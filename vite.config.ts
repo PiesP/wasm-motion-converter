@@ -1,6 +1,6 @@
+import { visualizer } from 'rollup-plugin-visualizer';
 import { defineConfig } from 'vite';
 import solid from 'vite-plugin-solid';
-import { visualizer } from 'rollup-plugin-visualizer';
 
 export default defineConfig({
   plugins: [
@@ -25,6 +25,9 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
+  },
+  worker: {
+    format: 'es',
   },
   build: {
     target: 'esnext',
