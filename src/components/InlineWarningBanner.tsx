@@ -3,6 +3,8 @@ import type { PerformanceWarning } from '../types/conversion-types';
 
 interface InlineWarningBannerProps {
   warnings: PerformanceWarning[];
+  actionLabel?: string;
+  onAction?: () => void;
 }
 
 const InlineWarningBanner: Component<InlineWarningBannerProps> = (props) => {
@@ -39,6 +41,17 @@ const InlineWarningBanner: Component<InlineWarningBannerProps> = (props) => {
                 )}
               </For>
             </ul>
+            {props.onAction && props.actionLabel ? (
+              <div class="mt-3">
+                <button
+                  type="button"
+                  class="inline-flex items-center px-3 py-2 border border-transparent text-xs font-medium rounded-md text-yellow-900 bg-yellow-200 hover:bg-yellow-300 dark:text-yellow-100 dark:bg-yellow-800 dark:hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 dark:focus:ring-offset-gray-900"
+                  onClick={props.onAction}
+                >
+                  {props.actionLabel}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

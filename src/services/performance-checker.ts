@@ -1,4 +1,9 @@
-import type { PerformanceWarning, VideoMetadata } from '../types/conversion-types';
+import type {
+  ConversionScale,
+  ConversionSettings,
+  PerformanceWarning,
+  VideoMetadata,
+} from '../types/conversion-types';
 import {
   COMPLEX_CODECS,
   WARN_DURATION_SECONDS,
@@ -66,4 +71,42 @@ export function checkPerformance(file: File, metadata: VideoMetadata): Performan
   }
 
   return warnings;
+}
+
+const preferLowerScale = (
+  current: ConversionScale,
+  target: ConversionScale
+): ConversionScale => (current < target ? current : target);
+
+export function getRecommendedSettings(
+  file: File,
+  metadata: VideoMetadata,
+  current: ConversionSettings
+): ConversionSettings | null {
+  let changed = false;
+  const next: ConversionSettings = { ...current };
+  const pixels = metadata.width * metadata.height;
+
+  if (file.size > WARN_FILE_SIZE_HIGH || metadata.duration > WARN_DURATION_SECONDS) {
+    if (next.quality !== 'low') {
+      next.quality = 'low';
+      changed = true;
+    }
+  }
+
+  if (file.size > WARN_FILE_SIZE_CRITICAL || pixels > WARN_RESOLUTION_PIXELS * 2) {
+    const newScale = preferLowerScale(next.scale, 0.5);
+    if (newScale !== next.scale) {
+      next.scale = newScale;
+      changed = true;
+    }
+  } else if (pixels > WARN_RESOLUTION_PIXELS) {
+    const newScale = preferLowerScale(next.scale, 0.75);
+    if (newScale !== next.scale) {
+      next.scale = newScale;
+      changed = true;
+    }
+  }
+
+  return changed ? next : null;
 }

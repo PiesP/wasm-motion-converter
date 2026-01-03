@@ -1,6 +1,6 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import type { ConversionOptions, VideoMetadata } from '../types/conversion-types';
+import type { ConversionOptions, ConversionQuality, VideoMetadata } from '../types/conversion-types';
 import {
   FFMPEG_CORE_URL,
   QUALITY_PRESETS,
@@ -10,6 +10,10 @@ import {
 } from '../utils/constants';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { withTimeout } from '../utils/with-timeout';
+
+const INPUT_FILE_NAME = 'input.mp4';
+const INPUT_CACHE_TTL_MS = 120_000;
+const PROGRESS_THROTTLE_MS = 150;
 
 function getOptimalThreadCount(): number {
   const cores = navigator.hardwareConcurrency || 2;
@@ -28,6 +32,12 @@ function getFilterGraphSafeArgs(): string[] {
   return ['-threads', '1', '-filter_threads', '1'];
 }
 
+function getScaleFilter(quality: ConversionQuality, scale: number): string {
+  const filter =
+    quality === 'high' ? 'lanczos' : quality === 'medium' ? 'bicubic' : 'bilinear';
+  return `scale=iw*${scale}:ih*${scale}:flags=${filter}`;
+}
+
 class FFmpegService {
   private ffmpeg: FFmpeg | null = null;
   private loaded = false;
@@ -37,6 +47,10 @@ class FFmpegService {
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private lastProgressTime = 0;
   private isConverting = false;
+  private lastProgressEmitTime = 0;
+  private lastProgressValue = -1;
+  private cachedInputKey: string | null = null;
+  private inputCacheTimer: ReturnType<typeof setTimeout> | null = null;
 
   private getFFmpeg(): FFmpeg {
     if (!this.ffmpeg || !this.loaded) {
@@ -52,6 +66,20 @@ class FFmpegService {
     if (this.progressCallback) {
       this.progressCallback(progress);
     }
+  }
+
+  private shouldEmitProgress(progress: number): boolean {
+    const now = Date.now();
+    const timeDelta = now - this.lastProgressEmitTime;
+    const progressDelta = Math.abs(progress - this.lastProgressValue);
+
+    if (timeDelta < PROGRESS_THROTTLE_MS && progressDelta < 1) {
+      return false;
+    }
+
+    this.lastProgressEmitTime = now;
+    this.lastProgressValue = progress;
+    return true;
   }
 
   private async safeDelete(fileName: string): Promise<void> {
@@ -77,11 +105,13 @@ class FFmpegService {
         ? Math.min(100, Math.max(0, progressPercent))
         : 0;
 
-      if (onProgress) {
-        onProgress(normalizedProgress);
-      }
+      if (this.shouldEmitProgress(normalizedProgress)) {
+        if (onProgress) {
+          onProgress(normalizedProgress);
+        }
 
-      this.emitProgress(normalizedProgress);
+        this.emitProgress(normalizedProgress);
+      }
     });
 
     const baseURL = FFMPEG_CORE_URL;
@@ -106,8 +136,7 @@ class FFmpegService {
 
   async getVideoMetadata(file: File): Promise<VideoMetadata> {
     const ffmpeg = this.getFFmpeg();
-    const inputFileName = 'input.mp4';
-    await ffmpeg.writeFile(inputFileName, await fetchFile(file));
+    const inputFileName = INPUT_FILE_NAME;
 
     const metadata: VideoMetadata = {
       width: 0,
@@ -118,7 +147,7 @@ class FFmpegService {
       bitrate: 0,
     };
 
-    ffmpeg.on('log', ({ message }) => {
+    const logHandler = ({ message }: { message: string }) => {
       const resolutionMatch = message.match(/(\d{2,5})x(\d{2,5})/);
       if (resolutionMatch) {
         metadata.width = Number.parseInt(resolutionMatch[1] ?? '0', 10);
@@ -147,24 +176,24 @@ class FFmpegService {
       if (bitrateMatch) {
         metadata.bitrate = Number.parseInt(bitrateMatch[1] ?? '0', 10) * 1000;
       }
-    });
+    };
+
+    ffmpeg.on('log', logHandler);
 
     try {
+      await this.ensureInputFile(file);
       await withTimeout(
         ffmpeg.exec(['-i', inputFileName]),
         TIMEOUT_VIDEO_ANALYSIS,
         `Video analysis timed out after ${TIMEOUT_VIDEO_ANALYSIS / 1000} seconds. The file may be corrupted or in an unsupported format.`
       );
+      return metadata;
     } catch (error) {
-      if (error instanceof Error && error.message.includes('timed out')) {
-        await this.safeDelete(inputFileName);
-        throw error;
-      }
+      await this.clearCachedInput();
+      throw error;
+    } finally {
+      ffmpeg.off('log', logHandler);
     }
-
-    await this.safeDelete(inputFileName);
-
-    return metadata;
   }
 
   async convertToGIF(file: File, options: ConversionOptions): Promise<Blob> {
@@ -172,14 +201,14 @@ class FFmpegService {
 
     const { quality, scale } = options;
     const settings = QUALITY_PRESETS.gif[quality];
-    const inputFileName = 'input.mp4';
+    const inputFileName = INPUT_FILE_NAME;
     const paletteFileName = 'palette.png';
     const outputFileName = 'output.gif';
 
     this.startWatchdog();
 
     try {
-      await ffmpeg.writeFile(inputFileName, await fetchFile(file));
+      await this.ensureInputFile(file);
 
       if (isMemoryCritical()) {
         console.warn('[FFmpeg Service] Critical memory usage detected - conversion may fail');
@@ -187,7 +216,7 @@ class FFmpegService {
 
       this.emitProgress(10);
 
-      const scaleFilter = `scale=iw*${scale}:ih*${scale}:flags=lanczos`;
+      const scaleFilter = getScaleFilter(quality, scale);
 
       try {
         this.updateStatus('Generating color palette...');
@@ -233,7 +262,7 @@ class FFmpegService {
         if (!this.ffmpeg || !this.loaded) {
           await this.initialize();
           ffmpeg = this.getFFmpeg();
-          await ffmpeg.writeFile(inputFileName, await fetchFile(file));
+          await this.ensureInputFile(file);
         }
 
         this.emitProgress(50);
@@ -247,13 +276,13 @@ class FFmpegService {
 
       this.emitProgress(100);
 
-      await this.safeDelete(inputFileName);
+      await this.clearCachedInput();
       await this.safeDelete(paletteFileName);
       await this.safeDelete(outputFileName);
 
       return new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/gif' });
     } catch (error) {
-      await this.safeDelete(inputFileName);
+      await this.clearCachedInput();
       await this.safeDelete(paletteFileName);
       await this.safeDelete(outputFileName);
       throw error;
@@ -267,13 +296,13 @@ class FFmpegService {
 
     const { quality, scale } = options;
     const settings = QUALITY_PRESETS.webp[quality];
-    const inputFileName = 'input.mp4';
+    const inputFileName = INPUT_FILE_NAME;
     const outputFileName = 'output.webp';
 
     this.startWatchdog();
 
     try {
-      await ffmpeg.writeFile(inputFileName, await fetchFile(file));
+      await this.ensureInputFile(file);
 
       if (isMemoryCritical()) {
         console.warn('[FFmpeg Service] Critical memory usage detected - conversion may fail');
@@ -281,7 +310,7 @@ class FFmpegService {
 
       this.emitProgress(20);
 
-      const scaleFilter = `scale=iw*${scale}:ih*${scale}:flags=lanczos`;
+      const scaleFilter = getScaleFilter(quality, scale);
 
       const webpThreadArgs = getThreadArgs(false);
       await withTimeout(
@@ -316,12 +345,12 @@ class FFmpegService {
 
       this.emitProgress(100);
 
-      await this.safeDelete(inputFileName);
+      await this.clearCachedInput();
       await this.safeDelete(outputFileName);
 
       return new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/webp' });
     } catch (error) {
-      await this.safeDelete(inputFileName);
+      await this.clearCachedInput();
       await this.safeDelete(outputFileName);
       throw error;
     } finally {
@@ -343,8 +372,7 @@ class FFmpegService {
         );
       }
       await this.initialize();
-      const ffmpeg = this.getFFmpeg();
-      await ffmpeg.writeFile(inputFileName, await fetchFile(file));
+      await this.ensureInputFile(file);
     }
 
     this.updateStatus('Converting to GIF directly (no palette optimization)...');
@@ -374,6 +402,15 @@ class FFmpegService {
     this.statusCallback = callback;
   }
 
+  async clearCachedInput(): Promise<void> {
+    if (this.inputCacheTimer) {
+      clearTimeout(this.inputCacheTimer);
+      this.inputCacheTimer = null;
+    }
+    this.cachedInputKey = null;
+    await this.safeDelete(INPUT_FILE_NAME);
+  }
+
   private updateStatus(message: string): void {
     if (this.statusCallback) {
       this.statusCallback(message);
@@ -387,6 +424,8 @@ class FFmpegService {
   private startWatchdog(): void {
     this.lastProgressTime = Date.now();
     this.isConverting = true;
+    this.lastProgressEmitTime = 0;
+    this.lastProgressValue = -1;
 
     this.watchdogTimer = setInterval(() => {
       const timeSinceProgress = Date.now() - this.lastProgressTime;
@@ -415,6 +454,11 @@ class FFmpegService {
       this.ffmpeg = null;
       this.loaded = false;
     }
+    if (this.inputCacheTimer) {
+      clearTimeout(this.inputCacheTimer);
+      this.inputCacheTimer = null;
+    }
+    this.cachedInputKey = null;
     this.stopWatchdog();
   }
 
@@ -425,6 +469,36 @@ class FFmpegService {
       this.loaded = false;
       this.ffmpeg = null;
     }
+    if (this.inputCacheTimer) {
+      clearTimeout(this.inputCacheTimer);
+      this.inputCacheTimer = null;
+    }
+    this.cachedInputKey = null;
+  }
+
+  private getFileCacheKey(file: File): string {
+    return `${file.name}-${file.size}-${file.lastModified}`;
+  }
+
+  private setInputCache(key: string): void {
+    this.cachedInputKey = key;
+    if (this.inputCacheTimer) {
+      clearTimeout(this.inputCacheTimer);
+    }
+    this.inputCacheTimer = setTimeout(() => {
+      void this.clearCachedInput();
+    }, INPUT_CACHE_TTL_MS);
+  }
+
+  private async ensureInputFile(file: File): Promise<void> {
+    const ffmpeg = this.getFFmpeg();
+    const key = this.getFileCacheKey(file);
+    if (this.cachedInputKey === key) {
+      return;
+    }
+    await this.safeDelete(INPUT_FILE_NAME);
+    await ffmpeg.writeFile(INPUT_FILE_NAME, await fetchFile(file));
+    this.setInputCache(key);
   }
 }
 

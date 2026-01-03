@@ -13,8 +13,8 @@ import ThemeToggle from './components/ThemeToggle';
 import VideoMetadataDisplay from './components/VideoMetadataDisplay';
 import { convertVideo } from './services/conversion-service';
 import { ffmpegService } from './services/ffmpeg-service';
-import { checkPerformance } from './services/performance-checker';
-import { analyzeVideo } from './services/video-analyzer';
+import { checkPerformance, getRecommendedSettings } from './services/performance-checker';
+import { analyzeVideo, analyzeVideoQuick } from './services/video-analyzer';
 import {
   appState,
   environmentSupported,
@@ -49,6 +49,7 @@ import { validateVideoFile } from './utils/file-validation';
 
 const App: Component = () => {
   const [conversionStartTime, setConversionStartTime] = createSignal<number>(0);
+  const formatQualityLabel = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
   onMount(() => {
     const isSupported = typeof SharedArrayBuffer !== 'undefined' && crossOriginIsolated === true;
     setEnvironmentSupported(isSupported);
@@ -92,21 +93,39 @@ const App: Component = () => {
       return;
     }
 
+    await ffmpegService.clearCachedInput();
     setInputFile(file);
 
     try {
-      if (!ffmpegService.isLoaded()) {
+      const needsInit = !ffmpegService.isLoaded();
+      const initPromise = needsInit
+        ? ffmpegService.initialize(setLoadingProgress)
+        : Promise.resolve();
+
+      if (needsInit) {
         setAppState('loading-ffmpeg');
-        await ffmpegService.initialize(setLoadingProgress);
       }
+
+      let fullAnalysisDone = false;
+      if (needsInit) {
+        analyzeVideoQuick(file)
+          .then((metadata) => {
+            if (fullAnalysisDone) {
+              return;
+            }
+            setVideoMetadata(metadata);
+            setPerformanceWarnings(checkPerformance(file, metadata));
+          })
+          .catch(() => {});
+      }
+
+      await initPromise;
 
       setAppState('analyzing');
       const metadata = await analyzeVideo(file);
+      fullAnalysisDone = true;
       setVideoMetadata(metadata);
-
-      const warnings = checkPerformance(file, metadata);
-      setPerformanceWarnings(warnings);
-
+      setPerformanceWarnings(checkPerformance(file, metadata));
       setAppState('idle');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unknown error occurred');
@@ -176,6 +195,7 @@ const App: Component = () => {
     resetAnalysisState();
     resetOutputState();
     setConversionSettings(DEFAULT_CONVERSION_SETTINGS);
+    void ffmpegService.clearCachedInput();
     setAppState('idle');
   };
 
@@ -207,6 +227,32 @@ const App: Component = () => {
       appState() === 'analyzing' ||
       appState() === 'converting'
   );
+
+  const recommendedSettings = createMemo(() => {
+    const file = inputFile();
+    const metadata = videoMetadata();
+    if (!file || !metadata) {
+      return null;
+    }
+    return getRecommendedSettings(file, metadata, conversionSettings());
+  });
+
+  const recommendedActionLabel = createMemo(() => {
+    const recommendation = recommendedSettings();
+    if (!recommendation) {
+      return undefined;
+    }
+    const qualityLabel = formatQualityLabel(recommendation.quality);
+    const scaleLabel = `${Math.round(recommendation.scale * 100)}%`;
+    return `Apply recommended settings (Quality: ${qualityLabel}, Scale: ${scaleLabel})`;
+  });
+
+  const handleApplyRecommended = () => {
+    const recommendation = recommendedSettings();
+    if (recommendation) {
+      setConversionSettings(recommendation);
+    }
+  };
 
   return (
     <div class="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col transition-colors">
@@ -270,7 +316,11 @@ const App: Component = () => {
               />
 
               <Show when={performanceWarnings().length > 0}>
-                <InlineWarningBanner warnings={performanceWarnings()} />
+                <InlineWarningBanner
+                  warnings={performanceWarnings()}
+                  actionLabel={recommendedActionLabel()}
+                  onAction={recommendedActionLabel() ? handleApplyRecommended : undefined}
+                />
               </Show>
             </Show>
           </div>
