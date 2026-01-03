@@ -83,7 +83,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
       <div class="mt-4">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white">Conversion Complete</h3>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 mb-4">{props.originalName}</p>
 
         <div class="grid grid-cols-2 gap-4 text-sm">
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">

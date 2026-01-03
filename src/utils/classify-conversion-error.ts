@@ -1,5 +1,14 @@
 import type { ConversionSettings, ErrorContext, VideoMetadata } from '../types/conversion-types';
 
+/**
+ * Classify a conversion error and provide helpful suggestions
+ * Analyzes error messages to determine the root cause and suggest remediation
+ * @param errorMessage - The error message from the conversion process
+ * @param metadata - Video metadata for context-aware classification
+ * @param conversionSettings - The settings used for conversion for context
+ * @param ffmpegLogs - Optional FFmpeg logs for detailed error analysis
+ * @returns ErrorContext with error type, phase, and user-friendly suggestion
+ */
 export function classifyConversionError(
   errorMessage: string,
   metadata: VideoMetadata | null,

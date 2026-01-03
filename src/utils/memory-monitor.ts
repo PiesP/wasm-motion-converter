@@ -50,7 +50,11 @@ function getMemoryInfo(): MemoryInfo | null {
  * Estimate memory usage based on video characteristics
  * Used as fallback for browsers without performance.memory API
  */
-function estimateMemoryUsage(videoSize: number, duration: number, resolution: number): MemoryEstimate {
+function estimateMemoryUsage(
+  videoSize: number,
+  duration: number,
+  resolution: number
+): MemoryEstimate {
   // Heuristic: estimate memory usage based on video characteristics
   // Typical conversion uses 5-10x the input file size in memory
   const estimatedMemoryUsage = videoSize * 7;

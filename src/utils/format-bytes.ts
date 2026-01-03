@@ -1,3 +1,8 @@
+/**
+ * Format bytes to human-readable file size string
+ * @param bytes - Number of bytes to format
+ * @returns Human-readable file size (e.g., "2.5 MB")
+ */
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 Bytes';
 

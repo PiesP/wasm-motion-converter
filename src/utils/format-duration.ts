@@ -1,3 +1,8 @@
+/**
+ * Format duration in seconds to human-readable time string
+ * @param seconds - Duration in seconds
+ * @returns Formatted time string (e.g., "1:23" for MM:SS or "1:02:34" for HH:MM:SS)
+ */
 export function formatDuration(seconds: number): string {
   const totalSeconds = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(totalSeconds / 3600);

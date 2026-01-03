@@ -92,9 +92,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         <div class="text-xs text-gray-600 dark:text-gray-400 text-center font-mono">
           <span>Elapsed: {formatDuration(elapsedSeconds())}</span>
           <Show
-            when={
-              props.estimatedSecondsRemaining != null && props.estimatedSecondsRemaining > 0
-            }
+            when={props.estimatedSecondsRemaining != null && props.estimatedSecondsRemaining > 0}
           >
             <span> | ETA: {formatDuration(props.estimatedSecondsRemaining!)}</span>
           </Show>

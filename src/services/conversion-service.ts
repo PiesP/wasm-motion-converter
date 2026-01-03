@@ -1,8 +1,4 @@
-import type {
-  ConversionFormat,
-  ConversionOptions,
-  VideoMetadata,
-} from '../types/conversion-types';
+import type { ConversionFormat, ConversionOptions, VideoMetadata } from '../types/conversion-types';
 import { ffmpegService } from './ffmpeg-service';
 
 export function convertVideo(
