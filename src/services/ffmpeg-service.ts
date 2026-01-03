@@ -1,6 +1,10 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import type { ConversionOptions, ConversionQuality, VideoMetadata } from '../types/conversion-types';
+import type {
+  ConversionOptions,
+  ConversionQuality,
+  VideoMetadata,
+} from '../types/conversion-types';
 import {
   FFMPEG_CORE_URL,
   QUALITY_PRESETS,
@@ -33,8 +37,7 @@ function getFilterGraphSafeArgs(): string[] {
 }
 
 function getScaleFilter(quality: ConversionQuality, scale: number): string {
-  const filter =
-    quality === 'high' ? 'lanczos' : quality === 'medium' ? 'bicubic' : 'bilinear';
+  const filter = quality === 'high' ? 'lanczos' : quality === 'medium' ? 'bicubic' : 'bilinear';
   return `scale=iw*${scale}:ih*${scale}:flags=${filter}`;
 }
 
@@ -51,6 +54,8 @@ class FFmpegService {
   private lastProgressValue = -1;
   private cachedInputKey: string | null = null;
   private inputCacheTimer: ReturnType<typeof setTimeout> | null = null;
+  private cancellationRequested = false;
+  private isTerminating = false;
 
   private getFFmpeg(): FFmpeg {
     if (!this.ffmpeg || !this.loaded) {
@@ -89,15 +94,19 @@ class FFmpegService {
     try {
       await this.ffmpeg.deleteFile(fileName);
     } catch (error) {
-      if (import.meta.env.DEV) {
-        console.debug(`[FFmpeg Service] Could not delete ${fileName}:`, error);
-      }
+      // Silent failure - file might not exist
+      console.debug(`[FFmpeg Service] Could not delete ${fileName}:`, error);
     }
   }
 
   async initialize(onProgress?: (progress: number) => void): Promise<void> {
     if (this.loaded) {
       return;
+    }
+
+    // Wait for any ongoing termination to complete
+    while (this.isTerminating) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     const ffmpeg = new FFmpeg();
@@ -209,6 +218,7 @@ class FFmpegService {
     const paletteFileName = 'palette.png';
     const outputFileName = 'output.gif';
 
+    this.cancellationRequested = false;
     this.startWatchdog();
 
     try {
@@ -242,6 +252,10 @@ class FFmpegService {
 
         this.emitProgress(40);
 
+        if (this.cancellationRequested) {
+          throw new Error('Conversion cancelled by user');
+        }
+
         this.updateStatus('Converting to GIF with palette...');
         const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
         const filterComplexThreadArgs = getThreadArgs(true);
@@ -261,7 +275,20 @@ class FFmpegService {
           () => this.terminateFFmpeg()
         );
       } catch (error) {
-        console.warn('[FFmpeg Service] Palette generation failed, falling back to direct conversion:', error);
+        const errorMessage = error instanceof Error ? error.message : '';
+
+        // If error is due to cancellation or termination, don't attempt fallback
+        if (
+          errorMessage.includes('cancelled by user') ||
+          errorMessage.includes('called FFmpeg.terminate()')
+        ) {
+          throw error;
+        }
+
+        console.warn(
+          '[FFmpeg Service] Palette generation failed, falling back to direct conversion:',
+          error
+        );
         this.updateStatus('Using fallback conversion method...');
         await this.safeDelete(paletteFileName);
 
@@ -305,6 +332,7 @@ class FFmpegService {
     const inputFileName = INPUT_FILE_NAME;
     const outputFileName = 'output.webp';
 
+    this.cancellationRequested = false;
     this.startWatchdog();
 
     try {
@@ -315,6 +343,10 @@ class FFmpegService {
       }
 
       this.emitProgress(20);
+
+      if (this.cancellationRequested) {
+        throw new Error('Conversion cancelled by user');
+      }
 
       const scaleFilter = getScaleFilter(quality, scale);
 
@@ -408,6 +440,15 @@ class FFmpegService {
     this.statusCallback = callback;
   }
 
+  cancelConversion(): void {
+    if (!this.isConverting) {
+      return;
+    }
+    this.cancellationRequested = true;
+    this.updateStatus('Cancelling conversion...');
+    this.terminateFFmpeg();
+  }
+
   async clearCachedInput(): Promise<void> {
     if (this.inputCacheTimer) {
       clearTimeout(this.inputCacheTimer);
@@ -452,6 +493,8 @@ class FFmpegService {
   }
 
   private terminateFFmpeg(): void {
+    this.isTerminating = true;
+
     if (this.ffmpeg) {
       try {
         this.ffmpeg.terminate();
@@ -466,11 +509,19 @@ class FFmpegService {
       this.inputCacheTimer = null;
     }
     this.cachedInputKey = null;
+    this.cancellationRequested = false;
     this.stopWatchdog();
+
+    // Small delay to ensure FFmpeg worker is fully terminated
+    setTimeout(() => {
+      this.isTerminating = false;
+    }, 200);
   }
 
   terminate(): void {
+    this.isTerminating = true;
     this.stopWatchdog();
+
     if (this.ffmpeg) {
       this.ffmpeg.terminate();
       this.loaded = false;
@@ -481,6 +532,11 @@ class FFmpegService {
       this.inputCacheTimer = null;
     }
     this.cachedInputKey = null;
+    this.cancellationRequested = false;
+
+    setTimeout(() => {
+      this.isTerminating = false;
+    }, 200);
   }
 
   private getFileCacheKey(file: File): string {

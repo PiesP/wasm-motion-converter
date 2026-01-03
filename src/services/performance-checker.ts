@@ -73,10 +73,8 @@ export function checkPerformance(file: File, metadata: VideoMetadata): Performan
   return warnings;
 }
 
-const preferLowerScale = (
-  current: ConversionScale,
-  target: ConversionScale
-): ConversionScale => (current < target ? current : target);
+const preferLowerScale = (current: ConversionScale, target: ConversionScale): ConversionScale =>
+  current < target ? current : target;
 
 export function getRecommendedSettings(
   file: File,

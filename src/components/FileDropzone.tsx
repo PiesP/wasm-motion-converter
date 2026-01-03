@@ -9,6 +9,7 @@ interface FileDropzoneProps {
   statusMessage?: string;
   showElapsedTime?: boolean;
   startTime?: number;
+  estimatedSecondsRemaining?: number | null;
 }
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
@@ -146,7 +147,13 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           <div class="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-2">
             <span>Processing...</span>
             {props.showElapsedTime && props.startTime && (
-              <span class="font-mono">({formatDuration(elapsedSeconds())})</span>
+              <span class="font-mono">
+                (Elapsed: {formatDuration(elapsedSeconds())}
+                {props.estimatedSecondsRemaining != null && props.estimatedSecondsRemaining > 0 && (
+                  <> | ETA: {formatDuration(props.estimatedSecondsRemaining)}</>
+                )}
+                )
+              </span>
             )}
           </div>
           {props.statusMessage ? (

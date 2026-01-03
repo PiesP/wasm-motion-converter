@@ -25,7 +25,7 @@ const selectedOptionClass =
 const defaultOptionClass =
   'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-600';
 
-const OptionSelector = <T extends OptionValue,>(props: OptionSelectorProps<T>) => {
+const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) => {
   const columns = () => props.columns ?? (props.options.length >= 3 ? 3 : 2);
   const optionClass = (selected: boolean) =>
     `${baseOptionClass} ${selected ? selectedOptionClass : defaultOptionClass}`;

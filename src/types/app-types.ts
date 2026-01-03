@@ -1,7 +1,1 @@
-export type AppState =
-  | 'idle'
-  | 'loading-ffmpeg'
-  | 'analyzing'
-  | 'converting'
-  | 'done'
-  | 'error';
+export type AppState = 'idle' | 'loading-ffmpeg' | 'analyzing' | 'converting' | 'done' | 'error';

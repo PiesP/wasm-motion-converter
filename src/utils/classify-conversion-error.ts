@@ -8,11 +8,7 @@ export function classifyConversionError(
   const timestamp = Date.now();
   const baseContext = { timestamp, originalError: errorMessage };
 
-  if (
-    message.includes('timed out') ||
-    message.includes('90s') ||
-    message.includes('hung')
-  ) {
+  if (message.includes('timed out') || message.includes('90s') || message.includes('hung')) {
     return {
       type: 'timeout',
       ...baseContext,
