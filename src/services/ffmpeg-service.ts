@@ -136,7 +136,9 @@ async function verifyWorkerIsolation(): Promise<void> {
 
 function getOptimalThreadCount(): number {
   const cores = navigator.hardwareConcurrency || 2;
-  return Math.min(cores, 4);
+  // Use 75% of available cores for better performance on modern CPUs
+  // Capped at 8 to prevent excessive resource usage
+  return Math.min(Math.floor(cores * 0.75), 8);
 }
 
 /**
@@ -189,6 +191,7 @@ class FFmpegService {
   // Resource tracking for cleanup
   private activeHeartbeats: Set<ReturnType<typeof setInterval>> = new Set();
   private activeBlobUrls: Set<string> = new Set();
+  private knownFiles: Set<string> = new Set();
 
   private getFFmpeg(): FFmpeg {
     if (!this.ffmpeg || !this.loaded) {
@@ -334,6 +337,7 @@ class FFmpegService {
     const ffmpeg = this.getFFmpeg();
     try {
       await ffmpeg.writeFile(fileName, data);
+      this.knownFiles.add(fileName);
       logger.debug('conversion', `Wrote file: ${fileName}`, {
         size: typeof data === 'string' ? data.length : data.byteLength,
       });
@@ -373,6 +377,7 @@ class FFmpegService {
     }
     try {
       await this.ffmpeg.deleteFile(fileName);
+      this.knownFiles.delete(fileName);
       logger.debug('conversion', `Deleted ${fileName}`);
     } catch (error) {
       // Silent failure - file might not exist
@@ -384,18 +389,14 @@ class FFmpegService {
 
   /**
    * Check if a file exists in FFmpeg filesystem
+   * Uses Set-based tracking to avoid reading entire files into memory
    * Returns false if file doesn't exist or on error
    */
   private async safeFileExists(fileName: string): Promise<boolean> {
     if (!this.ffmpeg) {
       return false;
     }
-    try {
-      await this.ffmpeg.readFile(fileName);
-      return true;
-    } catch {
-      return false;
-    }
+    return this.knownFiles.has(fileName);
   }
 
   async initialize(
@@ -1245,6 +1246,9 @@ class FFmpegService {
       }
     }
     this.activeBlobUrls.clear();
+
+    // Clear known files tracking
+    this.knownFiles.clear();
 
     logger.debug('general', 'All resources cleaned up');
   }

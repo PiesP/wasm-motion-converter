@@ -1,6 +1,7 @@
 import {
   batch,
   type Component,
+  createEffect,
   createMemo,
   createSignal,
   ErrorBoundary,
@@ -47,6 +48,7 @@ import {
   inputFile,
   MAX_RESULTS,
   performanceWarnings,
+  saveConversionSettings,
   setAutoAppliedRecommendation,
   setConversionProgress,
   setConversionResults,
@@ -108,6 +110,12 @@ const App: Component = () => {
         });
       });
     }
+  });
+
+  // Persist conversion settings to localStorage whenever they change
+  createEffect(() => {
+    const settings = conversionSettings();
+    saveConversionSettings(settings);
   });
 
   const resetConversionRuntimeState = () => {

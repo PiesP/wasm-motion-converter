@@ -8,7 +8,14 @@ interface ResultPreviewProps {
 }
 
 const ResultPreview: Component<ResultPreviewProps> = (props) => {
-  const previewUrl = createMemo(() => URL.createObjectURL(props.outputBlob));
+  // Create blob URL with proper cleanup of previous URLs to prevent memory leaks
+  const previewUrl = createMemo<string>((prev) => {
+    // Revoke previous blob URL before creating new one
+    if (prev) {
+      URL.revokeObjectURL(prev);
+    }
+    return URL.createObjectURL(props.outputBlob);
+  }, '');
   const [loaded, setLoaded] = createSignal(false);
 
   createEffect(() => {

@@ -9,9 +9,9 @@ interface QualitySelectorProps {
 }
 
 const options: OptionSelectorOption<ConversionQuality>[] = [
-  { value: 'low', label: 'Low', description: 'Fast, larger' },
+  { value: 'low', label: 'Low', description: 'Fast' },
   { value: 'medium', label: 'Medium', description: 'Balanced' },
-  { value: 'high', label: 'High', description: 'Slow, smaller' },
+  { value: 'high', label: 'High', description: 'Slow' },
 ];
 
 const QualitySelector: Component<QualitySelectorProps> = (props) => {

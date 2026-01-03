@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { defineConfig } from 'vite';
 import solid from 'vite-plugin-solid';
@@ -11,6 +12,16 @@ export default defineConfig({
       brotliSize: true,
     }),
   ],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      '@components': path.resolve(__dirname, './src/components'),
+      '@services': path.resolve(__dirname, './src/services'),
+      '@utils': path.resolve(__dirname, './src/utils'),
+      '@stores': path.resolve(__dirname, './src/stores'),
+      '@types': path.resolve(__dirname, './src/types'),
+    },
+  },
   server: {
     headers: {
       'Cross-Origin-Embedder-Policy': 'require-corp',
