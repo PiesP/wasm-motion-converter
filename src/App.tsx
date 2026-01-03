@@ -1,9 +1,9 @@
 import {
   type Component,
-  createMemo
-  createSignalateSignal,
-  ErrorBoundaryary,
-  For
+  createMemo,
+  createSignal,
+  ErrorBoundary,
+  For,
   onMount,
   Show,
 } from 'solid-js';

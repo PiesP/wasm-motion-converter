@@ -1,12 +1,16 @@
-import type { ConversionSettings } from '../types/conversion-types';
+import type { ConversionQuality, ConversionSettings } from '../types/conversion-types';
 import { formatBytes } from './format-bytes';
 import { formatDuration } from './format-duration';
 
-const QUALITY_FACTORS: Record<string, { size: number; time: number }> = {
+type QualityFactor = { size: number; time: number };
+
+const QUALITY_FACTORS: Record<ConversionQuality, QualityFactor> = {
   low: { size: 0.35, time: 0.9 },
   medium: { size: 0.55, time: 1.0 },
   high: { size: 0.8, time: 1.25 },
 };
+
+const getQualityFactor = (key: ConversionQuality): QualityFactor => QUALITY_FACTORS[key];
 
 function clampRange(min: number, max: number, floor: number, ceil: number): [number, number] {
   return [Math.max(min, floor), Math.min(max, ceil)];
@@ -17,7 +21,7 @@ export function estimateOutputSizeRange(
   settings: ConversionSettings,
   resolutionScaleFactor: number
 ): { minBytes: number; maxBytes: number; label: string } {
-  const quality = QUALITY_FACTORS[settings.quality];
+  const quality = getQualityFactor(settings.quality);
   const base = inputSizeBytes * quality.size * resolutionScaleFactor;
   // Provide a range to set expectation; widen a bit for GIF variability.
   const minBytes = base * 0.6;
@@ -35,7 +39,7 @@ export function estimateEtaRange(
   megapixels: number,
   settings: ConversionSettings
 ): { minSeconds: number; maxSeconds: number; label: string } {
-  const quality = QUALITY_FACTORS[settings.quality];
+  const quality = getQualityFactor(settings.quality);
   const complexity = durationSeconds * megapixels * quality.time;
   // heuristic: baseline 720p 30s medium ≈ 12s; scale linearly and widen.
   const baseline = 12;
