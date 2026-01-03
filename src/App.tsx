@@ -27,9 +27,11 @@ import {
   appState,
   environmentSupported,
   loadingProgress,
+  loadingStatusMessage,
   setAppState,
   setEnvironmentSupported,
   setLoadingProgress,
+  setLoadingStatusMessage,
 } from './stores/app-store';
 import {
   conversionResults,
@@ -89,6 +91,7 @@ const App: Component = () => {
 
   const resetOutputState = () => {
     setLoadingProgress(0);
+    setLoadingStatusMessage('');
   };
 
   const clearConversionCallbacks = () => {
@@ -115,7 +118,7 @@ const App: Component = () => {
     try {
       const needsInit = !ffmpegService.isLoaded();
       const initPromise = needsInit
-        ? ffmpegService.initialize(setLoadingProgress)
+        ? ffmpegService.initialize(setLoadingProgress, setLoadingStatusMessage)
         : Promise.resolve();
 
       if (needsInit) {
@@ -366,6 +369,7 @@ const App: Component = () => {
                 <ConversionProgress
                   progress={loadingProgress()}
                   status="Loading FFmpeg (~30MB download)..."
+                  statusMessage={loadingStatusMessage()}
                 />
               </Show>
 

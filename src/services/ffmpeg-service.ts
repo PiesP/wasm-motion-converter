@@ -109,7 +109,10 @@ class FFmpegService {
     }
   }
 
-  async initialize(onProgress?: (progress: number) => void): Promise<void> {
+  async initialize(
+    onProgress?: (progress: number) => void,
+    onStatus?: (message: string) => void
+  ): Promise<void> {
     if (this.loaded) {
       return;
     }
@@ -148,13 +151,46 @@ class FFmpegService {
     });
 
     const baseURL = FFMPEG_CORE_URL;
+    let downloadProgress = 0;
+    const reportProgress = (value: number) => {
+      if (!onProgress) {
+        return;
+      }
+      const clamped = Math.min(100, Math.max(0, Math.round(value)));
+      onProgress(clamped);
+    };
+    const applyDownloadProgress = (weight: number, message: string) => (url: string) => {
+      downloadProgress = Math.min(90, downloadProgress + weight);
+      reportProgress(downloadProgress);
+      if (onStatus) {
+        onStatus(message);
+      }
+      return url;
+    };
 
     try {
+      reportProgress(5);
+      if (onStatus) {
+        onStatus('Downloading FFmpeg assets...');
+      }
       const [coreURL, wasmURL, workerURL] = await Promise.all([
-        loadFFmpegAsset(`${baseURL}/ffmpeg-core.js`, 'text/javascript', 'FFmpeg core script'),
-        loadFFmpegAsset(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm', 'FFmpeg core WASM'),
-        loadFFmpegAsset(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript', 'FFmpeg worker'),
+        loadFFmpegAsset(`${baseURL}/ffmpeg-core.js`, 'text/javascript', 'FFmpeg core script').then(
+          applyDownloadProgress(10, 'FFmpeg core script downloaded.')
+        ),
+        loadFFmpegAsset(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm', 'FFmpeg core WASM').then(
+          applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')
+        ),
+        loadFFmpegAsset(
+          `${baseURL}/ffmpeg-core.worker.js`,
+          'text/javascript',
+          'FFmpeg worker'
+        ).then(applyDownloadProgress(10, 'FFmpeg worker downloaded.')),
       ]);
+
+      reportProgress(Math.max(downloadProgress, 90));
+      if (onStatus) {
+        onStatus('Initializing FFmpeg runtime...');
+      }
 
       await withTimeout(
         ffmpeg.load({
@@ -167,6 +203,10 @@ class FFmpegService {
         () => this.terminateFFmpeg()
       );
 
+      reportProgress(100);
+      if (onStatus) {
+        onStatus('FFmpeg ready.');
+      }
       this.loaded = true;
     } catch (error) {
       this.terminateFFmpeg();
