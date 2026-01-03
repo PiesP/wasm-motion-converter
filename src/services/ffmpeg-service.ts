@@ -27,7 +27,7 @@ async function loadFFmpegAsset(url: string, mimeType: string, label: string): Pr
   return withTimeout(
     toBlobURL(url, mimeType),
     TIMEOUT_FFMPEG_DOWNLOAD,
-    `Downloading ${label} timed out after ${DOWNLOAD_TIMEOUT_SECONDS} seconds. Please check your network connection and ensure unpkg.com is reachable.`
+    `Downloading ${label} timed out after ${DOWNLOAD_TIMEOUT_SECONDS} seconds. Please check your network connection and ensure cdn.jsdelivr.net is reachable.`
   );
 }
 
