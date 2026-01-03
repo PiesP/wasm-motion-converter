@@ -24,6 +24,7 @@ import { convertVideo } from './services/conversion-service';
 import { ffmpegService } from './services/ffmpeg-service';
 import { checkPerformance, getRecommendedSettings } from './services/performance-checker';
 import { analyzeVideo, analyzeVideoQuick } from './services/video-analyzer';
+import { logger } from './utils/logger';
 import {
   appState,
   environmentSupported,
@@ -225,6 +226,14 @@ const App: Component = () => {
       etaCalculator.reset();
       setEstimatedSecondsRemaining(null);
       setMemoryWarning(false);
+
+      logger.info('conversion', 'Starting conversion', {
+        format: settings.format,
+        quality: settings.quality,
+        scale: settings.scale,
+        fileSize: file.size,
+        fileName: file.name,
+      });
       if (memoryCheckTimer) {
         clearInterval(memoryCheckTimer);
       }
@@ -255,6 +264,13 @@ const App: Component = () => {
         clearInterval(memoryCheckTimer);
         memoryCheckTimer = null;
       }
+
+      const duration = Date.now() - conversionStartTime();
+      logger.info('conversion', 'Conversion completed successfully', {
+        duration: `${(duration / 1000).toFixed(2)}s`,
+        outputSize: blob.size,
+      });
+
       const resultId =
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
           ? crypto.randomUUID()
@@ -296,7 +312,18 @@ const App: Component = () => {
         return;
       }
 
-      const context = classifyConversionError(errorMessage_, videoMetadata());
+      const context = classifyConversionError(
+        errorMessage_,
+        videoMetadata(),
+        settings,
+        ffmpegService.getRecentFFmpegLogs()
+      );
+
+      logger.error('conversion', 'Conversion failed', {
+        error: errorMessage_,
+        settings,
+        errorType: context.type,
+      });
 
       setErrorMessage(context.originalError);
       setErrorContext(context);

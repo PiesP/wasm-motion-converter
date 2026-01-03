@@ -21,6 +21,8 @@ export const FFMPEG_CORE_BASE_URLS = [
   `https://unpkg.com/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
 ];
 
+// Note: GIF palettegen filter's stats_mode parameter is not supported in ffmpeg.wasm 5.1.4
+// and has been removed. FFmpeg uses its default statistics mode which works correctly.
 export const QUALITY_PRESETS = {
   gif: {
     low: { fps: 10, colors: 128 },

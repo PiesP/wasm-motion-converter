@@ -1,19 +1,30 @@
-import type { ErrorContext, VideoMetadata } from '../types/conversion-types';
+import type { ConversionSettings, ErrorContext, VideoMetadata } from '../types/conversion-types';
 
 export function classifyConversionError(
   errorMessage: string,
-  metadata: VideoMetadata | null
+  metadata: VideoMetadata | null,
+  conversionSettings?: ConversionSettings,
+  ffmpegLogs?: string[]
 ): ErrorContext {
   const message = errorMessage.toLowerCase();
   const timestamp = Date.now();
-  const baseContext = { timestamp, originalError: errorMessage };
+  const baseContext = {
+    timestamp,
+    originalError: errorMessage,
+    conversionSettings,
+    ffmpegLogs,
+    phase: 'unknown',
+  };
 
   if (message.includes('timed out') || message.includes('90s') || message.includes('hung')) {
+    const isWatchdogTimeout = message.includes('stalled');
     return {
       type: 'timeout',
       ...baseContext,
-      suggestion:
-        'The conversion took too long. Try reducing the quality setting to "low" or the scale to 0.5, or choose a shorter video.',
+      phase: isWatchdogTimeout ? 'watchdog_timeout' : 'ffmpeg_timeout',
+      suggestion: isWatchdogTimeout
+        ? 'The conversion appeared to stall without progress updates. This may indicate a complex video file. Try reducing the quality to "low" or scale to 0.5.'
+        : 'The conversion took too long. Try reducing the quality setting to "low" or the scale to 0.5, or choose a shorter video.',
     };
   }
 

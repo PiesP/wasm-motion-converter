@@ -28,6 +28,9 @@ export interface ErrorContext {
   originalError: string;
   timestamp: number;
   suggestion?: string;
+  conversionSettings?: ConversionSettings;
+  ffmpegLogs?: string[];
+  phase?: string;
 }
 
 export interface VideoMetadata {

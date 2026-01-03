@@ -16,6 +16,7 @@ import {
   TIMEOUT_VIDEO_ANALYSIS,
 } from '../utils/constants';
 import { isMemoryCritical } from '../utils/memory-monitor';
+import { logger } from '../utils/logger';
 import { withTimeout } from '../utils/with-timeout';
 
 const INPUT_FILE_NAME = 'input.mp4';
@@ -172,6 +173,8 @@ class FFmpegService {
   private cancellationRequested = false;
   private isTerminating = false;
   private prefetchPromise: Promise<void> | null = null;
+  private ffmpegLogBuffer: string[] = [];
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   private getFFmpeg(): FFmpeg {
     if (!this.ffmpeg || !this.loaded) {
@@ -244,9 +247,12 @@ class FFmpegService {
     }
     try {
       await this.ffmpeg.deleteFile(fileName);
+      logger.debug('conversion', `Deleted ${fileName}`);
     } catch (error) {
       // Silent failure - file might not exist
-      console.debug(`[FFmpeg Service] Could not delete ${fileName}:`, error);
+      logger.debug('conversion', `Could not delete ${fileName} (non-critical)`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -469,6 +475,14 @@ class FFmpegService {
   }
 
   async convertToGIF(file: File, options: ConversionOptions): Promise<Blob> {
+    const conversionStartTime = Date.now();
+
+    // Check if FFmpeg needs reinitialization
+    if (!this.loaded || !this.ffmpeg) {
+      logger.warn('conversion', 'FFmpeg not initialized, reinitializing...');
+      await this.initialize();
+    }
+
     let ffmpeg = this.getFFmpeg();
 
     const { quality, scale } = options;
@@ -477,8 +491,28 @@ class FFmpegService {
     const paletteFileName = 'palette.png';
     const outputFileName = 'output.gif';
 
+    logger.info('conversion', 'Starting GIF conversion', {
+      quality,
+      scale,
+      fps: settings.fps,
+      colors: settings.colors,
+    });
+
     this.cancellationRequested = false;
     this.startWatchdog();
+
+    const ffmpegLogHandler = ({ type, message }: { type: string; message: string }) => {
+      logger.debug('ffmpeg', `[${type}] ${message}`);
+      this.ffmpegLogBuffer.push(`[${type}] ${message}`);
+      if (this.ffmpegLogBuffer.length > 100) {
+        this.ffmpegLogBuffer.shift();
+      }
+      if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
+        logger.warn('ffmpeg', `FFmpeg warning/error: ${message}`);
+      }
+    };
+
+    ffmpeg.on('log', ffmpegLogHandler);
 
     try {
       await this.ensureInputFile(file);
@@ -493,22 +527,34 @@ class FFmpegService {
 
       try {
         this.updateStatus('Generating color palette...');
-        const statsMode = quality === 'low' ? 'fast' : 'full';
         const paletteThreadArgs = getFilterGraphSafeArgs();
-        await withTimeout(
-          ffmpeg.exec([
-            ...paletteThreadArgs,
-            '-i',
-            inputFileName,
-            '-vf',
-            `fps=${settings.fps},${scaleFilter},palettegen=max_colors=${settings.colors}:stats_mode=${statsMode}`,
-            paletteFileName,
-          ]),
-          TIMEOUT_CONVERSION,
-          `GIF palette generation timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
-          () => this.terminateFFmpeg()
-        );
+        const paletteCmd = [
+          ...paletteThreadArgs,
+          '-i',
+          inputFileName,
+          '-vf',
+          `fps=${settings.fps},${scaleFilter},palettegen=max_colors=${settings.colors}`,
+          '-update',
+          '1', // Tell FFmpeg this is a single image, not a sequence
+          paletteFileName,
+        ];
+        logger.debug('ffmpeg', 'Palette generation command', { cmd: paletteCmd.join(' ') });
 
+        // Start heartbeat for palette generation to prevent watchdog timeout
+        const paletteHeartbeat = this.startProgressHeartbeat(10, 35, 30);
+
+        try {
+          await withTimeout(
+            ffmpeg.exec(paletteCmd),
+            TIMEOUT_CONVERSION,
+            `GIF palette generation timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+            () => this.terminateFFmpeg()
+          );
+        } finally {
+          this.stopProgressHeartbeat(paletteHeartbeat);
+        }
+
+        logger.debug('conversion', 'Palette generation complete');
         this.emitProgress(40);
 
         if (this.cancellationRequested) {
@@ -518,17 +564,19 @@ class FFmpegService {
         this.updateStatus('Converting to GIF with palette...');
         const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
         const filterComplexThreadArgs = getThreadArgs(true);
+        const conversionCmd = [
+          ...filterComplexThreadArgs,
+          '-i',
+          inputFileName,
+          '-i',
+          paletteFileName,
+          '-filter_complex',
+          `fps=${settings.fps},${scaleFilter}[x];[x][1:v]paletteuse=dither=${ditherMode}`,
+          outputFileName,
+        ];
+        logger.debug('ffmpeg', 'GIF conversion command', { cmd: conversionCmd.join(' ') });
         await withTimeout(
-          ffmpeg.exec([
-            ...filterComplexThreadArgs,
-            '-i',
-            inputFileName,
-            '-i',
-            paletteFileName,
-            '-filter_complex',
-            `fps=${settings.fps},${scaleFilter}[x];[x][1:v]paletteuse=dither=${ditherMode}`,
-            outputFileName,
-          ]),
+          ffmpeg.exec(conversionCmd),
           TIMEOUT_CONVERSION,
           `GIF conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
           () => this.terminateFFmpeg()
@@ -548,6 +596,9 @@ class FFmpegService {
           '[FFmpeg Service] Palette generation failed, falling back to direct conversion:',
           error
         );
+        logger.warn('conversion', 'Palette generation failed, using fallback', {
+          error: errorMessage,
+        });
         this.updateStatus('Using fallback conversion method...');
         await this.safeDelete(paletteFileName);
 
@@ -568,6 +619,12 @@ class FFmpegService {
 
       this.emitProgress(100);
 
+      const duration = Date.now() - conversionStartTime;
+      logger.info('conversion', 'GIF conversion complete', {
+        duration: `${(duration / 1000).toFixed(2)}s`,
+        outputSize: data.length,
+      });
+
       if (isMemoryCritical()) {
         await this.clearCachedInput();
       } else if (this.cachedInputKey) {
@@ -585,11 +642,20 @@ class FFmpegService {
       await this.safeDelete(outputFileName);
       throw error;
     } finally {
+      ffmpeg.off('log', ffmpegLogHandler);
       this.stopWatchdog();
     }
   }
 
   async convertToWebP(file: File, options: ConversionOptions): Promise<Blob> {
+    const conversionStartTime = Date.now();
+
+    // Check if FFmpeg needs reinitialization
+    if (!this.loaded || !this.ffmpeg) {
+      logger.warn('conversion', 'FFmpeg not initialized, reinitializing...');
+      await this.initialize();
+    }
+
     const ffmpeg = this.getFFmpeg();
 
     const { quality, scale } = options;
@@ -597,8 +663,29 @@ class FFmpegService {
     const inputFileName = INPUT_FILE_NAME;
     const outputFileName = 'output.webp';
 
+    logger.info('conversion', 'Starting WebP conversion', {
+      quality,
+      scale,
+      fps: settings.fps,
+      webpQuality: settings.quality,
+      preset: settings.preset,
+    });
+
     this.cancellationRequested = false;
     this.startWatchdog();
+
+    const ffmpegLogHandler = ({ type, message }: { type: string; message: string }) => {
+      logger.debug('ffmpeg', `[${type}] ${message}`);
+      this.ffmpegLogBuffer.push(`[${type}] ${message}`);
+      if (this.ffmpegLogBuffer.length > 100) {
+        this.ffmpegLogBuffer.shift();
+      }
+      if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
+        logger.warn('ffmpeg', `FFmpeg warning/error: ${message}`);
+      }
+    };
+
+    ffmpeg.on('log', ffmpegLogHandler);
 
     try {
       await this.ensureInputFile(file);
@@ -615,38 +702,54 @@ class FFmpegService {
 
       const scaleFilter = getScaleFilter(quality, scale);
 
+      // Start heartbeat to prevent watchdog timeout during scale filter processing
+      const estimatedDuration = 30; // Conservative estimate in seconds
+      const heartbeat = this.startProgressHeartbeat(20, 85, estimatedDuration);
+
       const webpThreadArgs = getThreadArgs(false);
-      await withTimeout(
-        ffmpeg.exec([
-          ...webpThreadArgs,
-          '-i',
-          inputFileName,
-          '-vf',
-          `fps=${settings.fps},${scaleFilter}`,
-          '-c:v',
-          'libwebp',
-          '-lossless',
-          '0',
-          '-quality',
-          settings.quality.toString(),
-          '-preset',
-          settings.preset,
-          '-compression_level',
-          settings.compressionLevel.toString(),
-          '-loop',
-          '0',
-          outputFileName,
-        ]),
-        TIMEOUT_CONVERSION,
-        `WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
-        () => this.terminateFFmpeg()
-      );
+      const webpCmd = [
+        ...webpThreadArgs,
+        '-i',
+        inputFileName,
+        '-vf',
+        `fps=${settings.fps},${scaleFilter}`,
+        '-c:v',
+        'libwebp',
+        '-lossless',
+        '0',
+        '-quality',
+        settings.quality.toString(),
+        '-preset',
+        settings.preset,
+        '-compression_level',
+        settings.compressionLevel.toString(),
+        '-loop',
+        '0',
+        outputFileName,
+      ];
+      logger.debug('ffmpeg', 'WebP conversion command', { cmd: webpCmd.join(' ') });
+      try {
+        await withTimeout(
+          ffmpeg.exec(webpCmd),
+          TIMEOUT_CONVERSION,
+          `WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+          () => this.terminateFFmpeg()
+        );
+      } finally {
+        this.stopProgressHeartbeat(heartbeat);
+      }
 
       this.emitProgress(90);
 
       const data = await ffmpeg.readFile(outputFileName);
 
       this.emitProgress(100);
+
+      const duration = Date.now() - conversionStartTime;
+      logger.info('conversion', 'WebP conversion complete', {
+        duration: `${(duration / 1000).toFixed(2)}s`,
+        outputSize: data.length,
+      });
 
       if (isMemoryCritical()) {
         await this.clearCachedInput();
@@ -663,6 +766,7 @@ class FFmpegService {
       await this.safeDelete(outputFileName);
       throw error;
     } finally {
+      ffmpeg.off('log', ffmpegLogHandler);
       this.stopWatchdog();
     }
   }
@@ -739,16 +843,65 @@ class FFmpegService {
     return this.loaded;
   }
 
+  getRecentFFmpegLogs(): string[] {
+    return [...this.ffmpegLogBuffer];
+  }
+
+  private startProgressHeartbeat(
+    startProgress: number,
+    endProgress: number,
+    estimatedDurationSeconds: number
+  ): ReturnType<typeof setInterval> {
+    const startTime = Date.now();
+    const progressRange = endProgress - startProgress;
+    const HEARTBEAT_INTERVAL_MS = 5000;
+
+    logger.debug(
+      'progress',
+      `Starting heartbeat: ${startProgress}% -> ${endProgress}% (estimated ${estimatedDurationSeconds}s)`
+    );
+
+    return setInterval(() => {
+      const elapsedSeconds = (Date.now() - startTime) / 1000;
+      const estimatedCompletion = Math.min(elapsedSeconds / (estimatedDurationSeconds * 1.5), 0.95);
+
+      const interpolatedProgress = startProgress + progressRange * estimatedCompletion;
+      const roundedProgress = Math.floor(interpolatedProgress);
+
+      logger.debug(
+        'progress',
+        `Heartbeat update: ${roundedProgress}% (elapsed: ${elapsedSeconds.toFixed(1)}s)`
+      );
+      this.emitProgress(roundedProgress);
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopProgressHeartbeat(intervalId: ReturnType<typeof setInterval> | null): void {
+    if (intervalId) {
+      clearInterval(intervalId);
+      logger.debug('progress', 'Heartbeat stopped');
+    }
+  }
+
   private startWatchdog(): void {
     this.lastProgressTime = Date.now();
     this.isConverting = true;
     this.lastProgressEmitTime = 0;
     this.lastProgressValue = -1;
 
+    logger.debug('watchdog', 'Watchdog started');
+
     this.watchdogTimer = setInterval(() => {
       const timeSinceProgress = Date.now() - this.lastProgressTime;
+      logger.debug(
+        'watchdog',
+        `Watchdog check: ${(timeSinceProgress / 1000).toFixed(1)}s since last progress`
+      );
 
       if (timeSinceProgress > 90000) {
+        logger.warn('watchdog', 'Conversion stalled - terminating', {
+          timeSinceProgress: `${(timeSinceProgress / 1000).toFixed(1)}s`,
+        });
         this.updateStatus('Conversion stalled - terminating...');
         this.terminateFFmpeg();
       }
@@ -796,6 +949,8 @@ class FFmpegService {
     this.cachedInputKey = null;
     this.cancellationRequested = false;
     this.stopWatchdog();
+    this.stopProgressHeartbeat(this.heartbeatInterval);
+    this.heartbeatInterval = null;
 
     // Small delay to ensure FFmpeg worker is fully terminated
     setTimeout(() => {
@@ -806,6 +961,8 @@ class FFmpegService {
   terminate(): void {
     this.isTerminating = true;
     this.stopWatchdog();
+    this.stopProgressHeartbeat(this.heartbeatInterval);
+    this.heartbeatInterval = null;
 
     if (this.ffmpeg) {
       this.ffmpeg.terminate();
