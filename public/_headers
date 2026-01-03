@@ -1,3 +1,11 @@
+# FFmpeg worker bundle (avoid stale COEP headers)
+/assets/worker-*.js
+  Content-Type: text/javascript; charset=utf-8
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Opener-Policy: same-origin
+  X-Content-Type-Options: nosniff
+  Cache-Control: public, max-age=0, must-revalidate
+
 # JavaScript modules
 /assets/*.js
   Content-Type: text/javascript; charset=utf-8
