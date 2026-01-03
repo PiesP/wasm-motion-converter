@@ -7,6 +7,7 @@ import type {
 } from '../types/conversion-types';
 import {
   FFMPEG_CORE_BASE_URLS,
+  FFMPEG_CORE_VERSION,
   QUALITY_PRESETS,
   TIMEOUT_CONVERSION,
   TIMEOUT_FFMPEG_DOWNLOAD,
@@ -19,13 +20,49 @@ import { withTimeout } from '../utils/with-timeout';
 
 const INPUT_FILE_NAME = 'input.mp4';
 const INPUT_CACHE_TTL_MS = 120_000;
-const PROGRESS_THROTTLE_MS = 150;
+const PROGRESS_THROTTLE_MS = 220;
+const INPUT_CACHE_POST_CONVERT_MS = 60_000;
 const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
 const WORKER_CHECK_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_WORKER_CHECK / 1000;
+const FFMPEG_CACHE_NAME = `ffmpeg-core-${FFMPEG_CORE_VERSION}`;
+
+const requestIdle = (callback: IdleRequestCallback, options?: IdleRequestOptions): number => {
+  if (typeof requestIdleCallback !== 'undefined') {
+    return requestIdleCallback(callback, options);
+  }
+  return window.setTimeout(
+    () => callback({ didTimeout: true, timeRemaining: () => 0 }),
+    options?.timeout ?? 0
+  );
+};
+
+const supportsCacheStorage = (): boolean => typeof caches !== 'undefined';
+
+async function cacheAwareBlobURL(url: string, mimeType: string): Promise<string> {
+  if (!supportsCacheStorage()) {
+    return toBlobURL(url, mimeType);
+  }
+
+  const cache = await caches.open(FFMPEG_CACHE_NAME);
+  const cachedResponse = await cache.match(url);
+  if (cachedResponse) {
+    const cachedBlob = await cachedResponse.blob();
+    return URL.createObjectURL(cachedBlob);
+  }
+
+  const response = await fetch(url, { cache: 'force-cache', credentials: 'omit' });
+  if (!response.ok) {
+    return toBlobURL(url, mimeType);
+  }
+
+  await cache.put(url, response.clone());
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
 
 async function loadFFmpegAsset(url: string, mimeType: string, label: string): Promise<string> {
   return withTimeout(
-    toBlobURL(url, mimeType),
+    cacheAwareBlobURL(url, mimeType),
     TIMEOUT_FFMPEG_DOWNLOAD,
     `Downloading ${label} timed out after ${DOWNLOAD_TIMEOUT_SECONDS} seconds. Please check your network connection and ensure cdn.jsdelivr.net is reachable.`
   );
@@ -134,6 +171,7 @@ class FFmpegService {
   private inputCacheTimer: ReturnType<typeof setTimeout> | null = null;
   private cancellationRequested = false;
   private isTerminating = false;
+  private prefetchPromise: Promise<void> | null = null;
 
   private getFFmpeg(): FFmpeg {
     if (!this.ffmpeg || !this.loaded) {
@@ -149,6 +187,41 @@ class FFmpegService {
     if (this.progressCallback) {
       this.progressCallback(progress);
     }
+  }
+
+  prefetchCoreAssets(): Promise<void> {
+    if (this.loaded || !supportsCacheStorage()) {
+      return Promise.resolve();
+    }
+    if (this.prefetchPromise) {
+      return this.prefetchPromise;
+    }
+
+    const runPrefetch = async () => {
+      let lastError: unknown;
+      for (const baseURL of FFMPEG_CORE_BASE_URLS) {
+        try {
+          const urls = await Promise.all([
+            cacheAwareBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            cacheAwareBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            cacheAwareBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+          ]);
+          urls.forEach((url) => URL.revokeObjectURL(url));
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      if (lastError) {
+        throw lastError;
+      }
+    };
+
+    this.prefetchPromise = runPrefetch().finally(() => {
+      this.prefetchPromise = null;
+    });
+    return this.prefetchPromise;
   }
 
   private shouldEmitProgress(progress: number): boolean {
@@ -210,7 +283,7 @@ class FFmpegService {
         : 0;
 
       if (this.shouldEmitProgress(normalizedProgress)) {
-        if (onProgress) {
+        if (onProgress && !this.isConverting) {
           onProgress(normalizedProgress);
         }
 
@@ -277,6 +350,15 @@ class FFmpegService {
       throw lastError ?? new Error('Unable to download FFmpeg assets from available CDNs.');
     };
 
+    const slowNetworkTimer =
+      typeof window !== 'undefined'
+        ? window.setTimeout(() => {
+            if (downloadProgress < 25 && onStatus) {
+              onStatus('Network seems slow. If this persists, check your connection or firewall.');
+            }
+          }, 12_000)
+        : null;
+
     try {
       if (onStatus) {
         onStatus('Checking FFmpeg worker environment...');
@@ -317,6 +399,10 @@ class FFmpegService {
         );
       }
       throw error;
+    } finally {
+      if (slowNetworkTimer) {
+        clearTimeout(slowNetworkTimer);
+      }
     }
   }
 
@@ -369,7 +455,7 @@ class FFmpegService {
     try {
       await this.ensureInputFile(file);
       await withTimeout(
-        ffmpeg.exec(['-i', inputFileName]),
+        ffmpeg.exec(['-hide_banner', '-i', inputFileName]),
         TIMEOUT_VIDEO_ANALYSIS,
         `Video analysis timed out after ${TIMEOUT_VIDEO_ANALYSIS / 1000} seconds. The file may be corrupted or in an unsupported format.`
       );
@@ -482,9 +568,15 @@ class FFmpegService {
 
       this.emitProgress(100);
 
-      await this.clearCachedInput();
+      if (isMemoryCritical()) {
+        await this.clearCachedInput();
+      } else if (this.cachedInputKey) {
+        this.setInputCache(this.cachedInputKey, INPUT_CACHE_POST_CONVERT_MS);
+      }
       await this.safeDelete(paletteFileName);
       await this.safeDelete(outputFileName);
+
+      this.scheduleIdleTrim();
 
       return new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/gif' });
     } catch (error) {
@@ -556,8 +648,14 @@ class FFmpegService {
 
       this.emitProgress(100);
 
-      await this.clearCachedInput();
+      if (isMemoryCritical()) {
+        await this.clearCachedInput();
+      } else if (this.cachedInputKey) {
+        this.setInputCache(this.cachedInputKey, INPUT_CACHE_POST_CONVERT_MS);
+      }
       await this.safeDelete(outputFileName);
+
+      this.scheduleIdleTrim();
 
       return new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/webp' });
     } catch (error) {
@@ -665,6 +763,20 @@ class FFmpegService {
     this.isConverting = false;
   }
 
+  private scheduleIdleTrim(): void {
+    requestIdle(
+      () => {
+        if (this.isConverting) {
+          return;
+        }
+        if (isMemoryCritical()) {
+          this.terminate();
+        }
+      },
+      { timeout: 3000 }
+    );
+  }
+
   private terminateFFmpeg(): void {
     this.isTerminating = true;
 
@@ -716,14 +828,14 @@ class FFmpegService {
     return `${file.name}-${file.size}-${file.lastModified}`;
   }
 
-  private setInputCache(key: string): void {
+  private setInputCache(key: string, ttlMs = INPUT_CACHE_TTL_MS): void {
     this.cachedInputKey = key;
     if (this.inputCacheTimer) {
       clearTimeout(this.inputCacheTimer);
     }
     this.inputCacheTimer = setTimeout(() => {
       void this.clearCachedInput();
-    }, INPUT_CACHE_TTL_MS);
+    }, ttlMs);
   }
 
   private async ensureInputFile(file: File): Promise<void> {

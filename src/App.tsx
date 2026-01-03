@@ -1,4 +1,5 @@
 import {
+  batch,
   type Component,
   createMemo,
   createSignal,
@@ -57,7 +58,9 @@ import {
   setVideoMetadata,
   videoMetadata,
 } from './stores/conversion-store';
+import type { VideoMetadata } from './types/conversion-types';
 import { classifyConversionError } from './utils/classify-conversion-error';
+import { WARN_RESOLUTION_PIXELS } from './utils/constants';
 import { estimateEtaRange, estimateOutputSizeRange } from './utils/estimate-output';
 import { ETACalculator } from './utils/eta-calculator';
 import { validateVideoFile } from './utils/file-validation';
@@ -72,9 +75,38 @@ const App: Component = () => {
   let memoryCheckTimer: ReturnType<typeof setInterval> | null = null;
   const etaCalculator = new ETACalculator();
   const formatQualityLabel = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+  const runIdle = (callback: () => void) => {
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(callback, { timeout: 3000 });
+    } else {
+      setTimeout(callback, 1200);
+    }
+  };
+
+  const shouldRunFullAnalysis = (file: File, metadata: VideoMetadata | null): boolean => {
+    if (!metadata) {
+      return true;
+    }
+    const isSmallFile = file.size <= 50 * 1024 * 1024;
+    const isShort = metadata.duration > 0 ? metadata.duration <= 15 : false;
+    const isLowRes = metadata.width * metadata.height <= WARN_RESOLUTION_PIXELS;
+    return !(isSmallFile && isShort && isLowRes);
+  };
   onMount(() => {
     const isSupported = typeof SharedArrayBuffer !== 'undefined' && crossOriginIsolated === true;
     setEnvironmentSupported(isSupported);
+
+    const connection = (navigator as Navigator & { connection?: { effectiveType?: string } })
+      .connection;
+    const isFastNetwork = !connection || connection.effectiveType === '4g';
+    if (isFastNetwork) {
+      runIdle(() => {
+        void ffmpegService.prefetchCoreAssets().catch((error) => {
+          console.debug('[FFmpeg] Prefetch skipped', error);
+        });
+      });
+    }
   });
 
   const resetConversionRuntimeState = () => {
@@ -137,32 +169,38 @@ const App: Component = () => {
         setAppState('loading-ffmpeg');
       }
 
-      let fullAnalysisDone = false;
-      if (needsInit) {
-        analyzeVideoQuick(file)
-          .then((metadata) => {
-            if (fullAnalysisDone) {
-              return;
-            }
-            setVideoMetadata(metadata);
-            setPerformanceWarnings(checkPerformance(file, metadata));
-          })
-          .catch(() => {});
+      let quickMetadata: VideoMetadata | null = null;
+      const quickAnalysisPromise = analyzeVideoQuick(file)
+        .then((metadata) => {
+          quickMetadata = metadata;
+          setVideoMetadata(metadata);
+          setPerformanceWarnings(checkPerformance(file, metadata));
+          return metadata;
+        })
+        .catch(() => null);
+
+      await Promise.all([initPromise, quickAnalysisPromise]);
+
+      const requiresFullAnalysis = shouldRunFullAnalysis(file, quickMetadata);
+      let finalMetadata: VideoMetadata | null = quickMetadata;
+
+      if (requiresFullAnalysis) {
+        setAppState('analyzing');
+        const metadata = await analyzeVideo(file);
+        finalMetadata = metadata;
+        setVideoMetadata(metadata);
+        setPerformanceWarnings(checkPerformance(file, metadata));
       }
 
-      await initPromise;
-
-      setAppState('analyzing');
-      const metadata = await analyzeVideo(file);
-      fullAnalysisDone = true;
-      setVideoMetadata(metadata);
-      setPerformanceWarnings(checkPerformance(file, metadata));
-      const recommendation = getRecommendedSettings(file, metadata, conversionSettings());
-      const applied = Boolean(recommendation);
-      setAutoAppliedRecommendation(applied);
-      if (recommendation) {
-        setConversionSettings(recommendation);
+      if (finalMetadata) {
+        const recommendation = getRecommendedSettings(file, finalMetadata, conversionSettings());
+        const applied = Boolean(recommendation);
+        setAutoAppliedRecommendation(applied);
+        if (recommendation) {
+          setConversionSettings(recommendation);
+        }
       }
+
       setAppState('idle');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unknown error occurred');
@@ -197,10 +235,11 @@ const App: Component = () => {
       }, 2000);
 
       const progressCallback = (progress: number) => {
-        setConversionProgress(progress);
-        etaCalculator.addSample(progress);
-        const eta = etaCalculator.getETA();
-        setEstimatedSecondsRemaining(eta);
+        batch(() => {
+          setConversionProgress(progress);
+          etaCalculator.addSample(progress);
+          setEstimatedSecondsRemaining(etaCalculator.getETA());
+        });
       };
 
       ffmpegService.setProgressCallback(progressCallback);

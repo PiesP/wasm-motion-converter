@@ -1,4 +1,4 @@
-import { type Component, createEffect, createMemo, onCleanup } from 'solid-js';
+import { type Component, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 import { formatBytes } from '../utils/format-bytes';
 
 interface ResultPreviewProps {
@@ -9,9 +9,11 @@ interface ResultPreviewProps {
 
 const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const previewUrl = createMemo(() => URL.createObjectURL(props.outputBlob));
+  const [loaded, setLoaded] = createSignal(false);
 
   createEffect(() => {
     const url = previewUrl();
+    setLoaded(false);
     onCleanup(() => {
       URL.revokeObjectURL(url);
     });
@@ -43,8 +45,19 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         Download
       </button>
 
-      <div class="mt-4 flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
-        <img src={previewUrl()} alt="Converted animation" class="max-w-full h-auto rounded" />
+      <div class="mt-4 flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg p-4 relative overflow-hidden">
+        <div
+          class={`absolute inset-0 transition-opacity duration-300 ${loaded() ? 'opacity-0' : 'opacity-100'}`}
+        >
+          <div class="w-full h-full bg-gray-200 dark:bg-gray-800 animate-pulse rounded" />
+        </div>
+        <img
+          src={previewUrl()}
+          alt="Converted animation"
+          class={`max-w-full h-auto rounded transition-opacity duration-300 ${loaded() ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={() => setLoaded(true)}
+          loading="lazy"
+        />
       </div>
 
       <div class="mt-4">
