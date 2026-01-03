@@ -16,8 +16,8 @@ import {
   TIMEOUT_VIDEO_ANALYSIS,
 } from '../utils/constants';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
-import { isMemoryCritical } from '../utils/memory-monitor';
 import { logger } from '../utils/logger';
+import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';
 import { withTimeout } from '../utils/with-timeout';
 
@@ -139,16 +139,24 @@ function getOptimalThreadCount(): number {
   return Math.min(cores, 4);
 }
 
-function getThreadArgs(useFilterComplex: boolean): string[] {
-  if (useFilterComplex) {
-    return ['-threads', '1', '-filter_threads', '1', '-filter_complex_threads', '1'];
+/**
+ * Unified threading strategy for FFmpeg operations
+ * Different operations require different threading approaches to avoid ffmpeg.wasm deadlocks
+ */
+function getThreadingArgs(operation: 'filter-complex' | 'scale-filter' | 'simple'): string[] {
+  switch (operation) {
+    case 'filter-complex':
+      // Complex filter graphs need single-threaded mode to avoid deadlocks
+      return ['-threads', '1', '-filter_threads', '1', '-filter_complex_threads', '1'];
+    case 'scale-filter':
+      // Scale filters need single-threaded filter execution
+      return ['-threads', '1', '-filter_threads', '1'];
+    case 'simple': {
+      // Simple operations can use multi-threading
+      const threads = getOptimalThreadCount();
+      return ['-threads', threads.toString()];
+    }
   }
-  const threads = getOptimalThreadCount();
-  return ['-threads', threads.toString()];
-}
-
-function getFilterGraphSafeArgs(): string[] {
-  return ['-threads', '1', '-filter_threads', '1'];
 }
 
 function getScaleFilter(quality: ConversionQuality, scale: number): string | null {
@@ -177,6 +185,10 @@ class FFmpegService {
   private prefetchPromise: Promise<void> | null = null;
   private ffmpegLogBuffer: string[] = [];
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Resource tracking for cleanup
+  private activeHeartbeats: Set<ReturnType<typeof setInterval>> = new Set();
+  private activeBlobUrls: Set<string> = new Set();
 
   private getFFmpeg(): FFmpeg {
     if (!this.ffmpeg || !this.loaded) {
@@ -243,6 +255,118 @@ class FFmpegService {
     return true;
   }
 
+  /**
+   * Wait for any ongoing termination to complete with timeout
+   * Prevents infinite loops if termination gets stuck
+   */
+  private async waitForTermination(
+    timeoutMs: number = FFMPEG_INTERNALS.MAX_TERMINATION_WAIT_MS
+  ): Promise<void> {
+    const startTime = Date.now();
+
+    while (this.isTerminating) {
+      const elapsed = Date.now() - startTime;
+
+      if (elapsed > timeoutMs) {
+        logger.warn('ffmpeg', 'Termination wait timed out, proceeding anyway', {
+          elapsed: `${elapsed}ms`,
+        });
+        this.isTerminating = false; // Force reset
+        break;
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, FFMPEG_INTERNALS.TERMINATION_CHECK_INTERVAL_MS)
+      );
+    }
+  }
+
+  /**
+   * Creates a shared FFmpeg log handler for conversion operations
+   * Logs all FFmpeg output and maintains a buffer of recent logs
+   */
+  private createFFmpegLogHandler(): (event: { type: string; message: string }) => void {
+    return ({ type, message }: { type: string; message: string }) => {
+      logger.debug('ffmpeg', `[${type}] ${message}`);
+
+      this.ffmpegLogBuffer.push(`[${type}] ${message}`);
+      if (this.ffmpegLogBuffer.length > FFMPEG_INTERNALS.FFMPEG_LOG_BUFFER_SIZE) {
+        this.ffmpegLogBuffer.shift();
+      }
+
+      if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
+        logger.warn('ffmpeg', `FFmpeg warning/error: ${message}`);
+      }
+    };
+  }
+
+  /**
+   * Handles cleanup after conversion completes or fails
+   * Manages input cache and deletes temporary files
+   */
+  private async handleConversionCleanup(
+    outputFileName: string,
+    additionalFiles: string[] = []
+  ): Promise<void> {
+    const files = [outputFileName, ...additionalFiles];
+
+    // Manage input cache based on memory status
+    if (isMemoryCritical()) {
+      logger.debug('conversion', 'Memory critical - clearing cached input');
+      await this.clearCachedInput();
+    } else if (this.cachedInputKey) {
+      logger.debug('conversion', 'Refreshing input cache with shorter TTL');
+      this.setInputCache(this.cachedInputKey, FFMPEG_INTERNALS.INPUT_CACHE_POST_CONVERT_MS);
+    }
+
+    // Delete all temporary files
+    await Promise.all(files.map((f) => this.safeDelete(f)));
+
+    // Schedule idle memory trimming
+    this.scheduleIdleTrim();
+  }
+
+  /**
+   * Safe wrapper for writing files to FFmpeg filesystem
+   * Logs and propagates errors for better debugging
+   */
+  private async safeWriteFile(fileName: string, data: Uint8Array | string): Promise<void> {
+    const ffmpeg = this.getFFmpeg();
+    try {
+      await ffmpeg.writeFile(fileName, data);
+      logger.debug('conversion', `Wrote file: ${fileName}`, {
+        size: typeof data === 'string' ? data.length : data.byteLength,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('conversion', `Failed to write ${fileName}`, { error: message });
+      throw new Error(`Failed to write ${fileName}: ${message}`);
+    }
+  }
+
+  /**
+   * Safe wrapper for reading files from FFmpeg filesystem
+   * Logs and propagates errors for better debugging
+   */
+  private async safeReadFile(fileName: string): Promise<Uint8Array> {
+    const ffmpeg = this.getFFmpeg();
+    try {
+      const data = await ffmpeg.readFile(fileName);
+      logger.debug('conversion', `Read file: ${fileName}`, {
+        size: data.length,
+      });
+      return new Uint8Array(data as Uint8Array);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('conversion', `Failed to read ${fileName}`, { error: message });
+      throw new Error(`Failed to read ${fileName}: ${message}`);
+    }
+  }
+
+  /**
+   * Safe wrapper for deleting files from FFmpeg filesystem
+   * Non-critical errors are logged but not propagated
+   */
   private async safeDelete(fileName: string): Promise<void> {
     if (!this.ffmpeg) {
       return;
@@ -255,6 +379,22 @@ class FFmpegService {
       logger.debug('conversion', `Could not delete ${fileName} (non-critical)`, {
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  /**
+   * Check if a file exists in FFmpeg filesystem
+   * Returns false if file doesn't exist or on error
+   */
+  private async safeFileExists(fileName: string): Promise<boolean> {
+    if (!this.ffmpeg) {
+      return false;
+    }
+    try {
+      await this.ffmpeg.readFile(fileName);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -276,10 +416,8 @@ class FFmpegService {
       );
     }
 
-    // Wait for any ongoing termination to complete
-    while (this.isTerminating) {
-      await new Promise((resolve) => setTimeout(resolve, FFMPEG_INTERNALS.TERMINATION_CHECK_INTERVAL_MS));
-    }
+    // Wait for any ongoing termination to complete (with timeout protection)
+    await this.waitForTermination();
 
     const ffmpeg = new FFmpeg();
     this.ffmpeg = ffmpeg;
@@ -514,17 +652,7 @@ class FFmpegService {
     this.cancellationRequested = false;
     this.startWatchdog();
 
-    const ffmpegLogHandler = ({ type, message }: { type: string; message: string }) => {
-      logger.debug('ffmpeg', `[${type}] ${message}`);
-      this.ffmpegLogBuffer.push(`[${type}] ${message}`);
-      if (this.ffmpegLogBuffer.length > FFMPEG_INTERNALS.FFMPEG_LOG_BUFFER_SIZE) {
-        this.ffmpegLogBuffer.shift();
-      }
-      if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
-        logger.warn('ffmpeg', `FFmpeg warning/error: ${message}`);
-      }
-    };
-
+    const ffmpegLogHandler = this.createFFmpegLogHandler();
     ffmpeg.on('log', ffmpegLogHandler);
 
     try {
@@ -534,13 +662,13 @@ class FFmpegService {
         console.warn('[FFmpeg Service] Critical memory usage detected - conversion may fail');
       }
 
-      this.emitProgress(10);
+      this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
 
       const scaleFilter = getScaleFilter(quality, scale);
 
       try {
         this.updateStatus('Generating color palette...');
-        const paletteThreadArgs = getFilterGraphSafeArgs();
+        const paletteThreadArgs = getThreadingArgs('scale-filter');
         const paletteFilterChain = scaleFilter
           ? `fps=${settings.fps},${scaleFilter},palettegen=max_colors=${settings.colors}`
           : `fps=${settings.fps},palettegen=max_colors=${settings.colors}`;
@@ -557,7 +685,11 @@ class FFmpegService {
         logger.debug('ffmpeg', 'Palette generation command', { cmd: paletteCmd.join(' ') });
 
         // Start heartbeat for palette generation to prevent watchdog timeout
-        const paletteHeartbeat = this.startProgressHeartbeat(10, 35, 30);
+        const paletteHeartbeat = this.startProgressHeartbeat(
+          FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START,
+          FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_END,
+          30
+        );
 
         performanceTracker.startPhase('palette-gen');
         logger.performance('Starting GIF palette generation');
@@ -576,7 +708,7 @@ class FFmpegService {
         performanceTracker.endPhase('palette-gen');
         logger.performance('GIF palette generation complete');
         logger.debug('conversion', 'Palette generation complete');
-        this.emitProgress(40);
+        this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START);
 
         if (this.cancellationRequested) {
           throw new Error('Conversion cancelled by user');
@@ -584,7 +716,7 @@ class FFmpegService {
 
         this.updateStatus('Converting to GIF with palette...');
         const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
-        const filterComplexThreadArgs = getThreadArgs(true);
+        const filterComplexThreadArgs = getThreadingArgs('filter-complex');
         const conversionFilterChain = scaleFilter
           ? `fps=${settings.fps},${scaleFilter}[x];[x][1:v]paletteuse=dither=${ditherMode}`
           : `fps=${settings.fps}[x];[x][1:v]paletteuse=dither=${ditherMode}`;
@@ -637,11 +769,11 @@ class FFmpegService {
         await this.convertToGIFDirect(inputFileName, outputFileName, settings, scaleFilter, file);
       }
 
-      this.emitProgress(90);
+      this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END);
 
-      const data = await ffmpeg.readFile(outputFileName);
+      const data = await this.safeReadFile(outputFileName);
 
-      this.emitProgress(100);
+      this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE);
 
       const duration = Date.now() - conversionStartTime;
       logger.info('conversion', 'GIF conversion complete', {
@@ -652,15 +784,7 @@ class FFmpegService {
       performanceTracker.saveToSessionStorage();
       logger.performance('Performance report saved to sessionStorage');
 
-      if (isMemoryCritical()) {
-        await this.clearCachedInput();
-      } else if (this.cachedInputKey) {
-        this.setInputCache(this.cachedInputKey, FFMPEG_INTERNALS.INPUT_CACHE_POST_CONVERT_MS);
-      }
-      await this.safeDelete(paletteFileName);
-      await this.safeDelete(outputFileName);
-
-      this.scheduleIdleTrim();
+      await this.handleConversionCleanup(outputFileName, [paletteFileName]);
 
       return new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/gif' });
     } catch (error) {
@@ -701,17 +825,7 @@ class FFmpegService {
     this.cancellationRequested = false;
     this.startWatchdog();
 
-    const ffmpegLogHandler = ({ type, message }: { type: string; message: string }) => {
-      logger.debug('ffmpeg', `[${type}] ${message}`);
-      this.ffmpegLogBuffer.push(`[${type}] ${message}`);
-      if (this.ffmpegLogBuffer.length > FFMPEG_INTERNALS.FFMPEG_LOG_BUFFER_SIZE) {
-        this.ffmpegLogBuffer.shift();
-      }
-      if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
-        logger.warn('ffmpeg', `FFmpeg warning/error: ${message}`);
-      }
-    };
-
+    const ffmpegLogHandler = this.createFFmpegLogHandler();
     ffmpeg.on('log', ffmpegLogHandler);
 
     try {
@@ -721,7 +835,7 @@ class FFmpegService {
         console.warn('[FFmpeg Service] Critical memory usage detected - conversion may fail');
       }
 
-      this.emitProgress(20);
+      this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START);
 
       if (this.cancellationRequested) {
         throw new Error('Conversion cancelled by user');
@@ -729,65 +843,98 @@ class FFmpegService {
 
       const scaleFilter = getScaleFilter(quality, scale);
 
-      // Start heartbeat to prevent watchdog timeout during scale filter processing
-      const estimatedDuration = 30; // Conservative estimate in seconds
-      const heartbeat = this.startProgressHeartbeat(20, 85, estimatedDuration);
-
-      // Use single-threaded mode when scaling to avoid ffmpeg.wasm threading issues
-      const webpThreadArgs = scaleFilter ? getFilterGraphSafeArgs() : getThreadArgs(false);
-      const webpFilterArgs = scaleFilter
-        ? `fps=${settings.fps},${scaleFilter}`
-        : `fps=${settings.fps}`;
-      const webpCmd = [
-        ...webpThreadArgs,
-        '-i',
-        inputFileName,
-        '-vf',
-        webpFilterArgs,
-        '-c:v',
-        'libwebp',
-        '-lossless',
-        '0',
-        '-quality',
-        settings.quality.toString(),
-        '-preset',
-        settings.preset,
-        '-compression_level',
-        settings.compressionLevel.toString(),
-        '-method',
-        settings.method.toString(),
-        '-qmin',
-        '1',
-        '-qmax',
-        '100',
-        '-loop',
-        '0',
-        outputFileName,
-      ];
-      logger.debug('ffmpeg', 'WebP conversion command', { cmd: webpCmd.join(' ') });
-
-      performanceTracker.startPhase('webp-encode');
-      logger.performance('Starting WebP encoding');
-
+      // Try main conversion with fallback on failure
       try {
-        await withTimeout(
-          ffmpeg.exec(webpCmd),
-          TIMEOUT_CONVERSION,
-          `WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
-          () => this.terminateFFmpeg()
+        // Start heartbeat to prevent watchdog timeout during scale filter processing
+        const estimatedDuration = 30; // Conservative estimate in seconds
+        const heartbeat = this.startProgressHeartbeat(
+          FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
+          FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END,
+          estimatedDuration
         );
-      } finally {
-        this.stopProgressHeartbeat(heartbeat);
+
+        // Use single-threaded mode when scaling to avoid ffmpeg.wasm threading issues
+        const webpThreadArgs = getThreadingArgs(scaleFilter ? 'scale-filter' : 'simple');
+        const webpFilterArgs = scaleFilter
+          ? `fps=${settings.fps},${scaleFilter}`
+          : `fps=${settings.fps}`;
+        const webpCmd = [
+          ...webpThreadArgs,
+          '-i',
+          inputFileName,
+          '-vf',
+          webpFilterArgs,
+          '-c:v',
+          'libwebp',
+          '-lossless',
+          '0',
+          '-quality',
+          settings.quality.toString(),
+          '-preset',
+          settings.preset,
+          '-compression_level',
+          settings.compressionLevel.toString(),
+          '-method',
+          settings.method.toString(),
+          '-qmin',
+          '1',
+          '-qmax',
+          '100',
+          '-loop',
+          '0',
+          outputFileName,
+        ];
+        logger.debug('ffmpeg', 'WebP conversion command', { cmd: webpCmd.join(' ') });
+
+        performanceTracker.startPhase('webp-encode');
+        logger.performance('Starting WebP encoding');
+
+        try {
+          await withTimeout(
+            ffmpeg.exec(webpCmd),
+            TIMEOUT_CONVERSION,
+            `WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+            () => this.terminateFFmpeg()
+          );
+        } finally {
+          this.stopProgressHeartbeat(heartbeat);
+        }
+
+        performanceTracker.endPhase('webp-encode');
+        logger.performance('WebP encoding complete');
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : '';
+
+        // If error is due to cancellation or termination, don't attempt fallback
+        if (
+          errorMessage.includes('cancelled by user') ||
+          errorMessage.includes('called FFmpeg.terminate()')
+        ) {
+          throw error;
+        }
+
+        // Otherwise, attempt fallback conversion
+        logger.warn('conversion', 'WebP conversion failed, using fallback', {
+          error: errorMessage,
+        });
+        this.updateStatus('Using fallback conversion...');
+
+        // Reinitialize if needed
+        if (!this.ffmpeg || !this.loaded) {
+          await this.initialize();
+          await this.ensureInputFile(file);
+        }
+
+        this.emitProgress(50);
+
+        await this.convertToWebPDirect(inputFileName, outputFileName, settings, scaleFilter, file);
       }
 
-      performanceTracker.endPhase('webp-encode');
-      logger.performance('WebP encoding complete');
+      this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END);
 
-      this.emitProgress(90);
+      const data = await this.safeReadFile(outputFileName);
 
-      const data = await ffmpeg.readFile(outputFileName);
-
-      this.emitProgress(100);
+      this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE);
 
       const duration = Date.now() - conversionStartTime;
       logger.info('conversion', 'WebP conversion complete', {
@@ -798,14 +945,7 @@ class FFmpegService {
       performanceTracker.saveToSessionStorage();
       logger.performance('Performance report saved to sessionStorage');
 
-      if (isMemoryCritical()) {
-        await this.clearCachedInput();
-      } else if (this.cachedInputKey) {
-        this.setInputCache(this.cachedInputKey, FFMPEG_INTERNALS.INPUT_CACHE_POST_CONVERT_MS);
-      }
-      await this.safeDelete(outputFileName);
-
-      this.scheduleIdleTrim();
+      await this.handleConversionCleanup(outputFileName);
 
       return new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/webp' });
     } catch (error) {
@@ -818,12 +958,89 @@ class FFmpegService {
     }
   }
 
+  /**
+   * WebP fallback conversion using simpler settings
+   * Used when main conversion fails - uses lossless mode with fast compression
+   */
+  private async convertToWebPDirect(
+    inputFileName: string,
+    outputFileName: string,
+    settings: { fps: number },
+    scaleFilter: string | null,
+    file?: File,
+    startProgress = 50
+  ): Promise<void> {
+    if (!this.ffmpeg || !this.loaded) {
+      if (!file) {
+        throw new Error(
+          'Cannot reinitialize FFmpeg without original file for direct conversion fallback'
+        );
+      }
+      await this.initialize();
+      await this.ensureInputFile(file);
+    }
+
+    this.updateStatus('Using fallback WebP conversion...');
+    logger.info('conversion', 'Using WebP direct conversion fallback', {
+      fps: settings.fps,
+      hasScaleFilter: !!scaleFilter,
+    });
+
+    const ffmpeg = this.getFFmpeg();
+    // Use simple threading for fallback
+    const webpThreadArgs = getThreadingArgs('simple');
+    const webpFilterArgs = scaleFilter
+      ? `fps=${settings.fps},${scaleFilter}`
+      : `fps=${settings.fps}`;
+
+    // Add heartbeat for fallback conversion
+    const heartbeat = this.startProgressHeartbeat(
+      startProgress,
+      FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END,
+      20
+    );
+
+    performanceTracker.startPhase('webp-fallback');
+    logger.performance('Starting WebP direct fallback conversion');
+
+    try {
+      await withTimeout(
+        ffmpeg.exec([
+          ...webpThreadArgs,
+          '-i',
+          inputFileName,
+          '-vf',
+          webpFilterArgs,
+          '-c:v',
+          'libwebp',
+          '-lossless',
+          '1', // Fallback uses lossless for reliability
+          '-compression_level',
+          '3', // Fast compression
+          '-preset',
+          'default',
+          '-loop',
+          '0',
+          outputFileName,
+        ]),
+        TIMEOUT_CONVERSION,
+        `Direct WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+        () => this.terminateFFmpeg()
+      );
+    } finally {
+      this.stopProgressHeartbeat(heartbeat);
+      performanceTracker.endPhase('webp-fallback');
+      logger.performance('WebP direct fallback conversion complete');
+    }
+  }
+
   private async convertToGIFDirect(
     inputFileName: string,
     outputFileName: string,
     settings: { fps: number },
     scaleFilter: string | null,
-    file?: File
+    file?: File,
+    startProgress = 50
   ): Promise<void> {
     if (!this.ffmpeg || !this.loaded) {
       if (!file) {
@@ -836,25 +1053,46 @@ class FFmpegService {
     }
 
     this.updateStatus('Converting to GIF directly (no palette optimization)...');
+    logger.info('conversion', 'Using GIF direct conversion fallback', {
+      fps: settings.fps,
+      hasScaleFilter: !!scaleFilter,
+    });
 
     const ffmpeg = this.getFFmpeg();
-    const directGifThreadArgs = getThreadArgs(false);
+    const directGifThreadArgs = getThreadingArgs('simple');
     const directGifFilterArgs = scaleFilter
       ? `fps=${settings.fps},${scaleFilter}`
       : `fps=${settings.fps}`;
-    await withTimeout(
-      ffmpeg.exec([
-        ...directGifThreadArgs,
-        '-i',
-        inputFileName,
-        '-vf',
-        directGifFilterArgs,
-        outputFileName,
-      ]),
-      TIMEOUT_CONVERSION,
-      `Direct GIF conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
-      () => this.terminateFFmpeg()
+
+    // Add heartbeat for fallback conversion
+    const heartbeat = this.startProgressHeartbeat(
+      startProgress,
+      FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END,
+      20
     );
+
+    performanceTracker.startPhase('gif-fallback');
+    logger.performance('Starting GIF direct fallback conversion');
+
+    try {
+      await withTimeout(
+        ffmpeg.exec([
+          ...directGifThreadArgs,
+          '-i',
+          inputFileName,
+          '-vf',
+          directGifFilterArgs,
+          outputFileName,
+        ]),
+        TIMEOUT_CONVERSION,
+        `Direct GIF conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+        () => this.terminateFFmpeg()
+      );
+    } finally {
+      this.stopProgressHeartbeat(heartbeat);
+      performanceTracker.endPhase('gif-fallback');
+      logger.performance('GIF direct fallback conversion complete');
+    }
   }
 
   setProgressCallback(callback: ((progress: number) => void) | null): void {
@@ -910,10 +1148,11 @@ class FFmpegService {
       `Starting heartbeat: ${startProgress}% -> ${endProgress}% (estimated ${estimatedDurationSeconds}s)`
     );
 
-    return setInterval(() => {
+    const interval = setInterval(() => {
       const elapsedSeconds = (Date.now() - startTime) / 1000;
       const estimatedCompletion = Math.min(
-        elapsedSeconds / (estimatedDurationSeconds * FFMPEG_INTERNALS.HEARTBEAT_DURATION_MULTIPLIER),
+        elapsedSeconds /
+          (estimatedDurationSeconds * FFMPEG_INTERNALS.HEARTBEAT_DURATION_MULTIPLIER),
         FFMPEG_INTERNALS.HEARTBEAT_MAX_COMPLETION
       );
 
@@ -926,11 +1165,16 @@ class FFmpegService {
       );
       this.emitProgress(roundedProgress, true);
     }, FFMPEG_INTERNALS.HEARTBEAT_INTERVAL_MS);
+
+    // Track the interval for cleanup
+    this.activeHeartbeats.add(interval);
+    return interval;
   }
 
   private stopProgressHeartbeat(intervalId: ReturnType<typeof setInterval> | null): void {
     if (intervalId) {
       clearInterval(intervalId);
+      this.activeHeartbeats.delete(intervalId); // Untrack the interval
       logger.debug('progress', 'Heartbeat stopped');
     }
   }
@@ -969,6 +1213,42 @@ class FFmpegService {
     this.isConverting = false;
   }
 
+  /**
+   * Centralized cleanup of all tracked resources
+   * Ensures no memory leaks from intervals, timeouts, or blob URLs
+   */
+  private cleanupResources(): void {
+    // Clear all active heartbeats
+    for (const interval of this.activeHeartbeats) {
+      clearInterval(interval);
+    }
+    this.activeHeartbeats.clear();
+
+    // Clear watchdog timer
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+
+    // Clear input cache timer
+    if (this.inputCacheTimer) {
+      clearTimeout(this.inputCacheTimer);
+      this.inputCacheTimer = null;
+    }
+
+    // Revoke all blob URLs (currently unused, reserved for future blob URL tracking)
+    for (const url of this.activeBlobUrls) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        logger.debug('general', 'Failed to revoke blob URL', { error });
+      }
+    }
+    this.activeBlobUrls.clear();
+
+    logger.debug('general', 'All resources cleaned up');
+  }
+
   private scheduleIdleTrim(): void {
     requestIdle(
       () => {
@@ -986,6 +1266,9 @@ class FFmpegService {
   private terminateFFmpeg(): void {
     this.isTerminating = true;
 
+    // Clean up all resources first
+    this.cleanupResources();
+
     if (this.ffmpeg) {
       try {
         this.ffmpeg.terminate();
@@ -995,13 +1278,9 @@ class FFmpegService {
       this.ffmpeg = null;
       this.loaded = false;
     }
-    if (this.inputCacheTimer) {
-      clearTimeout(this.inputCacheTimer);
-      this.inputCacheTimer = null;
-    }
+
     this.cachedInputKey = null;
     this.cancellationRequested = false;
-    this.stopWatchdog();
     this.stopProgressHeartbeat(this.heartbeatInterval);
     this.heartbeatInterval = null;
 
@@ -1013,19 +1292,18 @@ class FFmpegService {
 
   terminate(): void {
     this.isTerminating = true;
-    this.stopWatchdog();
-    this.stopProgressHeartbeat(this.heartbeatInterval);
-    this.heartbeatInterval = null;
+
+    // Clean up all resources first
+    this.cleanupResources();
 
     if (this.ffmpeg) {
       this.ffmpeg.terminate();
       this.loaded = false;
       this.ffmpeg = null;
     }
-    if (this.inputCacheTimer) {
-      clearTimeout(this.inputCacheTimer);
-      this.inputCacheTimer = null;
-    }
+
+    this.stopProgressHeartbeat(this.heartbeatInterval);
+    this.heartbeatInterval = null;
     this.cachedInputKey = null;
     this.cancellationRequested = false;
 
@@ -1049,14 +1327,30 @@ class FFmpegService {
   }
 
   private async ensureInputFile(file: File): Promise<void> {
-    const ffmpeg = this.getFFmpeg();
     const key = this.getFileCacheKey(file);
+
+    // Check if file is already cached in FFmpeg filesystem
     if (this.cachedInputKey === key) {
-      return;
+      const exists = await this.safeFileExists(FFMPEG_INTERNALS.INPUT_FILE_NAME);
+      if (exists) {
+        logger.debug('conversion', 'Using cached input file', { key });
+        return;
+      }
     }
+
+    // Prepare new input file
     await this.safeDelete(FFMPEG_INTERNALS.INPUT_FILE_NAME);
-    await ffmpeg.writeFile(FFMPEG_INTERNALS.INPUT_FILE_NAME, await fetchFile(file));
-    this.setInputCache(key);
+
+    try {
+      const data = await fetchFile(file);
+      await this.safeWriteFile(FFMPEG_INTERNALS.INPUT_FILE_NAME, data);
+      this.setInputCache(key);
+      logger.debug('conversion', 'Input file prepared', { key, size: file.size });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('conversion', 'Failed to prepare input file', { error: message });
+      throw new Error(`Failed to prepare input file: ${message}`);
+    }
   }
 }
 

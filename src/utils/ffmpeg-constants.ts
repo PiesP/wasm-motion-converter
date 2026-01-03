@@ -54,4 +54,6 @@ export const FFMPEG_INTERNALS = {
 /**
  * Type-safe access to progress constants
  */
-export type FFmpegProgressRange = typeof FFMPEG_INTERNALS.PROGRESS.GIF | typeof FFMPEG_INTERNALS.PROGRESS.WEBP;
+export type FFmpegProgressRange =
+  | typeof FFMPEG_INTERNALS.PROGRESS.GIF
+  | typeof FFMPEG_INTERNALS.PROGRESS.WEBP;

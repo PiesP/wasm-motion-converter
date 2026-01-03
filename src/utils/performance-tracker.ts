@@ -3,7 +3,9 @@ type PerformancePhase =
   | 'ffmpeg-init'
   | 'conversion'
   | 'palette-gen'
-  | 'webp-encode';
+  | 'webp-encode'
+  | 'gif-fallback'
+  | 'webp-fallback';
 
 interface TimingEntry {
   phase: PerformancePhase;
