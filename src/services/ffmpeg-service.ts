@@ -15,15 +15,13 @@ import {
   TIMEOUT_FFMPEG_WORKER_CHECK,
   TIMEOUT_VIDEO_ANALYSIS,
 } from '../utils/constants';
+import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { logger } from '../utils/logger';
 import { performanceTracker } from '../utils/performance-tracker';
 import { withTimeout } from '../utils/with-timeout';
 
-const INPUT_FILE_NAME = 'input.mp4';
-const INPUT_CACHE_TTL_MS = 120_000;
-const PROGRESS_THROTTLE_MS = 220;
-const INPUT_CACHE_POST_CONVERT_MS = 60_000;
+// Legacy constants kept for backward compatibility with external timeout values
 const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
 const WORKER_CHECK_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_WORKER_CHECK / 1000;
 const FFMPEG_CACHE_NAME = `ffmpeg-core-${FFMPEG_CORE_VERSION}`;
@@ -153,7 +151,10 @@ function getFilterGraphSafeArgs(): string[] {
   return ['-threads', '1', '-filter_threads', '1'];
 }
 
-function getScaleFilter(quality: ConversionQuality, scale: number): string {
+function getScaleFilter(quality: ConversionQuality, scale: number): string | null {
+  if (scale === 1.0) {
+    return null; // No scaling needed at 100%
+  }
   const filter = quality === 'high' ? 'lanczos' : quality === 'medium' ? 'bicubic' : 'bilinear';
   return `scale=iw*${scale}:ih*${scale}:flags=${filter}`;
 }
@@ -184,8 +185,8 @@ class FFmpegService {
     return this.ffmpeg;
   }
 
-  private emitProgress(progress: number): void {
-    if (this.isConverting) {
+  private emitProgress(progress: number, isHeartbeat = false): void {
+    if (this.isConverting && !isHeartbeat) {
       this.lastProgressTime = Date.now();
     }
     if (this.progressCallback) {
@@ -233,7 +234,7 @@ class FFmpegService {
     const timeDelta = now - this.lastProgressEmitTime;
     const progressDelta = Math.abs(progress - this.lastProgressValue);
 
-    if (timeDelta < PROGRESS_THROTTLE_MS && progressDelta < 1) {
+    if (timeDelta < FFMPEG_INTERNALS.PROGRESS_THROTTLE_MS && progressDelta < 1) {
       return false;
     }
 
@@ -277,7 +278,7 @@ class FFmpegService {
 
     // Wait for any ongoing termination to complete
     while (this.isTerminating) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, FFMPEG_INTERNALS.TERMINATION_CHECK_INTERVAL_MS));
     }
 
     const ffmpeg = new FFmpeg();
@@ -294,6 +295,7 @@ class FFmpegService {
           onProgress(normalizedProgress);
         }
 
+        logger.debug('progress', `FFmpeg progress: ${normalizedProgress}% (source: ffmpeg)`);
         this.emitProgress(normalizedProgress);
       }
     });
@@ -425,7 +427,7 @@ class FFmpegService {
 
   async getVideoMetadata(file: File): Promise<VideoMetadata> {
     const ffmpeg = this.getFFmpeg();
-    const inputFileName = INPUT_FILE_NAME;
+    const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
 
     const metadata: VideoMetadata = {
       width: 0,
@@ -498,7 +500,7 @@ class FFmpegService {
 
     const { quality, scale } = options;
     const settings = QUALITY_PRESETS.gif[quality];
-    const inputFileName = INPUT_FILE_NAME;
+    const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
     const paletteFileName = 'palette.png';
     const outputFileName = 'output.gif';
 
@@ -515,7 +517,7 @@ class FFmpegService {
     const ffmpegLogHandler = ({ type, message }: { type: string; message: string }) => {
       logger.debug('ffmpeg', `[${type}] ${message}`);
       this.ffmpegLogBuffer.push(`[${type}] ${message}`);
-      if (this.ffmpegLogBuffer.length > 100) {
+      if (this.ffmpegLogBuffer.length > FFMPEG_INTERNALS.FFMPEG_LOG_BUFFER_SIZE) {
         this.ffmpegLogBuffer.shift();
       }
       if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
@@ -539,12 +541,15 @@ class FFmpegService {
       try {
         this.updateStatus('Generating color palette...');
         const paletteThreadArgs = getFilterGraphSafeArgs();
+        const paletteFilterChain = scaleFilter
+          ? `fps=${settings.fps},${scaleFilter},palettegen=max_colors=${settings.colors}`
+          : `fps=${settings.fps},palettegen=max_colors=${settings.colors}`;
         const paletteCmd = [
           ...paletteThreadArgs,
           '-i',
           inputFileName,
           '-vf',
-          `fps=${settings.fps},${scaleFilter},palettegen=max_colors=${settings.colors}`,
+          paletteFilterChain,
           '-update',
           '1', // Tell FFmpeg this is a single image, not a sequence
           paletteFileName,
@@ -580,6 +585,9 @@ class FFmpegService {
         this.updateStatus('Converting to GIF with palette...');
         const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
         const filterComplexThreadArgs = getThreadArgs(true);
+        const conversionFilterChain = scaleFilter
+          ? `fps=${settings.fps},${scaleFilter}[x];[x][1:v]paletteuse=dither=${ditherMode}`
+          : `fps=${settings.fps}[x];[x][1:v]paletteuse=dither=${ditherMode}`;
         const conversionCmd = [
           ...filterComplexThreadArgs,
           '-i',
@@ -587,7 +595,7 @@ class FFmpegService {
           '-i',
           paletteFileName,
           '-filter_complex',
-          `fps=${settings.fps},${scaleFilter}[x];[x][1:v]paletteuse=dither=${ditherMode}`,
+          conversionFilterChain,
           outputFileName,
         ];
         logger.debug('ffmpeg', 'GIF conversion command', { cmd: conversionCmd.join(' ') });
@@ -647,7 +655,7 @@ class FFmpegService {
       if (isMemoryCritical()) {
         await this.clearCachedInput();
       } else if (this.cachedInputKey) {
-        this.setInputCache(this.cachedInputKey, INPUT_CACHE_POST_CONVERT_MS);
+        this.setInputCache(this.cachedInputKey, FFMPEG_INTERNALS.INPUT_CACHE_POST_CONVERT_MS);
       }
       await this.safeDelete(paletteFileName);
       await this.safeDelete(outputFileName);
@@ -679,7 +687,7 @@ class FFmpegService {
 
     const { quality, scale } = options;
     const settings = QUALITY_PRESETS.webp[quality];
-    const inputFileName = INPUT_FILE_NAME;
+    const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
     const outputFileName = 'output.webp';
 
     logger.info('conversion', 'Starting WebP conversion', {
@@ -696,7 +704,7 @@ class FFmpegService {
     const ffmpegLogHandler = ({ type, message }: { type: string; message: string }) => {
       logger.debug('ffmpeg', `[${type}] ${message}`);
       this.ffmpegLogBuffer.push(`[${type}] ${message}`);
-      if (this.ffmpegLogBuffer.length > 100) {
+      if (this.ffmpegLogBuffer.length > FFMPEG_INTERNALS.FFMPEG_LOG_BUFFER_SIZE) {
         this.ffmpegLogBuffer.shift();
       }
       if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
@@ -725,13 +733,17 @@ class FFmpegService {
       const estimatedDuration = 30; // Conservative estimate in seconds
       const heartbeat = this.startProgressHeartbeat(20, 85, estimatedDuration);
 
-      const webpThreadArgs = getThreadArgs(false);
+      // Use single-threaded mode when scaling to avoid ffmpeg.wasm threading issues
+      const webpThreadArgs = scaleFilter ? getFilterGraphSafeArgs() : getThreadArgs(false);
+      const webpFilterArgs = scaleFilter
+        ? `fps=${settings.fps},${scaleFilter}`
+        : `fps=${settings.fps}`;
       const webpCmd = [
         ...webpThreadArgs,
         '-i',
         inputFileName,
         '-vf',
-        `fps=${settings.fps},${scaleFilter}`,
+        webpFilterArgs,
         '-c:v',
         'libwebp',
         '-lossless',
@@ -789,7 +801,7 @@ class FFmpegService {
       if (isMemoryCritical()) {
         await this.clearCachedInput();
       } else if (this.cachedInputKey) {
-        this.setInputCache(this.cachedInputKey, INPUT_CACHE_POST_CONVERT_MS);
+        this.setInputCache(this.cachedInputKey, FFMPEG_INTERNALS.INPUT_CACHE_POST_CONVERT_MS);
       }
       await this.safeDelete(outputFileName);
 
@@ -810,7 +822,7 @@ class FFmpegService {
     inputFileName: string,
     outputFileName: string,
     settings: { fps: number },
-    scaleFilter: string,
+    scaleFilter: string | null,
     file?: File
   ): Promise<void> {
     if (!this.ffmpeg || !this.loaded) {
@@ -827,13 +839,16 @@ class FFmpegService {
 
     const ffmpeg = this.getFFmpeg();
     const directGifThreadArgs = getThreadArgs(false);
+    const directGifFilterArgs = scaleFilter
+      ? `fps=${settings.fps},${scaleFilter}`
+      : `fps=${settings.fps}`;
     await withTimeout(
       ffmpeg.exec([
         ...directGifThreadArgs,
         '-i',
         inputFileName,
         '-vf',
-        `fps=${settings.fps},${scaleFilter}`,
+        directGifFilterArgs,
         outputFileName,
       ]),
       TIMEOUT_CONVERSION,
@@ -865,7 +880,7 @@ class FFmpegService {
       this.inputCacheTimer = null;
     }
     this.cachedInputKey = null;
-    await this.safeDelete(INPUT_FILE_NAME);
+    await this.safeDelete(FFMPEG_INTERNALS.INPUT_FILE_NAME);
   }
 
   private updateStatus(message: string): void {
@@ -889,7 +904,6 @@ class FFmpegService {
   ): ReturnType<typeof setInterval> {
     const startTime = Date.now();
     const progressRange = endProgress - startProgress;
-    const HEARTBEAT_INTERVAL_MS = 5000;
 
     logger.debug(
       'progress',
@@ -898,17 +912,20 @@ class FFmpegService {
 
     return setInterval(() => {
       const elapsedSeconds = (Date.now() - startTime) / 1000;
-      const estimatedCompletion = Math.min(elapsedSeconds / (estimatedDurationSeconds * 1.5), 0.95);
+      const estimatedCompletion = Math.min(
+        elapsedSeconds / (estimatedDurationSeconds * FFMPEG_INTERNALS.HEARTBEAT_DURATION_MULTIPLIER),
+        FFMPEG_INTERNALS.HEARTBEAT_MAX_COMPLETION
+      );
 
       const interpolatedProgress = startProgress + progressRange * estimatedCompletion;
       const roundedProgress = Math.floor(interpolatedProgress);
 
       logger.debug(
         'progress',
-        `Heartbeat update: ${roundedProgress}% (elapsed: ${elapsedSeconds.toFixed(1)}s)`
+        `Heartbeat update: ${roundedProgress}% (elapsed: ${elapsedSeconds.toFixed(1)}s, source: heartbeat)`
       );
-      this.emitProgress(roundedProgress);
-    }, HEARTBEAT_INTERVAL_MS);
+      this.emitProgress(roundedProgress, true);
+    }, FFMPEG_INTERNALS.HEARTBEAT_INTERVAL_MS);
   }
 
   private stopProgressHeartbeat(intervalId: ReturnType<typeof setInterval> | null): void {
@@ -933,14 +950,15 @@ class FFmpegService {
         `Watchdog check: ${(timeSinceProgress / 1000).toFixed(1)}s since last progress`
       );
 
-      if (timeSinceProgress > 90000) {
-        logger.warn('watchdog', 'Conversion stalled - terminating', {
+      if (timeSinceProgress > FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS) {
+        logger.error('watchdog', 'Conversion stalled - no actual progress for 90s', {
+          lastProgress: this.lastProgressValue,
           timeSinceProgress: `${(timeSinceProgress / 1000).toFixed(1)}s`,
         });
         this.updateStatus('Conversion stalled - terminating...');
         this.terminateFFmpeg();
       }
-    }, 10000);
+    }, FFMPEG_INTERNALS.WATCHDOG_CHECK_INTERVAL_MS);
   }
 
   private stopWatchdog(): void {
@@ -990,7 +1008,7 @@ class FFmpegService {
     // Small delay to ensure FFmpeg worker is fully terminated
     setTimeout(() => {
       this.isTerminating = false;
-    }, 200);
+    }, FFMPEG_INTERNALS.TERMINATION_SETTLE_MS);
   }
 
   terminate(): void {
@@ -1013,14 +1031,14 @@ class FFmpegService {
 
     setTimeout(() => {
       this.isTerminating = false;
-    }, 200);
+    }, FFMPEG_INTERNALS.TERMINATION_SETTLE_MS);
   }
 
   private getFileCacheKey(file: File): string {
     return `${file.name}-${file.size}-${file.lastModified}`;
   }
 
-  private setInputCache(key: string, ttlMs = INPUT_CACHE_TTL_MS): void {
+  private setInputCache(key: string, ttlMs: number = FFMPEG_INTERNALS.INPUT_CACHE_TTL_MS): void {
     this.cachedInputKey = key;
     if (this.inputCacheTimer) {
       clearTimeout(this.inputCacheTimer);
@@ -1036,8 +1054,8 @@ class FFmpegService {
     if (this.cachedInputKey === key) {
       return;
     }
-    await this.safeDelete(INPUT_FILE_NAME);
-    await ffmpeg.writeFile(INPUT_FILE_NAME, await fetchFile(file));
+    await this.safeDelete(FFMPEG_INTERNALS.INPUT_FILE_NAME);
+    await ffmpeg.writeFile(FFMPEG_INTERNALS.INPUT_FILE_NAME, await fetchFile(file));
     this.setInputCache(key);
   }
 }
