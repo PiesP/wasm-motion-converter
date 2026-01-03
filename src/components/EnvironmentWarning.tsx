@@ -32,7 +32,9 @@ const EnvironmentWarning: Component = () => {
             </p>
             <p class="mt-2">
               <strong>If you're accessing a deployed site:</strong> Contact the administrator to
-              configure COOP/COEP headers.
+              configure COOP/COEP headers. If FFmpeg fails to start, browser extensions or strict
+              security settings may be blocking module/blob workers—try an InPrivate window or
+              disable blockers temporarily.
             </p>
           </div>
         </div>

@@ -1,9 +1,9 @@
 import {
   type Component,
-  ErrorBoundary,
-  For,
-  createMemo,
-  createSignal,
+  createMemo
+  createSignalateSignal,
+  ErrorBoundaryary,
+  For
   onMount,
   Show,
 } from 'solid-js';
@@ -34,8 +34,10 @@ import {
   setLoadingStatusMessage,
 } from './stores/app-store';
 import {
-  conversionResults,
+  autoAppliedRecommendationendation,
   conversionProgress,
+  conversionResults,
+  conversionResults,
   conversionSettings,
   conversionStatusMessage,
   DEFAULT_CONVERSION_SETTINGS,
@@ -43,30 +45,31 @@ import {
   errorMessage,
   inputFile,
   MAX_RESULTS,
+  setAutoAppliedRecommendation,
   performanceWarnings,
+  setAutoAppliedRecommendation,
   setConversionProgress,
   setConversionResults,
   setConversionSettings,
   setConversionStatusMessage,
-  setErrorContext,
-  setErrorMessage,
+  setErrorCont
   setInputFile,
-  setAutoAppliedRecommendation,
-  setPerformanceWarnings,
-  setVideoMetadata,
-  autoAppliedRecommendation,
+  setPerformanceWa
   videoMetadata,
 } from './stores/conversion-store';
 import { classifyConversionError } from './utils/classify-conversion-error';
-import { estimateEtaRange, estimateOutputSizeRangenge, estimateOutpestimateioutputfrom './utils/estimate-output';
-import { ETACalculatorrom './utils/eta-etaucalculator
-import { validateVideoFilelidation';filevalidation
+import { estimateEtaRange, estimateOutputSizeRange } from './utils/estimate-output';
+import { ETACalculator } from './utils/eta-calculator';
+import { validateVideoFile } from './utils/file-validation';
+import { isMemoryCritical } from './utils/memory-monitor';
 
 const App: Component = () => {
   const [conversionStartTime, setConversionStartTime] = createSignal<number>(0);
   const [estimatedSecondsRemaining, setEstimatedSecondsRemaining] = createSignal<number | null>(
     null
   );
+  const [memoryWarning, setMemoryWarning] = createSignal(false);
+  let memoryCheckTimer: ReturnType<typeof setInterval> | null = null;
   const etaCalculator = new ETACalculator();
   const formatQualityLabel = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
   onMount(() => {
@@ -79,7 +82,12 @@ const App: Component = () => {
     setConversionStatusMessage('');
     setConversionStartTime(0);
     setEstimatedSecondsRemaining(null);
+    setMemoryWarning(false);
     etaCalculator.reset();
+    if (memoryCheckTimer) {
+      clearInterval(memoryCheckTimer);
+      memoryCheckTimer = null;
+    }
   };
 
   const resetErrorState = () => {
@@ -178,6 +186,15 @@ const App: Component = () => {
       setErrorContext(null);
       etaCalculator.reset();
       setEstimatedSecondsRemaining(null);
+      setMemoryWarning(false);
+      if (memoryCheckTimer) {
+        clearInterval(memoryCheckTimer);
+      }
+      memoryCheckTimer = setInterval(() => {
+        if (isMemoryCritical()) {
+          setMemoryWarning(true);
+        }
+      }, 2000);
 
       const progressCallback = (progress: number) => {
         setConversionProgress(progress);
@@ -195,6 +212,10 @@ const App: Component = () => {
       });
 
       clearConversionCallbacks();
+      if (memoryCheckTimer) {
+        clearInterval(memoryCheckTimer);
+        memoryCheckTimer = null;
+      }
       const resultId =
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
           ? crypto.randomUUID()
@@ -217,6 +238,10 @@ const App: Component = () => {
       setConversionStartTime(0);
     } catch (error) {
       clearConversionCallbacks();
+      if (memoryCheckTimer) {
+        clearInterval(memoryCheckTimer);
+        memoryCheckTimer = null;
+      }
       setConversionStatusMessage('');
       setConversionStartTime(0);
 
@@ -380,6 +405,13 @@ const App: Component = () => {
 
           <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-8 lg:items-start">
             <div class="space-y-6">
+              <Show when={memoryWarning()}>
+                <div class="bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-500 rounded-lg p-4 text-sm text-red-800 dark:text-red-200">
+                  High browser memory usage detected (&gt;80% of JS heap). Close other heavy tabs or
+                  switch to Low quality and 50% scale to reduce failure risk.
+                </div>
+              </Show>
+
               <FileDropzone
                 onFileSelected={handleFileSelected}
                 disabled={isBusy()}
