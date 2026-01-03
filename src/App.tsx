@@ -76,6 +76,7 @@ const App: Component = () => {
   );
   const [memoryWarning, setMemoryWarning] = createSignal(false);
   let memoryCheckTimer: ReturnType<typeof setInterval> | null = null;
+  let lastEtaUpdate = 0; // Timestamp of last ETA UI update (for throttling)
   const etaCalculator = new ETACalculator();
   const formatQualityLabel = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
@@ -241,6 +242,7 @@ const App: Component = () => {
       setErrorContext(null);
       etaCalculator.reset();
       setEstimatedSecondsRemaining(null);
+      lastEtaUpdate = 0; // Reset ETA update throttle
       setMemoryWarning(false);
 
       logger.info('conversion', 'Starting conversion', {
@@ -260,10 +262,15 @@ const App: Component = () => {
       }, 2000);
 
       const progressCallback = (progress: number) => {
+        const now = Date.now();
         batch(() => {
           setConversionProgress(progress);
           etaCalculator.addSample(progress);
-          setEstimatedSecondsRemaining(etaCalculator.getETA());
+          // Throttle ETA UI updates to max 1/second to reduce reactive computation overhead
+          if (now - lastEtaUpdate >= 1000) {
+            setEstimatedSecondsRemaining(etaCalculator.getETA());
+            lastEtaUpdate = now;
+          }
         });
       };
 
@@ -606,6 +613,7 @@ const App: Component = () => {
                     outputBlob={result.outputBlob}
                     originalName={result.originalName}
                     originalSize={result.originalSize}
+                    onConvertAnother={handleReset}
                   />
                 )}
               </For>

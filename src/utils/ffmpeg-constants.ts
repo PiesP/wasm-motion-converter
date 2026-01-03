@@ -49,6 +49,14 @@ export const FFMPEG_INTERNALS = {
 
   // FFmpeg log buffer configuration
   FFMPEG_LOG_BUFFER_SIZE: 100, // Maximum number of log entries to keep
+
+  // Adaptive watchdog timeout multipliers
+  WATCHDOG_MULTIPLIERS: {
+    RESOLUTION_4K: 5.0, // 5x timeout for 4K+ video (3840x2160+)
+    RESOLUTION_FHD: 2.0, // 2x timeout for FHD (1920x1080+)
+    LONG_DURATION: 2.0, // 2x timeout for videos >5min
+    HIGH_QUALITY: 1.5, // 1.5x timeout for high quality settings
+  },
 } as const;
 
 /**
@@ -57,3 +65,50 @@ export const FFMPEG_INTERNALS = {
 export type FFmpegProgressRange =
   | typeof FFMPEG_INTERNALS.PROGRESS.GIF
   | typeof FFMPEG_INTERNALS.PROGRESS.WEBP;
+
+/**
+ * Calculate adaptive watchdog timeout based on video characteristics
+ * Scales timeout for complex conversions to prevent false positives
+ *
+ * @param baseTimeoutMs - Base timeout in milliseconds (default: WATCHDOG_STALL_TIMEOUT_MS)
+ * @param options - Video and conversion characteristics
+ * @returns Adaptive timeout in milliseconds
+ */
+export function calculateAdaptiveWatchdogTimeout(
+  baseTimeoutMs: number = FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS,
+  options: {
+    resolution?: { width: number; height: number };
+    duration?: number; // in seconds
+    quality?: 'low' | 'medium' | 'high';
+  } = {}
+): number {
+  let multiplier = 1.0;
+
+  // Scale based on resolution
+  if (options.resolution) {
+    const { width, height } = options.resolution;
+    const totalPixels = width * height;
+
+    if (totalPixels >= 3840 * 2160) {
+      // 4K or higher
+      multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.RESOLUTION_4K;
+    } else if (totalPixels >= 1920 * 1080) {
+      // Full HD
+      multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.RESOLUTION_FHD;
+    }
+  }
+
+  // Scale based on duration (>5 minutes = long video)
+  if (options.duration && options.duration > 300) {
+    multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.LONG_DURATION;
+  }
+
+  // Scale based on quality setting
+  if (options.quality === 'high') {
+    multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.HIGH_QUALITY;
+  }
+
+  const adaptiveTimeout = Math.round(baseTimeoutMs * multiplier);
+
+  return adaptiveTimeout;
+}

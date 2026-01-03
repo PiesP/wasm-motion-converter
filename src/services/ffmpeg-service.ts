@@ -15,7 +15,7 @@ import {
   TIMEOUT_FFMPEG_WORKER_CHECK,
   TIMEOUT_VIDEO_ANALYSIS,
 } from '../utils/constants';
-import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
+import { FFMPEG_INTERNALS, calculateAdaptiveWatchdogTimeout } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';
@@ -180,6 +180,7 @@ class FFmpegService {
   private isConverting = false;
   private lastProgressEmitTime = 0;
   private lastProgressValue = -1;
+  private currentWatchdogTimeout: number = FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS; // Adaptive timeout
   private cachedInputKey: string | null = null;
   private inputCacheTimer: ReturnType<typeof setTimeout> | null = null;
   private cancellationRequested = false;
@@ -190,7 +191,6 @@ class FFmpegService {
 
   // Resource tracking for cleanup
   private activeHeartbeats: Set<ReturnType<typeof setInterval>> = new Set();
-  private activeBlobUrls: Set<string> = new Set();
   private knownFiles: Set<string> = new Set();
 
   private getFFmpeg(): FFmpeg {
@@ -717,7 +717,7 @@ class FFmpegService {
     });
 
     this.cancellationRequested = false;
-    this.startWatchdog();
+    this.startWatchdog(metadata, quality);
 
     // Create log handler with progress parsing for palette generation
     const videoDuration = metadata?.duration;
@@ -917,7 +917,7 @@ class FFmpegService {
     });
 
     this.cancellationRequested = false;
-    this.startWatchdog();
+    this.startWatchdog(metadata, quality);
 
     // Create log handler with progress parsing for WebP conversion
     const videoDuration = metadata?.duration;
@@ -1279,26 +1279,50 @@ class FFmpegService {
     }
   }
 
-  private startWatchdog(): void {
+  private startWatchdog(
+    metadata?: VideoMetadata,
+    quality?: ConversionQuality
+  ): void {
     this.lastProgressTime = Date.now();
     this.isConverting = true;
     this.lastProgressEmitTime = 0;
     this.lastProgressValue = -1;
 
-    logger.debug('watchdog', 'Watchdog started');
+    // Calculate adaptive timeout based on video characteristics
+    this.currentWatchdogTimeout = calculateAdaptiveWatchdogTimeout(
+      FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS,
+      {
+        resolution: metadata ? { width: metadata.width, height: metadata.height } : undefined,
+        duration: metadata?.duration,
+        quality,
+      }
+    );
+
+    logger.debug('watchdog', 'Watchdog started', {
+      baseTimeout: `${FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS / 1000}s`,
+      adaptiveTimeout: `${this.currentWatchdogTimeout / 1000}s`,
+      resolution: metadata ? `${metadata.width}x${metadata.height}` : 'unknown',
+      duration: metadata?.duration ? `${metadata.duration.toFixed(1)}s` : 'unknown',
+      quality: quality || 'unknown',
+    });
 
     this.watchdogTimer = setInterval(() => {
       const timeSinceProgress = Date.now() - this.lastProgressTime;
       logger.debug(
         'watchdog',
-        `Watchdog check: ${(timeSinceProgress / 1000).toFixed(1)}s since last progress`
+        `Watchdog check: ${(timeSinceProgress / 1000).toFixed(1)}s since last progress (timeout: ${this.currentWatchdogTimeout / 1000}s)`
       );
 
-      if (timeSinceProgress > FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS) {
-        logger.error('watchdog', 'Conversion stalled - no actual progress for 90s', {
-          lastProgress: this.lastProgressValue,
-          timeSinceProgress: `${(timeSinceProgress / 1000).toFixed(1)}s`,
-        });
+      if (timeSinceProgress > this.currentWatchdogTimeout) {
+        logger.error(
+          'watchdog',
+          `Conversion stalled - no progress for ${(this.currentWatchdogTimeout / 1000).toFixed(1)}s`,
+          {
+            lastProgress: this.lastProgressValue,
+            timeSinceProgress: `${(timeSinceProgress / 1000).toFixed(1)}s`,
+            timeout: `${(this.currentWatchdogTimeout / 1000).toFixed(1)}s`,
+          }
+        );
         this.updateStatus('Conversion stalled - terminating...');
         this.terminateFFmpeg();
       }
@@ -1336,16 +1360,6 @@ class FFmpegService {
       this.inputCacheTimer = null;
     }
 
-    // Revoke all blob URLs (currently unused, reserved for future blob URL tracking)
-    for (const url of this.activeBlobUrls) {
-      try {
-        URL.revokeObjectURL(url);
-      } catch (error) {
-        logger.debug('general', 'Failed to revoke blob URL', { error });
-      }
-    }
-    this.activeBlobUrls.clear();
-
     // Clear known files tracking
     this.knownFiles.clear();
 
@@ -1366,11 +1380,48 @@ class FFmpegService {
     );
   }
 
+  /**
+   * Clean up temporary files in FFmpeg virtual filesystem before termination
+   * Prevents orphaned temp files and potential memory leaks
+   */
+  private async cleanupTempFiles(): Promise<void> {
+    if (!this.ffmpeg || !this.loaded) {
+      return;
+    }
+
+    const tempFiles = [
+      FFMPEG_INTERNALS.INPUT_FILE_NAME, // input.mp4
+      'palette.png', // GIF palette file
+      'output.gif', // GIF output
+      'output.webp', // WebP output
+    ];
+
+    logger.debug('conversion', 'Cleaning up temp files before termination', { files: tempFiles });
+
+    // Attempt to delete each temp file, ignoring errors
+    for (const file of tempFiles) {
+      try {
+        await this.safeDelete(file);
+      } catch (error) {
+        // Ignore errors during cleanup - file may not exist or FFmpeg may already be terminated
+        logger.debug('conversion', `Failed to delete temp file: ${file}`, { error });
+      }
+    }
+  }
+
   private terminateFFmpeg(): void {
     this.isTerminating = true;
 
     // Clean up all resources first
     this.cleanupResources();
+
+    // Attempt to clean up temp files before termination (async, but don't wait)
+    // This is a best-effort cleanup to prevent memory leaks
+    if (this.ffmpeg && this.loaded) {
+      this.cleanupTempFiles().catch((error) => {
+        logger.debug('conversion', 'Temp file cleanup failed during termination', { error });
+      });
+    }
 
     if (this.ffmpeg) {
       try {
@@ -1398,6 +1449,14 @@ class FFmpegService {
 
     // Clean up all resources first
     this.cleanupResources();
+
+    // Attempt to clean up temp files before termination (async, but don't wait)
+    // This is a best-effort cleanup to prevent memory leaks
+    if (this.ffmpeg && this.loaded) {
+      this.cleanupTempFiles().catch((error) => {
+        logger.debug('conversion', 'Temp file cleanup failed during termination', { error });
+      });
+    }
 
     if (this.ffmpeg) {
       this.ffmpeg.terminate();

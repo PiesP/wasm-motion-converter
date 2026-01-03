@@ -1,5 +1,6 @@
-import { type Component, createEffect, createSignal, onCleanup } from 'solid-js';
-import { formatDuration } from '../utils/format-duration';
+import type { Component } from 'solid-js';
+import { createSignal } from 'solid-js';
+import ProgressBar from './ProgressBar';
 
 interface FileDropzoneProps {
   onFileSelected: (file: File) => void;
@@ -14,7 +15,6 @@ interface FileDropzoneProps {
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [isDragging, setIsDragging] = createSignal(false);
-  const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
 
   const isBusy = () => Boolean(props.status);
   const isInteractive = () => !props.disabled && !isBusy();
@@ -25,25 +25,6 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     }
     return Math.min(100, Math.max(0, Math.round(raw)));
   };
-
-  createEffect(() => {
-    if (!isBusy() || !props.showElapsedTime || !props.startTime) {
-      setElapsedSeconds(0);
-      return;
-    }
-    const updateElapsed = () => {
-      const elapsed = Math.floor((Date.now() - props.startTime!) / 1000);
-      setElapsedSeconds(elapsed);
-    };
-    updateElapsed();
-    const interval = setInterval(() => {
-      updateElapsed();
-    }, 1000);
-
-    onCleanup(() => {
-      clearInterval(interval);
-    });
-  });
 
   const selectFile = (files?: FileList | null) => {
     const file = files?.[0];
@@ -111,54 +92,17 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       aria-disabled={!isInteractive()}
     >
       {isBusy() ? (
-        <div class="flex flex-col items-center gap-4">
-          <div class="flex items-center gap-3 text-sm font-medium text-gray-700 dark:text-gray-200">
-            <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-              />
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
-            </svg>
-            <span>{props.status}</span>
-            <span class="text-gray-600 dark:text-gray-400">{progressValue()}%</span>
-          </div>
-          <div
-            class="w-full max-w-md bg-gray-200 dark:bg-gray-800 rounded-full h-2.5"
-            role="progressbar"
-            aria-valuenow={progressValue()}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={props.status || 'Processing'}
-          >
-            <div
-              class="bg-blue-600 dark:bg-blue-500 h-2.5 rounded-full transition-all duration-300"
-              style={{ width: `${progressValue()}%` }}
-            />
-          </div>
-          <div class="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-2">
-            <span>Processing...</span>
-            {props.showElapsedTime && props.startTime && (
-              <span class="font-mono">
-                (Elapsed: {formatDuration(elapsedSeconds())}
-                {props.estimatedSecondsRemaining != null && props.estimatedSecondsRemaining > 0 && (
-                  <> | ETA: {formatDuration(props.estimatedSecondsRemaining)}</>
-                )}
-                )
-              </span>
-            )}
-          </div>
-          {props.statusMessage ? (
-            <p class="text-xs text-gray-600 dark:text-gray-400 italic">{props.statusMessage}</p>
-          ) : null}
+        <div class="max-w-md mx-auto">
+          <ProgressBar
+            progress={progressValue()}
+            status={props.status || 'Processing'}
+            statusMessage={props.statusMessage}
+            showSpinner={true}
+            showElapsedTime={props.showElapsedTime}
+            startTime={props.startTime}
+            estimatedSecondsRemaining={props.estimatedSecondsRemaining}
+            layout="vertical"
+          />
         </div>
       ) : (
         <>
