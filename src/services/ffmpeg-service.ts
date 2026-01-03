@@ -11,6 +11,7 @@ import {
   TIMEOUT_CONVERSION,
   TIMEOUT_FFMPEG_DOWNLOAD,
   TIMEOUT_FFMPEG_INIT,
+  TIMEOUT_FFMPEG_WORKER_CHECK,
   TIMEOUT_VIDEO_ANALYSIS,
 } from '../utils/constants';
 import { isMemoryCritical } from '../utils/memory-monitor';
@@ -20,6 +21,7 @@ const INPUT_FILE_NAME = 'input.mp4';
 const INPUT_CACHE_TTL_MS = 120_000;
 const PROGRESS_THROTTLE_MS = 150;
 const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
+const WORKER_CHECK_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_WORKER_CHECK / 1000;
 
 async function loadFFmpegAsset(url: string, mimeType: string, label: string): Promise<string> {
   return withTimeout(
@@ -27,6 +29,66 @@ async function loadFFmpegAsset(url: string, mimeType: string, label: string): Pr
     TIMEOUT_FFMPEG_DOWNLOAD,
     `Downloading ${label} timed out after ${DOWNLOAD_TIMEOUT_SECONDS} seconds. Please check your network connection and ensure unpkg.com is reachable.`
   );
+}
+
+type WorkerIsolationStatus = {
+  sharedArrayBuffer: boolean;
+  crossOriginIsolated: boolean;
+};
+
+async function verifyWorkerIsolation(): Promise<void> {
+  if (typeof Worker === 'undefined') {
+    throw new Error('Web Workers are not available in this browser.');
+  }
+
+  const script = `
+    self.postMessage({
+      sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+      crossOriginIsolated: self.crossOriginIsolated === true,
+    });
+  `;
+
+  const blobUrl = URL.createObjectURL(new Blob([script], { type: 'text/javascript' }));
+  let worker: Worker | null = null;
+
+  try {
+    worker = new Worker(blobUrl);
+    const status = await withTimeout(
+      new Promise<WorkerIsolationStatus>((resolve, reject) => {
+        if (!worker) {
+          reject(new Error('Failed to create FFmpeg worker.'));
+          return;
+        }
+        worker.onmessage = (event) => resolve(event.data as WorkerIsolationStatus);
+        worker.onerror = () =>
+          reject(
+            new Error(
+              'Failed to start FFmpeg worker. Browser extensions or security settings may be blocking blob workers.'
+            )
+          );
+      }),
+      TIMEOUT_FFMPEG_WORKER_CHECK,
+      `FFmpeg worker check timed out after ${WORKER_CHECK_TIMEOUT_SECONDS} seconds.`
+    );
+
+    if (!status.sharedArrayBuffer || !status.crossOriginIsolated) {
+      throw new Error(
+        'FFmpeg worker does not support SharedArrayBuffer. Cross-origin isolation is required for FFmpeg to run.'
+      );
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Failed to construct')) {
+      throw new Error(
+        'FFmpeg worker could not be created. If you use ad blockers or privacy extensions, try disabling them or using an InPrivate window.'
+      );
+    }
+    throw error;
+  } finally {
+    if (worker) {
+      worker.terminate();
+    }
+    URL.revokeObjectURL(blobUrl);
+  }
 }
 
 function getOptimalThreadCount(): number {
@@ -169,6 +231,12 @@ class FFmpegService {
     };
 
     try {
+      if (onStatus) {
+        onStatus('Checking FFmpeg worker environment...');
+      }
+      reportProgress(2);
+      await verifyWorkerIsolation();
+
       reportProgress(5);
       if (onStatus) {
         onStatus('Downloading FFmpeg assets...');
