@@ -22,6 +22,5 @@ export const [theme, setTheme] = createSignal<Theme>(getInitialTheme());
 export const toggleTheme = () => {
   const currentTheme = theme();
   const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-  console.log('[Theme Store] toggleTheme:', 'current:', currentTheme, '-> new:', newTheme);
   setTheme(newTheme);
 };

@@ -27,7 +27,7 @@ import {
   conversionProgress,
   conversionSettings,
   conversionStatusMessage,
-  type ErrorContext,
+  DEFAULT_CONVERSION_SETTINGS,
   errorContext,
   errorMessage,
   inputFile,
@@ -44,7 +44,7 @@ import {
   setVideoMetadata,
   videoMetadata,
 } from './stores/conversion-store';
-import type { VideoMetadata } from './types/conversion-types';
+import { classifyConversionError } from './utils/classify-conversion-error';
 import { validateVideoFile } from './utils/file-validation';
 
 const App: Component = () => {
@@ -65,13 +65,26 @@ const App: Component = () => {
     setErrorContext(null);
   };
 
+  const resetAnalysisState = () => {
+    setVideoMetadata(null);
+    setPerformanceWarnings([]);
+  };
+
+  const resetOutputState = () => {
+    setOutputBlob(null);
+    setLoadingProgress(0);
+  };
+
+  const clearConversionCallbacks = () => {
+    ffmpegService.setProgressCallback(null);
+    ffmpegService.setStatusCallback(null);
+  };
+
   const handleFileSelected = async (file: File) => {
     resetConversionRuntimeState();
     resetErrorState();
-    setOutputBlob(null);
-    setVideoMetadata(null);
-    setPerformanceWarnings([]);
-    setLoadingProgress(0);
+    resetAnalysisState();
+    resetOutputState();
 
     const validation = validateVideoFile(file);
     if (!validation.valid) {
@@ -85,9 +98,7 @@ const App: Component = () => {
     try {
       if (!ffmpegService.isLoaded()) {
         setAppState('loading-ffmpeg');
-        await ffmpegService.initialize((progress) => {
-          setLoadingProgress(progress);
-        });
+        await ffmpegService.initialize(setLoadingProgress);
       }
 
       setAppState('analyzing');
@@ -107,20 +118,10 @@ const App: Component = () => {
   const handleConvert = async () => {
     const file = inputFile();
     if (!file) {
-      console.warn('[App] handleConvert: No input file');
       return;
     }
 
-    console.log(
-      '[App] Starting conversion - file:',
-      file.name,
-      'format:',
-      conversionSettings().format,
-      'quality:',
-      conversionSettings().quality,
-      'scale:',
-      conversionSettings().scale
-    );
+    const settings = conversionSettings();
 
     try {
       setAppState('converting');
@@ -129,48 +130,27 @@ const App: Component = () => {
       setConversionStartTime(Date.now());
       setErrorContext(null);
       setOutputBlob(null);
-      console.log('[App] State set to converting, progress reset to 0, startTime:', Date.now());
 
-      // Set up progress callback for conversion
-      ffmpegService.setProgressCallback((progress) => {
-        console.log('[App] Progress callback received:', progress);
-        setConversionProgress(progress);
+      ffmpegService.setProgressCallback(setConversionProgress);
+      ffmpegService.setStatusCallback(setConversionStatusMessage);
+
+      const blob = await convertVideo(file, settings.format, {
+        quality: settings.quality,
+        scale: settings.scale,
       });
 
-      // Set up status message callback
-      ffmpegService.setStatusCallback((message) => {
-        console.log('[App] Status callback received:', message);
-        setConversionStatusMessage(message);
-      });
-
-      const blob = await convertVideo(file, conversionSettings().format, {
-        quality: conversionSettings().quality,
-        scale: conversionSettings().scale,
-      });
-
-      console.log('[App] Conversion completed, blob size:', blob.size);
-
-      // Clear progress and status callbacks after conversion
-      ffmpegService.setProgressCallback(null);
-      ffmpegService.setStatusCallback(null);
-
+      clearConversionCallbacks();
       setOutputBlob(blob);
       setAppState('done');
       setConversionStatusMessage('');
       setConversionStartTime(0);
-      console.log('[App] State set to done');
     } catch (error) {
-      console.error('[App] Conversion error:', error);
-      ffmpegService.setProgressCallback(null);
-      ffmpegService.setStatusCallback(null);
+      clearConversionCallbacks();
       setConversionStatusMessage('');
       setConversionStartTime(0);
 
-      // Classify error and set suggestion
       const errorMessage_ = error instanceof Error ? error.message : 'Conversion failed';
-      const context = classifyConversionError(errorMessage_, file, videoMetadata());
-
-      console.warn('[App] Error classified as:', context.type, 'Suggestion:', context.suggestion);
+      const context = classifyConversionError(errorMessage_, videoMetadata());
 
       setErrorMessage(context.originalError);
       setErrorContext(context);
@@ -178,117 +158,13 @@ const App: Component = () => {
     }
   };
 
-  /**
-   * Classify conversion errors and provide suggestions
-   */
-  const classifyConversionError = (
-    errorMsg: string,
-    _file: File,
-    metadata: VideoMetadata | null
-  ): ErrorContext => {
-    const timestamp = Date.now();
-    const baseContext = { timestamp, originalError: errorMsg };
-
-    // Timeout errors
-    if (errorMsg.includes('timed out') || errorMsg.includes('90s') || errorMsg.includes('hung')) {
-      return {
-        type: 'timeout',
-        ...baseContext,
-        suggestion:
-          'The conversion took too long. Try reducing the quality setting to "low" or the scale to 0.5, or choose a shorter video.',
-      };
-    }
-
-    // Memory errors (including "memory access out of bounds" from ffmpeg.wasm issues)
-    if (
-      errorMsg.includes('memory') ||
-      errorMsg.includes('Out of memory') ||
-      errorMsg.includes('abort') ||
-      errorMsg.includes('stack overflow')
-    ) {
-      return {
-        type: 'memory',
-        ...baseContext,
-        suggestion:
-          'Your browser ran out of memory or encountered a memory issue. Try using a smaller video file, reducing quality to "low", or scaling down the resolution.',
-      };
-    }
-
-    // Codec/format errors
-    if (
-      errorMsg.includes('codec') ||
-      errorMsg.includes('unsupported') ||
-      errorMsg.includes('not found')
-    ) {
-      return {
-        type: 'codec',
-        ...baseContext,
-        suggestion:
-          'The video format or codec is not supported. Try converting the video to H.264/MP4 format first using another tool.',
-      };
-    }
-
-    // WebP specific issues
-    if (errorMsg.includes('webp') || errorMsg.includes('libwebp')) {
-      return {
-        type: 'format',
-        ...baseContext,
-        suggestion:
-          'WebP conversion failed. Try using GIF format instead, or reduce the quality/scale settings.',
-      };
-    }
-
-    // Worker/threading issues (common ffmpeg.wasm problem)
-    if (
-      errorMsg.includes('worker') ||
-      errorMsg.includes('thread') ||
-      errorMsg.includes('cors') ||
-      errorMsg.includes('cross-origin') ||
-      errorMsg.includes('SharedArrayBuffer')
-    ) {
-      return {
-        type: 'general',
-        ...baseContext,
-        suggestion:
-          'Worker or cross-origin isolation issue. Ensure your server has proper COOP/COEP headers configured. Try refreshing the page or using a different browser.',
-      };
-    }
-
-    // General error with performance context
-    if (metadata) {
-      const totalPixels = metadata.width * metadata.height * metadata.framerate * metadata.duration;
-      if (totalPixels > 500_000_000) {
-        return {
-          type: 'memory',
-          ...baseContext,
-          suggestion:
-            'The video is too complex to convert in your browser (very high total pixel count). Try reducing quality to "low", scale to 0.5, or choosing a shorter/lower resolution video.',
-        };
-      }
-    }
-
-    // Default general error with common solutions
-    return {
-      type: 'general',
-      ...baseContext,
-      suggestion:
-        'An unexpected error occurred. Try: 1) Reducing quality to "low" or scale to 0.5, 2) Using a different video file, 3) Reloading the page, or 4) Closing other browser tabs.',
-    };
-  };
-
   const handleReset = () => {
     resetConversionRuntimeState();
     resetErrorState();
     setInputFile(null);
-    setVideoMetadata(null);
-    setConversionSettings({
-      format: 'gif',
-      quality: 'medium',
-      scale: 1.0,
-    });
-    setPerformanceWarnings([]);
-    setOutputBlob(null);
-    setLoadingProgress(0);
+    resetAnalysisState();
+    resetOutputState();
+    setConversionSettings(DEFAULT_CONVERSION_SETTINGS);
     setAppState('idle');
   };
 

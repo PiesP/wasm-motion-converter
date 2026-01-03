@@ -13,6 +13,15 @@ export interface ConversionOptions {
   scale: ConversionScale;
 }
 
+export type ConversionErrorType = 'timeout' | 'memory' | 'format' | 'codec' | 'general';
+
+export interface ErrorContext {
+  type: ConversionErrorType;
+  originalError: string;
+  timestamp: number;
+  suggestion?: string;
+}
+
 export interface VideoMetadata {
   width: number;
   height: number;

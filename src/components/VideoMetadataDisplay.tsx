@@ -1,6 +1,7 @@
 import type { Component } from 'solid-js';
 import type { VideoMetadata } from '../types/conversion-types';
 import { formatBytes } from '../utils/format-bytes';
+import { formatDuration } from '../utils/format-duration';
 
 interface VideoMetadataDisplayProps {
   metadata: VideoMetadata;
@@ -9,12 +10,6 @@ interface VideoMetadataDisplayProps {
 }
 
 const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
-  const formatDuration = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
   return (
     <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 mb-6">
       <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Input Video</h3>

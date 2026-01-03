@@ -17,7 +17,6 @@ export async function withTimeout<T>(
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
       if (onTimeout) {
-        console.log('[withTimeout] Calling cleanup callback before timeout rejection');
         onTimeout();
       }
       reject(new Error(errorMessage));
@@ -25,15 +24,10 @@ export async function withTimeout<T>(
   });
 
   try {
-    const result = await Promise.race([promise, timeoutPromise]);
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
     if (timeoutId !== undefined) {
       clearTimeout(timeoutId);
     }
-    return result;
-  } catch (error) {
-    if (timeoutId !== undefined) {
-      clearTimeout(timeoutId);
-    }
-    throw error;
   }
 }

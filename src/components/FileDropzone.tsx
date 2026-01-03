@@ -7,6 +7,13 @@ interface FileDropzoneProps {
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [isDragging, setIsDragging] = createSignal(false);
 
+  const selectFile = (files?: FileList | null) => {
+    const file = files?.[0];
+    if (file) {
+      props.onFileSelected(file);
+    }
+  };
+
   const handleDragOver = (e: DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -19,25 +26,12 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const handleDrop = (e: DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-
-    const files = e.dataTransfer?.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      if (file) {
-        props.onFileSelected(file);
-      }
-    }
+    selectFile(e.dataTransfer?.files);
   };
 
   const handleFileInput = (e: Event) => {
     const input = e.target as HTMLInputElement;
-    const files = input.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      if (file) {
-        props.onFileSelected(file);
-      }
-    }
+    selectFile(input.files);
   };
 
   return (

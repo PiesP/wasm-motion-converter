@@ -1,4 +1,4 @@
-import { type Component, createMemo } from 'solid-js';
+import { type Component, createEffect, createMemo, onCleanup } from 'solid-js';
 import { formatBytes } from '../utils/format-bytes';
 
 interface ResultPreviewProps {
@@ -9,6 +9,13 @@ interface ResultPreviewProps {
 
 const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const previewUrl = createMemo(() => URL.createObjectURL(props.outputBlob));
+
+  createEffect(() => {
+    const url = previewUrl();
+    onCleanup(() => {
+      URL.revokeObjectURL(url);
+    });
+  });
 
   const handleDownload = () => {
     const url = previewUrl();

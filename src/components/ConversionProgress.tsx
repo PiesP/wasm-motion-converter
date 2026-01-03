@@ -1,4 +1,5 @@
 import { type Component, createEffect, createSignal, onCleanup, Show } from 'solid-js';
+import { formatDuration } from '../utils/format-duration';
 
 interface ConversionProgressProps {
   progress: number;
@@ -11,36 +12,20 @@ interface ConversionProgressProps {
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {
   const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
 
-  // Update elapsed time every second if showElapsedTime is true
   createEffect(() => {
-    console.log(
-      '[ConversionProgress] Effect triggered - showElapsedTime:',
-      props.showElapsedTime,
-      'startTime:',
-      props.startTime,
-      'progress:',
-      props.progress
-    );
-
-    if (props.showElapsedTime && props.startTime) {
-      console.log('[ConversionProgress] Starting interval timer');
-      const interval = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - (props.startTime ?? 0)) / 1000);
-        setElapsedSeconds(elapsed);
-      }, 1000);
-
-      onCleanup(() => {
-        console.log('[ConversionProgress] Cleaning up interval');
-        clearInterval(interval);
-      });
+    if (!props.showElapsedTime || !props.startTime) {
+      setElapsedSeconds(0);
+      return;
     }
-  });
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - props.startTime) / 1000);
+      setElapsedSeconds(elapsed);
+    }, 1000);
 
-  const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+    onCleanup(() => {
+      clearInterval(interval);
+    });
+  });
 
   return (
     <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6">
@@ -79,7 +64,7 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
             <span class="text-sm">Processing...</span>
             {props.showElapsedTime && (
               <span class="text-sm font-mono text-gray-600 dark:text-gray-400">
-                ({formatTime(elapsedSeconds())})
+                ({formatDuration(elapsedSeconds())})
               </span>
             )}
           </div>

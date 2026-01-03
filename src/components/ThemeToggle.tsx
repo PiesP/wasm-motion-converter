@@ -7,8 +7,6 @@ const ThemeToggle: Component = () => {
     const currentTheme = theme();
     const html = document.documentElement;
 
-    console.log('[ThemeToggle] Effect running - syncing theme to DOM:', currentTheme);
-
     // Update DOM for Tailwind dark mode
     if (currentTheme === 'dark') {
       html.classList.add('dark');
@@ -20,8 +18,6 @@ const ThemeToggle: Component = () => {
 
     // Persist theme preference
     localStorage.setItem('theme', currentTheme);
-
-    console.log('[ThemeToggle] DOM synced - dark class:', html.classList.contains('dark'));
   });
 
   return (
