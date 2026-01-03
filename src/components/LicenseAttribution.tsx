@@ -35,6 +35,18 @@ const LicenseAttribution: Component = () => {
             View Third-Party Licenses
           </a>
         </p>
+        <p>
+          Questions or feedback?{' '}
+          <a
+            href="https://github.com/PiesP/wasm-motion-converter/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            Open an issue on GitHub
+          </a>
+          .
+        </p>
       </div>
     </footer>
   );
