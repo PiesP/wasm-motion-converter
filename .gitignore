@@ -1,0 +1,43 @@
+#+#+#+#+#############################################
+# dropconvert-wasm - .gitignore
+# Stack: Vite + React + TypeScript + Tailwind + ffmpeg.wasm
+#+#+#+#+#############################################
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs / temp
+*.log
+tmp/
+temp/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# AdSense (generated dynamically from env vars)
+public/ads.txt
+
+# Editor / OS
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+
+.claude
+.github/copilot-instructions.md
+.github/prompts
+.vscode
+AGENTS.md
+CLAUDE.md

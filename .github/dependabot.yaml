@@ -1,0 +1,108 @@
+---
+# Dependabot configuration for dropconvert-wasm
+# Stack: Vite + React + TypeScript + Tailwind + ffmpeg.wasm
+
+version: 2
+updates:
+  # Root workspace npm packages
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    labels:
+      - "dependencies"
+      - "automated"
+
+
+    # Group updates by category to reduce PR noise
+    groups:
+      ffmpeg:
+        patterns:
+          - "@ffmpeg/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+        update-types:
+          - "minor"
+          - "patch"
+
+      build:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+      tailwind:
+        patterns:
+          - "tailwindcss"
+          - "postcss"
+          - "autoprefixer"
+        update-types:
+          - "minor"
+          - "patch"
+
+      # TypeScript ecosystem
+      typescript:
+        patterns:
+          - "typescript"
+          - "@types/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+      # Linting and formatting (Biome + Knip)
+      quality:
+        patterns:
+          - "@biomejs/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+    # Ignore packages that require manual review for major updates
+    ignore:
+      # Vite major updates need careful review
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      # React major updates need careful review
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      # ffmpeg.wasm major updates need careful review
+      - dependency-name: "@ffmpeg/ffmpeg"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions updates
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    commit-message:
+      prefix: "ci(deps)"
+    labels:
+      - "ci"
+      - "dependencies"
+      - "automated"
+    groups:
+      actions:
+        patterns:
+          - "*"

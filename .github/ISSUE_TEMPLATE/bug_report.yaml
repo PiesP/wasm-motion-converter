@@ -1,0 +1,117 @@
+name: "Bug report"
+description: "Report a problem with dropconvert-wasm"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug.
+        Please provide as much detail as possible so we can reproduce and fix it.
+
+        **Privacy note:** Please do not attach sensitive images or private data.
+
+  - type: input
+    id: summary
+    attributes:
+      label: "Short summary"
+      description: "One sentence describing the problem"
+      placeholder: "Conversion fails when dropping a PNG (SharedArrayBuffer not available)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to reproduce"
+      description: "List the exact steps needed to see the problem."
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected behavior"
+      description: "What did you expect to happen?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Actual behavior"
+      description: "What actually happened? Include screenshots if helpful."
+    validations:
+      required: true
+
+  - type: input
+    id: app_version
+    attributes:
+      label: "App version / commit"
+      description: "Git tag, release version, or commit SHA (if known)"
+      placeholder: "v0.1.0 or 1a2b3c4"
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: "Browser"
+      options:
+        - "Chrome"
+        - "Edge"
+        - "Firefox"
+        - "Safari"
+        - "Other"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: device
+    attributes:
+      label: "Device"
+      options:
+        - "Desktop"
+        - "Mobile"
+        - "Tablet"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: "OS"
+      description: "Operating system (and version if known)"
+      placeholder: "Windows 11, macOS 15, Ubuntu 24.04, iOS 18, Android 15"
+
+  - type: input
+    id: browser_version
+    attributes:
+      label: "Browser version"
+      description: "Exact browser version (if known)"
+      placeholder: "Chrome 131.0.x"
+
+  - type: textarea
+    id: sab
+    attributes:
+      label: "SharedArrayBuffer / crossOriginIsolated"
+      description: "Please paste the output from your browser console. This is required for ffmpeg.wasm multi-threading."
+      placeholder: |
+        SharedArrayBuffer: true/false
+        crossOriginIsolated: true/false
+
+  - type: textarea
+    id: console_logs
+    attributes:
+      label: "Console logs"
+      description: "Paste relevant console output (errors/warnings). Screenshots are OK too."
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "Checklist"
+      options:
+        - label: "I have checked existing issues for duplicates"
+          required: true

@@ -1,0 +1,85 @@
+name: CI
+
+# Continuous Integration for dropconvert-wasm
+# - Lint (Biome)
+# - Format check (Biome)
+# - Typecheck (TypeScript)
+# - Build (Vite)
+
+on:
+  push:
+    branches: [master, main]
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.MD"
+      - "**/*.txt"
+      - "**/*.svg"
+      - ".vscode/**"
+      - ".github/*.md"
+      - "LICENSES/**"
+  pull_request:
+    branches: [master, main]
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.MD"
+      - "**/*.txt"
+      - "**/*.svg"
+      - ".vscode/**"
+      - ".github/*.md"
+      - "LICENSES/**"
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "22.16.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Build & Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm fmt:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Upload dist (push only)
+        uses: actions/upload-artifact@v6
+        if: github.event_name == 'push'
+        with:
+          name: dist-${{ github.sha }}
+          path: dist/
+          retention-days: 7

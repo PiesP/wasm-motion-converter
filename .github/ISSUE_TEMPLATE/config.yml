@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions / support
+    url: https://github.com/PiesP/dropconvert-wasm/discussions
+    about: "Use GitHub Discussions for Q&A (if enabled). If Discussions are not available, open an issue with context."
+  - name: Security & privacy reports
+    url: https://github.com/PiesP/dropconvert-wasm/security/advisories
+    about: "Please do not open public issues for vulnerabilities. Use GitHub Security Advisories."
+  - name: Troubleshooting
+    url: https://github.com/PiesP/dropconvert-wasm#troubleshooting
+    about: "Check common issues like SharedArrayBuffer/crossOriginIsolated before filing a bug."
