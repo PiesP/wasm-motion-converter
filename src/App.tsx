@@ -34,9 +34,8 @@ import {
   setLoadingStatusMessage,
 } from './stores/app-store';
 import {
-  autoAppliedRecommendationendation,
+  autoAppliedRecommendation,
   conversionProgress,
-  conversionResults,
   conversionResults,
   conversionSettings,
   conversionStatusMessage,
@@ -45,16 +44,17 @@ import {
   errorMessage,
   inputFile,
   MAX_RESULTS,
-  setAutoAppliedRecommendation,
   performanceWarnings,
   setAutoAppliedRecommendation,
   setConversionProgress,
   setConversionResults,
   setConversionSettings,
   setConversionStatusMessage,
-  setErrorCont
+  setErrorContext,
+  setErrorMessage,
   setInputFile,
-  setPerformanceWa
+  setPerformanceWarnings,
+  setVideoMetadata,
   videoMetadata,
 } from './stores/conversion-store';
 import { classifyConversionError } from './utils/classify-conversion-error';

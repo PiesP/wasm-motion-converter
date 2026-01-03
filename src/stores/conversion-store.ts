@@ -1,7 +1,7 @@
 import { createSignal } from 'solid-js';
 import type {
-  ConversionResult
-  ConversionSettingsgs,
+  ConversionResult,
+  ConversionSettings,
   ErrorContext,
   PerformanceWarning,
   VideoMetadata,
