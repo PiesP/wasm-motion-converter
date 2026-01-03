@@ -4,6 +4,7 @@ import { formatBytes } from '../utils/format-bytes';
 interface ResultPreviewProps {
   outputBlob: Blob;
   originalSize: number;
+  originalName: string;
   onReset: () => void;
 }
 
@@ -20,9 +21,14 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const handleDownload = () => {
     const url = previewUrl();
     const extension = props.outputBlob.type === 'image/gif' ? 'gif' : 'webp';
+    const originalName = props.originalName.trim();
+    const lastDotIndex = originalName.lastIndexOf('.');
+    const baseName =
+      originalName && lastDotIndex > 0 ? originalName.slice(0, lastDotIndex) : originalName;
+    const safeBaseName = baseName.trim() ? baseName : 'converted';
     const a = document.createElement('a');
     a.href = url;
-    a.download = `converted.${extension}`;
+    a.download = `${safeBaseName}.${extension}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

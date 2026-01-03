@@ -299,6 +299,7 @@ const App: Component = () => {
           <ResultPreview
             outputBlob={outputBlob()!}
             originalSize={inputFile()?.size ?? 0}
+            originalName={inputFile()?.name ?? ''}
             onReset={handleReset}
           />
         </Show>
