@@ -52,7 +52,7 @@ async function verifyWorkerIsolation(): Promise<void> {
   let worker: Worker | null = null;
 
   try {
-    worker = new Worker(blobUrl);
+    worker = new Worker(blobUrl, { type: 'module' });
     const status = await withTimeout(
       new Promise<WorkerIsolationStatus>((resolve, reject) => {
         if (!worker) {
@@ -77,10 +77,16 @@ async function verifyWorkerIsolation(): Promise<void> {
       );
     }
   } catch (error) {
-    if (error instanceof Error && error.message.includes('Failed to construct')) {
-      throw new Error(
-        'FFmpeg worker could not be created. If you use ad blockers or privacy extensions, try disabling them or using an InPrivate window.'
-      );
+    if (error instanceof Error) {
+      if (
+        error.name === 'SecurityError' ||
+        error.message.includes('Failed to construct') ||
+        error.message.includes('Worker')
+      ) {
+        throw new Error(
+          'FFmpeg worker could not be created. Browser extensions or security settings may be blocking module/blob workers. Try disabling blockers or using an InPrivate window.'
+        );
+      }
     }
     throw error;
   } finally {
@@ -279,6 +285,11 @@ class FFmpegService {
     } catch (error) {
       this.terminateFFmpeg();
       console.error('FFmpeg initialization failed:', error);
+      if (error instanceof Error && error.message.includes('called FFmpeg.terminate()')) {
+        throw new Error(
+          'FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers or strict browser security settings. Try disabling ad blockers, using an InPrivate window, or testing another browser.'
+        );
+      }
       throw error;
     }
   }
