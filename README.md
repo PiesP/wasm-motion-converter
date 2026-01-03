@@ -4,7 +4,7 @@ git clone https://github.com/yourusername/wasm-motion-converter.git
 
 Cloudflare Pages-ready SolidJS SPA that turns a **single image into a short looping MP4 or GIF** entirely in your browser using **ffmpeg.wasm**. No uploads, no servers, just client-side WASM.
 
-🔗 **Live demo:** (add the deployed URL here after publishing)
+🔗 **Live demo:** https://wasm-motion-converter.pages.dev/
 
 ---
 
