@@ -51,13 +51,16 @@ import {
   setErrorContext,
   setErrorMessage,
   setInputFile,
+  setAutoAppliedRecommendation,
   setPerformanceWarnings,
   setVideoMetadata,
+  autoAppliedRecommendation,
   videoMetadata,
 } from './stores/conversion-store';
 import { classifyConversionError } from './utils/classify-conversion-error';
-import { ETACalculator } from './utils/eta-calculator';
-import { validateVideoFile } from './utils/file-validation';
+import { estimateEtaRange, estimateOutputSizeRangenge, estimateOutpestimateioutputfrom './utils/estimate-output';
+import { ETACalculatorrom './utils/eta-etaucalculator
+import { validateVideoFilelidation';filevalidation
 
 const App: Component = () => {
   const [conversionStartTime, setConversionStartTime] = createSignal<number>(0);
@@ -87,6 +90,7 @@ const App: Component = () => {
   const resetAnalysisState = () => {
     setVideoMetadata(null);
     setPerformanceWarnings([]);
+    setAutoAppliedRecommendation(false);
   };
 
   const resetOutputState = () => {
@@ -145,6 +149,12 @@ const App: Component = () => {
       fullAnalysisDone = true;
       setVideoMetadata(metadata);
       setPerformanceWarnings(checkPerformance(file, metadata));
+      const recommendation = getRecommendedSettings(file, metadata, conversionSettings());
+      const applied = Boolean(recommendation);
+      setAutoAppliedRecommendation(applied);
+      if (recommendation) {
+        setConversionSettings(recommendation);
+      }
       setAppState('idle');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unknown error occurred');
@@ -285,6 +295,22 @@ const App: Component = () => {
     return getRecommendedSettings(file, metadata, conversionSettings());
   });
 
+  const estimates = createMemo(() => {
+    const file = inputFile();
+    const metadata = videoMetadata();
+    if (!file || !metadata) {
+      return null;
+    }
+    const scaleFactor = conversionSettings().scale ** 2;
+    const sizeRange = estimateOutputSizeRange(file.size, conversionSettings(), scaleFactor);
+    const megapixels = (metadata.width * metadata.height * scaleFactor) / 1_000_000;
+    const etaRange = estimateEtaRange(metadata.duration, megapixels, conversionSettings());
+    return {
+      sizeLabel: sizeRange.label,
+      etaLabel: etaRange.label,
+    };
+  });
+
   const recommendedActionLabel = createMemo(() => {
     const recommendation = recommendedSettings();
     if (!recommendation) {
@@ -390,6 +416,8 @@ const App: Component = () => {
                     warnings={performanceWarnings()}
                     actionLabel={recommendedActionLabel()}
                     onAction={recommendedActionLabel() ? handleApplyRecommended : undefined}
+                    autoApplied={autoAppliedRecommendation()}
+                    estimates={estimates()}
                   />
                 </Show>
               </Show>

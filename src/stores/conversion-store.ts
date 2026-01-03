@@ -1,7 +1,7 @@
 import { createSignal } from 'solid-js';
 import type {
-  ConversionSettings,
-  ConversionResult,
+  ConversionResult
+  ConversionSettingsgs,
   ErrorContext,
   PerformanceWarning,
   VideoMetadata,
@@ -24,3 +24,4 @@ export const MAX_RESULTS = 10;
 export const [conversionResults, setConversionResults] = createSignal<ConversionResult[]>([]);
 export const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
 export const [errorContext, setErrorContext] = createSignal<ErrorContext | null>(null);
+export const [autoAppliedRecommendation, setAutoAppliedRecommendation] = createSignal(false);

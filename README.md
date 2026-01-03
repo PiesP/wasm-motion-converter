@@ -2,7 +2,7 @@ git clone https://github.com/yourusername/wasm-motion-converter.git
 
 # dropconvert-wasm
 
-Cloudflare Pages-ready SolidJS SPA that turns a **single image into a short looping MP4 or GIF** entirely in your browser using **ffmpeg.wasm**. No uploads, no servers, just client-side WASM.
+Cloudflare Pages-ready SolidJS SPA that turns a **single video into an animated GIF or WebP** entirely in your browser using **ffmpeg.wasm**. No uploads, no servers, just client-side WASM.
 
 🔗 **Live demo:** https://wasm-motion-converter.pages.dev/
 
@@ -10,8 +10,8 @@ Cloudflare Pages-ready SolidJS SPA that turns a **single image into a short loop
 
 ## Features
 
-- 🎯 **Single-image dropzone** with image-only validation (PNG/JPEG/WebP/HEIC where supported)
-- 🎞️ **Outputs MP4 (H.264) or GIF** loops in a few seconds
+- 🎯 **Single-video dropzone** with video-only validation (MP4/MOV/WebM/AVI/MKV, max 500MB)
+- 🎞️ **Outputs GIF or WebP** loops in a few seconds
 - 🧠 **100% client-side** with ffmpeg.wasm multithreading (SharedArrayBuffer required)
 - ⚙️ **Quality & scale presets** (Low/Medium/High and 50/75/100%) for fast or high-fidelity results
 - ⏱️ **Clear states**: first-run FFmpeg download (~30MB), converting with progress + elapsed time, done preview & download
@@ -26,8 +26,8 @@ Cloudflare Pages-ready SolidJS SPA that turns a **single image into a short loop
 ### For users
 
 1. Open the web app (no install needed).
-2. Drop or select a single image.
-3. Pick **MP4** or **GIF**, choose quality/scale.
+2. Drop or select a single video.
+3. Pick **GIF** or **WebP**, choose quality/scale.
 4. Click **Convert** and watch the progress.
 5. Preview and download the result.
 
@@ -130,10 +130,10 @@ await ffmpeg.load({
 
 ### Presets & limits
 
-- Quality presets trade speed vs fidelity (Low / Medium / High).
-- Scale presets: 0.5×, 0.75×, 1× of the original image resolution.
-- Timeouts: FFmpeg init 90s, image prep 30s, conversion 5m.
-- Warnings surface for very large images to avoid memory issues in-browser.
+- Quality presets trade speed vs fidelity (Low / Medium / High) for GIF/WebP output.
+- Scale presets: 0.5×, 0.75×, 1× of the original video resolution.
+- Timeouts: FFmpeg init 90s, video analysis 30s, conversion 5m.
+- Warnings surface for very large or long videos to avoid memory issues in-browser.
 
 ### Browser compatibility
 

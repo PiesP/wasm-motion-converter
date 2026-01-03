@@ -1,10 +1,17 @@
 import { type Component, For } from 'solid-js';
 import type { PerformanceWarning } from '../types/conversion-types';
 
+interface EstimateSummary {
+  sizeLabel: string;
+  etaLabel?: string;
+}
+
 interface InlineWarningBannerProps {
   warnings: PerformanceWarning[];
   actionLabel?: string;
   onAction?: () => void;
+  autoApplied?: boolean;
+  estimates?: EstimateSummary | null;
 }
 
 const InlineWarningBanner: Component<InlineWarningBannerProps> = (props) => {
@@ -35,7 +42,10 @@ const InlineWarningBanner: Component<InlineWarningBannerProps> = (props) => {
             Performance Warning
           </h3>
           <div class="mt-2 text-sm text-yellow-700 dark:text-yellow-400">
-            <p class="mb-2">Your video may result in slow conversion or large output files:</p>
+            <p class="mb-2">
+              Your video may result in slow conversion or large output files:
+              {props.autoApplied ? ' Applied recommended settings to improve reliability.' : ''}
+            </p>
             <ul class="list-disc list-inside space-y-1">
               <For each={props.warnings}>
                 {(warning) => (
@@ -45,6 +55,18 @@ const InlineWarningBanner: Component<InlineWarningBannerProps> = (props) => {
                 )}
               </For>
             </ul>
+            {props.estimates ? (
+              <div class="mt-3 space-y-1 text-xs text-yellow-800 dark:text-yellow-200">
+                <p>
+                  Estimated output size: <strong>{props.estimates.sizeLabel}</strong>
+                  {props.estimates.etaLabel ? (
+                    <>
+                      {' · '}Estimated conversion time: <strong>{props.estimates.etaLabel}</strong>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            ) : null}
             {props.onAction && props.actionLabel ? (
               <div class="mt-3">
                 <button
