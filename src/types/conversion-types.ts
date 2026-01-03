@@ -13,6 +13,14 @@ export interface ConversionOptions {
   scale: ConversionScale;
 }
 
+export interface ConversionResult {
+  id: string;
+  outputBlob: Blob;
+  originalName: string;
+  originalSize: number;
+  createdAt: number;
+}
+
 export type ConversionErrorType = 'timeout' | 'memory' | 'format' | 'codec' | 'general';
 
 export interface ErrorContext {

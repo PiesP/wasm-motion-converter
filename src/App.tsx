@@ -1,4 +1,4 @@
-import { type Component, createSignal, onMount, Show } from 'solid-js';
+import { type Component, For, createMemo, createSignal, onMount, Show } from 'solid-js';
 import ConversionProgress from './components/ConversionProgress';
 import EnvironmentWarning from './components/EnvironmentWarning';
 import ErrorDisplay from './components/ErrorDisplay';
@@ -24,6 +24,7 @@ import {
   setLoadingProgress,
 } from './stores/app-store';
 import {
+  conversionResults,
   conversionProgress,
   conversionSettings,
   conversionStatusMessage,
@@ -31,15 +32,14 @@ import {
   errorContext,
   errorMessage,
   inputFile,
-  outputBlob,
   performanceWarnings,
   setConversionProgress,
+  setConversionResults,
   setConversionSettings,
   setConversionStatusMessage,
   setErrorContext,
   setErrorMessage,
   setInputFile,
-  setOutputBlob,
   setPerformanceWarnings,
   setVideoMetadata,
   videoMetadata,
@@ -71,7 +71,6 @@ const App: Component = () => {
   };
 
   const resetOutputState = () => {
-    setOutputBlob(null);
     setLoadingProgress(0);
   };
 
@@ -129,7 +128,6 @@ const App: Component = () => {
       setConversionStatusMessage('');
       setConversionStartTime(Date.now());
       setErrorContext(null);
-      setOutputBlob(null);
 
       ffmpegService.setProgressCallback(setConversionProgress);
       ffmpegService.setStatusCallback(setConversionStatusMessage);
@@ -140,7 +138,20 @@ const App: Component = () => {
       });
 
       clearConversionCallbacks();
-      setOutputBlob(blob);
+      const resultId =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      setConversionResults((results) => [
+        {
+          id: resultId,
+          outputBlob: blob,
+          originalName: file.name,
+          originalSize: file.size,
+          createdAt: Date.now(),
+        },
+        ...results,
+      ]);
       setAppState('done');
       setConversionStatusMessage('');
       setConversionStartTime(0);
@@ -177,6 +188,26 @@ const App: Component = () => {
     }
   };
 
+  const dropzoneStatus = createMemo(() => {
+    if (appState() === 'converting') {
+      return {
+        label: 'Converting video...',
+        progress: conversionProgress(),
+        message: conversionStatusMessage(),
+        showElapsedTime: true,
+        startTime: conversionStartTime(),
+      };
+    }
+    return null;
+  });
+
+  const isBusy = createMemo(
+    () =>
+      appState() === 'loading-ffmpeg' ||
+      appState() === 'analyzing' ||
+      appState() === 'converting'
+  );
+
   return (
     <div class="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col transition-colors">
       <header class="bg-white dark:bg-gray-900 shadow-sm dark:shadow-gray-800 border-b border-gray-200 dark:border-gray-800">
@@ -205,12 +236,16 @@ const App: Component = () => {
           />
         </Show>
 
-        {/* File dropzone - only show when no file selected */}
-        <Show when={!inputFile() && appState() !== 'converting' && appState() !== 'done'}>
-          <FileDropzone onFileSelected={handleFileSelected} />
-        </Show>
+        <FileDropzone
+          onFileSelected={handleFileSelected}
+          disabled={isBusy()}
+          status={dropzoneStatus()?.label}
+          progress={dropzoneStatus()?.progress}
+          statusMessage={dropzoneStatus()?.message}
+          showElapsedTime={dropzoneStatus()?.showElapsedTime}
+          startTime={dropzoneStatus()?.startTime}
+        />
 
-        {/* Loading states */}
         <Show when={appState() === 'loading-ffmpeg'}>
           <ConversionProgress
             progress={loadingProgress()}
@@ -223,11 +258,7 @@ const App: Component = () => {
         </Show>
 
         {/* Video metadata and warnings - show after file analysis */}
-        <Show
-          when={
-            inputFile() && videoMetadata() && appState() !== 'converting' && appState() !== 'done'
-          }
-        >
+        <Show when={inputFile() && videoMetadata()}>
           <VideoMetadataDisplay
             metadata={videoMetadata()!}
             fileName={inputFile()!.name}
@@ -240,68 +271,61 @@ const App: Component = () => {
         </Show>
 
         {/* Conversion settings - ALWAYS visible (from first screen) */}
-        <Show when={appState() !== 'converting' && appState() !== 'done'}>
-          <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6">
-            <FormatSelector
-              value={conversionSettings().format}
-              onChange={(format) => setConversionSettings({ ...conversionSettings(), format })}
-              disabled={!videoMetadata()}
-            />
-
-            <QualitySelector
-              value={conversionSettings().quality}
-              onChange={(quality) => setConversionSettings({ ...conversionSettings(), quality })}
-              disabled={!videoMetadata()}
-            />
-
-            <ScaleSelector
-              value={conversionSettings().scale}
-              inputMetadata={videoMetadata()}
-              onChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
-              disabled={!videoMetadata()}
-            />
-
-            <div class="flex gap-3">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6">
+          <div class="flex gap-3 mb-6">
+            <button
+              type="button"
+              disabled={!videoMetadata() || isBusy()}
+              class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleConvert}
+            >
+              Convert
+            </button>
+            <Show when={inputFile()}>
               <button
                 type="button"
-                disabled={!videoMetadata() || appState() !== 'idle'}
-                class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={handleConvert}
+                disabled={isBusy()}
+                class="inline-flex justify-center items-center px-4 py-2 border border-gray-300 dark:border-gray-700 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleReset}
               >
-                Convert
+                Cancel
               </button>
-              <Show when={inputFile()}>
-                <button
-                  type="button"
-                  class="inline-flex justify-center items-center px-4 py-2 border border-gray-300 dark:border-gray-700 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 dark:focus:ring-offset-gray-900"
-                  onClick={handleReset}
-                >
-                  Cancel
-                </button>
-              </Show>
-            </div>
+            </Show>
           </div>
-        </Show>
 
-        {/* Converting state */}
-        <Show when={appState() === 'converting'}>
-          <ConversionProgress
-            progress={conversionProgress()}
-            status="Converting video..."
-            statusMessage={conversionStatusMessage()}
-            showElapsedTime={true}
-            startTime={conversionStartTime()}
+          <FormatSelector
+            value={conversionSettings().format}
+            onChange={(format) => setConversionSettings({ ...conversionSettings(), format })}
+            disabled={!videoMetadata() || isBusy()}
           />
-        </Show>
 
-        {/* Result preview */}
-        <Show when={appState() === 'done' && outputBlob()}>
-          <ResultPreview
-            outputBlob={outputBlob()!}
-            originalSize={inputFile()?.size ?? 0}
-            originalName={inputFile()?.name ?? ''}
-            onReset={handleReset}
+          <QualitySelector
+            value={conversionSettings().quality}
+            onChange={(quality) => setConversionSettings({ ...conversionSettings(), quality })}
+            disabled={!videoMetadata() || isBusy()}
           />
+
+          <ScaleSelector
+            value={conversionSettings().scale}
+            inputMetadata={videoMetadata()}
+            onChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
+            disabled={!videoMetadata() || isBusy()}
+          />
+        </div>
+
+        {/* Result previews */}
+        <Show when={conversionResults().length > 0}>
+          <div class="mt-8 space-y-6">
+            <For each={conversionResults()}>
+              {(result) => (
+                <ResultPreview
+                  outputBlob={result.outputBlob}
+                  originalName={result.originalName}
+                  originalSize={result.originalSize}
+                />
+              )}
+            </For>
+          </div>
         </Show>
       </main>
 

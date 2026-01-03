@@ -17,9 +17,13 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
       setElapsedSeconds(0);
       return;
     }
-    const interval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - props.startTime) / 1000);
+    const updateElapsed = () => {
+      const elapsed = Math.floor((Date.now() - props.startTime!) / 1000);
       setElapsedSeconds(elapsed);
+    };
+    updateElapsed();
+    const interval = setInterval(() => {
+      updateElapsed();
     }, 1000);
 
     onCleanup(() => {

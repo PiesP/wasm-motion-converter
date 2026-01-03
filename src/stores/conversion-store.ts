@@ -1,6 +1,7 @@
 import { createSignal } from 'solid-js';
 import type {
   ConversionSettings,
+  ConversionResult,
   ErrorContext,
   PerformanceWarning,
   VideoMetadata,
@@ -19,6 +20,6 @@ export const [conversionSettings, setConversionSettings] = createSignal<Conversi
 export const [performanceWarnings, setPerformanceWarnings] = createSignal<PerformanceWarning[]>([]);
 export const [conversionProgress, setConversionProgress] = createSignal(0);
 export const [conversionStatusMessage, setConversionStatusMessage] = createSignal<string>('');
-export const [outputBlob, setOutputBlob] = createSignal<Blob | null>(null);
+export const [conversionResults, setConversionResults] = createSignal<ConversionResult[]>([]);
 export const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
 export const [errorContext, setErrorContext] = createSignal<ErrorContext | null>(null);
