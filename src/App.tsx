@@ -162,6 +162,10 @@ const App: Component = () => {
     if (!validation.valid) {
       setErrorMessage(validation.error ?? 'Unknown error');
       setAppState('error');
+      // Move focus to retry button for keyboard users and screen readers
+      queueMicrotask(() => {
+        document.querySelector<HTMLButtonElement>('[data-error-retry-button]')?.focus();
+      });
       return;
     }
 
@@ -214,6 +218,10 @@ const App: Component = () => {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unknown error occurred');
       setAppState('error');
+      // Move focus to retry button for keyboard users and screen readers
+      queueMicrotask(() => {
+        document.querySelector<HTMLButtonElement>('[data-error-retry-button]')?.focus();
+      });
     }
   };
 
@@ -299,6 +307,10 @@ const App: Component = () => {
       setAppState('done');
       setConversionStatusMessage('');
       setConversionStartTime(0);
+      // Move focus to download button for keyboard users and screen readers
+      queueMicrotask(() => {
+        document.querySelector<HTMLButtonElement>('[data-download-button]')?.focus();
+      });
     } catch (error) {
       clearConversionCallbacks();
       if (memoryCheckTimer) {
@@ -336,6 +348,10 @@ const App: Component = () => {
       setErrorMessage(context.originalError);
       setErrorContext(context);
       setAppState('error');
+      // Move focus to retry button for keyboard users and screen readers
+      queueMicrotask(() => {
+        document.querySelector<HTMLButtonElement>('[data-error-retry-button]')?.focus();
+      });
     }
   };
 

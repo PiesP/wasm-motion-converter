@@ -31,11 +31,18 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
     `${baseOptionClass} ${selected ? selectedOptionClass : defaultOptionClass}`;
 
   return (
-    <div class={`mb-6 ${props.disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-      <div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+    <fieldset
+      class={`mb-6 ${props.disabled ? 'opacity-50 pointer-events-none' : ''}`}
+      disabled={props.disabled}
+    >
+      <legend class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
         {props.title}
-      </div>
-      <div class={`grid gap-3 ${columns() === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+      </legend>
+      <div
+        role="radiogroup"
+        aria-labelledby={props.name}
+        class={`grid gap-3 ${columns() === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}
+      >
         <For each={props.options}>
           {(option) => (
             <label class={optionClass(option.value === props.value)}>
@@ -58,7 +65,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
           )}
         </For>
       </div>
-    </div>
+    </fieldset>
   );
 };
 
