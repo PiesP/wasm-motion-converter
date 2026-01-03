@@ -23,11 +23,11 @@ export default defineConfig({
       'Cross-Origin-Opener-Policy': 'same-origin',
     },
   },
+  // Vite dependency pre-bundling can break @ffmpeg/ffmpeg's internal worker URL rewriting
+  // (it may point to a non-existent /node_modules/.vite/deps/worker.js). Excluding it keeps
+  // the worker module resolvable in dev.
   optimizeDeps: {
-    exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
-  },
-  worker: {
-    format: 'es',
+    exclude: ['@ffmpeg/ffmpeg'],
   },
   build: {
     target: 'esnext',
