@@ -286,9 +286,17 @@ class FFmpegService {
 
   /**
    * Creates a shared FFmpeg log handler for conversion operations
-   * Logs all FFmpeg output and maintains a buffer of recent logs
+   * Logs all FFmpeg output, maintains a buffer of recent logs, and parses progress information
+   *
+   * @param totalDuration - Total duration in seconds for progress calculation (optional)
+   * @param progressStart - Starting progress percentage (optional)
+   * @param progressEnd - Ending progress percentage (optional)
    */
-  private createFFmpegLogHandler(): (event: { type: string; message: string }) => void {
+  private createFFmpegLogHandler(
+    totalDuration?: number,
+    progressStart?: number,
+    progressEnd?: number
+  ): (event: { type: string; message: string }) => void {
     return ({ type, message }: { type: string; message: string }) => {
       logger.debug('ffmpeg', `[${type}] ${message}`);
 
@@ -300,7 +308,60 @@ class FFmpegService {
       if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
         logger.warn('ffmpeg', `FFmpeg warning/error: ${message}`);
       }
+
+      // Parse progress from FFmpeg logs when native progress events don't fire
+      // This is especially useful for single-threaded filter operations
+      if (totalDuration && progressStart !== undefined && progressEnd !== undefined) {
+        this.parseProgressFromLog(message, totalDuration, progressStart, progressEnd);
+      }
     };
+  }
+
+  /**
+   * Parse progress information from FFmpeg log messages
+   * Extracts frame count and time information as fallback when native progress events don't work
+   */
+  private parseProgressFromLog(
+    message: string,
+    totalDuration: number,
+    progressStart: number,
+    progressEnd: number
+  ): void {
+    // Parse time information: "time=00:01:23.45"
+    const timeMatch = message.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+    if (timeMatch) {
+      const hours = Number.parseInt(timeMatch[1] ?? '0', 10);
+      const minutes = Number.parseInt(timeMatch[2] ?? '0', 10);
+      const seconds = Number.parseFloat(timeMatch[3] ?? '0');
+      const currentTime = hours * 3600 + minutes * 60 + seconds;
+
+      // Calculate progress as a percentage of total duration
+      const progressRatio = Math.min(currentTime / totalDuration, 1.0);
+      const progressRange = progressEnd - progressStart;
+      const calculatedProgress = progressStart + progressRatio * progressRange;
+
+      // Only emit if progress has changed significantly (avoid spam)
+      if (Math.abs(calculatedProgress - this.lastProgressValue) > 0.5) {
+        this.emitProgress(Math.round(calculatedProgress));
+      }
+      return;
+    }
+
+    // Parse frame information: "frame= 123" or "frame=123"
+    const frameMatch = message.match(/frame=\s*(\d+)/);
+    if (frameMatch && totalDuration > 0) {
+      const currentFrame = Number.parseInt(frameMatch[1] ?? '0', 10);
+      // Estimate total frames based on typical frame rate (assume 30fps if unknown)
+      const estimatedTotalFrames = totalDuration * 30;
+      const progressRatio = Math.min(currentFrame / estimatedTotalFrames, 1.0);
+      const progressRange = progressEnd - progressStart;
+      const calculatedProgress = progressStart + progressRatio * progressRange;
+
+      // Only emit if progress has changed significantly
+      if (Math.abs(calculatedProgress - this.lastProgressValue) > 0.5) {
+        this.emitProgress(Math.round(calculatedProgress));
+      }
+    }
   }
 
   /**
@@ -626,7 +687,11 @@ class FFmpegService {
     }
   }
 
-  async convertToGIF(file: File, options: ConversionOptions): Promise<Blob> {
+  async convertToGIF(
+    file: File,
+    options: ConversionOptions,
+    metadata?: VideoMetadata
+  ): Promise<Blob> {
     const conversionStartTime = Date.now();
 
     // Check if FFmpeg needs reinitialization
@@ -648,12 +713,19 @@ class FFmpegService {
       scale,
       fps: settings.fps,
       colors: settings.colors,
+      duration: metadata?.duration,
     });
 
     this.cancellationRequested = false;
     this.startWatchdog();
 
-    const ffmpegLogHandler = this.createFFmpegLogHandler();
+    // Create log handler with progress parsing for palette generation
+    const videoDuration = metadata?.duration;
+    const ffmpegLogHandler = this.createFFmpegLogHandler(
+      videoDuration,
+      FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START,
+      FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_END
+    );
     ffmpeg.on('log', ffmpegLogHandler);
 
     try {
@@ -714,6 +786,15 @@ class FFmpegService {
         if (this.cancellationRequested) {
           throw new Error('Conversion cancelled by user');
         }
+
+        // Update log handler for final conversion phase with new progress range
+        ffmpeg.off('log', ffmpegLogHandler);
+        const conversionLogHandler = this.createFFmpegLogHandler(
+          videoDuration,
+          FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START,
+          FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END
+        );
+        ffmpeg.on('log', conversionLogHandler);
 
         this.updateStatus('Converting to GIF with palette...');
         const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
@@ -794,12 +875,23 @@ class FFmpegService {
       await this.safeDelete(outputFileName);
       throw error;
     } finally {
+      // Remove both log handlers (conversionLogHandler might not exist if error during palette gen)
       ffmpeg.off('log', ffmpegLogHandler);
+      try {
+        // @ts-expect-error - conversionLogHandler might not be defined
+        ffmpeg.off('log', conversionLogHandler);
+      } catch {
+        // Ignore if conversionLogHandler doesn't exist
+      }
       this.stopWatchdog();
     }
   }
 
-  async convertToWebP(file: File, options: ConversionOptions): Promise<Blob> {
+  async convertToWebP(
+    file: File,
+    options: ConversionOptions,
+    metadata?: VideoMetadata
+  ): Promise<Blob> {
     const conversionStartTime = Date.now();
 
     // Check if FFmpeg needs reinitialization
@@ -821,12 +913,19 @@ class FFmpegService {
       fps: settings.fps,
       webpQuality: settings.quality,
       preset: settings.preset,
+      duration: metadata?.duration,
     });
 
     this.cancellationRequested = false;
     this.startWatchdog();
 
-    const ffmpegLogHandler = this.createFFmpegLogHandler();
+    // Create log handler with progress parsing for WebP conversion
+    const videoDuration = metadata?.duration;
+    const ffmpegLogHandler = this.createFFmpegLogHandler(
+      videoDuration,
+      FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
+      FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END
+    );
     ffmpeg.on('log', ffmpegLogHandler);
 
     try {

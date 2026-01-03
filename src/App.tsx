@@ -270,10 +270,15 @@ const App: Component = () => {
       ffmpegService.setProgressCallback(progressCallback);
       ffmpegService.setStatusCallback(setConversionStatusMessage);
 
-      const blob = await convertVideo(file, settings.format, {
-        quality: settings.quality,
-        scale: settings.scale,
-      });
+      const blob = await convertVideo(
+        file,
+        settings.format,
+        {
+          quality: settings.quality,
+          scale: settings.scale,
+        },
+        videoMetadata() ?? undefined
+      );
 
       clearConversionCallbacks();
       if (memoryCheckTimer) {
