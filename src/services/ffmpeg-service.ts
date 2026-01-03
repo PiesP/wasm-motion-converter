@@ -88,7 +88,11 @@ class FFmpegService {
     }
     try {
       await this.ffmpeg.deleteFile(fileName);
-    } catch {}
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.debug(`[FFmpeg Service] Could not delete ${fileName}:`, error);
+      }
+    }
   }
 
   async initialize(onProgress?: (progress: number) => void): Promise<void> {
@@ -257,6 +261,8 @@ class FFmpegService {
           () => this.terminateFFmpeg()
         );
       } catch (error) {
+        console.warn('[FFmpeg Service] Palette generation failed, falling back to direct conversion:', error);
+        this.updateStatus('Using fallback conversion method...');
         await this.safeDelete(paletteFileName);
 
         if (!this.ffmpeg || !this.loaded) {
@@ -431,6 +437,7 @@ class FFmpegService {
       const timeSinceProgress = Date.now() - this.lastProgressTime;
 
       if (timeSinceProgress > 90000) {
+        this.updateStatus('Conversion stalled - terminating...');
         this.terminateFFmpeg();
       }
     }, 10000);

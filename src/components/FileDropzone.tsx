@@ -98,11 +98,21 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      tabIndex={isInteractive() ? 0 : -1}
+      onKeyDown={(e) => {
+        if (isInteractive() && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          document.getElementById('file-upload')?.click();
+        }
+      }}
+      role="button"
+      aria-label="Drop video file here or press Enter to select a file"
+      aria-disabled={!isInteractive()}
     >
       {isBusy() ? (
         <div class="flex flex-col items-center gap-4">
           <div class="flex items-center gap-3 text-sm font-medium text-gray-700 dark:text-gray-200">
-            <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+            <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24" aria-hidden="true">
               <circle
                 class="opacity-25"
                 cx="12"
@@ -120,7 +130,14 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
             <span>{props.status}</span>
             <span class="text-gray-600 dark:text-gray-400">{progressValue()}%</span>
           </div>
-          <div class="w-full max-w-md bg-gray-200 dark:bg-gray-800 rounded-full h-2.5">
+          <div
+            class="w-full max-w-md bg-gray-200 dark:bg-gray-800 rounded-full h-2.5"
+            role="progressbar"
+            aria-valuenow={progressValue()}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={props.status || 'Processing'}
+          >
             <div
               class="bg-blue-600 dark:bg-blue-500 h-2.5 rounded-full transition-all duration-300"
               style={{ width: `${progressValue()}%` }}

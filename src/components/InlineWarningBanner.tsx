@@ -9,7 +9,11 @@ interface InlineWarningBannerProps {
 
 const InlineWarningBanner: Component<InlineWarningBannerProps> = (props) => {
   return (
-    <div class="bg-yellow-50 dark:bg-yellow-950 border-l-4 border-yellow-400 dark:border-yellow-500 rounded-lg p-4">
+    <div
+      class="bg-yellow-50 dark:bg-yellow-950 border-l-4 border-yellow-400 dark:border-yellow-500 rounded-lg p-4"
+      role="alert"
+      aria-live="polite"
+    >
       <div class="flex items-start">
         <div class="flex-shrink-0">
           <svg

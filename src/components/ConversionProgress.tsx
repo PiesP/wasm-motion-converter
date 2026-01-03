@@ -40,7 +40,14 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
             {props.progress}%
           </span>
         </div>
-        <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5">
+        <div
+          class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5"
+          role="progressbar"
+          aria-valuenow={props.progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={props.status}
+        >
           <div
             class="bg-blue-600 dark:bg-blue-500 h-2.5 rounded-full transition-all duration-300"
             style={{ width: `${props.progress}%` }}
@@ -49,7 +56,7 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
       </div>
       <div class="flex flex-col items-center justify-center text-gray-500 dark:text-gray-400">
         <div class="flex items-center">
-          <svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24">
+          <svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" aria-hidden="true">
             <circle
               class="opacity-25"
               cx="12"

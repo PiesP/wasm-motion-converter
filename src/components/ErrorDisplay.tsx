@@ -9,7 +9,11 @@ interface ErrorDisplayProps {
 
 const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
   return (
-    <div class="bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-500 p-4">
+    <div
+      class="bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-500 p-4"
+      role="alert"
+      aria-live="assertive"
+    >
       <div class="flex">
         <div class="flex-shrink-0">
           <svg

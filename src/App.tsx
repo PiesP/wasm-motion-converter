@@ -32,6 +32,7 @@ import {
   errorContext,
   errorMessage,
   inputFile,
+  MAX_RESULTS,
   performanceWarnings,
   setConversionProgress,
   setConversionResults,
@@ -161,16 +162,19 @@ const App: Component = () => {
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      setConversionResults((results) => [
-        {
-          id: resultId,
-          outputBlob: blob,
-          originalName: file.name,
-          originalSize: file.size,
-          createdAt: Date.now(),
-        },
-        ...results,
-      ]);
+      setConversionResults((results) => {
+        const newResults = [
+          {
+            id: resultId,
+            outputBlob: blob,
+            originalName: file.name,
+            originalSize: file.size,
+            createdAt: Date.now(),
+          },
+          ...results,
+        ];
+        return newResults.slice(0, MAX_RESULTS);
+      });
       setAppState('done');
       setConversionStatusMessage('');
       setConversionStartTime(0);
