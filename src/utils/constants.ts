@@ -30,9 +30,9 @@ export const QUALITY_PRESETS = {
     high: { fps: 24, colors: 256 },
   },
   webp: {
-    low: { fps: 10, quality: 50, preset: 'picture', compressionLevel: 4 },
-    medium: { fps: 15, quality: 75, preset: 'picture', compressionLevel: 4 },
-    high: { fps: 24, quality: 90, preset: 'default', compressionLevel: 6 },
+    low: { fps: 10, quality: 70, preset: 'default', compressionLevel: 3, method: 4 },
+    medium: { fps: 15, quality: 85, preset: 'default', compressionLevel: 4, method: 5 },
+    high: { fps: 24, quality: 95, preset: 'default', compressionLevel: 6, method: 6 },
   },
 } as const;
 

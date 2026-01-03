@@ -1,5 +1,5 @@
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
-type LogCategory = 'ffmpeg' | 'conversion' | 'progress' | 'watchdog' | 'general';
+type LogCategory = 'ffmpeg' | 'conversion' | 'progress' | 'watchdog' | 'general' | 'performance';
 
 class Logger {
   private isDev = import.meta.env.DEV;
@@ -13,8 +13,8 @@ class Logger {
   }
 
   private log(level: LogLevel, category: LogCategory, message: string, context?: unknown): void {
-    // Filter DEBUG/INFO in production
-    if (!this.isDev && (level === 'DEBUG' || level === 'INFO')) {
+    // Filter DEBUG/INFO in production, except for performance logs
+    if (!this.isDev && (level === 'DEBUG' || level === 'INFO') && category !== 'performance') {
       return;
     }
 
@@ -45,6 +45,10 @@ class Logger {
 
   error(category: LogCategory, message: string, context?: unknown): void {
     this.log('ERROR', category, message, context);
+  }
+
+  performance(message: string, context?: unknown): void {
+    this.log('INFO', 'performance', message, context);
   }
 }
 

@@ -17,6 +17,7 @@ import {
 } from '../utils/constants';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { logger } from '../utils/logger';
+import { performanceTracker } from '../utils/performance-tracker';
 import { withTimeout } from '../utils/with-timeout';
 
 const INPUT_FILE_NAME = 'input.mp4';
@@ -331,6 +332,9 @@ class FFmpegService {
             onStatus(`Downloading FFmpeg assets from ${hostLabel}...`);
           }
 
+          performanceTracker.startPhase('ffmpeg-download', { cdn: hostLabel });
+          logger.performance(`Starting FFmpeg asset download from ${hostLabel}`);
+
           return await Promise.all([
             loadFFmpegAsset(
               `${baseURL}/ffmpeg-core.js`,
@@ -374,11 +378,16 @@ class FFmpegService {
 
       reportProgress(5);
       const [coreURL, wasmURL, workerURL] = await resolveFFmpegAssets();
+      performanceTracker.endPhase('ffmpeg-download');
+      logger.performance('FFmpeg asset download complete');
 
       reportProgress(Math.max(downloadProgress, 90));
       if (onStatus) {
         onStatus('Initializing FFmpeg runtime...');
       }
+
+      performanceTracker.startPhase('ffmpeg-init');
+      logger.performance('Starting FFmpeg initialization');
 
       await withTimeout(
         ffmpeg.load({
@@ -390,6 +399,8 @@ class FFmpegService {
         `FFmpeg initialization timed out after ${TIMEOUT_FFMPEG_INIT / 1000} seconds. Please check your internet connection and try again.`,
         () => this.terminateFFmpeg()
       );
+      performanceTracker.endPhase('ffmpeg-init');
+      logger.performance('FFmpeg initialization complete');
 
       reportProgress(100);
       if (onStatus) {
@@ -543,6 +554,9 @@ class FFmpegService {
         // Start heartbeat for palette generation to prevent watchdog timeout
         const paletteHeartbeat = this.startProgressHeartbeat(10, 35, 30);
 
+        performanceTracker.startPhase('palette-gen');
+        logger.performance('Starting GIF palette generation');
+
         try {
           await withTimeout(
             ffmpeg.exec(paletteCmd),
@@ -554,6 +568,8 @@ class FFmpegService {
           this.stopProgressHeartbeat(paletteHeartbeat);
         }
 
+        performanceTracker.endPhase('palette-gen');
+        logger.performance('GIF palette generation complete');
         logger.debug('conversion', 'Palette generation complete');
         this.emitProgress(40);
 
@@ -624,6 +640,9 @@ class FFmpegService {
         duration: `${(duration / 1000).toFixed(2)}s`,
         outputSize: data.length,
       });
+
+      performanceTracker.saveToSessionStorage();
+      logger.performance('Performance report saved to sessionStorage');
 
       if (isMemoryCritical()) {
         await this.clearCachedInput();
@@ -723,11 +742,21 @@ class FFmpegService {
         settings.preset,
         '-compression_level',
         settings.compressionLevel.toString(),
+        '-method',
+        settings.method.toString(),
+        '-qmin',
+        '1',
+        '-qmax',
+        '100',
         '-loop',
         '0',
         outputFileName,
       ];
       logger.debug('ffmpeg', 'WebP conversion command', { cmd: webpCmd.join(' ') });
+
+      performanceTracker.startPhase('webp-encode');
+      logger.performance('Starting WebP encoding');
+
       try {
         await withTimeout(
           ffmpeg.exec(webpCmd),
@@ -738,6 +767,9 @@ class FFmpegService {
       } finally {
         this.stopProgressHeartbeat(heartbeat);
       }
+
+      performanceTracker.endPhase('webp-encode');
+      logger.performance('WebP encoding complete');
 
       this.emitProgress(90);
 
@@ -750,6 +782,9 @@ class FFmpegService {
         duration: `${(duration / 1000).toFixed(2)}s`,
         outputSize: data.length,
       });
+
+      performanceTracker.saveToSessionStorage();
+      logger.performance('Performance report saved to sessionStorage');
 
       if (isMemoryCritical()) {
         await this.clearCachedInput();
