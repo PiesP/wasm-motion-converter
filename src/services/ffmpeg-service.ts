@@ -9,6 +9,7 @@ import {
   FFMPEG_CORE_URL,
   QUALITY_PRESETS,
   TIMEOUT_CONVERSION,
+  TIMEOUT_FFMPEG_DOWNLOAD,
   TIMEOUT_FFMPEG_INIT,
   TIMEOUT_VIDEO_ANALYSIS,
 } from '../utils/constants';
@@ -18,6 +19,15 @@ import { withTimeout } from '../utils/with-timeout';
 const INPUT_FILE_NAME = 'input.mp4';
 const INPUT_CACHE_TTL_MS = 120_000;
 const PROGRESS_THROTTLE_MS = 150;
+const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
+
+async function loadFFmpegAsset(url: string, mimeType: string, label: string): Promise<string> {
+  return withTimeout(
+    toBlobURL(url, mimeType),
+    TIMEOUT_FFMPEG_DOWNLOAD,
+    `Downloading ${label} timed out after ${DOWNLOAD_TIMEOUT_SECONDS} seconds. Please check your network connection and ensure unpkg.com is reachable.`
+  );
+}
 
 function getOptimalThreadCount(): number {
   const cores = navigator.hardwareConcurrency || 2;
@@ -104,6 +114,16 @@ class FFmpegService {
       return;
     }
 
+    const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
+    const isCrossOriginIsolated =
+      typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
+
+    if (!hasSharedArrayBuffer || !isCrossOriginIsolated) {
+      throw new Error(
+        'SharedArrayBuffer is not available. This app requires cross-origin isolation (COOP/COEP headers) to initialize FFmpeg.'
+      );
+    }
+
     // Wait for any ongoing termination to complete
     while (this.isTerminating) {
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -130,18 +150,26 @@ class FFmpegService {
     const baseURL = FFMPEG_CORE_URL;
 
     try {
+      const [coreURL, wasmURL, workerURL] = await Promise.all([
+        loadFFmpegAsset(`${baseURL}/ffmpeg-core.js`, 'text/javascript', 'FFmpeg core script'),
+        loadFFmpegAsset(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm', 'FFmpeg core WASM'),
+        loadFFmpegAsset(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript', 'FFmpeg worker'),
+      ]);
+
       await withTimeout(
         ffmpeg.load({
-          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-          workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+          coreURL,
+          wasmURL,
+          workerURL,
         }),
         TIMEOUT_FFMPEG_INIT,
-        `FFmpeg initialization timed out after ${TIMEOUT_FFMPEG_INIT / 1000} seconds. Please check your internet connection and try again.`
+        `FFmpeg initialization timed out after ${TIMEOUT_FFMPEG_INIT / 1000} seconds. Please check your internet connection and try again.`,
+        () => this.terminateFFmpeg()
       );
 
       this.loaded = true;
     } catch (error) {
+      this.terminateFFmpeg();
       console.error('FFmpeg initialization failed:', error);
       throw error;
     }
