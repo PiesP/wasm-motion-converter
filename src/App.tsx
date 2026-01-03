@@ -211,7 +211,7 @@ const App: Component = () => {
   return (
     <div class="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col transition-colors">
       <header class="bg-white dark:bg-gray-900 shadow-sm dark:shadow-gray-800 border-b border-gray-200 dark:border-gray-800">
-        <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div class="flex-1">
             <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Motion Converter</h1>
             <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
@@ -222,95 +222,101 @@ const App: Component = () => {
         </div>
       </header>
 
-      <main class="flex-1 max-w-4xl mx-auto w-full px-4 py-8">
-        <Show when={!environmentSupported()}>
-          <EnvironmentWarning />
-        </Show>
-
-        <Show when={appState() === 'error' && errorMessage()}>
-          <ErrorDisplay
-            message={errorMessage()!}
-            suggestion={errorContext()?.suggestion}
-            onRetry={handleRetry}
-            onSelectNewFile={handleReset}
-          />
-        </Show>
-
-        <FileDropzone
-          onFileSelected={handleFileSelected}
-          disabled={isBusy()}
-          status={dropzoneStatus()?.label}
-          progress={dropzoneStatus()?.progress}
-          statusMessage={dropzoneStatus()?.message}
-          showElapsedTime={dropzoneStatus()?.showElapsedTime}
-          startTime={dropzoneStatus()?.startTime}
-        />
-
-        <Show when={appState() === 'loading-ffmpeg'}>
-          <ConversionProgress
-            progress={loadingProgress()}
-            status="Loading FFmpeg (~30MB download)..."
-          />
-        </Show>
-
-        <Show when={appState() === 'analyzing'}>
-          <ConversionProgress progress={50} status="Analyzing video..." />
-        </Show>
-
-        {/* Video metadata and warnings - show after file analysis */}
-        <Show when={inputFile() && videoMetadata()}>
-          <VideoMetadataDisplay
-            metadata={videoMetadata()!}
-            fileName={inputFile()!.name}
-            fileSize={inputFile()!.size}
-          />
-
-          <Show when={performanceWarnings().length > 0}>
-            <InlineWarningBanner warnings={performanceWarnings()} />
+      <main class="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
+        <div class="space-y-6">
+          <Show when={!environmentSupported()}>
+            <EnvironmentWarning />
           </Show>
-        </Show>
 
-        {/* Conversion settings - ALWAYS visible (from first screen) */}
-        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6">
-          <div class="flex gap-3 mb-6">
-            <button
-              type="button"
-              disabled={!videoMetadata() || isBusy()}
-              class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={handleConvert}
-            >
-              Convert
-            </button>
-            <Show when={inputFile()}>
-              <button
-                type="button"
-                disabled={isBusy()}
-                class="inline-flex justify-center items-center px-4 py-2 border border-gray-300 dark:border-gray-700 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={handleReset}
-              >
-                Cancel
-              </button>
+          <Show when={appState() === 'error' && errorMessage()}>
+            <ErrorDisplay
+              message={errorMessage()!}
+              suggestion={errorContext()?.suggestion}
+              onRetry={handleRetry}
+              onSelectNewFile={handleReset}
+            />
+          </Show>
+        </div>
+
+        <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-8 lg:items-start">
+          <div class="space-y-6">
+            <FileDropzone
+              onFileSelected={handleFileSelected}
+              disabled={isBusy()}
+              status={dropzoneStatus()?.label}
+              progress={dropzoneStatus()?.progress}
+              statusMessage={dropzoneStatus()?.message}
+              showElapsedTime={dropzoneStatus()?.showElapsedTime}
+              startTime={dropzoneStatus()?.startTime}
+            />
+
+            <Show when={appState() === 'loading-ffmpeg'}>
+              <ConversionProgress
+                progress={loadingProgress()}
+                status="Loading FFmpeg (~30MB download)..."
+              />
+            </Show>
+
+            <Show when={appState() === 'analyzing'}>
+              <ConversionProgress progress={50} status="Analyzing video..." />
+            </Show>
+
+            {/* Video metadata and warnings - show after file analysis */}
+            <Show when={inputFile() && videoMetadata()}>
+              <VideoMetadataDisplay
+                metadata={videoMetadata()!}
+                fileName={inputFile()!.name}
+                fileSize={inputFile()!.size}
+              />
+
+              <Show when={performanceWarnings().length > 0}>
+                <InlineWarningBanner warnings={performanceWarnings()} />
+              </Show>
             </Show>
           </div>
 
-          <FormatSelector
-            value={conversionSettings().format}
-            onChange={(format) => setConversionSettings({ ...conversionSettings(), format })}
-            disabled={!videoMetadata() || isBusy()}
-          />
+          {/* Conversion settings - ALWAYS visible (from first screen) */}
+          <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6">
+            <div class="flex gap-3 mb-6">
+              <button
+                type="button"
+                disabled={!videoMetadata() || isBusy()}
+                class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleConvert}
+              >
+                Convert
+              </button>
+              <Show when={inputFile()}>
+                <button
+                  type="button"
+                  disabled={isBusy()}
+                  class="inline-flex justify-center items-center px-4 py-2 border border-gray-300 dark:border-gray-700 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={handleReset}
+                >
+                  Cancel
+                </button>
+              </Show>
+            </div>
 
-          <QualitySelector
-            value={conversionSettings().quality}
-            onChange={(quality) => setConversionSettings({ ...conversionSettings(), quality })}
-            disabled={!videoMetadata() || isBusy()}
-          />
+            <FormatSelector
+              value={conversionSettings().format}
+              onChange={(format) => setConversionSettings({ ...conversionSettings(), format })}
+              disabled={!videoMetadata() || isBusy()}
+            />
 
-          <ScaleSelector
-            value={conversionSettings().scale}
-            inputMetadata={videoMetadata()}
-            onChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
-            disabled={!videoMetadata() || isBusy()}
-          />
+            <QualitySelector
+              value={conversionSettings().quality}
+              onChange={(quality) => setConversionSettings({ ...conversionSettings(), quality })}
+              disabled={!videoMetadata() || isBusy()}
+            />
+
+            <ScaleSelector
+              value={conversionSettings().scale}
+              inputMetadata={videoMetadata()}
+              onChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
+              disabled={!videoMetadata() || isBusy()}
+            />
+          </div>
         </div>
 
         {/* Result previews */}

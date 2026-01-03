@@ -2,7 +2,7 @@ import type { Component } from 'solid-js';
 
 const EnvironmentWarning: Component = () => {
   return (
-    <div class="bg-yellow-50 dark:bg-yellow-950 border-l-4 border-yellow-400 dark:border-yellow-500 p-4 mb-6">
+    <div class="bg-yellow-50 dark:bg-yellow-950 border-l-4 border-yellow-400 dark:border-yellow-500 p-4">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg

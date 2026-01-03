@@ -3,7 +3,7 @@ import type { Component } from 'solid-js';
 const LicenseAttribution: Component = () => {
   return (
     <footer class="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 py-6 mt-8">
-      <div class="max-w-4xl mx-auto px-4 text-center text-sm text-gray-600 dark:text-gray-400 space-y-2">
+      <div class="max-w-6xl mx-auto px-4 text-center text-sm text-gray-600 dark:text-gray-400 space-y-2">
         <p>
           Powered by{' '}
           <a

@@ -11,7 +11,7 @@ interface VideoMetadataDisplayProps {
 
 const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
   return (
-    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 mb-6">
+    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
       <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Input Video</h3>
       <div class="space-y-2 text-sm">
         <div class="flex justify-between">
