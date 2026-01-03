@@ -16,7 +16,10 @@ export const SUPPORTED_VIDEO_MIMES = [
 ];
 
 export const FFMPEG_CORE_VERSION = '0.12.6';
-export const FFMPEG_CORE_URL = `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`;
+export const FFMPEG_CORE_BASE_URLS = [
+  `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
+  `https://unpkg.com/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
+];
 
 export const QUALITY_PRESETS = {
   gif: {

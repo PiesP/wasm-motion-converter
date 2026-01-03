@@ -6,7 +6,7 @@ import type {
   VideoMetadata,
 } from '../types/conversion-types';
 import {
-  FFMPEG_CORE_URL,
+  FFMPEG_CORE_BASE_URLS,
   QUALITY_PRESETS,
   TIMEOUT_CONVERSION,
   TIMEOUT_FFMPEG_DOWNLOAD,
@@ -218,7 +218,6 @@ class FFmpegService {
       }
     });
 
-    const baseURL = FFMPEG_CORE_URL;
     let downloadProgress = 0;
     const reportProgress = (value: number) => {
       if (!onProgress) {
@@ -236,6 +235,48 @@ class FFmpegService {
       return url;
     };
 
+    const resolveFFmpegAssets = async (): Promise<[string, string, string]> => {
+      let lastError: unknown;
+
+      for (const baseURL of FFMPEG_CORE_BASE_URLS) {
+        try {
+          const hostLabel = (() => {
+            try {
+              return new URL(baseURL).host;
+            } catch {
+              return baseURL;
+            }
+          })();
+
+          if (onStatus) {
+            onStatus(`Downloading FFmpeg assets from ${hostLabel}...`);
+          }
+
+          return await Promise.all([
+            loadFFmpegAsset(
+              `${baseURL}/ffmpeg-core.js`,
+              'text/javascript',
+              'FFmpeg core script'
+            ).then(applyDownloadProgress(10, 'FFmpeg core script downloaded.')),
+            loadFFmpegAsset(
+              `${baseURL}/ffmpeg-core.wasm`,
+              'application/wasm',
+              'FFmpeg core WASM'
+            ).then(applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')),
+            loadFFmpegAsset(
+              `${baseURL}/ffmpeg-core.worker.js`,
+              'text/javascript',
+              'FFmpeg worker'
+            ).then(applyDownloadProgress(10, 'FFmpeg worker downloaded.')),
+          ]);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError ?? new Error('Unable to download FFmpeg assets from available CDNs.');
+    };
+
     try {
       if (onStatus) {
         onStatus('Checking FFmpeg worker environment...');
@@ -244,22 +285,7 @@ class FFmpegService {
       await verifyWorkerIsolation();
 
       reportProgress(5);
-      if (onStatus) {
-        onStatus('Downloading FFmpeg assets...');
-      }
-      const [coreURL, wasmURL, workerURL] = await Promise.all([
-        loadFFmpegAsset(`${baseURL}/ffmpeg-core.js`, 'text/javascript', 'FFmpeg core script').then(
-          applyDownloadProgress(10, 'FFmpeg core script downloaded.')
-        ),
-        loadFFmpegAsset(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm', 'FFmpeg core WASM').then(
-          applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')
-        ),
-        loadFFmpegAsset(
-          `${baseURL}/ffmpeg-core.worker.js`,
-          'text/javascript',
-          'FFmpeg worker'
-        ).then(applyDownloadProgress(10, 'FFmpeg worker downloaded.')),
-      ]);
+      const [coreURL, wasmURL, workerURL] = await resolveFFmpegAssets();
 
       reportProgress(Math.max(downloadProgress, 90));
       if (onStatus) {
