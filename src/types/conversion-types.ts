@@ -19,6 +19,9 @@ export interface ConversionResult {
   originalName: string;
   originalSize: number;
   createdAt: number;
+  settings: ConversionSettings;
+  wasTranscoded?: boolean;
+  originalCodec?: string;
 }
 
 export type ConversionErrorType = 'timeout' | 'memory' | 'format' | 'codec' | 'general';

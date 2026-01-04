@@ -176,11 +176,14 @@ class WebCodecsConversionService {
               }
 
               // For WebP and AVIF: capture first frame only (static image)
-              if ((format === 'webp' || format === 'avif') && capturedFrames.length === 0) {
-                if (!frame.imageData) {
-                  throw new Error('WebCodecs did not provide raw frame data.');
+              if (format === 'webp' || format === 'avif') {
+                if (capturedFrames.length === 0) {
+                  if (!frame.imageData) {
+                    throw new Error('WebCodecs did not provide raw frame data.');
+                  }
+                  capturedFrames.push(frame.imageData);
                 }
-                capturedFrames.push(frame.imageData);
+                // Ignore subsequent frames for static image formats
                 return;
               }
 
@@ -232,6 +235,8 @@ class WebCodecsConversionService {
         fps: decodeResult.fps,
         duration: decodeResult.duration,
         frameFormat,
+        capturedFramesCount: capturedFrames.length,
+        frameFilesCount: frameFiles.length,
       });
 
       ffmpegService.reportProgress(decodeEnd);
@@ -353,6 +358,7 @@ class WebCodecsConversionService {
         this.webpWorkerPool
       ) {
         // Use worker pool for static WebP encoding
+        logger.info('conversion', 'Using WebP worker pool encoding');
         const firstFrame = capturedFrames[0];
         try {
           outputBlob = await this.webpWorkerPool.execute(async (worker) => {
@@ -396,6 +402,7 @@ class WebCodecsConversionService {
         }
       } else if (format === 'webp' && capturedFrames.length > 0 && capturedFrames[0]) {
         // Fallback to main thread for WebP
+        logger.info('conversion', 'Using WebP main thread encoding (Squoosh)');
         try {
           outputBlob = await SquooshWebPService.encode(capturedFrames[0], {
             quality,
@@ -408,6 +415,13 @@ class WebCodecsConversionService {
         }
       } else {
         // Fallback to FFmpeg for animated WebP, AVIF, or unsupported formats
+        logger.info('conversion', 'Using FFmpeg frame sequence encoding', {
+          format,
+          frameFilesCount: frameFiles.length,
+          capturedFramesCount: capturedFrames.length,
+          hasFirstCapturedFrame: !!capturedFrames[0],
+          hasWorkerPool: !!this.webpWorkerPool,
+        });
         outputBlob = await ffmpegService.encodeFrameSequence({
           format: format as 'gif' | 'webp',
           options,

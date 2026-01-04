@@ -314,6 +314,10 @@ const App: Component = () => {
             originalName: file.name,
             originalSize: file.size,
             createdAt: Date.now(),
+            settings: settings,
+            // biome-ignore lint/suspicious/noExplicitAny: Blob metadata attached dynamically by FFmpegService
+            wasTranscoded: (blob as any).wasTranscoded,
+            originalCodec: videoMetadata()?.codec,
           },
           ...results,
         ];
@@ -616,7 +620,9 @@ const App: Component = () => {
                     outputBlob={result.outputBlob}
                     originalName={result.originalName}
                     originalSize={result.originalSize}
-                    onConvertAnother={handleReset}
+                    settings={result.settings}
+                    wasTranscoded={result.wasTranscoded}
+                    originalCodec={result.originalCodec}
                   />
                 )}
               </For>

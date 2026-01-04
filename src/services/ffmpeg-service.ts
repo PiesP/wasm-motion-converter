@@ -681,20 +681,21 @@ class FFmpegService {
    * @param conversionCommand Command to convert H.264→output
    * @returns true if transcode succeeded, false if failed
    */
-  private async transcodeAV1ToH264(
+  private async transcodeToH264(
     inputFileName: string,
     outputFormat: 'gif' | 'webp',
-    conversionCommand: string[]
+    conversionCommand: string[],
+    sourceCodec: string
   ): Promise<boolean> {
     const h264TempFile = FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE;
 
-    logger.info('conversion', 'Starting AV1→H.264 transcode fallback');
-    this.updateStatus('Transcoding AV1 to H.264 (this may take longer)...');
+    logger.info('conversion', `Starting ${sourceCodec}→H.264 transcode fallback`);
+    this.updateStatus(`Transcoding ${sourceCodec} to H.264 (this may take longer)...`);
 
     try {
       const ffmpeg = this.getFFmpeg();
 
-      // PASS 1: AV1→H.264 transcode
+      // PASS 1: codec→H.264 transcode
       const transcodeHeartbeat = this.startProgressHeartbeat(
         FFMPEG_INTERNALS.PROGRESS.AV1_TRANSCODE.DECODE_START,
         FFMPEG_INTERNALS.PROGRESS.AV1_TRANSCODE.DECODE_END,
@@ -722,13 +723,15 @@ class FFmpegService {
         h264TempFile,
       ];
 
-      logger.debug('ffmpeg', 'AV1→H.264 transcode command', { cmd: transcodeCommand.join(' ') });
+      logger.debug('ffmpeg', `${sourceCodec}→H.264 transcode command`, {
+        cmd: transcodeCommand.join(' '),
+      });
 
       try {
         await withTimeout(
           ffmpeg.exec(transcodeCommand),
           TIMEOUT_CONVERSION,
-          `AV1 to H.264 transcoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+          `${sourceCodec} to H.264 transcoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
           () => this.terminateFFmpeg()
         );
       } finally {
@@ -741,7 +744,10 @@ class FFmpegService {
         return false;
       }
 
-      logger.info('conversion', 'AV1→H.264 transcode complete, converting to final format');
+      logger.info(
+        'conversion',
+        `${sourceCodec}→H.264 transcode complete, converting to final format`
+      );
       this.updateStatus(`Converting H.264 to ${outputFormat.toUpperCase()}...`);
 
       // PASS 2: H.264→GIF/WebP conversion
@@ -774,11 +780,11 @@ class FFmpegService {
       // Clean up H.264 temp file
       await this.safeDelete(h264TempFile);
 
-      logger.info('conversion', 'AV1 transcode fallback succeeded');
+      logger.info('conversion', `${sourceCodec} transcode fallback succeeded`);
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error('conversion', 'AV1 transcode fallback failed', { error: message });
+      logger.error('conversion', `${sourceCodec} transcode fallback failed`, { error: message });
 
       // Clean up temp file on failure
       await this.safeDelete(h264TempFile);
@@ -1075,16 +1081,85 @@ class FFmpegService {
     this.ffmpegLogBuffer = [];
   }
 
-  private isLikelyAv1(metadata?: VideoMetadata): boolean {
-    const codec = metadata?.codec?.toLowerCase() ?? '';
-    if (codec.includes('av1') || codec.includes('av01')) {
-      return true;
+  /**
+   * Check if FFmpeg.wasm can decode a given codec
+   * FFmpeg.wasm v5.1.4 lacks AV1 decoder (no libaom/libdav1d)
+   */
+  private canFFmpegDecode(codec: string): boolean {
+    const codecLower = codec.toLowerCase();
+    // AV1 is NOT supported by FFmpeg.wasm (no libaom/libdav1d in build)
+    if (codecLower === 'av1') {
+      return false;
+    }
+    // HEVC and VP9 are supported (libx265, libvpx)
+    return true;
+  }
+
+  private needsTranscoding(metadata?: VideoMetadata): { needed: boolean; codec: string } {
+    const codecStr = metadata?.codec?.toLowerCase() ?? '';
+
+    // Check for AV1
+    if (codecStr.includes('av1') || codecStr.includes('av01')) {
+      return { needed: true, codec: 'AV1' };
     }
 
-    return this.ffmpegLogBuffer.some((log) => {
+    // Check for HEVC (H.265)
+    if (
+      codecStr.includes('hevc') ||
+      codecStr.includes('h265') ||
+      codecStr.includes('h.265') ||
+      codecStr.includes('hvc1') ||
+      codecStr.includes('hev1')
+    ) {
+      return { needed: true, codec: 'HEVC' };
+    }
+
+    // Check for VP9
+    if (codecStr.includes('vp9') || codecStr.includes('vp09')) {
+      return { needed: true, codec: 'VP9' };
+    }
+
+    // Fallback: check FFmpeg log buffer
+    const logEntry = this.ffmpegLogBuffer.find((log) => {
       const entry = log.toLowerCase();
-      return entry.includes('av1') || entry.includes('av01');
+      if (entry.includes('av1') || entry.includes('av01')) {
+        return true;
+      }
+      if (
+        entry.includes('hevc') ||
+        entry.includes('h265') ||
+        entry.includes('h.265') ||
+        entry.includes('hvc1') ||
+        entry.includes('hev1')
+      ) {
+        return true;
+      }
+      if (entry.includes('vp9') || entry.includes('vp09')) {
+        return true;
+      }
+      return false;
     });
+
+    if (logEntry) {
+      const entry = logEntry.toLowerCase();
+      if (entry.includes('av1') || entry.includes('av01')) {
+        return { needed: true, codec: 'AV1' };
+      }
+      if (
+        entry.includes('hevc') ||
+        entry.includes('h265') ||
+        entry.includes('h.265') ||
+        entry.includes('hvc1') ||
+        entry.includes('hev1')
+      ) {
+        return { needed: true, codec: 'HEVC' };
+      }
+      if (entry.includes('vp9') || entry.includes('vp09')) {
+        return { needed: true, codec: 'VP9' };
+      }
+    }
+
+    return { needed: false, codec: '' };
   }
 
   private async resolveMetadataForConversion(
@@ -1490,6 +1565,55 @@ class FFmpegService {
         console.warn('[FFmpeg Service] Critical memory usage detected - conversion may fail');
       }
 
+      // Proactive codec transcoding check
+      let wasTranscoded = false;
+      let originalCodec = '';
+      let actualInputFileName: string = inputFileName;
+
+      const transcodeCheck = this.needsTranscoding(metadataForConversion);
+      if (transcodeCheck.needed) {
+        originalCodec = transcodeCheck.codec;
+
+        // Check if FFmpeg can actually decode this codec
+        if (!this.canFFmpegDecode(originalCodec)) {
+          logger.warn(
+            'conversion',
+            `Detected ${originalCodec} codec, but FFmpeg.wasm cannot decode it (no decoder support). Skipping FFmpeg conversion - use WebCodecs path instead.`
+          );
+          throw new Error(
+            `${originalCodec} codec is not supported by FFmpeg.wasm. This video requires hardware-accelerated decoding via WebCodecs.`
+          );
+        }
+
+        logger.info(
+          'conversion',
+          `Detected ${originalCodec}, proactively transcoding to H.264 before GIF conversion`
+        );
+
+        // Build a temporary base command for transcoding
+        const tempBaseCmd: string[] = [];
+        const transcodeSuccess = await this.transcodeToH264(
+          inputFileName,
+          'gif',
+          tempBaseCmd,
+          originalCodec
+        );
+
+        if (transcodeSuccess) {
+          wasTranscoded = true;
+          actualInputFileName = FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE;
+          logger.info(
+            'conversion',
+            'Proactive transcode succeeded, using H.264 intermediate for GIF conversion'
+          );
+        } else {
+          logger.warn(
+            'conversion',
+            'Proactive transcode failed, continuing with original file (reactive fallback may catch it)'
+          );
+        }
+      }
+
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
 
       const scaleFilter = getScaleFilter(quality, scale);
@@ -1503,7 +1627,7 @@ class FFmpegService {
         const paletteCmd = [
           ...paletteThreadArgs,
           '-i',
-          inputFileName,
+          actualInputFileName,
           '-vf',
           paletteFilterChain,
           '-update',
@@ -1560,7 +1684,7 @@ class FFmpegService {
         const conversionCmd = [
           ...filterComplexThreadArgs,
           '-i',
-          inputFileName,
+          actualInputFileName,
           '-i',
           paletteFileName,
           '-filter_complex',
@@ -1603,7 +1727,13 @@ class FFmpegService {
 
         this.emitProgress(50);
 
-        await this.convertToGIFDirect(inputFileName, outputFileName, settings, scaleFilter, file);
+        await this.convertToGIFDirect(
+          actualInputFileName,
+          outputFileName,
+          settings,
+          scaleFilter,
+          file
+        );
       }
 
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END);
@@ -1616,11 +1746,25 @@ class FFmpegService {
           reason: validation.reason,
         });
 
-        // Check if this is AV1 codec
-        const isAV1 = this.isLikelyAv1(metadataForConversion);
+        // Check if this needs transcoding (AV1, HEVC, VP9)
+        const transcodeCheck = this.needsTranscoding(metadataForConversion);
 
-        if (isAV1 && !this.cancellationRequested) {
-          logger.info('conversion', 'Detected AV1 codec, attempting retry strategies');
+        if (transcodeCheck.needed && !this.cancellationRequested) {
+          // Check if FFmpeg can actually decode this codec
+          if (!this.canFFmpegDecode(transcodeCheck.codec)) {
+            logger.error(
+              'conversion',
+              `${transcodeCheck.codec} codec detected but FFmpeg.wasm cannot decode it. Conversion impossible.`
+            );
+            throw new Error(
+              `${transcodeCheck.codec} codec is not supported by FFmpeg.wasm. Please use WebCodecs path or convert the video to H.264 first.`
+            );
+          }
+
+          logger.info(
+            'conversion',
+            `Detected ${transcodeCheck.codec} codec, attempting retry strategies`
+          );
 
           // TIER 2: Retry with AV1-tuned decoder flags
           await this.safeDelete(outputFileName);
@@ -1655,15 +1799,23 @@ class FFmpegService {
               logger.info('conversion', 'AV1 decoder retry produced valid output');
               // Continue to read file below
             } else {
-              // TIER 3: Transcode AV1→H.264→GIF
-              logger.info('conversion', 'Retry failed, attempting AV1 transcode');
+              // TIER 3: Transcode codec→H.264→GIF
+              logger.info(
+                'conversion',
+                `Retry failed, attempting ${transcodeCheck.codec} transcode`
+              );
               await this.safeDelete(outputFileName);
 
-              const transcodeSuccess = await this.transcodeAV1ToH264(inputFileName, 'gif', baseCmd);
+              const transcodeSuccess = await this.transcodeToH264(
+                inputFileName,
+                'gif',
+                baseCmd,
+                transcodeCheck.codec
+              );
 
               if (!transcodeSuccess) {
                 throw new Error(
-                  'AV1 codec is not supported in this browser. ' +
+                  `${transcodeCheck.codec} codec is not supported in this browser. ` +
                     'Please convert your video to H.264 (MP4) format using: ' +
                     'ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4 ' +
                     'then upload the converted file.'
@@ -1680,14 +1832,22 @@ class FFmpegService {
             }
           } else {
             // Retry failed, try transcode
-            logger.info('conversion', 'Decoder retry failed, attempting transcode');
+            logger.info(
+              'conversion',
+              `Decoder retry failed, attempting ${transcodeCheck.codec} transcode`
+            );
             await this.safeDelete(outputFileName);
 
-            const transcodeSuccess = await this.transcodeAV1ToH264(inputFileName, 'gif', baseCmd);
+            const transcodeSuccess = await this.transcodeToH264(
+              inputFileName,
+              'gif',
+              baseCmd,
+              transcodeCheck.codec
+            );
 
             if (!transcodeSuccess) {
               throw new Error(
-                'AV1 codec is not supported in this browser. ' +
+                `${transcodeCheck.codec} codec is not supported in this browser. ` +
                   'Please convert your video to H.264 (MP4) format using: ' +
                   'ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4 ' +
                   'then upload the converted file.'
@@ -1701,11 +1861,11 @@ class FFmpegService {
             }
           }
         } else {
-          // Not AV1 or cancelled - throw validation error
+          // No problematic codec detected or conversion cancelled - throw validation error
           throw new Error(
             `GIF conversion produced invalid output: ${validation.reason}. ` +
-              'This may indicate a corrupted video file, unsupported codec, or AV1 format. ' +
-              'If using AV1, please convert to H.264: ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4'
+              'This may indicate a corrupted video file or unsupported codec (AV1, HEVC, VP9). ' +
+              'If using an unsupported codec, please convert to H.264: ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4'
           );
         }
       }
@@ -1725,7 +1885,15 @@ class FFmpegService {
 
       await this.handleConversionCleanup(outputFileName, [paletteFileName]);
 
-      return new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/gif' });
+      const blob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/gif' });
+      // Attach transcoding metadata for UI display
+      // biome-ignore lint/suspicious/noExplicitAny: Dynamic metadata attachment to Blob for UI
+      (blob as any).wasTranscoded = wasTranscoded;
+      if (wasTranscoded) {
+        // biome-ignore lint/suspicious/noExplicitAny: Dynamic metadata attachment to Blob for UI
+        (blob as any).originalCodec = originalCodec;
+      }
+      return blob;
     } catch (error) {
       await this.clearCachedInput();
       await this.safeDelete(paletteFileName);
@@ -1808,6 +1976,55 @@ class FFmpegService {
         console.warn('[FFmpeg Service] Critical memory usage detected - conversion may fail');
       }
 
+      // Proactive codec transcoding check
+      let wasTranscoded = false;
+      let originalCodec = '';
+      let actualInputFileName: string = inputFileName;
+
+      const transcodeCheck = this.needsTranscoding(metadataForConversion);
+      if (transcodeCheck.needed) {
+        originalCodec = transcodeCheck.codec;
+
+        // Check if FFmpeg can actually decode this codec
+        if (!this.canFFmpegDecode(originalCodec)) {
+          logger.warn(
+            'conversion',
+            `Detected ${originalCodec} codec, but FFmpeg.wasm cannot decode it (no decoder support). Skipping FFmpeg conversion - use WebCodecs path instead.`
+          );
+          throw new Error(
+            `${originalCodec} codec is not supported by FFmpeg.wasm. This video requires hardware-accelerated decoding via WebCodecs.`
+          );
+        }
+
+        logger.info(
+          'conversion',
+          `Detected ${originalCodec}, proactively transcoding to H.264 before WebP conversion`
+        );
+
+        // Build a temporary base command for transcoding
+        const tempBaseCmd: string[] = [];
+        const transcodeSuccess = await this.transcodeToH264(
+          inputFileName,
+          'webp',
+          tempBaseCmd,
+          originalCodec
+        );
+
+        if (transcodeSuccess) {
+          wasTranscoded = true;
+          actualInputFileName = FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE;
+          logger.info(
+            'conversion',
+            'Proactive transcode succeeded, using H.264 intermediate for WebP conversion'
+          );
+        } else {
+          logger.warn(
+            'conversion',
+            'Proactive transcode failed, continuing with original file (reactive fallback may catch it)'
+          );
+        }
+      }
+
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START);
 
       if (this.cancellationRequested) {
@@ -1835,7 +2052,7 @@ class FFmpegService {
         const webpCmd = [
           ...webpThreadArgs,
           '-i',
-          inputFileName,
+          actualInputFileName,
           '-vf',
           webpFilterArgs,
           '-c:v',
@@ -1899,7 +2116,13 @@ class FFmpegService {
 
         this.emitProgress(50);
 
-        await this.convertToWebPDirect(inputFileName, outputFileName, settings, scaleFilter, file);
+        await this.convertToWebPDirect(
+          actualInputFileName,
+          outputFileName,
+          settings,
+          scaleFilter,
+          file
+        );
       }
 
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END);
@@ -1912,11 +2135,25 @@ class FFmpegService {
           reason: validation.reason,
         });
 
-        // Check if this is AV1 codec
-        const isAV1 = this.isLikelyAv1(metadataForConversion);
+        // Check if this needs transcoding (AV1, HEVC, VP9)
+        const transcodeCheck = this.needsTranscoding(metadataForConversion);
 
-        if (isAV1 && !this.cancellationRequested) {
-          logger.info('conversion', 'Detected AV1 codec, attempting retry strategies');
+        if (transcodeCheck.needed && !this.cancellationRequested) {
+          // Check if FFmpeg can actually decode this codec
+          if (!this.canFFmpegDecode(transcodeCheck.codec)) {
+            logger.error(
+              'conversion',
+              `${transcodeCheck.codec} codec detected but FFmpeg.wasm cannot decode it. Conversion impossible.`
+            );
+            throw new Error(
+              `${transcodeCheck.codec} codec is not supported by FFmpeg.wasm. Please use WebCodecs path or convert the video to H.264 first.`
+            );
+          }
+
+          logger.info(
+            'conversion',
+            `Detected ${transcodeCheck.codec} codec, attempting retry strategies`
+          );
 
           // TIER 2: Retry with AV1-tuned decoder flags
           await this.safeDelete(outputFileName);
@@ -1965,19 +2202,23 @@ class FFmpegService {
               logger.info('conversion', 'AV1 decoder retry produced valid output');
               // Continue to read file below
             } else {
-              // TIER 3: Transcode AV1→H.264→WebP
-              logger.info('conversion', 'Retry failed, attempting AV1 transcode');
+              // TIER 3: Transcode codec→H.264→WebP
+              logger.info(
+                'conversion',
+                `Retry failed, attempting ${transcodeCheck.codec} transcode`
+              );
               await this.safeDelete(outputFileName);
 
-              const transcodeSuccess = await this.transcodeAV1ToH264(
+              const transcodeSuccess = await this.transcodeToH264(
                 inputFileName,
                 'webp',
-                baseCmd
+                baseCmd,
+                transcodeCheck.codec
               );
 
               if (!transcodeSuccess) {
                 throw new Error(
-                  'AV1 codec is not supported in this browser. ' +
+                  `${transcodeCheck.codec} codec is not supported in this browser. ` +
                     'Please convert your video to H.264 (MP4) format using: ' +
                     'ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4 ' +
                     'then upload the converted file.'
@@ -1994,14 +2235,22 @@ class FFmpegService {
             }
           } else {
             // Retry failed, try transcode
-            logger.info('conversion', 'Decoder retry failed, attempting transcode');
+            logger.info(
+              'conversion',
+              `Decoder retry failed, attempting ${transcodeCheck.codec} transcode`
+            );
             await this.safeDelete(outputFileName);
 
-            const transcodeSuccess = await this.transcodeAV1ToH264(inputFileName, 'webp', baseCmd);
+            const transcodeSuccess = await this.transcodeToH264(
+              inputFileName,
+              'webp',
+              baseCmd,
+              transcodeCheck.codec
+            );
 
             if (!transcodeSuccess) {
               throw new Error(
-                'AV1 codec is not supported in this browser. ' +
+                `${transcodeCheck.codec} codec is not supported in this browser. ` +
                   'Please convert your video to H.264 (MP4) format using: ' +
                   'ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4 ' +
                   'then upload the converted file.'
@@ -2015,11 +2264,11 @@ class FFmpegService {
             }
           }
         } else {
-          // Not AV1 or cancelled - throw validation error
+          // No problematic codec detected or conversion cancelled - throw validation error
           throw new Error(
             `WebP conversion produced invalid output: ${validation.reason}. ` +
-              'This may indicate a corrupted video file, unsupported codec, or AV1 format. ' +
-              'If using AV1, please convert to H.264: ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4'
+              'This may indicate a corrupted video file or unsupported codec (AV1, HEVC, VP9). ' +
+              'If using an unsupported codec, please convert to H.264: ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4'
           );
         }
       }
@@ -2039,7 +2288,15 @@ class FFmpegService {
 
       await this.handleConversionCleanup(outputFileName);
 
-      return new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/webp' });
+      const blob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/webp' });
+      // Attach transcoding metadata for UI display
+      // biome-ignore lint/suspicious/noExplicitAny: Dynamic metadata attachment to Blob for UI
+      (blob as any).wasTranscoded = wasTranscoded;
+      if (wasTranscoded) {
+        // biome-ignore lint/suspicious/noExplicitAny: Dynamic metadata attachment to Blob for UI
+        (blob as any).originalCodec = originalCodec;
+      }
+      return blob;
     } catch (error) {
       await this.clearCachedInput();
       await this.safeDelete(outputFileName);
