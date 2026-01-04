@@ -4,6 +4,7 @@ import { visualizer } from 'rollup-plugin-visualizer';
 import type { Plugin, PluginOption } from 'vite';
 import { defineConfig, loadEnv } from 'vite';
 import solid from 'vite-plugin-solid';
+
 // HTML transform plugin for injecting AdSense code conditionally
 function htmlTransformPlugin(env: Record<string, string>): Plugin {
   return {
@@ -43,8 +44,8 @@ function generateAdsTxtPlugin(env: Record<string, string>): Plugin {
 
       // Only generate ads.txt if ads are enabled and publisher ID is set
       if (enableAds && publisherId && !publisherId.includes('XXXX')) {
-        const publicDir = join(process.cwd(), 'public');
-        const adsTxtPath = join(publicDir, 'ads.txt');
+        const publicDir = path.join(process.cwd(), 'public');
+        const adsTxtPath = path.join(publicDir, 'ads.txt');
 
         // Extract numeric ID from ca-pub-XXXXXXXXXXXXXXXX
         const numericId = publisherId.replace('ca-pub-', '');
