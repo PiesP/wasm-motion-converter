@@ -36,7 +36,9 @@
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@jsquash/webp": "^1.5.0",
     "gifenc": "^1.0.3",
+    "modern-gif": "^2.0.4",
     "solid-js": "^1.9.10"
   },
   "devDependencies": {
