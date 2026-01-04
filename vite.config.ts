@@ -1,9 +1,10 @@
-import { mkdirSync,dwriteFileSync } irSyncnode:fsleSync } irSyncnode:fsleSync } from 'node:fs';
-import path,,, joinnode:pathte';
-import tyvisualizerPion } nerollup-plugin-visualizerig, m 'vite';
-import type { Plugin,iPluginOption } neConfig'vite
-solidvitedefineConfigolloadEnvvite
-// HTMLsolidrm plugvite-plugin-solidjecting AdSense code conditionally
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { visualizer } from 'rollup-plugin-visualizer';
+import type { Plugin, PluginOption } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
+import solid from 'vite-plugin-solid';
+// HTML transform plugin for injecting AdSense code conditionally
 function htmlTransformPlugin(env: Record<string, string>): Plugin {
   return {
     name: 'html-transform',
