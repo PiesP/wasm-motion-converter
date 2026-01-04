@@ -4,7 +4,8 @@ import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { ffmpegService } from './ffmpeg-service';
-import { GifEncService } from './gifenc-service';
+import { ModernGifService } from './modern-gif-service';
+import { SquooshWebPService } from './squoosh-webp-service';
 import {
   type WebCodecsCaptureMode,
   type WebCodecsFrameFormat,
@@ -38,7 +39,7 @@ class WebCodecsConversionService {
 
   async maybeConvert(
     file: File,
-    format: 'gif' | 'webp',
+    format: 'gif' | 'webp' | 'avif',
     options: ConversionOptions,
     metadata?: VideoMetadata
   ): Promise<Blob | null> {
@@ -68,22 +69,35 @@ class WebCodecsConversionService {
 
   async convert(
     file: File,
-    format: 'gif' | 'webp',
+    format: 'gif' | 'webp' | 'avif',
     options: ConversionOptions,
     metadata?: VideoMetadata
   ): Promise<Blob> {
     const { quality, scale } = options;
     const settings =
-      format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
-    const useGifEnc = format === 'gif' && GifEncService.isSupported();
-    const needsFFmpeg = format === 'webp' || !useGifEnc;
-    const targetFps = settings.fps;
+      format === 'gif'
+        ? QUALITY_PRESETS.gif[quality]
+        : format === 'webp'
+          ? QUALITY_PRESETS.webp[quality]
+          : QUALITY_PRESETS.avif[quality];
+    const useModernGif = format === 'gif' && ModernGifService.isSupported();
     const decoder = new WebCodecsDecoderService();
     const frameFiles: string[] = [];
     const capturedFrames: ImageData[] = [];
-    const frameFormat: WebCodecsFrameFormat = useGifEnc
+
+    // Determine if we need RGBA frames (for modern-gif or @jsquash/webp static)
+    // For animated WebP and AVIF, we'll check later
+    const needsRGBA = useModernGif || format === 'webp' || format === 'avif';
+    const frameFormat: WebCodecsFrameFormat = needsRGBA
       ? 'rgba'
       : FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT;
+
+    // AVIF doesn't have fps in presets, use a default
+    const targetFps = 'fps' in settings ? settings.fps : 15;
+
+    // Determine if FFmpeg is needed
+    // Note: We'll check isAnimated after frame capture
+    const needsFFmpeg = !useModernGif;
 
     const decodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_START;
     const decodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_END;
@@ -128,7 +142,16 @@ class WebCodecsConversionService {
               ffmpegService.reportProgress(Math.round(progress));
             },
             onFrame: async (frame) => {
-              if (useGifEnc) {
+              if (useModernGif) {
+                if (!frame.imageData) {
+                  throw new Error('WebCodecs did not provide raw frame data.');
+                }
+                capturedFrames.push(frame.imageData);
+                return;
+              }
+
+              // For WebP and AVIF: capture first frame only (static image)
+              if ((format === 'webp' || format === 'avif') && capturedFrames.length === 0) {
                 if (!frame.imageData) {
                   throw new Error('WebCodecs did not provide raw frame data.');
                 }
@@ -189,39 +212,67 @@ class WebCodecsConversionService {
       ffmpegService.reportProgress(decodeEnd);
       ffmpegService.reportStatus(`Encoding ${format.toUpperCase()}...`);
 
-      const outputBlob = useGifEnc
-        ? await GifEncService.encode(capturedFrames, {
-            width: decodeResult.width,
-            height: decodeResult.height,
-            fps: targetFps,
-            colors: QUALITY_PRESETS.gif[quality].colors,
-            onProgress: (current, total) => {
-              const progress =
-                FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START +
-                ((FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END -
-                  FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START) *
-                  current) /
-                  Math.max(1, total);
-              ffmpegService.reportProgress(Math.round(progress));
-            },
-            shouldCancel: () => ffmpegService.isCancellationRequested(),
-          })
-        : await ffmpegService.encodeFrameSequence({
-            format,
-            options,
-            frameCount: decodeResult.frameCount,
-            fps: targetFps,
-            durationSeconds: metadata?.duration ?? decodeResult.duration,
-            frameFiles,
-          });
+      let outputBlob: Blob;
+
+      if (useModernGif) {
+        // Use modern-gif for GIF encoding
+        outputBlob = await ModernGifService.encode(capturedFrames, {
+          width: decodeResult.width,
+          height: decodeResult.height,
+          fps: targetFps,
+          quality,
+          onProgress: (current, total) => {
+            const progress =
+              FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START +
+              ((FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END -
+                FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START) *
+                current) /
+                Math.max(1, total);
+            ffmpegService.reportProgress(Math.round(progress));
+          },
+          shouldCancel: () => ffmpegService.isCancellationRequested(),
+        });
+      } else if (format === 'webp' && capturedFrames.length > 0 && capturedFrames[0]) {
+        // Use @jsquash/webp for static WebP
+        outputBlob = await SquooshWebPService.encode(capturedFrames[0], {
+          quality,
+          onProgress: (current, total) => {
+            const progress =
+              FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START +
+              ((FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END -
+                FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START) *
+                current) /
+                Math.max(1, total);
+            ffmpegService.reportProgress(Math.round(progress));
+          },
+          shouldCancel: () => ffmpegService.isCancellationRequested(),
+        });
+      } else {
+        // Fallback to FFmpeg for animated WebP or edge cases
+        // Note: AVIF not yet supported in Phase 1, will be handled by main FFmpeg path
+        if (format === 'avif') {
+          throw new Error('AVIF encoding via WebCodecs not yet implemented in Phase 1');
+        }
+        outputBlob = await ffmpegService.encodeFrameSequence({
+          format: format as 'gif' | 'webp',
+          options,
+          frameCount: decodeResult.frameCount,
+          fps: targetFps,
+          durationSeconds: metadata?.duration ?? decodeResult.duration,
+          frameFiles,
+        });
+      }
 
       const completionProgress =
         format === 'gif'
           ? FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE
-          : FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE;
+          : format === 'webp'
+            ? FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE
+            : FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE;
       ffmpegService.reportProgress(completionProgress);
 
-      if (useGifEnc) {
+      // Cleanup captured frames for non-FFmpeg encoders
+      if (capturedFrames.length > 0 && (useModernGif || format !== 'gif')) {
         capturedFrames.length = 0;
       }
 

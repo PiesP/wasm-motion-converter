@@ -17,9 +17,6 @@ importers:
       '@jsquash/webp':
         specifier: ^1.5.0
         version: 1.5.0
-      gifenc:
-        specifier: ^1.0.3
-        version: 1.0.3
       modern-gif:
         specifier: ^2.0.4
         version: 2.0.4
@@ -759,9 +756,6 @@ packages:
 
   get-tsconfig@4.13.0:
     resolution: {integrity: sha512-1VKTZJCwBrvbd+Wn3AOgQP/2Av+TfTCOlE4AcRJE72W1ksZXbAx8PPBR9RzgTeSPzlPMHrbANMH3LbltH73wxQ==}
-
-  gifenc@1.0.3:
-    resolution: {integrity: sha512-xdr6AdrfGBcfzncONUOlXMBuc5wJDtOueE3c5rdG0oNgtINLD+f2iFZltrBRZYzACRbKr+mSVU/x98zv2u3jmw==}
 
   glob@13.0.0:
     resolution: {integrity: sha512-tvZgpqk6fz4BaNZ66ZsRaZnbHvP/jG3uKJvAZOwEVUL4RTA5nJeeLYfyN9/VA8NX/V3IBG+hkeuGpKjvELkVhA==}
@@ -1678,8 +1672,6 @@ snapshots:
   get-tsconfig@4.13.0:
     dependencies:
       resolve-pkg-maps: 1.0.0
-
-  gifenc@1.0.3: {}
 
   glob@13.0.0:
     dependencies:

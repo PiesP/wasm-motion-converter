@@ -73,6 +73,11 @@ export const QUALITY_PRESETS = {
     medium: { fps: 15, quality: 85, preset: 'default', compressionLevel: 4, method: 5 },
     high: { fps: 24, quality: 95, preset: 'default', compressionLevel: 6, method: 6 },
   },
+  avif: {
+    low: { quality: 60, speed: 8 },
+    medium: { quality: 70, speed: 6 },
+    high: { quality: 80, speed: 4 },
+  },
 } as const;
 
 // Timeout configurations (in milliseconds)

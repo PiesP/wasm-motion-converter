@@ -1,4 +1,4 @@
-export type ConversionFormat = 'gif' | 'webp';
+export type ConversionFormat = 'gif' | 'webp' | 'avif';
 export type ConversionQuality = 'low' | 'medium' | 'high';
 export type ConversionScale = 0.5 | 0.75 | 1.0;
 
