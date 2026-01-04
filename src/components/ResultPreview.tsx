@@ -29,7 +29,14 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   const handleDownload = () => {
     const url = previewUrl();
-    const extension = props.outputBlob.type === 'image/gif' ? 'gif' : 'webp';
+    const extension =
+      props.outputBlob.type === 'image/gif'
+        ? 'gif'
+        : props.outputBlob.type === 'image/webp'
+          ? 'webp'
+          : props.outputBlob.type === 'image/avif'
+            ? 'avif'
+            : 'webp';
     const originalName = props.originalName.trim();
     const lastDotIndex = originalName.lastIndexOf('.');
     const baseName =

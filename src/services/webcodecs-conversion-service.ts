@@ -6,14 +6,34 @@ import { isMemoryCritical } from '../utils/memory-monitor';
 import { ffmpegService } from './ffmpeg-service';
 import { ModernGifService } from './modern-gif-service';
 import { SquooshWebPService } from './squoosh-webp-service';
+import { WorkerPool } from './worker-pool';
+import type { EncoderWorkerAPI } from '../workers/types';
 import {
   type WebCodecsCaptureMode,
-  type WebCodecsFrameFormat,
   WebCodecsDecoderService,
+  type WebCodecsFrameFormat,
 } from './webcodecs-decoder';
 import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support';
 
 class WebCodecsConversionService {
+  private gifWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
+  private webpWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
+
+  constructor() {
+    // Lazy initialize worker pools
+    if (typeof window !== 'undefined') {
+      this.gifWorkerPool = new WorkerPool(
+        new URL('../workers/gif-encoder.worker.ts', import.meta.url),
+        { lazyInit: true, maxWorkers: 4 }
+      );
+
+      this.webpWorkerPool = new WorkerPool(
+        new URL('../workers/webp-encoder.worker.ts', import.meta.url),
+        { lazyInit: true, maxWorkers: 2 }
+      );
+    }
+  }
+
   async canConvert(file: File, metadata?: VideoMetadata): Promise<boolean> {
     if (!metadata?.codec || metadata.codec === 'unknown') {
       return false;
@@ -94,6 +114,7 @@ class WebCodecsConversionService {
 
     // AVIF doesn't have fps in presets, use a default
     const targetFps = 'fps' in settings ? settings.fps : 15;
+    const maxFrames = format === 'webp' || format === 'avif' ? 1 : undefined;
 
     // Determine if FFmpeg is needed
     // Note: We'll check isAnimated after frame capture
@@ -101,6 +122,10 @@ class WebCodecsConversionService {
 
     const decodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_START;
     const decodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_END;
+    const reportDecodeProgress = (current: number, total: number) => {
+      const progress = decodeStart + ((decodeEnd - decodeStart) * current) / Math.max(1, total);
+      ffmpegService.reportProgress(Math.round(progress));
+    };
 
     ffmpegService.beginExternalConversion(metadata, quality);
 
@@ -113,7 +138,10 @@ class WebCodecsConversionService {
       ffmpegService.reportStatus('Decoding with WebCodecs...');
       ffmpegService.reportProgress(decodeStart);
 
-      const captureModes: WebCodecsCaptureMode[] = ['auto', 'seek'];
+      const captureModes: WebCodecsCaptureMode[] =
+        format === 'webp' || format === 'avif'
+          ? ['seek', 'frame-callback', 'auto']
+          : ['auto', 'seek'];
       let captureModeUsed: WebCodecsCaptureMode | null = null;
       let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>> | null =
         null;
@@ -134,13 +162,10 @@ class WebCodecsConversionService {
             framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
             frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
             frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
+            maxFrames,
             captureMode,
             shouldCancel: () => ffmpegService.isCancellationRequested(),
-            onProgress: (current, total) => {
-              const progress =
-                decodeStart + ((decodeEnd - decodeStart) * current) / Math.max(1, total);
-              ffmpegService.reportProgress(Math.round(progress));
-            },
+            onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
               if (useModernGif) {
                 if (!frame.imageData) {
@@ -212,47 +237,177 @@ class WebCodecsConversionService {
       ffmpegService.reportProgress(decodeEnd);
       ffmpegService.reportStatus(`Encoding ${format.toUpperCase()}...`);
 
+      const reportEncodeProgress = (current: number, total: number) => {
+        const progress =
+          FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START +
+          ((FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END -
+            FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START) *
+            current) /
+            Math.max(1, total);
+        ffmpegService.reportProgress(Math.round(progress));
+      };
+
+      const encodeWithFFmpegFallback = async (errorMessage: string): Promise<Blob> => {
+        if (format === 'avif') {
+          throw new Error(errorMessage);
+        }
+
+        logger.warn('conversion', 'WebCodecs encoder failed, retrying with FFmpeg frames', {
+          error: errorMessage,
+        });
+
+        if (!ffmpegService.isLoaded()) {
+          await ffmpegService.initialize();
+        }
+
+        if (frameFiles.length > 0) {
+          await ffmpegService.deleteVirtualFiles(frameFiles);
+          frameFiles.length = 0;
+        }
+
+        capturedFrames.length = 0;
+
+        ffmpegService.reportStatus(`Retrying ${format.toUpperCase()} encode with FFmpeg...`);
+        ffmpegService.reportProgress(decodeStart);
+
+        const fallbackFrameFiles: string[] = [];
+        let fallbackResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>>;
+
+        try {
+          fallbackResult = await decoder.decodeToFrames({
+            file,
+            targetFps,
+            scale,
+            frameFormat: FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT,
+            frameQuality: FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY,
+            framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
+            frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
+            frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
+            captureMode: 'seek',
+            shouldCancel: () => ffmpegService.isCancellationRequested(),
+            onProgress: reportDecodeProgress,
+            onFrame: async (frame) => {
+              if (!frame.data) {
+                throw new Error('WebCodecs did not provide encoded frame data.');
+              }
+              await ffmpegService.writeVirtualFile(frame.name, frame.data);
+              fallbackFrameFiles.push(frame.name);
+            },
+          });
+        } catch (fallbackError) {
+          if (fallbackFrameFiles.length > 0) {
+            await ffmpegService.deleteVirtualFiles(fallbackFrameFiles);
+          }
+          throw fallbackError;
+        }
+
+        return await ffmpegService.encodeFrameSequence({
+          format: format as 'gif' | 'webp',
+          options,
+          frameCount: fallbackResult.frameCount,
+          fps: targetFps,
+          durationSeconds: metadata?.duration ?? fallbackResult.duration,
+          frameFiles: fallbackFrameFiles,
+        });
+      };
+
       let outputBlob: Blob;
 
-      if (useModernGif) {
-        // Use modern-gif for GIF encoding
-        outputBlob = await ModernGifService.encode(capturedFrames, {
-          width: decodeResult.width,
-          height: decodeResult.height,
-          fps: targetFps,
-          quality,
-          onProgress: (current, total) => {
-            const progress =
-              FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START +
-              ((FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END -
-                FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START) *
-                current) /
-                Math.max(1, total);
-            ffmpegService.reportProgress(Math.round(progress));
-          },
-          shouldCancel: () => ffmpegService.isCancellationRequested(),
-        });
-      } else if (format === 'webp' && capturedFrames.length > 0 && capturedFrames[0]) {
-        // Use @jsquash/webp for static WebP
-        outputBlob = await SquooshWebPService.encode(capturedFrames[0], {
-          quality,
-          onProgress: (current, total) => {
-            const progress =
-              FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START +
-              ((FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END -
-                FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START) *
-                current) /
-                Math.max(1, total);
-            ffmpegService.reportProgress(Math.round(progress));
-          },
-          shouldCancel: () => ffmpegService.isCancellationRequested(),
-        });
-      } else {
-        // Fallback to FFmpeg for animated WebP or edge cases
-        // Note: AVIF not yet supported in Phase 1, will be handled by main FFmpeg path
-        if (format === 'avif') {
-          throw new Error('AVIF encoding via WebCodecs not yet implemented in Phase 1');
+      if (useModernGif && this.gifWorkerPool) {
+        // Use worker pool for GIF encoding
+        try {
+          outputBlob = await this.gifWorkerPool.execute(async (worker) => {
+            return await worker.encode(capturedFrames, {
+              width: decodeResult.width,
+              height: decodeResult.height,
+              fps: targetFps,
+              quality,
+              onProgress: reportEncodeProgress,
+              shouldCancel: () => ffmpegService.isCancellationRequested(),
+            });
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.warn('conversion', 'GIF worker encoding failed, retrying on main thread', {
+            error: errorMessage,
+          });
+          try {
+            outputBlob = await ModernGifService.encode(capturedFrames, {
+              width: decodeResult.width,
+              height: decodeResult.height,
+              fps: targetFps,
+              quality,
+              onProgress: reportEncodeProgress,
+              shouldCancel: () => ffmpegService.isCancellationRequested(),
+            });
+          } catch (fallbackError) {
+            const fallbackMessage =
+              fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+            outputBlob = await encodeWithFFmpegFallback(fallbackMessage);
+          }
         }
+      } else if (
+        format === 'webp' &&
+        capturedFrames.length > 0 &&
+        capturedFrames[0] &&
+        this.webpWorkerPool
+      ) {
+        // Use worker pool for static WebP encoding
+        const firstFrame = capturedFrames[0];
+        try {
+          outputBlob = await this.webpWorkerPool.execute(async (worker) => {
+            return await worker.encode([firstFrame], {
+              quality,
+              onProgress: reportEncodeProgress,
+              shouldCancel: () => ffmpegService.isCancellationRequested(),
+            });
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.warn('conversion', 'WebP worker encoding failed, retrying on main thread', {
+            error: errorMessage,
+          });
+          try {
+            outputBlob = await SquooshWebPService.encode(firstFrame, {
+              quality,
+              onProgress: reportEncodeProgress,
+              shouldCancel: () => ffmpegService.isCancellationRequested(),
+            });
+          } catch (fallbackError) {
+            const fallbackMessage =
+              fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+            outputBlob = await encodeWithFFmpegFallback(fallbackMessage);
+          }
+        }
+      } else if (useModernGif) {
+        // Fallback to main thread if workers unavailable
+        try {
+          outputBlob = await ModernGifService.encode(capturedFrames, {
+            width: decodeResult.width,
+            height: decodeResult.height,
+            fps: targetFps,
+            quality,
+            onProgress: reportEncodeProgress,
+            shouldCancel: () => ffmpegService.isCancellationRequested(),
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          outputBlob = await encodeWithFFmpegFallback(errorMessage);
+        }
+      } else if (format === 'webp' && capturedFrames.length > 0 && capturedFrames[0]) {
+        // Fallback to main thread for WebP
+        try {
+          outputBlob = await SquooshWebPService.encode(capturedFrames[0], {
+            quality,
+            onProgress: reportEncodeProgress,
+            shouldCancel: () => ffmpegService.isCancellationRequested(),
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          outputBlob = await encodeWithFFmpegFallback(errorMessage);
+        }
+      } else {
+        // Fallback to FFmpeg for animated WebP, AVIF, or unsupported formats
         outputBlob = await ffmpegService.encodeFrameSequence({
           format: format as 'gif' | 'webp',
           options,
@@ -268,11 +423,13 @@ class WebCodecsConversionService {
           ? FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE
           : format === 'webp'
             ? FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE
-            : FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE;
+            : format === 'avif'
+              ? FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE
+              : FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE;
       ffmpegService.reportProgress(completionProgress);
 
       // Cleanup captured frames for non-FFmpeg encoders
-      if (capturedFrames.length > 0 && (useModernGif || format !== 'gif')) {
+      if (capturedFrames.length > 0 && (useModernGif || format === 'webp')) {
         capturedFrames.length = 0;
       }
 
@@ -285,6 +442,13 @@ class WebCodecsConversionService {
     } finally {
       ffmpegService.endExternalConversion();
     }
+  }
+
+  cleanup(): void {
+    this.gifWorkerPool?.terminate();
+    this.webpWorkerPool?.terminate();
+    this.gifWorkerPool = null;
+    this.webpWorkerPool = null;
   }
 }
 

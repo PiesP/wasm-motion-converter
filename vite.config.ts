@@ -114,6 +114,7 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks: {
             ffmpeg: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
+            encoders: ['modern-gif', '@jsquash/webp'],
           },
         },
       },

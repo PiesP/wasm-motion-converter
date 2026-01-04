@@ -14,13 +14,18 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+interface MediaStreamTrackProcessorInit {
+  track: MediaStreamTrack;
+  maxBufferSize?: number;
+}
+
 interface MediaStreamTrackProcessor<T = VideoFrame> {
   readonly readable: ReadableStream<T>;
 }
 
 declare var MediaStreamTrackProcessor: {
   prototype: MediaStreamTrackProcessor;
-  new (options: { track: MediaStreamTrack }): MediaStreamTrackProcessor;
+  new (options: MediaStreamTrackProcessorInit): MediaStreamTrackProcessor;
 };
 
 type ImageEncoder = Record<string, never>;

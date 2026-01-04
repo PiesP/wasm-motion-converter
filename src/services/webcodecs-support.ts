@@ -60,7 +60,27 @@ export const getWebCodecsSupportStatus = (): WebCodecsSupportStatus => {
 
 export const isWebCodecsDecodeSupported = (): boolean => {
   const status = getWebCodecsSupportStatus();
-  return status.videoFrame && status.trackProcessor && status.captureStream;
+  const hasVideoElement =
+    typeof HTMLVideoElement !== 'undefined' && typeof HTMLCanvasElement !== 'undefined';
+  if (!hasVideoElement) {
+    return false;
+  }
+
+  const supportsFrameCallback =
+    typeof HTMLVideoElement !== 'undefined' &&
+    typeof (HTMLVideoElement.prototype as { requestVideoFrameCallback?: unknown })
+      .requestVideoFrameCallback === 'function';
+
+  // Track processor is preferred, but we can fall back to requestVideoFrameCallback or seek capture.
+  if (status.trackProcessor && status.captureStream) {
+    return true;
+  }
+
+  if (supportsFrameCallback) {
+    return true;
+  }
+
+  return true;
 };
 
 const normalizeCodec = (codec: string): string => codec.trim().toLowerCase();
@@ -103,7 +123,7 @@ export async function isWebCodecsCodecSupported(
   }
 
   const status = getWebCodecsSupportStatus();
-  if (!status.available || !status.videoFrame || !status.trackProcessor) {
+  if (!status.available && typeof HTMLVideoElement === 'undefined') {
     return false;
   }
 
@@ -154,6 +174,16 @@ export async function isWebCodecsCodecSupported(
           codec: codecString,
           error: error instanceof Error ? error.message : String(error),
         });
+      }
+    }
+  }
+
+  if (typeof document !== 'undefined' && typeof HTMLVideoElement !== 'undefined') {
+    const testVideo = document.createElement('video');
+    for (const codecString of candidates) {
+      const canPlay = testVideo.canPlayType(`${fileType || 'video/mp4'}; codecs="${codecString}"`);
+      if (canPlay === 'probably' || canPlay === 'maybe') {
+        return true;
       }
     }
   }

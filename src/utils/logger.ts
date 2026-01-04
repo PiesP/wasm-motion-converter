@@ -6,7 +6,8 @@ type LogCategory =
   | 'watchdog'
   | 'general'
   | 'performance'
-  | 'prefetch';
+  | 'prefetch'
+  | 'worker-pool';
 
 /**
  * Logger utility for structured logging throughout the application

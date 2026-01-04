@@ -29,6 +29,7 @@ export interface WebCodecsDecodeOptions {
   framePrefix: string;
   frameDigits: number;
   frameStartNumber: number;
+  maxFrames?: number;
   captureMode?: WebCodecsCaptureMode;
   onFrame: (frame: WebCodecsFramePayload) => Promise<void>;
   onProgress?: WebCodecsProgressCallback;
@@ -71,13 +72,17 @@ const waitForEvent = (target: EventTarget, eventName: string, timeoutMs: number)
     target.addEventListener(eventName, onEvent, { once: true });
   });
 
-const createCanvas = (width: number, height: number): CaptureContext => {
+const createCanvas = (
+  width: number,
+  height: number,
+  willReadFrequently: boolean = false
+): CaptureContext => {
   const hasDocument = typeof document !== 'undefined';
   if (hasDocument) {
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
-    const context = canvas.getContext('2d', { alpha: false });
+    const context = canvas.getContext('2d', { alpha: false, willReadFrequently });
     if (!context) {
       throw new Error('Canvas 2D context not available');
     }
@@ -91,7 +96,7 @@ const createCanvas = (width: number, height: number): CaptureContext => {
   }
 
   const canvas = new OffscreenCanvas(width, height);
-  const context = canvas.getContext('2d', { alpha: false });
+  const context = canvas.getContext('2d', { alpha: false, willReadFrequently });
   if (!context) {
     throw new Error('Canvas 2D context not available');
   }
@@ -168,6 +173,7 @@ export class WebCodecsDecoderService {
       framePrefix,
       frameDigits,
       frameStartNumber,
+      maxFrames,
       captureMode = 'auto',
       onFrame,
       onProgress,
@@ -198,9 +204,13 @@ export class WebCodecsDecoderService {
 
       const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
       const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
-      const captureContext = createCanvas(targetWidth, targetHeight);
+      const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba');
       const frameFiles: string[] = [];
       const estimatedTotalFrames = Math.max(1, Math.ceil(duration * targetFps));
+      const totalFrames =
+        maxFrames && maxFrames > 0
+          ? Math.max(1, Math.min(maxFrames, estimatedTotalFrames))
+          : estimatedTotalFrames;
 
       video.currentTime = 0;
 
@@ -280,7 +290,7 @@ export class WebCodecsDecoderService {
         );
         await onFrame({ name: frameName, data, imageData, index, timestamp });
         frameFiles.push(frameName);
-        onProgress?.(frameFiles.length, estimatedTotalFrames);
+        onProgress?.(frameFiles.length, totalFrames);
       };
 
       const supportStatus = getWebCodecsSupportStatus();
@@ -296,15 +306,30 @@ export class WebCodecsDecoderService {
           duration,
           targetFps,
           captureFrame,
-          shouldCancel
+          shouldCancel,
+          totalFrames
         );
       } else if (captureMode === 'frame-callback') {
         if (!supportsFrameCallback) {
           throw new Error('requestVideoFrameCallback is not supported in this browser.');
         }
-        await this.captureWithFrameCallback(video, duration, targetFps, captureFrame, shouldCancel);
+        await this.captureWithFrameCallback(
+          video,
+          duration,
+          targetFps,
+          captureFrame,
+          shouldCancel,
+          totalFrames
+        );
       } else if (captureMode === 'seek') {
-        await this.captureWithSeeking(video, duration, targetFps, captureFrame, shouldCancel);
+        await this.captureWithSeeking(
+          video,
+          duration,
+          targetFps,
+          captureFrame,
+          shouldCancel,
+          totalFrames
+        );
       } else if (supportsTrackProcessor) {
         try {
           await this.captureWithTrackProcessor(
@@ -312,7 +337,8 @@ export class WebCodecsDecoderService {
             duration,
             targetFps,
             captureFrame,
-            shouldCancel
+            shouldCancel,
+            totalFrames
           );
         } catch (error) {
           logger.warn('conversion', 'WebCodecs track capture failed, falling back', {
@@ -324,16 +350,38 @@ export class WebCodecsDecoderService {
               duration,
               targetFps,
               captureFrame,
-              shouldCancel
+              shouldCancel,
+              totalFrames
             );
           } else {
-            await this.captureWithSeeking(video, duration, targetFps, captureFrame, shouldCancel);
+            await this.captureWithSeeking(
+              video,
+              duration,
+              targetFps,
+              captureFrame,
+              shouldCancel,
+              totalFrames
+            );
           }
         }
       } else if (supportsFrameCallback) {
-        await this.captureWithFrameCallback(video, duration, targetFps, captureFrame, shouldCancel);
+        await this.captureWithFrameCallback(
+          video,
+          duration,
+          targetFps,
+          captureFrame,
+          shouldCancel,
+          totalFrames
+        );
       } else {
-        await this.captureWithSeeking(video, duration, targetFps, captureFrame, shouldCancel);
+        await this.captureWithSeeking(
+          video,
+          duration,
+          targetFps,
+          captureFrame,
+          shouldCancel,
+          totalFrames
+        );
       }
 
       return {
@@ -354,7 +402,8 @@ export class WebCodecsDecoderService {
     duration: number,
     targetFps: number,
     captureFrame: (index: number, timestamp: number) => Promise<void>,
-    shouldCancel?: () => boolean
+    shouldCancel?: () => boolean,
+    maxFrames?: number
   ): Promise<void> {
     try {
       await video.play();
@@ -362,12 +411,22 @@ export class WebCodecsDecoderService {
       logger.warn('conversion', 'Autoplay blocked, falling back to seek capture', {
         error: error instanceof Error ? error.message : String(error),
       });
-      await this.captureWithSeeking(video, duration, targetFps, captureFrame, shouldCancel);
+      await this.captureWithSeeking(
+        video,
+        duration,
+        targetFps,
+        captureFrame,
+        shouldCancel,
+        maxFrames
+      );
       return;
     }
 
     const frameInterval = 1 / targetFps;
-    const totalFrames = Math.max(1, Math.ceil(duration * targetFps));
+    const totalFrames =
+      maxFrames && maxFrames > 0
+        ? Math.max(1, Math.min(maxFrames, Math.ceil(duration * targetFps)))
+        : Math.max(1, Math.ceil(duration * targetFps));
     const epsilon = 0.001;
     let nextFrameTime = 0;
     let frameIndex = 0;
@@ -471,7 +530,8 @@ export class WebCodecsDecoderService {
     duration: number,
     targetFps: number,
     captureFrame: (index: number, timestamp: number) => Promise<void>,
-    shouldCancel?: () => boolean
+    shouldCancel?: () => boolean,
+    maxFrames?: number
   ): Promise<void> {
     if (
       typeof MediaStreamTrackProcessor === 'undefined' ||
@@ -498,7 +558,10 @@ export class WebCodecsDecoderService {
     const processor = new MediaStreamTrackProcessor({ track });
     const reader = processor.readable.getReader();
     const frameIntervalUs = 1_000_000 / targetFps;
-    const totalFrames = Math.max(1, Math.ceil(duration * targetFps));
+    const totalFrames =
+      maxFrames && maxFrames > 0
+        ? Math.max(1, Math.min(maxFrames, Math.ceil(duration * targetFps)))
+        : Math.max(1, Math.ceil(duration * targetFps));
     const epsilonUs = 1_000;
     let nextFrameTimeUs = 0;
     let frameIndex = 0;
@@ -573,11 +636,15 @@ export class WebCodecsDecoderService {
     duration: number,
     targetFps: number,
     captureFrame: (index: number, timestamp: number) => Promise<void>,
-    shouldCancel?: () => boolean
+    shouldCancel?: () => boolean,
+    maxFrames?: number
   ): Promise<void> {
     video.pause();
     const frameInterval = 1 / targetFps;
-    const totalFrames = Math.max(1, Math.ceil(duration * targetFps));
+    const totalFrames =
+      maxFrames && maxFrames > 0
+        ? Math.max(1, Math.min(maxFrames, Math.ceil(duration * targetFps)))
+        : Math.max(1, Math.ceil(duration * targetFps));
     const epsilon = 0.001;
 
     for (let index = 0; index < totalFrames; index += 1) {
