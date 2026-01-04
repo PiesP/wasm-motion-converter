@@ -1,3 +1,0 @@
-name = "wasm-motion-converter"
-compatibility_date = "2024-01-03"
-pages_build_output_dir = "dist"
