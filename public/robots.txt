@@ -1,4 +1,5 @@
 # Motion Converter - Video to GIF/WebP
+# https://wasm-motion-converter.pages.dev/
 # All processing happens client-side, no dynamic content
 
 User-agent: *
