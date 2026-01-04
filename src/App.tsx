@@ -92,6 +92,9 @@ const App: Component = () => {
     if (!metadata) {
       return true;
     }
+    if (metadata.codec === 'unknown' || metadata.framerate <= 0 || metadata.bitrate <= 0) {
+      return true;
+    }
     const isSmallFile = file.size <= 50 * 1024 * 1024;
     const isShort = metadata.duration > 0 ? metadata.duration <= 15 : false;
     const isLowRes = metadata.width * metadata.height <= WARN_RESOLUTION_PIXELS;

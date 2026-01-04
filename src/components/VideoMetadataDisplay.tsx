@@ -35,7 +35,7 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
         <div class="flex justify-between">
           <span class="text-gray-600 dark:text-gray-400">Codec:</span>
           <span class="font-medium text-gray-900 dark:text-white uppercase">
-            {props.metadata.codec}
+            {props.metadata.codec === 'unknown' ? 'Detecting...' : props.metadata.codec}
           </span>
         </div>
         <div class="flex justify-between">
