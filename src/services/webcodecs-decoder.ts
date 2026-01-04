@@ -640,6 +640,31 @@ export class WebCodecsDecoderService {
     maxFrames?: number
   ): Promise<void> {
     video.pause();
+
+    // Fast extraction for single-frame formats (WebP/AVIF)
+    // Seek to a representative frame (25% into video or middle) instead of first frame
+    if (maxFrames === 1) {
+      if (shouldCancel?.()) {
+        throw new Error('Conversion cancelled by user');
+      }
+
+      // Choose representative frame: 25% duration mark, clamped to valid range
+      // This provides better representation than first frame (often black/fade-in)
+      const epsilon = 0.001;
+      const representativeTime = Math.min(duration - epsilon, Math.max(epsilon, duration * 0.25));
+
+      logger.info('conversion', 'Fast single-frame extraction', {
+        duration,
+        targetTime: representativeTime,
+        position: '25%',
+      });
+
+      await this.seekTo(video, representativeTime);
+      await captureFrame(0, representativeTime);
+      return;
+    }
+
+    // Standard multi-frame extraction
     const frameInterval = 1 / targetFps;
     const totalFrames =
       maxFrames && maxFrames > 0

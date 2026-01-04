@@ -20,6 +20,7 @@ import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';
 import { withTimeout } from '../utils/with-timeout';
+import { canFFmpegDecode as canFFmpegDecodeCodec } from '../utils/codec-capabilities';
 
 // Legacy constants kept for backward compatibility with external timeout values
 const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
@@ -1083,16 +1084,10 @@ class FFmpegService {
 
   /**
    * Check if FFmpeg.wasm can decode a given codec
-   * FFmpeg.wasm v5.1.4 lacks AV1 decoder (no libaom/libdav1d)
+   * Delegates to codec-capabilities module for centralized capability management
    */
   private canFFmpegDecode(codec: string): boolean {
-    const codecLower = codec.toLowerCase();
-    // AV1 is NOT supported by FFmpeg.wasm (no libaom/libdav1d in build)
-    if (codecLower === 'av1') {
-      return false;
-    }
-    // HEVC and VP9 are supported (libx265, libvpx)
-    return true;
+    return canFFmpegDecodeCodec(codec);
   }
 
   private needsTranscoding(metadata?: VideoMetadata): { needed: boolean; codec: string } {
