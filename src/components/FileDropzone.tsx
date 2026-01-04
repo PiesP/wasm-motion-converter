@@ -137,7 +137,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           </div>
           <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">or drag and drop</p>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">
-            MP4, MOV, WebM, AVI, MKV (max 500MB)
+            Most video formats (MP4, MOV, WebM, MKV, AVI) - max 500MB
           </p>
         </>
       )}

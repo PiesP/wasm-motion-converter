@@ -1,4 +1,4 @@
-import { MAX_FILE_SIZE, SUPPORTED_VIDEO_MIMES } from './constants';
+import { MAX_FILE_SIZE, SUPPORTED_VIDEO_EXTENSIONS, SUPPORTED_VIDEO_MIMES } from './constants';
 
 /**
  * Result of file validation with error message if invalid
@@ -21,12 +21,24 @@ export function validateVideoFile(file: File): FileValidationResult {
     };
   }
 
-  if (!SUPPORTED_VIDEO_MIMES.includes(file.type)) {
-    return {
-      valid: false,
-      error: 'Unsupported format. Please use MP4, MOV, WebM, AVI, or MKV.',
-    };
+  const mimeType = file.type.toLowerCase();
+  if (mimeType) {
+    if (mimeType.startsWith('video/')) {
+      return { valid: true };
+    }
+    if (SUPPORTED_VIDEO_MIMES.includes(mimeType)) {
+      return { valid: true };
+    }
   }
 
-  return { valid: true };
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (extension && SUPPORTED_VIDEO_EXTENSIONS.includes(extension)) {
+    return { valid: true };
+  }
+
+  return {
+    valid: false,
+    error:
+      'Unsupported format. Please choose a common video format (MP4, MOV, WebM, MKV, AVI) or a file with a video extension.',
+  };
 }

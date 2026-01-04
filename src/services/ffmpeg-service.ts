@@ -1560,7 +1560,8 @@ class FFmpegService {
         });
 
         // Check if this is AV1 codec
-        const isAV1 = metadata?.codec?.toLowerCase().includes('av1');
+        const codecLabel = metadata?.codec?.toLowerCase() ?? '';
+        const isAV1 = codecLabel.includes('av1') || codecLabel.includes('av01');
 
         if (isAV1 && !this.cancellationRequested) {
           logger.info('conversion', 'Detected AV1 codec, attempting retry strategies');
@@ -1856,7 +1857,8 @@ class FFmpegService {
         });
 
         // Check if this is AV1 codec
-        const isAV1 = metadata?.codec?.toLowerCase().includes('av1');
+        const codecLabel = metadata?.codec?.toLowerCase() ?? '';
+        const isAV1 = codecLabel.includes('av1') || codecLabel.includes('av01');
 
         if (isAV1 && !this.cancellationRequested) {
           logger.info('conversion', 'Detected AV1 codec, attempting retry strategies');

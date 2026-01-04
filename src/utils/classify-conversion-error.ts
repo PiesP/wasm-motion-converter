@@ -77,8 +77,11 @@ export function classifyConversionError(
     // Check if it's specifically an AV1 issue
     const isAV1Issue =
       metadata?.codec?.toLowerCase().includes('av1') ||
+      metadata?.codec?.toLowerCase().includes('av01') ||
       message.includes('av1') ||
-      ffmpegLogs?.some((log) => log.toLowerCase().includes('av1'));
+      message.includes('av01') ||
+      ffmpegLogs?.some((log) => log.toLowerCase().includes('av1')) ||
+      ffmpegLogs?.some((log) => log.toLowerCase().includes('av01'));
 
     return {
       type: 'codec',

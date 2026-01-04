@@ -15,6 +15,29 @@ export const SUPPORTED_VIDEO_MIMES = [
   'video/webm',
   'video/x-msvideo',
   'video/x-matroska',
+  'video/x-m4v',
+  'video/ogg',
+  'video/mpeg',
+  'video/mp2t',
+  'video/x-ms-wmv',
+  'video/x-flv',
+];
+
+export const SUPPORTED_VIDEO_EXTENSIONS = [
+  'mp4',
+  'mov',
+  'webm',
+  'avi',
+  'mkv',
+  'm4v',
+  'ogv',
+  'mpg',
+  'mpeg',
+  'ts',
+  'mts',
+  'm2ts',
+  'wmv',
+  'flv',
 ];
 
 export const FFMPEG_CORE_VERSION = '0.12.6';
