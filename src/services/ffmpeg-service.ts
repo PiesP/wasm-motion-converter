@@ -463,7 +463,11 @@ class FFmpegService {
     outputFileName: string,
     additionalFiles: string[] = []
   ): Promise<void> {
-    const files = [outputFileName, ...additionalFiles];
+    const files = [
+      outputFileName,
+      ...additionalFiles,
+      FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE,
+    ];
 
     // Manage input cache based on memory status
     if (isMemoryCritical()) {
@@ -549,6 +553,236 @@ class FFmpegService {
       return false;
     }
     return this.knownFiles.has(fileName);
+  }
+
+  /**
+   * Validate FFmpeg output file for correctness
+   * Checks file size and basic format validity
+   * @param fileName Output file to validate
+   * @param expectedFormat Expected output format (gif/webp)
+   * @returns Object with valid flag and optional reason for failure
+   */
+  private async validateOutputFile(
+    fileName: string,
+    expectedFormat: 'gif' | 'webp'
+  ): Promise<{ valid: boolean; reason?: string }> {
+    try {
+      // Read file data (will throw if file doesn't exist)
+      const data = await this.safeReadFile(fileName);
+
+      // Check minimum size based on format
+      const minSize =
+        expectedFormat === 'gif'
+          ? FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_GIF_SIZE_BYTES
+          : FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_WEBP_SIZE_BYTES;
+
+      if (data.length < minSize) {
+        logger.warn('conversion', `Output file too small: ${data.length} bytes`, {
+          expectedMinimum: minSize,
+          format: expectedFormat,
+        });
+        return {
+          valid: false,
+          reason: `Output file too small (${data.length} bytes, expected ≥${minSize})`,
+        };
+      }
+
+      // Validate file signature (magic bytes)
+      if (expectedFormat === 'gif') {
+        // GIF signature: "GIF89a" or "GIF87a"
+        const gifSignature = String.fromCharCode(...data.slice(0, 6));
+        if (!gifSignature.startsWith('GIF8')) {
+          logger.warn('conversion', 'Invalid GIF signature', { signature: gifSignature });
+          return { valid: false, reason: 'Invalid GIF file signature' };
+        }
+      } else if (expectedFormat === 'webp') {
+        // WebP signature: "RIFF....WEBP"
+        const riffSignature = String.fromCharCode(...data.slice(0, 4));
+        const webpSignature = String.fromCharCode(...data.slice(8, 12));
+        if (riffSignature !== 'RIFF' || webpSignature !== 'WEBP') {
+          logger.warn('conversion', 'Invalid WebP signature', {
+            riff: riffSignature,
+            webp: webpSignature,
+          });
+          return { valid: false, reason: 'Invalid WebP file signature' };
+        }
+      }
+
+      logger.debug('conversion', 'Output file validated successfully', {
+        format: expectedFormat,
+        size: data.length,
+      });
+
+      return { valid: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('conversion', 'Failed to validate output file', { error: message });
+      return { valid: false, reason: `Validation error: ${message}` };
+    }
+  }
+
+  /**
+   * Retry conversion with AV1-optimized decoder flags
+   * Increases probe buffers and disables threading (AV1 + threads = issues)
+   * @param inputFileName Input file name in FFmpeg filesystem
+   * @param outputFileName Output file name
+   * @param baseCommand Base FFmpeg command args (without input/threading)
+   * @returns true if retry succeeded, false if failed
+   */
+  private async retryWithAV1DecoderTuning(
+    inputFileName: string,
+    outputFileName: string,
+    baseCommand: string[]
+  ): Promise<boolean> {
+    logger.info('conversion', 'Attempting AV1 decoder retry with tuned flags');
+
+    try {
+      const ffmpeg = this.getFFmpeg();
+
+      // AV1-optimized input flags
+      const av1InputFlags = [
+        '-analyzeduration',
+        FFMPEG_INTERNALS.AV1_TRANSCODE.PROBE_DURATION_MS.toString(),
+        '-probesize',
+        (FFMPEG_INTERNALS.AV1_TRANSCODE.PROBE_SIZE_MB * 1024 * 1024).toString(),
+        '-fflags',
+        '+genpts', // Generate presentation timestamps
+        '-threads',
+        '1', // Force single-threaded (AV1 decoder has threading issues)
+      ];
+
+      const retryCommand = [...av1InputFlags, '-i', inputFileName, ...baseCommand, outputFileName];
+
+      logger.debug('ffmpeg', 'AV1 retry command', { cmd: retryCommand.join(' ') });
+
+      await withTimeout(
+        ffmpeg.exec(retryCommand),
+        TIMEOUT_CONVERSION,
+        `AV1 decoder retry timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+        () => this.terminateFFmpeg()
+      );
+
+      logger.info('conversion', 'AV1 decoder retry succeeded');
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('conversion', 'AV1 decoder retry failed', { error: message });
+      return false;
+    }
+  }
+
+  /**
+   * Transcode AV1 video to H.264 intermediate for better compatibility
+   * 2-pass conversion: AV1→H.264 then H.264→GIF/WebP
+   * @param inputFileName Original AV1 input file
+   * @param outputFormat Target format
+   * @param conversionCommand Command to convert H.264→output
+   * @returns true if transcode succeeded, false if failed
+   */
+  private async transcodeAV1ToH264(
+    inputFileName: string,
+    outputFormat: 'gif' | 'webp',
+    conversionCommand: string[]
+  ): Promise<boolean> {
+    const h264TempFile = FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE;
+
+    logger.info('conversion', 'Starting AV1→H.264 transcode fallback');
+    this.updateStatus('Transcoding AV1 to H.264 (this may take longer)...');
+
+    try {
+      const ffmpeg = this.getFFmpeg();
+
+      // PASS 1: AV1→H.264 transcode
+      const transcodeHeartbeat = this.startProgressHeartbeat(
+        FFMPEG_INTERNALS.PROGRESS.AV1_TRANSCODE.DECODE_START,
+        FFMPEG_INTERNALS.PROGRESS.AV1_TRANSCODE.DECODE_END,
+        45 // Conservative estimate: 45 seconds
+      );
+
+      const transcodeCommand = [
+        '-analyzeduration',
+        FFMPEG_INTERNALS.AV1_TRANSCODE.PROBE_DURATION_MS.toString(),
+        '-probesize',
+        (FFMPEG_INTERNALS.AV1_TRANSCODE.PROBE_SIZE_MB * 1024 * 1024).toString(),
+        '-i',
+        inputFileName,
+        '-c:v',
+        'libx264',
+        '-crf',
+        FFMPEG_INTERNALS.AV1_TRANSCODE.INTERMEDIATE_CRF.toString(),
+        '-preset',
+        FFMPEG_INTERNALS.AV1_TRANSCODE.INTERMEDIATE_PRESET,
+        '-pix_fmt',
+        'yuv420p',
+        '-an', // No audio
+        '-threads',
+        '1', // Single-threaded for stability
+        h264TempFile,
+      ];
+
+      logger.debug('ffmpeg', 'AV1→H.264 transcode command', { cmd: transcodeCommand.join(' ') });
+
+      try {
+        await withTimeout(
+          ffmpeg.exec(transcodeCommand),
+          TIMEOUT_CONVERSION,
+          `AV1 to H.264 transcoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+          () => this.terminateFFmpeg()
+        );
+      } finally {
+        this.stopProgressHeartbeat(transcodeHeartbeat);
+      }
+
+      // Verify H.264 intermediate was created
+      if (!(await this.safeFileExists(h264TempFile))) {
+        logger.error('conversion', 'H.264 intermediate file was not created');
+        return false;
+      }
+
+      logger.info('conversion', 'AV1→H.264 transcode complete, converting to final format');
+      this.updateStatus(`Converting H.264 to ${outputFormat.toUpperCase()}...`);
+
+      // PASS 2: H.264→GIF/WebP conversion
+      const convertHeartbeat = this.startProgressHeartbeat(
+        FFMPEG_INTERNALS.PROGRESS.AV1_TRANSCODE.ENCODE_START,
+        FFMPEG_INTERNALS.PROGRESS.AV1_TRANSCODE.ENCODE_END,
+        30 // Conservative estimate: 30 seconds
+      );
+
+      // Replace input file in conversion command
+      const finalCommand = conversionCommand.map((arg) =>
+        arg === inputFileName ? h264TempFile : arg
+      );
+
+      logger.debug('ffmpeg', `H.264→${outputFormat} conversion command`, {
+        cmd: finalCommand.join(' '),
+      });
+
+      try {
+        await withTimeout(
+          ffmpeg.exec(finalCommand),
+          TIMEOUT_CONVERSION,
+          `H.264 to ${outputFormat} conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+          () => this.terminateFFmpeg()
+        );
+      } finally {
+        this.stopProgressHeartbeat(convertHeartbeat);
+      }
+
+      // Clean up H.264 temp file
+      await this.safeDelete(h264TempFile);
+
+      logger.info('conversion', 'AV1 transcode fallback succeeded');
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('conversion', 'AV1 transcode fallback failed', { error: message });
+
+      // Clean up temp file on failure
+      await this.safeDelete(h264TempFile);
+
+      return false;
+    }
   }
 
   /**
@@ -744,14 +978,37 @@ class FFmpegService {
       bitrate: 0,
     };
 
+    let logOutput = '';
+
     const logHandler = ({ message }: { message: string }) => {
-      const resolutionMatch = message.match(/(\d{2,5})x(\d{2,5})/);
+      logOutput += `${message}\n`;
+    };
+
+    ffmpeg.on('log', logHandler);
+
+    try {
+      await this.ensureInputFile(file);
+
+      // Use standard ffmpeg info output - ffprobe-style args don't work in ffmpeg.wasm
+      await withTimeout(
+        ffmpeg.exec(['-i', inputFileName]),
+        TIMEOUT_VIDEO_ANALYSIS,
+        `Video analysis timed out after ${TIMEOUT_VIDEO_ANALYSIS / 1000} seconds. The file may be corrupted or in an unsupported format.`
+      );
+    } catch {
+      // Expected to fail since we're just reading info, not converting
+      // The metadata is captured in logOutput via the log handler
+    }
+
+    try {
+      // Parse metadata from FFmpeg output
+      const resolutionMatch = logOutput.match(/(\d{2,5})x(\d{2,5})/);
       if (resolutionMatch) {
         metadata.width = Number.parseInt(resolutionMatch[1] ?? '0', 10);
         metadata.height = Number.parseInt(resolutionMatch[2] ?? '0', 10);
       }
 
-      const durationMatch = message.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+      const durationMatch = logOutput.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/);
       if (durationMatch) {
         const hours = Number.parseInt(durationMatch[1] ?? '0', 10);
         const minutes = Number.parseInt(durationMatch[2] ?? '0', 10);
@@ -759,35 +1016,25 @@ class FFmpegService {
         metadata.duration = hours * 3600 + minutes * 60 + seconds;
       }
 
-      const codecMatch = message.match(/Video: (\w+)/);
+      // Improved codec regex to handle various formats
+      // Matches patterns like "Video: h264", "Video: vp9 (Profile 0)", etc.
+      const codecMatch = logOutput.match(/Video:\s+([a-zA-Z0-9_]+)(?:\s|\(|,)/);
       if (codecMatch) {
         metadata.codec = codecMatch[1] ?? 'unknown';
       }
 
-      const framerateMatch = message.match(/(\d+(?:\.\d+)?) fps/);
+      const framerateMatch = logOutput.match(/(\d+(?:\.\d+)?)\s*fps/);
       if (framerateMatch) {
         metadata.framerate = Number.parseFloat(framerateMatch[1] ?? '0');
       }
 
-      const bitrateMatch = message.match(/bitrate: (\d+) kb\/s/);
+      const bitrateMatch = logOutput.match(/bitrate:\s*(\d+)\s*kb\/s/i);
       if (bitrateMatch) {
         metadata.bitrate = Number.parseInt(bitrateMatch[1] ?? '0', 10) * 1000;
       }
-    };
 
-    ffmpeg.on('log', logHandler);
-
-    try {
-      await this.ensureInputFile(file);
-      await withTimeout(
-        ffmpeg.exec(['-hide_banner', '-i', inputFileName]),
-        TIMEOUT_VIDEO_ANALYSIS,
-        `Video analysis timed out after ${TIMEOUT_VIDEO_ANALYSIS / 1000} seconds. The file may be corrupted or in an unsupported format.`
-      );
-      return metadata;
-    } catch (error) {
       await this.clearCachedInput();
-      throw error;
+      return metadata;
     } finally {
       ffmpeg.off('log', logHandler);
     }
@@ -968,6 +1215,105 @@ class FFmpegService {
       }
 
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END);
+
+      // VALIDATE OUTPUT before reading
+      const validation = await this.validateOutputFile(outputFileName, 'gif');
+
+      if (!validation.valid) {
+        logger.warn('conversion', 'GIF output validation failed', {
+          reason: validation.reason,
+        });
+
+        // Check if this is AV1 codec
+        const isAV1 = metadata?.codec?.toLowerCase().includes('av1');
+
+        if (isAV1 && !this.cancellationRequested) {
+          logger.info('conversion', 'Detected AV1 codec, attempting retry strategies');
+
+          // TIER 2: Retry with AV1-tuned decoder flags
+          await this.safeDelete(outputFileName);
+          await this.safeDelete(paletteFileName);
+          this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
+
+          // Reconstruct conversion command for retry
+          const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
+          const scaleFilter = getScaleFilter(quality, scale);
+          const conversionFilterChain = scaleFilter
+            ? `fps=${settings.fps},${scaleFilter}[x];[x][1:v]paletteuse=dither=${ditherMode}`
+            : `fps=${settings.fps}[x];[x][1:v]paletteuse=dither=${ditherMode}`;
+          const baseCmd = [
+            '-i',
+            inputFileName,
+            '-i',
+            paletteFileName,
+            '-filter_complex',
+            conversionFilterChain,
+            outputFileName,
+          ];
+
+          const retrySuccess = await this.retryWithAV1DecoderTuning(
+            inputFileName,
+            outputFileName,
+            baseCmd
+          );
+
+          if (retrySuccess) {
+            const retryValidation = await this.validateOutputFile(outputFileName, 'gif');
+            if (retryValidation.valid) {
+              logger.info('conversion', 'AV1 decoder retry produced valid output');
+              // Continue to read file below
+            } else {
+              // TIER 3: Transcode AV1→H.264→GIF
+              logger.info('conversion', 'Retry failed, attempting AV1 transcode');
+              await this.safeDelete(outputFileName);
+
+              const transcodeSuccess = await this.transcodeAV1ToH264(inputFileName, 'gif', baseCmd);
+
+              if (!transcodeSuccess) {
+                throw new Error(
+                  'AV1 video conversion failed after trying all strategies. ' +
+                    'Try: 1) Convert video to H.264/MP4 first, 2) Use different quality/scale settings, ' +
+                    '3) Try a different video file.'
+                );
+              }
+
+              // Final validation
+              const finalValidation = await this.validateOutputFile(outputFileName, 'gif');
+              if (!finalValidation.valid) {
+                throw new Error(
+                  `GIF conversion produced invalid output: ${finalValidation.reason}`
+                );
+              }
+            }
+          } else {
+            // Retry failed, try transcode
+            logger.info('conversion', 'Decoder retry failed, attempting transcode');
+            await this.safeDelete(outputFileName);
+
+            const transcodeSuccess = await this.transcodeAV1ToH264(inputFileName, 'gif', baseCmd);
+
+            if (!transcodeSuccess) {
+              throw new Error(
+                'AV1 video conversion failed after trying all strategies. ' +
+                  'Try: 1) Convert video to H.264/MP4 first, 2) Use different quality/scale settings, ' +
+                  '3) Try a different video file.'
+              );
+            }
+
+            // Final validation
+            const finalValidation = await this.validateOutputFile(outputFileName, 'gif');
+            if (!finalValidation.valid) {
+              throw new Error(`GIF conversion produced invalid output: ${finalValidation.reason}`);
+            }
+          }
+        } else {
+          // Not AV1 or cancelled - throw validation error
+          throw new Error(
+            `GIF conversion produced invalid output: ${validation.reason}. ` +
+              'This may indicate a corrupted video file or unsupported codec.'
+          );
+        }
+      }
 
       const data = await this.safeReadFile(outputFileName);
 
@@ -1157,6 +1503,123 @@ class FFmpegService {
       }
 
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END);
+
+      // VALIDATE OUTPUT before reading
+      const validation = await this.validateOutputFile(outputFileName, 'webp');
+
+      if (!validation.valid) {
+        logger.warn('conversion', 'WebP output validation failed', {
+          reason: validation.reason,
+        });
+
+        // Check if this is AV1 codec
+        const isAV1 = metadata?.codec?.toLowerCase().includes('av1');
+
+        if (isAV1 && !this.cancellationRequested) {
+          logger.info('conversion', 'Detected AV1 codec, attempting retry strategies');
+
+          // TIER 2: Retry with AV1-tuned decoder flags
+          await this.safeDelete(outputFileName);
+          this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START);
+
+          // Reconstruct conversion command for retry
+          const scaleFilter = getScaleFilter(quality, scale);
+          const webpFilterArgs = scaleFilter
+            ? `fps=${settings.fps},${scaleFilter}`
+            : `fps=${settings.fps}`;
+          const baseCmd = [
+            '-i',
+            inputFileName,
+            '-vf',
+            webpFilterArgs,
+            '-c:v',
+            'libwebp',
+            '-lossless',
+            '0',
+            '-quality',
+            settings.quality.toString(),
+            '-preset',
+            settings.preset,
+            '-compression_level',
+            settings.compressionLevel.toString(),
+            '-method',
+            settings.method.toString(),
+            '-qmin',
+            '1',
+            '-qmax',
+            '100',
+            '-loop',
+            '0',
+            outputFileName,
+          ];
+
+          const retrySuccess = await this.retryWithAV1DecoderTuning(
+            inputFileName,
+            outputFileName,
+            baseCmd
+          );
+
+          if (retrySuccess) {
+            const retryValidation = await this.validateOutputFile(outputFileName, 'webp');
+            if (retryValidation.valid) {
+              logger.info('conversion', 'AV1 decoder retry produced valid output');
+              // Continue to read file below
+            } else {
+              // TIER 3: Transcode AV1→H.264→WebP
+              logger.info('conversion', 'Retry failed, attempting AV1 transcode');
+              await this.safeDelete(outputFileName);
+
+              const transcodeSuccess = await this.transcodeAV1ToH264(
+                inputFileName,
+                'webp',
+                baseCmd
+              );
+
+              if (!transcodeSuccess) {
+                throw new Error(
+                  'AV1 video conversion failed after trying all strategies. ' +
+                    'Try: 1) Convert video to H.264/MP4 first, 2) Use different quality/scale settings, ' +
+                    '3) Try a different video file.'
+                );
+              }
+
+              // Final validation
+              const finalValidation = await this.validateOutputFile(outputFileName, 'webp');
+              if (!finalValidation.valid) {
+                throw new Error(
+                  `WebP conversion produced invalid output: ${finalValidation.reason}`
+                );
+              }
+            }
+          } else {
+            // Retry failed, try transcode
+            logger.info('conversion', 'Decoder retry failed, attempting transcode');
+            await this.safeDelete(outputFileName);
+
+            const transcodeSuccess = await this.transcodeAV1ToH264(inputFileName, 'webp', baseCmd);
+
+            if (!transcodeSuccess) {
+              throw new Error(
+                'AV1 video conversion failed after trying all strategies. ' +
+                  'Try: 1) Convert video to H.264/MP4 first, 2) Use different quality/scale settings, ' +
+                  '3) Try a different video file.'
+              );
+            }
+
+            // Final validation
+            const finalValidation = await this.validateOutputFile(outputFileName, 'webp');
+            if (!finalValidation.valid) {
+              throw new Error(`WebP conversion produced invalid output: ${finalValidation.reason}`);
+            }
+          }
+        } else {
+          // Not AV1 or cancelled - throw validation error
+          throw new Error(
+            `WebP conversion produced invalid output: ${validation.reason}. ` +
+              'This may indicate a corrupted video file or unsupported codec.'
+          );
+        }
+      }
 
       const data = await this.safeReadFile(outputFileName);
 
@@ -1517,6 +1980,7 @@ class FFmpegService {
       'palette.png', // GIF palette file
       'output.gif', // GIF output
       'output.webp', // WebP output
+      FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE, // H.264 intermediate
     ];
 
     logger.debug('conversion', 'Cleaning up temp files before termination', { files: tempFiles });

@@ -54,13 +54,24 @@ export function classifyConversionError(
   if (
     message.includes('codec') ||
     message.includes('unsupported') ||
-    message.includes('not found')
+    message.includes('not found') ||
+    message.includes('function not implemented') ||
+    message.includes('decoder') ||
+    message.includes('decode')
   ) {
+    // Check if it's specifically an AV1 issue
+    const isAV1Issue =
+      metadata?.codec?.toLowerCase().includes('av1') ||
+      message.includes('av1') ||
+      ffmpegLogs?.some((log) => log.toLowerCase().includes('av1'));
+
     return {
       type: 'codec',
       ...baseContext,
-      suggestion:
-        'The video format or codec is not supported. Try converting the video to H.264/MP4 format first using another tool.',
+      phase: isAV1Issue ? 'av1_decode_failure' : 'codec_error',
+      suggestion: isAV1Issue
+        ? 'AV1 video codec is not fully supported by the browser decoder. The converter will automatically try alternative decoding methods or transcode to H.264 first.'
+        : 'The video format or codec is not supported. Try converting the video to H.264/MP4 format first using another tool.',
     };
   }
 

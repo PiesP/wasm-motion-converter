@@ -25,6 +25,22 @@ export const FFMPEG_INTERNALS = {
   TERMINATION_CHECK_INTERVAL_MS: 100, // How often to check termination status
   MAX_TERMINATION_WAIT_MS: 5_000, // Maximum time to wait for termination
 
+  // Output validation thresholds
+  OUTPUT_VALIDATION: {
+    MIN_FILE_SIZE_BYTES: 100, // Minimum valid output (prevents 0-byte files)
+    MIN_GIF_SIZE_BYTES: 50, // GIF header + minimal frame
+    MIN_WEBP_SIZE_BYTES: 50, // WebP header + minimal frame
+  },
+
+  // AV1 transcode settings
+  AV1_TRANSCODE: {
+    TEMP_H264_FILE: 'temp_h264.mp4',
+    PROBE_DURATION_MS: 10_000_000, // 10s analyzeduration for complex streams
+    PROBE_SIZE_MB: 100, // 100MB probesize for difficult decodes
+    INTERMEDIATE_CRF: 18, // High quality intermediate
+    INTERMEDIATE_PRESET: 'medium', // Balance speed/quality
+  },
+
   // Progress range constants for consistent UX
   PROGRESS: {
     GIF: {
@@ -40,6 +56,12 @@ export const FFMPEG_INTERNALS = {
       CONVERSION_START: 10,
       CONVERSION_END: 90,
       COMPLETE: 100,
+    },
+    AV1_TRANSCODE: {
+      DECODE_START: 20, // AV1→H.264 decode phase
+      DECODE_END: 60,
+      ENCODE_START: 60, // H.264→output encode phase
+      ENCODE_END: 90,
     },
   },
 
