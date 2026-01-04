@@ -1,5 +1,5 @@
-import type tyVideoMetadataadata } fr.otypes/conversionttypesnversion-types';
-import peffmpegServiceom './ffmegffmpegservice
+import type { VideoMetadata } from '../types/conversion-types';
+import { ffmpegService } from './ffmpeg-service';
 
 export function analyzeVideo(file: File): Promise<VideoMetadata> {
   return ffmpegService.getVideoMetadata(file);
