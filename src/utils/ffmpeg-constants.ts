@@ -95,6 +95,8 @@ export const FFMPEG_INTERNALS = {
     FRAME_START_NUMBER: 0,
     METADATA_TIMEOUT_MS: 5000,
     SEEK_TIMEOUT_MS: 5000,
+    FRAME_STALL_TIMEOUT_MS: 7000,
+    MAX_TOTAL_DECODE_MS: 60000, // 60s max for WebCodecs decode (fail-fast if stalling)
   },
 } as const;
 

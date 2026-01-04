@@ -1,10 +1,16 @@
 import type { VideoMetadata } from '../types/conversion-types';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
+import {
+  getWebCodecsSupportStatus,
+  isWebCodecsCodecSupported,
+  isWebCodecsDecodeSupported,
+} from './webcodecs-support';
 
 export type WebCodecsFrameFormat = 'png' | 'jpeg';
 
 export type WebCodecsProgressCallback = (current: number, total: number) => void;
+export type WebCodecsCaptureMode = 'auto' | 'frame-callback' | 'seek' | 'track';
 
 export interface WebCodecsFramePayload {
   name: string;
@@ -22,6 +28,7 @@ export interface WebCodecsDecodeOptions {
   framePrefix: string;
   frameDigits: number;
   frameStartNumber: number;
+  captureMode?: WebCodecsCaptureMode;
   onFrame: (frame: WebCodecsFramePayload) => Promise<void>;
   onProgress?: WebCodecsProgressCallback;
   shouldCancel?: () => boolean;
@@ -64,21 +71,29 @@ const waitForEvent = (target: EventTarget, eventName: string, timeoutMs: number)
   });
 
 const createCanvas = (width: number, height: number): CaptureContext => {
-  const hasOffscreenCanvas = typeof OffscreenCanvas !== 'undefined';
-  const canvas = hasOffscreenCanvas
-    ? new OffscreenCanvas(width, height)
-    : document.createElement('canvas');
-
-  if (!hasOffscreenCanvas) {
+  const hasDocument = typeof document !== 'undefined';
+  if (hasDocument) {
+    const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) {
+      throw new Error('Canvas 2D context not available');
+    }
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    return { canvas, context, targetWidth: width, targetHeight: height };
   }
 
+  if (typeof OffscreenCanvas === 'undefined') {
+    throw new Error('Canvas rendering is not available in this environment.');
+  }
+
+  const canvas = new OffscreenCanvas(width, height);
   const context = canvas.getContext('2d', { alpha: false });
   if (!context) {
     throw new Error('Canvas 2D context not available');
   }
-
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
 
@@ -125,22 +140,9 @@ export class WebCodecsDecoderService {
     return (
       typeof document !== 'undefined' &&
       typeof HTMLVideoElement !== 'undefined' &&
-      typeof HTMLCanvasElement !== 'undefined'
+      typeof HTMLCanvasElement !== 'undefined' &&
+      isWebCodecsDecodeSupported()
     );
-  }
-
-  static getCodecString(codec: string): string | null {
-    const normalized = codec.toLowerCase();
-    if (normalized === 'av1' || normalized === 'av01') {
-      return 'av01.0.05M.08';
-    }
-    if (normalized === 'vp9') {
-      return 'vp09.00.10.08';
-    }
-    if (normalized === 'hevc' || normalized === 'h265') {
-      return 'hvc1.1.6.L93.B0';
-    }
-    return null;
   }
 
   static async isCodecSupported(
@@ -148,39 +150,7 @@ export class WebCodecsDecoderService {
     fileType: string,
     metadata?: VideoMetadata
   ): Promise<boolean> {
-    if (typeof navigator === 'undefined' || !('mediaCapabilities' in navigator)) {
-      return true;
-    }
-
-    const codecString = WebCodecsDecoderService.getCodecString(codec);
-    if (!codecString) {
-      return true;
-    }
-
-    const contentType = `${fileType || 'video/mp4'}; codecs="${codecString}"`;
-    const width = metadata?.width || 640;
-    const height = metadata?.height || 360;
-    const bitrate = metadata?.bitrate || 2_000_000;
-    const framerate = metadata?.framerate || 30;
-
-    try {
-      const info = await navigator.mediaCapabilities.decodingInfo({
-        type: 'file',
-        video: {
-          contentType,
-          width,
-          height,
-          bitrate,
-          framerate,
-        },
-      });
-      return info.supported;
-    } catch (error) {
-      logger.warn('conversion', 'MediaCapabilities decodingInfo failed', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return true;
-    }
+    return isWebCodecsCodecSupported(codec, fileType, metadata);
   }
 
   async decodeToFrames(options: WebCodecsDecodeOptions): Promise<WebCodecsDecodeResult> {
@@ -197,6 +167,7 @@ export class WebCodecsDecoderService {
       framePrefix,
       frameDigits,
       frameStartNumber,
+      captureMode = 'auto',
       onFrame,
       onProgress,
       shouldCancel,
@@ -232,9 +203,22 @@ export class WebCodecsDecoderService {
 
       video.currentTime = 0;
 
+      let consecutiveEmptyFrames = 0;
+      const MAX_CONSECUTIVE_EMPTY_FRAMES = 3; // Abort early if we get multiple empty frames
+      const startDecodeTime = Date.now();
+
       const captureFrame = async (index: number, timestamp: number) => {
         if (shouldCancel?.()) {
           throw new Error('Conversion cancelled by user');
+        }
+
+        // Fail-fast if decode is taking too long (indicates stall)
+        const elapsed = Date.now() - startDecodeTime;
+        if (elapsed > FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS) {
+          throw new Error(
+            `WebCodecs decode exceeded ${FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS}ms timeout at frame ${index}. ` +
+              'Codec incompatibility detected. Falling back to FFmpeg.'
+          );
         }
 
         captureContext.context.drawImage(
@@ -250,7 +234,27 @@ export class WebCodecsDecoderService {
           frameFormat === 'png' ? 'image/png' : 'image/jpeg',
           frameFormat === 'jpeg' ? frameQuality : undefined
         );
+        if (blob.size === 0) {
+          consecutiveEmptyFrames += 1;
+          if (consecutiveEmptyFrames >= MAX_CONSECUTIVE_EMPTY_FRAMES) {
+            throw new Error(
+              `WebCodecs decoder produced ${consecutiveEmptyFrames} consecutive empty frames at frame ${index}. ` +
+                'This typically indicates codec incompatibility (e.g., AV1). Falling back to FFmpeg.'
+            );
+          }
+          logger.warn('conversion', `WebCodecs produced empty frame ${index}, retrying`, {
+            consecutiveEmptyFrames,
+            maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
+          });
+          // Still throw to fail-fast after threshold
+          throw new Error('Captured empty frame from WebCodecs decoder.');
+        }
+        consecutiveEmptyFrames = 0; // Reset counter on successful frame
+
         const data = new Uint8Array(await blob.arrayBuffer());
+        if (data.byteLength === 0) {
+          throw new Error('Captured empty frame data from WebCodecs decoder.');
+        }
         const frameName = formatFrameName(
           framePrefix,
           frameDigits,
@@ -262,8 +266,54 @@ export class WebCodecsDecoderService {
         onProgress?.(frameFiles.length, estimatedTotalFrames);
       };
 
+      const supportStatus = getWebCodecsSupportStatus();
       const supportsFrameCallback = typeof video.requestVideoFrameCallback === 'function';
-      if (supportsFrameCallback) {
+      const supportsTrackProcessor = supportStatus.trackProcessor && supportStatus.captureStream;
+
+      if (captureMode === 'track') {
+        if (!supportsTrackProcessor) {
+          throw new Error('WebCodecs track processor is not supported in this browser.');
+        }
+        await this.captureWithTrackProcessor(
+          video,
+          duration,
+          targetFps,
+          captureFrame,
+          shouldCancel
+        );
+      } else if (captureMode === 'frame-callback') {
+        if (!supportsFrameCallback) {
+          throw new Error('requestVideoFrameCallback is not supported in this browser.');
+        }
+        await this.captureWithFrameCallback(video, duration, targetFps, captureFrame, shouldCancel);
+      } else if (captureMode === 'seek') {
+        await this.captureWithSeeking(video, duration, targetFps, captureFrame, shouldCancel);
+      } else if (supportsTrackProcessor) {
+        try {
+          await this.captureWithTrackProcessor(
+            video,
+            duration,
+            targetFps,
+            captureFrame,
+            shouldCancel
+          );
+        } catch (error) {
+          logger.warn('conversion', 'WebCodecs track capture failed, falling back', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          if (supportsFrameCallback) {
+            await this.captureWithFrameCallback(
+              video,
+              duration,
+              targetFps,
+              captureFrame,
+              shouldCancel
+            );
+          } else {
+            await this.captureWithSeeking(video, duration, targetFps, captureFrame, shouldCancel);
+          }
+        }
+      } else if (supportsFrameCallback) {
         await this.captureWithFrameCallback(video, duration, targetFps, captureFrame, shouldCancel);
       } else {
         await this.captureWithSeeking(video, duration, targetFps, captureFrame, shouldCancel);
@@ -300,17 +350,71 @@ export class WebCodecsDecoderService {
     }
 
     const frameInterval = 1 / targetFps;
+    const totalFrames = Math.max(1, Math.ceil(duration * targetFps));
     const epsilon = 0.001;
     let nextFrameTime = 0;
     let frameIndex = 0;
 
     await new Promise<void>((resolve, reject) => {
+      let finished = false;
+      let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const clearStallTimer = () => {
+        if (stallTimer) {
+          clearTimeout(stallTimer);
+          stallTimer = null;
+        }
+      };
+
+      const scheduleStallTimer = () => {
+        clearStallTimer();
+        stallTimer = setTimeout(() => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          reject(new Error('WebCodecs frame capture stalled.'));
+        }, FFMPEG_INTERNALS.WEBCODECS.FRAME_STALL_TIMEOUT_MS);
+      };
+
+      const finalize = () => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        clearStallTimer();
+        video.removeEventListener('ended', handleEnded);
+        video.removeEventListener('error', handleError);
+        resolve();
+      };
+
+      const handleEnded = () => {
+        finalize();
+      };
+
+      const handleError = () => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        clearStallTimer();
+        reject(new Error('WebCodecs video decode error.'));
+      };
+
+      video.addEventListener('ended', handleEnded, { once: true });
+      video.addEventListener('error', handleError, { once: true });
+      scheduleStallTimer();
+
       const handleFrame = async (
         _now: number,
         metadata: VideoFrameCallbackMetadata
       ): Promise<void> => {
         try {
+          if (finished) {
+            return;
+          }
           if (shouldCancel?.()) {
+            finished = true;
             reject(new Error('Conversion cancelled by user'));
             return;
           }
@@ -322,21 +426,129 @@ export class WebCodecsDecoderService {
             await captureFrame(frameIndex, mediaTime);
             frameIndex += 1;
             nextFrameTime += frameInterval;
+            scheduleStallTimer();
           }
 
-          if (mediaTime + epsilon >= duration || frameIndex * frameInterval > duration) {
-            resolve();
+          if (frameIndex >= totalFrames || mediaTime + epsilon >= duration || video.ended) {
+            finalize();
             return;
           }
 
           video.requestVideoFrameCallback(handleFrame);
         } catch (error) {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          clearStallTimer();
           reject(error);
         }
       };
 
       video.requestVideoFrameCallback(handleFrame);
     });
+  }
+
+  private async captureWithTrackProcessor(
+    video: HTMLVideoElement,
+    duration: number,
+    targetFps: number,
+    captureFrame: (index: number, timestamp: number) => Promise<void>,
+    shouldCancel?: () => boolean
+  ): Promise<void> {
+    if (
+      typeof MediaStreamTrackProcessor === 'undefined' ||
+      typeof (video as unknown as Record<string, unknown>).captureStream !== 'function'
+    ) {
+      throw new Error('WebCodecs track processor is not available in this browser.');
+    }
+
+    try {
+      await video.play();
+    } catch (error) {
+      logger.warn('conversion', 'Autoplay blocked for track capture', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
+    const stream = (video as unknown as { captureStream(): MediaStream }).captureStream();
+    const [track] = stream.getVideoTracks();
+    if (!track) {
+      throw new Error('No video track available for WebCodecs capture.');
+    }
+
+    const processor = new MediaStreamTrackProcessor({ track });
+    const reader = processor.readable.getReader();
+    const frameIntervalUs = 1_000_000 / targetFps;
+    const totalFrames = Math.max(1, Math.ceil(duration * targetFps));
+    const epsilonUs = 1_000;
+    let nextFrameTimeUs = 0;
+    let frameIndex = 0;
+    const startDecodeTime = Date.now();
+
+    const readFrame = async (): Promise<ReadableStreamReadResult<VideoFrame>> => {
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      try {
+        return await Promise.race([
+          reader.read(),
+          new Promise<ReadableStreamReadResult<VideoFrame>>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              reject(new Error('WebCodecs track capture stalled.'));
+            }, FFMPEG_INTERNALS.WEBCODECS.FRAME_STALL_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+    };
+
+    try {
+      while (frameIndex < totalFrames) {
+        if (shouldCancel?.()) {
+          throw new Error('Conversion cancelled by user');
+        }
+
+        const elapsed = Date.now() - startDecodeTime;
+        if (elapsed > FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS) {
+          throw new Error(
+            `WebCodecs decode exceeded ${FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS}ms timeout at frame ${frameIndex}. ` +
+              'Codec incompatibility detected. Falling back to FFmpeg.'
+          );
+        }
+
+        const { value: frame, done } = await readFrame();
+        if (done || !frame) {
+          break;
+        }
+
+        try {
+          const timestampUs =
+            typeof frame.timestamp === 'number'
+              ? frame.timestamp
+              : Math.round(video.currentTime * 1_000_000);
+          const shouldCapture = frameIndex === 0 || timestampUs + epsilonUs >= nextFrameTimeUs;
+
+          if (shouldCapture) {
+            await captureFrame(frameIndex, timestampUs / 1_000_000);
+            frameIndex += 1;
+            nextFrameTimeUs += frameIntervalUs;
+          }
+
+          if (timestampUs / 1_000_000 >= duration) {
+            break;
+          }
+        } finally {
+          frame.close();
+        }
+      }
+    } finally {
+      reader.releaseLock();
+      track.stop();
+      video.pause();
+    }
   }
 
   private async captureWithSeeking(

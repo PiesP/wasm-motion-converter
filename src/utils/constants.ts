@@ -7,7 +7,21 @@ export const WARN_DURATION_SECONDS = 30; // 30 seconds
 
 export const COMPLEX_CODECS = ['hevc', 'h265', 'vp9', 'av1', 'av01'];
 
-export const WEBCODECS_ACCELERATED = ['av1', 'av01', 'hevc', 'h265', 'vp9'];
+export const WEBCODECS_ACCELERATED = [
+  'av1',
+  'av01',
+  'hevc',
+  'h265',
+  'hvc1',
+  'hev1',
+  'vp9',
+  'vp09',
+  'vp8',
+  'vp08',
+  'h264',
+  'avc1',
+  'avc3',
+];
 
 export const SUPPORTED_VIDEO_MIMES = [
   'video/mp4',

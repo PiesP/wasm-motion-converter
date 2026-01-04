@@ -14,14 +14,12 @@ import {
   TIMEOUT_FFMPEG_INIT,
   TIMEOUT_FFMPEG_WORKER_CHECK,
   TIMEOUT_VIDEO_ANALYSIS,
-  WEBCODECS_ACCELERATED,
 } from '../utils/constants';
 import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';
 import { withTimeout } from '../utils/with-timeout';
-import { WebCodecsDecoderService } from './webcodecs-decoder';
 
 // Legacy constants kept for backward compatibility with external timeout values
 const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
@@ -218,6 +216,7 @@ class FFmpegService {
   private prefetchPromise: Promise<void> | null = null;
   private ffmpegLogBuffer: string[] = [];
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private hasLoggedEnvironment = false;
 
   // Resource tracking for cleanup
   private activeHeartbeats: Set<ReturnType<typeof setInterval>> = new Set();
@@ -230,9 +229,10 @@ class FFmpegService {
     return this.ffmpeg;
   }
 
-  private emitProgress(progress: number, isHeartbeat = false): void {
-    if (this.isConverting && !isHeartbeat) {
+  private emitProgress(progress: number, _isHeartbeat = false): void {
+    if (this.isConverting) {
       this.lastProgressTime = Date.now();
+      this.lastProgressValue = progress;
     }
     if (this.progressCallback) {
       this.progressCallback(progress);
@@ -1042,6 +1042,106 @@ class FFmpegService {
     }
   }
 
+  private resetFFmpegLogBuffer(): void {
+    this.ffmpegLogBuffer = [];
+  }
+
+  private isLikelyAv1(metadata?: VideoMetadata): boolean {
+    const codec = metadata?.codec?.toLowerCase() ?? '';
+    if (codec.includes('av1') || codec.includes('av01')) {
+      return true;
+    }
+
+    return this.ffmpegLogBuffer.some((log) => {
+      const entry = log.toLowerCase();
+      return entry.includes('av1') || entry.includes('av01');
+    });
+  }
+
+  private async resolveMetadataForConversion(
+    file: File,
+    metadata?: VideoMetadata
+  ): Promise<VideoMetadata | undefined> {
+    if (metadata?.codec && metadata.codec !== 'unknown') {
+      return metadata;
+    }
+
+    try {
+      const analyzed = await this.getVideoMetadata(file);
+      return analyzed;
+    } catch (error) {
+      logger.warn('conversion', 'Metadata probe failed, continuing without codec', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return metadata;
+    }
+  }
+
+  private logEnvironmentContext(): void {
+    if (this.hasLoggedEnvironment || typeof navigator === 'undefined') {
+      return;
+    }
+
+    const nav = navigator as Navigator & {
+      deviceMemory?: number;
+      userAgentData?: {
+        brands?: { brand: string; version: string }[];
+        mobile?: boolean;
+        platform?: string;
+      };
+    };
+    const brands = nav.userAgentData?.brands
+      ?.map((brand) => `${brand.brand}/${brand.version}`)
+      .join(', ');
+    const platform = nav.userAgentData?.platform ?? navigator.platform;
+
+    logger.info('general', 'Environment info', {
+      userAgent: navigator.userAgent,
+      platform,
+      vendor: navigator.vendor,
+      language: navigator.language,
+      languages: navigator.languages,
+      mobile: nav.userAgentData?.mobile,
+      brands,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      deviceMemory: nav.deviceMemory,
+      sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+      crossOriginIsolated:
+        typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true,
+      requestVideoFrameCallback:
+        typeof HTMLVideoElement !== 'undefined' &&
+        'requestVideoFrameCallback' in HTMLVideoElement.prototype,
+      mediaCapabilities: typeof navigator.mediaCapabilities !== 'undefined',
+    });
+
+    this.hasLoggedEnvironment = true;
+  }
+
+  private logConversionContext(
+    file: File,
+    format: 'gif' | 'webp',
+    options: ConversionOptions,
+    metadata?: VideoMetadata
+  ): void {
+    this.logEnvironmentContext();
+
+    logger.info('conversion', 'Conversion context', {
+      format,
+      quality: options.quality,
+      scale: options.scale,
+      fileName: file.name,
+      fileType: file.type || 'unknown',
+      fileSize: file.size,
+      lastModified: file.lastModified,
+      duration: metadata?.duration,
+      width: metadata?.width,
+      height: metadata?.height,
+      codec: metadata?.codec,
+      framerate: metadata?.framerate,
+      bitrate: metadata?.bitrate,
+    });
+  }
+
   private getFrameSequencePattern(): string {
     return `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}%0${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS}d.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`;
   }
@@ -1057,131 +1157,51 @@ class FFmpegService {
     ];
   }
 
-  private async shouldUseWebCodecs(file: File, metadata?: VideoMetadata): Promise<boolean> {
-    if (!metadata?.codec) {
-      return false;
+  async encodeFrameSequence(params: {
+    format: 'gif' | 'webp';
+    options: ConversionOptions;
+    frameCount: number;
+    fps: number;
+    durationSeconds: number;
+    frameFiles: string[];
+  }): Promise<Blob> {
+    if (!this.loaded || !this.ffmpeg) {
+      logger.warn('conversion', 'FFmpeg not initialized, reinitializing...');
+      await this.initialize();
     }
-
-    const codec = metadata.codec.toLowerCase();
-    if (!WEBCODECS_ACCELERATED.includes(codec)) {
-      return false;
-    }
-
-    if (isMemoryCritical()) {
-      logger.warn('conversion', 'Skipping WebCodecs decode due to critical memory usage');
-      return false;
-    }
-
-    if (!WebCodecsDecoderService.isSupported()) {
-      return false;
-    }
-
-    return WebCodecsDecoderService.isCodecSupported(codec, file.type, metadata);
-  }
-
-  private async maybeConvertWithWebCodecs(
-    file: File,
-    format: 'gif' | 'webp',
-    options: ConversionOptions,
-    metadata?: VideoMetadata
-  ): Promise<Blob | null> {
-    const useWebCodecs = await this.shouldUseWebCodecs(file, metadata);
-    if (!useWebCodecs) {
-      return null;
-    }
-
-    try {
-      return await this.convertWithWebCodecs(file, format, options, metadata);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-
-      if (
-        errorMessage.includes('cancelled by user') ||
-        errorMessage.includes('called FFmpeg.terminate()')
-      ) {
-        throw error;
-      }
-
-      logger.warn('conversion', 'WebCodecs path failed, falling back to FFmpeg', {
-        error: errorMessage,
-      });
-      return null;
-    }
-  }
-
-  private async convertWithWebCodecs(
-    file: File,
-    format: 'gif' | 'webp',
-    options: ConversionOptions,
-    metadata?: VideoMetadata
-  ): Promise<Blob> {
     const ffmpeg = this.getFFmpeg();
-    const { quality, scale } = options;
-    const gifSettings = QUALITY_PRESETS.gif[quality];
-    const webpSettings = QUALITY_PRESETS.webp[quality];
-    const targetFps = format === 'gif' ? gifSettings.fps : webpSettings.fps;
+    const { format, options, frameCount, fps, durationSeconds, frameFiles } = params;
     const outputFileName = format === 'gif' ? 'output.gif' : 'output.webp';
     const paletteFileName = FFMPEG_INTERNALS.PALETTE_FILE_NAME;
-    const frameFiles: string[] = [];
-    const decoder = new WebCodecsDecoderService();
-
-    const decodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_START;
-    const decodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_END;
     const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
     try {
-      this.updateStatus('Decoding with hardware acceleration...');
-      this.emitProgress(decodeStart);
-
-      const decodeResult = await decoder.decodeToFrames({
-        file,
-        targetFps,
-        scale,
-        frameFormat: FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT,
-        frameQuality: FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY,
-        framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
-        frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
-        frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-        shouldCancel: () => this.cancellationRequested,
-        onProgress: (current, total) => {
-          const progress = decodeStart + ((decodeEnd - decodeStart) * current) / Math.max(1, total);
-          this.emitProgress(Math.round(progress));
-        },
-        onFrame: async (frame) => {
-          await this.safeWriteFile(frame.name, frame.data);
-          frameFiles.push(frame.name);
-        },
-      });
-
-      if (!decodeResult.frameCount) {
-        throw new Error('WebCodecs decode produced no frames.');
-      }
-
-      this.emitProgress(decodeEnd);
-      this.updateStatus(`Encoding ${format.toUpperCase()}...`);
-
-      const inputArgs = this.getFrameInputArgs(targetFps);
+      await this.validateFrameSequence(frameCount);
+      const inputArgs = this.getFrameInputArgs(fps);
+      this.emitProgress(encodeStart);
 
       if (format === 'gif') {
+        const settings = QUALITY_PRESETS.gif[options.quality];
         await this.encodeFramesToGif(
           ffmpeg,
           inputArgs,
           outputFileName,
           paletteFileName,
-          quality,
-          gifSettings,
-          metadata?.duration ?? decodeResult.duration,
+          options.quality,
+          settings,
+          durationSeconds,
           encodeStart,
           encodeEnd
         );
       } else {
+        const settings = QUALITY_PRESETS.webp[options.quality];
         await this.encodeFramesToWebP(
           ffmpeg,
           inputArgs,
           outputFileName,
-          webpSettings,
-          metadata?.duration ?? decodeResult.duration,
+          settings,
+          durationSeconds,
           encodeStart,
           encodeEnd
         );
@@ -1195,11 +1215,6 @@ class FFmpegService {
       }
 
       const data = await this.safeReadFile(outputFileName);
-      const completionProgress =
-        format === 'gif'
-          ? FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE
-          : FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE;
-      this.emitProgress(completionProgress);
 
       await this.handleConversionCleanup(outputFileName, [
         ...frameFiles,
@@ -1301,6 +1316,21 @@ class FFmpegService {
     }
   }
 
+  private async validateFrameSequence(frameCount: number): Promise<void> {
+    // This is a lightweight validation using knownFiles tracking
+    // More comprehensive validation happens during FFmpeg encoding
+    logger.debug('conversion', 'Validating frame sequence', {
+      frameCount,
+    });
+
+    // Note: Actual frame integrity validation happens when FFmpeg reads them
+    // If frames are 0-byte or corrupted, FFmpeg will fail with clear errors
+    // that trigger the fallback mechanism
+    if (frameCount < 2) {
+      throw new Error('Frame sequence too small for conversion');
+    }
+  }
+
   private async encodeFramesToWebP(
     ffmpeg: FFmpeg,
     inputArgs: string[],
@@ -1317,6 +1347,8 @@ class FFmpegService {
     encodeEnd: number
   ): Promise<void> {
     const webpThreadArgs = getThreadingArgs('simple');
+    // Optimize WebP encoding for speed while maintaining quality
+    // Use deadline for faster encoding and reduce complexity
     const webpCmd = [
       ...webpThreadArgs,
       ...inputArgs,
@@ -1329,13 +1361,11 @@ class FFmpegService {
       '-preset',
       settings.preset,
       '-compression_level',
-      settings.compressionLevel.toString(),
+      Math.max(3, Math.min(settings.compressionLevel, 5)).toString(), // Cap compression level at 5 for speed
       '-method',
-      settings.method.toString(),
-      '-qmin',
-      '1',
-      '-qmax',
-      '100',
+      Math.min(settings.method, 4).toString(), // Limit method to 4 for faster encoding
+      '-deadline',
+      'realtime', // Use realtime preset for fast encoding (instead of good/best)
       '-loop',
       '0',
       outputFileName,
@@ -1394,31 +1424,29 @@ class FFmpegService {
 
     const { quality, scale } = options;
     const settings = QUALITY_PRESETS.gif[quality];
+    const resolvedMetadata = await this.resolveMetadataForConversion(file, metadata);
+    const metadataForConversion = resolvedMetadata ?? metadata;
     const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
     const paletteFileName = FFMPEG_INTERNALS.PALETTE_FILE_NAME;
     const outputFileName = 'output.gif';
+
+    this.logConversionContext(file, 'gif', options, metadataForConversion);
 
     logger.info('conversion', 'Starting GIF conversion', {
       quality,
       scale,
       fps: settings.fps,
       colors: settings.colors,
-      duration: metadata?.duration,
+      duration: metadataForConversion?.duration,
     });
 
-    this.cancellationRequested = false;
-    this.startWatchdog(metadata, quality);
+    this.beginExternalConversion(metadataForConversion, quality);
 
     let ffmpegLogHandler: ((event: { type: string; message: string }) => void) | null = null;
     let conversionLogHandler: ((event: { type: string; message: string }) => void) | null = null;
 
-    const webcodecsResult = await this.maybeConvertWithWebCodecs(file, 'gif', options, metadata);
-    if (webcodecsResult) {
-      return webcodecsResult;
-    }
-
     // Create log handler with progress parsing for palette generation
-    const videoDuration = metadata?.duration;
+    const videoDuration = metadataForConversion?.duration;
     ffmpegLogHandler = this.createFFmpegLogHandler(
       videoDuration,
       FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START,
@@ -1523,7 +1551,7 @@ class FFmpegService {
         // If error is due to cancellation or termination, don't attempt fallback
         if (
           errorMessage.includes('cancelled by user') ||
-          errorMessage.includes('called FFmpeg.terminate()')
+          (this.cancellationRequested && errorMessage.includes('called FFmpeg.terminate()'))
         ) {
           throw error;
         }
@@ -1560,8 +1588,7 @@ class FFmpegService {
         });
 
         // Check if this is AV1 codec
-        const codecLabel = metadata?.codec?.toLowerCase() ?? '';
-        const isAV1 = codecLabel.includes('av1') || codecLabel.includes('av01');
+        const isAV1 = this.isLikelyAv1(metadataForConversion);
 
         if (isAV1 && !this.cancellationRequested) {
           logger.info('conversion', 'Detected AV1 codec, attempting retry strategies');
@@ -1607,9 +1634,10 @@ class FFmpegService {
 
               if (!transcodeSuccess) {
                 throw new Error(
-                  'AV1 video conversion failed after trying all strategies. ' +
-                    'Try: 1) Convert video to H.264/MP4 first, 2) Use different quality/scale settings, ' +
-                    '3) Try a different video file.'
+                  'AV1 codec is not supported in this browser. ' +
+                    'Please convert your video to H.264 (MP4) format using: ' +
+                    'ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4 ' +
+                    'then upload the converted file.'
                 );
               }
 
@@ -1630,9 +1658,10 @@ class FFmpegService {
 
             if (!transcodeSuccess) {
               throw new Error(
-                'AV1 video conversion failed after trying all strategies. ' +
-                  'Try: 1) Convert video to H.264/MP4 first, 2) Use different quality/scale settings, ' +
-                  '3) Try a different video file.'
+                'AV1 codec is not supported in this browser. ' +
+                  'Please convert your video to H.264 (MP4) format using: ' +
+                  'ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4 ' +
+                  'then upload the converted file.'
               );
             }
 
@@ -1646,7 +1675,8 @@ class FFmpegService {
           // Not AV1 or cancelled - throw validation error
           throw new Error(
             `GIF conversion produced invalid output: ${validation.reason}. ` +
-              'This may indicate a corrupted video file or unsupported codec.'
+              'This may indicate a corrupted video file, unsupported codec, or AV1 format. ' +
+              'If using AV1, please convert to H.264: ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4'
           );
         }
       }
@@ -1713,8 +1743,12 @@ class FFmpegService {
 
     const { quality, scale } = options;
     const settings = QUALITY_PRESETS.webp[quality];
+    const resolvedMetadata = await this.resolveMetadataForConversion(file, metadata);
+    const metadataForConversion = resolvedMetadata ?? metadata;
     const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
     const outputFileName = 'output.webp';
+
+    this.logConversionContext(file, 'webp', options, metadataForConversion);
 
     logger.info('conversion', 'Starting WebP conversion', {
       quality,
@@ -1722,21 +1756,15 @@ class FFmpegService {
       fps: settings.fps,
       webpQuality: settings.quality,
       preset: settings.preset,
-      duration: metadata?.duration,
+      duration: metadataForConversion?.duration,
     });
 
-    this.cancellationRequested = false;
-    this.startWatchdog(metadata, quality);
+    this.beginExternalConversion(metadataForConversion, quality);
 
     let ffmpegLogHandler: ((event: { type: string; message: string }) => void) | null = null;
 
-    const webcodecsResult = await this.maybeConvertWithWebCodecs(file, 'webp', options, metadata);
-    if (webcodecsResult) {
-      return webcodecsResult;
-    }
-
     // Create log handler with progress parsing for WebP conversion
-    const videoDuration = metadata?.duration;
+    const videoDuration = metadataForConversion?.duration;
     ffmpegLogHandler = this.createFFmpegLogHandler(
       videoDuration,
       FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
@@ -1774,6 +1802,7 @@ class FFmpegService {
         const webpFilterArgs = scaleFilter
           ? `fps=${settings.fps},${scaleFilter}`
           : `fps=${settings.fps}`;
+        // Optimize WebP settings for faster encoding
         const webpCmd = [
           ...webpThreadArgs,
           '-i',
@@ -1789,13 +1818,11 @@ class FFmpegService {
           '-preset',
           settings.preset,
           '-compression_level',
-          settings.compressionLevel.toString(),
+          Math.max(3, Math.min(settings.compressionLevel, 5)).toString(), // Cap at 5 for speed
           '-method',
-          settings.method.toString(),
-          '-qmin',
-          '1',
-          '-qmax',
-          '100',
+          Math.min(settings.method, 4).toString(), // Limit method for faster encoding
+          '-deadline',
+          'realtime', // Use realtime preset for faster encoding
           '-loop',
           '0',
           outputFileName,
@@ -1824,7 +1851,7 @@ class FFmpegService {
         // If error is due to cancellation or termination, don't attempt fallback
         if (
           errorMessage.includes('cancelled by user') ||
-          errorMessage.includes('called FFmpeg.terminate()')
+          (this.cancellationRequested && errorMessage.includes('called FFmpeg.terminate()'))
         ) {
           throw error;
         }
@@ -1857,8 +1884,7 @@ class FFmpegService {
         });
 
         // Check if this is AV1 codec
-        const codecLabel = metadata?.codec?.toLowerCase() ?? '';
-        const isAV1 = codecLabel.includes('av1') || codecLabel.includes('av01');
+        const isAV1 = this.isLikelyAv1(metadataForConversion);
 
         if (isAV1 && !this.cancellationRequested) {
           logger.info('conversion', 'Detected AV1 codec, attempting retry strategies');
@@ -1922,9 +1948,10 @@ class FFmpegService {
 
               if (!transcodeSuccess) {
                 throw new Error(
-                  'AV1 video conversion failed after trying all strategies. ' +
-                    'Try: 1) Convert video to H.264/MP4 first, 2) Use different quality/scale settings, ' +
-                    '3) Try a different video file.'
+                  'AV1 codec is not supported in this browser. ' +
+                    'Please convert your video to H.264 (MP4) format using: ' +
+                    'ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4 ' +
+                    'then upload the converted file.'
                 );
               }
 
@@ -1945,9 +1972,10 @@ class FFmpegService {
 
             if (!transcodeSuccess) {
               throw new Error(
-                'AV1 video conversion failed after trying all strategies. ' +
-                  'Try: 1) Convert video to H.264/MP4 first, 2) Use different quality/scale settings, ' +
-                  '3) Try a different video file.'
+                'AV1 codec is not supported in this browser. ' +
+                  'Please convert your video to H.264 (MP4) format using: ' +
+                  'ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4 ' +
+                  'then upload the converted file.'
               );
             }
 
@@ -1961,7 +1989,8 @@ class FFmpegService {
           // Not AV1 or cancelled - throw validation error
           throw new Error(
             `WebP conversion produced invalid output: ${validation.reason}. ` +
-              'This may indicate a corrupted video file or unsupported codec.'
+              'This may indicate a corrupted video file, unsupported codec, or AV1 format. ' +
+              'If using AV1, please convert to H.264: ffmpeg -i input.mp4 -c:v libx264 -preset fast output.mp4'
           );
         }
       }
@@ -2051,11 +2080,15 @@ class FFmpegService {
           '-c:v',
           'libwebp',
           '-lossless',
-          '1', // Fallback uses lossless for reliability
-          '-compression_level',
-          '3', // Fast compression
+          '0', // Use lossy for faster encoding
+          '-quality',
+          '75', // Good quality balance
           '-preset',
           'default',
+          '-compression_level',
+          '3', // Fast compression
+          '-deadline',
+          'realtime', // Fast encoding deadline
           '-loop',
           '0',
           outputFileName,
@@ -2138,6 +2171,36 @@ class FFmpegService {
 
   setStatusCallback(callback: ((message: string) => void) | null): void {
     this.statusCallback = callback;
+  }
+
+  beginExternalConversion(metadata?: VideoMetadata, quality?: ConversionQuality): void {
+    this.cancellationRequested = false;
+    this.startWatchdog(metadata, quality);
+    this.resetFFmpegLogBuffer();
+  }
+
+  endExternalConversion(): void {
+    this.stopWatchdog();
+  }
+
+  reportProgress(progress: number, isHeartbeat = false): void {
+    this.emitProgress(progress, isHeartbeat);
+  }
+
+  reportStatus(message: string): void {
+    this.updateStatus(message);
+  }
+
+  isCancellationRequested(): boolean {
+    return this.cancellationRequested;
+  }
+
+  async writeVirtualFile(fileName: string, data: Uint8Array | string): Promise<void> {
+    await this.safeWriteFile(fileName, data);
+  }
+
+  async deleteVirtualFiles(fileNames: string[]): Promise<void> {
+    await Promise.all(fileNames.map((file) => this.safeDelete(file)));
   }
 
   cancelConversion(): void {

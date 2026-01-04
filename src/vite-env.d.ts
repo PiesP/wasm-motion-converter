@@ -13,3 +13,26 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+interface MediaStreamTrackProcessor<T = VideoFrame> {
+  readonly readable: ReadableStream<T>;
+}
+
+declare var MediaStreamTrackProcessor: {
+  prototype: MediaStreamTrackProcessor;
+  new (options: { track: MediaStreamTrack }): MediaStreamTrackProcessor;
+};
+
+type ImageEncoder = Record<string, never>;
+
+declare var ImageEncoder: {
+  prototype: ImageEncoder;
+  new (...args: never[]): ImageEncoder;
+};
+
+// HTMLMediaElement captureStream extension
+declare global {
+  interface HTMLMediaElement {
+    captureStream?(): MediaStream;
+  }
+}
