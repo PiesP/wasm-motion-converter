@@ -1018,11 +1018,40 @@ class FFmpegService {
         metadata.duration = hours * 3600 + minutes * 60 + seconds;
       }
 
-      // Improved codec regex to handle various formats
-      // Matches patterns like "Video: h264", "Video: vp9 (Profile 0)", etc.
-      const codecMatch = logOutput.match(/Video:\s+([a-zA-Z0-9_]+)(?:\s|\(|,)/);
+      // Enhanced codec detection with comprehensive pattern matching
+      // Handles: h264, h265, hevc, vp8, vp9, av1, av01, prores, dnxhd, etc.
+      // FFmpeg output examples:
+      //   - "Video: h264 (High)" -> h264
+      //   - "Video: hevc (Main 10)" -> hevc
+      //   - "Video: av1 (Profile 0)" -> av1
+      //   - "Video: vp9 (Profile 0)" -> vp9
+      const codecMatch = logOutput.match(/Video:\s+([a-zA-Z0-9_]+(?:-[a-zA-Z0-9]+)*)(?:\s|\(|,)/i);
       if (codecMatch) {
-        metadata.codec = codecMatch[1] ?? 'unknown';
+        const detectedCodec = codecMatch[1]?.toLowerCase() ?? 'unknown';
+
+        // Normalize codec names
+        const codecAliases: Record<string, string> = {
+          h264: 'H.264',
+          avc: 'H.264',
+          h265: 'H.265',
+          hevc: 'H.265',
+          vp8: 'VP8',
+          vp9: 'VP9',
+          av1: 'AV1',
+          av01: 'AV1',
+          prores: 'ProRes',
+          dnxhd: 'DNxHD',
+          mpeg2video: 'MPEG2',
+          mpeg1video: 'MPEG1',
+          msmpeg4v2: 'MSMPEG4v2',
+          wmv1: 'WMV1',
+          wmv2: 'WMV2',
+          mjpeg: 'MJPEG',
+          png: 'PNG',
+          bmp: 'BMP',
+        };
+
+        metadata.codec = codecAliases[detectedCodec] || detectedCodec.toUpperCase();
       }
 
       const framerateMatch = logOutput.match(/(\d+(?:\.\d+)?)\s*fps/);

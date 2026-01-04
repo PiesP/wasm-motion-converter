@@ -22,8 +22,8 @@
     "dev": "vite",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
-    "fmt": "biome format --write .",
-    "fmt:check": "biome format .",
+    "fmt": "biome format .",
+    "fmt:fix": "biome format --write .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "licenses:generate": "tsx scripts/generate-third-party-licenses.ts",
     "prebuild": "pnpm -s licenses:generate && pnpm quality",
@@ -31,7 +31,7 @@
     "analyze": "vite build && echo '\nBundle analysis generated at dist/stats.html'",
     "preview": "vite preview",
     "clean": "rimraf dist node_modules/.vite",
-    "quality": "pnpm -s fmt:check && pnpm -s lint && pnpm -s typecheck"
+    "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s typecheck"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
