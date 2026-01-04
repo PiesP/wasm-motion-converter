@@ -168,6 +168,25 @@ curl -I https://your-app.pages.dev | grep -i "Cross-Origin"
 - Netlify: add the same COOP/COEP rules to `_headers`.
 - Vercel: configure `vercel.json` headers for `require-corp` / `same-origin`.
 
+### Google AdSense (optional)
+
+This project includes optional Google AdSense support that's **disabled by default** and won't interfere with development:
+
+1. **Get publisher ID**: Visit https://adsense.google.com and obtain your publisher ID (format: `ca-pub-XXXXXXXXXXXXXXXX`)
+2. **Configure locally**: Create `.env.local`:
+   ```bash
+   VITE_ADSENSE_PUBLISHER_ID=ca-pub-XXXXXXXXXXXXXXXX
+   VITE_ENABLE_ADS=true  # Set to 'false' for development
+   ```
+3. **Production deployment**: Set the same environment variables in your hosting provider (Cloudflare Pages, Netlify, Vercel, etc.)
+
+**How it works:**
+
+- AdSense is injected via Vite plugins only when `VITE_ENABLE_ADS=true`
+- When disabled, HTML placeholders are replaced with `<!-- AdSense disabled -->` comments
+- The `public/ads.txt` file is generated automatically at build time (excluded from git)
+- Zero impact on development workflow—ads are off by default
+
 ---
 
 ## Testing
