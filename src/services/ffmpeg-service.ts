@@ -5,6 +5,7 @@ import type {
   ConversionQuality,
   VideoMetadata,
 } from '../types/conversion-types';
+import { canFFmpegDecode as canFFmpegDecodeCodec } from '../utils/codec-capabilities';
 import {
   FFMPEG_CORE_BASE_URLS,
   FFMPEG_CORE_VERSION,
@@ -20,7 +21,6 @@ import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';
 import { withTimeout } from '../utils/with-timeout';
-import { canFFmpegDecode as canFFmpegDecodeCodec } from '../utils/codec-capabilities';
 
 // Legacy constants kept for backward compatibility with external timeout values
 const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;

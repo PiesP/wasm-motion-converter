@@ -2,6 +2,8 @@
  * Memory monitoring utilities for tracking browser memory usage during conversions
  */
 
+import type { ConversionFormat, ConversionScale } from '../types/conversion-types';
+
 export type MemoryWarningLevel = 'safe' | 'warning' | 'critical';
 
 interface MemoryInfo {
@@ -154,5 +156,134 @@ export function getMemoryStatus(
     level: 'safe',
     percentage: 0,
     isEstimated: true,
+  };
+}
+
+/**
+ * Get available memory in bytes
+ * Returns remaining heap space (limit - used) or conservative estimate
+ */
+export function getAvailableMemory(): number {
+  const memInfo = getMemoryInfo();
+
+  if (memInfo) {
+    // Return actual available memory
+    return memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize;
+  }
+
+  // Conservative estimate: assume 4GB limit with 40% already used
+  const conservativeLimit = 4 * 1024 * 1024 * 1024; // 4GB
+  const assumedUsage = conservativeLimit * 0.4; // 40% used
+  return conservativeLimit - assumedUsage;
+}
+
+/**
+ * Estimate memory requirements for a conversion
+ *
+ * @param fileSize - Input file size in bytes
+ * @param format - Output format (GIF requires more memory for palette)
+ * @param scale - Scale factor (smaller scale = less memory)
+ * @returns Estimated memory usage in bytes
+ */
+export function estimateConversionMemory(
+  fileSize: number,
+  format: ConversionFormat,
+  scale: ConversionScale
+): number {
+  // Base multiplier: video processing typically uses 5-7x file size
+  let baseSizeMultiplier = 6;
+
+  // Format-specific adjustments
+  if (format === 'gif') {
+    // GIF palette generation requires additional memory
+    baseSizeMultiplier *= 1.5;
+  } else if (format === 'avif') {
+    // AVIF encoding is less memory-intensive
+    baseSizeMultiplier *= 0.8;
+  }
+
+  let memoryEstimate = fileSize * baseSizeMultiplier;
+
+  // Scale adjustment: memory usage scales with pixel count (quadratic)
+  // 50% scale = 25% pixel count = 25% memory
+  const scaleMultiplier = scale * scale;
+  memoryEstimate *= scaleMultiplier;
+
+  return memoryEstimate;
+}
+
+/**
+ * Check if a conversion will likely fit in available memory
+ *
+ * @param fileSize - Input file size in bytes
+ * @param format - Output format
+ * @param scale - Scale factor
+ * @param safetyMargin - Safety margin percentage (default 0.6 = 60% threshold)
+ * @returns Object with canFit boolean and recommended settings if needed
+ */
+export function checkConversionMemoryFit(
+  fileSize: number,
+  format: ConversionFormat,
+  scale: ConversionScale,
+  safetyMargin: number = 0.6
+): {
+  canFit: boolean;
+  estimatedMemory: number;
+  availableMemory: number;
+  usagePercentage: number;
+  recommendation?: {
+    scale?: ConversionScale;
+    quality?: 'low';
+    message: string;
+  };
+} {
+  const estimatedMemory = estimateConversionMemory(fileSize, format, scale);
+  const availableMemory = getAvailableMemory();
+  const usagePercentage = (estimatedMemory / availableMemory) * 100;
+
+  const canFit = estimatedMemory <= availableMemory * safetyMargin;
+
+  if (canFit) {
+    return {
+      canFit: true,
+      estimatedMemory,
+      availableMemory,
+      usagePercentage,
+    };
+  }
+
+  // Generate recommendation
+  let recommendation: {
+    scale?: ConversionScale;
+    quality?: 'low';
+    message: string;
+  };
+
+  // Try to find a scale that fits
+  const scales: ConversionScale[] = [0.5, 0.75, 1.0];
+  const currentScaleIndex = scales.indexOf(scale);
+
+  if (currentScaleIndex > 0) {
+    // Can downscale
+    const recommendedScale = scales[currentScaleIndex - 1] as ConversionScale;
+    recommendation = {
+      scale: recommendedScale,
+      quality: 'low',
+      message: `Reduced to ${recommendedScale * 100}% scale and low quality to conserve memory`,
+    };
+  } else {
+    // Already at lowest scale
+    recommendation = {
+      quality: 'low',
+      message: 'Reduced to low quality to conserve memory (file may be too large)',
+    };
+  }
+
+  return {
+    canFit: false,
+    estimatedMemory,
+    availableMemory,
+    usagePercentage,
+    recommendation,
   };
 }

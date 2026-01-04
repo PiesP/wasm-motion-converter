@@ -1,12 +1,12 @@
 import type { ConversionFormat, ConversionOptions, VideoMetadata } from '../types/conversion-types';
-import { ffmpegService } from './ffmpeg-service';
-import { webcodecsConversionService } from './webcodecs-conversion-service';
-import { logger } from '../utils/logger';
 import {
   getCodecCapability,
   getCodecErrorMessage,
   requiresWebCodecs,
 } from '../utils/codec-capabilities';
+import { logger } from '../utils/logger';
+import { ffmpegService } from './ffmpeg-service';
+import { webcodecsConversionService } from './webcodecs-conversion-service';
 import { isWebCodecsDecodeSupported } from './webcodecs-support';
 
 const resolveMetadata = async (

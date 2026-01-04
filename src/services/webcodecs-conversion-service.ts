@@ -2,11 +2,11 @@ import type { ConversionOptions, VideoMetadata } from '../types/conversion-types
 import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
-import { isMemoryCritical } from '../utils/memory-monitor';
+import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
 import { ffmpegService } from './ffmpeg-service';
 import { ModernGifService } from './modern-gif-service';
 import { SquooshWebPService } from './squoosh-webp-service';
-import { WorkerPool } from './worker-pool';
+import { WorkerPool, getOptimalPoolSize } from './worker-pool';
 import type { EncoderWorkerAPI } from '../workers/types';
 import {
   type WebCodecsCaptureMode,
@@ -20,16 +20,30 @@ class WebCodecsConversionService {
   private webpWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
 
   constructor() {
-    // Lazy initialize worker pools
+    // Lazy initialize worker pools with dynamic sizing
     if (typeof window !== 'undefined') {
+      const hwConcurrency = navigator.hardwareConcurrency || 4;
+      const availableMem = getAvailableMemory();
+
+      // Calculate optimal pool sizes based on hardware and memory
+      const optimalGifWorkers = getOptimalPoolSize('gif', hwConcurrency, availableMem);
+      const optimalWebPWorkers = getOptimalPoolSize('webp', hwConcurrency, availableMem);
+
+      logger.info('worker-pool', 'Dynamic worker pool sizing', {
+        hardwareConcurrency: hwConcurrency,
+        availableMemory: `${Math.round(availableMem / 1024 / 1024)}MB`,
+        gifWorkers: optimalGifWorkers,
+        webpWorkers: optimalWebPWorkers,
+      });
+
       this.gifWorkerPool = new WorkerPool(
         new URL('../workers/gif-encoder.worker.ts', import.meta.url),
-        { lazyInit: true, maxWorkers: 4 }
+        { lazyInit: true, maxWorkers: optimalGifWorkers }
       );
 
       this.webpWorkerPool = new WorkerPool(
         new URL('../workers/webp-encoder.worker.ts', import.meta.url),
-        { lazyInit: true, maxWorkers: 2 }
+        { lazyInit: true, maxWorkers: optimalWebPWorkers }
       );
     }
   }
