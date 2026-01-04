@@ -1,5 +1,3 @@
-git clone https://github.com/yourusername/wasm-motion-converter.git
-
 # dropconvert-wasm
 
 Cloudflare Pages-ready SolidJS SPA that turns a **single video into an animated GIF or WebP** entirely in your browser using **ffmpeg.wasm**. No uploads, no servers, just client-side WASM.
