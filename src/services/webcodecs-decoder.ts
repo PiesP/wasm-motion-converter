@@ -7,14 +7,15 @@ import {
   isWebCodecsDecodeSupported,
 } from './webcodecs-support';
 
-export type WebCodecsFrameFormat = 'png' | 'jpeg';
+export type WebCodecsFrameFormat = 'png' | 'jpeg' | 'rgba';
 
 export type WebCodecsProgressCallback = (current: number, total: number) => void;
 export type WebCodecsCaptureMode = 'auto' | 'frame-callback' | 'seek' | 'track';
 
 export interface WebCodecsFramePayload {
   name: string;
-  data: Uint8Array;
+  data?: Uint8Array;
+  imageData?: ImageData;
   index: number;
   timestamp: number;
 }
@@ -229,31 +230,47 @@ export class WebCodecsDecoderService {
           captureContext.targetHeight
         );
 
-        const blob = await canvasToBlob(
-          captureContext.canvas,
-          frameFormat === 'png' ? 'image/png' : 'image/jpeg',
-          frameFormat === 'jpeg' ? frameQuality : undefined
-        );
-        if (blob.size === 0) {
-          consecutiveEmptyFrames += 1;
-          if (consecutiveEmptyFrames >= MAX_CONSECUTIVE_EMPTY_FRAMES) {
-            throw new Error(
-              `WebCodecs decoder produced ${consecutiveEmptyFrames} consecutive empty frames at frame ${index}. ` +
-                'This typically indicates codec incompatibility (e.g., AV1). Falling back to FFmpeg.'
-            );
-          }
-          logger.warn('conversion', `WebCodecs produced empty frame ${index}, retrying`, {
-            consecutiveEmptyFrames,
-            maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
-          });
-          // Still throw to fail-fast after threshold
-          throw new Error('Captured empty frame from WebCodecs decoder.');
-        }
-        consecutiveEmptyFrames = 0; // Reset counter on successful frame
+        let data: Uint8Array | undefined;
+        let imageData: ImageData | undefined;
 
-        const data = new Uint8Array(await blob.arrayBuffer());
-        if (data.byteLength === 0) {
-          throw new Error('Captured empty frame data from WebCodecs decoder.');
+        if (frameFormat === 'rgba') {
+          imageData = captureContext.context.getImageData(
+            0,
+            0,
+            captureContext.targetWidth,
+            captureContext.targetHeight
+          );
+          if (imageData.data.length === 0) {
+            throw new Error('Captured empty frame data from WebCodecs decoder.');
+          }
+          consecutiveEmptyFrames = 0;
+        } else {
+          const blob = await canvasToBlob(
+            captureContext.canvas,
+            frameFormat === 'png' ? 'image/png' : 'image/jpeg',
+            frameFormat === 'jpeg' ? frameQuality : undefined
+          );
+          if (blob.size === 0) {
+            consecutiveEmptyFrames += 1;
+            if (consecutiveEmptyFrames >= MAX_CONSECUTIVE_EMPTY_FRAMES) {
+              throw new Error(
+                `WebCodecs decoder produced ${consecutiveEmptyFrames} consecutive empty frames at frame ${index}. ` +
+                  'This typically indicates codec incompatibility (e.g., AV1). Falling back to FFmpeg.'
+              );
+            }
+            logger.warn('conversion', `WebCodecs produced empty frame ${index}, retrying`, {
+              consecutiveEmptyFrames,
+              maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
+            });
+            // Still throw to fail-fast after threshold
+            throw new Error('Captured empty frame from WebCodecs decoder.');
+          }
+          consecutiveEmptyFrames = 0; // Reset counter on successful frame
+
+          data = new Uint8Array(await blob.arrayBuffer());
+          if (data.byteLength === 0) {
+            throw new Error('Captured empty frame data from WebCodecs decoder.');
+          }
         }
         const frameName = formatFrameName(
           framePrefix,
@@ -261,7 +278,7 @@ export class WebCodecsDecoderService {
           frameStartNumber + index,
           frameFormat
         );
-        await onFrame({ name: frameName, data, index, timestamp });
+        await onFrame({ name: frameName, data, imageData, index, timestamp });
         frameFiles.push(frameName);
         onProgress?.(frameFiles.length, estimatedTotalFrames);
       };
