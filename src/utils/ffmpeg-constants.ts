@@ -57,6 +57,12 @@ export const FFMPEG_INTERNALS = {
       CONVERSION_END: 90,
       COMPLETE: 100,
     },
+    WEBCODECS: {
+      DECODE_START: 10,
+      DECODE_END: 50,
+      ENCODE_START: 50,
+      ENCODE_END: 90,
+    },
     AV1_TRANSCODE: {
       DECODE_START: 20, // AV1→H.264 decode phase
       DECODE_END: 60,
@@ -79,6 +85,17 @@ export const FFMPEG_INTERNALS = {
     LONG_DURATION: 2.0, // 2x timeout for videos >5min
     HIGH_QUALITY: 1.5, // 1.5x timeout for high quality settings
   },
+
+  // WebCodecs frame extraction configuration
+  WEBCODECS: {
+    FRAME_FORMAT: 'png',
+    FRAME_QUALITY: 0.92,
+    FRAME_FILE_PREFIX: 'frame_',
+    FRAME_FILE_DIGITS: 6,
+    FRAME_START_NUMBER: 0,
+    METADATA_TIMEOUT_MS: 5000,
+    SEEK_TIMEOUT_MS: 5000,
+  },
 } as const;
 
 /**
@@ -86,7 +103,8 @@ export const FFMPEG_INTERNALS = {
  */
 export type FFmpegProgressRange =
   | typeof FFMPEG_INTERNALS.PROGRESS.GIF
-  | typeof FFMPEG_INTERNALS.PROGRESS.WEBP;
+  | typeof FFMPEG_INTERNALS.PROGRESS.WEBP
+  | typeof FFMPEG_INTERNALS.PROGRESS.WEBCODECS;
 
 /**
  * Calculate adaptive watchdog timeout based on video characteristics

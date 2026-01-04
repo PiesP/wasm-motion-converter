@@ -14,12 +14,14 @@ import {
   TIMEOUT_FFMPEG_INIT,
   TIMEOUT_FFMPEG_WORKER_CHECK,
   TIMEOUT_VIDEO_ANALYSIS,
+  WEBCODECS_ACCELERATED,
 } from '../utils/constants';
 import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';
 import { withTimeout } from '../utils/with-timeout';
+import { WebCodecsDecoderService } from './webcodecs-decoder';
 
 // Legacy constants kept for backward compatibility with external timeout values
 const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
@@ -1040,6 +1042,331 @@ class FFmpegService {
     }
   }
 
+  private getFrameSequencePattern(): string {
+    return `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}%0${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS}d.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`;
+  }
+
+  private getFrameInputArgs(fps: number): string[] {
+    return [
+      '-framerate',
+      fps.toString(),
+      '-start_number',
+      FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER.toString(),
+      '-i',
+      this.getFrameSequencePattern(),
+    ];
+  }
+
+  private async shouldUseWebCodecs(file: File, metadata?: VideoMetadata): Promise<boolean> {
+    if (!metadata?.codec) {
+      return false;
+    }
+
+    const codec = metadata.codec.toLowerCase();
+    if (!WEBCODECS_ACCELERATED.includes(codec)) {
+      return false;
+    }
+
+    if (isMemoryCritical()) {
+      logger.warn('conversion', 'Skipping WebCodecs decode due to critical memory usage');
+      return false;
+    }
+
+    if (!WebCodecsDecoderService.isSupported()) {
+      return false;
+    }
+
+    return WebCodecsDecoderService.isCodecSupported(codec, file.type, metadata);
+  }
+
+  private async maybeConvertWithWebCodecs(
+    file: File,
+    format: 'gif' | 'webp',
+    options: ConversionOptions,
+    metadata?: VideoMetadata
+  ): Promise<Blob | null> {
+    const useWebCodecs = await this.shouldUseWebCodecs(file, metadata);
+    if (!useWebCodecs) {
+      return null;
+    }
+
+    try {
+      return await this.convertWithWebCodecs(file, format, options, metadata);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      if (
+        errorMessage.includes('cancelled by user') ||
+        errorMessage.includes('called FFmpeg.terminate()')
+      ) {
+        throw error;
+      }
+
+      logger.warn('conversion', 'WebCodecs path failed, falling back to FFmpeg', {
+        error: errorMessage,
+      });
+      return null;
+    }
+  }
+
+  private async convertWithWebCodecs(
+    file: File,
+    format: 'gif' | 'webp',
+    options: ConversionOptions,
+    metadata?: VideoMetadata
+  ): Promise<Blob> {
+    const ffmpeg = this.getFFmpeg();
+    const { quality, scale } = options;
+    const gifSettings = QUALITY_PRESETS.gif[quality];
+    const webpSettings = QUALITY_PRESETS.webp[quality];
+    const targetFps = format === 'gif' ? gifSettings.fps : webpSettings.fps;
+    const outputFileName = format === 'gif' ? 'output.gif' : 'output.webp';
+    const paletteFileName = FFMPEG_INTERNALS.PALETTE_FILE_NAME;
+    const frameFiles: string[] = [];
+    const decoder = new WebCodecsDecoderService();
+
+    const decodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_START;
+    const decodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_END;
+    const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
+    const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
+
+    try {
+      this.updateStatus('Decoding with hardware acceleration...');
+      this.emitProgress(decodeStart);
+
+      const decodeResult = await decoder.decodeToFrames({
+        file,
+        targetFps,
+        scale,
+        frameFormat: FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT,
+        frameQuality: FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY,
+        framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
+        frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
+        frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
+        shouldCancel: () => this.cancellationRequested,
+        onProgress: (current, total) => {
+          const progress = decodeStart + ((decodeEnd - decodeStart) * current) / Math.max(1, total);
+          this.emitProgress(Math.round(progress));
+        },
+        onFrame: async (frame) => {
+          await this.safeWriteFile(frame.name, frame.data);
+          frameFiles.push(frame.name);
+        },
+      });
+
+      if (!decodeResult.frameCount) {
+        throw new Error('WebCodecs decode produced no frames.');
+      }
+
+      this.emitProgress(decodeEnd);
+      this.updateStatus(`Encoding ${format.toUpperCase()}...`);
+
+      const inputArgs = this.getFrameInputArgs(targetFps);
+
+      if (format === 'gif') {
+        await this.encodeFramesToGif(
+          ffmpeg,
+          inputArgs,
+          outputFileName,
+          paletteFileName,
+          quality,
+          gifSettings,
+          metadata?.duration ?? decodeResult.duration,
+          encodeStart,
+          encodeEnd
+        );
+      } else {
+        await this.encodeFramesToWebP(
+          ffmpeg,
+          inputArgs,
+          outputFileName,
+          webpSettings,
+          metadata?.duration ?? decodeResult.duration,
+          encodeStart,
+          encodeEnd
+        );
+      }
+
+      const validation = await this.validateOutputFile(outputFileName, format);
+      if (!validation.valid) {
+        throw new Error(
+          `${format.toUpperCase()} conversion produced invalid output: ${validation.reason}`
+        );
+      }
+
+      const data = await this.safeReadFile(outputFileName);
+      const completionProgress =
+        format === 'gif'
+          ? FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE
+          : FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE;
+      this.emitProgress(completionProgress);
+
+      await this.handleConversionCleanup(outputFileName, [
+        ...frameFiles,
+        ...(format === 'gif' ? [paletteFileName] : []),
+      ]);
+
+      return new Blob([new Uint8Array(data as Uint8Array)], {
+        type: format === 'gif' ? 'image/gif' : 'image/webp',
+      });
+    } catch (error) {
+      await this.safeDelete(outputFileName);
+      await this.cleanupFrameFiles(frameFiles);
+      if (format === 'gif') {
+        await this.safeDelete(paletteFileName);
+      }
+      throw error;
+    }
+  }
+
+  private async encodeFramesToGif(
+    ffmpeg: FFmpeg,
+    inputArgs: string[],
+    outputFileName: string,
+    paletteFileName: string,
+    quality: ConversionQuality,
+    settings: { fps: number; colors: number },
+    durationSeconds: number,
+    encodeStart: number,
+    encodeEnd: number
+  ): Promise<void> {
+    const paletteEnd = Math.round((encodeStart + encodeEnd) / 2);
+    const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
+    const paletteThreadArgs = getThreadingArgs('scale-filter');
+    const paletteCmd = [
+      ...paletteThreadArgs,
+      ...inputArgs,
+      '-vf',
+      `palettegen=max_colors=${settings.colors}`,
+      '-update',
+      '1',
+      paletteFileName,
+    ];
+
+    const paletteLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, paletteEnd);
+    ffmpeg.on('log', paletteLogHandler);
+
+    const paletteHeartbeat = this.startProgressHeartbeat(
+      encodeStart,
+      paletteEnd,
+      Math.max(15, Math.min(durationSeconds, 45))
+    );
+
+    try {
+      await withTimeout(
+        ffmpeg.exec(paletteCmd),
+        TIMEOUT_CONVERSION,
+        `WebCodecs GIF palette generation timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+        () => this.terminateFFmpeg()
+      );
+    } finally {
+      ffmpeg.off('log', paletteLogHandler);
+      this.stopProgressHeartbeat(paletteHeartbeat);
+    }
+
+    const conversionThreadArgs = getThreadingArgs('filter-complex');
+    const conversionCmd = [
+      ...conversionThreadArgs,
+      ...inputArgs,
+      '-i',
+      paletteFileName,
+      '-filter_complex',
+      `paletteuse=dither=${ditherMode}`,
+      outputFileName,
+    ];
+
+    const conversionLogHandler = this.createFFmpegLogHandler(
+      durationSeconds,
+      paletteEnd,
+      encodeEnd
+    );
+    ffmpeg.on('log', conversionLogHandler);
+
+    const conversionHeartbeat = this.startProgressHeartbeat(
+      paletteEnd,
+      encodeEnd,
+      Math.max(20, Math.min(durationSeconds * 1.2, 60))
+    );
+
+    try {
+      await withTimeout(
+        ffmpeg.exec(conversionCmd),
+        TIMEOUT_CONVERSION,
+        `WebCodecs GIF conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+        () => this.terminateFFmpeg()
+      );
+    } finally {
+      ffmpeg.off('log', conversionLogHandler);
+      this.stopProgressHeartbeat(conversionHeartbeat);
+    }
+  }
+
+  private async encodeFramesToWebP(
+    ffmpeg: FFmpeg,
+    inputArgs: string[],
+    outputFileName: string,
+    settings: {
+      fps: number;
+      quality: number;
+      preset: string;
+      compressionLevel: number;
+      method: number;
+    },
+    durationSeconds: number,
+    encodeStart: number,
+    encodeEnd: number
+  ): Promise<void> {
+    const webpThreadArgs = getThreadingArgs('simple');
+    const webpCmd = [
+      ...webpThreadArgs,
+      ...inputArgs,
+      '-c:v',
+      'libwebp',
+      '-lossless',
+      '0',
+      '-quality',
+      settings.quality.toString(),
+      '-preset',
+      settings.preset,
+      '-compression_level',
+      settings.compressionLevel.toString(),
+      '-method',
+      settings.method.toString(),
+      '-qmin',
+      '1',
+      '-qmax',
+      '100',
+      '-loop',
+      '0',
+      outputFileName,
+    ];
+
+    const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
+    ffmpeg.on('log', webpLogHandler);
+
+    const webpHeartbeat = this.startProgressHeartbeat(
+      encodeStart,
+      encodeEnd,
+      Math.max(15, Math.min(durationSeconds, 45))
+    );
+
+    try {
+      await withTimeout(
+        ffmpeg.exec(webpCmd),
+        TIMEOUT_CONVERSION,
+        `WebCodecs WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+        () => this.terminateFFmpeg()
+      );
+    } finally {
+      ffmpeg.off('log', webpLogHandler);
+      this.stopProgressHeartbeat(webpHeartbeat);
+    }
+  }
+
+  private async cleanupFrameFiles(frameFiles: string[]): Promise<void> {
+    await Promise.all(frameFiles.map((file) => this.safeDelete(file)));
+  }
+
   /**
    * Convert video file to animated GIF
    * Supports adaptive quality based on frame count and system memory
@@ -1068,7 +1395,7 @@ class FFmpegService {
     const { quality, scale } = options;
     const settings = QUALITY_PRESETS.gif[quality];
     const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
-    const paletteFileName = 'palette.png';
+    const paletteFileName = FFMPEG_INTERNALS.PALETTE_FILE_NAME;
     const outputFileName = 'output.gif';
 
     logger.info('conversion', 'Starting GIF conversion', {
@@ -1082,9 +1409,17 @@ class FFmpegService {
     this.cancellationRequested = false;
     this.startWatchdog(metadata, quality);
 
+    let ffmpegLogHandler: ((event: { type: string; message: string }) => void) | null = null;
+    let conversionLogHandler: ((event: { type: string; message: string }) => void) | null = null;
+
+    const webcodecsResult = await this.maybeConvertWithWebCodecs(file, 'gif', options, metadata);
+    if (webcodecsResult) {
+      return webcodecsResult;
+    }
+
     // Create log handler with progress parsing for palette generation
     const videoDuration = metadata?.duration;
-    const ffmpegLogHandler = this.createFFmpegLogHandler(
+    ffmpegLogHandler = this.createFFmpegLogHandler(
       videoDuration,
       FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START,
       FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_END
@@ -1152,7 +1487,7 @@ class FFmpegService {
 
         // Update log handler for final conversion phase with new progress range
         ffmpeg.off('log', ffmpegLogHandler);
-        const conversionLogHandler = this.createFFmpegLogHandler(
+        conversionLogHandler = this.createFFmpegLogHandler(
           videoDuration,
           FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START,
           FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END
@@ -1338,12 +1673,13 @@ class FFmpegService {
       throw error;
     } finally {
       // Remove both log handlers (conversionLogHandler might not exist if error during palette gen)
-      ffmpeg.off('log', ffmpegLogHandler);
-      try {
-        // @ts-expect-error - conversionLogHandler might not be defined
+      if (ffmpegLogHandler) {
+        ffmpeg.off('log', ffmpegLogHandler);
+        ffmpegLogHandler = null;
+      }
+      if (conversionLogHandler) {
         ffmpeg.off('log', conversionLogHandler);
-      } catch {
-        // Ignore if conversionLogHandler doesn't exist
+        conversionLogHandler = null;
       }
       this.stopWatchdog();
     }
@@ -1391,9 +1727,16 @@ class FFmpegService {
     this.cancellationRequested = false;
     this.startWatchdog(metadata, quality);
 
+    let ffmpegLogHandler: ((event: { type: string; message: string }) => void) | null = null;
+
+    const webcodecsResult = await this.maybeConvertWithWebCodecs(file, 'webp', options, metadata);
+    if (webcodecsResult) {
+      return webcodecsResult;
+    }
+
     // Create log handler with progress parsing for WebP conversion
     const videoDuration = metadata?.duration;
-    const ffmpegLogHandler = this.createFFmpegLogHandler(
+    ffmpegLogHandler = this.createFFmpegLogHandler(
       videoDuration,
       FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
       FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END
@@ -1642,7 +1985,10 @@ class FFmpegService {
       await this.safeDelete(outputFileName);
       throw error;
     } finally {
-      ffmpeg.off('log', ffmpegLogHandler);
+      if (ffmpegLogHandler) {
+        ffmpeg.off('log', ffmpegLogHandler);
+        ffmpegLogHandler = null;
+      }
       this.stopWatchdog();
     }
   }
@@ -1977,7 +2323,7 @@ class FFmpegService {
 
     const tempFiles = [
       FFMPEG_INTERNALS.INPUT_FILE_NAME, // input.mp4
-      'palette.png', // GIF palette file
+      FFMPEG_INTERNALS.PALETTE_FILE_NAME, // GIF palette file
       'output.gif', // GIF output
       'output.webp', // WebP output
       FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE, // H.264 intermediate

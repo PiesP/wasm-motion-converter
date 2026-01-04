@@ -52,6 +52,21 @@ export function classifyConversionError(
   }
 
   if (
+    message.includes('webcodecs') ||
+    message.includes('hardware acceleration') ||
+    message.includes('frame callback') ||
+    message.includes('media capabilities')
+  ) {
+    return {
+      type: 'codec',
+      ...baseContext,
+      phase: 'webcodecs_decode_failure',
+      suggestion:
+        'Hardware decoding is not available for this codec in your browser. The converter will fall back to the FFmpeg path or you can try a different browser with AV1 support.',
+    };
+  }
+
+  if (
     message.includes('codec') ||
     message.includes('unsupported') ||
     message.includes('not found') ||
