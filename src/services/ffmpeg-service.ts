@@ -1365,6 +1365,8 @@ class FFmpegService {
       FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER.toString(),
       '-i',
       this.getFrameSequencePattern(),
+      '-r',
+      fps.toString(),
     ];
   }
 
