@@ -3098,6 +3098,13 @@ class FFmpegService {
       this.watchdogTimer = null;
     }
 
+    // Clear FFmpeg log silence monitor
+    if (this.logSilenceInterval) {
+      clearInterval(this.logSilenceInterval);
+      this.logSilenceInterval = null;
+      this.logSilenceStrikes = 0;
+    }
+
     // Clear input cache timer
     if (this.inputCacheTimer) {
       clearTimeout(this.inputCacheTimer);
@@ -3155,6 +3162,9 @@ class FFmpegService {
   }
 
   private terminateFFmpeg(): void {
+    // Always stop watchdogs and log monitors first
+    this.stopWatchdog();
+
     this.isTerminating = true;
 
     // Clean up all resources first
@@ -3190,6 +3200,9 @@ class FFmpegService {
   }
 
   terminate(): void {
+    // Always stop watchdogs and log monitors first
+    this.stopWatchdog();
+
     this.isTerminating = true;
 
     // Clean up all resources first
