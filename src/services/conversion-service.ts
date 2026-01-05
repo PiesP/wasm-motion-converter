@@ -5,6 +5,7 @@ import {
   requiresWebCodecs,
 } from '../utils/codec-capabilities';
 import { getConversionStrategy } from '../utils/conversion-strategy';
+import { getErrorMessage } from '../utils/error-utils';
 import { logger } from '../utils/logger';
 import { ffmpegService } from './ffmpeg-service';
 import { webcodecsConversionService } from './webcodecs-conversion-service';
@@ -25,7 +26,7 @@ const resolveMetadata = async (
     return await ffmpegService.getVideoMetadata(file);
   } catch (error) {
     logger.warn('conversion', 'Metadata probe failed, continuing without codec', {
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return metadata;
   }
@@ -91,7 +92,7 @@ async function selectConversionPath(
       return ffmpegService.convertToGIF(file, options, resolvedMetadata);
     } catch (error) {
       // If FFmpeg fails for GIF, fallback to WebCodecs path
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       logger.warn('conversion', 'GIF FFmpeg path failed, attempting WebCodecs fallback', {
         codec: normalizedCodec,
         error: errorMessage,
