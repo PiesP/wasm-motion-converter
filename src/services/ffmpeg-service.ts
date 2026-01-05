@@ -1367,7 +1367,7 @@ class FFmpegService {
       this.getFrameSequencePattern(),
       '-r',
       fps.toString(),
-      '-vsync',
+      '-fps_mode',
       'cfr',
     ];
   }
@@ -1708,8 +1708,6 @@ class FFmpegService {
         'yuv420p',
         '-frames:v',
         frameCount.toString(),
-        '-movflags',
-        '+faststart',
         intermediateFileName,
       ];
 
@@ -1765,8 +1763,6 @@ class FFmpegService {
         Math.max(3, Math.min(settings.compressionLevel, 4)).toString(),
         '-method',
         Math.min(settings.method, 4).toString(),
-        '-deadline',
-        'realtime',
         '-loop',
         '0',
         outputFileName,
@@ -2498,8 +2494,6 @@ class FFmpegService {
           Math.max(3, Math.min(settings.compressionLevel, 4)).toString(), // Cap at 4 for speed
           '-method',
           Math.min(settings.method, 4).toString(), // Limit method for faster encoding
-          '-deadline',
-          'realtime', // Use realtime preset for faster encoding
           '-loop',
           '0',
           outputFileName,
@@ -2799,8 +2793,6 @@ class FFmpegService {
           'default',
           '-compression_level',
           '3', // Fast compression
-          '-deadline',
-          'realtime', // Fast encoding deadline
           '-loop',
           '0',
           outputFileName,
