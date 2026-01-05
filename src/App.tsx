@@ -203,6 +203,7 @@ const App: Component = () => {
               <ErrorDisplay
                 message={errorMessage()!}
                 suggestion={errorContext()?.suggestion}
+                errorType={errorContext()?.type}
                 onRetry={handleRetry}
                 onSelectNewFile={handleReset}
               />

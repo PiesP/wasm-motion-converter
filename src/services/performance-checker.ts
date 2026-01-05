@@ -21,7 +21,7 @@ export function checkPerformance(file: File, metadata: VideoMetadata): Performan
   if (file.size > WARN_FILE_SIZE_CRITICAL) {
     warnings.push({
       type: 'fileSize',
-      severity: 'error',
+      severity: 'critical',
       message: `File size is ${formatBytes(file.size)} (over 300MB)`,
       recommendation:
         'Large file may cause browser memory issues. Strongly recommend 50% scale or trim video length',
@@ -29,7 +29,7 @@ export function checkPerformance(file: File, metadata: VideoMetadata): Performan
   } else if (file.size > WARN_FILE_SIZE_HIGH) {
     warnings.push({
       type: 'fileSize',
-      severity: 'warning',
+      severity: 'high',
       message: `File size is ${formatBytes(file.size)} (over 200MB)`,
       recommendation:
         'Consider using "Low" quality preset to reduce memory usage and improve conversion speed',
@@ -46,7 +46,7 @@ export function checkPerformance(file: File, metadata: VideoMetadata): Performan
   if (metadata.width * metadata.height > WARN_RESOLUTION_PIXELS) {
     warnings.push({
       type: 'resolution',
-      severity: 'warning',
+      severity: 'high',
       message: `Resolution is ${metadata.width}x${metadata.height} (over 1080p)`,
       recommendation: 'Select 50% or 75% scale to reduce processing time',
     });

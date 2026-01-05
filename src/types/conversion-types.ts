@@ -46,7 +46,7 @@ export interface VideoMetadata {
 }
 
 export type PerformanceWarningType = 'fileSize' | 'resolution' | 'duration' | 'codec';
-export type PerformanceWarningSeverity = 'warning' | 'error';
+export type PerformanceWarningSeverity = 'critical' | 'high' | 'warning';
 
 export interface PerformanceWarning {
   type: PerformanceWarningType;
