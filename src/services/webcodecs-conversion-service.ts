@@ -167,12 +167,21 @@ class WebCodecsConversionService {
   private async isAvifEncodingSupported(): Promise<boolean> {
     const supportStatus = getWebCodecsSupportStatus();
     if (!supportStatus.imageEncoder || typeof ImageEncoder === 'undefined') {
+      logger.warn('conversion', 'WebCodecs ImageEncoder not available for AVIF', {
+        imageEncoder: supportStatus.imageEncoder,
+      });
       return false;
     }
 
     if (typeof ImageEncoder.isTypeSupported === 'function') {
       try {
-        return await ImageEncoder.isTypeSupported('image/avif');
+        const supported = await ImageEncoder.isTypeSupported('image/avif');
+        if (!supported) {
+          logger.warn('conversion', 'WebCodecs ImageEncoder does not support AVIF', {
+            imageEncoder: supportStatus.imageEncoder,
+          });
+        }
+        return supported;
       } catch (error) {
         logger.warn('conversion', 'WebCodecs AVIF support check failed', {
           error: error instanceof Error ? error.message : String(error),
@@ -197,6 +206,22 @@ class WebCodecsConversionService {
     const normalizedQuality = Math.min(1, Math.max(0, preset.quality / 100));
     const chunks: ArrayBuffer[] = [];
     let encodeError: Error | null = null;
+    let bitmap: ImageBitmap | undefined;
+    const source: ImageBitmapSource =
+      typeof createImageBitmap === 'function'
+        ? await (async (): Promise<ImageBitmapSource> => {
+            try {
+              const bmp = await createImageBitmap(frame);
+              bitmap = bmp;
+              return bmp;
+            } catch (error) {
+              logger.warn('conversion', 'AVIF encode fallback to ImageData source', {
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return frame;
+            }
+          })()
+        : frame;
 
     const encoder = new ImageEncoder({
       type: 'image/avif',
@@ -212,14 +237,25 @@ class WebCodecsConversionService {
     });
 
     try {
-      await encoder.encode(frame);
+      await encoder.encode(source);
       await encoder.flush();
+    } catch (error) {
+      encodeError = error instanceof Error ? error : new Error(String(error));
     } finally {
       encoder.close();
+      if (bitmap) {
+        bitmap.close();
+      }
     }
 
     if (encodeError) {
-      throw encodeError;
+      logger.error('conversion', 'WebCodecs AVIF encode failed', {
+        error: encodeError.message,
+        quality,
+        width: frame.width,
+        height: frame.height,
+      });
+      throw new Error(`AVIF encoding failed: ${encodeError.message}`);
     }
 
     if (!chunks.length) {
@@ -538,6 +574,14 @@ class WebCodecsConversionService {
           ? QUALITY_PRESETS.webp[quality]
           : QUALITY_PRESETS.avif[quality];
     const useModernGif = format === 'gif' && ModernGifService.isSupported();
+
+    if (format === 'avif') {
+      const avifSupported = await this.isAvifEncodingSupported();
+      if (!avifSupported) {
+        throw new Error('AVIF encoding requires WebCodecs ImageEncoder support in this browser.');
+      }
+    }
+
     const decoder = new WebCodecsDecoderService();
     const frameFiles: string[] = [];
     const capturedFrames: ImageData[] = [];
