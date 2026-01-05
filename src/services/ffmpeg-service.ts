@@ -1434,7 +1434,6 @@ class FFmpegService {
         const settings = QUALITY_PRESETS.webp[options.quality];
         await this.encodeFramesToWebP(
           ffmpeg,
-          inputArgs,
           outputFileName,
           settings,
           durationSeconds,
@@ -1617,7 +1616,6 @@ class FFmpegService {
 
   private async encodeFramesToWebP(
     ffmpeg: FFmpeg,
-    inputArgs: string[],
     outputFileName: string,
     settings: {
       fps: number;
@@ -1679,12 +1677,41 @@ class FFmpegService {
         this.stopProgressHeartbeat(heartbeat);
       }
     } else {
-      // ANIMATED: Multi-frame WebP encoding (existing logic)
+      // ANIMATED: Multi-frame WebP encoding using concat demuxer
+      // Generate concat file content with explicit durations
+      const frameDuration = 1 / settings.fps;
+      const concatLines: string[] = [];
+
+      for (let i = 0; i < frameCount; i++) {
+        const frameName = `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}${String(i + FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER).padStart(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS, '0')}.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`;
+        concatLines.push(`file '${frameName}'`);
+        concatLines.push(`duration ${frameDuration.toFixed(6)}`);
+      }
+      // Last frame needs to be repeated for proper ending
+      const lastFrameName = `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}${String(frameCount - 1 + FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER).padStart(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS, '0')}.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`;
+      concatLines.push(`file '${lastFrameName}'`);
+
+      const concatContent = concatLines.join('\n');
+      const concatFileName = 'frames_concat.txt';
+
+      // Write concat file to VFS
+      await ffmpeg.writeFile(concatFileName, concatContent);
+      logger.debug('conversion', 'Created concat file for WebP encoding', {
+        frameCount,
+        fps: settings.fps,
+        frameDuration,
+      });
+
       const webpThreadArgs = getThreadingArgs('simple');
       const webpCmd = [
         ...getProgressLoggingArgs(),
         ...webpThreadArgs,
-        ...inputArgs,
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        concatFileName,
         '-c:v',
         'libwebp',
         '-lossless',
@@ -1704,7 +1731,7 @@ class FFmpegService {
         outputFileName,
       ];
 
-      logger.info('conversion', 'Encoding animated WebP (multi-frame)', {
+      logger.info('conversion', 'Encoding animated WebP (multi-frame) with concat demuxer', {
         frameCount,
         fps: settings.fps,
         quality: settings.quality,
