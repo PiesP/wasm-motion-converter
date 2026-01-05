@@ -108,7 +108,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           </div>
         </Show>
 
-        <div class="grid grid-cols-2 gap-4 text-sm mt-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mt-3">
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Original Size</div>
             <div class="font-medium text-gray-900 dark:text-white">
@@ -123,7 +123,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           </div>
         </div>
 
-        <div class="grid grid-cols-3 gap-4 text-sm mt-3">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3">
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Format</div>
             <div class="font-medium text-gray-900 dark:text-white uppercase">

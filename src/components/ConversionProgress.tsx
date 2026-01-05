@@ -11,7 +11,12 @@ interface ConversionProgressProps {
 
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {
   return (
-    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6">
+    <div
+      class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6"
+      role="region"
+      aria-live="polite"
+      aria-busy="true"
+    >
       <ProgressBar
         progress={props.progress}
         status={props.status}

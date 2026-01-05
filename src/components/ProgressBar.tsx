@@ -101,7 +101,11 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
 
       {/* Status message */}
       <Show when={props.statusMessage}>
-        <p class="text-xs text-gray-600 dark:text-gray-400 text-center italic">
+        <p
+          class="text-xs text-gray-600 dark:text-gray-400 text-center italic"
+          role="status"
+          aria-live="polite"
+        >
           {props.statusMessage}
         </p>
       </Show>

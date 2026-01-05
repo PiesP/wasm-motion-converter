@@ -90,6 +90,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       role="button"
       aria-label="Drop video file here or press Enter to select a file"
       aria-disabled={!isInteractive()}
+      aria-busy={isBusy()}
     >
       {isBusy() ? (
         <div class="max-w-md mx-auto">

@@ -41,28 +41,41 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
       <div
         role="radiogroup"
         aria-labelledby={props.name}
-        class={`grid gap-3 ${columns() === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}
+        class={`grid gap-3 ${columns() === 3 ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'}`}
       >
         <For each={props.options}>
-          {(option) => (
-            <label class={optionClass(option.value === props.value)}>
-              <input
-                type="radio"
-                name={props.name}
-                value={String(option.value)}
-                checked={option.value === props.value}
-                onChange={() => props.onChange(option.value)}
-                disabled={props.disabled}
-                class="sr-only"
-              />
-              <div class="text-center">
-                <div class="font-medium">{option.label}</div>
-                <Show when={option.description}>
-                  <div class="text-xs mt-1 opacity-75">{option.description}</div>
-                </Show>
-              </div>
-            </label>
-          )}
+          {(option) => {
+            const descriptionId = option.description
+              ? `${props.name}-${option.value}-desc`
+              : undefined;
+            const ariaLabel = option.description
+              ? `${option.label}: ${option.description}`
+              : option.label;
+
+            return (
+              <label class={optionClass(option.value === props.value)}>
+                <input
+                  type="radio"
+                  name={props.name}
+                  value={String(option.value)}
+                  checked={option.value === props.value}
+                  onChange={() => props.onChange(option.value)}
+                  disabled={props.disabled}
+                  class="sr-only"
+                  aria-label={ariaLabel}
+                  aria-describedby={descriptionId}
+                />
+                <div class="text-center">
+                  <div class="font-medium">{option.label}</div>
+                  <Show when={option.description}>
+                    <div id={descriptionId} class="text-xs mt-1 opacity-75">
+                      {option.description}
+                    </div>
+                  </Show>
+                </div>
+              </label>
+            );
+          }}
         </For>
       </div>
     </fieldset>

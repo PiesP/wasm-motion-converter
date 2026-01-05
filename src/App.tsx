@@ -484,6 +484,12 @@ const App: Component = () => {
       )}
     >
       <div class="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col transition-colors">
+        <a
+          href="#main-content"
+          class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-blue-600 focus:text-white focus:rounded focus:shadow-lg"
+        >
+          Skip to main content
+        </a>
         <header class="bg-white dark:bg-gray-900 shadow-sm dark:shadow-gray-800 border-b border-gray-200 dark:border-gray-800">
           <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
             <div class="flex-1">
@@ -496,7 +502,7 @@ const App: Component = () => {
           </div>
         </header>
 
-        <main class="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
+        <main id="main-content" class="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
           <div class="space-y-6">
             <Show when={!environmentSupported()}>
               <EnvironmentWarning />
