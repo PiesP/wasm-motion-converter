@@ -190,3 +190,48 @@ export async function isWebCodecsCodecSupported(
 
   return false;
 }
+
+const H264_ENCODER_CODECS = ['avc1.42E01E', 'avc1.4D401E'];
+
+export async function getH264EncoderConfig(params: {
+  width: number;
+  height: number;
+  bitrate: number;
+  framerate: number;
+}): Promise<VideoEncoderConfig | null> {
+  const status = getWebCodecsSupportStatus();
+  if (!status.videoEncoder || typeof VideoEncoder === 'undefined') {
+    return null;
+  }
+
+  const width = Math.max(1, Math.round(params.width));
+  const height = Math.max(1, Math.round(params.height));
+  const bitrate = Math.max(100_000, Math.round(params.bitrate));
+  const framerate = Math.max(1, Math.round(params.framerate));
+
+  for (const codec of H264_ENCODER_CODECS) {
+    const config: VideoEncoderConfig = {
+      codec,
+      width,
+      height,
+      bitrate,
+      framerate,
+      hardwareAcceleration: 'prefer-hardware',
+      avc: { format: 'annexb' },
+    };
+
+    try {
+      const support = await VideoEncoder.isConfigSupported(config);
+      if (support.supported) {
+        return support.config ?? config;
+      }
+    } catch (error) {
+      logger.warn('conversion', 'VideoEncoder.isConfigSupported failed', {
+        codec,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return null;
+}

@@ -75,6 +75,11 @@ type WorkerIsolationStatus = {
   crossOriginIsolated: boolean;
 };
 
+type FFmpegInputOverride = {
+  format: 'h264';
+  framerate: number;
+};
+
 async function verifyWorkerIsolation(): Promise<void> {
   if (typeof Worker === 'undefined') {
     throw new Error('Web Workers are not available in this browser.');
@@ -1269,6 +1274,27 @@ class FFmpegService {
     ];
   }
 
+  private buildInputArgs(inputFileName: string, override?: FFmpegInputOverride): string[] {
+    if (!override) {
+      return ['-i', inputFileName];
+    }
+
+    if (override.format === 'h264') {
+      return [
+        '-f',
+        'h264',
+        '-r',
+        Math.max(1, Math.round(override.framerate)).toString(),
+        '-fflags',
+        '+genpts',
+        '-i',
+        inputFileName,
+      ];
+    }
+
+    return ['-i', inputFileName];
+  }
+
   async encodeFrameSequence(params: {
     format: 'gif' | 'webp';
     options: ConversionOptions;
@@ -1584,7 +1610,8 @@ class FFmpegService {
   async convertToGIF(
     file: File,
     options: ConversionOptions,
-    metadata?: VideoMetadata
+    metadata?: VideoMetadata,
+    inputOverride?: FFmpegInputOverride
   ): Promise<Blob> {
     const conversionStartTime = Date.now();
 
@@ -1705,6 +1732,8 @@ class FFmpegService {
         }
       }
 
+      const inputArgs = this.buildInputArgs(actualInputFileName, inputOverride);
+
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
 
       const scaleFilter = getScaleFilter(quality, scale);
@@ -1717,8 +1746,7 @@ class FFmpegService {
           : `fps=${settings.fps},palettegen=max_colors=${settings.colors}`;
         const paletteCmd = [
           ...paletteThreadArgs,
-          '-i',
-          actualInputFileName,
+          ...inputArgs,
           '-vf',
           paletteFilterChain,
           '-update',
@@ -1774,8 +1802,7 @@ class FFmpegService {
           : `fps=${settings.fps}[x];[x][1:v]paletteuse=dither=${ditherMode}`;
         const conversionCmd = [
           ...filterComplexThreadArgs,
-          '-i',
-          actualInputFileName,
+          ...inputArgs,
           '-i',
           paletteFileName,
           '-filter_complex',
@@ -1818,13 +1845,7 @@ class FFmpegService {
 
         this.emitProgress(50);
 
-        await this.convertToGIFDirect(
-          actualInputFileName,
-          outputFileName,
-          settings,
-          scaleFilter,
-          file
-        );
+        await this.convertToGIFDirect(inputArgs, outputFileName, settings, scaleFilter, file);
       }
 
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END);
@@ -2017,7 +2038,8 @@ class FFmpegService {
   async convertToWebP(
     file: File,
     options: ConversionOptions,
-    metadata?: VideoMetadata
+    metadata?: VideoMetadata,
+    inputOverride?: FFmpegInputOverride
   ): Promise<Blob> {
     const conversionStartTime = Date.now();
 
@@ -2137,6 +2159,8 @@ class FFmpegService {
         }
       }
 
+      const inputArgs = this.buildInputArgs(actualInputFileName, inputOverride);
+
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START);
 
       if (this.cancellationRequested) {
@@ -2163,8 +2187,7 @@ class FFmpegService {
         // Optimize WebP settings for faster encoding
         const webpCmd = [
           ...webpThreadArgs,
-          '-i',
-          actualInputFileName,
+          ...inputArgs,
           '-vf',
           webpFilterArgs,
           '-c:v',
@@ -2228,13 +2251,7 @@ class FFmpegService {
 
         this.emitProgress(50);
 
-        await this.convertToWebPDirect(
-          actualInputFileName,
-          outputFileName,
-          settings,
-          scaleFilter,
-          file
-        );
+        await this.convertToWebPDirect(inputArgs, outputFileName, settings, scaleFilter, file);
       }
 
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END);
@@ -2427,7 +2444,7 @@ class FFmpegService {
    * Used when main conversion fails - uses lossless mode with fast compression
    */
   private async convertToWebPDirect(
-    inputFileName: string,
+    inputArgs: string[],
     outputFileName: string,
     settings: { fps: number },
     scaleFilter: string | null,
@@ -2471,8 +2488,7 @@ class FFmpegService {
       await withTimeout(
         ffmpeg.exec([
           ...webpThreadArgs,
-          '-i',
-          inputFileName,
+          ...inputArgs,
           '-vf',
           webpFilterArgs,
           '-c:v',
@@ -2503,7 +2519,7 @@ class FFmpegService {
   }
 
   private async convertToGIFDirect(
-    inputFileName: string,
+    inputArgs: string[],
     outputFileName: string,
     settings: { fps: number },
     scaleFilter: string | null,
@@ -2546,8 +2562,7 @@ class FFmpegService {
       await withTimeout(
         ffmpeg.exec([
           ...directGifThreadArgs,
-          '-i',
-          inputFileName,
+          ...inputArgs,
           '-vf',
           directGifFilterArgs,
           outputFileName,
