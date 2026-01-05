@@ -380,6 +380,7 @@ class WebCodecsConversionService {
     const decoder = new WebCodecsDecoderService();
     const frameFiles: string[] = [];
     const capturedFrames: ImageData[] = [];
+    let lastValidEncodedFrame: Uint8Array | null = null;
 
     // Determine if we need RGBA frames (for modern-gif or static WebP/AVIF)
     const needsRGBA = useModernGif || format === 'webp' || format === 'avif';
@@ -417,6 +418,52 @@ class WebCodecsConversionService {
     };
 
     ffmpegService.beginExternalConversion(metadata, quality);
+
+    // PRIORITY: Use H.264 intermediate for complex codecs (AV1, VP9, HEVC)
+    // This ensures stable conversion for codecs with WebCodecs compatibility issues
+    if (this.shouldUseH264Intermediate(metadata, format)) {
+      logger.info('conversion', 'Using H.264 intermediate path for complex codec', {
+        codec: metadata?.codec,
+        format,
+        reason: 'stability',
+      });
+
+      try {
+        const h264Result = await this.convertViaH264Intermediate({
+          decoder,
+          file,
+          format,
+          options,
+          targetFps,
+          scale,
+          metadata,
+          reportDecodeProgress,
+        });
+
+        if (h264Result) {
+          return h264Result;
+        }
+
+        // If H.264 intermediate fails, fall through to direct WebCodecs path
+        logger.warn('conversion', 'H.264 intermediate path failed, trying direct WebCodecs', {
+          codec: metadata?.codec,
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (
+          errorMessage.includes('cancelled by user') ||
+          (ffmpegService.isCancellationRequested() &&
+            errorMessage.includes('called FFmpeg.terminate()'))
+        ) {
+          throw error;
+        }
+
+        logger.warn('conversion', 'H.264 intermediate path error, trying direct WebCodecs', {
+          error: errorMessage,
+          codec: metadata?.codec,
+        });
+      }
+    }
 
     try {
       if (needsFFmpeg && !ffmpegService.isLoaded()) {
@@ -476,10 +523,38 @@ class WebCodecsConversionService {
                 return;
               }
 
-              if (!frame.data) {
-                throw new Error('WebCodecs did not provide encoded frame data.');
+              // Validate frame data exists and is not empty
+              if (!frame.data || frame.data.byteLength === 0) {
+                if (!lastValidEncodedFrame) {
+                  logger.error('conversion', 'WebCodecs produced empty frame with no fallback', {
+                    frameName: frame.name,
+                    frameIndex: frame.index,
+                  });
+                  throw new Error(
+                    'WebCodecs produced empty frame data at the start of the sequence. ' +
+                      'This indicates codec incompatibility. Falling back to FFmpeg.'
+                  );
+                }
+
+                // Reuse the last valid encoded frame to avoid writing 0-byte frames
+                const reusedFrame = new Uint8Array(lastValidEncodedFrame);
+                logger.warn(
+                  'conversion',
+                  'WebCodecs produced empty frame data, reusing last frame',
+                  {
+                    frameName: frame.name,
+                    frameIndex: frame.index,
+                    dataSize: frame.data?.byteLength ?? 0,
+                  }
+                );
+                await ffmpegService.writeVirtualFile(frame.name, reusedFrame);
+                frameFiles.push(frame.name);
+                return;
               }
-              await ffmpegService.writeVirtualFile(frame.name, frame.data);
+
+              const encodedFrame = new Uint8Array(frame.data);
+              lastValidEncodedFrame = encodedFrame;
+              await ffmpegService.writeVirtualFile(frame.name, encodedFrame);
               frameFiles.push(frame.name);
             },
           });
@@ -546,20 +621,8 @@ class WebCodecsConversionService {
           throw new Error(errorMessage);
         }
 
-        const h264Fallback = await this.convertViaH264Intermediate({
-          decoder,
-          file,
-          format,
-          options,
-          targetFps,
-          scale,
-          metadata,
-          reportDecodeProgress,
-        });
-        if (h264Fallback) {
-          return h264Fallback;
-        }
-
+        // H.264 intermediate path already attempted at the start of convert()
+        // Skip redundant retry and go directly to FFmpeg frame re-extraction
         logger.warn('conversion', 'WebCodecs encoder failed, retrying with FFmpeg frames', {
           error: errorMessage,
         });
@@ -580,6 +643,7 @@ class WebCodecsConversionService {
 
         const fallbackFrameFiles: string[] = [];
         let fallbackResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>>;
+        let lastValidFallbackFrame: Uint8Array | null = null;
 
         try {
           fallbackResult = await decoder.decodeToFrames({
@@ -595,10 +659,28 @@ class WebCodecsConversionService {
             shouldCancel: () => ffmpegService.isCancellationRequested(),
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
-              if (!frame.data) {
-                throw new Error('WebCodecs did not provide encoded frame data.');
+              if (!frame.data || frame.data.byteLength === 0) {
+                if (!lastValidFallbackFrame) {
+                  throw new Error('WebCodecs did not provide encoded frame data.');
+                }
+
+                const reusedFrame = new Uint8Array(lastValidFallbackFrame);
+                logger.warn(
+                  'conversion',
+                  'WebCodecs produced empty fallback frame data, reusing last frame',
+                  {
+                    frameName: frame.name,
+                    frameIndex: frame.index,
+                  }
+                );
+                await ffmpegService.writeVirtualFile(frame.name, reusedFrame);
+                fallbackFrameFiles.push(frame.name);
+                return;
               }
-              await ffmpegService.writeVirtualFile(frame.name, frame.data);
+
+              const encodedFrame = new Uint8Array(frame.data);
+              lastValidFallbackFrame = encodedFrame;
+              await ffmpegService.writeVirtualFile(frame.name, encodedFrame);
               fallbackFrameFiles.push(frame.name);
             },
           });

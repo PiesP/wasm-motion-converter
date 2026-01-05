@@ -15,6 +15,8 @@ import {
   TIMEOUT_FFMPEG_INIT,
   TIMEOUT_FFMPEG_WORKER_CHECK,
   TIMEOUT_VIDEO_ANALYSIS,
+  WARN_DURATION_SECONDS,
+  WARN_RESOLUTION_PIXELS,
 } from '../utils/constants';
 import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
@@ -196,6 +198,10 @@ function getThreadingArgs(operation: 'filter-complex' | 'scale-filter' | 'simple
   }
 }
 
+function getProgressLoggingArgs(): string[] {
+  return ['-progress', '-', '-loglevel', 'info'];
+}
+
 function getScaleFilter(quality: ConversionQuality, scale: number): string | null {
   if (scale === 1.0) {
     return null; // No scaling needed at 100%
@@ -212,7 +218,9 @@ class FFmpegService {
 
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private lastProgressTime = 0;
+  private lastLogTime = 0;
   private isConverting = false;
+  private conversionLock = false; // Prevent concurrent conversions
   private lastProgressEmitTime = 0;
   private lastProgressValue = -1;
   private currentWatchdogTimeout: number = FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS; // Adaptive timeout
@@ -224,6 +232,8 @@ class FFmpegService {
   private ffmpegLogBuffer: string[] = [];
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private hasLoggedEnvironment = false;
+  private logSilenceInterval: ReturnType<typeof setInterval> | null = null;
+  private logSilenceStrikes = 0;
 
   // Resource tracking for cleanup
   private activeHeartbeats: Set<ReturnType<typeof setInterval>> = new Set();
@@ -236,11 +246,19 @@ class FFmpegService {
     return this.ffmpeg;
   }
 
-  private emitProgress(progress: number, _isHeartbeat = false): void {
+  private emitProgress(progress: number, isHeartbeat = false): void {
     if (this.isConverting) {
-      this.lastProgressTime = Date.now();
+      const now = Date.now();
+      this.lastProgressTime = now;
       this.lastProgressValue = progress;
+
+      // Treat heartbeat-driven progress as encoder activity to avoid false stall detection
+      if (isHeartbeat) {
+        this.lastLogTime = now;
+        this.logSilenceStrikes = 0;
+      }
     }
+
     if (this.progressCallback) {
       this.progressCallback(progress);
     }
@@ -359,6 +377,31 @@ class FFmpegService {
   }
 
   /**
+   * Acquire conversion lock to prevent concurrent conversions
+   * Returns true if lock acquired, false if already locked
+   */
+  private acquireConversionLock(): boolean {
+    if (this.conversionLock) {
+      logger.warn('conversion', 'Conversion already in progress, rejecting concurrent request', {
+        isConverting: this.isConverting,
+        locked: this.conversionLock,
+      });
+      return false;
+    }
+    this.conversionLock = true;
+    logger.debug('conversion', 'Conversion lock acquired');
+    return true;
+  }
+
+  /**
+   * Release conversion lock
+   */
+  private releaseConversionLock(): void {
+    this.conversionLock = false;
+    logger.debug('conversion', 'Conversion lock released');
+  }
+
+  /**
    * Wait for any ongoing termination to complete with timeout
    * Prevents infinite loops if termination gets stuck
    */
@@ -398,6 +441,8 @@ class FFmpegService {
     progressEnd?: number
   ): (event: { type: string; message: string }) => void {
     return ({ type, message }: { type: string; message: string }) => {
+      this.lastLogTime = Date.now();
+      this.logSilenceStrikes = 0;
       logger.debug('ffmpeg', `[${type}] ${message}`);
 
       this.ffmpegLogBuffer.push(`[${type}] ${message}`);
@@ -435,12 +480,55 @@ class FFmpegService {
       const seconds = Number.parseFloat(timeMatch[3] ?? '0');
       const currentTime = hours * 3600 + minutes * 60 + seconds;
 
-      // Calculate progress as a percentage of total duration
       const progressRatio = Math.min(currentTime / totalDuration, 1.0);
       const progressRange = progressEnd - progressStart;
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
-      // Only emit if progress has changed significantly (avoid spam)
+      if (Math.abs(calculatedProgress - this.lastProgressValue) > 0.5) {
+        this.emitProgress(Math.round(calculatedProgress));
+      }
+      return;
+    }
+
+    // Parse progress-format output: "out_time=00:00:01.00" (from -progress -)
+    const outTimeMatch = message.match(/out_time=(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/);
+    if (outTimeMatch) {
+      const hours = Number.parseInt(outTimeMatch[1] ?? '0', 10);
+      const minutes = Number.parseInt(outTimeMatch[2] ?? '0', 10);
+      const seconds = Number.parseFloat(outTimeMatch[3] ?? '0');
+      const currentTime = hours * 3600 + minutes * 60 + seconds;
+
+      const progressRatio = Math.min(currentTime / totalDuration, 1.0);
+      const progressRange = progressEnd - progressStart;
+      const calculatedProgress = progressStart + progressRatio * progressRange;
+
+      if (Math.abs(calculatedProgress - this.lastProgressValue) > 0.5) {
+        this.emitProgress(Math.round(calculatedProgress));
+      }
+      return;
+    }
+
+    // Parse progress-format milliseconds/microseconds: "out_time_ms=1234" or "out_time_us=1234567"
+    const outTimeMsMatch = message.match(/out_time_ms=(\d+)/);
+    if (outTimeMsMatch) {
+      const currentTime = Number.parseInt(outTimeMsMatch[1] ?? '0', 10) / 1000;
+      const progressRatio = Math.min(currentTime / totalDuration, 1.0);
+      const progressRange = progressEnd - progressStart;
+      const calculatedProgress = progressStart + progressRatio * progressRange;
+
+      if (Math.abs(calculatedProgress - this.lastProgressValue) > 0.5) {
+        this.emitProgress(Math.round(calculatedProgress));
+      }
+      return;
+    }
+
+    const outTimeUsMatch = message.match(/out_time_us=(\d+)/);
+    if (outTimeUsMatch) {
+      const currentTime = Number.parseInt(outTimeUsMatch[1] ?? '0', 10) / 1_000_000;
+      const progressRatio = Math.min(currentTime / totalDuration, 1.0);
+      const progressRange = progressEnd - progressStart;
+      const calculatedProgress = progressStart + progressRatio * progressRange;
+
       if (Math.abs(calculatedProgress - this.lastProgressValue) > 0.5) {
         this.emitProgress(Math.round(calculatedProgress));
       }
@@ -1456,16 +1544,10 @@ class FFmpegService {
   }
 
   private async validateFrameSequence(frameCount: number, format: 'gif' | 'webp'): Promise<void> {
-    // This is a lightweight validation using knownFiles tracking
-    // More comprehensive validation happens during FFmpeg encoding
     logger.debug('conversion', 'Validating frame sequence', {
       frameCount,
       format,
     });
-
-    // Note: Actual frame integrity validation happens when FFmpeg reads them
-    // If frames are 0-byte or corrupted, FFmpeg will fail with clear errors
-    // that trigger the fallback mechanism
 
     // GIF requires animation (>=2 frames), WebP supports static (1 frame)
     const minFrames = format === 'gif' ? 2 : 1;
@@ -1474,6 +1556,49 @@ class FFmpegService {
         `Frame sequence too small for ${format.toUpperCase()} conversion ` +
           `(minimum: ${minFrames}, got: ${frameCount})`
       );
+    }
+
+    // Validate frame files exist and are not empty
+    const ffmpeg = this.getFFmpeg();
+    let emptyFrameCount = 0;
+    const MAX_EMPTY_FRAMES = 2;
+    const MIN_VALID_PNG_SIZE = 200; // Increased from 67 to detect small corrupt frames
+
+    for (let i = 0; i < frameCount; i += 1) {
+      const frameIndex = FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER + i;
+      const frameName = `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}${String(frameIndex).padStart(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS, '0')}.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`;
+
+      try {
+        const fileData = await ffmpeg.readFile(frameName);
+        if (fileData.length === 0 || fileData.length < MIN_VALID_PNG_SIZE) {
+          emptyFrameCount += 1;
+          logger.warn('conversion', `Detected invalid frame file: ${frameName}`, {
+            size: fileData.length,
+            minRequired: MIN_VALID_PNG_SIZE,
+          });
+
+          if (emptyFrameCount > MAX_EMPTY_FRAMES) {
+            throw new Error(
+              `Too many invalid frames detected (${emptyFrameCount}/${frameCount}). ` +
+                'This indicates WebCodecs codec incompatibility. Falling back to FFmpeg.'
+            );
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes('ENOENT') && !message.includes('not exist')) {
+          throw error;
+        }
+        logger.error('conversion', `Frame file missing: ${frameName}`);
+        throw new Error(`Frame file ${frameName} is missing from FFmpeg filesystem.`);
+      }
+    }
+
+    if (emptyFrameCount > 0) {
+      logger.warn('conversion', `Detected ${emptyFrameCount} invalid frame(s) in sequence`, {
+        emptyFrameCount,
+        totalFrames: frameCount,
+      });
     }
   }
 
@@ -1498,6 +1623,7 @@ class FFmpegService {
     if (isStatic) {
       // OPTIMIZED: Direct single-frame PNG-to-WebP encoding
       const staticCmd = [
+        ...getProgressLoggingArgs(),
         '-i',
         `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}${String(FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER).padStart(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS, '0')}.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`,
         '-c:v',
@@ -1543,6 +1669,7 @@ class FFmpegService {
       // ANIMATED: Multi-frame WebP encoding (existing logic)
       const webpThreadArgs = getThreadingArgs('simple');
       const webpCmd = [
+        ...getProgressLoggingArgs(),
         ...webpThreadArgs,
         ...inputArgs,
         '-c:v',
@@ -1554,7 +1681,7 @@ class FFmpegService {
         '-preset',
         settings.preset,
         '-compression_level',
-        Math.max(3, Math.min(settings.compressionLevel, 5)).toString(), // Cap compression level at 5 for speed
+        Math.max(3, Math.min(settings.compressionLevel, 4)).toString(), // Cap compression level at 4 for speed
         '-method',
         Math.min(settings.method, 4).toString(), // Limit method to 4 for faster encoding
         '-deadline',
@@ -1613,6 +1740,24 @@ class FFmpegService {
     metadata?: VideoMetadata,
     inputOverride?: FFmpegInputOverride
   ): Promise<Blob> {
+    // Acquire conversion lock to prevent concurrent conversions
+    if (!this.acquireConversionLock()) {
+      throw new Error('Another conversion is already in progress. Please wait for it to complete.');
+    }
+
+    try {
+      return await this.convertToGIFInternal(file, options, metadata, inputOverride);
+    } finally {
+      this.releaseConversionLock();
+    }
+  }
+
+  private async convertToGIFInternal(
+    file: File,
+    options: ConversionOptions,
+    metadata?: VideoMetadata,
+    inputOverride?: FFmpegInputOverride
+  ): Promise<Blob> {
     const conversionStartTime = Date.now();
 
     // Check if FFmpeg needs reinitialization
@@ -1638,7 +1783,7 @@ class FFmpegService {
         : presetSettings.fps;
 
     // Create settings object with adaptive FPS
-    const settings = {
+    let settings = {
       ...presetSettings,
       fps: optimalFps,
     };
@@ -1652,11 +1797,45 @@ class FFmpegService {
       });
     }
 
-    this.logConversionContext(file, 'gif', options, metadataForConversion);
+    // Heuristics: downscale / cap FPS for long or high-res GIFs
+    let effectiveScale = scale;
+    const pixels = metadataForConversion
+      ? metadataForConversion.width * metadataForConversion.height
+      : 0;
+    const isHighResolution = pixels > WARN_RESOLUTION_PIXELS;
+    const isVeryHighResolution = pixels > WARN_RESOLUTION_PIXELS * 1.5;
+    const isLong = metadataForConversion?.duration
+      ? metadataForConversion.duration > WARN_DURATION_SECONDS
+      : false;
+    const isVeryLong = metadataForConversion?.duration
+      ? metadataForConversion.duration > WARN_DURATION_SECONDS * 2
+      : false;
+
+    if (isVeryHighResolution && effectiveScale > 0.5) {
+      effectiveScale = 0.5;
+      logger.info('conversion', 'Auto-scaling GIF to 50% for very high resolution input');
+    } else if (isHighResolution && effectiveScale > 0.75) {
+      effectiveScale = 0.75;
+      logger.info('conversion', 'Auto-scaling GIF to 75% for high resolution input');
+    }
+
+    if ((isLong || isVeryLong) && settings.fps > 12) {
+      settings = { ...settings, fps: 12 };
+      logger.info('conversion', 'Capping GIF FPS to 12 for long duration input', {
+        duration: metadataForConversion?.duration,
+      });
+    }
+
+    this.logConversionContext(
+      file,
+      'gif',
+      { ...options, scale: effectiveScale },
+      metadataForConversion
+    );
 
     logger.info('conversion', 'Starting GIF conversion', {
       quality,
-      scale,
+      scale: effectiveScale,
       fps: settings.fps,
       colors: settings.colors,
       duration: metadataForConversion?.duration,
@@ -1736,7 +1915,7 @@ class FFmpegService {
 
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
 
-      const scaleFilter = getScaleFilter(quality, scale);
+      const scaleFilter = getScaleFilter(quality, effectiveScale);
 
       try {
         this.updateStatus('Generating color palette...');
@@ -2041,6 +2220,24 @@ class FFmpegService {
     metadata?: VideoMetadata,
     inputOverride?: FFmpegInputOverride
   ): Promise<Blob> {
+    // Acquire conversion lock to prevent concurrent conversions
+    if (!this.acquireConversionLock()) {
+      throw new Error('Another conversion is already in progress. Please wait for it to complete.');
+    }
+
+    try {
+      return await this.convertToWebPInternal(file, options, metadata, inputOverride);
+    } finally {
+      this.releaseConversionLock();
+    }
+  }
+
+  private async convertToWebPInternal(
+    file: File,
+    options: ConversionOptions,
+    metadata?: VideoMetadata,
+    inputOverride?: FFmpegInputOverride
+  ): Promise<Blob> {
     const conversionStartTime = Date.now();
 
     // Check if FFmpeg needs reinitialization
@@ -2186,6 +2383,7 @@ class FFmpegService {
           : `fps=${settings.fps}`;
         // Optimize WebP settings for faster encoding
         const webpCmd = [
+          ...getProgressLoggingArgs(),
           ...webpThreadArgs,
           ...inputArgs,
           '-vf',
@@ -2199,7 +2397,7 @@ class FFmpegService {
           '-preset',
           settings.preset,
           '-compression_level',
-          Math.max(3, Math.min(settings.compressionLevel, 5)).toString(), // Cap at 5 for speed
+          Math.max(3, Math.min(settings.compressionLevel, 4)).toString(), // Cap at 4 for speed
           '-method',
           Math.min(settings.method, 4).toString(), // Limit method for faster encoding
           '-deadline',
@@ -2294,6 +2492,7 @@ class FFmpegService {
             ? `fps=${settings.fps},${scaleFilter}`
             : `fps=${settings.fps}`;
           const baseCmd = [
+            ...getProgressLoggingArgs(),
             '-i',
             inputFileName,
             '-vf',
@@ -2307,7 +2506,7 @@ class FFmpegService {
             '-preset',
             settings.preset,
             '-compression_level',
-            settings.compressionLevel.toString(),
+            Math.max(3, Math.min(settings.compressionLevel, 4)).toString(),
             '-method',
             settings.method.toString(),
             '-qmin',
@@ -2487,6 +2686,7 @@ class FFmpegService {
     try {
       await withTimeout(
         ffmpeg.exec([
+          ...getProgressLoggingArgs(),
           ...webpThreadArgs,
           ...inputArgs,
           '-vf',
@@ -2694,6 +2894,8 @@ class FFmpegService {
 
   private startWatchdog(metadata?: VideoMetadata, quality?: ConversionQuality): void {
     this.lastProgressTime = Date.now();
+    this.lastLogTime = Date.now();
+    this.logSilenceStrikes = 0;
     this.isConverting = true;
     this.lastProgressEmitTime = 0;
     this.lastProgressValue = -1;
@@ -2715,6 +2917,32 @@ class FFmpegService {
       duration: metadata?.duration ? `${metadata.duration.toFixed(1)}s` : 'unknown',
       quality: quality || 'unknown',
     });
+
+    if (this.logSilenceInterval) {
+      clearInterval(this.logSilenceInterval);
+    }
+    this.logSilenceInterval = setInterval(() => {
+      const silenceMs = Date.now() - this.lastLogTime;
+      if (silenceMs > FFMPEG_INTERNALS.LOG_SILENCE_TIMEOUT_MS) {
+        this.logSilenceStrikes += 1;
+        logger.warn('ffmpeg', 'No FFmpeg logs detected for extended period', {
+          silenceMs,
+          strike: this.logSilenceStrikes,
+          maxStrikes: FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES,
+        });
+
+        this.updateStatus('FFmpeg encoder is unresponsive, checking...');
+
+        if (this.logSilenceStrikes >= FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES) {
+          logger.error(
+            'ffmpeg',
+            'FFmpeg produced no output after multiple checks, terminating as stalled'
+          );
+          this.updateStatus('Conversion stalled - terminating (no encoder output)...');
+          this.terminateFFmpeg();
+        }
+      }
+    }, FFMPEG_INTERNALS.LOG_SILENCE_CHECK_INTERVAL_MS);
 
     this.watchdogTimer = setInterval(() => {
       const timeSinceProgress = Date.now() - this.lastProgressTime;
@@ -2743,6 +2971,10 @@ class FFmpegService {
     if (this.watchdogTimer) {
       clearInterval(this.watchdogTimer);
       this.watchdogTimer = null;
+    }
+    if (this.logSilenceInterval) {
+      clearInterval(this.logSilenceInterval);
+      this.logSilenceInterval = null;
     }
     this.isConverting = false;
   }

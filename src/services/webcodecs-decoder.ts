@@ -215,7 +215,7 @@ export class WebCodecsDecoderService {
       video.currentTime = 0;
 
       let consecutiveEmptyFrames = 0;
-      const MAX_CONSECUTIVE_EMPTY_FRAMES = 3; // Abort early if we get multiple empty frames
+      const MAX_CONSECUTIVE_EMPTY_FRAMES = 2; // Reduced from 3 for faster AV1 fallback
       const startDecodeTime = Date.now();
 
       const captureFrame = async (index: number, timestamp: number) => {
@@ -251,7 +251,19 @@ export class WebCodecsDecoderService {
             captureContext.targetHeight
           );
           if (imageData.data.length === 0) {
-            throw new Error('Captured empty frame data from WebCodecs decoder.');
+            consecutiveEmptyFrames += 1;
+            logger.warn('conversion', `WebCodecs produced empty RGBA frame ${index}, skipping`, {
+              consecutiveEmptyFrames,
+              maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
+            });
+
+            if (consecutiveEmptyFrames >= MAX_CONSECUTIVE_EMPTY_FRAMES) {
+              throw new Error(
+                `WebCodecs decoder produced ${consecutiveEmptyFrames} consecutive empty frames at frame ${index}. ` +
+                  'This typically indicates codec incompatibility (e.g., AV1). Falling back to FFmpeg.'
+              );
+            }
+            return; // Skip empty frame without emitting
           }
           consecutiveEmptyFrames = 0;
         } else {
@@ -262,25 +274,37 @@ export class WebCodecsDecoderService {
           );
           if (blob.size === 0) {
             consecutiveEmptyFrames += 1;
+            logger.warn('conversion', `WebCodecs produced empty frame ${index}, skipping`, {
+              consecutiveEmptyFrames,
+              maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
+            });
+
             if (consecutiveEmptyFrames >= MAX_CONSECUTIVE_EMPTY_FRAMES) {
               throw new Error(
                 `WebCodecs decoder produced ${consecutiveEmptyFrames} consecutive empty frames at frame ${index}. ` +
                   'This typically indicates codec incompatibility (e.g., AV1). Falling back to FFmpeg.'
               );
             }
-            logger.warn('conversion', `WebCodecs produced empty frame ${index}, retrying`, {
-              consecutiveEmptyFrames,
-              maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
-            });
-            // Still throw to fail-fast after threshold
-            throw new Error('Captured empty frame from WebCodecs decoder.');
+            return; // Skip this empty capture and keep decoding
           }
-          consecutiveEmptyFrames = 0; // Reset counter on successful frame
 
           data = new Uint8Array(await blob.arrayBuffer());
           if (data.byteLength === 0) {
-            throw new Error('Captured empty frame data from WebCodecs decoder.');
+            consecutiveEmptyFrames += 1;
+            logger.warn('conversion', `WebCodecs produced empty frame data at ${index}, skipping`, {
+              consecutiveEmptyFrames,
+              maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
+            });
+
+            if (consecutiveEmptyFrames >= MAX_CONSECUTIVE_EMPTY_FRAMES) {
+              throw new Error(
+                `WebCodecs decoder produced ${consecutiveEmptyFrames} consecutive empty frames at frame ${index}. ` +
+                  'This typically indicates codec incompatibility (e.g., AV1). Falling back to FFmpeg.'
+              );
+            }
+            return;
           }
+          consecutiveEmptyFrames = 0; // Reset counter on successful frame
         }
         const frameName = formatFrameName(
           framePrefix,

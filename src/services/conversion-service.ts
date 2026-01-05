@@ -4,6 +4,7 @@ import {
   getCodecErrorMessage,
   requiresWebCodecs,
 } from '../utils/codec-capabilities';
+import { getConversionStrategy } from '../utils/conversion-strategy';
 import { logger } from '../utils/logger';
 import { ffmpegService } from './ffmpeg-service';
 import { webcodecsConversionService } from './webcodecs-conversion-service';
@@ -37,6 +38,27 @@ export async function convertVideo(
   metadata?: VideoMetadata
 ): Promise<Blob> {
   const resolvedMetadata = await resolveMetadata(file, metadata);
+  const strategy = getConversionStrategy({ file, format, metadata: resolvedMetadata });
+
+  let effectiveOptions: ConversionOptions = { ...options };
+
+  if (strategy.scaleOverride && strategy.scaleOverride !== effectiveOptions.scale) {
+    logger.info('conversion', 'Applying strategy scale override', {
+      from: effectiveOptions.scale,
+      to: strategy.scaleOverride,
+      reasons: strategy.reasons,
+    });
+    effectiveOptions = { ...effectiveOptions, scale: strategy.scaleOverride };
+  }
+
+  if (strategy.recommendedQuality && strategy.recommendedQuality !== effectiveOptions.quality) {
+    logger.info('conversion', 'Applying strategy quality override', {
+      from: effectiveOptions.quality,
+      to: strategy.recommendedQuality,
+      reasons: strategy.reasons,
+    });
+    effectiveOptions = { ...effectiveOptions, quality: strategy.recommendedQuality };
+  }
 
   // Codec-aware routing: Route to optimal conversion path based on codec capabilities
   const codec = resolvedMetadata?.codec;
@@ -66,7 +88,7 @@ export async function convertVideo(
     const result = await webcodecsConversionService.convert(
       file,
       format,
-      options,
+      effectiveOptions,
       resolvedMetadata
     );
     return result;
@@ -74,12 +96,15 @@ export async function convertVideo(
 
   // For codecs supported by both paths or FFmpeg-only:
   // Try WebCodecs first (faster, GPU-accelerated), fall back to FFmpeg
-  const webcodecsResult = await webcodecsConversionService.maybeConvert(
-    file,
-    format,
-    options,
-    resolvedMetadata
-  );
+  const skipWebCodecs = strategy.forceFFmpeg && format === 'gif';
+  const webcodecsResult = skipWebCodecs
+    ? null
+    : await webcodecsConversionService.maybeConvert(
+        file,
+        format,
+        effectiveOptions,
+        resolvedMetadata
+      );
   if (webcodecsResult) {
     return webcodecsResult;
   }
@@ -94,11 +119,12 @@ export async function convertVideo(
   logger.info('conversion', 'Using FFmpeg fallback path', {
     codec,
     format,
+    strategy: strategy.reasons,
   });
 
   if (format === 'gif') {
-    return ffmpegService.convertToGIF(file, options, resolvedMetadata);
+    return ffmpegService.convertToGIF(file, effectiveOptions, resolvedMetadata);
   }
 
-  return ffmpegService.convertToWebP(file, options, resolvedMetadata);
+  return ffmpegService.convertToWebP(file, effectiveOptions, resolvedMetadata);
 }

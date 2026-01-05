@@ -5,7 +5,7 @@ export const WARN_FILE_SIZE_CRITICAL = 300 * 1024 * 1024; // 300MB - suggest sca
 export const WARN_RESOLUTION_PIXELS = 1920 * 1080; // 1080p
 export const WARN_DURATION_SECONDS = 30; // 30 seconds
 
-export const COMPLEX_CODECS = ['hevc', 'h265', 'vp9', 'av1', 'av01'];
+export const COMPLEX_CODECS = ['hevc', 'h265', 'hvc1', 'hev1', 'vp9', 'vp09', 'av1', 'av01'];
 
 export const WEBCODECS_ACCELERATED = [
   'av1',

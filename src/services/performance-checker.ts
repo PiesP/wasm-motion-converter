@@ -84,12 +84,18 @@ export function getRecommendedSettings(
   let changed = false;
   const next: ConversionSettings = { ...current };
   const pixels = metadata.width * metadata.height;
+  const isGif = current.format === 'gif';
 
   if (file.size > WARN_FILE_SIZE_HIGH || metadata.duration > WARN_DURATION_SECONDS) {
     if (next.quality !== 'low') {
       next.quality = 'low';
       changed = true;
     }
+  }
+
+  if (isGif && metadata.duration > WARN_DURATION_SECONDS && next.quality !== 'low') {
+    next.quality = 'low';
+    changed = true;
   }
 
   if (file.size > WARN_FILE_SIZE_CRITICAL || pixels > WARN_RESOLUTION_PIXELS * 2) {
@@ -100,6 +106,14 @@ export function getRecommendedSettings(
     }
   } else if (pixels > WARN_RESOLUTION_PIXELS) {
     const newScale = preferLowerScale(next.scale, 0.75);
+    if (newScale !== next.scale) {
+      next.scale = newScale;
+      changed = true;
+    }
+  }
+
+  if (isGif && pixels > WARN_RESOLUTION_PIXELS * 1.5) {
+    const newScale = preferLowerScale(next.scale, 0.5);
     if (newScale !== next.scale) {
       next.scale = newScale;
       changed = true;

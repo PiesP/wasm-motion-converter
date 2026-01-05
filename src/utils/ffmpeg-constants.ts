@@ -73,7 +73,12 @@ export const FFMPEG_INTERNALS = {
 
   // Heartbeat estimation parameters
   HEARTBEAT_DURATION_MULTIPLIER: 1.5, // Multiplier for estimated duration
-  HEARTBEAT_MAX_COMPLETION: 0.95, // Cap heartbeat progress at 95% of estimate
+  HEARTBEAT_MAX_COMPLETION: 0.99, // Cap heartbeat progress at 99% of estimate (reduce visible stall)
+
+  // FFmpeg log silence monitoring
+  LOG_SILENCE_TIMEOUT_MS: 20_000, // Warn if no FFmpeg logs for 20s
+  LOG_SILENCE_CHECK_INTERVAL_MS: 5_000,
+  LOG_SILENCE_MAX_STRIKES: 3, // After 3 silence intervals, abort as stalled
 
   // FFmpeg log buffer configuration
   FFMPEG_LOG_BUFFER_SIZE: 100, // Maximum number of log entries to keep
