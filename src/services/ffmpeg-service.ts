@@ -1711,9 +1711,8 @@ class FFmpegService {
       });
 
       // Log the actual FFmpeg command for debugging
-      logger.info('ffmpeg', 'WebP encoding command', {
-        command: webpCmd.join(' '),
-      });
+      const cmdString = webpCmd.join(' ');
+      logger.info('ffmpeg', `WebP encoding command: ${cmdString}`);
 
       const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
       ffmpeg.on('log', webpLogHandler);
