@@ -31,6 +31,115 @@ const resolveMetadata = async (
   }
 };
 
+/**
+ * Smart path selection: Routes conversion based on codec+format+availability
+ * Order of checks (by priority):
+ * 1. Codec requirements (WebCodecs-only vs FFmpeg-supported)
+ * 2. Format constraints (GIF performance vs other formats)
+ * 3. Format-specific logic (WebP quality vs GIF speed)
+ */
+async function selectConversionPath(
+  file: File,
+  format: ConversionFormat,
+  options: ConversionOptions,
+  resolvedMetadata: VideoMetadata | undefined,
+  strategy: ReturnType<typeof getConversionStrategy>,
+  webCodecsAvailable: boolean,
+  codec: string | undefined | null,
+  codecCapability: ReturnType<typeof getCodecCapability>
+): Promise<Blob> {
+  // Normalize codec to handle null case
+  const normalizedCodec = codec || undefined;
+
+  // Priority 1: Handle WebCodecs-only codecs (e.g., AV1)
+  if (requiresWebCodecs(normalizedCodec)) {
+    if (!webCodecsAvailable) {
+      const errorMessage = getCodecErrorMessage(normalizedCodec, webCodecsAvailable);
+      logger.error('conversion', 'WebCodecs-only codec unavailable', {
+        codec: normalizedCodec,
+        format,
+        error: errorMessage,
+      });
+      throw new Error(errorMessage ?? 'WebCodecs not available');
+    }
+
+    // Special case: AV1 + GIF requires WebCodecs decoding + FFmpeg encoding
+    // This is the only valid path for this combination
+    if (format === 'gif') {
+      logger.info('conversion', 'WebCodecs-only codec with GIF: using hybrid path', {
+        codec: normalizedCodec,
+        reasons: ['AV1/WebCodecs-only codec cannot use direct FFmpeg GIF path'],
+      });
+      return webcodecsConversionService.convert(file, format, options, resolvedMetadata);
+    }
+
+    // WebCodecs-only codec with WebP: Use WebCodecs path
+    logger.info('conversion', 'WebCodecs-only codec: using WebCodecs path', {
+      codec: normalizedCodec,
+      format,
+    });
+    return webcodecsConversionService.convert(file, format, options, resolvedMetadata);
+  }
+
+  // Priority 2: Format-specific constraints (GIF prefers direct FFmpeg)
+  if (format === 'gif' && strategy.forceFFmpeg && codecCapability !== 'webcodecs-only') {
+    logger.info('conversion', 'GIF format: attempting direct FFmpeg path', {
+      codec: normalizedCodec,
+      isFFmpegCapable: codecCapability === 'both' || codecCapability === 'ffmpeg-only',
+    });
+    try {
+      return ffmpegService.convertToGIF(file, options, resolvedMetadata);
+    } catch (error) {
+      // If FFmpeg fails for GIF, fallback to WebCodecs path
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('conversion', 'GIF FFmpeg path failed, attempting WebCodecs fallback', {
+        codec: normalizedCodec,
+        error: errorMessage,
+        fallbackReason:
+          codecCapability === 'both' ? 'codec supports both paths' : 'codec unsupported by FFmpeg',
+      });
+      if (webCodecsAvailable) {
+        return webcodecsConversionService.convert(file, format, options, resolvedMetadata);
+      }
+      throw error;
+    }
+  }
+
+  // Priority 3: WebCodecs-first for other formats if available
+  if (!strategy.forceFFmpeg && webCodecsAvailable) {
+    logger.info('conversion', 'Attempting WebCodecs path (GPU-accelerated)', {
+      codec: normalizedCodec,
+      format,
+    });
+    const result = await webcodecsConversionService.maybeConvert(
+      file,
+      format,
+      options,
+      resolvedMetadata
+    );
+    if (result) {
+      return result;
+    }
+    logger.info('conversion', 'WebCodecs path unavailable, falling back to FFmpeg', {
+      codec: normalizedCodec,
+      format,
+    });
+  }
+
+  // Final fallback: FFmpeg path
+  logger.info('conversion', 'Using FFmpeg path', {
+    codec: normalizedCodec,
+    format,
+    reason: strategy.forceFFmpeg ? 'strategy enforced' : 'WebCodecs unavailable or unsupported',
+  });
+
+  if (format === 'gif') {
+    return ffmpegService.convertToGIF(file, options, resolvedMetadata);
+  }
+
+  return ffmpegService.convertToWebP(file, options, resolvedMetadata);
+}
+
 export async function convertVideo(
   file: File,
   format: ConversionFormat,
@@ -65,60 +174,22 @@ export async function convertVideo(
   const codecCapability = getCodecCapability(codec);
   const webCodecsAvailable = isWebCodecsDecodeSupported();
 
-  logger.info('conversion', 'Codec-aware routing', {
+  logger.info('conversion', 'Codec-aware routing decision', {
     codec,
-    capability: codecCapability,
+    codecCapability,
     webCodecsAvailable,
     format,
+    strategyReasons: strategy.reasons,
   });
 
-  // Check if codec requires WebCodecs exclusively (e.g., AV1)
-  if (requiresWebCodecs(codec)) {
-    const errorMessage = getCodecErrorMessage(codec, webCodecsAvailable);
-    if (errorMessage) {
-      logger.error('conversion', 'Codec requires WebCodecs but not available', {
-        codec,
-        error: errorMessage,
-      });
-      throw new Error(errorMessage);
-    }
-
-    // AV1: MUST use WebCodecs, error if conversion fails
-    logger.info('conversion', `${codec?.toUpperCase()} requires WebCodecs, using exclusive path`);
-    const result = await webcodecsConversionService.convert(
-      file,
-      format,
-      effectiveOptions,
-      resolvedMetadata
-    );
-    return result;
-  }
-
-  // For codecs supported by both paths or FFmpeg-only:
-  // Try WebCodecs first (faster, GPU-accelerated), fall back to FFmpeg
-  const skipWebCodecs = strategy.forceFFmpeg && format === 'gif';
-  const webcodecsResult = skipWebCodecs
-    ? null
-    : await webcodecsConversionService.maybeConvert(
-        file,
-        format,
-        effectiveOptions,
-        resolvedMetadata
-      );
-  if (webcodecsResult) {
-    return webcodecsResult;
-  }
-
-  // FFmpeg fallback
-  logger.info('conversion', 'Using FFmpeg fallback path', {
-    codec,
+  return selectConversionPath(
+    file,
     format,
-    strategy: strategy.reasons,
-  });
-
-  if (format === 'gif') {
-    return ffmpegService.convertToGIF(file, effectiveOptions, resolvedMetadata);
-  }
-
-  return ffmpegService.convertToWebP(file, effectiveOptions, resolvedMetadata);
+    effectiveOptions,
+    resolvedMetadata,
+    strategy,
+    webCodecsAvailable,
+    codec,
+    codecCapability
+  );
 }

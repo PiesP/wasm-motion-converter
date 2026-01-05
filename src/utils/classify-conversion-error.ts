@@ -74,7 +74,7 @@ export function classifyConversionError(
     message.includes('decoder') ||
     message.includes('decode')
   ) {
-    // Check if it's specifically an AV1 issue
+    // Detect specific codec failures
     const isAV1Issue =
       metadata?.codec?.toLowerCase().includes('av1') ||
       metadata?.codec?.toLowerCase().includes('av01') ||
@@ -83,12 +83,26 @@ export function classifyConversionError(
       ffmpegLogs?.some((log) => log.toLowerCase().includes('av1')) ||
       ffmpegLogs?.some((log) => log.toLowerCase().includes('av01'));
 
+    const isGIFConversionWithAV1 =
+      isAV1Issue &&
+      (message.includes('gif') || ffmpegLogs?.some((log) => log.toLowerCase().includes('gif')));
+
+    if (isGIFConversionWithAV1) {
+      return {
+        type: 'codec',
+        ...baseContext,
+        phase: 'av1_gif_conversion_failure',
+        suggestion:
+          'Converting AV1 video to GIF encountered a compatibility issue. The converter will automatically fall back to WebCodecs-based GIF generation, which may take longer but will work.',
+      };
+    }
+
     return {
       type: 'codec',
       ...baseContext,
       phase: isAV1Issue ? 'av1_decode_failure' : 'codec_error',
       suggestion: isAV1Issue
-        ? 'AV1 video codec is not fully supported by the browser decoder. The converter will automatically try alternative decoding methods or transcode to H.264 first.'
+        ? 'AV1 video codec requires WebCodecs support. The converter will automatically use this method. If it fails, try reducing quality to "low" or scaling down the video.'
         : 'The video format or codec is not supported. Try converting the video to H.264/MP4 format first using another tool.',
     };
   }

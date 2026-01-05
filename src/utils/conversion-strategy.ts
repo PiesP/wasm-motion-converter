@@ -43,41 +43,78 @@ export function getConversionStrategy(params: {
   const isVeryLong = metadata.duration > WARN_DURATION_SECONDS * 2;
   const isHugeFile = file.size > WARN_FILE_SIZE_HIGH;
 
-  // GIF: avoid WebCodecs overhead for very long/high-res inputs; prefer FFmpeg directly
-  if (format === 'gif' && (isVeryLong || isVeryHighResolution || isHugeFile)) {
+  // GIF optimization strategy:
+  // - Direct FFmpeg path is 3x faster for H.264/standard codecs
+  // - WebCodecs + FFmpeg encoding adds overhead
+  // - But WebCodecs-only codecs (AV1) MUST use WebCodecs path
+  // Therefore: Set forceFFmpeg=true for GIF by default, but allow WebCodecs for AV1
+  if (format === 'gif') {
+    // Note: AV1 + GIF will use WebCodecs in conversion-service despite forceFFmpeg=true
+    // because requiresWebCodecs() check takes priority over format preference
     strategy.forceFFmpeg = true;
-    strategy.reasons.push('GIF high load - preferring direct FFmpeg path');
+    strategy.reasons.push(
+      'GIF: prefer direct FFmpeg encoding for 3x performance (unless codec is WebCodecs-only)'
+    );
 
     if (isVeryHighResolution) {
       strategy.scaleOverride = coerceScale(0.5);
-      strategy.reasons.push('Scaling to 50% for very high resolution GIF');
+      strategy.reasons.push('GIF + very high resolution: scale to 50% to reduce encoding time');
     } else if (isHighResolution) {
       strategy.scaleOverride = coerceScale(0.75);
-      strategy.reasons.push('Scaling to 75% for high resolution GIF');
+      strategy.reasons.push('GIF + high resolution: scale to 75% to optimize encoding speed');
     }
 
-    if (isLong || isVeryLong) {
-      // Cap FPS to keep palette and encode faster/stable
+    if (isVeryLong) {
+      // Cap FPS to keep palette generation and encoding fast/stable for very long videos
       strategy.fpsCap = 12;
-      strategy.reasons.push('Capping GIF FPS to 12 for long duration');
+      strategy.reasons.push('GIF + very long duration: cap FPS to 12 for faster palette/encode');
       strategy.recommendedQuality = 'low';
+      strategy.reasons.push('GIF + very long duration: reduce quality for stability');
+    } else if (isLong) {
+      // Moderate FPS cap for long videos
+      strategy.fpsCap = 15;
+      strategy.reasons.push('GIF + long duration: moderate FPS cap to 15');
     }
+
+    return strategy;
   }
 
-  // AV1 → WebP: be conservative to reduce stalls during FFmpeg encode fallback
-  if (format === 'webp' && codec.includes('av1')) {
-    if (!strategy.scaleOverride && (isHighResolution || isLong || isHugeFile)) {
-      strategy.scaleOverride = coerceScale(0.75);
-      strategy.reasons.push('AV1 WebP: scaling to 75% to reduce encode load');
+  // WebP optimization strategy:
+  // AV1 codec: WebCodecs is the ONLY option (FFmpeg lacks AV1 decoder)
+  // Other codecs: WebCodecs preferred for speed, FFmpeg as fallback
+  if (format === 'webp') {
+    if (codec.includes('av1')) {
+      // AV1 + WebP: WebCodecs is mandatory, apply conservative settings
+      strategy.reasons.push('AV1 + WebP: must use WebCodecs (FFmpeg lacks AV1 decoder)');
+
+      if (isVeryHighResolution || isHugeFile) {
+        strategy.scaleOverride = coerceScale(0.5);
+        strategy.reasons.push('AV1 + WebP + large file: scale to 50% to reduce memory pressure');
+      } else if (isHighResolution || isLong) {
+        strategy.scaleOverride = coerceScale(0.75);
+        strategy.reasons.push('AV1 + WebP + high load: scale to 75% for memory efficiency');
+      }
+
+      if (isVeryLong || isHugeFile) {
+        strategy.recommendedQuality = 'low';
+        strategy.reasons.push('AV1 + WebP + long/large: reduce quality for stability');
+      } else {
+        strategy.recommendedQuality = 'medium';
+        strategy.reasons.push('AV1 + WebP: use medium quality for balance');
+      }
+    } else {
+      // Non-AV1 WebP: WebCodecs preferred unless resource constraints
+      strategy.reasons.push('WebP: prefer WebCodecs for GPU acceleration');
+
+      if (isVeryHighResolution || isVeryLong || isHugeFile) {
+        strategy.scaleOverride = coerceScale(0.75);
+        strategy.reasons.push('WebP + high load: scale to 75% for efficiency');
+      }
     }
 
-    if (!strategy.recommendedQuality || strategy.recommendedQuality === 'high') {
-      strategy.recommendedQuality = 'medium';
-      strategy.reasons.push('AV1 WebP: lowering quality to improve stability');
-    }
+    return strategy;
   }
 
-  // WebP: keep WebCodecs preferred unless codec forces FFmpeg; no extra strategy here
-
+  // No specific strategy for other formats
   return strategy;
 }

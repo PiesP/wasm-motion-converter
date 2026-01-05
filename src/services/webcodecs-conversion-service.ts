@@ -341,6 +341,16 @@ class WebCodecsConversionService {
       return null;
     }
 
+    // GIF: Skip WebCodecs path, use FFmpeg direct instead
+    // WebCodecs frame extraction for GIF has VFS write stability issues
+    if (format === 'gif') {
+      logger.info('conversion', 'GIF format with complex codec: skipping WebCodecs path', {
+        codec: metadata?.codec,
+        reason: 'Use FFmpeg direct path instead',
+      });
+      return null;
+    }
+
     logger.info('conversion', 'Using WebCodecs direct frame extraction path', {
       codec: metadata?.codec,
       format,
@@ -353,7 +363,7 @@ class WebCodecsConversionService {
       ffmpegService.reportStatus('Extracting frames via WebCodecs...');
 
       // Direct WebCodecs → PNG pipeline for complex codecs
-      // Use FFmpeg frame-sequence encoding for stable WebP/GIF output
+      // Use FFmpeg frame-sequence encoding for stable WebP output
       const startTime = Date.now();
 
       const frameFormat = 'png';
@@ -370,8 +380,14 @@ class WebCodecsConversionService {
         maxFrames,
         captureMode: 'auto',
         onFrame: async (frame) => {
-          // For GIF/WebP, write PNG frame data to FFmpeg VFS
+          // For WebP, write PNG frame data to FFmpeg VFS
           if (frame.data && frame.data.byteLength > 0) {
+            // Validate frame data before writing to avoid VFS corruption
+            if (frame.data.byteLength < 100) {
+              logger.warn('conversion', `Suspicious small frame from WebCodecs: ${frame.name}`, {
+                byteLength: frame.data.byteLength,
+              });
+            }
             logger.debug('conversion', `Writing frame to VFS: ${frame.name}`, {
               size: frame.data.byteLength,
             });
@@ -400,7 +416,7 @@ class WebCodecsConversionService {
       ffmpegService.reportStatus(`Converting frames to ${format.toUpperCase()}...`);
 
       const outputBlob = await ffmpegService.encodeFrameSequence({
-        format: format === 'gif' ? 'gif' : 'webp',
+        format: 'webp', // format is guaranteed to be 'webp' here after GIF check
         options,
         frameCount: frameFiles.length,
         fps: targetFps,
@@ -467,6 +483,22 @@ class WebCodecsConversionService {
     const settings =
       format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
     const useModernGif = format === 'gif' && ModernGifService.isSupported();
+
+    // GIF format: Always prefer FFmpeg direct path for better performance
+    // WebCodecs frame extraction + FFmpeg GIF encoding is 3x slower than direct FFmpeg encoding
+    // and has reliability issues with FFmpeg GIF options (e.g., fps_mode parsing errors)
+    if (format === 'gif' && !useModernGif) {
+      logger.info(
+        'conversion',
+        'GIF format detected: using direct FFmpeg path for optimal performance',
+        {
+          fileSize: file.size,
+          format,
+        }
+      );
+      await ffmpegService.initialize();
+      return ffmpegService.convertToGIF(file, options, metadata);
+    }
 
     const decoder = new WebCodecsDecoderService();
     const frameFiles: string[] = [];
