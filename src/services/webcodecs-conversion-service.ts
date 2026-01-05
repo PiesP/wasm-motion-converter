@@ -18,7 +18,6 @@ import { getOptimalPoolSize, WorkerPool } from './worker-pool';
 
 class WebCodecsConversionService {
   private gifWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
-  private webpWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
 
   constructor() {
     // Lazy initialize worker pools with dynamic sizing
@@ -28,23 +27,16 @@ class WebCodecsConversionService {
 
       // Calculate optimal pool sizes based on hardware and memory
       const optimalGifWorkers = getOptimalPoolSize('gif', hwConcurrency, availableMem);
-      const optimalWebPWorkers = getOptimalPoolSize('webp', hwConcurrency, availableMem);
 
       logger.info('worker-pool', 'Dynamic worker pool sizing', {
         hardwareConcurrency: hwConcurrency,
         availableMemory: `${Math.round(availableMem / 1024 / 1024)}MB`,
         gifWorkers: optimalGifWorkers,
-        webpWorkers: optimalWebPWorkers,
       });
 
       this.gifWorkerPool = new WorkerPool(
         new URL('../workers/gif-encoder.worker.ts', import.meta.url),
         { lazyInit: true, maxWorkers: optimalGifWorkers }
-      );
-
-      this.webpWorkerPool = new WorkerPool(
-        new URL('../workers/webp-encoder.worker.ts', import.meta.url),
-        { lazyInit: true, maxWorkers: optimalWebPWorkers }
       );
     }
   }
@@ -381,40 +373,6 @@ class WebCodecsConversionService {
             outputBlob = await encodeWithFFmpegFallback(fallbackMessage);
           }
         }
-      } else if (
-        format === 'webp' &&
-        capturedFrames.length > 0 &&
-        capturedFrames[0] &&
-        this.webpWorkerPool
-      ) {
-        // Use worker pool for static WebP encoding
-        logger.info('conversion', 'Using WebP worker pool encoding');
-        const firstFrame = capturedFrames[0];
-        try {
-          outputBlob = await this.webpWorkerPool.execute(async (worker) => {
-            return await worker.encode([firstFrame], {
-              quality,
-              onProgress: reportEncodeProgress,
-              shouldCancel: () => ffmpegService.isCancellationRequested(),
-            });
-          });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.warn('conversion', 'WebP worker encoding failed, retrying on main thread', {
-            error: errorMessage,
-          });
-          try {
-            outputBlob = await SquooshWebPService.encode(firstFrame, {
-              quality,
-              onProgress: reportEncodeProgress,
-              shouldCancel: () => ffmpegService.isCancellationRequested(),
-            });
-          } catch (fallbackError) {
-            const fallbackMessage =
-              fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-            outputBlob = await encodeWithFFmpegFallback(fallbackMessage);
-          }
-        }
       } else if (useModernGif) {
         // Fallback to main thread if workers unavailable
         try {
@@ -441,6 +399,19 @@ class WebCodecsConversionService {
           });
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
+
+          // Detect WASM loading failures
+          if (errorMessage.includes('magic word') || errorMessage.includes('wasm')) {
+            logger.error('conversion', 'WebP WASM loading failed', {
+              error: errorMessage,
+              suggestion: 'Falling back to FFmpeg encoding',
+            });
+          } else {
+            logger.warn('conversion', 'WebP encoding failed, using FFmpeg fallback', {
+              error: errorMessage,
+            });
+          }
+
           outputBlob = await encodeWithFFmpegFallback(errorMessage);
         }
       } else {
@@ -450,7 +421,6 @@ class WebCodecsConversionService {
           frameFilesCount: frameFiles.length,
           capturedFramesCount: capturedFrames.length,
           hasFirstCapturedFrame: !!capturedFrames[0],
-          hasWorkerPool: !!this.webpWorkerPool,
         });
         outputBlob = await ffmpegService.encodeFrameSequence({
           format: format as 'gif' | 'webp',
@@ -490,9 +460,7 @@ class WebCodecsConversionService {
 
   cleanup(): void {
     this.gifWorkerPool?.terminate();
-    this.webpWorkerPool?.terminate();
     this.gifWorkerPool = null;
-    this.webpWorkerPool = null;
   }
 }
 

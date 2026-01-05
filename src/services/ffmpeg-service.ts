@@ -446,6 +446,18 @@ class FFmpegService {
     const frameMatch = message.match(/frame=\s*(\d+)/);
     if (frameMatch && totalDuration > 0) {
       const currentFrame = Number.parseInt(frameMatch[1] ?? '0', 10);
+
+      // Detect FFmpeg encoder stalls at frame 0
+      if (currentFrame === 0 && message.includes('time=')) {
+        const elapsedTime = Date.now() - (this.lastProgressTime || Date.now());
+        if (elapsedTime > 5000) {
+          logger.warn('conversion', 'FFmpeg encoder stalled at frame 0', {
+            message: message.substring(0, 200),
+            elapsedMs: elapsedTime,
+          });
+        }
+      }
+
       // Estimate total frames based on typical frame rate (assume 30fps if unknown)
       const estimatedTotalFrames = totalDuration * 30;
       const progressRatio = Math.min(currentFrame / estimatedTotalFrames, 1.0);
@@ -1277,7 +1289,7 @@ class FFmpegService {
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
     try {
-      await this.validateFrameSequence(frameCount);
+      await this.validateFrameSequence(frameCount, format);
       const inputArgs = this.getFrameInputArgs(fps);
       this.emitProgress(encodeStart);
 
@@ -1303,7 +1315,8 @@ class FFmpegService {
           settings,
           durationSeconds,
           encodeStart,
-          encodeEnd
+          encodeEnd,
+          frameCount
         );
       }
 
@@ -1416,18 +1429,25 @@ class FFmpegService {
     }
   }
 
-  private async validateFrameSequence(frameCount: number): Promise<void> {
+  private async validateFrameSequence(frameCount: number, format: 'gif' | 'webp'): Promise<void> {
     // This is a lightweight validation using knownFiles tracking
     // More comprehensive validation happens during FFmpeg encoding
     logger.debug('conversion', 'Validating frame sequence', {
       frameCount,
+      format,
     });
 
     // Note: Actual frame integrity validation happens when FFmpeg reads them
     // If frames are 0-byte or corrupted, FFmpeg will fail with clear errors
     // that trigger the fallback mechanism
-    if (frameCount < 2) {
-      throw new Error('Frame sequence too small for conversion');
+
+    // GIF requires animation (>=2 frames), WebP supports static (1 frame)
+    const minFrames = format === 'gif' ? 2 : 1;
+    if (frameCount < minFrames) {
+      throw new Error(
+        `Frame sequence too small for ${format.toUpperCase()} conversion ` +
+          `(minimum: ${minFrames}, got: ${frameCount})`
+      );
     }
   }
 
@@ -1444,52 +1464,106 @@ class FFmpegService {
     },
     durationSeconds: number,
     encodeStart: number,
-    encodeEnd: number
+    encodeEnd: number,
+    frameCount: number
   ): Promise<void> {
-    const webpThreadArgs = getThreadingArgs('simple');
-    // Optimize WebP encoding for speed while maintaining quality
-    // Use deadline for faster encoding and reduce complexity
-    const webpCmd = [
-      ...webpThreadArgs,
-      ...inputArgs,
-      '-c:v',
-      'libwebp',
-      '-lossless',
-      '0',
-      '-quality',
-      settings.quality.toString(),
-      '-preset',
-      settings.preset,
-      '-compression_level',
-      Math.max(3, Math.min(settings.compressionLevel, 5)).toString(), // Cap compression level at 5 for speed
-      '-method',
-      Math.min(settings.method, 4).toString(), // Limit method to 4 for faster encoding
-      '-deadline',
-      'realtime', // Use realtime preset for fast encoding (instead of good/best)
-      '-loop',
-      '0',
-      outputFileName,
-    ];
+    const isStatic = frameCount === 1;
 
-    const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
-    ffmpeg.on('log', webpLogHandler);
+    if (isStatic) {
+      // OPTIMIZED: Direct single-frame PNG-to-WebP encoding
+      const staticCmd = [
+        '-i',
+        `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}${String(FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER).padStart(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS, '0')}.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`,
+        '-c:v',
+        'libwebp',
+        '-lossless',
+        '0',
+        '-quality',
+        settings.quality.toString(),
+        '-preset',
+        settings.preset,
+        '-compression_level',
+        settings.compressionLevel.toString(),
+        '-method',
+        settings.method.toString(),
+        outputFileName,
+      ];
 
-    const webpHeartbeat = this.startProgressHeartbeat(
-      encodeStart,
-      encodeEnd,
-      Math.max(15, Math.min(durationSeconds, 45))
-    );
+      logger.info('conversion', 'Encoding static WebP (single frame)', {
+        quality: settings.quality,
+        compressionLevel: settings.compressionLevel,
+      });
 
-    try {
-      await withTimeout(
-        ffmpeg.exec(webpCmd),
-        TIMEOUT_CONVERSION,
-        `WebCodecs WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
-        () => this.terminateFFmpeg()
+      const logHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
+      ffmpeg.on('log', logHandler);
+
+      // Shorter timeout for single-frame encoding (30s vs 300s)
+      const staticTimeout = 30_000;
+      const heartbeat = this.startProgressHeartbeat(encodeStart, encodeEnd, 5);
+
+      try {
+        await withTimeout(
+          ffmpeg.exec(staticCmd),
+          staticTimeout,
+          `Static WebP encoding timed out after ${staticTimeout / 1000}s. ` +
+            `Check logs for FFmpeg stalls or WASM loading failures.`,
+          () => this.terminateFFmpeg()
+        );
+      } finally {
+        ffmpeg.off('log', logHandler);
+        this.stopProgressHeartbeat(heartbeat);
+      }
+    } else {
+      // ANIMATED: Multi-frame WebP encoding (existing logic)
+      const webpThreadArgs = getThreadingArgs('simple');
+      const webpCmd = [
+        ...webpThreadArgs,
+        ...inputArgs,
+        '-c:v',
+        'libwebp',
+        '-lossless',
+        '0',
+        '-quality',
+        settings.quality.toString(),
+        '-preset',
+        settings.preset,
+        '-compression_level',
+        Math.max(3, Math.min(settings.compressionLevel, 5)).toString(), // Cap compression level at 5 for speed
+        '-method',
+        Math.min(settings.method, 4).toString(), // Limit method to 4 for faster encoding
+        '-deadline',
+        'realtime', // Use realtime preset for fast encoding (instead of good/best)
+        '-loop',
+        '0',
+        outputFileName,
+      ];
+
+      logger.info('conversion', 'Encoding animated WebP (multi-frame)', {
+        frameCount,
+        fps: settings.fps,
+        quality: settings.quality,
+      });
+
+      const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
+      ffmpeg.on('log', webpLogHandler);
+
+      const webpHeartbeat = this.startProgressHeartbeat(
+        encodeStart,
+        encodeEnd,
+        Math.max(15, Math.min(durationSeconds, 45))
       );
-    } finally {
-      ffmpeg.off('log', webpLogHandler);
-      this.stopProgressHeartbeat(webpHeartbeat);
+
+      try {
+        await withTimeout(
+          ffmpeg.exec(webpCmd),
+          TIMEOUT_CONVERSION,
+          `WebCodecs WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+          () => this.terminateFFmpeg()
+        );
+      } finally {
+        ffmpeg.off('log', webpLogHandler);
+        this.stopProgressHeartbeat(webpHeartbeat);
+      }
     }
   }
 
