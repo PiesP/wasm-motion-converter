@@ -15,6 +15,7 @@ import FileDropzone from './components/FileDropzone';
 import FormatSelector from './components/FormatSelector';
 import InlineWarningBanner from './components/InlineWarningBanner';
 import LicenseAttribution from './components/LicenseAttribution';
+import MemoryWarning from './components/MemoryWarning';
 import QualitySelector from './components/QualitySelector';
 import ResultPreview from './components/ResultPreview';
 import ScaleSelector from './components/ScaleSelector';
@@ -30,6 +31,7 @@ import {
   loadingStatusMessage,
   setEnvironmentSupported,
 } from './stores/app-store';
+import { isMemoryCritical } from './utils/memory-monitor';
 import {
   autoAppliedRecommendation,
   conversionProgress,
@@ -153,6 +155,32 @@ const App: Component = () => {
     }
   };
 
+  const handleReduceSettings = () => {
+    setConversionSettings({
+      ...conversionSettings(),
+      quality: 'low',
+      scale: 0.5,
+    });
+    // If showing pre-conversion warning, dismiss it and start conversion
+    if (memoryWarning() && appState() !== 'converting') {
+      setMemoryWarning(false);
+      handleConvert();
+    }
+  };
+
+  const handleDismissMemoryWarning = () => {
+    setMemoryWarning(false);
+  };
+
+  const handleConvertWithMemoryCheck = () => {
+    // Check memory before starting conversion
+    if (isMemoryCritical()) {
+      setMemoryWarning(true);
+      return;
+    }
+    handleConvert();
+  };
+
   return (
     <ErrorBoundary
       fallback={(error) => (
@@ -213,10 +241,12 @@ const App: Component = () => {
           <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-8 lg:items-start">
             <div class="space-y-6">
               <Show when={memoryWarning()}>
-                <div class="bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-500 rounded-lg p-4 text-sm text-red-800 dark:text-red-200">
-                  High browser memory usage detected ({'>'}80% of JS heap). Close other heavy tabs
-                  or switch to Low quality and 50% scale to reduce failure risk.
-                </div>
+                <MemoryWarning
+                  isDuringConversion={appState() === 'converting'}
+                  onReduceSettings={handleReduceSettings}
+                  onCancel={handleCancelConversion}
+                  onDismiss={handleDismissMemoryWarning}
+                />
               </Show>
 
               <FileDropzone
@@ -272,7 +302,7 @@ const App: Component = () => {
                       type="button"
                       disabled={!videoMetadata() || isBusy()}
                       class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
-                      onClick={handleConvert}
+                      onClick={handleConvertWithMemoryCheck}
                     >
                       Convert
                     </button>
