@@ -77,7 +77,7 @@ export function getConversionStrategy(params: {
     }
   }
 
-  // WebP/AVIF: keep WebCodecs preferred unless codec forces FFmpeg; no extra strategy here
+  // WebP: keep WebCodecs preferred unless codec forces FFmpeg; no extra strategy here
 
   return strategy;
 }

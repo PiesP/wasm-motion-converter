@@ -16,21 +16,14 @@ import { QUALITY_PRESETS } from './constants';
  *
  * @param sourceFPS - Original video frame rate
  * @param quality - Quality preset (low/medium/high)
- * @param format - Output format (gif/webp/avif)
+ * @param format - Output format (gif/webp)
  * @returns Optimized FPS value
  */
 export function getOptimalFPS(
   sourceFPS: number,
   quality: ConversionQuality,
-  format: 'gif' | 'webp' | 'avif'
+  format: 'gif' | 'webp'
 ): number {
-  // AVIF doesn't have FPS presets (primarily static image format)
-  // Return a default FPS of 15 for AVIF
-  if (format === 'avif') {
-    const defaultFPS = 15;
-    return Math.min(sourceFPS, defaultFPS);
-  }
-
   // Get preset FPS for this quality/format combination
   const preset = QUALITY_PRESETS[format][quality];
   const presetFPS = 'fps' in preset ? preset.fps : 15;
@@ -54,12 +47,8 @@ export function getOptimalFPS(
 export function shouldUseAdaptiveFPS(
   sourceFPS: number,
   quality: ConversionQuality,
-  format: 'gif' | 'webp' | 'avif'
+  format: 'gif' | 'webp'
 ): boolean {
-  if (format === 'avif') {
-    return getOptimalFPS(sourceFPS, quality, format) !== 15;
-  }
-
   const preset = QUALITY_PRESETS[format][quality];
   const presetFPS = 'fps' in preset ? preset.fps : 15;
   const optimalFPS = getOptimalFPS(sourceFPS, quality, format);
@@ -78,17 +67,11 @@ export function shouldUseAdaptiveFPS(
 export function getFPSOptimizationMessage(
   sourceFPS: number,
   quality: ConversionQuality,
-  format: 'gif' | 'webp' | 'avif'
+  format: 'gif' | 'webp'
 ): string | undefined {
   const optimalFPS = getOptimalFPS(sourceFPS, quality, format);
-
-  let presetFPS: number;
-  if (format === 'avif') {
-    presetFPS = 15;
-  } else {
-    const preset = QUALITY_PRESETS[format][quality];
-    presetFPS = 'fps' in preset ? preset.fps : 15;
-  }
+  const preset = QUALITY_PRESETS[format][quality];
+  const presetFPS = 'fps' in preset ? preset.fps : 15;
 
   if (optimalFPS === presetFPS) {
     return undefined;

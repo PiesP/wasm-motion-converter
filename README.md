@@ -221,7 +221,7 @@ MIT for app code. FFmpeg core is **LGPL 2.1+**; comply with FFmpeg licensing whe
 
 - Custom clip length and easing presets
 - More motion styles (pan/zoom variations)
-- APNG/AVIF output option
+- APNG output option
 - Offline-ready caching of ffmpeg core
 - Batch conversion
 

@@ -1,6 +1,6 @@
 import { type Component, createEffect, createMemo, createSignal, onCleanup, Show } from 'solid-js';
-import { formatBytes } from '../utils/format-bytes';
 import type { ConversionSettings } from '../types/conversion-types';
+import { formatBytes } from '../utils/format-bytes';
 
 interface ResultPreviewProps {
   outputBlob: Blob;
@@ -37,9 +37,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         ? 'gif'
         : props.outputBlob.type === 'image/webp'
           ? 'webp'
-          : props.outputBlob.type === 'image/avif'
-            ? 'avif'
-            : 'webp';
+          : 'webp';
     const originalName = props.originalName.trim();
     const lastDotIndex = originalName.lastIndexOf('.');
     const baseName =

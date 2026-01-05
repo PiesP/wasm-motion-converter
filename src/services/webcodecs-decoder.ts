@@ -698,7 +698,7 @@ export class WebCodecsDecoderService {
   ): Promise<void> {
     video.pause();
 
-    // Fast extraction for single-frame formats (WebP/AVIF)
+    // Fast extraction for single-frame formats (WebP)
     // Seek to a representative frame (25% into video or middle) instead of first frame
     if (maxFrames === 1) {
       if (shouldCancel?.()) {

@@ -192,14 +192,10 @@ export function estimateConversionMemory(
 ): number {
   // Base multiplier: video processing typically uses 5-7x file size
   let baseSizeMultiplier = 6;
-
   // Format-specific adjustments
   if (format === 'gif') {
     // GIF palette generation requires additional memory
     baseSizeMultiplier *= 1.5;
-  } else if (format === 'avif') {
-    // AVIF encoding is less memory-intensive
-    baseSizeMultiplier *= 0.8;
   }
 
   let memoryEstimate = fileSize * baseSizeMultiplier;

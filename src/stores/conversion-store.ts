@@ -29,7 +29,7 @@ const getInitialConversionSettings = (): ConversionSettings => {
       // Validate that the loaded settings have all required fields
       if (
         parsed.format &&
-        ['gif', 'webp', 'avif'].includes(parsed.format) &&
+        ['gif', 'webp'].includes(parsed.format) &&
         parsed.quality &&
         ['low', 'medium', 'high'].includes(parsed.quality) &&
         typeof parsed.scale === 'number' &&
