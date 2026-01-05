@@ -28,11 +28,23 @@ declare var MediaStreamTrackProcessor: {
   new (options: MediaStreamTrackProcessorInit): MediaStreamTrackProcessor;
 };
 
-type ImageEncoder = Record<string, never>;
+interface ImageEncoderInit {
+  type: string;
+  quality?: number;
+  output: (chunk: { byteLength: number; copyTo: (destination: ArrayBufferView) => void }) => void;
+  error?: (error: Error) => void;
+}
+
+interface ImageEncoder {
+  encode(image: ImageBitmapSource): Promise<void> | void;
+  flush(): Promise<void>;
+  close(): void;
+}
 
 declare var ImageEncoder: {
   prototype: ImageEncoder;
-  new (...args: never[]): ImageEncoder;
+  new (init: ImageEncoderInit): ImageEncoder;
+  isTypeSupported?: (type: string) => Promise<boolean>;
 };
 
 // HTMLMediaElement captureStream extension

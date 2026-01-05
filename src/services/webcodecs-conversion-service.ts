@@ -1,4 +1,4 @@
-import type { ConversionOptions, VideoMetadata } from '../types/conversion-types';
+import type { ConversionOptions, ConversionQuality, VideoMetadata } from '../types/conversion-types';
 import { COMPLEX_CODECS, QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
@@ -13,7 +13,11 @@ import {
   WebCodecsDecoderService,
   type WebCodecsFrameFormat,
 } from './webcodecs-decoder';
-import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support';
+import {
+  getWebCodecsSupportStatus,
+  isWebCodecsCodecSupported,
+  isWebCodecsDecodeSupported,
+} from './webcodecs-support';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool';
 
 const WEBP_ANIMATION_MAX_FRAMES = 240;
@@ -154,6 +158,71 @@ class WebCodecsConversionService {
     }
 
     return { valid: true };
+  }
+
+  private async isAvifEncodingSupported(): Promise<boolean> {
+    const supportStatus = getWebCodecsSupportStatus();
+    if (!supportStatus.imageEncoder || typeof ImageEncoder === 'undefined') {
+      return false;
+    }
+
+    if (typeof ImageEncoder.isTypeSupported === 'function') {
+      try {
+        return await ImageEncoder.isTypeSupported('image/avif');
+      } catch (error) {
+        logger.warn('conversion', 'WebCodecs AVIF support check failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async encodeAvifWithWebCodecs(
+    frame: ImageData,
+    quality: ConversionQuality
+  ): Promise<Blob> {
+    const isSupported = await this.isAvifEncodingSupported();
+    if (!isSupported) {
+      throw new Error('AVIF encoding via WebCodecs is not supported in this browser.');
+    }
+
+    const preset = QUALITY_PRESETS.avif[quality];
+    const normalizedQuality = Math.min(1, Math.max(0, preset.quality / 100));
+    const chunks: Uint8Array[] = [];
+    let encodeError: Error | null = null;
+
+    const encoder = new ImageEncoder({
+      type: 'image/avif',
+      quality: normalizedQuality,
+      output: (chunk) => {
+        const buffer = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(buffer);
+        chunks.push(buffer);
+      },
+      error: (error) => {
+        encodeError = error instanceof Error ? error : new Error(String(error));
+      },
+    });
+
+    try {
+      await encoder.encode(frame);
+      await encoder.flush();
+    } finally {
+      encoder.close();
+    }
+
+    if (encodeError) {
+      throw encodeError;
+    }
+
+    if (!chunks.length) {
+      throw new Error('WebCodecs AVIF encoder produced no output.');
+    }
+
+    return new Blob(chunks, { type: 'image/avif' });
   }
 
   private buildWebPFrameDurations(timestamps: number[], fps: number, frameCount: number): number[] {
@@ -929,9 +998,14 @@ class WebCodecsConversionService {
         webpEncodedFrames.length = 0;
         webpFrameTimestamps.length = 0;
       } else if (format === 'avif') {
-        // Use FFmpeg for AVIF encoding
-        logger.info('conversion', 'Using FFmpeg for AVIF encoding');
-        outputBlob = await encodeWithFFmpegFallback('AVIF encoding via FFmpeg');
+        const capturedFrame = capturedFrames[0];
+        if (!capturedFrame) {
+          throw new Error('WebCodecs did not provide a frame for AVIF encoding.');
+        }
+
+        logger.info('conversion', 'Using WebCodecs ImageEncoder for AVIF');
+        outputBlob = await this.encodeAvifWithWebCodecs(capturedFrame, quality);
+        reportEncodeProgress(1, 1);
       } else {
         // Fallback to FFmpeg for animated WebP or unsupported formats
         logger.info('conversion', 'Using FFmpeg frame sequence encoding', {
