@@ -1712,6 +1712,8 @@ class FFmpegService {
         '0',
         '-i',
         concatFileName,
+        '-vf',
+        `setpts=N/${settings.fps}/TB`,
         '-c:v',
         'libwebp',
         '-lossless',
@@ -1731,10 +1733,11 @@ class FFmpegService {
         outputFileName,
       ];
 
-      logger.info('conversion', 'Encoding animated WebP (multi-frame) with concat demuxer', {
+      logger.info('conversion', 'Encoding animated WebP (multi-frame) with concat demuxer + setpts filter', {
         frameCount,
         fps: settings.fps,
         quality: settings.quality,
+        setptsFilter: `setpts=N/${settings.fps}/TB`,
       });
 
       // Log the actual FFmpeg command for debugging
