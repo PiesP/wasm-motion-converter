@@ -191,7 +191,17 @@ export async function isWebCodecsCodecSupported(
   return false;
 }
 
-const H264_ENCODER_CODECS = ['avc1.42E01E', 'avc1.4D401E'];
+// H.264 encoder codec strings in order of preference
+// - avc1.42E01E: Baseline Profile Level 3.0 (most compatible)
+// - avc1.4D401E: Main Profile Level 3.0 (better compression)
+// - avc1.42001E: Baseline Profile Level 3.0 (alternative)
+// - avc1.640028: High Profile Level 4.0 (best quality but less compatible)
+const H264_ENCODER_CODECS = [
+  'avc1.42E01E', // Baseline Level 3.0
+  'avc1.4D401E', // Main Level 3.0
+  'avc1.42001E', // Baseline Level 3.0 (alt)
+  'avc1.640028', // High Level 4.0
+];
 
 export async function getH264EncoderConfig(params: {
   width: number;
@@ -209,29 +219,55 @@ export async function getH264EncoderConfig(params: {
   const bitrate = Math.max(100_000, Math.round(params.bitrate));
   const framerate = Math.max(1, Math.round(params.framerate));
 
-  for (const codec of H264_ENCODER_CODECS) {
-    const config: VideoEncoderConfig = {
-      codec,
-      width,
-      height,
-      bitrate,
-      framerate,
-      hardwareAcceleration: 'prefer-hardware',
-      avc: { format: 'annexb' },
-    };
+  // Try hardware acceleration first, then software fallback
+  const accelerationModes: ('prefer-hardware' | 'prefer-software')[] = [
+    'prefer-hardware',
+    'prefer-software',
+  ];
 
-    try {
-      const support = await VideoEncoder.isConfigSupported(config);
-      if (support.supported) {
-        return support.config ?? config;
-      }
-    } catch (error) {
-      logger.warn('conversion', 'VideoEncoder.isConfigSupported failed', {
+  for (const hardwareAcceleration of accelerationModes) {
+    for (const codec of H264_ENCODER_CODECS) {
+      const config: VideoEncoderConfig = {
         codec,
-        error: error instanceof Error ? error.message : String(error),
-      });
+        width,
+        height,
+        bitrate,
+        framerate,
+        hardwareAcceleration,
+        avc: { format: 'annexb' },
+      };
+
+      try {
+        const support = await VideoEncoder.isConfigSupported(config);
+        if (support.supported) {
+          logger.info('conversion', 'H.264 encoder config found', {
+            codec,
+            hardwareAcceleration,
+            width,
+            height,
+            bitrate,
+            framerate,
+          });
+          return support.config ?? config;
+        }
+      } catch (error) {
+        logger.warn('conversion', 'VideoEncoder.isConfigSupported failed', {
+          codec,
+          hardwareAcceleration,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
+
+  logger.error('conversion', 'No H.264 encoder configuration supported', {
+    width,
+    height,
+    bitrate,
+    framerate,
+    triedCodecs: H264_ENCODER_CODECS,
+    triedAccelerations: accelerationModes,
+  });
 
   return null;
 }

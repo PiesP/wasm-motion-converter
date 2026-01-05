@@ -920,6 +920,12 @@ class FFmpegService {
     const isCrossOriginIsolated =
       typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
 
+    logger.info('ffmpeg', 'FFmpeg initialization environment check', {
+      hasSharedArrayBuffer,
+      isCrossOriginIsolated,
+      canUseMultithreading: hasSharedArrayBuffer && isCrossOriginIsolated,
+    });
+
     if (!hasSharedArrayBuffer || !isCrossOriginIsolated) {
       throw new Error(
         'SharedArrayBuffer is not available. This app requires cross-origin isolation (COOP/COEP headers) to initialize FFmpeg.'
@@ -2377,7 +2383,11 @@ class FFmpegService {
         );
 
         // Use single-threaded mode when scaling to avoid ffmpeg.wasm threading issues
-        const webpThreadArgs = getThreadingArgs(scaleFilter ? 'scale-filter' : 'simple');
+        // For H.264 input, also use single-threaded to prevent buffer overflow
+        const isH264Input = inputOverride?.format === 'h264';
+        const webpThreadArgs = getThreadingArgs(
+          scaleFilter || isH264Input ? 'scale-filter' : 'simple'
+        );
         const webpFilterArgs = scaleFilter
           ? `fps=${settings.fps},${scaleFilter}`
           : `fps=${settings.fps}`;

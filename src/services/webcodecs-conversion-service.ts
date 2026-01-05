@@ -400,17 +400,52 @@ class WebCodecsConversionService {
         type: 'video/h264',
       });
 
-      ffmpegService.reportStatus(`Converting H.264 to ${format.toUpperCase()}...`);
+      // Instead of passing H.264 directly to FFmpeg (which is slow with libwebp),
+      // decode H.264 to PNG frames using WebCodecs, then encode with FFmpeg
+      ffmpegService.reportStatus(`Extracting frames from H.264...`);
+
+      const frameFiles: string[] = [];
+
+      // Decode H.264 to PNG frames using WebCodecs
+      const decodeResult = await decoder.decodeToFrames({
+        file: h264File,
+        targetFps,
+        scale,
+        frameFormat: 'png',
+        frameQuality: 0.95,
+        framePrefix: 'frame_',
+        frameDigits: 6,
+        frameStartNumber: 0,
+        maxFrames: undefined, // Extract all frames
+        captureMode: 'auto',
+        onFrame: async (frame: { name: string; data?: Uint8Array }) => {
+          if (frame.data) {
+            frameFiles.push(frame.name);
+          }
+        },
+        onProgress: reportDecodeProgress,
+        shouldCancel: () => ffmpegService.isCancellationRequested(),
+      });
+
+      ffmpegService.reportStatus(`Converting frames to ${format.toUpperCase()}...`);
 
       const outputBlob =
         format === 'gif'
-          ? await ffmpegService.convertToGIF(h264File, options, h264Intermediate.metadata, {
-              format: 'h264',
-              framerate: h264Intermediate.metadata.framerate,
+          ? await ffmpegService.encodeFrameSequence({
+              format: 'gif',
+              options,
+              frameCount: decodeResult.frameCount,
+              fps: targetFps,
+              durationSeconds: decodeResult.duration,
+              frameFiles: decodeResult.frameFiles,
             })
-          : await ffmpegService.convertToWebP(h264File, options, h264Intermediate.metadata, {
-              format: 'h264',
-              framerate: h264Intermediate.metadata.framerate,
+          : await ffmpegService.encodeFrameSequence({
+              format: 'webp',
+              options,
+              frameCount: decodeResult.frameCount,
+              fps: targetFps,
+              durationSeconds: decodeResult.duration,
+              frameFiles: decodeResult.frameFiles,
             });
 
       // biome-ignore lint/suspicious/noExplicitAny: Attach metadata for UI display
