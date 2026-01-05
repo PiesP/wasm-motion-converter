@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import { ModernGifService, type ModernGifOptions } from '../services/modern-gif-service';
+import { type ModernGifOptions, ModernGifService } from '../services/modern-gif-service';
 
 const api = {
   async encode(frames: ImageData | ImageData[], options: ModernGifOptions): Promise<Blob> {

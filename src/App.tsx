@@ -25,7 +25,6 @@ import { convertVideo } from './services/conversion-service';
 import { ffmpegService } from './services/ffmpeg-service';
 import { checkPerformance, getRecommendedSettings } from './services/performance-checker';
 import { analyzeVideo, analyzeVideoQuick } from './services/video-analyzer';
-import { logger } from './utils/logger';
 import {
   appState,
   environmentSupported,
@@ -67,6 +66,7 @@ import { WARN_RESOLUTION_PIXELS } from './utils/constants';
 import { estimateEtaRange, estimateOutputSizeRange } from './utils/estimate-output';
 import { ETACalculator } from './utils/eta-calculator';
 import { validateVideoFile } from './utils/file-validation';
+import { logger } from './utils/logger';
 import { isMemoryCritical } from './utils/memory-monitor';
 
 const App: Component = () => {
@@ -522,8 +522,8 @@ const App: Component = () => {
             <div class="space-y-6">
               <Show when={memoryWarning()}>
                 <div class="bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-500 rounded-lg p-4 text-sm text-red-800 dark:text-red-200">
-                  High browser memory usage detected (&gt;80% of JS heap). Close other heavy tabs or
-                  switch to Low quality and 50% scale to reduce failure risk.
+                  High browser memory usage detected ({'>'}80% of JS heap). Close other heavy tabs
+                  or switch to Low quality and 50% scale to reduce failure risk.
                 </div>
               </Show>
 

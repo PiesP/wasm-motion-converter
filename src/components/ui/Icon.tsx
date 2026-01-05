@@ -1,4 +1,4 @@
-import { Match, Switch, splitProps, type Component, type JSX } from 'solid-js';
+import { type Component, type JSX, Match, Switch, splitProps } from 'solid-js';
 
 export type IconName =
   | 'info'

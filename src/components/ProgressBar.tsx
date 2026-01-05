@@ -1,5 +1,5 @@
 import type { Component } from 'solid-js';
-import { Show, createEffect, createSignal, onCleanup } from 'solid-js';
+import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
 import { formatDuration } from '../utils/format-duration';
 
 interface ProgressBarProps {

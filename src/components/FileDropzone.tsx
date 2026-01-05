@@ -74,7 +74,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
 
   return (
     <div
-      class={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${dropzoneStateClass()} ${
+      class={`border-2 border-dashed rounded-lg p-6 md:p-12 text-center transition-colors ${dropzoneStateClass()} ${
         props.disabled && !isBusy() ? 'opacity-60 cursor-not-allowed' : ''
       }`}
       onDragOver={handleDragOver}
