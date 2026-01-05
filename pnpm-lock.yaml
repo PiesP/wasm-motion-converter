@@ -14,6 +14,9 @@ importers:
       '@ffmpeg/util':
         specifier: ^0.12.2
         version: 0.12.2
+      '@jsquash/webp':
+        specifier: 1.5.0-animated-webp-support-beta.2
+        version: 1.5.0-animated-webp-support-beta.2
       comlink:
         specifier: ^4.4.2
         version: 4.4.2
@@ -396,6 +399,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@jsquash/webp@1.5.0-animated-webp-support-beta.2':
+    resolution: {integrity: sha512-lB9/R4OIfdjdSvD7h7jBHhKTToW4Alv1CUzj14MbwMbgAN6iPofx+83eG92Lp0WL0osGp/IyI4RHp+LW2pqzBA==}
 
   '@rollup/rollup-android-arm-eabi@4.54.0':
     resolution: {integrity: sha512-OywsdRHrFvCdvsewAInDKCNyR3laPA2mc9bRYJ6LBp5IyvF3fvXbbNR0bSzHlZVFtn6E0xw2oZlyjg4rKCVcng==}
@@ -1098,6 +1104,9 @@ packages:
       vite:
         optional: true
 
+  wasm-feature-detect@1.8.0:
+    resolution: {integrity: sha512-zksaLKM2fVlnB5jQQDqKXXwYHLQUVH9es+5TOOHwGOVJOCeRBCiPjwSg+3tN2AdTCzjgli4jijCH290kXb/zWQ==}
+
   wrap-ansi@7.0.0:
     resolution: {integrity: sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==}
     engines: {node: '>=10'}
@@ -1377,6 +1386,10 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@jsquash/webp@1.5.0-animated-webp-support-beta.2':
+    dependencies:
+      wasm-feature-detect: 1.8.0
 
   '@rollup/rollup-android-arm-eabi@4.54.0':
     optional: true
@@ -1946,6 +1959,8 @@ snapshots:
   vitefu@1.1.1(vite@7.3.0(@types/node@25.0.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
     optionalDependencies:
       vite: 7.3.0(@types/node@25.0.3)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+
+  wasm-feature-detect@1.8.0: {}
 
   wrap-ansi@7.0.0:
     dependencies:

@@ -36,6 +36,7 @@
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@jsquash/webp": "1.5.0-animated-webp-support-beta.2",
     "comlink": "^4.4.2",
     "modern-gif": "^2.0.4",
     "solid-js": "^1.9.10"
