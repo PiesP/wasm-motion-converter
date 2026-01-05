@@ -12,20 +12,8 @@ import {
   WebCodecsDecoderService,
   type WebCodecsFrameFormat,
 } from './webcodecs-decoder';
-import {
-  getH264EncoderConfig,
-  isWebCodecsCodecSupported,
-  isWebCodecsDecodeSupported,
-} from './webcodecs-support';
+import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool';
-
-const H264_INTERMEDIATE_FILE_NAME = 'webcodecs_h264.h264';
-
-const estimateH264Bitrate = (width: number, height: number, fps: number): number => {
-  const pixelsPerSecond = Math.max(1, Math.round(width * height * fps));
-  const bitrate = Math.round(pixelsPerSecond * 0.07);
-  return Math.min(8_000_000, Math.max(1_000_000, bitrate));
-};
 
 const isComplexCodec = (codec?: string): boolean => {
   if (!codec || codec === 'unknown') {
@@ -129,237 +117,6 @@ class WebCodecsConversionService {
     return true;
   }
 
-  private async encodeToH264Intermediate(params: {
-    decoder: WebCodecsDecoderService;
-    file: File;
-    targetFps: number;
-    scale: number;
-    reportProgress: (current: number, total: number) => void;
-    shouldCancel: () => boolean;
-  }): Promise<{ data: Uint8Array; metadata: VideoMetadata }> {
-    if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') {
-      throw new Error('VideoEncoder is not available in this browser.');
-    }
-
-    const { decoder, file, targetFps, scale, reportProgress, shouldCancel } = params;
-    const chunks: Uint8Array[] = [];
-    let encoder: VideoEncoder | undefined;
-    let encoderConfig: VideoEncoderConfig | undefined;
-    let encoderError: string | null = null;
-    let frameIndex = 0;
-    const keyFrameInterval = Math.max(1, Math.round(targetFps));
-
-    const handleOutput = (chunk: EncodedVideoChunk) => {
-      const data = new Uint8Array(chunk.byteLength);
-      chunk.copyTo(data);
-      chunks.push(data);
-    };
-
-    const handleError = (error: Error) => {
-      encoderError = error instanceof Error ? error.message : String(error);
-      logger.error('conversion', 'H.264 VideoEncoder error callback triggered', {
-        error: encoderError,
-        encoderState: encoder?.state,
-      });
-    };
-
-    const ensureEncoder = async (width: number, height: number) => {
-      if (encoder) {
-        return;
-      }
-
-      const bitrate = estimateH264Bitrate(width, height, targetFps);
-      const config = await getH264EncoderConfig({
-        width,
-        height,
-        bitrate,
-        framerate: targetFps,
-      });
-
-      if (!config) {
-        throw new Error('H.264 encoder configuration is not supported.');
-      }
-
-      encoderConfig = config;
-      encoder = new VideoEncoder({
-        output: handleOutput,
-        error: handleError,
-      });
-      encoder.configure(config);
-      logger.info('conversion', 'H.264 encoder initialized', {
-        width,
-        height,
-        bitrate,
-        framerate: targetFps,
-        encoderState: encoder.state,
-      });
-      ffmpegService.reportStatus('Encoding H.264 intermediate...');
-      ffmpegService.reportProgress(FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START);
-    };
-
-    let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>> | null = null;
-
-    try {
-      logger.info('conversion', 'H.264 intermediate: Starting frame capture', {
-        targetFps,
-        scale,
-        frameFormat: 'rgba',
-      });
-
-      decodeResult = await decoder.decodeToFrames({
-        file,
-        targetFps,
-        scale,
-        frameFormat: 'rgba',
-        frameQuality: FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY,
-        framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
-        frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
-        frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-        captureMode: 'auto',
-        shouldCancel,
-        onProgress: reportProgress,
-        onFrame: async (frame) => {
-          if (shouldCancel()) {
-            throw new Error('Conversion cancelled by user');
-          }
-          if (!frame.imageData) {
-            throw new Error('WebCodecs did not provide raw frame data.');
-          }
-
-          await ensureEncoder(frame.imageData.width, frame.imageData.height);
-          if (!encoder) {
-            throw new Error('H.264 encoder failed to initialize.');
-          }
-
-          // Check encoder state before encoding
-          if (encoder.state !== 'configured') {
-            throw new Error(
-              `H.264 encoder not in configured state at frame ${frameIndex}: ${encoder.state}`
-            );
-          }
-
-          const timestamp = Math.round((frameIndex / targetFps) * 1_000_000);
-          // Create VideoFrame from ImageData by extracting buffer
-          try {
-            // Validate ImageData buffer before creating VideoFrame
-            const bufferSize = frame.imageData.data.buffer.byteLength;
-            const expectedSize = frame.imageData.width * frame.imageData.height * 4;
-            if (bufferSize !== expectedSize) {
-              throw new Error(
-                `ImageData buffer size mismatch: expected ${expectedSize}, got ${bufferSize}`
-              );
-            }
-
-            const videoFrame = new VideoFrame(frame.imageData.data.buffer, {
-              format: 'RGBA' as VideoPixelFormat,
-              codedWidth: frame.imageData.width,
-              codedHeight: frame.imageData.height,
-              timestamp,
-            });
-            encoder.encode(videoFrame, { keyFrame: frameIndex % keyFrameInterval === 0 });
-            videoFrame.close();
-          } catch (frameError) {
-            const errorMsg = frameError instanceof Error ? frameError.message : String(frameError);
-            logger.error('conversion', 'H.264 frame encoding error', {
-              frameIndex,
-              width: frame.imageData.width,
-              height: frame.imageData.height,
-              timestamp,
-              encoderState: encoder.state,
-              error: errorMsg,
-            });
-            throw new Error(
-              `H.264 frame encoding failed at frame ${frameIndex} (${frame.imageData.width}x${frame.imageData.height}): ${errorMsg}`
-            );
-          }
-          frameIndex += 1;
-
-          if (encoderError) {
-            throw new Error(`H.264 encoder error: ${encoderError}`);
-          }
-        },
-      });
-
-      if (!encoder) {
-        throw new Error('H.264 encoder was not initialized.');
-      }
-
-      logger.info('conversion', 'H.264 intermediate: Frame capture complete, flushing encoder', {
-        frameCount: frameIndex,
-        chunks: chunks.length,
-      });
-
-      const encoderToFlush = encoder;
-      await encoderToFlush.flush();
-
-      logger.info('conversion', 'H.264 intermediate: Encoder flushed successfully', {
-        totalChunks: chunks.length,
-        totalSize: chunks.reduce((sum, c) => sum + c.byteLength, 0),
-      });
-    } finally {
-      if (encoder) {
-        try {
-          encoder.close();
-        } catch (error) {
-          logger.warn('conversion', 'Failed to close H.264 encoder', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-    }
-
-    if (!decodeResult) {
-      throw new Error('H.264 intermediate decode failed.');
-    }
-
-    if (encoderError) {
-      throw new Error(`H.264 encoder error: ${encoderError}`);
-    }
-
-    logger.info('conversion', 'H.264 intermediate: Validation passed', {
-      decodeResult: {
-        frameCount: decodeResult.frameCount,
-        width: decodeResult.width,
-        height: decodeResult.height,
-        fps: decodeResult.fps,
-        duration: decodeResult.duration,
-      },
-      chunks: chunks.length,
-      encoderConfig: {
-        width: encoderConfig?.width,
-        height: encoderConfig?.height,
-        framerate: encoderConfig?.framerate,
-      },
-    });
-
-    const totalSize = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
-    const data = new Uint8Array(totalSize);
-    let offset = 0;
-    for (const chunk of chunks) {
-      data.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-
-    ffmpegService.reportProgress(FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END);
-
-    const bitrate =
-      encoderConfig?.bitrate && typeof encoderConfig.bitrate === 'number'
-        ? encoderConfig.bitrate
-        : estimateH264Bitrate(decodeResult.width, decodeResult.height, targetFps);
-
-    return {
-      data,
-      metadata: {
-        width: decodeResult.width,
-        height: decodeResult.height,
-        duration: decodeResult.duration,
-        codec: 'H.264',
-        framerate: targetFps,
-        bitrate,
-      },
-    };
-  }
-
   private async convertViaH264Intermediate(params: {
     decoder: WebCodecsDecoderService;
     file: File;
@@ -382,33 +139,17 @@ class WebCodecsConversionService {
       format,
     });
 
+    const frameFiles: string[] = [];
+
     try {
-      ffmpegService.reportStatus('Transcoding to H.264 for compatibility...');
+      ffmpegService.reportStatus('Extracting frames via WebCodecs...');
 
-      const h264Intermediate = await this.encodeToH264Intermediate({
-        decoder,
-        file,
-        targetFps,
-        scale,
-        reportProgress: reportDecodeProgress,
-        shouldCancel: () => ffmpegService.isCancellationRequested(),
-      });
+      // For complex codecs, bypass H.264 intermediate entirely
+      // Extract PNG frames directly and write to FFmpeg VFS
+      const startTime = Date.now();
 
-      // Use Uint8Array to ensure compatibility with BlobPart
-      // Create a copy to ensure it's an ArrayBuffer, not SharedArrayBuffer
-      const h264File = new File([h264Intermediate.data.slice()], H264_INTERMEDIATE_FILE_NAME, {
-        type: 'video/h264',
-      });
-
-      // Instead of passing H.264 directly to FFmpeg (which is slow with libwebp),
-      // decode H.264 to PNG frames using WebCodecs, then encode with FFmpeg
-      ffmpegService.reportStatus(`Extracting frames from H.264...`);
-
-      const frameFiles: string[] = [];
-
-      // Decode H.264 to PNG frames using WebCodecs
       const decodeResult = await decoder.decodeToFrames({
-        file: h264File,
+        file,
         targetFps,
         scale,
         frameFormat: 'png',
@@ -416,15 +157,24 @@ class WebCodecsConversionService {
         framePrefix: 'frame_',
         frameDigits: 6,
         frameStartNumber: 0,
-        maxFrames: undefined, // Extract all frames
+        maxFrames: undefined,
         captureMode: 'auto',
-        onFrame: async (frame: { name: string; data?: Uint8Array }) => {
-          if (frame.data) {
+        onFrame: async (frame) => {
+          // Write PNG frame data to FFmpeg VFS
+          if (frame.data && frame.data.byteLength > 0) {
+            await ffmpegService.writeVirtualFile(frame.name, frame.data);
             frameFiles.push(frame.name);
           }
         },
         onProgress: reportDecodeProgress,
         shouldCancel: () => ffmpegService.isCancellationRequested(),
+      });
+
+      const elapsed = Date.now() - startTime;
+      logger.info('conversion', 'Frame extraction complete', {
+        frameCount: decodeResult.frameCount,
+        duration: decodeResult.duration,
+        elapsed: `${elapsed}ms`,
       });
 
       ffmpegService.reportStatus(`Converting frames to ${format.toUpperCase()}...`);
@@ -434,18 +184,18 @@ class WebCodecsConversionService {
           ? await ffmpegService.encodeFrameSequence({
               format: 'gif',
               options,
-              frameCount: decodeResult.frameCount,
+              frameCount: frameFiles.length,
               fps: targetFps,
               durationSeconds: decodeResult.duration,
-              frameFiles: decodeResult.frameFiles,
+              frameFiles,
             })
           : await ffmpegService.encodeFrameSequence({
               format: 'webp',
               options,
-              frameCount: decodeResult.frameCount,
+              frameCount: frameFiles.length,
               fps: targetFps,
               durationSeconds: decodeResult.duration,
-              frameFiles: decodeResult.frameFiles,
+              frameFiles,
             });
 
       // biome-ignore lint/suspicious/noExplicitAny: Attach metadata for UI display
@@ -465,12 +215,24 @@ class WebCodecsConversionService {
         throw error;
       }
 
+      // Clean up temporary frame files
+      if (frameFiles.length > 0) {
+        try {
+          await ffmpegService.deleteVirtualFiles(frameFiles);
+        } catch (cleanupError) {
+          logger.warn('conversion', 'Failed to clean up frame files', {
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        }
+      }
+
       // Log detailed error information for debugging
       const errorStack = error instanceof Error ? error.stack : 'No stack trace';
       const detailedError = {
         error: errorMessage,
         codec: metadata?.codec,
         format,
+        framesWritten: frameFiles.length,
         stack: errorStack?.substring(0, 500), // Truncate stack for readability
       };
       logger.error('conversion', 'H.264 intermediate fallback failed', detailedError);
