@@ -1367,6 +1367,8 @@ class FFmpegService {
       this.getFrameSequencePattern(),
       '-r',
       fps.toString(),
+      '-vsync',
+      'cfr',
     ];
   }
 
@@ -1706,6 +1708,11 @@ class FFmpegService {
         frameCount,
         fps: settings.fps,
         quality: settings.quality,
+      });
+
+      // Log the actual FFmpeg command for debugging
+      logger.info('ffmpeg', 'WebP encoding command', {
+        command: webpCmd.join(' '),
       });
 
       const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
