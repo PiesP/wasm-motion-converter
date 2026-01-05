@@ -20,6 +20,7 @@ import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '../utils/ffm
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';
+import { getOptimalFPS } from '../utils/quality-optimizer';
 import { withTimeout } from '../utils/with-timeout';
 
 // Legacy constants kept for backward compatibility with external timeout values
@@ -1522,12 +1523,33 @@ class FFmpegService {
     let ffmpeg = this.getFFmpeg();
 
     const { quality, scale } = options;
-    const settings = QUALITY_PRESETS.gif[quality];
+    const presetSettings = QUALITY_PRESETS.gif[quality];
     const resolvedMetadata = await this.resolveMetadataForConversion(file, metadata);
     const metadataForConversion = resolvedMetadata ?? metadata;
     const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
     const paletteFileName = FFMPEG_INTERNALS.PALETTE_FILE_NAME;
     const outputFileName = 'output.gif';
+
+    // Calculate optimal FPS based on source video FPS and quality preset
+    const optimalFps =
+      metadataForConversion?.framerate && metadataForConversion.framerate > 0
+        ? getOptimalFPS(metadataForConversion.framerate, quality, 'gif')
+        : presetSettings.fps;
+
+    // Create settings object with adaptive FPS
+    const settings = {
+      ...presetSettings,
+      fps: optimalFps,
+    };
+
+    if (metadataForConversion?.framerate && optimalFps !== presetSettings.fps) {
+      logger.info('conversion', 'Using adaptive FPS for GIF', {
+        sourceFPS: metadataForConversion.framerate,
+        presetFPS: presetSettings.fps,
+        optimalFPS: optimalFps,
+        quality,
+      });
+    }
 
     this.logConversionContext(file, 'gif', options, metadataForConversion);
 
@@ -1934,11 +1956,32 @@ class FFmpegService {
     const ffmpeg = this.getFFmpeg();
 
     const { quality, scale } = options;
-    const settings = QUALITY_PRESETS.webp[quality];
+    const presetSettings = QUALITY_PRESETS.webp[quality];
     const resolvedMetadata = await this.resolveMetadataForConversion(file, metadata);
     const metadataForConversion = resolvedMetadata ?? metadata;
     const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
     const outputFileName = 'output.webp';
+
+    // Calculate optimal FPS based on source video FPS and quality preset
+    const optimalFps =
+      metadataForConversion?.framerate && metadataForConversion.framerate > 0
+        ? getOptimalFPS(metadataForConversion.framerate, quality, 'webp')
+        : presetSettings.fps;
+
+    // Create settings object with adaptive FPS
+    const settings = {
+      ...presetSettings,
+      fps: optimalFps,
+    };
+
+    if (metadataForConversion?.framerate && optimalFps !== presetSettings.fps) {
+      logger.info('conversion', 'Using adaptive FPS for WebP', {
+        sourceFPS: metadataForConversion.framerate,
+        presetFPS: presetSettings.fps,
+        optimalFPS: optimalFps,
+        quality,
+      });
+    }
 
     this.logConversionContext(file, 'webp', options, metadataForConversion);
 

@@ -3,17 +3,18 @@ import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
 import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
+import { getOptimalFPS } from '../utils/quality-optimizer';
+import type { EncoderWorkerAPI } from '../workers/types';
 import { ffmpegService } from './ffmpeg-service';
 import { ModernGifService } from './modern-gif-service';
 import { SquooshWebPService } from './squoosh-webp-service';
-import { WorkerPool, getOptimalPoolSize } from './worker-pool';
-import type { EncoderWorkerAPI } from '../workers/types';
 import {
   type WebCodecsCaptureMode,
   WebCodecsDecoderService,
   type WebCodecsFrameFormat,
 } from './webcodecs-decoder';
 import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support';
+import { getOptimalPoolSize, WorkerPool } from './worker-pool';
 
 class WebCodecsConversionService {
   private gifWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
@@ -126,8 +127,23 @@ class WebCodecsConversionService {
       ? 'rgba'
       : FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT;
 
-    // AVIF doesn't have fps in presets, use a default
-    const targetFps = 'fps' in settings ? settings.fps : 15;
+    // Calculate optimal FPS based on source video FPS and quality preset
+    const presetFps = 'fps' in settings ? settings.fps : 15;
+    const targetFps =
+      metadata?.framerate && metadata.framerate > 0
+        ? getOptimalFPS(metadata.framerate, quality, format)
+        : presetFps;
+
+    if (metadata?.framerate && targetFps !== presetFps) {
+      logger.info('conversion', 'Using adaptive FPS', {
+        sourceFPS: metadata.framerate,
+        presetFPS: presetFps,
+        optimalFPS: targetFps,
+        quality,
+        format,
+      });
+    }
+
     const maxFrames = format === 'webp' || format === 'avif' ? 1 : undefined;
 
     // Determine if FFmpeg is needed

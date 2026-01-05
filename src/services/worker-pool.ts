@@ -1,7 +1,7 @@
 import * as Comlink from 'comlink';
-import type { EncoderWorkerAPI, WorkerPoolOptions } from '../workers/types';
 import { logger } from '../utils/logger';
 import { getAvailableMemory } from '../utils/memory-monitor';
+import type { EncoderWorkerAPI, WorkerPoolOptions } from '../workers/types';
 
 /**
  * Calculate optimal worker pool size based on hardware and memory
