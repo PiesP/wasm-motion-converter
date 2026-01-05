@@ -1677,43 +1677,86 @@ class FFmpegService {
         this.stopProgressHeartbeat(heartbeat);
       }
     } else {
-      // ANIMATED: Multi-frame WebP encoding using concat demuxer
-      // Generate concat file content with explicit durations
-      const frameDuration = 1 / settings.fps;
-      const concatLines: string[] = [];
+      // ANIMATED: Multi-frame WebP encoding using TWO-PASS approach
+      // Pass 1: PNG frames → H.264 intermediate file (creates proper PTS in container)
+      // Pass 2: H.264 → WebP (proven working path)
 
-      for (let i = 0; i < frameCount; i++) {
-        const frameName = `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}${String(i + FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER).padStart(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS, '0')}.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`;
-        concatLines.push(`file '${frameName}'`);
-        concatLines.push(`duration ${frameDuration.toFixed(6)}`);
-      }
-      // Last frame needs to be repeated for proper ending
-      const lastFrameName = `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}${String(frameCount - 1 + FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER).padStart(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS, '0')}.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`;
-      concatLines.push(`file '${lastFrameName}'`);
+      const intermediateFileName = 'temp_intermediate.mp4';
+      const h264EncodeEnd = Math.round((encodeStart + encodeEnd) / 2);
 
-      const concatContent = concatLines.join('\n');
-      const concatFileName = 'frames_concat.txt';
-
-      // Write concat file to VFS
-      await ffmpeg.writeFile(concatFileName, concatContent);
-      logger.debug('conversion', 'Created concat file for WebP encoding', {
+      logger.info('conversion', 'Starting two-pass WebP encoding', {
         frameCount,
         fps: settings.fps,
-        frameDuration,
+        quality: settings.quality,
+        approach: 'PNG → H.264 → WebP',
       });
 
+      // PASS 1: Encode PNG frames to H.264/MP4
+      const h264ThreadArgs = getThreadingArgs('simple');
+      const h264Cmd = [
+        ...getProgressLoggingArgs(),
+        ...h264ThreadArgs,
+        '-framerate',
+        settings.fps.toString(),
+        '-start_number',
+        FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER.toString(),
+        '-i',
+        this.getFrameSequencePattern(),
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast', // Fast encoding for intermediate file
+        '-crf',
+        '18', // High quality to preserve details
+        '-pix_fmt',
+        'yuv420p',
+        '-vf',
+        `fps=${settings.fps}`, // Explicit framerate filter
+        '-movflags',
+        '+faststart',
+        intermediateFileName,
+      ];
+
+      logger.info('conversion', 'Pass 1: Encoding PNG frames to H.264 intermediate', {
+        frameCount,
+        fps: settings.fps,
+        output: intermediateFileName,
+      });
+
+      const h264LogHandler = this.createFFmpegLogHandler(
+        durationSeconds,
+        encodeStart,
+        h264EncodeEnd
+      );
+      ffmpeg.on('log', h264LogHandler);
+
+      const h264Heartbeat = this.startProgressHeartbeat(
+        encodeStart,
+        h264EncodeEnd,
+        Math.max(15, Math.min(durationSeconds, 30))
+      );
+
+      try {
+        await withTimeout(
+          ffmpeg.exec(h264Cmd),
+          TIMEOUT_CONVERSION,
+          `H.264 intermediate encoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+          () => this.terminateFFmpeg()
+        );
+      } finally {
+        ffmpeg.off('log', h264LogHandler);
+        this.stopProgressHeartbeat(h264Heartbeat);
+      }
+
+      logger.info('conversion', 'Pass 1 complete: H.264 intermediate created');
+
+      // PASS 2: Convert H.264 to WebP
       const webpThreadArgs = getThreadingArgs('simple');
       const webpCmd = [
         ...getProgressLoggingArgs(),
         ...webpThreadArgs,
-        '-f',
-        'concat',
-        '-safe',
-        '0',
         '-i',
-        concatFileName,
-        '-vf',
-        `setpts=N/${settings.fps}/TB`,
+        intermediateFileName,
         '-c:v',
         'libwebp',
         '-lossless',
@@ -1723,50 +1766,54 @@ class FFmpegService {
         '-preset',
         settings.preset,
         '-compression_level',
-        Math.max(3, Math.min(settings.compressionLevel, 4)).toString(), // Cap compression level at 4 for speed
+        Math.max(3, Math.min(settings.compressionLevel, 4)).toString(),
         '-method',
-        Math.min(settings.method, 4).toString(), // Limit method to 4 for faster encoding
+        Math.min(settings.method, 4).toString(),
         '-deadline',
-        'realtime', // Use realtime preset for fast encoding (instead of good/best)
+        'realtime',
         '-loop',
         '0',
         outputFileName,
       ];
 
-      logger.info(
-        'conversion',
-        'Encoding animated WebP (multi-frame) with concat demuxer + setpts filter',
-        {
-          frameCount,
-          fps: settings.fps,
-          quality: settings.quality,
-          setptsFilter: `setpts=N/${settings.fps}/TB`,
-        }
-      );
+      logger.info('conversion', 'Pass 2: Converting H.264 to WebP', {
+        input: intermediateFileName,
+        output: outputFileName,
+        quality: settings.quality,
+      });
 
-      // Log the actual FFmpeg command for debugging
-      const cmdString = webpCmd.join(' ');
-      logger.info('ffmpeg', `WebP encoding command: ${cmdString}`);
-
-      const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
+      const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, h264EncodeEnd, encodeEnd);
       ffmpeg.on('log', webpLogHandler);
 
       const webpHeartbeat = this.startProgressHeartbeat(
-        encodeStart,
+        h264EncodeEnd,
         encodeEnd,
-        Math.max(15, Math.min(durationSeconds, 45))
+        Math.max(15, Math.min(durationSeconds, 30))
       );
 
       try {
         await withTimeout(
           ffmpeg.exec(webpCmd),
           TIMEOUT_CONVERSION,
-          `WebCodecs WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+          `WebP encoding from H.264 timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
           () => this.terminateFFmpeg()
         );
       } finally {
         ffmpeg.off('log', webpLogHandler);
         this.stopProgressHeartbeat(webpHeartbeat);
+      }
+
+      logger.info('conversion', 'Pass 2 complete: WebP encoding finished');
+
+      // Cleanup intermediate file
+      try {
+        await this.safeDelete(intermediateFileName);
+        logger.debug('conversion', 'Cleaned up intermediate H.264 file');
+      } catch (error) {
+        logger.warn('conversion', 'Could not delete intermediate H.264 file (non-critical)', {
+          file: intermediateFileName,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
