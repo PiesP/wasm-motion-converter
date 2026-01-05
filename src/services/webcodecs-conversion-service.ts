@@ -157,6 +157,10 @@ class WebCodecsConversionService {
 
     const handleError = (error: Error) => {
       encoderError = error instanceof Error ? error.message : String(error);
+      logger.error('conversion', 'H.264 VideoEncoder error callback triggered', {
+        error: encoderError,
+        encoderState: encoder?.state,
+      });
     };
 
     const ensureEncoder = async (width: number, height: number) => {
@@ -182,6 +186,13 @@ class WebCodecsConversionService {
         error: handleError,
       });
       encoder.configure(config);
+      logger.info('conversion', 'H.264 encoder initialized', {
+        width,
+        height,
+        bitrate,
+        framerate: targetFps,
+        encoderState: encoder.state,
+      });
       ffmpegService.reportStatus('Encoding H.264 intermediate...');
       ffmpegService.reportProgress(FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START);
     };
@@ -189,6 +200,12 @@ class WebCodecsConversionService {
     let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>> | null = null;
 
     try {
+      logger.info('conversion', 'H.264 intermediate: Starting frame capture', {
+        targetFps,
+        scale,
+        frameFormat: 'rgba',
+      });
+
       decodeResult = await decoder.decodeToFrames({
         file,
         targetFps,
@@ -198,7 +215,7 @@ class WebCodecsConversionService {
         framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
         frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
         frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-        captureMode: 'seek',
+        captureMode: 'auto',
         shouldCancel,
         onProgress: reportProgress,
         onFrame: async (frame) => {
@@ -214,16 +231,47 @@ class WebCodecsConversionService {
             throw new Error('H.264 encoder failed to initialize.');
           }
 
+          // Check encoder state before encoding
+          if (encoder.state !== 'configured') {
+            throw new Error(
+              `H.264 encoder not in configured state at frame ${frameIndex}: ${encoder.state}`
+            );
+          }
+
           const timestamp = Math.round((frameIndex / targetFps) * 1_000_000);
           // Create VideoFrame from ImageData by extracting buffer
-          const videoFrame = new VideoFrame(frame.imageData.data.buffer, {
-            format: 'RGBA' as VideoPixelFormat,
-            codedWidth: frame.imageData.width,
-            codedHeight: frame.imageData.height,
-            timestamp,
-          });
-          encoder.encode(videoFrame, { keyFrame: frameIndex % keyFrameInterval === 0 });
-          videoFrame.close();
+          try {
+            // Validate ImageData buffer before creating VideoFrame
+            const bufferSize = frame.imageData.data.buffer.byteLength;
+            const expectedSize = frame.imageData.width * frame.imageData.height * 4;
+            if (bufferSize !== expectedSize) {
+              throw new Error(
+                `ImageData buffer size mismatch: expected ${expectedSize}, got ${bufferSize}`
+              );
+            }
+
+            const videoFrame = new VideoFrame(frame.imageData.data.buffer, {
+              format: 'RGBA' as VideoPixelFormat,
+              codedWidth: frame.imageData.width,
+              codedHeight: frame.imageData.height,
+              timestamp,
+            });
+            encoder.encode(videoFrame, { keyFrame: frameIndex % keyFrameInterval === 0 });
+            videoFrame.close();
+          } catch (frameError) {
+            const errorMsg = frameError instanceof Error ? frameError.message : String(frameError);
+            logger.error('conversion', 'H.264 frame encoding error', {
+              frameIndex,
+              width: frame.imageData.width,
+              height: frame.imageData.height,
+              timestamp,
+              encoderState: encoder.state,
+              error: errorMsg,
+            });
+            throw new Error(
+              `H.264 frame encoding failed at frame ${frameIndex} (${frame.imageData.width}x${frame.imageData.height}): ${errorMsg}`
+            );
+          }
           frameIndex += 1;
 
           if (encoderError) {
@@ -236,8 +284,18 @@ class WebCodecsConversionService {
         throw new Error('H.264 encoder was not initialized.');
       }
 
+      logger.info('conversion', 'H.264 intermediate: Frame capture complete, flushing encoder', {
+        frameCount: frameIndex,
+        chunks: chunks.length,
+      });
+
       const encoderToFlush = encoder;
       await encoderToFlush.flush();
+
+      logger.info('conversion', 'H.264 intermediate: Encoder flushed successfully', {
+        totalChunks: chunks.length,
+        totalSize: chunks.reduce((sum, c) => sum + c.byteLength, 0),
+      });
     } finally {
       if (encoder) {
         try {
@@ -257,6 +315,22 @@ class WebCodecsConversionService {
     if (encoderError) {
       throw new Error(`H.264 encoder error: ${encoderError}`);
     }
+
+    logger.info('conversion', 'H.264 intermediate: Validation passed', {
+      decodeResult: {
+        frameCount: decodeResult.frameCount,
+        width: decodeResult.width,
+        height: decodeResult.height,
+        fps: decodeResult.fps,
+        duration: decodeResult.duration,
+      },
+      chunks: chunks.length,
+      encoderConfig: {
+        width: encoderConfig?.width,
+        height: encoderConfig?.height,
+        framerate: encoderConfig?.framerate,
+      },
+    });
 
     const totalSize = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
     const data = new Uint8Array(totalSize);
@@ -356,9 +430,22 @@ class WebCodecsConversionService {
         throw error;
       }
 
-      logger.warn('conversion', 'H.264 intermediate fallback failed', {
+      // Log detailed error information for debugging
+      const errorStack = error instanceof Error ? error.stack : 'No stack trace';
+      const detailedError = {
         error: errorMessage,
-      });
+        codec: metadata?.codec,
+        format,
+        stack: errorStack?.substring(0, 500), // Truncate stack for readability
+      };
+      logger.error('conversion', 'H.264 intermediate fallback failed', detailedError);
+      // Also log to console for debugging in browser dev tools
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('[H.264 intermediate] Error:', errorMessage);
+        if (errorStack) {
+          console.error('[H.264 intermediate] Stack:', errorStack.substring(0, 500));
+        }
+      }
       return null;
     }
   }
@@ -655,7 +742,7 @@ class WebCodecsConversionService {
             framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
             frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
             frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-            captureMode: 'seek',
+            captureMode: 'auto',
             shouldCancel: () => ffmpegService.isCancellationRequested(),
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {

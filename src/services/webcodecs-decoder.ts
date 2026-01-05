@@ -312,7 +312,16 @@ export class WebCodecsDecoderService {
           frameStartNumber + index,
           frameFormat
         );
-        await onFrame({ name: frameName, data, imageData, index, timestamp });
+        try {
+          await onFrame({ name: frameName, data, imageData, index, timestamp });
+        } catch (frameCallbackError) {
+          throw new Error(
+            `onFrame callback failed at frame ${index}: ` +
+              (frameCallbackError instanceof Error
+                ? frameCallbackError.message
+                : String(frameCallbackError))
+          );
+        }
         frameFiles.push(frameName);
         onProgress?.(frameFiles.length, totalFrames);
       };
@@ -365,10 +374,19 @@ export class WebCodecsDecoderService {
             totalFrames
           );
         } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          const errorStack = error instanceof Error ? error.stack : '';
           logger.warn('conversion', 'WebCodecs track capture failed, falling back', {
-            error: error instanceof Error ? error.message : String(error),
+            error: errorMsg,
+            supportsFrameCallback,
+            stack: errorStack,
           });
           if (supportsFrameCallback) {
+            logger.info(
+              'conversion',
+              'WebCodecs decoder: Attempting frame-callback fallback mode',
+              {}
+            );
             await this.captureWithFrameCallback(
               video,
               duration,
@@ -378,6 +396,11 @@ export class WebCodecsDecoderService {
               totalFrames
             );
           } else {
+            logger.info(
+              'conversion',
+              'WebCodecs decoder: frame-callback not supported, using seek fallback',
+              {}
+            );
             await this.captureWithSeeking(
               video,
               duration,
@@ -547,6 +570,11 @@ export class WebCodecsDecoderService {
 
       video.requestVideoFrameCallback(handleFrame);
     });
+
+    logger.info('conversion', 'WebCodecs frame-callback capture completed', {
+      capturedFrames: frameIndex,
+      totalFrames,
+    });
   }
 
   private async captureWithTrackProcessor(
@@ -652,6 +680,11 @@ export class WebCodecsDecoderService {
       reader.releaseLock();
       track.stop();
       video.pause();
+      logger.info('conversion', 'WebCodecs track capture completed', {
+        capturedFrames: frameIndex,
+        totalFrames,
+        elapsed: Date.now() - startDecodeTime,
+      });
     }
   }
 
@@ -705,6 +738,11 @@ export class WebCodecsDecoderService {
       await this.seekTo(video, targetTime);
       await captureFrame(index, targetTime);
     }
+
+    logger.info('conversion', 'WebCodecs seek-based capture completed', {
+      capturedFrames: totalFrames,
+      totalFrames,
+    });
   }
 
   private async seekTo(video: HTMLVideoElement, time: number): Promise<void> {
