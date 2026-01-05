@@ -19,6 +19,7 @@ import {
   WARN_RESOLUTION_PIXELS,
 } from '../utils/constants';
 import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
+import { getErrorMessage } from '../utils/error-utils';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';
@@ -298,7 +299,7 @@ class FFmpegService {
           return urls;
         } catch (error) {
           logger.debug('prefetch', `Failed to load from ${baseURL}`, {
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
           return null;
         }
@@ -342,7 +343,7 @@ class FFmpegService {
         } catch (error) {
           lastError = error;
           logger.debug('prefetch', `Mirror ${baseURL} exhausted retries`, {
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }
@@ -607,7 +608,7 @@ class FFmpegService {
         size: typeof data === 'string' ? data.length : data.byteLength,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       logger.error('conversion', `Failed to write ${fileName}`, { error: message });
       throw new Error(`Failed to write ${fileName}: ${message}`);
     }
@@ -626,7 +627,7 @@ class FFmpegService {
       });
       return new Uint8Array(data as Uint8Array);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       logger.error('conversion', `Failed to read ${fileName}`, { error: message });
       throw new Error(`Failed to read ${fileName}: ${message}`);
     }
@@ -647,7 +648,7 @@ class FFmpegService {
     } catch (error) {
       // Silent failure - file might not exist
       logger.debug('conversion', `Could not delete ${fileName} (non-critical)`, {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }
@@ -724,7 +725,7 @@ class FFmpegService {
 
       return { valid: true };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       logger.error('conversion', 'Failed to validate output file', { error: message });
       return { valid: false, reason: `Validation error: ${message}` };
     }
@@ -774,7 +775,7 @@ class FFmpegService {
       logger.info('conversion', 'AV1 decoder retry succeeded');
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       logger.warn('conversion', 'AV1 decoder retry failed', { error: message });
       return false;
     }
@@ -890,7 +891,7 @@ class FFmpegService {
       logger.info('conversion', `${sourceCodec} transcode fallback succeeded`);
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       logger.error('conversion', `${sourceCodec} transcode fallback failed`, { error: message });
 
       // Clean up temp file on failure
@@ -1282,7 +1283,7 @@ class FFmpegService {
       return analyzed;
     } catch (error) {
       logger.warn('conversion', 'Metadata probe failed, continuing without codec', {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return metadata;
     }
@@ -1602,7 +1603,7 @@ class FFmpegService {
           );
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         if (!message.includes('ENOENT') && !message.includes('not exist')) {
           throw error;
         }
@@ -1804,7 +1805,7 @@ class FFmpegService {
       } catch (error) {
         logger.warn('conversion', 'Could not delete intermediate H.264 file (non-critical)', {
           file: intermediateFileName,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -3255,7 +3256,7 @@ class FFmpegService {
       this.setInputCache(key);
       logger.debug('conversion', 'Input file prepared', { key, size: file.size });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       logger.error('conversion', 'Failed to prepare input file', { error: message });
       throw new Error(`Failed to prepare input file: ${message}`);
     }

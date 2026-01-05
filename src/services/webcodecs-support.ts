@@ -1,4 +1,5 @@
 import type { VideoMetadata } from '../types/conversion-types';
+import { getErrorMessage } from '../utils/error-utils';
 import { logger } from '../utils/logger';
 
 export type WebCodecsSupportStatus = {
@@ -147,7 +148,7 @@ export async function isWebCodecsCodecSupported(
       } catch (error) {
         logger.warn('conversion', 'VideoDecoder.isConfigSupported failed', {
           codec: codecString,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -172,7 +173,7 @@ export async function isWebCodecsCodecSupported(
       } catch (error) {
         logger.warn('conversion', 'MediaCapabilities decodingInfo failed', {
           codec: codecString,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -254,7 +255,7 @@ export async function getH264EncoderConfig(params: {
         logger.warn('conversion', 'VideoEncoder.isConfigSupported failed', {
           codec,
           hardwareAcceleration,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }

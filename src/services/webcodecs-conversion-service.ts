@@ -1,5 +1,6 @@
 import type { ConversionOptions, VideoMetadata } from '../types/conversion-types';
 import { COMPLEX_CODECS, QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
+import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
 import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
@@ -148,7 +149,7 @@ class WebCodecsConversionService {
       } catch (error) {
         return {
           valid: false,
-          reason: `WebP decode failed: ${error instanceof Error ? error.message : String(error)}`,
+          reason: `WebP decode failed: ${getErrorMessage(error)}`,
         };
       }
     }
@@ -289,7 +290,7 @@ class WebCodecsConversionService {
     try {
       return await this.convert(file, format, options, metadata);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       if (
         errorMessage.includes('cancelled by user') ||
         (ffmpegService.isCancellationRequested() &&
@@ -432,7 +433,7 @@ class WebCodecsConversionService {
 
       return outputBlob;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       if (
         errorMessage.includes('cancelled by user') ||
         (ffmpegService.isCancellationRequested() &&
@@ -589,7 +590,7 @@ class WebCodecsConversionService {
             codec: metadata?.codec,
           });
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage = getErrorMessage(error);
           if (
             errorMessage.includes('cancelled by user') ||
             (ffmpegService.isCancellationRequested() &&
@@ -698,7 +699,7 @@ class WebCodecsConversionService {
           captureModeUsed = captureMode;
           break;
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage = getErrorMessage(error);
           if (
             errorMessage.includes('cancelled by user') ||
             (ffmpegService.isCancellationRequested() &&
@@ -850,7 +851,7 @@ class WebCodecsConversionService {
             });
           });
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage = getErrorMessage(error);
           logger.warn('conversion', 'GIF worker encoding failed, retrying on main thread', {
             error: errorMessage,
           });
@@ -881,7 +882,7 @@ class WebCodecsConversionService {
             shouldCancel: () => ffmpegService.isCancellationRequested(),
           });
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage = getErrorMessage(error);
           outputBlob = await encodeWithFFmpegFallback(errorMessage);
         }
       } else if (format === 'webp') {
@@ -921,7 +922,7 @@ class WebCodecsConversionService {
 
             return result;
           } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
+            const errorMessage = getErrorMessage(error);
 
             if (
               errorMessage.includes('cancelled by user') ||

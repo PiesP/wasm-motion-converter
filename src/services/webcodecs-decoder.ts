@@ -1,4 +1,5 @@
 import type { VideoMetadata } from '../types/conversion-types';
+import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
 import {
@@ -374,7 +375,7 @@ export class WebCodecsDecoderService {
             totalFrames
           );
         } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
+          const errorMsg = getErrorMessage(error);
           const errorStack = error instanceof Error ? error.stack : '';
           logger.warn('conversion', 'WebCodecs track capture failed, falling back', {
             error: errorMsg,
@@ -456,7 +457,7 @@ export class WebCodecsDecoderService {
       await video.play();
     } catch (error) {
       logger.warn('conversion', 'Autoplay blocked, falling back to seek capture', {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       await this.captureWithSeeking(
         video,
@@ -596,7 +597,7 @@ export class WebCodecsDecoderService {
       await video.play();
     } catch (error) {
       logger.warn('conversion', 'Autoplay blocked for track capture', {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       throw error;
     }
@@ -766,7 +767,7 @@ export class WebCodecsDecoderService {
       video.load();
     } catch (error) {
       logger.debug('conversion', 'Video element cleanup failed', {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
 

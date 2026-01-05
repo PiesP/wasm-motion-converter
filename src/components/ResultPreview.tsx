@@ -12,12 +12,8 @@ interface ResultPreviewProps {
 }
 
 const ResultPreview: Component<ResultPreviewProps> = (props) => {
-  // Create blob URL with proper cleanup of previous URLs to prevent memory leaks
-  const previewUrl = createMemo<string>((prev) => {
-    // Revoke previous blob URL before creating new one
-    if (prev) {
-      URL.revokeObjectURL(prev);
-    }
+  // Create blob URL with cleanup handled by onCleanup
+  const previewUrl = createMemo<string>(() => {
     return URL.createObjectURL(props.outputBlob);
   }, '');
   const [loaded, setLoaded] = createSignal(false);
@@ -57,6 +53,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         <button
           type="button"
           data-download-button
+          aria-label="Download converted file"
           class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900"
           onClick={handleDownload}
         >

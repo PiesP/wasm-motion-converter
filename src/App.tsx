@@ -20,6 +20,7 @@ import QualitySelector from './components/QualitySelector';
 import ResultPreview from './components/ResultPreview';
 import ScaleSelector from './components/ScaleSelector';
 import ThemeToggle from './components/ThemeToggle';
+import ToastContainer from './components/ToastContainer';
 import VideoMetadataDisplay from './components/VideoMetadataDisplay';
 import { useConversionHandlers } from './hooks/useConversionHandlers';
 import { ffmpegService } from './services/ffmpeg-service';
@@ -212,8 +213,10 @@ const App: Component = () => {
         <header class="bg-white dark:bg-gray-900 shadow-sm dark:shadow-gray-800 border-b border-gray-200 dark:border-gray-800">
           <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
             <div class="flex-1">
-              <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Motion Converter</h1>
-              <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              <h1 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">
+                Motion Converter
+              </h1>
+              <p class="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">
                 Convert videos to animated GIF or WebP images
               </p>
             </div>
@@ -301,6 +304,7 @@ const App: Component = () => {
                     <button
                       type="button"
                       disabled={!videoMetadata() || isBusy()}
+                      aria-label="Convert video to animated image"
                       class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
                       onClick={handleConvertWithMemoryCheck}
                     >
@@ -310,6 +314,7 @@ const App: Component = () => {
                 >
                   <button
                     type="button"
+                    aria-label="Stop video conversion"
                     class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900"
                     onClick={handleCancelConversion}
                   >
@@ -359,6 +364,7 @@ const App: Component = () => {
         </main>
 
         <LicenseAttribution />
+        <ToastContainer />
       </div>
     </ErrorBoundary>
   );
