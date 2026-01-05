@@ -1,4 +1,8 @@
-import type { ConversionOptions, ConversionQuality, VideoMetadata } from '../types/conversion-types';
+import type {
+  ConversionOptions,
+  ConversionQuality,
+  VideoMetadata,
+} from '../types/conversion-types';
 import { COMPLEX_CODECS, QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
@@ -191,7 +195,7 @@ class WebCodecsConversionService {
 
     const preset = QUALITY_PRESETS.avif[quality];
     const normalizedQuality = Math.min(1, Math.max(0, preset.quality / 100));
-    const chunks: Uint8Array[] = [];
+    const chunks: ArrayBuffer[] = [];
     let encodeError: Error | null = null;
 
     const encoder = new ImageEncoder({
@@ -200,7 +204,7 @@ class WebCodecsConversionService {
       output: (chunk) => {
         const buffer = new Uint8Array(chunk.byteLength);
         chunk.copyTo(buffer);
-        chunks.push(buffer);
+        chunks.push(buffer.buffer);
       },
       error: (error) => {
         encodeError = error instanceof Error ? error : new Error(String(error));
