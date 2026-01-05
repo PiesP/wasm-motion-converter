@@ -123,6 +123,39 @@ class WebCodecsConversionService {
     };
   }
 
+  private async validateWebPBlob(blob: Blob): Promise<{ valid: boolean; reason?: string }> {
+    if (blob.size < FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_WEBP_SIZE_BYTES) {
+      return {
+        valid: false,
+        reason: `WebP output too small (${blob.size} bytes)`,
+      };
+    }
+
+    const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+    const riffSignature = String.fromCharCode(...header.slice(0, 4));
+    const webpSignature = String.fromCharCode(...header.slice(8, 12));
+    if (riffSignature !== 'RIFF' || webpSignature !== 'WEBP') {
+      return {
+        valid: false,
+        reason: 'Invalid WebP file signature',
+      };
+    }
+
+    if (typeof createImageBitmap === 'function') {
+      try {
+        const bitmap = await createImageBitmap(blob);
+        bitmap.close();
+      } catch (error) {
+        return {
+          valid: false,
+          reason: `WebP decode failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
+
+    return { valid: true };
+  }
+
   private buildWebPFrameDurations(timestamps: number[], fps: number, frameCount: number): number[] {
     const defaultDuration = Math.max(
       MIN_WEBP_FRAME_DURATION_MS,
@@ -402,6 +435,14 @@ class WebCodecsConversionService {
           });
 
           if (muxedWebP) {
+            const validation = await this.validateWebPBlob(muxedWebP);
+            if (!validation.valid) {
+              logger.warn('conversion', 'WebP muxer output failed validation', {
+                reason: validation.reason,
+                frameCount: webpEncodedFrames.length,
+              });
+              return null;
+            }
             // biome-ignore lint/suspicious/noExplicitAny: Attach metadata for UI display
             (muxedWebP as any).wasTranscoded = true;
             return muxedWebP;
@@ -549,53 +590,63 @@ class WebCodecsConversionService {
 
     ffmpegService.beginExternalConversion(metadata, quality);
 
+    let externalEnded = false;
+    const endConversion = () => {
+      if (externalEnded) {
+        return;
+      }
+      ffmpegService.endExternalConversion();
+      externalEnded = true;
+    };
+
     // PRIORITY: Use direct WebCodecs path for complex codecs (AV1, VP9, HEVC)
     // This extracts PNG frames directly without H.264 intermediate transcoding
-    if (this.shouldUseWebCodecsPath(metadata, format)) {
-      logger.info('conversion', 'Using WebCodecs direct path for complex codec', {
-        codec: metadata?.codec,
-        format,
-        reason: 'direct frame extraction',
-      });
-
-      try {
-        const webCodecsResult = await this.convertViaWebCodecsFrames({
-          decoder,
-          file,
-          format,
-          options,
-          targetFps,
-          scale,
-          metadata,
-          reportDecodeProgress,
-        });
-
-        if (webCodecsResult) {
-          return webCodecsResult;
-        }
-
-        // If WebCodecs path fails, fall through to direct FFmpeg path
-        logger.warn('conversion', 'WebCodecs direct path failed, trying FFmpeg fallback', {
-          codec: metadata?.codec,
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        if (
-          errorMessage.includes('cancelled by user') ||
-          (ffmpegService.isCancellationRequested() &&
-            errorMessage.includes('called FFmpeg.terminate()'))
-        ) {
-          throw error;
-        }
-
-        logger.warn('conversion', 'H.264 intermediate path error, trying direct WebCodecs', {
-          error: errorMessage,
-          codec: metadata?.codec,
-        });
-      }
-    }
-
     try {
+      if (this.shouldUseWebCodecsPath(metadata, format)) {
+        logger.info('conversion', 'Using WebCodecs direct path for complex codec', {
+          codec: metadata?.codec,
+          format,
+          reason: 'direct frame extraction',
+        });
+
+        try {
+          const webCodecsResult = await this.convertViaWebCodecsFrames({
+            decoder,
+            file,
+            format,
+            options,
+            targetFps,
+            scale,
+            metadata,
+            reportDecodeProgress,
+          });
+
+          if (webCodecsResult) {
+            endConversion();
+            return webCodecsResult;
+          }
+
+          // If WebCodecs path fails, fall through to direct FFmpeg path
+          logger.warn('conversion', 'WebCodecs direct path failed, trying FFmpeg fallback', {
+            codec: metadata?.codec,
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          if (
+            errorMessage.includes('cancelled by user') ||
+            (ffmpegService.isCancellationRequested() &&
+              errorMessage.includes('called FFmpeg.terminate()'))
+          ) {
+            throw error;
+          }
+
+          logger.warn('conversion', 'H.264 intermediate path error, trying direct WebCodecs', {
+            error: errorMessage,
+            codec: metadata?.codec,
+          });
+        }
+      }
+
       if (needsFFmpeg && !ffmpegService.isLoaded()) {
         logger.warn('conversion', 'FFmpeg not initialized, reinitializing...');
         await ffmpegService.initialize();
@@ -894,43 +945,60 @@ class WebCodecsConversionService {
       } else if (format === 'webp') {
         logger.info('conversion', 'Using WebP muxer path');
 
-        try {
-          const muxedWebP = await this.muxWebPFrames({
-            encodedFrames: webpEncodedFrames,
-            timestamps: webpFrameTimestamps,
-            width: decodeResult.width,
-            height: decodeResult.height,
-            fps: targetFps,
-            onProgress: reportEncodeProgress,
-            shouldCancel: () => ffmpegService.isCancellationRequested(),
-          });
+        let fallbackReason = 'WebP muxer output failed';
 
-          if (muxedWebP) {
-            outputBlob = muxedWebP;
-          } else {
-            logger.warn('conversion', 'WebP muxer produced no output, using FFmpeg fallback', {
-              frameCount: decodeResult.frameCount,
+        const muxedWebP = await (async (): Promise<Blob | null> => {
+          try {
+            const result = await this.muxWebPFrames({
+              encodedFrames: webpEncodedFrames,
+              timestamps: webpFrameTimestamps,
+              width: decodeResult.width,
+              height: decodeResult.height,
+              fps: targetFps,
+              onProgress: reportEncodeProgress,
+              shouldCancel: () => ffmpegService.isCancellationRequested(),
             });
-            outputBlob = await encodeWithFFmpegFallback('WebP muxer produced no output');
+
+            if (!result) {
+              fallbackReason = 'WebP muxer produced no output';
+              logger.warn('conversion', 'WebP muxer produced no output, using FFmpeg fallback', {
+                frameCount: decodeResult.frameCount,
+              });
+              return null;
+            }
+
+            const validation = await this.validateWebPBlob(result);
+            if (!validation.valid) {
+              fallbackReason = validation.reason ?? 'WebP muxer output failed validation';
+              logger.warn('conversion', 'WebP muxer output failed validation, using fallback', {
+                reason: validation.reason,
+                frameCount: webpEncodedFrames.length,
+              });
+              return null;
+            }
+
+            return result;
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+
+            if (
+              errorMessage.includes('cancelled by user') ||
+              (ffmpegService.isCancellationRequested() &&
+                errorMessage.includes('called FFmpeg.terminate()'))
+            ) {
+              throw error;
+            }
+
+            fallbackReason = errorMessage;
+            logger.warn('conversion', 'WebP muxer path failed, using FFmpeg fallback', {
+              error: errorMessage,
+              frameCount: webpEncodedFrames.length,
+            });
+            return null;
           }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+        })();
 
-          if (
-            errorMessage.includes('cancelled by user') ||
-            (ffmpegService.isCancellationRequested() &&
-              errorMessage.includes('called FFmpeg.terminate()'))
-          ) {
-            throw error;
-          }
-
-          logger.warn('conversion', 'WebP muxer path failed, using FFmpeg fallback', {
-            error: errorMessage,
-            frameCount: webpEncodedFrames.length,
-          });
-
-          outputBlob = await encodeWithFFmpegFallback(errorMessage);
-        }
+        outputBlob = muxedWebP ?? (await encodeWithFFmpegFallback(fallbackReason));
 
         webpEncodedFrames.length = 0;
         webpFrameTimestamps.length = 0;
@@ -978,7 +1046,7 @@ class WebCodecsConversionService {
       }
       throw error;
     } finally {
-      ffmpegService.endExternalConversion();
+      endConversion();
     }
   }
 

@@ -1692,16 +1692,12 @@ class FFmpegService {
       });
 
       // PASS 1: Encode PNG frames to H.264/MP4
-      const h264ThreadArgs = getThreadingArgs('simple');
+      const h264ThreadArgs = getThreadingArgs('scale-filter');
+      const frameInputArgs = this.getFrameInputArgs(settings.fps);
       const h264Cmd = [
         ...getProgressLoggingArgs(),
         ...h264ThreadArgs,
-        '-framerate',
-        settings.fps.toString(),
-        '-start_number',
-        FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER.toString(),
-        '-i',
-        this.getFrameSequencePattern(),
+        ...frameInputArgs,
         '-c:v',
         'libx264',
         '-preset',
@@ -1710,8 +1706,8 @@ class FFmpegService {
         '18', // High quality to preserve details
         '-pix_fmt',
         'yuv420p',
-        '-vf',
-        `fps=${settings.fps}`, // Explicit framerate filter
+        '-frames:v',
+        frameCount.toString(),
         '-movflags',
         '+faststart',
         intermediateFileName,
@@ -1751,7 +1747,7 @@ class FFmpegService {
       logger.info('conversion', 'Pass 1 complete: H.264 intermediate created');
 
       // PASS 2: Convert H.264 to WebP
-      const webpThreadArgs = getThreadingArgs('simple');
+      const webpThreadArgs = getThreadingArgs('scale-filter');
       const webpCmd = [
         ...getProgressLoggingArgs(),
         ...webpThreadArgs,

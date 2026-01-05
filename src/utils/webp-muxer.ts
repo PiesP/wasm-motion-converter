@@ -67,6 +67,35 @@ const concatChunks = (chunks: Uint8Array[], totalLength: number): Uint8Array => 
 };
 
 /**
+ * WebP frames produced by canvas/OffscreenCanvas include a full RIFF container.
+ * ANMF payloads must contain only the inner WebP chunks (VP8/VP8L/VP8X), not the outer RIFF header.
+ */
+const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
+  const bytes = new Uint8Array(data);
+  if (bytes.length < 12) {
+    return bytes;
+  }
+
+  const isRIFF = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46; // 'RIFF'
+  const isWEBP = bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50; // 'WEBP'
+
+  if (!isRIFF || !isWEBP) {
+    return bytes;
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const riffSize = view.getUint32(4, true); // Little-endian size
+  const payloadStart = 12; // Skip RIFF header + 'WEBP'
+  const payloadEnd = Math.min(bytes.length, payloadStart + riffSize);
+
+  if (payloadEnd <= payloadStart) {
+    return bytes;
+  }
+
+  return bytes.slice(payloadStart, payloadEnd);
+};
+
+/**
  * Write a 32-bit little-endian integer
  */
 function writeUint32LE(value: number): Uint8Array {
@@ -149,7 +178,7 @@ function createANMFChunk(
   width: number,
   height: number
 ): Uint8Array {
-  const frameBytes = new Uint8Array(frameData);
+  const frameBytes = stripWebPContainer(frameData);
   const frameSize = frameBytes.length;
   const chunkHeaderSize = 16; // ANMF header without frame data
   const chunkSize = chunkHeaderSize + frameSize;
