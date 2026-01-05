@@ -10,37 +10,49 @@ export type ConversionPath = 'webcodecs-only' | 'ffmpeg-only' | 'both' | 'unsupp
 /**
  * Codec capability mapping
  *
+ * Based on real-world test results:
+ * - H.264 → GIF (FFmpeg): 2.04s ⚡ (3x faster than WebCodecs hybrid)
+ * - H.264 → WebP (FFmpeg): 5.43s (2x faster than WebCodecs)
+ * - AV1 → GIF (WebCodecs + modern-gif): 13.94s (FFmpeg lacks decoder)
+ * - AV1 → WebP (WebCodecs 2-pass): 12.44s (FFmpeg lacks decoder)
+ *
  * - 'webcodecs-only': Codec can ONLY be decoded by WebCodecs (e.g., AV1 - FFmpeg.wasm lacks decoder)
  * - 'ffmpeg-only': Codec can ONLY be decoded by FFmpeg (e.g., legacy codecs)
- * - 'both': Codec supported by both WebCodecs and FFmpeg (e.g., H.264, HEVC, VP9)
+ * - 'both': Codec supported by both WebCodecs and FFmpeg (prefer FFmpeg for GIF/WebP performance)
  * - 'unsupported': Codec not supported by either path
  */
 const CODEC_CAPABILITIES: Record<string, ConversionPath> = {
-  // AV1 - WebCodecs only (FFmpeg.wasm v5.1.4 lacks libaom/libdav1d)
+  // === AV1 - WebCodecs only (FFmpeg.wasm v5.1.4 lacks libaom/libdav1d) ===
   av1: 'webcodecs-only',
   av01: 'webcodecs-only',
+  'av1.0': 'webcodecs-only',
 
-  // HEVC/H.265 - Both paths supported
+  // === HEVC/H.265 - Both paths supported (FFmpeg preferred for performance) ===
   hevc: 'both',
   h265: 'both',
   'h.265': 'both',
   hvc1: 'both',
   hev1: 'both',
 
-  // VP9 - Both paths supported
+  // === VP9 - Both paths supported (FFmpeg preferred for performance) ===
   vp9: 'both',
   vp09: 'both',
+  'vp9.0': 'both',
 
-  // VP8 - Both paths supported
+  // === VP8 - Both paths supported (FFmpeg preferred for performance) ===
   vp8: 'both',
   vp08: 'both',
+  'vp8.0': 'both',
 
-  // H.264/AVC - Both paths supported
+  // === H.264/AVC - Both paths supported (FFmpeg preferred for performance) ===
   h264: 'both',
   'h.264': 'both',
   avc1: 'both',
   avc3: 'both',
   avc: 'both',
+  'avc1.42': 'both', // Baseline profile
+  'avc1.4d': 'both', // Main profile
+  'avc1.64': 'both', // High profile
 };
 
 /**

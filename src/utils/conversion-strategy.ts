@@ -43,18 +43,27 @@ export function getConversionStrategy(params: {
   const isVeryLong = metadata.duration > WARN_DURATION_SECONDS * 2;
   const isHugeFile = file.size > WARN_FILE_SIZE_HIGH;
 
-  // GIF optimization strategy:
-  // - Direct FFmpeg path is 3x faster for H.264/standard codecs
-  // - WebCodecs + FFmpeg encoding adds overhead
-  // - But WebCodecs-only codecs (AV1) MUST use WebCodecs path
-  // Therefore: Set forceFFmpeg=true for GIF by default, but allow WebCodecs for AV1
+  // === GIF Conversion Strategy ===
+  // Test results (5.8s, 700x700, medium quality):
+  //   H.264 → GIF (FFmpeg): 2.04s ⚡ (3x faster)
+  //   AV1 → GIF (WebCodecs + modern-gif): 13.94s (worker failed, main thread fallback)
+  //
+  // Strategy: Always prefer FFmpeg direct path for codecs it supports (H.264, HEVC, VP8, VP9)
+  // AV1 must use WebCodecs path (FFmpeg lacks decoder)
   if (format === 'gif') {
-    // Note: AV1 + GIF will use WebCodecs in conversion-service despite forceFFmpeg=true
-    // because requiresWebCodecs() check takes priority over format preference
-    strategy.forceFFmpeg = true;
-    strategy.reasons.push(
-      'GIF: prefer direct FFmpeg encoding for 3x performance (unless codec is WebCodecs-only)'
-    );
+    // Check if codec is WebCodecs-only (AV1)
+    const isWebCodecsOnlyCodec =
+      codec.includes('av1') || codec.includes('av01') || codec === 'unknown';
+
+    if (isWebCodecsOnlyCodec) {
+      // AV1/unknown: WebCodecs path required
+      strategy.forceFFmpeg = false;
+      strategy.reasons.push('GIF + AV1: WebCodecs required (FFmpeg lacks AV1 decoder)');
+    } else {
+      // H.264/HEVC/VP8/VP9: FFmpeg direct path is 3x faster
+      strategy.forceFFmpeg = true;
+      strategy.reasons.push('GIF + supported codec: FFmpeg direct path (3x faster than hybrid)');
+    }
 
     if (isVeryHighResolution) {
       strategy.scaleOverride = coerceScale(0.5);
@@ -65,13 +74,11 @@ export function getConversionStrategy(params: {
     }
 
     if (isVeryLong) {
-      // Cap FPS to keep palette generation and encoding fast/stable for very long videos
       strategy.fpsCap = 12;
       strategy.reasons.push('GIF + very long duration: cap FPS to 12 for faster palette/encode');
       strategy.recommendedQuality = 'low';
       strategy.reasons.push('GIF + very long duration: reduce quality for stability');
     } else if (isLong) {
-      // Moderate FPS cap for long videos
       strategy.fpsCap = 15;
       strategy.reasons.push('GIF + long duration: moderate FPS cap to 15');
     }
@@ -79,13 +86,19 @@ export function getConversionStrategy(params: {
     return strategy;
   }
 
-  // WebP optimization strategy:
-  // AV1 codec: WebCodecs is the ONLY option (FFmpeg lacks AV1 decoder)
-  // Other codecs: WebCodecs preferred for speed, FFmpeg as fallback
+  // === WebP Conversion Strategy ===
+  // Test results (5.8s, 700x700, medium quality):
+  //   H.264 → WebP (FFmpeg): 5.43s (single-pass, fast)
+  //   AV1 → WebP (WebCodecs 2-pass): 12.44s (PNG→H.264→WebP pipeline)
+  //
+  // Strategy: Codec-specific routing
+  //   - AV1: WebCodecs mandatory (FFmpeg lacks decoder)
+  //   - H.264/HEVC/VP9: FFmpeg preferred (faster, simpler pipeline)
   if (format === 'webp') {
     if (codec.includes('av1')) {
-      // AV1 + WebP: WebCodecs is mandatory, apply conservative settings
-      strategy.reasons.push('AV1 + WebP: must use WebCodecs (FFmpeg lacks AV1 decoder)');
+      // AV1 + WebP: WebCodecs mandatory
+      strategy.forceFFmpeg = false;
+      strategy.reasons.push('AV1 + WebP: WebCodecs required (FFmpeg lacks AV1 decoder)');
 
       if (isVeryHighResolution || isHugeFile) {
         strategy.scaleOverride = coerceScale(0.5);
@@ -103,8 +116,9 @@ export function getConversionStrategy(params: {
         strategy.reasons.push('AV1 + WebP: use medium quality for balance');
       }
     } else {
-      // Non-AV1 WebP: WebCodecs preferred unless resource constraints
-      strategy.reasons.push('WebP: prefer WebCodecs for GPU acceleration');
+      // H.264/HEVC/VP8/VP9 + WebP: FFmpeg preferred (2x faster, simpler pipeline)
+      strategy.forceFFmpeg = true;
+      strategy.reasons.push('WebP + supported codec: FFmpeg direct path (faster than WebCodecs)');
 
       if (isVeryHighResolution || isVeryLong || isHugeFile) {
         strategy.scaleOverride = coerceScale(0.75);
