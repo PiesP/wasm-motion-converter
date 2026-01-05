@@ -6,6 +6,7 @@ interface QualitySelectorProps {
   value: ConversionQuality;
   onChange: (quality: ConversionQuality) => void;
   disabled?: boolean;
+  tooltip?: string;
 }
 
 const options: OptionSelectorOption<ConversionQuality>[] = [
@@ -24,6 +25,7 @@ const QualitySelector: Component<QualitySelectorProps> = (props) => {
       onChange={props.onChange}
       disabled={props.disabled}
       columns={3}
+      tooltip={props.tooltip}
     />
   );
 };

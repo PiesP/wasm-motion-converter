@@ -6,6 +6,7 @@ interface FormatSelectorProps {
   value: ConversionFormat;
   onChange: (format: ConversionFormat) => void;
   disabled?: boolean;
+  tooltip?: string;
 }
 
 const FormatSelector: Component<FormatSelectorProps> = (props) => {
@@ -27,6 +28,7 @@ const FormatSelector: Component<FormatSelectorProps> = (props) => {
       onChange={props.onChange}
       disabled={props.disabled}
       columns={columns()}
+      tooltip={props.tooltip}
     />
   );
 };

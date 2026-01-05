@@ -327,12 +327,14 @@ const App: Component = () => {
                 value={conversionSettings().format}
                 onChange={(format) => setConversionSettings({ ...conversionSettings(), format })}
                 disabled={!videoMetadata() || isBusy()}
+                tooltip="GIF works everywhere, WebP is smaller but requires modern browsers"
               />
 
               <QualitySelector
                 value={conversionSettings().quality}
                 onChange={(quality) => setConversionSettings({ ...conversionSettings(), quality })}
                 disabled={!videoMetadata() || isBusy()}
+                tooltip="Higher quality = larger file size and slower conversion"
               />
 
               <ScaleSelector
@@ -340,6 +342,7 @@ const App: Component = () => {
                 inputMetadata={videoMetadata()}
                 onChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
                 disabled={!videoMetadata() || isBusy()}
+                tooltip="Reduce dimensions to decrease file size and speed up conversion"
               />
             </div>
           </div>

@@ -15,6 +15,7 @@ interface FileDropzoneProps {
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [isDragging, setIsDragging] = createSignal(false);
+  const [justSelected, setJustSelected] = createSignal(false);
 
   const isBusy = () => Boolean(props.status);
   const isInteractive = () => !props.disabled && !isBusy();
@@ -29,6 +30,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const selectFile = (files?: FileList | null) => {
     const file = files?.[0];
     if (file) {
+      setJustSelected(true);
+      setTimeout(() => setJustSelected(false), 500);
       props.onFileSelected(file);
     }
   };
@@ -66,7 +69,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     if (isBusy()) {
       return 'border-blue-500 bg-blue-50 dark:bg-blue-950 dark:border-blue-400';
     }
-    if (isDragging()) {
+    if (isDragging() || justSelected()) {
       return 'border-blue-500 bg-blue-50 dark:bg-blue-950 dark:border-blue-400';
     }
     return 'border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-gray-400 dark:hover:border-gray-600';

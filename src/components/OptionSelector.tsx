@@ -1,4 +1,6 @@
 import { For, Show } from 'solid-js';
+import Icon from './ui/Icon';
+import Tooltip from './Tooltip';
 
 type OptionValue = string | number;
 
@@ -16,6 +18,7 @@ interface OptionSelectorProps<T extends OptionValue> {
   onChange: (value: T) => void;
   disabled?: boolean;
   columns?: 2 | 3;
+  tooltip?: string;
 }
 
 const baseOptionClass =
@@ -35,8 +38,19 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
       class={`mb-6 ${props.disabled ? 'opacity-50 pointer-events-none' : ''}`}
       disabled={props.disabled}
     >
-      <legend class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+      <legend class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
         {props.title}
+        <Show when={props.tooltip}>
+          <Tooltip content={props.tooltip!}>
+            <button
+              type="button"
+              tabIndex={0}
+              class="focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+            >
+              <Icon name="info" size="sm" class="text-gray-400 dark:text-gray-600 cursor-help" />
+            </button>
+          </Tooltip>
+        </Show>
       </legend>
       <div
         role="radiogroup"
