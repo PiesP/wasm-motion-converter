@@ -20,6 +20,9 @@ const CODEC_CAPABILITIES: Record<string, ConversionPath> = {
   av1: 'webcodecs-only',
   av01: 'webcodecs-only',
 
+  // AVIF - WebCodecs ImageEncoder for static image encoding
+  avif: 'webcodecs-only',
+
   // HEVC/H.265 - Both paths supported
   hevc: 'both',
   h265: 'both',

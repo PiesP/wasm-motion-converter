@@ -418,8 +418,10 @@ class WebCodecsConversionService {
     metadata: VideoMetadata | undefined,
     format: 'gif' | 'webp' | 'avif'
   ): boolean {
+    // AVIF requires WebCodecs ImageEncoder for static image encoding
     if (format === 'avif') {
-      return false;
+      // Use WebCodecs for AVIF single-frame encoding (no VideoFrame required)
+      return typeof ImageEncoder !== 'undefined';
     }
     if (!isComplexCodec(metadata?.codec)) {
       return false;
@@ -439,9 +441,19 @@ class WebCodecsConversionService {
     scale: number;
     metadata?: VideoMetadata;
     reportDecodeProgress: (current: number, total: number) => void;
+    capturedFrames?: ImageData[];
   }): Promise<Blob | null> {
-    const { decoder, file, format, options, targetFps, scale, metadata, reportDecodeProgress } =
-      params;
+    const {
+      decoder,
+      file,
+      format,
+      options,
+      targetFps,
+      scale,
+      metadata,
+      reportDecodeProgress,
+      capturedFrames,
+    } = params;
 
     if (!this.shouldUseWebCodecsPath(metadata, format)) {
       return null;
@@ -454,28 +466,47 @@ class WebCodecsConversionService {
 
     const frameFiles: string[] = [];
     const maxFrames =
-      format === 'webp' ? this.getMaxWebPFrames(targetFps, metadata?.duration) : undefined;
+      format === 'avif'
+        ? 1
+        : format === 'webp'
+          ? this.getMaxWebPFrames(targetFps, metadata?.duration)
+          : undefined;
 
     try {
       ffmpegService.reportStatus('Extracting frames via WebCodecs...');
 
       // Direct WebCodecs → PNG pipeline for complex codecs
       // Use FFmpeg frame-sequence encoding for stable WebP/GIF output
+      // For AVIF, extract RGBA ImageData for direct ImageEncoder encoding
       const startTime = Date.now();
+
+      const frameFormat = format === 'avif' ? 'rgba' : 'png';
 
       const decodeResult = await decoder.decodeToFrames({
         file,
         targetFps,
         scale,
-        frameFormat: 'png',
-        frameQuality: 0.95,
+        frameFormat,
+        frameQuality: format === 'avif' ? FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY : 0.95,
         framePrefix: 'frame_',
         frameDigits: 6,
         frameStartNumber: 0,
         maxFrames,
         captureMode: 'auto',
         onFrame: async (frame) => {
-          // Write PNG frame data to FFmpeg VFS for GIF/FFmpeg fallback
+          if (format === 'avif') {
+            // For AVIF, collect RGBA ImageData for direct WebCodecs ImageEncoder
+            if (frame.imageData && capturedFrames && capturedFrames.length === 0) {
+              capturedFrames.push(frame.imageData);
+              logger.debug('conversion', `Captured AVIF frame for ImageEncoder`, {
+                width: frame.imageData.width,
+                height: frame.imageData.height,
+              });
+            }
+            return;
+          }
+
+          // For GIF/WebP, write PNG frame data to FFmpeg VFS
           if (frame.data && frame.data.byteLength > 0) {
             logger.debug('conversion', `Writing frame to VFS: ${frame.name}`, {
               size: frame.data.byteLength,
@@ -498,7 +529,14 @@ class WebCodecsConversionService {
         frameCount: decodeResult.frameCount,
         duration: decodeResult.duration,
         elapsed: `${elapsed}ms`,
+        format,
+        capturedFramesCount: capturedFrames?.length ?? 0,
       });
+
+      // For AVIF, return null to signal that encoder should use capturedFrames
+      if (format === 'avif') {
+        return null;
+      }
 
       ffmpegService.reportStatus(`Converting frames to ${format.toUpperCase()}...`);
 
@@ -580,6 +618,11 @@ class WebCodecsConversionService {
       if (!avifSupported) {
         throw new Error('AVIF encoding requires WebCodecs ImageEncoder support in this browser.');
       }
+
+      // For AVIF, extract first frame as static image
+      logger.info('conversion', 'AVIF static image extraction mode', {
+        quality,
+      });
     }
 
     const decoder = new WebCodecsDecoderService();
@@ -644,6 +687,7 @@ class WebCodecsConversionService {
 
     // PRIORITY: Use direct WebCodecs path for complex codecs (AV1, VP9, HEVC)
     // This extracts PNG frames directly without H.264 intermediate transcoding
+    // For AVIF, extract RGBA ImageData for ImageEncoder encoding
     try {
       if (this.shouldUseWebCodecsPath(metadata, format)) {
         logger.info('conversion', 'Using WebCodecs direct path for complex codec', {
@@ -662,6 +706,7 @@ class WebCodecsConversionService {
             scale,
             metadata,
             reportDecodeProgress,
+            capturedFrames,
           });
 
           if (webCodecsResult) {
@@ -669,10 +714,22 @@ class WebCodecsConversionService {
             return webCodecsResult;
           }
 
-          // If WebCodecs path fails, fall through to direct FFmpeg path
-          logger.warn('conversion', 'WebCodecs direct path failed, trying FFmpeg fallback', {
-            codec: metadata?.codec,
-          });
+          // If WebCodecs path returns null for AVIF, continue to ImageEncoder encoding
+          if (format === 'avif' && capturedFrames.length > 0) {
+            logger.info(
+              'conversion',
+              'WebCodecs AVIF frame extraction complete, proceeding to ImageEncoder',
+              {
+                frameCount: capturedFrames.length,
+              }
+            );
+            // Fall through to AVIF ImageEncoder encoding below
+          } else {
+            // If WebCodecs path fails, fall through to direct FFmpeg path
+            logger.warn('conversion', 'WebCodecs direct path failed, trying FFmpeg fallback', {
+              codec: metadata?.codec,
+            });
+          }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           if (

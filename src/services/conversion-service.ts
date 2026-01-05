@@ -110,8 +110,12 @@ export async function convertVideo(
   }
 
   if (format === 'avif') {
+    logger.error('conversion', 'AVIF encoding failed with WebCodecs', {
+      codec,
+      webCodecsAvailable,
+    });
     throw new Error(
-      'AVIF encoding requires WebCodecs support. Please use WebP or GIF if WebCodecs is unavailable.'
+      'AVIF encoding requires WebCodecs ImageEncoder support. This feature is not available in your browser. Please use WebP or GIF as an alternative.'
     );
   }
 
