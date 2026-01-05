@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve **dropconvert-wasm**! This is a Cloudflare Pages-ready **Vite + SolidJS + TypeScript** SPA that turns a single image into a short MP4/GIF loop entirely **in the browser** with **ffmpeg.wasm** (no uploads).
+Thanks for helping improve **dropconvert-wasm**! This is a Cloudflare Pages-ready **Vite + SolidJS + TypeScript** SPA that converts a single video to GIF or WebP entirely **in the browser** with **ffmpeg.wasm** (no uploads).
 
 ## Where to communicate
 
@@ -23,7 +23,7 @@ To keep reports actionable, include:
 - OS + device type (desktop / mobile / tablet)
 - Expected vs. actual behavior
 - Exact repro steps
-- Input image details (format, resolution, file size)
+- Input video details (format, codec, resolution, file size)
 - Console/network output, especially:
   - `typeof SharedArrayBuffer`
   - `crossOriginIsolated`

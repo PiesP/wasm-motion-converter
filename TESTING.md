@@ -1,6 +1,6 @@
 # Testing Checklist – dropconvert-wasm
 
-This checklist focuses on the SPA that converts a single image into a short MP4 or GIF using ffmpeg.wasm entirely in the browser.
+This checklist focuses on the SPA that converts a single video to GIF or WebP using ffmpeg.wasm and WebCodecs API entirely in the browser.
 
 ## Pre-test setup
 
@@ -24,22 +24,22 @@ This checklist focuses on the SPA that converts a single image into a short MP4 
 - Theme preference persists on reload.
 - All text/icons remain legible in both themes.
 
-## Core flow (single image)
+## Core flow (single video)
 
 ### Initial state
 
-- Dropzone visible with image-only hint.
-- Format, quality, and scale selectors shown but disabled until an image is prepared.
+- Dropzone visible with video hint.
+- Format, quality, and scale selectors shown but disabled until a video is prepared.
 - Convert button disabled.
 
-### Image selection & preparation
+### Video selection & preparation
 
-- Drop a supported image (PNG/JPEG/WebP/HEIC where supported).
+- Drop a supported video (MP4/WebM/MOV with H.264/VP9/AV1 codec).
 - On first use, FFmpeg download progress appears (`Loading FFmpeg (~30MB)...`).
 - After FFmpeg loads, a short preparation/analyze step runs.
 - Once ready:
   - Metadata or basic info is shown (if available).
-  - Any performance warnings surface for very large images.
+  - Any performance warnings surface for very large videos.
   - Format/quality/scale controls enable and the Convert button activates.
 
 ### Conversion
