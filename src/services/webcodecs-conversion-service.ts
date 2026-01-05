@@ -101,7 +101,7 @@ class WebCodecsConversionService {
     }
   }
 
-  private shouldUseH264Intermediate(
+  private shouldUseWebCodecsPath(
     metadata: VideoMetadata | undefined,
     format: 'gif' | 'webp' | 'avif'
   ): boolean {
@@ -111,13 +111,13 @@ class WebCodecsConversionService {
     if (!isComplexCodec(metadata?.codec)) {
       return false;
     }
-    if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') {
+    if (typeof VideoFrame === 'undefined') {
       return false;
     }
     return true;
   }
 
-  private async convertViaH264Intermediate(params: {
+  private async convertViaWebCodecsFrames(params: {
     decoder: WebCodecsDecoderService;
     file: File;
     format: 'gif' | 'webp' | 'avif';
@@ -130,11 +130,11 @@ class WebCodecsConversionService {
     const { decoder, file, format, options, targetFps, scale, metadata, reportDecodeProgress } =
       params;
 
-    if (!this.shouldUseH264Intermediate(metadata, format)) {
+    if (!this.shouldUseWebCodecsPath(metadata, format)) {
       return null;
     }
 
-    logger.info('conversion', 'Attempting H.264 intermediate fallback', {
+    logger.info('conversion', 'Using WebCodecs direct frame extraction path', {
       codec: metadata?.codec,
       format,
     });
@@ -144,8 +144,8 @@ class WebCodecsConversionService {
     try {
       ffmpegService.reportStatus('Extracting frames via WebCodecs...');
 
-      // For complex codecs, bypass H.264 intermediate entirely
-      // Extract PNG frames directly and write to FFmpeg VFS
+      // Direct WebCodecs → PNG → WebP pipeline for complex codecs
+      // This avoids unnecessary H.264 intermediate transcoding
       const startTime = Date.now();
 
       const decodeResult = await decoder.decodeToFrames({
@@ -162,8 +162,16 @@ class WebCodecsConversionService {
         onFrame: async (frame) => {
           // Write PNG frame data to FFmpeg VFS
           if (frame.data && frame.data.byteLength > 0) {
+            logger.debug('conversion', `Writing frame to VFS: ${frame.name}`, {
+              size: frame.data.byteLength,
+            });
             await ffmpegService.writeVirtualFile(frame.name, frame.data);
             frameFiles.push(frame.name);
+          } else {
+            logger.error('conversion', `Rejected 0-byte frame from WebCodecs: ${frame.name}`, {
+              hasData: !!frame.data,
+              byteLength: frame.data?.byteLength ?? 0,
+            });
           }
         },
         onProgress: reportDecodeProgress,
@@ -235,12 +243,12 @@ class WebCodecsConversionService {
         framesWritten: frameFiles.length,
         stack: errorStack?.substring(0, 500), // Truncate stack for readability
       };
-      logger.error('conversion', 'H.264 intermediate fallback failed', detailedError);
+      logger.error('conversion', 'WebCodecs direct path failed', detailedError);
       // Also log to console for debugging in browser dev tools
       if (typeof console !== 'undefined' && console.error) {
-        console.error('[H.264 intermediate] Error:', errorMessage);
+        console.error('[WebCodecs direct] Error:', errorMessage);
         if (errorStack) {
-          console.error('[H.264 intermediate] Stack:', errorStack.substring(0, 500));
+          console.error('[WebCodecs direct] Stack:', errorStack.substring(0, 500));
         }
       }
       return null;
@@ -303,17 +311,17 @@ class WebCodecsConversionService {
 
     ffmpegService.beginExternalConversion(metadata, quality);
 
-    // PRIORITY: Use H.264 intermediate for complex codecs (AV1, VP9, HEVC)
-    // This ensures stable conversion for codecs with WebCodecs compatibility issues
-    if (this.shouldUseH264Intermediate(metadata, format)) {
-      logger.info('conversion', 'Using H.264 intermediate path for complex codec', {
+    // PRIORITY: Use direct WebCodecs path for complex codecs (AV1, VP9, HEVC)
+    // This extracts PNG frames directly without H.264 intermediate transcoding
+    if (this.shouldUseWebCodecsPath(metadata, format)) {
+      logger.info('conversion', 'Using WebCodecs direct path for complex codec', {
         codec: metadata?.codec,
         format,
-        reason: 'stability',
+        reason: 'direct frame extraction',
       });
 
       try {
-        const h264Result = await this.convertViaH264Intermediate({
+        const webCodecsResult = await this.convertViaWebCodecsFrames({
           decoder,
           file,
           format,
@@ -324,12 +332,12 @@ class WebCodecsConversionService {
           reportDecodeProgress,
         });
 
-        if (h264Result) {
-          return h264Result;
+        if (webCodecsResult) {
+          return webCodecsResult;
         }
 
-        // If H.264 intermediate fails, fall through to direct WebCodecs path
-        logger.warn('conversion', 'H.264 intermediate path failed, trying direct WebCodecs', {
+        // If WebCodecs path fails, fall through to direct FFmpeg path
+        logger.warn('conversion', 'WebCodecs direct path failed, trying FFmpeg fallback', {
           codec: metadata?.codec,
         });
       } catch (error) {

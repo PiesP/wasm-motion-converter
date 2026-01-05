@@ -85,4 +85,4 @@ export const TIMEOUT_FFMPEG_INIT = 90_000; // 90 seconds
 export const TIMEOUT_FFMPEG_DOWNLOAD = 90_000; // 90 seconds per core asset
 export const TIMEOUT_FFMPEG_WORKER_CHECK = 10_000; // 10 seconds for worker isolation check
 export const TIMEOUT_VIDEO_ANALYSIS = 30_000; // 30 seconds
-export const TIMEOUT_CONVERSION = 300_000; // 5 minutes (300 seconds)
+export const TIMEOUT_CONVERSION = 60_000; // 60 seconds (reduced from 5min due to WebP libwebp hang issues)

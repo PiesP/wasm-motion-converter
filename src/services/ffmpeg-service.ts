@@ -1566,9 +1566,7 @@ class FFmpegService {
 
     // Validate frame files exist and are not empty
     const ffmpeg = this.getFFmpeg();
-    let emptyFrameCount = 0;
-    const MAX_EMPTY_FRAMES = 2;
-    const MIN_VALID_PNG_SIZE = 200; // Increased from 67 to detect small corrupt frames
+    const MIN_VALID_PNG_SIZE = 500; // PNG header + minimal pixel data
 
     for (let i = 0; i < frameCount; i += 1) {
       const frameIndex = FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER + i;
@@ -1576,35 +1574,40 @@ class FFmpegService {
 
       try {
         const fileData = await ffmpeg.readFile(frameName);
-        if (fileData.length === 0 || fileData.length < MIN_VALID_PNG_SIZE) {
-          emptyFrameCount += 1;
-          logger.warn('conversion', `Detected invalid frame file: ${frameName}`, {
+
+        // Fail immediately on any invalid frame
+        if (fileData.length === 0) {
+          logger.error('conversion', `Zero-byte frame detected: ${frameName}`, {
+            frameIndex: i,
+            totalFrames: frameCount,
+          });
+          throw new Error(
+            `Invalid frame ${frameName} (0 bytes). ` +
+              'WebCodecs produced empty frame data. Falling back to FFmpeg.'
+          );
+        }
+
+        if (fileData.length < MIN_VALID_PNG_SIZE) {
+          logger.error('conversion', `Undersized frame detected: ${frameName}`, {
             size: fileData.length,
             minRequired: MIN_VALID_PNG_SIZE,
+            frameIndex: i,
           });
-
-          if (emptyFrameCount > MAX_EMPTY_FRAMES) {
-            throw new Error(
-              `Too many invalid frames detected (${emptyFrameCount}/${frameCount}). ` +
-                'This indicates WebCodecs codec incompatibility. Falling back to FFmpeg.'
-            );
-          }
+          throw new Error(
+            `Invalid frame ${frameName} (${fileData.length} bytes < ${MIN_VALID_PNG_SIZE} minimum). ` +
+              'WebCodecs produced corrupted frame data. Falling back to FFmpeg.'
+          );
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!message.includes('ENOENT') && !message.includes('not exist')) {
           throw error;
         }
-        logger.error('conversion', `Frame file missing: ${frameName}`);
+        logger.error('conversion', `Frame file missing: ${frameName}`, {
+          frameIndex: i,
+        });
         throw new Error(`Frame file ${frameName} is missing from FFmpeg filesystem.`);
       }
-    }
-
-    if (emptyFrameCount > 0) {
-      logger.warn('conversion', `Detected ${emptyFrameCount} invalid frame(s) in sequence`, {
-        emptyFrameCount,
-        totalFrames: frameCount,
-      });
     }
   }
 
