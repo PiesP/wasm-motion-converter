@@ -112,10 +112,7 @@ export default defineConfig(({ mode }) => {
       target: 'esnext',
       rollupOptions: {
         output: {
-          manualChunks: {
-            ffmpeg: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
-            encoders: ['modern-gif', '@jsquash/webp'],
-          },
+          format: 'es',
         },
       },
     },

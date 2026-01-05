@@ -1,8 +1,7 @@
 /**
  * AVIF Service - Browser support detection only
  *
- * Note: AVIF encoding is handled by FFmpeg fallback due to
- * @jsquash/avif incompatibility with Vite 7 worker bundling.
+ * Note: AVIF encoding is handled via FFmpeg in the conversion service.
  * This service only provides browser support detection.
  */
 

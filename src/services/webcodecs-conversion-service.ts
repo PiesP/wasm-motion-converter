@@ -7,7 +7,6 @@ import { getOptimalFPS } from '../utils/quality-optimizer';
 import type { EncoderWorkerAPI } from '../workers/types';
 import { ffmpegService } from './ffmpeg-service';
 import { ModernGifService } from './modern-gif-service';
-import { SquooshWebPService } from './squoosh-webp-service';
 import {
   type WebCodecsCaptureMode,
   WebCodecsDecoderService,
@@ -112,8 +111,7 @@ class WebCodecsConversionService {
     const frameFiles: string[] = [];
     const capturedFrames: ImageData[] = [];
 
-    // Determine if we need RGBA frames (for modern-gif or @jsquash/webp static)
-    // For animated WebP and AVIF, we'll check later
+    // Determine if we need RGBA frames (for modern-gif or static WebP/AVIF)
     const needsRGBA = useModernGif || format === 'webp' || format === 'avif';
     const frameFormat: WebCodecsFrameFormat = needsRGBA
       ? 'rgba'
@@ -138,9 +136,8 @@ class WebCodecsConversionService {
 
     const maxFrames = format === 'webp' || format === 'avif' ? 1 : undefined;
 
-    // Determine if FFmpeg is needed
-    // Note: We'll check isAnimated after frame capture
-    const needsFFmpeg = !useModernGif;
+    // Determine if FFmpeg is needed for initial frame handling
+    const needsFFmpeg = format === 'gif' && !useModernGif;
 
     const decodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_START;
     const decodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_END;
@@ -388,34 +385,16 @@ class WebCodecsConversionService {
           const errorMessage = error instanceof Error ? error.message : String(error);
           outputBlob = await encodeWithFFmpegFallback(errorMessage);
         }
-      } else if (format === 'webp' && capturedFrames.length > 0 && capturedFrames[0]) {
-        // Fallback to main thread for WebP
-        logger.info('conversion', 'Using WebP main thread encoding (Squoosh)');
-        try {
-          outputBlob = await SquooshWebPService.encode(capturedFrames[0], {
-            quality,
-            onProgress: reportEncodeProgress,
-            shouldCancel: () => ffmpegService.isCancellationRequested(),
-          });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-
-          // Detect WASM loading failures
-          if (errorMessage.includes('magic word') || errorMessage.includes('wasm')) {
-            logger.error('conversion', 'WebP WASM loading failed', {
-              error: errorMessage,
-              suggestion: 'Falling back to FFmpeg encoding',
-            });
-          } else {
-            logger.warn('conversion', 'WebP encoding failed, using FFmpeg fallback', {
-              error: errorMessage,
-            });
-          }
-
-          outputBlob = await encodeWithFFmpegFallback(errorMessage);
-        }
+      } else if (format === 'webp') {
+        // Use FFmpeg for WebP encoding
+        logger.info('conversion', 'Using FFmpeg for WebP encoding');
+        outputBlob = await encodeWithFFmpegFallback('WebP encoding via FFmpeg');
+      } else if (format === 'avif') {
+        // Use FFmpeg for AVIF encoding
+        logger.info('conversion', 'Using FFmpeg for AVIF encoding');
+        outputBlob = await encodeWithFFmpegFallback('AVIF encoding via FFmpeg');
       } else {
-        // Fallback to FFmpeg for animated WebP, AVIF, or unsupported formats
+        // Fallback to FFmpeg for animated WebP or unsupported formats
         logger.info('conversion', 'Using FFmpeg frame sequence encoding', {
           format,
           frameFilesCount: frameFiles.length,
@@ -443,7 +422,7 @@ class WebCodecsConversionService {
       ffmpegService.reportProgress(completionProgress);
 
       // Cleanup captured frames for non-FFmpeg encoders
-      if (capturedFrames.length > 0 && (useModernGif || format === 'webp')) {
+      if (capturedFrames.length > 0 && (useModernGif || format === 'webp' || format === 'avif')) {
         capturedFrames.length = 0;
       }
 

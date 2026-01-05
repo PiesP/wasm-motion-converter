@@ -84,6 +84,12 @@ export async function convertVideo(
     return webcodecsResult;
   }
 
+  if (format === 'avif') {
+    throw new Error(
+      'AVIF encoding requires WebCodecs support. Please use WebP or GIF if WebCodecs is unavailable.'
+    );
+  }
+
   // FFmpeg fallback
   logger.info('conversion', 'Using FFmpeg fallback path', {
     codec,

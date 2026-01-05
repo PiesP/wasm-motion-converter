@@ -102,6 +102,15 @@ export function classifyConversionError(
     };
   }
 
+  if (message.includes('avif')) {
+    return {
+      type: 'format',
+      ...baseContext,
+      suggestion:
+        'AVIF conversion failed. Try using WebP or GIF instead, or reduce the quality/scale settings.',
+    };
+  }
+
   if (
     message.includes('worker') ||
     message.includes('thread') ||

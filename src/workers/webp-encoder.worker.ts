@@ -1,14 +1,10 @@
 import * as Comlink from 'comlink';
-import { SquooshWebPService, type SquooshWebPOptions } from '../services/squoosh-webp-service';
 
+// WebP encoding via FFmpeg is now handled in the conversion service
+// This worker is kept for potential future use with alternative WebP encoders
 const api = {
-  async encode(frames: ImageData | ImageData[], options: SquooshWebPOptions): Promise<Blob> {
-    // WebP service expects a single frame
-    const frame = Array.isArray(frames) ? frames[0] : frames;
-    if (!frame) {
-      throw new Error('No frame provided for WebP encoding');
-    }
-    return await SquooshWebPService.encode(frame, options);
+  async encode(): Promise<Blob> {
+    throw new Error('WebP encoding is now handled via FFmpeg in the main service');
   },
   terminate() {
     self.close();
