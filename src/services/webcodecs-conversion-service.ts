@@ -344,29 +344,21 @@ class WebCodecsConversionService {
     });
 
     const frameFiles: string[] = [];
-    const webpEncodedFrames: Uint8Array[] = [];
-    const webpFrameTimestamps: number[] = [];
-    const webpQualityRatio =
-      format === 'webp' ? QUALITY_PRESETS.webp[options.quality].quality / 100 : null;
-    const webpFrameEncoder =
-      format === 'webp' && webpQualityRatio !== null
-        ? this.createWebPFrameEncoder(webpQualityRatio)
-        : null;
     const maxFrames =
       format === 'webp' ? this.getMaxWebPFrames(targetFps, metadata?.duration) : undefined;
 
     try {
       ffmpegService.reportStatus('Extracting frames via WebCodecs...');
 
-      // Direct WebCodecs → PNG → WebP pipeline for complex codecs
-      // This avoids unnecessary H.264 intermediate transcoding
+      // Direct WebCodecs → PNG pipeline for complex codecs
+      // Use FFmpeg frame-sequence encoding for stable WebP/GIF output
       const startTime = Date.now();
 
       const decodeResult = await decoder.decodeToFrames({
         file,
         targetFps,
         scale,
-        frameFormat: format === 'webp' ? 'rgba' : 'png',
+        frameFormat: 'png',
         frameQuality: 0.95,
         framePrefix: 'frame_',
         frameDigits: 6,
@@ -374,17 +366,6 @@ class WebCodecsConversionService {
         maxFrames,
         captureMode: 'auto',
         onFrame: async (frame) => {
-          if (format === 'webp') {
-            if (!frame.imageData || !webpFrameEncoder) {
-              throw new Error('WebCodecs did not provide raw frame data for WebP encoding.');
-            }
-
-            const encodedFrame = await webpFrameEncoder(frame.imageData);
-            webpEncodedFrames.push(encodedFrame);
-            webpFrameTimestamps.push(frame.timestamp);
-            return;
-          }
-
           // Write PNG frame data to FFmpeg VFS for GIF/FFmpeg fallback
           if (frame.data && frame.data.byteLength > 0) {
             logger.debug('conversion', `Writing frame to VFS: ${frame.name}`, {
@@ -412,63 +393,8 @@ class WebCodecsConversionService {
 
       ffmpegService.reportStatus(`Converting frames to ${format.toUpperCase()}...`);
 
-      if (format === 'webp') {
-        const reportEncodeProgress = (current: number, total: number) => {
-          const progress =
-            FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START +
-            ((FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END -
-              FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START) *
-              current) /
-              Math.max(1, total);
-          ffmpegService.reportProgress(Math.round(progress));
-        };
-
-        try {
-          const muxedWebP = await this.muxWebPFrames({
-            encodedFrames: webpEncodedFrames,
-            timestamps: webpFrameTimestamps,
-            width: decodeResult.width,
-            height: decodeResult.height,
-            fps: targetFps,
-            onProgress: reportEncodeProgress,
-            shouldCancel: () => ffmpegService.isCancellationRequested(),
-          });
-
-          if (muxedWebP) {
-            const validation = await this.validateWebPBlob(muxedWebP);
-            if (!validation.valid) {
-              logger.warn('conversion', 'WebP muxer output failed validation', {
-                reason: validation.reason,
-                frameCount: webpEncodedFrames.length,
-              });
-              return null;
-            }
-            // biome-ignore lint/suspicious/noExplicitAny: Attach metadata for UI display
-            (muxedWebP as any).wasTranscoded = true;
-            return muxedWebP;
-          }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          if (
-            errorMessage.includes('cancelled by user') ||
-            (ffmpegService.isCancellationRequested() &&
-              errorMessage.includes('called FFmpeg.terminate()'))
-          ) {
-            throw error;
-          }
-
-          logger.warn('conversion', 'WebP muxer path failed, falling back to FFmpeg', {
-            error: errorMessage,
-            frameCount: webpEncodedFrames.length,
-          });
-        }
-
-        // Let the caller fall through to the standard pipeline (will re-decode as needed)
-        return null;
-      }
-
       const outputBlob = await ffmpegService.encodeFrameSequence({
-        format: 'gif',
+        format: format === 'gif' ? 'gif' : 'webp',
         options,
         frameCount: frameFiles.length,
         fps: targetFps,
