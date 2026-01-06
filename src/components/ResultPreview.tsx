@@ -1,31 +1,74 @@
-import { type Component, createEffect, createMemo, createSignal, onCleanup, Show } from 'solid-js';
-import type { ConversionSettings } from '../types/conversion-types';
+import { createEffect, createMemo, createSignal, onCleanup, Show } from 'solid-js';
+
 import { formatBytes } from '../utils/format-bytes';
 import { formatDuration } from '../utils/format-duration';
 
+import type { Component } from 'solid-js';
+import type { ConversionSettings } from '../types/conversion-types';
+
+/**
+ * Scale percentage multiplier for display
+ */
+const SCALE_PERCENTAGE_MULTIPLIER = 100;
+
+/**
+ * Initial loaded state for image preview
+ */
+const INITIAL_LOADED_STATE = false;
+
+/**
+ * Result preview component props
+ */
 interface ResultPreviewProps {
+  /** Output blob of converted file */
   outputBlob: Blob;
+  /** Original file name */
   originalName: string;
+  /** Original file size in bytes */
   originalSize: number;
+  /** Conversion settings used */
   settings: ConversionSettings;
+  /** Duration of conversion in seconds */
   conversionDurationSeconds?: number;
+  /** Whether video was transcoded */
   wasTranscoded?: boolean;
+  /** Original video codec */
   originalCodec?: string;
 }
 
+/**
+ * Result preview component with download and metadata display
+ *
+ * Displays the converted file preview with download button and conversion statistics.
+ * Shows original vs output size comparison, conversion time, and applied settings.
+ * Handles blob URL lifecycle with automatic cleanup.
+ *
+ * @example
+ * ```tsx
+ * <ResultPreview
+ *   outputBlob={convertedBlob}
+ *   originalName="video.mp4"
+ *   originalSize={5242880}
+ *   settings={{ format: 'gif', quality: 'high', scale: 1.0 }}
+ *   conversionDurationSeconds={45}
+ * />
+ * ```
+ */
 const ResultPreview: Component<ResultPreviewProps> = (props) => {
   // Create blob URL with cleanup handled by onCleanup
   const previewUrl = createMemo<string>(() => {
     return URL.createObjectURL(props.outputBlob);
   }, '');
-  const [loaded, setLoaded] = createSignal(false);
-  const conversionTimeLabel = createMemo(() => {
+  const [loaded, setLoaded] = createSignal(INITIAL_LOADED_STATE);
+
+  const conversionTimeLabel = createMemo((): string | null => {
     if (typeof props.conversionDurationSeconds !== 'number') {
       return null;
     }
     return formatDuration(props.conversionDurationSeconds);
   });
-  const sizeGridClass = createMemo(() =>
+
+  const sizeGridClass = createMemo((): string =>
     conversionTimeLabel()
       ? 'grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3'
       : 'grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mt-3'
@@ -33,7 +76,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   createEffect(() => {
     const url = previewUrl();
-    setLoaded(false);
+    setLoaded(INITIAL_LOADED_STATE);
     onCleanup(() => {
       URL.revokeObjectURL(url);
     });
@@ -131,7 +174,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Scale</div>
             <div class="font-medium text-gray-900 dark:text-white">
-              {(props.settings.scale * 100).toFixed(0)}%
+              {(props.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%
             </div>
           </div>
         </div>

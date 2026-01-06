@@ -20,6 +20,7 @@
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
+    // Enforce 100 character line width for readability
     "lineWidth": 100,
     "lineEnding": "lf"
   },
@@ -28,43 +29,65 @@
     "rules": {
       "recommended": true,
       "correctness": {
+        // Warn about unused imports to keep code clean
         "noUnusedImports": "warn",
+        // Warn about unused variables to prevent dead code
         "noUnusedVariables": "warn",
+        // Allow unknown media features for Tailwind CSS
         "noUnknownMediaFeatureName": "off"
       },
       "style": {
+        // Allow non-null assertions when type safety is guaranteed
         "noNonNullAssertion": "off",
+        // Enforce const over let for immutable variables (CODE_STANDARDS: Constants)
         "useConst": "error",
+        // Warn against parameter reassignment for clarity
         "noParameterAssign": "warn"
       },
       "suspicious": {
-        "noExplicitAny": "on",
+        // Enforce explicit typing, avoid 'any' (CODE_STANDARDS: TypeScript Standards)
+        "noExplicitAny": "error",
+        // Allow void type for flexibility
         "noConfusingVoidType": "off",
+        // Allow control characters in regex
         "noControlCharactersInRegex": "off",
+        // Allow unknown CSS at-rules for Tailwind
         "noUnknownAtRules": "off",
+        // Allow assignments in expressions (common pattern)
         "noAssignInExpressions": "off",
+        // Allow document.cookie usage
         "noDocumentCookie": "off",
+        // Allow callbacks without explicit return
         "useIterableCallbackReturn": "off"
       },
       "complexity": {
+        // Allow forEach for readability in some cases
         "noForEach": "off",
+        // Allow static-only classes (singleton pattern)
         "noStaticOnlyClass": "off"
       },
       "a11y": {
+        // Relax some a11y rules for UI flexibility while maintaining core accessibility
+        // Note: Manual ARIA attributes are added where needed per CODE_STANDARDS section 11
         "noStaticElementInteractions": "off",
         "useKeyWithClickEvents": "off",
         "useMediaCaption": "off",
         "noSvgWithoutTitle": "off",
         "useAriaPropsSupportedByRole": "off",
+        // Allow semantic flexibility for custom components
         "useSemanticElements": "off"
       }
     }
   },
   "javascript": {
     "formatter": {
+      // Enforce single quotes for consistency (CODE_STANDARDS)
       "quoteStyle": "single",
+      // Always use semicolons (CODE_STANDARDS)
       "semicolons": "always",
+      // Use ES5 trailing commas for better diffs
       "trailingCommas": "es5",
+      // Always use parentheses for arrow functions
       "arrowParentheses": "always"
     }
   },
@@ -76,6 +99,7 @@
   },
   "css": {
     "parser": {
+      // Enable Tailwind CSS directive parsing
       "tailwindDirectives": true
     }
   },
@@ -83,6 +107,7 @@
     "enabled": true,
     "actions": {
       "source": {
+        // Auto-organize imports on save (CODE_STANDARDS: Import Order)
         "organizeImports": "on"
       }
     }

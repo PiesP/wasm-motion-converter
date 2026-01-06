@@ -1,14 +1,47 @@
 import type { Component } from 'solid-js';
-import type { Toast as ToastType } from '../stores/toast-store';
+
 import { removeToast } from '../stores/toast-store';
 import Icon from './ui/Icon';
 
+import type { Toast as ToastType } from '../stores/toast-store';
+
+/**
+ * Minimum width for toast notifications in pixels
+ */
+const MIN_TOAST_WIDTH = 'min-w-[300px]';
+
+/**
+ * Maximum width for toast notifications
+ */
+const MAX_TOAST_WIDTH = 'max-w-md';
+
+/**
+ * ARIA label for toast dismiss button
+ */
+const DISMISS_LABEL = 'Dismiss notification';
+
+/**
+ * Toast component props
+ */
 interface ToastProps {
+  /** Toast data to display */
   toast: ToastType;
 }
 
+/**
+ * Toast notification component
+ *
+ * Displays a dismissible toast notification with icon, message, and color coding
+ * based on the toast type (success, error, warning, info).
+ *
+ * @param props - Component props
+ * @returns Toast notification element
+ */
 const Toast: Component<ToastProps> = (props) => {
-  const getIconName = () => {
+  /**
+   * Get icon name based on toast type
+   */
+  const getIconName = (): 'success' | 'error' | 'warning' | 'info' => {
     switch (props.toast.type) {
       case 'success':
         return 'success' as const;
@@ -21,7 +54,16 @@ const Toast: Component<ToastProps> = (props) => {
     }
   };
 
-  const getColorClasses = () => {
+  /**
+   * Get color classes based on toast type
+   */
+  const getColorClasses = (): {
+    bg: string;
+    border: string;
+    icon: string;
+    text: string;
+    button: string;
+  } => {
     switch (props.toast.type) {
       case 'success':
         return {
@@ -64,7 +106,7 @@ const Toast: Component<ToastProps> = (props) => {
 
   return (
     <div
-      class={`${colors.bg} ${colors.border} border-l-4 rounded-lg shadow-lg p-4 flex items-start gap-3 min-w-[300px] max-w-md animate-slide-in`}
+      class={`${colors.bg} ${colors.border} border-l-4 rounded-lg shadow-lg p-4 flex items-start gap-3 ${MIN_TOAST_WIDTH} ${MAX_TOAST_WIDTH} animate-slide-in`}
       role="alert"
       aria-live="polite"
     >
@@ -74,7 +116,7 @@ const Toast: Component<ToastProps> = (props) => {
         type="button"
         onClick={() => removeToast(props.toast.id)}
         class={`${colors.button} focus:outline-none focus:ring-2 focus:ring-offset-2 rounded`}
-        aria-label="Dismiss notification"
+        aria-label={DISMISS_LABEL}
       >
         <Icon name="x" size="sm" />
       </button>

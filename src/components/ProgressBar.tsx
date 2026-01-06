@@ -1,21 +1,57 @@
-import type { Component } from 'solid-js';
 import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
+
 import { formatDuration } from '../utils/format-duration';
 
+import type { Component } from 'solid-js';
+
+/**
+ * Update interval for elapsed time counter (in milliseconds)
+ */
+const ELAPSED_TIME_UPDATE_INTERVAL = 1000;
+
+/**
+ * Progress bar component props
+ */
+/**
+ * Progress bar component props
+ */
 interface ProgressBarProps {
+  /** Current progress percentage (0-100) */
   progress: number;
+  /** Status label text */
   status: string;
+  /** Optional detailed status message */
   statusMessage?: string;
+  /** Whether to show loading spinner */
   showSpinner?: boolean;
+  /** Whether to show elapsed time counter */
   showElapsedTime?: boolean;
+  /** Start timestamp for elapsed time calculation */
   startTime?: number;
+  /** Estimated seconds remaining (null if unknown) */
   estimatedSecondsRemaining?: number | null;
-  layout?: 'horizontal' | 'vertical'; // horizontal: label & percentage on sides, vertical: label & percentage stacked above bar
+  /** Layout orientation for label and percentage display */
+  layout?: 'horizontal' | 'vertical';
 }
 
 /**
- * Reusable progress bar component
- * Provides consistent progress indication with optional spinner, elapsed time, and ETA
+ * Reusable progress bar component with elapsed time and ETA display
+ *
+ * Provides consistent progress indication with optional spinner, elapsed time counter,
+ * and estimated time remaining. Supports horizontal and vertical layouts.
+ * Fully accessible with ARIA attributes and live region updates.
+ *
+ * @example
+ * ```tsx
+ * <ProgressBar
+ *   progress={45}
+ *   status="Converting..."
+ *   showSpinner={true}
+ *   showElapsedTime={true}
+ *   startTime={Date.now()}
+ *   estimatedSecondsRemaining={30}
+ * />
+ * ```
  */
 const ProgressBar: Component<ProgressBarProps> = (props) => {
   const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
@@ -34,14 +70,14 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     updateElapsed();
 
     // Update every second
-    const interval = setInterval(updateElapsed, 1000);
+    const interval = setInterval(updateElapsed, ELAPSED_TIME_UPDATE_INTERVAL);
 
     onCleanup(() => {
       clearInterval(interval);
     });
   });
 
-  const isHorizontal = () => props.layout === 'horizontal';
+  const isHorizontal = (): boolean => props.layout === 'horizontal';
 
   return (
     <div class="flex flex-col gap-2">

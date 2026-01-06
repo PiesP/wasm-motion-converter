@@ -1,10 +1,6 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import type {
-  ConversionOptions,
-  ConversionQuality,
-  VideoMetadata,
-} from '../types/conversion-types';
+
 import { canFFmpegDecode as canFFmpegDecodeCodec } from '../utils/codec-capabilities';
 import {
   FFMPEG_CORE_BASE_URLS,
@@ -27,11 +23,34 @@ import { getOptimalFPS } from '../utils/quality-optimizer';
 import { getTimeoutForFormat } from '../utils/timeout-calculator';
 import { withTimeout } from '../utils/with-timeout';
 
-// Legacy constants kept for backward compatibility with external timeout values
+import type {
+  ConversionOptions,
+  ConversionQuality,
+  VideoMetadata,
+} from '../types/conversion-types';
+
+/**
+ * Legacy timeout constant for backward compatibility with external timeout values
+ */
 const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
+
+/**
+ * Legacy timeout constant for backward compatibility with worker check timeout
+ */
 const WORKER_CHECK_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_WORKER_CHECK / 1000;
+
+/**
+ * Cache name for FFmpeg core assets with version identifier
+ */
 const FFMPEG_CACHE_NAME = `ffmpeg-core-${FFMPEG_CORE_VERSION}`;
 
+/**
+ * Request idle callback with fallback to setTimeout for browsers that don't support it
+ *
+ * @param callback - Function to execute during idle time
+ * @param options - Idle callback options including timeout
+ * @returns Idle callback ID (or setTimeout ID)
+ */
 const requestIdle = (callback: IdleRequestCallback, options?: IdleRequestOptions): number => {
   if (typeof requestIdleCallback !== 'undefined') {
     return requestIdleCallback(callback, options);
@@ -42,8 +61,22 @@ const requestIdle = (callback: IdleRequestCallback, options?: IdleRequestOptions
   );
 };
 
+/**
+ * Check if Cache Storage API is available in current environment
+ *
+ * @returns True if Cache Storage is supported
+ */
 const supportsCacheStorage = (): boolean => typeof caches !== 'undefined';
 
+/**
+ * Load blob URL with cache awareness
+ * Uses Cache Storage API when available for faster repeat loads
+ * Falls back to direct blob URL creation if caching fails
+ *
+ * @param url - URL to load
+ * @param mimeType - MIME type for blob creation
+ * @returns Blob URL that can be used to load the asset
+ */
 async function cacheAwareBlobURL(url: string, mimeType: string): Promise<string> {
   if (!supportsCacheStorage()) {
     return toBlobURL(url, mimeType);
@@ -66,6 +99,15 @@ async function cacheAwareBlobURL(url: string, mimeType: string): Promise<string>
   return URL.createObjectURL(blob);
 }
 
+/**
+ * Load FFmpeg asset with timeout protection
+ * Wraps cacheAwareBlobURL with configurable timeout for reliability
+ *
+ * @param url - URL to load
+ * @param mimeType - MIME type for blob creation
+ * @param label - Human-readable label for error messages
+ * @returns Blob URL that can be used to load the asset
+ */
 async function loadFFmpegAsset(url: string, mimeType: string, label: string): Promise<string> {
   return withTimeout(
     cacheAwareBlobURL(url, mimeType),
@@ -74,16 +116,29 @@ async function loadFFmpegAsset(url: string, mimeType: string, label: string): Pr
   );
 }
 
+/**
+ * Worker isolation status for FFmpeg multi-threading support
+ */
 type WorkerIsolationStatus = {
   sharedArrayBuffer: boolean;
   crossOriginIsolated: boolean;
 };
 
+/**
+ * FFmpeg input format override for transcoding operations
+ */
 type FFmpegInputOverride = {
   format: 'h264';
   framerate: number;
 };
 
+/**
+ * Verify that Web Workers have proper isolation for SharedArrayBuffer
+ * FFmpeg multi-threading requires cross-origin isolation (COOP/COEP headers)
+ * Tests worker creation and SharedArrayBuffer availability
+ *
+ * @throws Error if Web Workers are unavailable, worker creation fails, or isolation is insufficient
+ */
 async function verifyWorkerIsolation(): Promise<void> {
   if (typeof Worker === 'undefined') {
     throw new Error('Web Workers are not available in this browser.');
@@ -145,6 +200,13 @@ async function verifyWorkerIsolation(): Promise<void> {
   }
 }
 
+/**
+ * Calculate optimal thread count for FFmpeg operations
+ * Uses 75% of available CPU cores for better performance on modern CPUs
+ * Capped at 8 threads to prevent excessive resource usage
+ *
+ * @returns Optimal number of threads (2-8)
+ */
 function getOptimalThreadCount(): number {
   const cores = navigator.hardwareConcurrency || 2;
   // Use 75% of available cores for better performance on modern CPUs
@@ -202,10 +264,25 @@ function getThreadingArgs(operation: 'filter-complex' | 'scale-filter' | 'simple
   }
 }
 
+/**
+ * Generate FFmpeg arguments for progress logging
+ * Enables progress reporting and detailed info-level logging
+ *
+ * @returns Array of FFmpeg command-line arguments for progress output
+ */
 function getProgressLoggingArgs(): string[] {
   return ['-progress', '-', '-loglevel', 'info'];
 }
 
+/**
+ * Generate scale filter string for video resizing
+ * Uses quality-appropriate interpolation algorithms
+ * Returns null if no scaling needed (scale === 1.0)
+ *
+ * @param quality - Conversion quality (determines interpolation algorithm)
+ * @param scale - Scale factor (0.0-1.0, where 1.0 = 100%)
+ * @returns FFmpeg scale filter string or null if no scaling needed
+ */
 function getScaleFilter(quality: ConversionQuality, scale: number): string | null {
   if (scale === 1.0) {
     return null; // No scaling needed at 100%

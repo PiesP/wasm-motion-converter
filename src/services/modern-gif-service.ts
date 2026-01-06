@@ -1,6 +1,10 @@
 import { encode } from 'modern-gif';
+
 import { logger } from '../utils/logger';
 
+/**
+ * Options for modern-gif encoding
+ */
 export interface ModernGifOptions {
   width: number;
   height: number;
@@ -11,11 +15,47 @@ export interface ModernGifOptions {
   shouldCancel?: () => boolean;
 }
 
+/**
+ * Quality to max colors mapping for GIF palette optimization
+ * - high: 256 colors (full palette, best quality)
+ * - medium: 128 colors (balanced)
+ * - low: 64 colors (smallest file size)
+ */
+const QUALITY_TO_MAX_COLORS = { high: 256, medium: 128, low: 64 } as const;
+
+/**
+ * Service for encoding GIF animations using modern-gif library
+ * Provides GPU-accelerated encoding with better quality than FFmpeg
+ */
 export class ModernGifService {
+  /**
+   * Check if modern-gif library is available and supported
+   *
+   * @returns True if modern-gif encode function is available
+   */
   static isSupported(): boolean {
     return typeof encode === 'function';
   }
 
+  /**
+   * Encode ImageData frames into animated GIF using modern-gif
+   * Uses quality-based color palette optimization for optimal file size
+   *
+   * @param frames - Array of ImageData frames to encode
+   * @param options - Encoding options (width, height, fps, quality, callbacks)
+   * @returns Animated GIF as Blob
+   * @throws Error if no frames provided or conversion cancelled
+   *
+   * @example
+   * const frames = [imageData1, imageData2, imageData3];
+   * const blob = await ModernGifService.encode(frames, {
+   *   width: 640,
+   *   height: 480,
+   *   fps: 30,
+   *   quality: 'high',
+   *   onProgress: (current, total) => console.log(`${current}/${total}`),
+   * });
+   */
   static async encode(frames: ImageData[], options: ModernGifOptions): Promise<Blob> {
     if (!frames.length) {
       throw new Error('No frames provided for GIF encoding.');
@@ -27,9 +67,8 @@ export class ModernGifService {
       throw new Error('Conversion cancelled by user');
     }
 
-    // Quality mapping: high=256 (most colors), medium=128, low=64
-    const qualityMap = { high: 256, medium: 128, low: 64 };
-    const maxColors = qualityMap[quality];
+    // Use quality mapping constant for palette optimization
+    const maxColors = QUALITY_TO_MAX_COLORS[quality];
 
     const startTime = performance.now();
 

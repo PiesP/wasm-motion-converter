@@ -1,12 +1,51 @@
-export const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
-export const WARN_FILE_SIZE = 100 * 1024 * 1024; // 100MB
-export const WARN_FILE_SIZE_HIGH = 200 * 1024 * 1024; // 200MB - suggest low quality
-export const WARN_FILE_SIZE_CRITICAL = 300 * 1024 * 1024; // 300MB - suggest scale reduction
-export const WARN_RESOLUTION_PIXELS = 1920 * 1080; // 1080p
-export const WARN_DURATION_SECONDS = 30; // 30 seconds
+/**
+ * Application Configuration Constants
+ *
+ * Centralized configuration for file size limits, timeouts, codec support,
+ * video format specifications, quality presets, and performance thresholds.
+ * All constants use UPPER_SNAKE_CASE naming convention.
+ */
 
+// ============================================================================
+// FILE SIZE CONSTRAINTS (bytes)
+// ============================================================================
+
+/** Maximum file size allowed for upload (500 MB) */
+export const MAX_FILE_SIZE = 500 * 1024 * 1024;
+
+/** Warn if file size exceeds this threshold (100 MB) */
+export const WARN_FILE_SIZE = 100 * 1024 * 1024;
+
+/** Warn if file size exceeds this threshold; suggest low quality preset (200 MB) */
+export const WARN_FILE_SIZE_HIGH = 200 * 1024 * 1024;
+
+/** Warn if file size exceeds this threshold; suggest scale reduction (300 MB) */
+export const WARN_FILE_SIZE_CRITICAL = 300 * 1024 * 1024;
+
+// ============================================================================
+// VIDEO RESOLUTION & DURATION THRESHOLDS
+// ============================================================================
+
+/** Warn if resolution exceeds this threshold (1920 × 1080 pixels, 2.07M pixels) */
+export const WARN_RESOLUTION_PIXELS = 1920 * 1080;
+
+/** Warn if duration exceeds this threshold (30 seconds) */
+export const WARN_DURATION_SECONDS = 30;
+
+// ============================================================================
+// CODEC SUPPORT
+// ============================================================================
+
+/**
+ * Codecs requiring advanced hardware acceleration or special handling.
+ * These codecs benefit significantly from GPU decoding via WebCodecs.
+ */
 export const COMPLEX_CODECS = ['hevc', 'h265', 'hvc1', 'hev1', 'vp9', 'vp09', 'av1', 'av01'];
 
+/**
+ * Codecs with efficient GPU-accelerated decoding support via WebCodecs API.
+ * These are the primary targets for hardware acceleration when available.
+ */
 export const WEBCODECS_ACCELERATED = [
   'av1',
   'av01',
@@ -23,6 +62,14 @@ export const WEBCODECS_ACCELERATED = [
   'avc3',
 ];
 
+// ============================================================================
+// SUPPORTED VIDEO FORMATS
+// ============================================================================
+
+/**
+ * MIME types for accepted video files.
+ * Used for file input validation (accept attribute) and format detection.
+ */
 export const SUPPORTED_VIDEO_MIMES = [
   'video/mp4',
   'video/quicktime',
@@ -37,6 +84,10 @@ export const SUPPORTED_VIDEO_MIMES = [
   'video/x-flv',
 ];
 
+/**
+ * File extensions for accepted video formats.
+ * Used for filename-based validation as fallback.
+ */
 export const SUPPORTED_VIDEO_EXTENSIONS = [
   'mp4',
   'mov',
@@ -54,14 +105,42 @@ export const SUPPORTED_VIDEO_EXTENSIONS = [
   'flv',
 ];
 
+// ============================================================================
+// FFmpeg CORE CONFIGURATION
+// ============================================================================
+
+/** FFmpeg.wasm core version (multithreaded build) */
 export const FFMPEG_CORE_VERSION = '0.12.6';
+
+/**
+ * CDN URLs for FFmpeg core files (JavaScript, WebAssembly, workers).
+ * Uses npm and unpkg mirrors for redundancy and global availability.
+ */
 export const FFMPEG_CORE_BASE_URLS = [
   `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
   `https://unpkg.com/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
 ];
 
-// Note: GIF palettegen filter's stats_mode parameter is not supported in ffmpeg.wasm 5.1.4
-// and has been removed. FFmpeg uses its default statistics mode which works correctly.
+// ============================================================================
+// CONVERSION QUALITY PRESETS
+// ============================================================================
+
+/**
+ * Quality presets for GIF and WebP conversions.
+ *
+ * **GIF Presets:**
+ * - `low`: 10 FPS, 128 colors (smallest file, lowest quality)
+ * - `medium`: 15 FPS, 256 colors (balanced quality and size)
+ * - `high`: 24 FPS, 256 colors (maximum quality and fluidity)
+ *
+ * **WebP Presets:**
+ * - `low`: 10 FPS, 70% quality, compression 3 (fastest, smallest)
+ * - `medium`: 15 FPS, 85% quality, compression 4 (balanced)
+ * - `high`: 24 FPS, 95% quality, compression 6 (best quality, slowest)
+ *
+ * @note GIF palettegen filter's `stats_mode` parameter is not supported in
+ * FFmpeg.wasm 5.1.4. FFmpeg uses its default statistics mode which works correctly.
+ */
 export const QUALITY_PRESETS = {
   gif: {
     low: { fps: 10, colors: 128 },
@@ -75,44 +154,99 @@ export const QUALITY_PRESETS = {
   },
 } as const;
 
-// Timeout configurations (in milliseconds)
-export const TIMEOUT_FFMPEG_INIT = 90_000; // 90 seconds
-export const TIMEOUT_FFMPEG_DOWNLOAD = 90_000; // 90 seconds per core asset
-export const TIMEOUT_FFMPEG_WORKER_CHECK = 10_000; // 10 seconds for worker isolation check
-export const TIMEOUT_VIDEO_ANALYSIS = 30_000; // 30 seconds
+// ============================================================================
+// TIMEOUT CONFIGURATIONS (milliseconds)
+// ============================================================================
 
-// @deprecated Use TIMEOUT_CONFIG with calculateTimeout() instead
-export const TIMEOUT_CONVERSION = 60_000; // 60 seconds (backward compatibility)
+/** Timeout for FFmpeg initialization and library loading (90 seconds) */
+export const TIMEOUT_FFMPEG_INIT = 90_000;
 
-// Format-specific timeout configuration
+/** Timeout for each FFmpeg core asset download from CDN (90 seconds) */
+export const TIMEOUT_FFMPEG_DOWNLOAD = 90_000;
+
+/** Timeout for worker isolation check via SharedArrayBuffer (10 seconds) */
+export const TIMEOUT_FFMPEG_WORKER_CHECK = 10_000;
+
+/** Timeout for video metadata analysis (30 seconds) */
+export const TIMEOUT_VIDEO_ANALYSIS = 30_000;
+
+/**
+ * @deprecated Use `TIMEOUT_CONFIG` with `calculateTimeout()` instead.
+ * Kept for backward compatibility. Default conversion timeout (60 seconds).
+ */
+export const TIMEOUT_CONVERSION = 60_000;
+
+// ============================================================================
+// DYNAMIC TIMEOUT CONFIGURATION
+// ============================================================================
+
+/**
+ * Format-specific timeout configuration for adaptive timeout calculation.
+ *
+ * Timeout formula: `baseTimeout + (videoDurationSeconds * perSecondMultiplier)`
+ * Result is capped at `maxTimeout`.
+ *
+ * **WebP (fastest codec):**
+ * - Base: 60s, per-second: 6s, max: 120s
+ * - A 10s video gets 60 + 60 = 120s timeout
+ *
+ * **GIF (slowest format, Gifsicle tier):**
+ * - Base: 90s, per-second: 2s, max: 360s (6 minutes)
+ * - A 60s video gets 90 + 120 = 210s timeout
+ *
+ * **MP4 (medium speed):**
+ * - Base: 60s, per-second: 2s, max: 180s (3 minutes)
+ * - A 30s video gets 60 + 60 = 120s timeout
+ */
 export interface TimeoutConfig {
-  baseTimeout: number; // Base timeout in ms
-  perSecondMultiplier: number; // Additional time per second of video
-  maxTimeout: number; // Maximum timeout cap
+  /** Base timeout in milliseconds */
+  baseTimeout: number;
+  /** Additional time per second of video duration (milliseconds) */
+  perSecondMultiplier: number;
+  /** Maximum timeout cap (milliseconds) */
+  maxTimeout: number;
 }
 
 export const TIMEOUT_CONFIG: Record<string, TimeoutConfig> = {
   webp: {
-    baseTimeout: 60_000, // 60s base
-    perSecondMultiplier: 6_000, // +6s per second of video
-    maxTimeout: 120_000, // Cap at 120s
+    baseTimeout: 60_000,
+    perSecondMultiplier: 6_000,
+    maxTimeout: 120_000,
   },
   gif: {
-    baseTimeout: 90_000, // 90s base
-    perSecondMultiplier: 2_000, // +2s per second of video
-    maxTimeout: 360_000, // Cap at 360s (6 minutes)
+    baseTimeout: 90_000,
+    perSecondMultiplier: 2_000,
+    maxTimeout: 360_000,
   },
   mp4: {
-    baseTimeout: 60_000, // 60s base
-    perSecondMultiplier: 2_000, // +2s per second of video
-    maxTimeout: 180_000, // Cap at 180s (3 minutes)
+    baseTimeout: 60_000,
+    perSecondMultiplier: 2_000,
+    maxTimeout: 180_000,
   },
 };
 
-// WebP hard limits (from WebP spec)
-export const WEBP_MAX_DURATION_MS = 10_000; // 10 seconds
+// ============================================================================
+// WebP FORMAT CONSTRAINTS (from WebP specification)
+// ============================================================================
+
+/** Maximum animation duration per WebP spec: 10 seconds (10,000 ms) */
+export const WEBP_MAX_DURATION_MS = 10_000;
+
+/** Maximum frame count per WebP spec: 240 frames */
 export const WEBP_MAX_FRAMES = 240;
 
-// Duration thresholds for warnings (in milliseconds)
-export const DURATION_WARNING_GIF_MEDIUM = 30_000; // 30s
-export const DURATION_WARNING_GIF_LONG = 60_000; // 60s
+// ============================================================================
+// DURATION WARNING THRESHOLDS (milliseconds)
+// ============================================================================
+
+/**
+ * Warn if GIF duration exceeds this threshold (30 seconds).
+ * GIFs become very large files at this duration.
+ */
+export const DURATION_WARNING_GIF_MEDIUM = 30_000;
+
+/**
+ * Warn if GIF duration exceeds this threshold (60 seconds).
+ * GIFs become impractically large at this duration; recommend scale reduction.
+ */
+export const DURATION_WARNING_GIF_LONG = 60_000;

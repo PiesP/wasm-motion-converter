@@ -1,4 +1,4 @@
-import type { ConversionOptions, VideoMetadata } from '../types/conversion-types';
+// External dependencies
 import { COMPLEX_CODECS, QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
 import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
@@ -6,23 +6,56 @@ import { logger } from '../utils/logger';
 import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
 import { getOptimalFPS } from '../utils/quality-optimizer';
 import { muxAnimatedWebP } from '../utils/webp-muxer';
-import type { EncoderWorkerAPI } from '../workers/types';
 import { ffmpegService } from './ffmpeg-service';
 import { ModernGifService } from './modern-gif-service';
-import {
-  type WebCodecsCaptureMode,
-  WebCodecsDecoderService,
-  type WebCodecsFrameFormat,
-} from './webcodecs-decoder';
+import { WebCodecsDecoderService } from './webcodecs-decoder';
 import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool';
 
+// Type imports
+import type { ConversionOptions, VideoMetadata } from '../types/conversion-types';
+import type { EncoderWorkerAPI } from '../workers/types';
+import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from './webcodecs-decoder';
+
+/**
+ * Maximum number of frames for WebP animation
+ * Limits frame count to prevent memory issues and ensure compatibility
+ */
 const WEBP_ANIMATION_MAX_FRAMES = 240;
+
+/**
+ * Maximum duration in seconds for WebP animation
+ * Prevents excessively long animations that could cause performance issues
+ */
 const WEBP_ANIMATION_MAX_DURATION_SECONDS = 10;
+
+/**
+ * Minimum frame duration in milliseconds for WebP
+ * WebP spec requires at least 8ms per frame
+ */
 const MIN_WEBP_FRAME_DURATION_MS = 8;
-const MAX_WEBP_DURATION_24BIT = 0xffffff; // 24-bit duration ceiling per WebP spec
+
+/**
+ * Maximum frame duration value (24-bit ceiling)
+ * WebP format stores duration in 24 bits: 0xFFFFFF milliseconds
+ */
+const MAX_WEBP_DURATION_24BIT = 0xffffff;
+
+/**
+ * Transparent black background color for WebP animations
+ * RGBA(0, 0, 0, 0) for proper alpha channel handling
+ */
 const WEBP_BACKGROUND_COLOR = { r: 0, g: 0, b: 0, a: 0 } as const;
 
+/**
+ * Check if codec is complex (requires special handling)
+ *
+ * Complex codecs like AV1, VP9, and HEVC require direct WebCodecs frame extraction
+ * to avoid double transcoding overhead.
+ *
+ * @param codec - Video codec string (e.g., 'av01', 'vp09', 'hev1')
+ * @returns True if codec is in the complex codec list
+ */
 const isComplexCodec = (codec?: string): boolean => {
   if (!codec || codec === 'unknown') {
     return false;
@@ -31,6 +64,22 @@ const isComplexCodec = (codec?: string): boolean => {
   return COMPLEX_CODECS.some((entry) => normalized.includes(entry));
 };
 
+/**
+ * WebCodecs Conversion Service
+ *
+ * Provides GPU-accelerated video conversion using WebCodecs API for modern browsers.
+ * Extracts video frames directly from the video stream and encodes to GIF/WebP formats.
+ *
+ * Features:
+ * - Direct frame extraction via WebCodecs (bypasses H.264 intermediate transcoding)
+ * - Worker pool for parallel GIF encoding
+ * - Complex codec support (AV1, VP9, HEVC) with direct PNG pipeline
+ * - Automatic fallback to FFmpeg for unsupported codecs
+ * - Memory-aware processing with critical memory checks
+ *
+ * @see webcodecs-decoder.ts for frame extraction implementation
+ * @see modern-gif-service.ts for GPU-accelerated GIF encoding
+ */
 class WebCodecsConversionService {
   private gifWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
 
@@ -56,6 +105,16 @@ class WebCodecsConversionService {
     }
   }
 
+  /**
+   * Calculate maximum WebP frame count
+   *
+   * Limits frame count based on duration and FPS to prevent memory issues.
+   * Caps at WEBP_ANIMATION_MAX_FRAMES (240) and WEBP_ANIMATION_MAX_DURATION_SECONDS (10s).
+   *
+   * @param targetFps - Target frames per second
+   * @param durationSeconds - Optional video duration in seconds
+   * @returns Maximum number of frames to extract
+   */
   private getMaxWebPFrames(targetFps: number, durationSeconds?: number): number {
     const cappedDuration = Math.max(
       1,
@@ -68,6 +127,15 @@ class WebCodecsConversionService {
     return Math.max(1, Math.min(estimatedFrames, WEBP_ANIMATION_MAX_FRAMES));
   }
 
+  /**
+   * Create WebP frame encoder function
+   *
+   * Returns a reusable encoder function that converts ImageData to WebP format.
+   * Uses OffscreenCanvas when available for better performance.
+   *
+   * @param qualityRatio - Quality ratio (0.0 to 1.0)
+   * @returns Async function that encodes ImageData to WebP Uint8Array
+   */
   private createWebPFrameEncoder(qualityRatio: number): (frame: ImageData) => Promise<Uint8Array> {
     let canvas: OffscreenCanvas | HTMLCanvasElement | null = null;
     let context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D | null = null;
@@ -124,6 +192,14 @@ class WebCodecsConversionService {
     };
   }
 
+  /**
+   * Validate WebP blob output
+   *
+   * Checks WebP file signature, minimum size, and decodability.
+   *
+   * @param blob - WebP blob to validate
+   * @returns Validation result with optional failure reason
+   */
   private async validateWebPBlob(blob: Blob): Promise<{ valid: boolean; reason?: string }> {
     if (blob.size < FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_WEBP_SIZE_BYTES) {
       return {
@@ -157,6 +233,17 @@ class WebCodecsConversionService {
     return { valid: true };
   }
 
+  /**
+   * Build frame duration array for WebP animation
+   *
+   * Calculates frame durations based on timestamps.
+   * Falls back to default FPS-based duration if timestamps are invalid.
+   *
+   * @param timestamps - Array of frame timestamps in seconds
+   * @param fps - Target frames per second
+   * @param frameCount - Total number of frames
+   * @returns Array of frame durations in milliseconds
+   */
   private buildWebPFrameDurations(timestamps: number[], fps: number, frameCount: number): number[] {
     const defaultDuration = Math.max(
       MIN_WEBP_FRAME_DURATION_MS,
@@ -194,6 +281,21 @@ class WebCodecsConversionService {
     return durations.slice(0, frameCount);
   }
 
+  /**
+   * Mux WebP frames into animated WebP
+   *
+   * Combines encoded WebP frames with timing information into single animated WebP file.
+   *
+   * @param params - Muxing parameters
+   * @param params.encodedFrames - Array of encoded WebP frame data
+   * @param params.timestamps - Frame timestamps in seconds
+   * @param params.width - Frame width in pixels
+   * @param params.height - Frame height in pixels
+   * @param params.fps - Target frames per second
+   * @param params.onProgress - Optional progress callback
+   * @param params.shouldCancel - Optional cancellation check
+   * @returns Animated WebP blob or null if no frames
+   */
   private async muxWebPFrames(params: {
     encodedFrames: Uint8Array[];
     timestamps: number[];
@@ -253,6 +355,15 @@ class WebCodecsConversionService {
     return new Blob([muxed], { type: 'image/webp' });
   }
 
+  /**
+   * Check if WebCodecs conversion is available for this video
+   *
+   * Validates codec support, browser capabilities, and memory availability.
+   *
+   * @param file - Input video file
+   * @param metadata - Optional video metadata with codec information
+   * @returns True if WebCodecs conversion can be used
+   */
   async canConvert(file: File, metadata?: VideoMetadata): Promise<boolean> {
     if (!metadata?.codec || metadata.codec === 'unknown') {
       return false;
@@ -276,6 +387,19 @@ class WebCodecsConversionService {
     return isWebCodecsCodecSupported(normalizedCodec, file.type, metadata);
   }
 
+  /**
+   * Attempt WebCodecs conversion with automatic FFmpeg fallback
+   *
+   * Tries WebCodecs conversion first, returns null if not supported or fails.
+   * Caller should fall back to FFmpeg when null is returned.
+   *
+   * @param file - Input video file
+   * @param format - Target format ('gif' or 'webp')
+   * @param options - Conversion options (quality, scale)
+   * @param metadata - Optional video metadata
+   * @returns Converted blob or null if WebCodecs path not available/failed
+   * @throws Error if conversion cancelled by user
+   */
   async maybeConvert(
     file: File,
     format: 'gif' | 'webp',
@@ -306,6 +430,15 @@ class WebCodecsConversionService {
     }
   }
 
+  /**
+   * Determine if WebCodecs direct path should be used
+   *
+   * Direct WebCodecs path is used for complex codecs (AV1, VP9, HEVC)
+   * to avoid double transcoding overhead.
+   *
+   * @param metadata - Video metadata with codec information
+   * @returns True if WebCodecs direct path should be used
+   */
   private shouldUseWebCodecsPath(metadata: VideoMetadata | undefined): boolean {
     if (!isComplexCodec(metadata?.codec)) {
       return false;
@@ -316,6 +449,24 @@ class WebCodecsConversionService {
     return true;
   }
 
+  /**
+   * Convert via WebCodecs direct frame extraction
+   *
+   * Extracts PNG frames directly from complex codecs (AV1, VP9, HEVC)
+   * without H.264 intermediate transcoding. Uses FFmpeg for final encoding.
+   *
+   * @param params - Conversion parameters
+   * @param params.decoder - WebCodecs decoder service instance
+   * @param params.file - Input video file
+   * @param params.format - Target format ('gif' or 'webp')
+   * @param params.options - Conversion options (quality, scale)
+   * @param params.targetFps - Target frames per second
+   * @param params.scale - Scale factor (0.0 to 1.0)
+   * @param params.metadata - Optional video metadata
+   * @param params.reportDecodeProgress - Progress callback for decoding phase
+   * @param params.capturedFrames - Optional array to collect captured frames
+   * @returns Converted blob or null if path is not suitable
+   */
   private async convertViaWebCodecsFrames(params: {
     decoder: WebCodecsDecoderService;
     file: File;
@@ -499,6 +650,30 @@ class WebCodecsConversionService {
     }
   }
 
+  /**
+   * Convert video to GIF or WebP format
+   *
+   * Main conversion method using WebCodecs API for frame extraction.
+   * Automatically selects optimal conversion path based on codec and format:
+   * - GIF: FFmpeg direct path (better performance)
+   * - WebP: WebCodecs + muxer (GPU-accelerated)
+   * - Complex codecs: Direct PNG extraction without H.264 transcoding
+   *
+   * @param file - Input video file
+   * @param format - Target format ('gif' or 'webp')
+   * @param options - Conversion options (quality, scale)
+   * @param metadata - Optional video metadata
+   * @returns Converted video blob
+   * @throws Error if conversion fails or is cancelled
+   *
+   * @example
+   * const blob = await webcodecsConversionService.convert(
+   *   videoFile,
+   *   'webp',
+   *   { quality: 'high', scale: 1.0 },
+   *   metadata
+   * );
+   */
   async convert(
     file: File,
     format: 'gif' | 'webp',
@@ -1049,6 +1224,12 @@ class WebCodecsConversionService {
     }
   }
 
+  /**
+   * Clean up worker pool resources
+   *
+   * Terminates all worker threads and releases memory.
+   * Should be called when service is no longer needed.
+   */
   cleanup(): void {
     this.gifWorkerPool?.terminate();
     this.gifWorkerPool = null;

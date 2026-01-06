@@ -1,10 +1,57 @@
-import type { VideoMetadata } from '../types/conversion-types';
 import { ffmpegService } from './ffmpeg-service';
 
+import type { VideoMetadata } from '../types/conversion-types';
+
+/**
+ * Timeout for video metadata loading (5 seconds)
+ */
+const VIDEO_METADATA_TIMEOUT_MS = 5000;
+
+/**
+ * Default codec value when codec information is unavailable
+ */
+const UNKNOWN_CODEC = 'unknown';
+
+/**
+ * Default numeric value for unavailable metadata fields
+ */
+const DEFAULT_METADATA_VALUE = 0;
+
+/**
+ * Analyze video file using FFmpeg to extract comprehensive metadata
+ * Provides accurate codec, framerate, and bitrate information
+ * Uses FFmpeg probe for deep inspection of video container
+ *
+ * @param file - Input video file to analyze
+ * @returns Complete video metadata including codec details
+ *
+ * @example
+ * const metadata = await analyzeVideo(file);
+ * console.log(`${metadata.width}x${metadata.height} @ ${metadata.framerate}fps`);
+ */
 export function analyzeVideo(file: File): Promise<VideoMetadata> {
   return ffmpegService.getVideoMetadata(file);
 }
 
+/**
+ * Quick video analysis using browser's native video element
+ * Extracts basic metadata (width, height, duration) without codec details
+ * Much faster than FFmpeg analysis but less comprehensive
+ * Includes 5-second timeout for reliability
+ *
+ * @param file - Input video file to analyze
+ * @returns Basic video metadata (codec will be 'unknown')
+ * @throws Error if video loading fails or times out
+ *
+ * @example
+ * try {
+ *   const metadata = await analyzeVideoQuick(file);
+ *   console.log(`Quick analysis: ${metadata.width}x${metadata.height}`);
+ * } catch (error) {
+ *   console.error('Quick analysis failed, falling back to FFmpeg');
+ *   const metadata = await analyzeVideo(file);
+ * }
+ */
 export function analyzeVideoQuick(file: File): Promise<VideoMetadata> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -12,7 +59,7 @@ export function analyzeVideoQuick(file: File): Promise<VideoMetadata> {
     const timeoutId = setTimeout(() => {
       cleanup();
       reject(new Error('Video metadata loading timed out'));
-    }, 5000);
+    }, VIDEO_METADATA_TIMEOUT_MS);
 
     const cleanup = () => {
       clearTimeout(timeoutId);
@@ -24,12 +71,12 @@ export function analyzeVideoQuick(file: File): Promise<VideoMetadata> {
     video.preload = 'metadata';
     video.onloadedmetadata = () => {
       const metadata: VideoMetadata = {
-        width: video.videoWidth || 0,
-        height: video.videoHeight || 0,
-        duration: Number.isFinite(video.duration) ? video.duration : 0,
-        codec: 'unknown',
-        framerate: 0,
-        bitrate: 0,
+        width: video.videoWidth || DEFAULT_METADATA_VALUE,
+        height: video.videoHeight || DEFAULT_METADATA_VALUE,
+        duration: Number.isFinite(video.duration) ? video.duration : DEFAULT_METADATA_VALUE,
+        codec: UNKNOWN_CODEC,
+        framerate: DEFAULT_METADATA_VALUE,
+        bitrate: DEFAULT_METADATA_VALUE,
       };
       cleanup();
       resolve(metadata);

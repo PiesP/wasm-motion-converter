@@ -1,7 +1,66 @@
+/**
+ * App Store
+ *
+ * Global application state management using SolidJS signals.
+ * Tracks high-level application state, FFmpeg loading progress, and environment support.
+ */
+
+// External dependencies
 import { createSignal } from 'solid-js';
+
+// Type imports
 import type { AppState } from '../types/app-types';
 
+/**
+ * Current application state
+ *
+ * Tracks the global workflow state:
+ * - 'idle': Waiting for file input
+ * - 'loading-ffmpeg': Initializing FFmpeg (first-time ~30MB download)
+ * - 'analyzing': Analyzing video metadata
+ * - 'converting': Encoding video
+ * - 'done': Conversion completed successfully
+ * - 'error': Error occurred
+ */
 export const [appState, setAppState] = createSignal<AppState>('idle');
-export const [loadingProgress, setLoadingProgress] = createSignal(0);
-export const [loadingStatusMessage, setLoadingStatusMessage] = createSignal('');
-export const [environmentSupported, setEnvironmentSupported] = createSignal(true);
+
+/**
+ * FFmpeg loading progress (0-100)
+ *
+ * Progress percentage for FFmpeg initialization.
+ * Only relevant during 'loading-ffmpeg' state.
+ */
+export const [loadingProgress, setLoadingProgress] = createSignal<number>(0);
+
+/**
+ * FFmpeg loading status message
+ *
+ * Human-readable status message during FFmpeg initialization.
+ * Examples: "Downloading FFmpeg core...", "Initializing worker..."
+ */
+export const [loadingStatusMessage, setLoadingStatusMessage] = createSignal<string>('');
+
+/**
+ * Environment support status
+ *
+ * Indicates whether the browser environment meets requirements:
+ * - SharedArrayBuffer support (for FFmpeg multithreading)
+ * - crossOriginIsolated (COOP/COEP headers)
+ * - Web Workers support
+ *
+ * Set to false if critical features are missing.
+ */
+export const [environmentSupported, setEnvironmentSupported] = createSignal<boolean>(true);
+
+/**
+ * Reset app store to initial state
+ *
+ * Clears all app-level state. Use when starting a new conversion
+ * or recovering from errors.
+ */
+export const resetAppStore = (): void => {
+  setAppState('idle');
+  setLoadingProgress(0);
+  setLoadingStatusMessage('');
+  // Note: environmentSupported is not reset (determined at startup)
+};

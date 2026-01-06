@@ -31,7 +31,7 @@
     "analyze": "vite build && echo '\nBundle analysis generated at dist/stats.html'",
     "preview": "vite preview",
     "clean": "rimraf dist node_modules/.vite",
-    "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s typecheck"
+    "quality": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s typecheck"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",

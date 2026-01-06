@@ -1,7 +1,7 @@
 import type { Component } from 'solid-js';
 import { For, onCleanup, onMount, Show } from 'solid-js';
 
-import { confirmationStore } from '../stores/confirmation-store';
+import { cancelDialog, confirmDialog, getConfirmationState } from '../stores/confirmation-store';
 
 import type { ValidationWarning } from '../types/validation';
 
@@ -49,14 +49,14 @@ function getSeverityIcon(severity: ValidationWarning['severity']): string {
  * ```
  */
 const ConfirmationModal: Component = () => {
-  const state = () => confirmationStore.state;
+  const state = getConfirmationState;
   let modalRef: HTMLDivElement | undefined;
   let cancelButtonRef: HTMLButtonElement | undefined;
 
   // Handle ESC key to close modal
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Escape' && state().isVisible) {
-      confirmationStore.cancel();
+      cancelDialog();
     }
   };
 
@@ -108,7 +108,7 @@ const ConfirmationModal: Component = () => {
         onClick={(e) => {
           // Close modal when clicking backdrop
           if (e.target === e.currentTarget) {
-            confirmationStore.cancel();
+            cancelDialog();
           }
         }}
       >
@@ -162,7 +162,7 @@ const ConfirmationModal: Component = () => {
             <button
               ref={cancelButtonRef}
               type="button"
-              onClick={() => confirmationStore.cancel()}
+              onClick={() => cancelDialog()}
               class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-gray-900 dark:text-gray-100"
               aria-label="Cancel conversion and close modal"
             >
@@ -170,7 +170,7 @@ const ConfirmationModal: Component = () => {
             </button>
             <button
               type="button"
-              onClick={() => confirmationStore.confirm()}
+              onClick={() => confirmDialog()}
               class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
               aria-label="Proceed with conversion despite warnings"
             >

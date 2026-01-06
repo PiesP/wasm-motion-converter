@@ -1,23 +1,64 @@
 <!doctype html>
 <html lang="en">
+  <!--
+    Motion Converter - Browser-based Video to GIF/WebP Conversion
+    ============================================================
+
+    This single-page application provides in-browser video conversion using:
+    - WebCodecs API (GPU-accelerated frame extraction when available)
+    - FFmpeg.wasm (fallback for broad format support)
+    - Web Workers (background processing without blocking UI)
+
+    Features:
+    - Client-side only: No server uploads or data transmission
+    - Multiple conversion formats: GIF, WebP
+    - Progress tracking with ETA calculation
+    - Memory monitoring and warnings
+    - Dark/light theme support
+    - Accessibility-first design
+
+    Built with:
+    - SolidJS (reactive UI framework)
+    - Vite (fast build tooling)
+    - Tailwind CSS (utility-first styling)
+    - TypeScript (type-safe implementation)
+  -->
   <head>
+    <!-- Character encoding and viewport configuration -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Theme support: Allow light/dark mode detection -->
+    <meta name="color-scheme" content="light dark" />
+
+    <!-- AdSense integration (populated at build time) -->
     %%ADSENSE_META%%
+
+    <!-- Page title and search engine metadata -->
     <title>Motion Converter - Video to GIF/WebP</title>
     <meta
       name="description"
       content="Convert videos to animated GIF or WebP images in your browser. No uploads, all processing happens locally."
     />
+
+    <!-- Branding and accessibility -->
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+
+    <!-- Performance optimization: Preconnect to CDN servers for FFmpeg.wasm -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
-    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="preconnect" href="https://unpkg.com" crossorigin />
     <link rel="dns-prefetch" href="https://unpkg.com" />
+
+    <!-- AdSense script (populated at build time, optional) -->
     %%ADSENSE_SCRIPT%%
   </head>
   <body>
+    <!-- Root element: SolidJS renders application here -->
+    <!-- Required for application initialization. If missing, check console for errors. -->
     <div id="root"></div>
+
+    <!-- Application entry point: SolidJS rendering with TypeScript -->
     <script type="module" src="/src/index.tsx"></script>
   </body>
 </html>

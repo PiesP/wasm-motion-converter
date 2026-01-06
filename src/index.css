@@ -1,11 +1,49 @@
+/**
+ * Global Styles for Motion Converter
+ *
+ * Provides base styling for the application including:
+ * - Tailwind CSS framework integration
+ * - Dark mode support with custom variant
+ * - System font stack and typography smoothing
+ * - Theme-aware background colors with smooth transitions
+ * - Custom keyframe animations for UI transitions
+ */
+
 @import "tailwindcss";
 
+/**
+ * Custom dark mode variant
+ *
+ * Enables dark mode styling using .dark class selector
+ * for both direct elements and nested descendants.
+ */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ============================================================================
+   Global Element Styles
+   ============================================================================ */
+
+/**
+ * Border box sizing for all elements
+ *
+ * Ensures padding and borders are included in element dimensions,
+ * simplifying layout calculations across the application.
+ */
 * {
   box-sizing: border-box;
 }
 
+/* ============================================================================
+   Typography & Body Styles
+   ============================================================================ */
+
+/**
+ * Root body element styling
+ *
+ * Applies system font stack with fallbacks, antialiasing for crisp text,
+ * and light theme background color. Smooth transition enables visual
+ * feedback during theme switching.
+ */
 body {
   margin: 0;
   font-family:
@@ -17,16 +55,44 @@ body {
   transition: background-color 0.2s;
 }
 
+/**
+ * Dark mode body background
+ *
+ * Provides high contrast dark background (#0f172a) for reduced eye strain
+ * in dark environments. Matches dark mode color scheme across application.
+ */
 html.dark body {
   background-color: #0f172a;
 }
 
+/* ============================================================================
+   Layout: Root Container
+   ============================================================================ */
+
+/**
+ * Root SolidJS app container
+ *
+ * Establishes full-height flex container for main application layout,
+ * enabling footer to stick to bottom when content is minimal.
+ */
 #root {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
 
+/* ============================================================================
+   Animations & Transitions
+   ============================================================================ */
+
+/**
+ * Slide-in animation keyframes
+ *
+ * Animates elements from right to left with fade-in effect.
+ * Used for toast notifications and modal transitions.
+ *
+ * Duration: 0.3s with ease-out timing for natural acceleration curve
+ */
 @keyframes slide-in {
   from {
     transform: translateX(100%);
@@ -38,6 +104,12 @@ html.dark body {
   }
 }
 
+/**
+ * Slide-in animation utility class
+ *
+ * Applies slide-in keyframes to elements for smooth entry animations.
+ * Commonly used for toast notifications and dynamic content.
+ */
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }

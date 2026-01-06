@@ -1,9 +1,3 @@
-import type {
-  ConversionScale,
-  ConversionSettings,
-  PerformanceWarning,
-  VideoMetadata,
-} from '../types/conversion-types';
 import {
   COMPLEX_CODECS,
   WARN_DURATION_SECONDS,
@@ -15,6 +9,46 @@ import {
 import { formatBytes } from '../utils/format-bytes';
 import { formatDuration } from '../utils/format-duration';
 
+import type {
+  ConversionScale,
+  ConversionSettings,
+  PerformanceWarning,
+  VideoMetadata,
+} from '../types/conversion-types';
+
+/**
+ * Scale factor: 50% of original resolution
+ */
+const SCALE_50_PERCENT = 0.5;
+
+/**
+ * Scale factor: 75% of original resolution
+ */
+const SCALE_75_PERCENT = 0.75;
+
+/**
+ * Resolution multiplier for GIF-specific scale recommendations
+ */
+const GIF_RESOLUTION_MULTIPLIER = 1.5;
+
+/**
+ * Resolution multiplier for critical scale recommendations
+ */
+const CRITICAL_RESOLUTION_MULTIPLIER = 2;
+
+/**
+ * Check video file and metadata for performance issues
+ * Analyzes file size, resolution, duration, and codec complexity
+ * Returns warnings with severity levels and actionable recommendations
+ *
+ * @param file - Input video file
+ * @param metadata - Video metadata (width, height, duration, codec)
+ * @returns Array of performance warnings with recommendations
+ *
+ * @example
+ * const warnings = checkPerformance(file, metadata);
+ * warnings.forEach(w => console.log(`${w.severity}: ${w.message}`));
+ */
 export function checkPerformance(file: File, metadata: VideoMetadata): PerformanceWarning[] {
   const warnings: PerformanceWarning[] = [];
 
@@ -73,9 +107,33 @@ export function checkPerformance(file: File, metadata: VideoMetadata): Performan
   return warnings;
 }
 
+/**
+ * Select the lower of two scale values
+ * Used to ensure scale recommendations don't increase current scale
+ *
+ * @param current - Current scale value
+ * @param target - Target scale value
+ * @returns The lower of the two scale values
+ */
 const preferLowerScale = (current: ConversionScale, target: ConversionScale): ConversionScale =>
   current < target ? current : target;
 
+/**
+ * Generate recommended settings based on performance warnings
+ * Automatically adjusts quality and scale settings for optimal performance
+ * Returns null if no changes are recommended
+ *
+ * @param file - Input video file
+ * @param metadata - Video metadata (width, height, duration, codec)
+ * @param current - Current conversion settings
+ * @returns Updated settings if changes recommended, null otherwise
+ *
+ * @example
+ * const recommended = getRecommendedSettings(file, metadata, currentSettings);
+ * if (recommended) {
+ *   console.log(`Recommend quality: ${recommended.quality}, scale: ${recommended.scale}`);
+ * }
+ */
 export function getRecommendedSettings(
   file: File,
   metadata: VideoMetadata,
@@ -98,22 +156,25 @@ export function getRecommendedSettings(
     changed = true;
   }
 
-  if (file.size > WARN_FILE_SIZE_CRITICAL || pixels > WARN_RESOLUTION_PIXELS * 2) {
-    const newScale = preferLowerScale(next.scale, 0.5);
+  if (
+    file.size > WARN_FILE_SIZE_CRITICAL ||
+    pixels > WARN_RESOLUTION_PIXELS * CRITICAL_RESOLUTION_MULTIPLIER
+  ) {
+    const newScale = preferLowerScale(next.scale, SCALE_50_PERCENT);
     if (newScale !== next.scale) {
       next.scale = newScale;
       changed = true;
     }
   } else if (pixels > WARN_RESOLUTION_PIXELS) {
-    const newScale = preferLowerScale(next.scale, 0.75);
+    const newScale = preferLowerScale(next.scale, SCALE_75_PERCENT);
     if (newScale !== next.scale) {
       next.scale = newScale;
       changed = true;
     }
   }
 
-  if (isGif && pixels > WARN_RESOLUTION_PIXELS * 1.5) {
-    const newScale = preferLowerScale(next.scale, 0.5);
+  if (isGif && pixels > WARN_RESOLUTION_PIXELS * GIF_RESOLUTION_MULTIPLIER) {
+    const newScale = preferLowerScale(next.scale, SCALE_50_PERCENT);
     if (newScale !== next.scale) {
       next.scale = newScale;
       changed = true;

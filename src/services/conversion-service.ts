@@ -1,4 +1,3 @@
-import type { ConversionFormat, ConversionOptions, VideoMetadata } from '../types/conversion-types';
 import {
   getCodecCapability,
   getCodecErrorMessage,
@@ -11,11 +10,28 @@ import { ffmpegService } from './ffmpeg-service';
 import { webcodecsConversionService } from './webcodecs-conversion-service';
 import { isWebCodecsDecodeSupported } from './webcodecs-support';
 
+import type { ConversionFormat, ConversionOptions, VideoMetadata } from '../types/conversion-types';
+
+/**
+ * Codec value indicating unknown or undetected codec
+ */
+const UNKNOWN_CODEC = 'unknown';
+
+/**
+ * Resolve video metadata
+ *
+ * If metadata is incomplete or missing codec information, probes the file
+ * using FFmpeg to obtain complete metadata.
+ *
+ * @param file - Video file to analyze
+ * @param metadata - Optional existing metadata
+ * @returns Resolved metadata or undefined if probe fails
+ */
 const resolveMetadata = async (
   file: File,
   metadata?: VideoMetadata
 ): Promise<VideoMetadata | undefined> => {
-  if (metadata?.codec && metadata.codec !== 'unknown') {
+  if (metadata?.codec && metadata.codec !== UNKNOWN_CODEC) {
     return metadata;
   }
 
@@ -33,11 +49,27 @@ const resolveMetadata = async (
 };
 
 /**
- * Smart path selection: Routes conversion based on codec+format+availability
- * Order of checks (by priority):
- * 1. Codec requirements (WebCodecs-only vs FFmpeg-supported)
- * 2. Format constraints (GIF performance vs other formats)
- * 3. Format-specific logic (WebP quality vs GIF speed)
+ * Select optimal conversion path based on codec and format
+ *
+ * Smart path selection that routes conversion based on codec capabilities,
+ * format constraints, and WebCodecs availability. Implements a priority-based
+ * decision tree to optimize for performance and compatibility.
+ *
+ * Priority order:
+ * 1. Codec requirements (WebCodecs-only codecs like AV1)
+ * 2. Format constraints (GIF prefers direct FFmpeg for performance)
+ * 3. WebCodecs-first for other formats when available
+ * 4. FFmpeg fallback for all remaining cases
+ *
+ * @param file - Video file to convert
+ * @param format - Target format (gif or webp)
+ * @param options - Conversion options (quality, scale, duration)
+ * @param resolvedMetadata - Resolved video metadata
+ * @param strategy - Conversion strategy with overrides
+ * @param webCodecsAvailable - Whether WebCodecs API is available
+ * @param codec - Video codec identifier
+ * @param codecCapability - Codec capability classification
+ * @returns Converted video blob
  */
 async function selectConversionPath(
   file: File,
@@ -141,6 +173,33 @@ async function selectConversionPath(
   return ffmpegService.convertToWebP(file, options, resolvedMetadata);
 }
 
+/**
+ * Convert video file to specified format
+ *
+ * Main entry point for video conversion. Handles metadata resolution,
+ * FFmpeg initialization, strategy application, and optimal path selection
+ * based on codec capabilities and format requirements.
+ *
+ * Features:
+ * - Parallel FFmpeg initialization and metadata resolution
+ * - Automatic strategy overrides for scale and quality
+ * - Codec-aware routing to WebCodecs or FFmpeg paths
+ * - Comprehensive logging for debugging and monitoring
+ *
+ * @param file - Input video file
+ * @param format - Target format (gif or webp)
+ * @param options - Conversion options (quality, scale, duration)
+ * @param metadata - Optional pre-resolved video metadata
+ * @returns Converted video blob
+ *
+ * @example
+ * const blob = await convertVideo(
+ *   videoFile,
+ *   'gif',
+ *   { quality: 'high', scale: 1.0 },
+ *   videoMetadata
+ * );
+ */
 export async function convertVideo(
   file: File,
   format: ConversionFormat,

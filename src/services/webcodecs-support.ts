@@ -1,23 +1,75 @@
-import type { VideoMetadata } from '../types/conversion-types';
+// External dependencies
 import { getErrorMessage } from '../utils/error-utils';
 import { logger } from '../utils/logger';
 
+// Type imports
+import type { VideoMetadata } from '../types/conversion-types';
+
+/**
+ * WebCodecs API support status
+ *
+ * Represents the availability of various WebCodecs APIs and related browser features
+ * for GPU-accelerated video/image processing.
+ */
 export type WebCodecsSupportStatus = {
+  /** Any WebCodecs API is available */
   available: boolean;
+  /** VideoDecoder API (decode video frames) */
   videoDecoder: boolean;
+  /** VideoEncoder API (encode video frames) */
   videoEncoder: boolean;
+  /** ImageDecoder API (decode images) */
   imageDecoder: boolean;
+  /** ImageEncoder API (encode images) */
   imageEncoder: boolean;
+  /** VideoFrame API (represent video frames) */
   videoFrame: boolean;
+  /** MediaStreamTrackProcessor API (extract frames from stream) */
   trackProcessor: boolean;
+  /** HTMLMediaElement.captureStream() support */
   captureStream: boolean;
 };
 
+/**
+ * Codec candidates for H.264 encoder
+ *
+ * Listed in order of preference:
+ * - Baseline Profile: Most compatible, lower compression
+ * - Main Profile: Better compression
+ * - High Profile: Best quality, less compatible
+ */
+const H264_ENCODER_CODECS = [
+  'avc1.42E01E', // Baseline Level 3.0
+  'avc1.4D401E', // Main Level 3.0
+  'avc1.42001E', // Baseline Level 3.0 (alt)
+  'avc1.640028', // High Level 4.0
+];
+
+/** Cached WebCodecs support status to avoid repeated checks */
 let cachedStatus: WebCodecsSupportStatus | null = null;
 
+/**
+ * Get global scope with fallback
+ *
+ * @returns Global scope object (globalThis or empty object)
+ */
 const getGlobal = (): typeof globalThis =>
   typeof globalThis !== 'undefined' ? globalThis : ({} as typeof globalThis);
 
+/**
+ * Get WebCodecs API support status
+ *
+ * Detects availability of WebCodecs APIs (VideoDecoder, VideoEncoder, ImageDecoder, etc.)
+ * and related browser features. Result is cached after first call.
+ *
+ * @returns Support status object with flags for each API
+ *
+ * @example
+ * const status = getWebCodecsSupportStatus();
+ * if (status.videoDecoder && status.trackProcessor) {
+ *   // Use GPU-accelerated video decoding
+ * }
+ */
 export const getWebCodecsSupportStatus = (): WebCodecsSupportStatus => {
   if (cachedStatus) {
     return cachedStatus;
@@ -59,6 +111,16 @@ export const getWebCodecsSupportStatus = (): WebCodecsSupportStatus => {
   return cachedStatus;
 };
 
+/**
+ * Check if WebCodecs video decoding is supported
+ *
+ * Requires HTMLVideoElement, HTMLCanvasElement, and at least one of:
+ * - MediaStreamTrackProcessor + captureStream (preferred)
+ * - requestVideoFrameCallback (fallback)
+ * - Video seeking (universal fallback)
+ *
+ * @returns True if WebCodecs decoding is usable
+ */
 export const isWebCodecsDecodeSupported = (): boolean => {
   const status = getWebCodecsSupportStatus();
   const hasVideoElement =
@@ -84,8 +146,27 @@ export const isWebCodecsDecodeSupported = (): boolean => {
   return true;
 };
 
+/**
+ * Normalize codec string to lowercase
+ *
+ * @param codec - Raw codec string (e.g., 'H264', 'AV1')
+ * @returns Normalized codec string (e.g., 'h264', 'av1')
+ */
 const normalizeCodec = (codec: string): string => codec.trim().toLowerCase();
 
+/**
+ * Get codec string candidates for testing
+ *
+ * Maps generic codec names to specific codec strings with profiles/levels.
+ * Returns multiple candidates for fallback testing.
+ *
+ * @param codec - Generic codec name (e.g., 'h264', 'av1', 'vp9')
+ * @returns Array of specific codec strings to test
+ *
+ * @example
+ * getCodecCandidates('av1') // ['av01.0.05M.08', 'av01.0.08M.08', 'av01.0.08M.10']
+ * getCodecCandidates('h264') // ['avc1.42E01E', 'avc1.4D401E']
+ */
 const getCodecCandidates = (codec: string): string[] => {
   const normalized = normalizeCodec(codec);
   switch (normalized) {
@@ -113,6 +194,27 @@ const getCodecCandidates = (codec: string): string[] => {
   }
 };
 
+/**
+ * Check if specific codec is supported for WebCodecs decoding
+ *
+ * Tests codec support using multiple methods:
+ * 1. VideoDecoder.isConfigSupported() (preferred, hardware-accelerated)
+ * 2. navigator.mediaCapabilities.decodingInfo() (fallback)
+ * 3. HTMLVideoElement.canPlayType() (universal fallback)
+ *
+ * @param codec - Codec name (e.g., 'h264', 'av1', 'vp9')
+ * @param fileType - Video MIME type (e.g., 'video/mp4', 'video/webm')
+ * @param metadata - Optional video metadata for accurate testing
+ * @returns True if codec is supported
+ *
+ * @example
+ * const supported = await isWebCodecsCodecSupported('av1', 'video/mp4', metadata);
+ * if (supported) {
+ *   // Use direct WebCodecs decoding
+ * } else {
+ *   // Fall back to FFmpeg
+ * }
+ */
 export async function isWebCodecsCodecSupported(
   codec: string,
   fileType: string,
@@ -192,18 +294,27 @@ export async function isWebCodecsCodecSupported(
   return false;
 }
 
-// H.264 encoder codec strings in order of preference
-// - avc1.42E01E: Baseline Profile Level 3.0 (most compatible)
-// - avc1.4D401E: Main Profile Level 3.0 (better compression)
-// - avc1.42001E: Baseline Profile Level 3.0 (alternative)
-// - avc1.640028: High Profile Level 4.0 (best quality but less compatible)
-const H264_ENCODER_CODECS = [
-  'avc1.42E01E', // Baseline Level 3.0
-  'avc1.4D401E', // Main Level 3.0
-  'avc1.42001E', // Baseline Level 3.0 (alt)
-  'avc1.640028', // High Level 4.0
-];
-
+/**
+ * Get H.264 encoder configuration supported by the browser
+ *
+ * Tests multiple H.264 profiles (Baseline, Main, High) with hardware and software acceleration.
+ * Returns the first supported configuration.
+ *
+ * @param params - Encoder parameters (width, height, bitrate, framerate)
+ * @returns Supported VideoEncoderConfig or null if no config is supported
+ *
+ * @example
+ * const config = await getH264EncoderConfig({
+ *   width: 1280,
+ *   height: 720,
+ *   bitrate: 2_000_000,
+ *   framerate: 30
+ * });
+ * if (config) {
+ *   const encoder = new VideoEncoder(...);
+ *   encoder.configure(config);
+ * }
+ */
 export async function getH264EncoderConfig(params: {
   width: number;
   height: number;

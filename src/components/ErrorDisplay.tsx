@@ -1,16 +1,54 @@
-import { type Component, createMemo, Show } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createMemo, onMount, Show } from 'solid-js';
+
 import type { ConversionErrorType } from '../types/conversion-types';
 
+/**
+ * Error display component props
+ */
 interface ErrorDisplayProps {
+  /** Error message to display */
   message: string;
+  /** Optional suggestion for resolving the error */
   suggestion?: string;
+  /** Type of conversion error for context-specific handling */
   errorType?: ConversionErrorType;
+  /** Callback when user clicks retry button */
   onRetry: () => void;
+  /** Callback when user wants to select a different file */
   onSelectNewFile: () => void;
+  /** Optional callback to dismiss the error message */
   onDismiss?: () => void;
 }
 
+/**
+ * Error display component
+ *
+ * Displays conversion errors with user-friendly messages, suggestions,
+ * and action buttons. Provides context-specific error handling based on
+ * error type (format, codec, timeout, memory, general).
+ *
+ * @example
+ * ```tsx
+ * <ErrorDisplay
+ *   message="Conversion failed due to timeout"
+ *   errorType="timeout"
+ *   suggestion="Try reducing video length or quality"
+ *   onRetry={handleRetry}
+ *   onSelectNewFile={handleSelectNew}
+ * />
+ * ```
+ */
 const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
+  let retryButtonRef: HTMLButtonElement | undefined;
+
+  // Focus retry button when error is displayed
+  onMount(() => {
+    queueMicrotask(() => {
+      retryButtonRef?.focus();
+    });
+  });
+
   // Determine if retry is possible based on error type
   const canRetry = createMemo(() => props.errorType !== 'format' && props.errorType !== 'codec');
 
@@ -57,7 +95,13 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
           class="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-red-100 dark:hover:bg-red-900"
           aria-label="Dismiss error message"
         >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg
+            class="w-5 h-5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
@@ -100,16 +144,19 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                   type="button"
                   class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900"
                   onClick={props.onSelectNewFile}
+                  aria-label="Select a different video file to convert"
                 >
                   Select Different File
                 </button>
               }
             >
               <button
+                ref={retryButtonRef}
                 type="button"
                 data-error-retry-button
                 class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900"
                 onClick={props.onRetry}
+                aria-label="Retry conversion with the same file"
               >
                 Retry with Same File
               </button>
@@ -117,6 +164,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 type="button"
                 class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 dark:focus:ring-offset-gray-900"
                 onClick={props.onSelectNewFile}
+                aria-label="Select a different video file to convert"
               >
                 Select Different File
               </button>

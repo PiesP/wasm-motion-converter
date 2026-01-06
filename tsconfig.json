@@ -1,32 +1,59 @@
 {
+  // TypeScript Configuration
+  //
+  // Configures TypeScript compiler for SolidJS + Vite project.
+  // Enforces strict type checking and enables modern ESNext features.
+  //
+  // @see https://www.typescriptlang.org/tsconfig
+  // @see CODE_STANDARDS.md Section 3 (TypeScript Standards)
+
   "compilerOptions": {
+    // Target ES2020 for modern browser support
     "target": "ES2020",
+
+    // Use ESNext module system (handled by Vite bundler)
     "module": "ESNext",
+
+    // Type definitions for ES2020, DOM APIs, and Web Workers
     "lib": ["ES2020", "DOM", "DOM.Iterable", "WebWorker"],
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+
+    // SolidJS JSX configuration
+    "jsx": "preserve", // Preserve JSX for Vite plugin transformation
+    "jsxImportSource": "solid-js", // Use SolidJS JSX runtime
+
+    // Module resolution using Vite's bundler strategy
     "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "allowImportingTsExtensions": true,
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "isolatedModules": true,
-    "noEmit": true,
+    "resolveJsonModule": true, // Allow importing .json files
+    "allowImportingTsExtensions": true, // Allow .ts/.tsx imports (handled by bundler)
+
+    // Strict type checking (CODE_STANDARDS.md Section 3)
+    "strict": true, // Enable all strict type-checking options
+    "noUnusedLocals": true, // Error on unused local variables
+    "noUnusedParameters": true, // Error on unused function parameters
+    "noFallthroughCasesInSwitch": true, // Require break/return in switch cases
+    "noUncheckedIndexedAccess": true, // Array/object access returns T | undefined
+
+    // Build configuration
+    "skipLibCheck": true, // Skip type checking of declaration files
+    "esModuleInterop": true, // Enable CommonJS/ESM interoperability
+    "isolatedModules": true, // Ensure each file can be transpiled independently
+    "noEmit": true, // Vite handles build output, TypeScript only for type checking
+
+    // Path mapping for cleaner imports (CODE_STANDARDS.md Section 1)
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@components/*": ["src/components/*"],
-      "@services/*": ["src/services/*"],
-      "@utils/*": ["src/utils/*"],
-      "@stores/*": ["src/stores/*"],
-      "@types/*": ["src/types/*"]
+      "@/*": ["src/*"], // Root src alias
+      "@components/*": ["src/components/*"], // Component imports
+      "@services/*": ["src/services/*"], // Service layer
+      "@utils/*": ["src/utils/*"], // Utility functions
+      "@stores/*": ["src/stores/*"], // Signal stores
+      "@types/*": ["src/types/*"] // Type definitions
     }
   },
+
+  // Files to include in compilation
   "include": ["src/**/*", "vite.config.ts", "scripts/**/*"],
+
+  // Files to exclude from compilation
   "exclude": ["node_modules", "dist"]
 }

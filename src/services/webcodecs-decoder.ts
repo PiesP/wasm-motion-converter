@@ -1,4 +1,4 @@
-import type { VideoMetadata } from '../types/conversion-types';
+// External dependencies
 import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
@@ -8,44 +8,102 @@ import {
   isWebCodecsDecodeSupported,
 } from './webcodecs-support';
 
+// Type imports
+import type { VideoMetadata } from '../types/conversion-types';
+
+/**
+ * Frame format type for WebCodecs output
+ * - png: PNG format (lossless, larger file size)
+ * - jpeg: JPEG format (lossy compression, smaller file size)
+ * - rgba: Raw RGBA pixel data (for in-memory processing)
+ */
 export type WebCodecsFrameFormat = 'png' | 'jpeg' | 'rgba';
 
+/**
+ * Progress callback type for frame extraction
+ * Reports current frame count and total expected frames
+ */
 export type WebCodecsProgressCallback = (current: number, total: number) => void;
+
+/**
+ * Capture mode for WebCodecs frame extraction
+ * - auto: Automatically select best mode (track → frame-callback → seek)
+ * - frame-callback: Use requestVideoFrameCallback API (Chrome/Edge)
+ * - seek: Manual seeking with seeked event (universal fallback)
+ * - track: MediaStreamTrackProcessor API (experimental)
+ */
 export type WebCodecsCaptureMode = 'auto' | 'frame-callback' | 'seek' | 'track';
 
+/**
+ * Frame payload delivered to onFrame callback
+ */
 export interface WebCodecsFramePayload {
+  /** Frame filename (e.g., 'frame_000001.png') */
   name: string;
+  /** Encoded frame data (PNG/JPEG bytes) - undefined for rgba format */
   data?: Uint8Array;
+  /** Raw RGBA pixel data - undefined for png/jpeg formats */
   imageData?: ImageData;
+  /** Zero-based frame index */
   index: number;
+  /** Frame timestamp in seconds */
   timestamp: number;
 }
 
+/**
+ * Options for WebCodecs video decoding
+ */
 export interface WebCodecsDecodeOptions {
+  /** Input video file */
   file: File;
+  /** Target frames per second (frame extraction rate) */
   targetFps: number;
+  /** Scale factor (0.0 to 1.0) - 1.0 = original size */
   scale: number;
+  /** Output frame format (png, jpeg, or rgba) */
   frameFormat: WebCodecsFrameFormat;
+  /** JPEG quality (0.0 to 1.0) - ignored for png/rgba */
   frameQuality: number;
+  /** Frame filename prefix (e.g., 'frame_') */
   framePrefix: string;
+  /** Number of zero-padded digits in filename (e.g., 6 = '000001') */
   frameDigits: number;
+  /** Starting frame number (usually 0) */
   frameStartNumber: number;
+  /** Optional maximum frame count (for limiting output) */
   maxFrames?: number;
+  /** Frame capture mode (auto, track, frame-callback, seek) */
   captureMode?: WebCodecsCaptureMode;
+  /** Callback invoked for each extracted frame */
   onFrame: (frame: WebCodecsFramePayload) => Promise<void>;
+  /** Optional progress callback */
   onProgress?: WebCodecsProgressCallback;
+  /** Optional cancellation check */
   shouldCancel?: () => boolean;
 }
 
+/**
+ * Result of WebCodecs video decoding
+ */
 export interface WebCodecsDecodeResult {
+  /** Array of frame filenames */
   frameFiles: string[];
+  /** Total number of extracted frames */
   frameCount: number;
+  /** Frame width in pixels (after scaling) */
   width: number;
+  /** Frame height in pixels (after scaling) */
   height: number;
+  /** Target frames per second */
   fps: number;
+  /** Video duration in seconds */
   duration: number;
 }
 
+/**
+ * Canvas context for frame capture
+ * Encapsulates canvas, rendering context, and dimensions
+ */
 type CaptureContext = {
   canvas: OffscreenCanvas | HTMLCanvasElement;
   context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -53,6 +111,22 @@ type CaptureContext = {
   targetHeight: number;
 };
 
+/**
+ * Maximum consecutive empty frames before failing
+ * Reduced from 3 to 2 for faster AV1 codec fallback detection
+ */
+const MAX_CONSECUTIVE_EMPTY_FRAMES = 2;
+
+/**
+ * Wait for event with timeout
+ *
+ * Creates a promise that resolves when the target event fires or rejects on timeout.
+ *
+ * @param target - Event target to listen to
+ * @param eventName - Name of event to wait for
+ * @param timeoutMs - Timeout in milliseconds
+ * @returns Promise that resolves with the event or rejects on timeout
+ */
 const waitForEvent = (target: EventTarget, eventName: string, timeoutMs: number): Promise<Event> =>
   new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
@@ -73,6 +147,17 @@ const waitForEvent = (target: EventTarget, eventName: string, timeoutMs: number)
     target.addEventListener(eventName, onEvent, { once: true });
   });
 
+/**
+ * Create canvas for frame capture
+ *
+ * Creates either OffscreenCanvas or HTMLCanvasElement with 2D context.
+ * Configures high-quality image smoothing for better scaling.
+ *
+ * @param width - Canvas width in pixels
+ * @param height - Canvas height in pixels
+ * @param willReadFrequently - Optimize context for frequent reads (RGBA extraction)
+ * @returns Canvas context wrapper with dimensions
+ */
 const createCanvas = (
   width: number,
   height: number,
@@ -107,6 +192,16 @@ const createCanvas = (
   return { canvas, context, targetWidth: width, targetHeight: height };
 };
 
+/**
+ * Convert canvas to Blob
+ *
+ * Uses OffscreenCanvas.convertToBlob() when available, falls back to toBlob().
+ *
+ * @param canvas - Canvas to convert
+ * @param mimeType - MIME type ('image/png' or 'image/jpeg')
+ * @param quality - Optional quality (0.0 to 1.0, for JPEG only)
+ * @returns Promise that resolves with Blob
+ */
 const canvasToBlob = async (
   canvas: OffscreenCanvas | HTMLCanvasElement,
   mimeType: string,
@@ -131,6 +226,17 @@ const canvasToBlob = async (
   });
 };
 
+/**
+ * Format frame filename
+ *
+ * Creates zero-padded frame filename (e.g., 'frame_000042.png').
+ *
+ * @param prefix - Filename prefix
+ * @param digits - Number of zero-padded digits
+ * @param index - Frame index
+ * @param extension - File extension
+ * @returns Formatted filename
+ */
 const formatFrameName = (
   prefix: string,
   digits: number,
@@ -138,11 +244,47 @@ const formatFrameName = (
   extension: string
 ): string => `${prefix}${String(index).padStart(digits, '0')}.${extension}`;
 
+/**
+ * Normalize video duration
+ *
+ * Ensures duration is a finite number, returns 0 for invalid values.
+ *
+ * @param duration - Raw duration value
+ * @returns Normalized duration (0 if not finite)
+ */
 const normalizeDuration = (duration: number): number => (Number.isFinite(duration) ? duration : 0);
 
+/**
+ * WebCodecs Decoder Service
+ *
+ * Provides GPU-accelerated video frame extraction using WebCodecs API.
+ * Supports multiple capture modes with automatic fallback:
+ * - Track processor (fastest, experimental)
+ * - Frame callback (Chrome/Edge, recommended)
+ * - Manual seeking (universal fallback)
+ *
+ * Features:
+ * - Hardware-accelerated video decoding
+ * - Multiple output formats (PNG, JPEG, RGBA)
+ * - Automatic codec compatibility detection
+ * - Empty frame detection with fast AV1 fallback
+ * - Cancellation support
+ * - Progress reporting
+ *
+ * @see webcodecs-conversion-service.ts for usage examples
+ */
 export class WebCodecsDecoderService {
   private activeUrls = new Set<string>();
 
+  /**
+   * Check if WebCodecs decoding is supported
+   *
+   * Validates browser support for required APIs:
+   * - HTMLVideoElement, HTMLCanvasElement
+   * - WebCodecs VideoDecoder API
+   *
+   * @returns True if WebCodecs decoding is available
+   */
   static isSupported(): boolean {
     return (
       typeof document !== 'undefined' &&
@@ -152,6 +294,16 @@ export class WebCodecsDecoderService {
     );
   }
 
+  /**
+   * Check if specific codec is supported
+   *
+   * Tests codec support using VideoDecoder.isConfigSupported().
+   *
+   * @param codec - Video codec string (e.g., 'avc1', 'vp09', 'av01')
+   * @param fileType - MIME type of video file
+   * @param metadata - Optional video metadata
+   * @returns Promise that resolves to true if codec is supported
+   */
   static async isCodecSupported(
     codec: string,
     fileType: string,
@@ -160,6 +312,34 @@ export class WebCodecsDecoderService {
     return isWebCodecsCodecSupported(codec, fileType, metadata);
   }
 
+  /**
+   * Decode video to frames
+   *
+   * Main entry point for WebCodecs frame extraction.
+   * Automatically selects best capture mode and handles fallbacks.
+   *
+   * @param options - Decode options with file, fps, scale, format, callbacks
+   * @returns Promise with decode result (frame files, count, dimensions, fps, duration)
+   * @throws Error if WebCodecs not supported or decode fails
+   *
+   * @example
+   * ```typescript
+   * const decoder = new WebCodecsDecoderService();
+   * const result = await decoder.decodeToFrames({
+   *   file: videoFile,
+   *   targetFps: 15,
+   *   scale: 1.0,
+   *   frameFormat: 'png',
+   *   frameQuality: 0.95,
+   *   framePrefix: 'frame_',
+   *   frameDigits: 6,
+   *   frameStartNumber: 0,
+   *   captureMode: 'auto',
+   *   onFrame: async (frame) => { },
+   *   onProgress: (current, total) => { }
+   * });
+   * ```
+   */
   async decodeToFrames(options: WebCodecsDecodeOptions): Promise<WebCodecsDecodeResult> {
     if (!WebCodecsDecoderService.isSupported()) {
       throw new Error('WebCodecs decode path is not supported in this browser.');
@@ -216,7 +396,6 @@ export class WebCodecsDecoderService {
       video.currentTime = 0;
 
       let consecutiveEmptyFrames = 0;
-      const MAX_CONSECUTIVE_EMPTY_FRAMES = 2; // Reduced from 3 for faster AV1 fallback
       const startDecodeTime = Date.now();
 
       const captureFrame = async (index: number, timestamp: number) => {
@@ -445,6 +624,19 @@ export class WebCodecsDecoderService {
     }
   }
 
+  /**
+   * Capture frames using requestVideoFrameCallback
+   *
+   * Uses Chrome/Edge's requestVideoFrameCallback API for precise frame timing.
+   * Falls back to seek-based capture if autoplay is blocked.
+   *
+   * @param video - Video element to capture from
+   * @param duration - Video duration in seconds
+   * @param targetFps - Target frames per second
+   * @param captureFrame - Callback to invoke for each frame
+   * @param shouldCancel - Optional cancellation check
+   * @param maxFrames - Optional maximum frame count
+   */
   private async captureWithFrameCallback(
     video: HTMLVideoElement,
     duration: number,
@@ -578,6 +770,20 @@ export class WebCodecsDecoderService {
     });
   }
 
+  /**
+   * Capture frames using MediaStreamTrackProcessor
+   *
+   * Uses experimental MediaStreamTrackProcessor API for hardware-accelerated capture.
+   * Requires MediaStream.captureStream() support.
+   *
+   * @param video - Video element to capture from
+   * @param duration - Video duration in seconds
+   * @param targetFps - Target frames per second
+   * @param captureFrame - Callback to invoke for each frame
+   * @param shouldCancel - Optional cancellation check
+   * @param maxFrames - Optional maximum frame count
+   * @throws Error if track processor not available or autoplay blocked
+   */
   private async captureWithTrackProcessor(
     video: HTMLVideoElement,
     duration: number,
@@ -689,6 +895,20 @@ export class WebCodecsDecoderService {
     }
   }
 
+  /**
+   * Capture frames using manual seeking
+   *
+   * Universal fallback method that works in all browsers.
+   * Seeks to each frame position and captures after 'seeked' event.
+   * For single-frame extraction, seeks to 25% duration for better representation.
+   *
+   * @param video - Video element to capture from
+   * @param duration - Video duration in seconds
+   * @param targetFps - Target frames per second
+   * @param captureFrame - Callback to invoke for each frame
+   * @param shouldCancel - Optional cancellation check
+   * @param maxFrames - Optional maximum frame count
+   */
   private async captureWithSeeking(
     video: HTMLVideoElement,
     duration: number,
@@ -746,6 +966,16 @@ export class WebCodecsDecoderService {
     });
   }
 
+  /**
+   * Seek video to specific time
+   *
+   * Sets video.currentTime and waits for 'seeked' event.
+   * Skips seek if already at target time (within 0.0001s).
+   *
+   * @param video - Video element to seek
+   * @param time - Target time in seconds
+   * @throws Error if time is NaN or seek times out
+   */
   private async seekTo(video: HTMLVideoElement, time: number): Promise<void> {
     if (Number.isNaN(time)) {
       throw new Error('Invalid seek time for video decode.');
@@ -760,6 +990,14 @@ export class WebCodecsDecoderService {
     await waitForEvent(video, 'seeked', FFMPEG_INTERNALS.WEBCODECS.SEEK_TIMEOUT_MS);
   }
 
+  /**
+   * Clean up video element and revoke object URL
+   *
+   * Pauses video, removes src, and revokes blob URL to free memory.
+   *
+   * @param video - Video element to clean up
+   * @param url - Blob URL to revoke
+   */
   private cleanupVideo(video: HTMLVideoElement, url: string): void {
     try {
       video.pause();

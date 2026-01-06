@@ -1,5 +1,8 @@
 /**
- * Memory monitoring utilities for tracking browser memory usage during conversions
+ * Memory monitoring utilities for tracking browser memory usage during conversions.
+ *
+ * Provides memory status detection, consumption estimation, and conversion feasibility checks
+ * with fallback estimation for browsers without the performance.memory API.
  */
 
 import type { ConversionFormat, ConversionScale } from '../types/conversion-types';
@@ -24,8 +27,10 @@ const MEMORY_WARNING_THRESHOLD = 60; // 60% - show warning
 const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
 
 /**
- * Get current memory usage information (Chrome/Edge only)
- * Returns null if performance.memory is not available
+ * Get current memory usage information (Chrome/Edge only).
+ * Returns null if performance.memory is not available.
+ *
+ * @returns Memory info object or null for unsupported browsers
  */
 function getMemoryInfo(): MemoryInfo | null {
   // @ts-expect-error - performance.memory is non-standard but available in Chrome/Edge
@@ -49,8 +54,17 @@ function getMemoryInfo(): MemoryInfo | null {
 }
 
 /**
- * Estimate memory usage based on video characteristics
- * Used as fallback for browsers without performance.memory API
+ * Estimate memory usage based on video characteristics.
+ * Used as fallback for browsers without performance.memory API.
+ *
+ * @param videoSize - Input video file size in bytes
+ * @param duration - Video duration in seconds
+ * @param resolution - Video resolution in pixels (width × height)
+ * @returns Estimated memory usage with usage percentage
+ *
+ * @example
+ * const estimate = estimateMemoryUsage(50_000_000, 60, 1920 * 1080);
+ * console.log(`Estimated usage: ${estimate.usagePercentage.toFixed(1)}%`);
  */
 function estimateMemoryUsage(
   videoSize: number,
@@ -78,7 +92,14 @@ function estimateMemoryUsage(
 }
 
 /**
- * Check if memory usage is at a critical level (>80%)
+ * Check if memory usage is at a critical level (>80%).
+ *
+ * @returns True if heap usage exceeds critical threshold
+ *
+ * @example
+ * if (isMemoryCritical()) {
+ *   console.warn('Memory is running out, conversion may fail');
+ * }
  */
 export function isMemoryCritical(): boolean {
   const memInfo = getMemoryInfo();
@@ -89,7 +110,18 @@ export function isMemoryCritical(): boolean {
 }
 
 /**
- * Get memory warning level with optional fallback estimation
+ * Get memory warning level with optional fallback estimation.
+ *
+ * @param videoSize - Video file size in bytes (optional, for estimation)
+ * @param duration - Video duration in seconds (optional, for estimation)
+ * @param resolution - Video resolution in pixels (optional, for estimation)
+ * @returns Memory warning level: 'safe', 'warning', or 'critical'
+ *
+ * @example
+ * const level = getMemoryWarningLevel(50_000_000, 60, 1920 * 1080);
+ * if (level === 'critical') {
+ *   showMemoryWarningToUser();
+ * }
  */
 export function getMemoryWarningLevel(
   videoSize?: number,
@@ -122,7 +154,16 @@ export function getMemoryWarningLevel(
 }
 
 /**
- * Get detailed memory status including estimates for non-Chrome browsers
+ * Get detailed memory status including estimates for non-Chrome browsers.
+ *
+ * @param videoSize - Video file size in bytes (optional, for estimation)
+ * @param duration - Video duration in seconds (optional, for estimation)
+ * @param resolution - Video resolution in pixels (optional, for estimation)
+ * @returns Object with memory level, percentage, and estimation flag
+ *
+ * @example
+ * const status = getMemoryStatus(50_000_000, 60, 1920 * 1080);
+ * console.log(`Memory: ${status.percentage.toFixed(1)}% (${status.isEstimated ? 'estimated' : 'actual'})`);
  */
 export function getMemoryStatus(
   videoSize?: number,
@@ -160,8 +201,17 @@ export function getMemoryStatus(
 }
 
 /**
- * Get available memory in bytes
- * Returns remaining heap space (limit - used) or conservative estimate
+ * Get available memory in bytes.
+ * Returns remaining heap space (limit - used) or conservative estimate.
+ *
+ * @returns Available memory in bytes
+ *
+ * @example
+ * const available = getAvailableMemory();
+ * const needed = 100_000_000; // 100 MB
+ * if (available < needed) {
+ *   console.warn('Insufficient memory available');
+ * }
  */
 export function getAvailableMemory(): number {
   const memInfo = getMemoryInfo();
@@ -178,12 +228,16 @@ export function getAvailableMemory(): number {
 }
 
 /**
- * Estimate memory requirements for a conversion
+ * Estimate memory requirements for a video conversion.
  *
  * @param fileSize - Input file size in bytes
- * @param format - Output format (GIF requires more memory for palette)
+ * @param format - Output format ('gif' requires more memory for palette)
  * @param scale - Scale factor (smaller scale = less memory)
  * @returns Estimated memory usage in bytes
+ *
+ * @example
+ * const estimate = estimateConversionMemory(50_000_000, 'gif', 1.0);
+ * console.log(`Estimated: ${(estimate / 1024 / 1024).toFixed(1)} MB`);
  */
 export function estimateConversionMemory(
   fileSize: number,
@@ -209,13 +263,20 @@ export function estimateConversionMemory(
 }
 
 /**
- * Check if a conversion will likely fit in available memory
+ * Check if a conversion will likely fit in available memory.
  *
  * @param fileSize - Input file size in bytes
  * @param format - Output format
  * @param scale - Scale factor
  * @param safetyMargin - Safety margin percentage (default 0.6 = 60% threshold)
- * @returns Object with canFit boolean and recommended settings if needed
+ * @returns Object with feasibility check and memory recommendations if needed
+ *
+ * @example
+ * const fit = checkConversionMemoryFit(50_000_000, 'gif', 1.0);
+ * if (!fit.canFit && fit.recommendation) {
+ *   console.log(`Recommendation: ${fit.recommendation.message}`);
+ *   setScale(fit.recommendation.scale ?? 1.0);
+ * }
  */
 export function checkConversionMemoryFit(
   fileSize: number,

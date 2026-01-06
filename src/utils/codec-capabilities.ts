@@ -2,24 +2,33 @@
  * Codec Capabilities Module
  *
  * Defines which conversion paths (WebCodecs, FFmpeg, or both) support each codec.
- * This enables intelligent routing to avoid futile conversion attempts.
+ * This enables intelligent routing to avoid futile conversion attempts and provides
+ * performance-optimized path selection based on real-world benchmarks.
  */
 
+/**
+ * Conversion path options for codec support
+ *
+ * - `webcodecs-only`: Codec can ONLY be decoded by WebCodecs (e.g., AV1 - FFmpeg.wasm lacks decoder)
+ * - `ffmpeg-only`: Codec can ONLY be decoded by FFmpeg (e.g., legacy codecs)
+ * - `both`: Codec supported by both WebCodecs and FFmpeg (prefer FFmpeg for GIF/WebP performance)
+ * - `unsupported`: Codec not supported by either path
+ */
 export type ConversionPath = 'webcodecs-only' | 'ffmpeg-only' | 'both' | 'unsupported';
 
 /**
- * Codec capability mapping
+ * Codec capability mapping based on real-world test results
  *
- * Based on real-world test results:
+ * Performance benchmarks:
  * - H.264 → GIF (FFmpeg): 2.04s ⚡ (3x faster than WebCodecs hybrid)
  * - H.264 → WebP (FFmpeg): 5.43s (2x faster than WebCodecs)
  * - AV1 → GIF (WebCodecs + modern-gif): 13.94s (FFmpeg lacks decoder)
  * - AV1 → WebP (WebCodecs 2-pass): 12.44s (FFmpeg lacks decoder)
  *
- * - 'webcodecs-only': Codec can ONLY be decoded by WebCodecs (e.g., AV1 - FFmpeg.wasm lacks decoder)
- * - 'ffmpeg-only': Codec can ONLY be decoded by FFmpeg (e.g., legacy codecs)
- * - 'both': Codec supported by both WebCodecs and FFmpeg (prefer FFmpeg for GIF/WebP performance)
- * - 'unsupported': Codec not supported by either path
+ * Path selection strategy:
+ * - AV1: WebCodecs only (FFmpeg.wasm v5.1.4 lacks libaom/libdav1d)
+ * - HEVC/VP8/VP9/H.264: Both paths supported, FFmpeg preferred for performance
+ * - Unknown codecs: Default to 'both' with fallback logic
  */
 const CODEC_CAPABILITIES: Record<string, ConversionPath> = {
   // === AV1 - WebCodecs only (FFmpeg.wasm v5.1.4 lacks libaom/libdav1d) ===
@@ -58,8 +67,19 @@ const CODEC_CAPABILITIES: Record<string, ConversionPath> = {
 /**
  * Get the conversion path capability for a given codec
  *
- * @param codec - Codec string (e.g., 'av1', 'h264', 'hevc')
+ * Determines which conversion paths (WebCodecs, FFmpeg, or both) can handle the specified codec.
+ * Uses direct lookup with fallback to partial matching for codec variants (e.g., "avc1.42E01E" → "avc1").
+ *
+ * @param codec - Codec string (e.g., 'av1', 'h264', 'hevc', 'avc1.42E01E')
  * @returns ConversionPath indicating which paths support this codec
+ *
+ * @example
+ * ```ts
+ * getCodecCapability('av1'); // 'webcodecs-only'
+ * getCodecCapability('h264'); // 'both'
+ * getCodecCapability('avc1.42E01E'); // 'both' (partial match to 'avc1')
+ * getCodecCapability('unknown'); // 'both' (fallback)
+ * ```
  */
 export function getCodecCapability(codec: string | undefined): ConversionPath {
   if (!codec || codec === 'unknown') {
@@ -89,8 +109,15 @@ export function getCodecCapability(codec: string | undefined): ConversionPath {
 /**
  * Check if a codec can be decoded by FFmpeg.wasm
  *
- * @param codec - Codec string
- * @returns true if FFmpeg can decode, false otherwise
+ * @param codec - Codec string (e.g., 'h264', 'hevc', 'vp9')
+ * @returns `true` if FFmpeg can decode this codec, `false` otherwise
+ *
+ * @example
+ * ```ts
+ * canFFmpegDecode('h264'); // true (both)
+ * canFFmpegDecode('av1'); // false (webcodecs-only)
+ * canFFmpegDecode('hevc'); // true (both)
+ * ```
  */
 export function canFFmpegDecode(codec: string | undefined): boolean {
   const capability = getCodecCapability(codec);
@@ -100,11 +127,18 @@ export function canFFmpegDecode(codec: string | undefined): boolean {
 /**
  * Check if a codec can be decoded by WebCodecs
  *
- * Note: This checks theoretical capability, not browser support.
- * Use webcodecs-support.ts for actual browser capability detection.
+ * Note: This checks theoretical capability based on codec specifications, not actual browser support.
+ * Use `webcodecs-support.ts` for runtime browser capability detection.
  *
- * @param codec - Codec string
- * @returns true if WebCodecs supports this codec (in theory), false otherwise
+ * @param codec - Codec string (e.g., 'av1', 'h264', 'vp9')
+ * @returns `true` if WebCodecs supports this codec (in theory), `false` otherwise
+ *
+ * @example
+ * ```ts
+ * canWebCodecsDecode('av1'); // true (webcodecs-only)
+ * canWebCodecsDecode('h264'); // true (both)
+ * canWebCodecsDecode('unknown'); // true (both - fallback)
+ * ```
  */
 export function canWebCodecsDecode(codec: string | undefined): boolean {
   const capability = getCodecCapability(codec);
@@ -114,8 +148,18 @@ export function canWebCodecsDecode(codec: string | undefined): boolean {
 /**
  * Check if a codec requires WebCodecs exclusively
  *
- * @param codec - Codec string
- * @returns true if codec MUST use WebCodecs (FFmpeg cannot decode), false otherwise
+ * Identifies codecs that cannot be decoded by FFmpeg.wasm and must use WebCodecs
+ * (e.g., AV1 due to missing libaom/libdav1d in FFmpeg.wasm v5.1.4).
+ *
+ * @param codec - Codec string (e.g., 'av1', 'av01')
+ * @returns `true` if codec MUST use WebCodecs (FFmpeg cannot decode), `false` otherwise
+ *
+ * @example
+ * ```ts
+ * requiresWebCodecs('av1'); // true (webcodecs-only)
+ * requiresWebCodecs('h264'); // false (both)
+ * requiresWebCodecs('hevc'); // false (both)
+ * ```
  */
 export function requiresWebCodecs(codec: string | undefined): boolean {
   return getCodecCapability(codec) === 'webcodecs-only';
@@ -124,9 +168,25 @@ export function requiresWebCodecs(codec: string | undefined): boolean {
 /**
  * Get a human-readable error message for unsupported codec scenarios
  *
- * @param codec - Codec string
- * @param webCodecsAvailable - Whether WebCodecs is available in browser
- * @returns Error message or null if conversion is possible
+ * Generates user-friendly error messages when codec conversion is not possible due to:
+ * - Unsupported codec (not in capability map)
+ * - WebCodecs-only codec without browser support
+ *
+ * @param codec - Codec string (e.g., 'av1', 'unknown-codec')
+ * @param webCodecsAvailable - Whether WebCodecs API is available in current browser
+ * @returns Error message string if conversion is not possible, `null` if conversion can proceed
+ *
+ * @example
+ * ```ts
+ * getCodecErrorMessage('av1', false);
+ * // 'AV1 codec requires WebCodecs API which is not available in your browser...'
+ *
+ * getCodecErrorMessage('h264', false);
+ * // null (FFmpeg can handle it)
+ *
+ * getCodecErrorMessage('unknown-codec', true);
+ * // null (will try both paths with fallback)
+ * ```
  */
 export function getCodecErrorMessage(
   codec: string | undefined,

@@ -1,13 +1,44 @@
+/**
+ * Conversion Error Classification Utility
+ *
+ * Analyzes conversion error messages to determine root cause and provide
+ * context-aware suggestions. Classifies errors into categories (timeout,
+ * memory, format, codec, general) based on error messages, video metadata,
+ * conversion settings, and FFmpeg logs.
+ */
+
+// Types
 import type { ConversionSettings, ErrorContext, VideoMetadata } from '../types/conversion-types';
 
 /**
+ * Maximum total pixel count threshold for browser conversion
+ *
+ * Videos exceeding this threshold (width × height × framerate × duration)
+ * are likely to cause memory issues in the browser.
+ */
+const MAX_TOTAL_PIXEL_COUNT = 500_000_000;
+
+/**
  * Classify a conversion error and provide helpful suggestions
- * Analyzes error messages to determine the root cause and suggest remediation
+ *
+ * Analyzes error messages to determine the root cause and suggest remediation.
+ * Uses pattern matching on error messages, video metadata, conversion settings,
+ * and FFmpeg logs to provide context-aware error classification.
+ *
  * @param errorMessage - The error message from the conversion process
  * @param metadata - Video metadata for context-aware classification
- * @param conversionSettings - The settings used for conversion for context
- * @param ffmpegLogs - Optional FFmpeg logs for detailed error analysis
+ * @param conversionSettings - The settings used for conversion (optional)
+ * @param ffmpegLogs - FFmpeg log output for detailed error analysis (optional)
  * @returns ErrorContext with error type, phase, and user-friendly suggestion
+ *
+ * @example
+ * const context = classifyConversionError(
+ *   'Conversion timed out after 90s',
+ *   { width: 1920, height: 1080, duration: 600, codec: 'h264', framerate: 30, bitrate: 5000000 },
+ *   { format: 'gif', quality: 'high', scale: 1.0 },
+ *   ['[info] Processing...', '[error] Timeout']
+ * );
+ * // Returns: { type: 'timeout', suggestion: '...', phase: 'ffmpeg_timeout', ... }
  */
 export function classifyConversionError(
   errorMessage: string,
@@ -25,6 +56,7 @@ export function classifyConversionError(
     phase: 'unknown',
   };
 
+  // Timeout errors
   if (message.includes('timed out') || message.includes('90s') || message.includes('hung')) {
     const isWatchdogTimeout = message.includes('stalled');
     return {
@@ -37,6 +69,7 @@ export function classifyConversionError(
     };
   }
 
+  // Memory errors
   if (
     message.includes('memory') ||
     message.includes('out of memory') ||
@@ -51,6 +84,7 @@ export function classifyConversionError(
     };
   }
 
+  // WebCodecs hardware acceleration errors
   if (
     message.includes('webcodecs') ||
     message.includes('hardware acceleration') ||
@@ -66,6 +100,7 @@ export function classifyConversionError(
     };
   }
 
+  // Codec and decoder errors
   if (
     message.includes('codec') ||
     message.includes('unsupported') ||
@@ -107,6 +142,7 @@ export function classifyConversionError(
     };
   }
 
+  // WebP format errors
   if (message.includes('webp') || message.includes('libwebp')) {
     return {
       type: 'format',
@@ -116,6 +152,7 @@ export function classifyConversionError(
     };
   }
 
+  // AVIF format errors
   if (message.includes('avif')) {
     return {
       type: 'format',
@@ -125,6 +162,7 @@ export function classifyConversionError(
     };
   }
 
+  // Worker and cross-origin isolation errors
   if (
     message.includes('worker') ||
     message.includes('thread') ||
@@ -140,9 +178,10 @@ export function classifyConversionError(
     };
   }
 
+  // Check for overly complex videos (high total pixel count)
   if (metadata) {
     const totalPixels = metadata.width * metadata.height * metadata.framerate * metadata.duration;
-    if (totalPixels > 500_000_000) {
+    if (totalPixels > MAX_TOTAL_PIXEL_COUNT) {
       return {
         type: 'memory',
         ...baseContext,
@@ -152,6 +191,7 @@ export function classifyConversionError(
     }
   }
 
+  // Default: general error
   return {
     type: 'general',
     ...baseContext,

@@ -1,33 +1,61 @@
 import type { Component } from 'solid-js';
+
 import type { ConversionFormat } from '../types/conversion-types';
+
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
+/**
+ * Available output format options
+ */
+const FORMAT_OPTIONS: OptionSelectorOption<ConversionFormat>[] = [
+  { value: 'gif', label: 'GIF', description: 'Universal support' },
+  { value: 'webp', label: 'WebP', description: 'Smaller file size' },
+];
+
+/**
+ * Number of columns for format selector grid
+ */
+const COLUMNS = 2;
+
+/**
+ * Format selector component props
+ */
 interface FormatSelectorProps {
+  /** Currently selected format */
   value: ConversionFormat;
+  /** Callback when format changes */
   onChange: (format: ConversionFormat) => void;
+  /** Whether the selector is disabled */
   disabled?: boolean;
+  /** Optional tooltip text */
   tooltip?: string;
 }
 
+/**
+ * Format selector component for choosing output format
+ *
+ * Allows users to select between GIF and WebP output formats
+ * with descriptions of each format's characteristics.
+ *
+ * @example
+ * ```tsx
+ * <FormatSelector
+ *   value={selectedFormat}
+ *   onChange={(format) => setFormat(format)}
+ *   disabled={isProcessing}
+ * />
+ * ```
+ */
 const FormatSelector: Component<FormatSelectorProps> = (props) => {
-  const options = (): OptionSelectorOption<ConversionFormat>[] => {
-    return [
-      { value: 'gif', label: 'GIF', description: 'Universal support' },
-      { value: 'webp', label: 'WebP', description: 'Smaller file size' },
-    ];
-  };
-
-  const columns = (): 2 => 2;
-
   return (
     <OptionSelector
       title="Output Format"
       name="format"
       value={props.value}
-      options={options()}
+      options={FORMAT_OPTIONS}
       onChange={props.onChange}
       disabled={props.disabled}
-      columns={columns()}
+      columns={COLUMNS}
       tooltip={props.tooltip}
     />
   );

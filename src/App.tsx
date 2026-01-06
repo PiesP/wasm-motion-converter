@@ -10,24 +10,6 @@ import {
   Show,
   Suspense,
 } from 'solid-js';
-// Eagerly loaded components (used immediately)
-import ConfirmationModal from './components/ConfirmationModal';
-import EnvironmentWarning from './components/EnvironmentWarning';
-import FileDropzone from './components/FileDropzone';
-import FormatSelector from './components/FormatSelector';
-import LicenseAttribution from './components/LicenseAttribution';
-import QualitySelector from './components/QualitySelector';
-import ScaleSelector from './components/ScaleSelector';
-import ThemeToggle from './components/ThemeToggle';
-import ToastContainer from './components/ToastContainer';
-import VideoMetadataDisplay from './components/VideoMetadataDisplay';
-
-// Lazy loaded components (conditionally shown - reduces initial bundle by ~15KB)
-const ConversionProgress = lazy(() => import('./components/ConversionProgress'));
-const ErrorDisplay = lazy(() => import('./components/ErrorDisplay'));
-const MemoryWarning = lazy(() => import('./components/MemoryWarning'));
-const ResultPreview = lazy(() => import('./components/ResultPreview'));
-
 import { useConversionHandlers } from './hooks/useConversionHandlers';
 import { ffmpegService } from './services/ffmpeg-service';
 import {
@@ -53,6 +35,43 @@ import {
 import { debounce } from './utils/debounce';
 import { isMemoryCritical } from './utils/memory-monitor';
 
+// Eagerly loaded components (used immediately)
+import ConfirmationModal from './components/ConfirmationModal';
+import EnvironmentWarning from './components/EnvironmentWarning';
+import FileDropzone from './components/FileDropzone';
+import FormatSelector from './components/FormatSelector';
+import LicenseAttribution from './components/LicenseAttribution';
+import QualitySelector from './components/QualitySelector';
+import ScaleSelector from './components/ScaleSelector';
+import ThemeToggle from './components/ThemeToggle';
+import ToastContainer from './components/ToastContainer';
+import VideoMetadataDisplay from './components/VideoMetadataDisplay';
+
+// Lazy loaded components (conditionally shown - reduces initial bundle by ~15KB)
+const ConversionProgress = lazy(() => import('./components/ConversionProgress'));
+const ErrorDisplay = lazy(() => import('./components/ErrorDisplay'));
+const MemoryWarning = lazy(() => import('./components/MemoryWarning'));
+const ResultPreview = lazy(() => import('./components/ResultPreview'));
+
+/**
+ * Main application component orchestrating the video conversion workflow
+ *
+ * @remarks
+ * Manages the complete user journey from file selection through analysis,
+ * conversion, and result preview. Implements sophisticated state management
+ * with memory monitoring, error handling, and accessibility features.
+ *
+ * Key features:
+ * - Lazy-loaded heavy components for optimal bundle size (~15KB savings)
+ * - Memory monitoring with adaptive quality settings to prevent OOM errors
+ * - FFmpeg asset prefetching on fast networks for improved UX
+ * - Persistent conversion settings via localStorage with debounced saves
+ * - Comprehensive error boundaries with user-friendly fallback UI
+ * - Full WCAG accessibility with ARIA labels and keyboard navigation
+ * - Responsive grid layout optimized for mobile and desktop
+ *
+ * @returns SolidJS component with main layout and conversion interface
+ */
 const App: Component = () => {
   const [conversionStartTime, setConversionStartTime] = createSignal<number>(0);
   const [estimatedSecondsRemaining, setEstimatedSecondsRemaining] = createSignal<number | null>(
@@ -74,13 +93,31 @@ const App: Component = () => {
     setMemoryWarning,
   });
 
-  const runIdle = (callback: () => void) => {
+  /**
+   * Schedule task execution during browser idle time
+   *
+   * @param callback - Function to execute when browser becomes idle
+   * @remarks
+   * Uses requestIdleCallback with 3-second timeout for modern browsers,
+   * falls back to setTimeout for older browsers. Prevents blocking main
+   * thread during critical rendering operations.
+   */
+  const runIdle = (callback: () => void): void => {
     if (typeof requestIdleCallback !== 'undefined') {
       requestIdleCallback(callback, { timeout: 3000 });
     } else {
       setTimeout(callback, 1200);
     }
   };
+
+  /**
+   * Initialize application on component mount
+   *
+   * @remarks
+   * - Detects SharedArrayBuffer and cross-origin isolation support
+   * - Checks network speed and prefetches FFmpeg assets if on 4G
+   * - Uses idle scheduling to avoid blocking initial render
+   */
   onMount(() => {
     const isSupported = typeof SharedArrayBuffer !== 'undefined' && crossOriginIsolated === true;
     setEnvironmentSupported(isSupported);
@@ -97,15 +134,36 @@ const App: Component = () => {
     }
   });
 
-  // Persist conversion settings to localStorage with debouncing (500ms)
-  // Prevents excessive writes when user rapidly changes multiple settings
+  /**
+   * Debounced persistence of conversion settings to localStorage
+   *
+   * @remarks
+   * Prevents excessive writes when user rapidly changes multiple settings.
+   * Debounced to 500ms to balance responsiveness with write frequency.
+   */
   const debouncedSaveSettings = debounce(saveConversionSettings, 500);
+
+  /**
+   * Effect to persist conversion settings on change
+   *
+   * @remarks
+   * Automatically saves user preferences to localStorage whenever
+   * conversion settings are modified, with debouncing to minimize I/O.
+   */
 
   createEffect(() => {
     const settings = conversionSettings();
     debouncedSaveSettings(settings);
   });
 
+  /**
+   * Memoized dropzone status object
+   *
+   * @remarks
+   * Computes conversion progress UI state during active conversion,
+   * returning null when not converting. Includes progress percentage,
+   * elapsed time tracking, and ETA calculation.
+   */
   const dropzoneStatus = createMemo(() => {
     if (appState() === 'converting') {
       return {
@@ -120,12 +178,27 @@ const App: Component = () => {
     return null;
   });
 
+  /**
+   * Memoized busy state computation
+   *
+   * @remarks
+   * Determines if UI should be disabled based on app state.
+   * Returns true during FFmpeg loading, video analysis, or conversion.
+   */
   const isBusy = createMemo(
     () =>
       appState() === 'loading-ffmpeg' || appState() === 'analyzing' || appState() === 'converting'
   );
 
-  const handleReduceSettings = () => {
+  /**
+   * Handle reducing settings due to memory constraints
+   *
+   * @remarks
+   * Automatically reduces quality to 'low' and scale to 0.5 when
+   * memory is critical. If memory warning is displayed, dismisses it
+   * and proceeds with conversion using reduced settings.
+   */
+  const handleReduceSettings = (): void => {
     setConversionSettings({
       ...conversionSettings(),
       quality: 'low',
@@ -138,11 +211,26 @@ const App: Component = () => {
     }
   };
 
-  const handleDismissMemoryWarning = () => {
+  /**
+   * Handle dismissing memory warning dialog
+   *
+   * @remarks
+   * Clears the memory warning flag without starting conversion.
+   * User can then manually decide to reduce settings or proceed at risk.
+   */
+  const handleDismissMemoryWarning = (): void => {
     setMemoryWarning(false);
   };
 
-  const handleConvertWithMemoryCheck = () => {
+  /**
+   * Handle conversion with memory check
+   *
+   * @remarks
+   * Checks memory availability before starting conversion.
+   * If memory is critical, shows warning dialog. Otherwise,
+   * proceeds with conversion immediately.
+   */
+  const handleConvertWithMemoryCheck = (): void => {
     // Check memory before starting conversion
     if (isMemoryCritical()) {
       setMemoryWarning(true);
