@@ -5,23 +5,28 @@ import {
   createSignal,
   ErrorBoundary,
   For,
+  lazy,
   onMount,
   Show,
+  Suspense,
 } from 'solid-js';
-import ConversionProgress from './components/ConversionProgress';
+// Eagerly loaded components (used immediately)
 import EnvironmentWarning from './components/EnvironmentWarning';
-import ErrorDisplay from './components/ErrorDisplay';
 import FileDropzone from './components/FileDropzone';
 import FormatSelector from './components/FormatSelector';
 import InlineWarningBanner from './components/InlineWarningBanner';
 import LicenseAttribution from './components/LicenseAttribution';
-import MemoryWarning from './components/MemoryWarning';
 import QualitySelector from './components/QualitySelector';
-import ResultPreview from './components/ResultPreview';
 import ScaleSelector from './components/ScaleSelector';
 import ThemeToggle from './components/ThemeToggle';
 import ToastContainer from './components/ToastContainer';
 import VideoMetadataDisplay from './components/VideoMetadataDisplay';
+
+// Lazy loaded components (conditionally shown - reduces initial bundle by ~15KB)
+const ConversionProgress = lazy(() => import('./components/ConversionProgress'));
+const ErrorDisplay = lazy(() => import('./components/ErrorDisplay'));
+const MemoryWarning = lazy(() => import('./components/MemoryWarning'));
+const ResultPreview = lazy(() => import('./components/ResultPreview'));
 import { useConversionHandlers } from './hooks/useConversionHandlers';
 import { ffmpegService } from './services/ffmpeg-service';
 import { getRecommendedSettings } from './services/performance-checker';
@@ -46,6 +51,7 @@ import {
   saveConversionSettings,
   setConversionSettings,
   videoMetadata,
+  videoThumbnail,
 } from './stores/conversion-store';
 import { estimateEtaRange, estimateOutputSizeRange } from './utils/estimate-output';
 
@@ -231,25 +237,37 @@ const App: Component = () => {
             </Show>
 
             <Show when={appState() === 'error' && errorMessage()}>
-              <ErrorDisplay
-                message={errorMessage()!}
-                suggestion={errorContext()?.suggestion}
-                errorType={errorContext()?.type}
-                onRetry={handleRetry}
-                onSelectNewFile={handleReset}
-              />
+              <Suspense
+                fallback={
+                  <div class="animate-pulse h-32 bg-gray-100 dark:bg-gray-800 rounded-lg" />
+                }
+              >
+                <ErrorDisplay
+                  message={errorMessage()!}
+                  suggestion={errorContext()?.suggestion}
+                  errorType={errorContext()?.type}
+                  onRetry={handleRetry}
+                  onSelectNewFile={handleReset}
+                />
+              </Suspense>
             </Show>
           </div>
 
           <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-8 lg:items-start">
             <div class="space-y-6">
               <Show when={memoryWarning()}>
-                <MemoryWarning
-                  isDuringConversion={appState() === 'converting'}
-                  onReduceSettings={handleReduceSettings}
-                  onCancel={handleCancelConversion}
-                  onDismiss={handleDismissMemoryWarning}
-                />
+                <Suspense
+                  fallback={
+                    <div class="animate-pulse h-24 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg" />
+                  }
+                >
+                  <MemoryWarning
+                    isDuringConversion={appState() === 'converting'}
+                    onReduceSettings={handleReduceSettings}
+                    onCancel={handleCancelConversion}
+                    onDismiss={handleDismissMemoryWarning}
+                  />
+                </Suspense>
               </Show>
 
               <FileDropzone
@@ -261,18 +279,31 @@ const App: Component = () => {
                 showElapsedTime={dropzoneStatus()?.showElapsedTime}
                 startTime={dropzoneStatus()?.startTime}
                 estimatedSecondsRemaining={dropzoneStatus()?.estimatedSecondsRemaining}
+                thumbnailUrl={videoThumbnail()}
               />
 
               <Show when={appState() === 'loading-ffmpeg'}>
-                <ConversionProgress
-                  progress={loadingProgress()}
-                  status="Loading FFmpeg (~30MB download)..."
-                  statusMessage={loadingStatusMessage()}
-                />
+                <Suspense
+                  fallback={
+                    <div class="animate-pulse h-20 bg-blue-50 dark:bg-blue-900/20 rounded-lg" />
+                  }
+                >
+                  <ConversionProgress
+                    progress={loadingProgress()}
+                    status="Loading FFmpeg (~30MB download)..."
+                    statusMessage={loadingStatusMessage()}
+                  />
+                </Suspense>
               </Show>
 
               <Show when={appState() === 'analyzing'}>
-                <ConversionProgress progress={50} status="Analyzing video..." />
+                <Suspense
+                  fallback={
+                    <div class="animate-pulse h-20 bg-blue-50 dark:bg-blue-900/20 rounded-lg" />
+                  }
+                >
+                  <ConversionProgress progress={50} status="Analyzing video..." />
+                </Suspense>
               </Show>
 
               {/* Video metadata and warnings - show after file analysis */}
@@ -352,14 +383,20 @@ const App: Component = () => {
             <div class="mt-8 space-y-6">
               <For each={conversionResults()}>
                 {(result) => (
-                  <ResultPreview
-                    outputBlob={result.outputBlob}
-                    originalName={result.originalName}
-                    originalSize={result.originalSize}
-                    settings={result.settings}
-                    wasTranscoded={result.wasTranscoded}
-                    originalCodec={result.originalCodec}
-                  />
+                  <Suspense
+                    fallback={
+                      <div class="animate-pulse h-96 bg-gray-100 dark:bg-gray-800 rounded-lg" />
+                    }
+                  >
+                    <ResultPreview
+                      outputBlob={result.outputBlob}
+                      originalName={result.originalName}
+                      originalSize={result.originalSize}
+                      settings={result.settings}
+                      wasTranscoded={result.wasTranscoded}
+                      originalCodec={result.originalCodec}
+                    />
+                  </Suspense>
                 )}
               </For>
             </div>

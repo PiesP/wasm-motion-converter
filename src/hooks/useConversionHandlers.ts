@@ -24,13 +24,16 @@ import {
   setInputFile,
   setPerformanceWarnings,
   setVideoMetadata,
+  setVideoThumbnail,
   videoMetadata,
+  videoThumbnail,
 } from '../stores/conversion-store';
 import { showToast } from '../stores/toast-store';
 import type { VideoMetadata } from '../types/conversion-types';
 import { classifyConversionError } from '../utils/classify-conversion-error';
 import { WARN_RESOLUTION_PIXELS } from '../utils/constants';
 import { ETACalculator } from '../utils/eta-calculator';
+import { extractVideoThumbnail } from '../utils/extract-thumbnail';
 import { validateVideoFile } from '../utils/file-validation';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
@@ -120,6 +123,22 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
 
     await ffmpegService.clearCachedInput();
     setInputFile(file);
+
+    // Extract thumbnail for preview (runs in parallel with other operations)
+    extractVideoThumbnail(file)
+      .then((thumbnailUrl) => {
+        if (thumbnailUrl) {
+          // Clean up previous thumbnail if exists
+          const prevThumbnail = videoThumbnail();
+          if (prevThumbnail && prevThumbnail.startsWith('data:')) {
+            // Data URLs don't need cleanup, but blob URLs would
+          }
+          setVideoThumbnail(thumbnailUrl);
+        }
+      })
+      .catch((error) => {
+        logger.warn('general', 'Failed to extract video thumbnail', { error });
+      });
 
     try {
       const needsInit = !ffmpegService.isLoaded();
