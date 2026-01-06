@@ -1486,7 +1486,10 @@ class FFmpegService {
   ): Promise<void> {
     const paletteEnd = Math.round((encodeStart + encodeEnd) / 2);
     const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
-    const paletteThreadArgs = getThreadingArgs('scale-filter');
+    // CRITICAL FIX: palettegen is a complex filter that analyzes all frames
+    // Using multi-threading causes deadlocks -> 60s timeout
+    // Force single-threaded mode for palette generation
+    const paletteThreadArgs = getThreadingArgs('filter-complex');
     const paletteCmd = [
       ...paletteThreadArgs,
       ...inputArgs,
@@ -1702,80 +1705,21 @@ class FFmpegService {
         this.stopProgressHeartbeat(heartbeat);
       }
     } else {
-      // ANIMATED: Multi-frame WebP encoding using TWO-PASS approach
-      // Pass 1: PNG frames → H.264 intermediate file (creates proper PTS in container)
-      // Pass 2: H.264 → WebP (proven working path)
-
-      const intermediateFileName = 'temp_intermediate.mp4';
-      const h264EncodeEnd = Math.round((encodeStart + encodeEnd) / 2);
-
-      logger.info('conversion', 'Starting two-pass WebP encoding', {
+      // OPTIMIZED: Direct PNG sequence → WebP encoding (saves 2-3s vs two-pass)
+      // This uses FFmpeg's native libwebp encoder with frame sequence input
+      logger.info('conversion', 'Starting direct WebP encoding', {
         frameCount,
         fps: settings.fps,
         quality: settings.quality,
-        approach: 'PNG → H.264 → WebP',
+        approach: 'PNG frames → WebP (direct)',
       });
 
-      // PASS 1: Encode PNG frames to H.264/MP4
-      const h264ThreadArgs = getThreadingArgs('scale-filter');
       const frameInputArgs = this.getFrameInputArgs(settings.fps);
-      const h264Cmd = [
-        ...getProgressLoggingArgs(),
-        ...h264ThreadArgs,
-        ...frameInputArgs,
-        '-c:v',
-        'libx264',
-        '-preset',
-        'ultrafast', // Fast encoding for intermediate file
-        '-crf',
-        '18', // High quality to preserve details
-        '-pix_fmt',
-        'yuv420p',
-        '-frames:v',
-        frameCount.toString(),
-        intermediateFileName,
-      ];
-
-      logger.info('conversion', 'Pass 1: Encoding PNG frames to H.264 intermediate', {
-        frameCount,
-        fps: settings.fps,
-        output: intermediateFileName,
-      });
-
-      const h264LogHandler = this.createFFmpegLogHandler(
-        durationSeconds,
-        encodeStart,
-        h264EncodeEnd
-      );
-      ffmpeg.on('log', h264LogHandler);
-
-      const h264Heartbeat = this.startProgressHeartbeat(
-        encodeStart,
-        h264EncodeEnd,
-        Math.max(15, Math.min(durationSeconds, 30))
-      );
-
-      try {
-        await withTimeout(
-          ffmpeg.exec(h264Cmd),
-          TIMEOUT_CONVERSION,
-          `H.264 intermediate encoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
-          () => this.terminateFFmpeg()
-        );
-      } finally {
-        ffmpeg.off('log', h264LogHandler);
-        this.stopProgressHeartbeat(h264Heartbeat);
-      }
-
-      logger.info('conversion', 'Pass 1 complete: H.264 intermediate created');
-
-      // PASS 2: Convert H.264 to WebP
       const webpThreadArgs = getThreadingArgs('scale-filter');
       const webpCmd = [
         ...getProgressLoggingArgs(),
         ...webpThreadArgs,
-        '-i',
-        intermediateFileName,
+        ...frameInputArgs,
         '-c:v',
         'libwebp',
         '-lossless',
@@ -1790,29 +1734,32 @@ class FFmpegService {
         Math.min(settings.method, 4).toString(),
         '-loop',
         '0',
+        '-frames:v',
+        frameCount.toString(),
         outputFileName,
       ];
 
-      logger.info('conversion', 'Pass 2: Converting H.264 to WebP', {
-        input: intermediateFileName,
-        output: outputFileName,
+      logger.info('conversion', 'Encoding PNG frames directly to WebP', {
+        frameCount,
+        fps: settings.fps,
         quality: settings.quality,
+        output: outputFileName,
       });
 
-      const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, h264EncodeEnd, encodeEnd);
+      const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
       ffmpeg.on('log', webpLogHandler);
 
       const webpHeartbeat = this.startProgressHeartbeat(
-        h264EncodeEnd,
+        encodeStart,
         encodeEnd,
-        Math.max(15, Math.min(durationSeconds, 30))
+        Math.max(15, Math.min(durationSeconds, 45))
       );
 
       try {
         await withTimeout(
           ffmpeg.exec(webpCmd),
           TIMEOUT_CONVERSION,
-          `WebP encoding from H.264 timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+          `Direct WebP encoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
           () => this.terminateFFmpeg()
         );
       } finally {
@@ -1820,18 +1767,7 @@ class FFmpegService {
         this.stopProgressHeartbeat(webpHeartbeat);
       }
 
-      logger.info('conversion', 'Pass 2 complete: WebP encoding finished');
-
-      // Cleanup intermediate file
-      try {
-        await this.safeDelete(intermediateFileName);
-        logger.debug('conversion', 'Cleaned up intermediate H.264 file');
-      } catch (error) {
-        logger.warn('conversion', 'Could not delete intermediate H.264 file (non-critical)', {
-          file: intermediateFileName,
-          error: getErrorMessage(error),
-        });
-      }
+      logger.info('conversion', 'Direct WebP encoding complete');
     }
   }
 
@@ -2034,7 +1970,8 @@ class FFmpegService {
 
       try {
         this.updateStatus('Generating color palette...');
-        const paletteThreadArgs = getThreadingArgs('scale-filter');
+        // CRITICAL FIX: palettegen requires single-threaded mode to avoid deadlocks
+        const paletteThreadArgs = getThreadingArgs('filter-complex');
         const paletteFilterChain = scaleFilter
           ? `fps=${settings.fps},${scaleFilter},palettegen=max_colors=${settings.colors}`
           : `fps=${settings.fps},palettegen=max_colors=${settings.colors}`;

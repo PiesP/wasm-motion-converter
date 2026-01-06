@@ -861,8 +861,17 @@ class WebCodecsConversionService {
       if (useModernGif && this.gifWorkerPool) {
         // Use worker pool for GIF encoding
         try {
+          // Convert ImageData to serializable format for worker transfer
+          // ImageData objects cannot be cloned by postMessage - must transfer underlying buffer
+          const serializableFrames = capturedFrames.map((frame) => ({
+            data: frame.data,
+            width: frame.width,
+            height: frame.height,
+            colorSpace: frame.colorSpace,
+          }));
+
           outputBlob = await this.gifWorkerPool.execute(async (worker) => {
-            return await worker.encode(capturedFrames, {
+            return await worker.encode(serializableFrames, {
               width: decodeResult.width,
               height: decodeResult.height,
               fps: targetFps,
