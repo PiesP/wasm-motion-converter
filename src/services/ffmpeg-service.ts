@@ -18,8 +18,8 @@ import {
   WARN_DURATION_SECONDS,
   WARN_RESOLUTION_PIXELS,
 } from '../utils/constants';
-import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { getErrorMessage } from '../utils/error-utils';
+import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';

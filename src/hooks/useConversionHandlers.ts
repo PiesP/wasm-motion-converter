@@ -26,14 +26,14 @@ import {
   setVideoMetadata,
   videoMetadata,
 } from '../stores/conversion-store';
+import { showToast } from '../stores/toast-store';
 import type { VideoMetadata } from '../types/conversion-types';
 import { classifyConversionError } from '../utils/classify-conversion-error';
+import { WARN_RESOLUTION_PIXELS } from '../utils/constants';
+import { ETACalculator } from '../utils/eta-calculator';
 import { validateVideoFile } from '../utils/file-validation';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
-import { WARN_RESOLUTION_PIXELS } from '../utils/constants';
-import { ETACalculator } from '../utils/eta-calculator';
-import { showToast } from '../stores/toast-store';
 
 interface ConversionHandlersOptions {
   conversionStartTime: () => number;

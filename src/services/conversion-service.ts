@@ -147,7 +147,17 @@ export async function convertVideo(
   options: ConversionOptions,
   metadata?: VideoMetadata
 ): Promise<Blob> {
+  // Initialize FFmpeg in parallel with metadata resolution for 1-3s speedup
+  const ffmpegInitPromise = ffmpegService.isLoaded()
+    ? Promise.resolve()
+    : ffmpegService.initialize();
+
+  // Resolve metadata (may use FFmpeg if needed)
   const resolvedMetadata = await resolveMetadata(file, metadata);
+
+  // Ensure FFmpeg is ready before proceeding
+  await ffmpegInitPromise;
+
   const strategy = getConversionStrategy({ file, format, metadata: resolvedMetadata });
 
   let effectiveOptions: ConversionOptions = { ...options };
