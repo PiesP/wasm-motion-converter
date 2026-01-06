@@ -25,6 +25,11 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     }
     return formatDuration(props.conversionDurationSeconds);
   });
+  const sizeGridClass = createMemo(() =>
+    conversionTimeLabel()
+      ? 'grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3'
+      : 'grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mt-3'
+  );
 
   createEffect(() => {
     const url = previewUrl();
@@ -87,7 +92,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       <div class="mt-4">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white">Conversion Complete</h3>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mt-3">
+        <div class={sizeGridClass()}>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Original Size</div>
             <div class="font-medium text-gray-900 dark:text-white">
@@ -95,23 +100,19 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             </div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <div class="text-gray-600 dark:text-gray-400">Output Size</div>
-                <div class="font-medium text-gray-900 dark:text-white">
-                  {formatBytes(props.outputBlob.size)}
-                </div>
-              </div>
-              <Show when={conversionTimeLabel()}>
-                {(label) => (
-                  <div class="text-right">
-                    <div class="text-gray-600 dark:text-gray-400">Conversion Time</div>
-                    <div class="font-medium text-gray-900 dark:text-white">{label()}</div>
-                  </div>
-                )}
-              </Show>
+            <div class="text-gray-600 dark:text-gray-400">Output Size</div>
+            <div class="font-medium text-gray-900 dark:text-white">
+              {formatBytes(props.outputBlob.size)}
             </div>
           </div>
+          <Show when={conversionTimeLabel()}>
+            {(label) => (
+              <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
+                <div class="text-gray-600 dark:text-gray-400">Conversion Time</div>
+                <div class="font-medium text-gray-900 dark:text-white">{label()}</div>
+              </div>
+            )}
+          </Show>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3">
