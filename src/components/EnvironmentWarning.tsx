@@ -1,33 +1,73 @@
-import { createSignal, onMount, type Component } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createSignal, onMount, Show } from 'solid-js';
 
+import { logger } from '../utils/logger';
+
+/**
+ * LocalStorage key for storing expanded state
+ */
 const STORAGE_KEY = 'envWarningExpanded';
 
+/**
+ * Environment warning component
+ *
+ * Displays a warning banner when the environment doesn't support SharedArrayBuffer
+ * or cross-origin isolation, which are required for FFmpeg multithreading.
+ * Includes expandable details and an environment test button.
+ *
+ * @example
+ * ```tsx
+ * <EnvironmentWarning />
+ * ```
+ */
 const EnvironmentWarning: Component = () => {
   const [isExpanded, setIsExpanded] = createSignal(true);
 
   // Load state from localStorage on mount
   onMount(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved !== null) {
-      setIsExpanded(saved === 'true');
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved !== null) {
+        setIsExpanded(saved === 'true');
+      }
+    } catch (error) {
+      logger.warn('general', 'Failed to load environment warning state', { error });
     }
   });
 
-  const toggleExpanded = () => {
+  /**
+   * Toggle expanded state and persist to localStorage
+   */
+  const handleToggleExpanded = (): void => {
     const newState = !isExpanded();
     setIsExpanded(newState);
-    localStorage.setItem(STORAGE_KEY, String(newState));
+
+    try {
+      localStorage.setItem(STORAGE_KEY, String(newState));
+    } catch (error) {
+      logger.warn('general', 'Failed to save environment warning state', { error });
+    }
   };
 
-  const testEnvironment = () => {
+  /**
+   * Test environment capabilities and display results
+   */
+  const handleTestEnvironment = (): void => {
     const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
     const isCrossOriginIsolated = crossOriginIsolated;
 
+    logger.info('general', 'Environment test results', {
+      hasSharedArrayBuffer,
+      isCrossOriginIsolated,
+    });
+
+    // Use console group for structured output
     console.group('🧪 Environment Test Results');
     console.log('SharedArrayBuffer:', hasSharedArrayBuffer ? '✅ Available' : '❌ Unavailable');
     console.log('crossOriginIsolated:', isCrossOriginIsolated ? '✅ true' : '❌ false');
     console.groupEnd();
 
+    // Alert for immediate feedback (acceptable for test utility)
     alert(
       `Environment Test Results:\n\n` +
         `SharedArrayBuffer: ${hasSharedArrayBuffer ? 'Available' : 'Unavailable'}\n` +
@@ -37,13 +77,18 @@ const EnvironmentWarning: Component = () => {
   };
 
   return (
-    <div class="bg-yellow-50 dark:bg-yellow-950 border-l-4 border-yellow-400 dark:border-yellow-500 p-4">
+    <div
+      class="bg-yellow-50 dark:bg-yellow-950 border-l-4 border-yellow-400 dark:border-yellow-500 p-4"
+      role="alert"
+      aria-live="polite"
+    >
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
             class="h-5 w-5 text-yellow-400 dark:text-yellow-500"
             viewBox="0 0 20 20"
             fill="currentColor"
+            aria-hidden="true"
           >
             <path
               fill-rule="evenodd"
@@ -59,7 +104,7 @@ const EnvironmentWarning: Component = () => {
             </h3>
             <button
               type="button"
-              onClick={toggleExpanded}
+              onClick={handleToggleExpanded}
               class="ml-3 text-sm text-yellow-700 dark:text-yellow-400 hover:text-yellow-900 dark:hover:text-yellow-200 underline focus:outline-none focus:ring-2 focus:ring-yellow-500 rounded"
               aria-expanded={isExpanded()}
               aria-label={isExpanded() ? 'Hide details' : 'Show details'}
@@ -68,35 +113,34 @@ const EnvironmentWarning: Component = () => {
             </button>
           </div>
 
-          {isExpanded() && (
-            <>
-              <div class="mt-2 text-sm text-yellow-700 dark:text-yellow-400">
-                <p>
-                  SharedArrayBuffer is not available. This application requires cross-origin
-                  isolation to work properly.
-                </p>
-                <p class="mt-2">
-                  <strong>If you're running this locally:</strong> Make sure you're using the Vite
-                  dev server with the correct headers configured.
-                </p>
-                <p class="mt-2">
-                  <strong>If you're accessing a deployed site:</strong> Contact the administrator to
-                  configure COOP/COEP headers. If FFmpeg fails to start, browser extensions or
-                  strict security settings may be blocking module/blob workers—try an InPrivate
-                  window or disable blockers temporarily.
-                </p>
-              </div>
-              <div class="mt-3">
-                <button
-                  type="button"
-                  onClick={testEnvironment}
-                  class="inline-flex items-center px-3 py-1.5 border border-yellow-600 dark:border-yellow-500 text-sm font-medium rounded text-yellow-700 dark:text-yellow-300 bg-yellow-100 dark:bg-yellow-900 hover:bg-yellow-200 dark:hover:bg-yellow-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
-                >
-                  🧪 Test Environment
-                </button>
-              </div>
-            </>
-          )}
+          <Show when={isExpanded()}>
+            <div class="mt-2 text-sm text-yellow-700 dark:text-yellow-400">
+              <p>
+                SharedArrayBuffer is not available. This application requires cross-origin isolation
+                to work properly.
+              </p>
+              <p class="mt-2">
+                <strong>If you're running this locally:</strong> Make sure you're using the Vite dev
+                server with the correct headers configured.
+              </p>
+              <p class="mt-2">
+                <strong>If you're accessing a deployed site:</strong> Contact the administrator to
+                configure COOP/COEP headers. If FFmpeg fails to start, browser extensions or strict
+                security settings may be blocking module/blob workers—try an InPrivate window or
+                disable blockers temporarily.
+              </p>
+            </div>
+            <div class="mt-3">
+              <button
+                type="button"
+                onClick={handleTestEnvironment}
+                class="inline-flex items-center px-3 py-1.5 border border-yellow-600 dark:border-yellow-500 text-sm font-medium rounded text-yellow-700 dark:text-yellow-300 bg-yellow-100 dark:bg-yellow-900 hover:bg-yellow-200 dark:hover:bg-yellow-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
+                aria-label="Test environment capabilities"
+              >
+                🧪 Test Environment
+              </button>
+            </div>
+          </Show>
         </div>
       </div>
     </div>

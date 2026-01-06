@@ -1,7 +1,16 @@
-import { For, Show } from 'solid-js';
+import type { Component } from 'solid-js';
+import { For, onCleanup, onMount, Show } from 'solid-js';
+
 import { confirmationStore } from '../stores/confirmation-store';
+
 import type { ValidationWarning } from '../types/validation';
 
+/**
+ * Get Tailwind color classes based on warning severity
+ *
+ * @param severity - Warning severity level
+ * @returns Tailwind CSS color classes
+ */
 function getSeverityColor(severity: ValidationWarning['severity']): string {
   switch (severity) {
     case 'error':
@@ -13,6 +22,12 @@ function getSeverityColor(severity: ValidationWarning['severity']): string {
   }
 }
 
+/**
+ * Get emoji icon based on warning severity
+ *
+ * @param severity - Warning severity level
+ * @returns Emoji icon string
+ */
 function getSeverityIcon(severity: ValidationWarning['severity']): string {
   switch (severity) {
     case 'error':
@@ -24,18 +39,88 @@ function getSeverityIcon(severity: ValidationWarning['severity']): string {
   }
 }
 
-export function ConfirmationModal() {
+/**
+ * Confirmation modal for displaying validation warnings
+ * and requiring user confirmation before proceeding
+ *
+ * @example
+ * ```tsx
+ * <ConfirmationModal />
+ * ```
+ */
+const ConfirmationModal: Component = () => {
   const state = () => confirmationStore.state;
+  let modalRef: HTMLDivElement | undefined;
+  let cancelButtonRef: HTMLButtonElement | undefined;
+
+  // Handle ESC key to close modal
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && state().isVisible) {
+      confirmationStore.cancel();
+    }
+  };
+
+  // Focus trap for modal accessibility
+  const handleFocusTrap = (event: KeyboardEvent) => {
+    if (event.key === 'Tab' && state().isVisible && modalRef) {
+      const focusableElements = modalRef.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement?.focus();
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement?.focus();
+      }
+    }
+  };
+
+  onMount(() => {
+    // Add event listeners for keyboard navigation
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleFocusTrap);
+
+    // Focus first interactive element when modal opens
+    if (state().isVisible) {
+      queueMicrotask(() => {
+        cancelButtonRef?.focus();
+      });
+    }
+  });
+
+  onCleanup(() => {
+    // Remove event listeners on cleanup
+    document.removeEventListener('keydown', handleKeyDown);
+    document.removeEventListener('keydown', handleFocusTrap);
+  });
 
   return (
     <Show when={state().isVisible}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
-          <h2 class="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">
+      <div
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
+        onClick={(e) => {
+          // Close modal when clicking backdrop
+          if (e.target === e.currentTarget) {
+            confirmationStore.cancel();
+          }
+        }}
+      >
+        <div
+          ref={modalRef}
+          class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6"
+        >
+          <h2 id="modal-title" class="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">
             Conversion Warning
           </h2>
 
-          <div class="space-y-3 mb-6">
+          <div class="space-y-3 mb-6" role="list">
             <For each={state().warnings}>
               {(warning) => (
                 <div
@@ -45,9 +130,13 @@ export function ConfirmationModal() {
                     'border-yellow-500': warning.severity === 'warning',
                     'border-blue-500': warning.severity === 'info',
                   }}
+                  role="listitem"
+                  aria-live="polite"
                 >
                   <div class="flex items-start gap-2">
-                    <span class="text-lg">{getSeverityIcon(warning.severity)}</span>
+                    <span class="text-lg" aria-hidden="true">
+                      {getSeverityIcon(warning.severity)}
+                    </span>
                     <div class="flex-1">
                       <p class={`font-medium ${getSeverityColor(warning.severity)}`}>
                         {warning.message}
@@ -59,7 +148,7 @@ export function ConfirmationModal() {
                       </Show>
                       <Show when={warning.suggestedAction}>
                         <p class="text-sm text-gray-700 dark:text-gray-300 mt-2 font-medium">
-                          💡 {warning.suggestedAction}
+                          <span aria-hidden="true">💡</span> {warning.suggestedAction}
                         </p>
                       </Show>
                     </div>
@@ -71,9 +160,11 @@ export function ConfirmationModal() {
 
           <div class="flex gap-3 justify-end">
             <button
+              ref={cancelButtonRef}
               type="button"
               onClick={() => confirmationStore.cancel()}
               class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-gray-900 dark:text-gray-100"
+              aria-label="Cancel conversion and close modal"
             >
               Cancel
             </button>
@@ -81,6 +172,7 @@ export function ConfirmationModal() {
               type="button"
               onClick={() => confirmationStore.confirm()}
               class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+              aria-label="Proceed with conversion despite warnings"
             >
               Proceed Anyway
             </button>
@@ -89,4 +181,6 @@ export function ConfirmationModal() {
       </div>
     </Show>
   );
-}
+};
+
+export default ConfirmationModal;

@@ -1,5 +1,8 @@
 import { type Component, type JSX, Match, Switch, splitProps } from 'solid-js';
 
+/**
+ * Available icon names
+ */
 export type IconName =
   | 'info'
   | 'warning'
@@ -14,19 +17,40 @@ export type IconName =
   | 'moon'
   | 'sun';
 
+/**
+ * Icon size variants
+ */
 export type IconSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
+/**
+ * Icon component props
+ */
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'name'> {
+  /** Name of the icon to display */
   name: IconName;
+  /** Size variant of the icon (default: 'md') */
   size?: IconSize;
+  /** Custom CSS class names */
+  class?: string;
+  /** Whether the icon is decorative or conveys meaning */
+  'aria-hidden'?: boolean | 'true' | 'false';
 }
 
+/**
+ * Icon component for displaying SVG icons
+ *
+ * @example
+ * ```tsx
+ * <Icon name="success" size="lg" aria-hidden={false} />
+ * <Icon name="spinner" size="sm" class="animate-spin" />
+ * ```
+ */
 const Icon: Component<IconProps> = (props) => {
-  const [local, others] = splitProps(props, ['name', 'size', 'class']);
+  const [local, others] = splitProps(props, ['name', 'size', 'class', 'aria-hidden']);
 
   const size = () => local.size ?? 'md';
 
-  const sizeClasses = () => {
+  const sizeClasses = (): string => {
     switch (size()) {
       case 'xs':
         return 'h-3 w-3';
@@ -38,12 +62,12 @@ const Icon: Component<IconProps> = (props) => {
         return 'h-6 w-6';
       case 'xl':
         return 'h-8 w-8';
-      default:
-        return 'h-5 w-5';
     }
   };
 
-  const combinedClasses = () => [sizeClasses(), local.class].filter(Boolean).join(' ');
+  const combinedClasses = (): string => [sizeClasses(), local.class].filter(Boolean).join(' ');
+
+  const ariaHidden = () => local['aria-hidden'] ?? true;
 
   return (
     <svg
@@ -53,7 +77,7 @@ const Icon: Component<IconProps> = (props) => {
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
-      aria-hidden="true"
+      aria-hidden={ariaHidden()}
     >
       <Switch>
         <Match when={local.name === 'info'}>

@@ -409,7 +409,6 @@ App
 │   │   ├── FileDropzone
 │   │   │   └── ProgressBar (during loading/conversion)
 │   │   ├── VideoMetadataDisplay
-│   │   ├── InlineWarningBanner (performance warnings)
 │   │   ├── FormatSelector
 │   │   │   └── OptionSelector
 │   │   ├── QualitySelector
