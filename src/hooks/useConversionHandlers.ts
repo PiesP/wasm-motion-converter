@@ -130,7 +130,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
         if (thumbnailUrl) {
           // Clean up previous thumbnail if exists
           const prevThumbnail = videoThumbnail();
-          if (prevThumbnail && prevThumbnail.startsWith('data:')) {
+          if (prevThumbnail?.startsWith('data:')) {
             // Data URLs don't need cleanup, but blob URLs would
           }
           setVideoThumbnail(thumbnailUrl);

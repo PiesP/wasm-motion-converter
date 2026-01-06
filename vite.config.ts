@@ -113,6 +113,18 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           format: 'es',
+          // Manual chunks for better long-term caching
+          // Separates vendor code from app code so vendor bundle is cached longer
+          manualChunks: {
+            // SolidJS framework code
+            'vendor-solid': ['solid-js'],
+            // FFmpeg dependencies (large, rarely change)
+            'vendor-ffmpeg': ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
+            // GIF encoding library
+            'vendor-gif': ['modern-gif'],
+            // Worker communication
+            'vendor-comlink': ['comlink'],
+          },
         },
       },
     },

@@ -27,6 +27,7 @@ const ConversionProgress = lazy(() => import('./components/ConversionProgress'))
 const ErrorDisplay = lazy(() => import('./components/ErrorDisplay'));
 const MemoryWarning = lazy(() => import('./components/MemoryWarning'));
 const ResultPreview = lazy(() => import('./components/ResultPreview'));
+
 import { useConversionHandlers } from './hooks/useConversionHandlers';
 import { ffmpegService } from './services/ffmpeg-service';
 import { getRecommendedSettings } from './services/performance-checker';
@@ -37,7 +38,6 @@ import {
   loadingStatusMessage,
   setEnvironmentSupported,
 } from './stores/app-store';
-import { isMemoryCritical } from './utils/memory-monitor';
 import {
   autoAppliedRecommendation,
   conversionProgress,
@@ -53,7 +53,9 @@ import {
   videoMetadata,
   videoThumbnail,
 } from './stores/conversion-store';
+import { debounce } from './utils/debounce';
 import { estimateEtaRange, estimateOutputSizeRange } from './utils/estimate-output';
+import { isMemoryCritical } from './utils/memory-monitor';
 
 const App: Component = () => {
   const [conversionStartTime, setConversionStartTime] = createSignal<number>(0);
@@ -95,10 +97,13 @@ const App: Component = () => {
     }
   });
 
-  // Persist conversion settings to localStorage whenever they change
+  // Persist conversion settings to localStorage with debouncing (500ms)
+  // Prevents excessive writes when user rapidly changes multiple settings
+  const debouncedSaveSettings = debounce(saveConversionSettings, 500);
+
   createEffect(() => {
     const settings = conversionSettings();
-    saveConversionSettings(settings);
+    debouncedSaveSettings(settings);
   });
 
   const dropzoneStatus = createMemo(() => {
