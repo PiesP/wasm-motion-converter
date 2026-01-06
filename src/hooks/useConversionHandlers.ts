@@ -204,11 +204,13 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
       if (memoryCheckTimer) {
         clearInterval(memoryCheckTimer);
       }
+      // Check memory every 5 seconds (memory issues don't develop in 2-3 seconds)
+      // Reduced from 2s to minimize unnecessary overhead during conversion
       memoryCheckTimer = setInterval(() => {
         if (isMemoryCritical()) {
           setMemoryWarning(true);
         }
-      }, 2000);
+      }, 5000);
 
       const progressCallback = (progress: number) => {
         const now = Date.now();
