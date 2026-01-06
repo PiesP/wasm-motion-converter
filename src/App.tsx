@@ -60,13 +60,19 @@ const App: Component = () => {
   );
   const [memoryWarning, setMemoryWarning] = createSignal(false);
 
-  const { handleFileSelected, handleConvert, handleReset, handleCancelConversion, handleRetry } =
-    useConversionHandlers({
-      conversionStartTime,
-      setConversionStartTime,
-      setEstimatedSecondsRemaining,
-      setMemoryWarning,
-    });
+  const {
+    handleFileSelected,
+    handleConvert,
+    handleReset,
+    handleCancelConversion,
+    handleRetry,
+    handleDismissError,
+  } = useConversionHandlers({
+    conversionStartTime,
+    setConversionStartTime,
+    setEstimatedSecondsRemaining,
+    setMemoryWarning,
+  });
 
   const runIdle = (callback: () => void) => {
     if (typeof requestIdleCallback !== 'undefined') {
@@ -205,6 +211,7 @@ const App: Component = () => {
                   errorType={errorContext()?.type}
                   onRetry={handleRetry}
                   onSelectNewFile={handleReset}
+                  onDismiss={handleDismissError}
                 />
               </Suspense>
             </Show>

@@ -410,11 +410,20 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
     }
   };
 
+  const handleDismissError = () => {
+    logger.info('general', 'User dismissed error message');
+    resetErrorState();
+    setAppState('idle');
+    // inputFile, videoMetadata, and settings remain intact
+    // User can now modify settings and click Convert again
+  };
+
   return {
     handleFileSelected,
     handleConvert,
     handleReset,
     handleCancelConversion,
     handleRetry,
+    handleDismissError,
   };
 }

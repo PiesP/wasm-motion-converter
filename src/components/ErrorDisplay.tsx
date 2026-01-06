@@ -7,6 +7,7 @@ interface ErrorDisplayProps {
   errorType?: ConversionErrorType;
   onRetry: () => void;
   onSelectNewFile: () => void;
+  onDismiss?: () => void;
 }
 
 const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
@@ -45,10 +46,27 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
 
   return (
     <div
-      class="bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-500 p-4 rounded-lg"
+      class="relative bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-500 p-4 rounded-lg"
       role="alert"
       aria-live="assertive"
     >
+      <Show when={props.onDismiss}>
+        <button
+          type="button"
+          onClick={props.onDismiss}
+          class="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-red-100 dark:hover:bg-red-900"
+          aria-label="Dismiss error message"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M6 18L18 6M6 6l12 12"
+            />
+          </svg>
+        </button>
+      </Show>
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
