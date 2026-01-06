@@ -11,6 +11,7 @@ import {
   Suspense,
 } from 'solid-js';
 // Eagerly loaded components (used immediately)
+import { ConfirmationModal } from './components/ConfirmationModal';
 import EnvironmentWarning from './components/EnvironmentWarning';
 import FileDropzone from './components/FileDropzone';
 import FormatSelector from './components/FormatSelector';
@@ -352,6 +353,7 @@ const App: Component = () => {
 
         <LicenseAttribution />
         <ToastContainer />
+        <ConfirmationModal />
       </div>
     </ErrorBoundary>
   );

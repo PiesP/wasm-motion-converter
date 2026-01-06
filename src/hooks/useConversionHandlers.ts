@@ -9,6 +9,7 @@ import {
   setLoadingProgress,
   setLoadingStatusMessage,
 } from '../stores/app-store';
+import { confirmationStore } from '../stores/confirmation-store';
 import {
   conversionSettings,
   DEFAULT_CONVERSION_SETTINGS,
@@ -33,7 +34,7 @@ import type { VideoMetadata } from '../types/conversion-types';
 import { classifyConversionError } from '../utils/classify-conversion-error';
 import { WARN_RESOLUTION_PIXELS } from '../utils/constants';
 import { ETACalculator } from '../utils/eta-calculator';
-import { validateVideoFile } from '../utils/file-validation';
+import { validateVideoDuration, validateVideoFile } from '../utils/file-validation';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 
@@ -190,6 +191,48 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
 
     const settings = conversionSettings();
 
+    // Validate video duration before starting conversion
+    try {
+      const durationValidation = await validateVideoDuration(file, settings.format);
+
+      // Check if any warnings require user confirmation
+      const needsConfirmation = durationValidation.warnings.some((w) => w.requiresConfirmation);
+
+      if (needsConfirmation) {
+        // Show confirmation modal and wait for user decision
+        return new Promise<void>((resolve) => {
+          confirmationStore.showConfirmation(
+            durationValidation.warnings,
+            () => {
+              // User confirmed - proceed with conversion
+              resolve();
+              performConversion(file, settings, durationValidation.duration);
+            },
+            () => {
+              // User cancelled
+              logger.info('conversion', 'User cancelled conversion after duration warning');
+              resolve();
+            }
+          );
+        });
+      }
+
+      // No confirmation needed, proceed directly
+      await performConversion(file, settings, durationValidation.duration);
+    } catch (validationError) {
+      // If validation fails, log warning but allow conversion to proceed
+      logger.warn('conversion', 'Duration validation failed, proceeding anyway', {
+        error: validationError instanceof Error ? validationError.message : String(validationError),
+      });
+      await performConversion(file, settings);
+    }
+  };
+
+  const performConversion = async (
+    file: File,
+    settings: ReturnType<typeof conversionSettings>,
+    videoDuration?: number
+  ) => {
     try {
       setAppState('converting');
       setConversionProgress(0);
@@ -207,6 +250,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
         scale: settings.scale,
         fileSize: file.size,
         fileName: file.name,
+        duration: videoDuration ? `${(videoDuration / 1000).toFixed(1)}s` : 'unknown',
       });
 
       if (memoryCheckTimer) {
@@ -242,6 +286,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
         {
           quality: settings.quality,
           scale: settings.scale,
+          duration: videoDuration ? videoDuration / 1000 : undefined, // Convert ms to seconds
         },
         videoMetadata() ?? undefined
       );

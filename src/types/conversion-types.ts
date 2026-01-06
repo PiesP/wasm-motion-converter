@@ -11,6 +11,7 @@ export interface ConversionSettings {
 export interface ConversionOptions {
   quality: ConversionQuality;
   scale: ConversionScale;
+  duration?: number; // Video duration in seconds (for adaptive timeout calculation)
 }
 
 export interface ConversionResult {

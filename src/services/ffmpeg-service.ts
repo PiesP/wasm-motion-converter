@@ -24,6 +24,7 @@ import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 import { performanceTracker } from '../utils/performance-tracker';
 import { getOptimalFPS } from '../utils/quality-optimizer';
+import { getTimeoutForFormat } from '../utils/timeout-calculator';
 import { withTimeout } from '../utils/with-timeout';
 
 // Legacy constants kept for backward compatibility with external timeout values
@@ -1899,6 +1900,12 @@ class FFmpegService {
 
     // Create log handler with progress parsing for palette generation
     const videoDuration = metadataForConversion?.duration;
+
+    // Calculate adaptive timeout based on video duration
+    const conversionTimeout = videoDuration
+      ? getTimeoutForFormat('gif', videoDuration * 1000) // Convert seconds to milliseconds
+      : getTimeoutForFormat('gif');
+
     ffmpegLogHandler = this.createFFmpegLogHandler(
       videoDuration,
       FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START,
@@ -1999,8 +2006,8 @@ class FFmpegService {
         try {
           await withTimeout(
             ffmpeg.exec(paletteCmd),
-            TIMEOUT_CONVERSION,
-            `GIF palette generation timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+            conversionTimeout,
+            `GIF palette generation timed out after ${conversionTimeout / 1000} seconds. Try reducing the quality or scale settings.`,
             () => this.terminateFFmpeg()
           );
         } finally {
@@ -2043,8 +2050,8 @@ class FFmpegService {
         logger.debug('ffmpeg', 'GIF conversion command', { cmd: conversionCmd.join(' ') });
         await withTimeout(
           ffmpeg.exec(conversionCmd),
-          TIMEOUT_CONVERSION,
-          `GIF conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+          conversionTimeout,
+          `GIF conversion timed out after ${conversionTimeout / 1000} seconds. Try reducing the quality or scale settings.`,
           () => this.terminateFFmpeg()
         );
       } catch (error) {
@@ -2076,7 +2083,15 @@ class FFmpegService {
 
         this.emitProgress(50);
 
-        await this.convertToGIFDirect(inputArgs, outputFileName, settings, scaleFilter, file);
+        await this.convertToGIFDirect(
+          inputArgs,
+          outputFileName,
+          settings,
+          scaleFilter,
+          file,
+          50,
+          conversionTimeout
+        );
       }
 
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END);
@@ -2345,6 +2360,12 @@ class FFmpegService {
 
     // Create log handler with progress parsing for WebP conversion
     const videoDuration = metadataForConversion?.duration;
+
+    // Calculate adaptive timeout based on video duration
+    const conversionTimeout = videoDuration
+      ? getTimeoutForFormat('webp', videoDuration * 1000) // Convert seconds to milliseconds
+      : getTimeoutForFormat('webp');
+
     ffmpegLogHandler = this.createFFmpegLogHandler(
       videoDuration,
       FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
@@ -2468,8 +2489,8 @@ class FFmpegService {
         try {
           await withTimeout(
             ffmpeg.exec(webpCmd),
-            TIMEOUT_CONVERSION,
-            `WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+            conversionTimeout,
+            `WebP conversion timed out after ${conversionTimeout / 1000} seconds. Try reducing the quality or scale settings.`,
             () => this.terminateFFmpeg()
           );
         } finally {
@@ -2503,7 +2524,15 @@ class FFmpegService {
 
         this.emitProgress(50);
 
-        await this.convertToWebPDirect(inputArgs, outputFileName, settings, scaleFilter, file);
+        await this.convertToWebPDirect(
+          inputArgs,
+          outputFileName,
+          settings,
+          scaleFilter,
+          file,
+          50,
+          conversionTimeout
+        );
       }
 
       this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END);
@@ -2702,7 +2731,8 @@ class FFmpegService {
     settings: { fps: number },
     scaleFilter: string | null,
     file?: File,
-    startProgress = 50
+    startProgress = 50,
+    timeout?: number
   ): Promise<void> {
     if (!this.ffmpeg || !this.loaded) {
       if (!file) {
@@ -2737,6 +2767,8 @@ class FFmpegService {
     performanceTracker.startPhase('webp-fallback');
     logger.performance('Starting WebP direct fallback conversion');
 
+    const effectiveTimeout = timeout ?? getTimeoutForFormat('webp');
+
     try {
       await withTimeout(
         ffmpeg.exec([
@@ -2759,8 +2791,8 @@ class FFmpegService {
           '0',
           outputFileName,
         ]),
-        TIMEOUT_CONVERSION,
-        `Direct WebP conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+        effectiveTimeout,
+        `Direct WebP conversion timed out after ${effectiveTimeout / 1000} seconds. Try reducing the quality or scale settings.`,
         () => this.terminateFFmpeg()
       );
     } finally {
@@ -2776,7 +2808,8 @@ class FFmpegService {
     settings: { fps: number },
     scaleFilter: string | null,
     file?: File,
-    startProgress = 50
+    startProgress = 50,
+    timeout?: number
   ): Promise<void> {
     if (!this.ffmpeg || !this.loaded) {
       if (!file) {
@@ -2810,6 +2843,8 @@ class FFmpegService {
     performanceTracker.startPhase('gif-fallback');
     logger.performance('Starting GIF direct fallback conversion');
 
+    const effectiveTimeout = timeout ?? getTimeoutForFormat('gif');
+
     try {
       await withTimeout(
         ffmpeg.exec([
@@ -2819,8 +2854,8 @@ class FFmpegService {
           directGifFilterArgs,
           outputFileName,
         ]),
-        TIMEOUT_CONVERSION,
-        `Direct GIF conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds. Try reducing the quality or scale settings.`,
+        effectiveTimeout,
+        `Direct GIF conversion timed out after ${effectiveTimeout / 1000} seconds. Try reducing the quality or scale settings.`,
         () => this.terminateFFmpeg()
       );
     } finally {
