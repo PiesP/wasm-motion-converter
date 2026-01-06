@@ -24,16 +24,15 @@ import {
   setInputFile,
   setPerformanceWarnings,
   setVideoMetadata,
-  setVideoThumbnail,
+  setVideoPreviewUrl,
   videoMetadata,
-  videoThumbnail,
+  videoPreviewUrl,
 } from '../stores/conversion-store';
 import { showToast } from '../stores/toast-store';
 import type { VideoMetadata } from '../types/conversion-types';
 import { classifyConversionError } from '../utils/classify-conversion-error';
 import { WARN_RESOLUTION_PIXELS } from '../utils/constants';
 import { ETACalculator } from '../utils/eta-calculator';
-import { extractVideoThumbnail } from '../utils/extract-thumbnail';
 import { validateVideoFile } from '../utils/file-validation';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
@@ -124,21 +123,11 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
     await ffmpegService.clearCachedInput();
     setInputFile(file);
 
-    // Extract thumbnail for preview (runs in parallel with other operations)
-    extractVideoThumbnail(file)
-      .then((thumbnailUrl) => {
-        if (thumbnailUrl) {
-          // Clean up previous thumbnail if exists
-          const prevThumbnail = videoThumbnail();
-          if (prevThumbnail?.startsWith('data:')) {
-            // Data URLs don't need cleanup, but blob URLs would
-          }
-          setVideoThumbnail(thumbnailUrl);
-        }
-      })
-      .catch((error) => {
-        logger.warn('general', 'Failed to extract video thumbnail', { error });
-      });
+    const previousPreviewUrl = videoPreviewUrl();
+    if (previousPreviewUrl) {
+      URL.revokeObjectURL(previousPreviewUrl);
+    }
+    setVideoPreviewUrl(URL.createObjectURL(file));
 
     try {
       const needsInit = !ffmpegService.isLoaded();
@@ -273,6 +262,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const durationSeconds = Math.max(0, duration / 1000);
       setConversionResults((results) => {
         const newResults = [
           {
@@ -282,6 +272,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
             originalSize: file.size,
             createdAt: Date.now(),
             settings: settings,
+            conversionDurationSeconds: durationSeconds,
             // biome-ignore lint/suspicious/noExplicitAny: Blob metadata attached dynamically by FFmpegService
             wasTranscoded: (blob as any).wasTranscoded,
             originalCodec: videoMetadata()?.codec,
@@ -346,6 +337,11 @@ export function useConversionHandlers(options: ConversionHandlersOptions) {
     resetConversionRuntimeState();
     resetErrorState();
     setInputFile(null);
+    const previousPreviewUrl = videoPreviewUrl();
+    if (previousPreviewUrl) {
+      URL.revokeObjectURL(previousPreviewUrl);
+    }
+    setVideoPreviewUrl(null);
     resetAnalysisState();
     resetOutputState();
     setConversionSettings(DEFAULT_CONVERSION_SETTINGS);

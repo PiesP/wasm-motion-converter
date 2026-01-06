@@ -20,6 +20,7 @@ export interface ConversionResult {
   originalSize: number;
   createdAt: number;
   settings: ConversionSettings;
+  conversionDurationSeconds?: number;
   wasTranscoded?: boolean;
   originalCodec?: string;
 }

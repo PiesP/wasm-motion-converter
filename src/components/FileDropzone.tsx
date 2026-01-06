@@ -11,7 +11,7 @@ interface FileDropzoneProps {
   showElapsedTime?: boolean;
   startTime?: number;
   estimatedSecondsRemaining?: number | null;
-  thumbnailUrl?: string | null;
+  previewUrl?: string | null;
 }
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
@@ -112,7 +112,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       ) : (
         <>
           <Show
-            when={props.thumbnailUrl}
+            when={props.previewUrl}
             fallback={
               <svg
                 class="mx-auto h-12 w-12 text-gray-400 dark:text-gray-600"
@@ -129,10 +129,13 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               </svg>
             }
           >
-            <img
-              src={props.thumbnailUrl!}
-              alt="Video thumbnail"
-              class="mx-auto h-32 w-auto rounded-lg shadow-md object-contain"
+            <video
+              src={props.previewUrl!}
+              class="mx-auto w-full max-w-md rounded-lg shadow-md bg-black"
+              controls
+              playsinline
+              preload="metadata"
+              aria-label="Selected video preview"
             />
           </Show>
           <div class="mt-4">

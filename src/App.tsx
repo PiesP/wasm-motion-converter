@@ -14,7 +14,6 @@ import {
 import EnvironmentWarning from './components/EnvironmentWarning';
 import FileDropzone from './components/FileDropzone';
 import FormatSelector from './components/FormatSelector';
-import InlineWarningBanner from './components/InlineWarningBanner';
 import LicenseAttribution from './components/LicenseAttribution';
 import QualitySelector from './components/QualitySelector';
 import ScaleSelector from './components/ScaleSelector';
@@ -30,7 +29,6 @@ const ResultPreview = lazy(() => import('./components/ResultPreview'));
 
 import { useConversionHandlers } from './hooks/useConversionHandlers';
 import { ffmpegService } from './services/ffmpeg-service';
-import { getRecommendedSettings } from './services/performance-checker';
 import {
   appState,
   environmentSupported,
@@ -39,7 +37,6 @@ import {
   setEnvironmentSupported,
 } from './stores/app-store';
 import {
-  autoAppliedRecommendation,
   conversionProgress,
   conversionResults,
   conversionSettings,
@@ -47,14 +44,12 @@ import {
   errorContext,
   errorMessage,
   inputFile,
-  performanceWarnings,
   saveConversionSettings,
   setConversionSettings,
   videoMetadata,
-  videoThumbnail,
+  videoPreviewUrl,
 } from './stores/conversion-store';
 import { debounce } from './utils/debounce';
-import { estimateEtaRange, estimateOutputSizeRange } from './utils/estimate-output';
 import { isMemoryCritical } from './utils/memory-monitor';
 
 const App: Component = () => {
@@ -71,8 +66,6 @@ const App: Component = () => {
       setEstimatedSecondsRemaining,
       setMemoryWarning,
     });
-
-  const formatQualityLabel = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
   const runIdle = (callback: () => void) => {
     if (typeof requestIdleCallback !== 'undefined') {
@@ -124,48 +117,6 @@ const App: Component = () => {
     () =>
       appState() === 'loading-ffmpeg' || appState() === 'analyzing' || appState() === 'converting'
   );
-
-  const recommendedSettings = createMemo(() => {
-    const file = inputFile();
-    const metadata = videoMetadata();
-    if (!file || !metadata) {
-      return null;
-    }
-    return getRecommendedSettings(file, metadata, conversionSettings());
-  });
-
-  const estimates = createMemo(() => {
-    const file = inputFile();
-    const metadata = videoMetadata();
-    if (!file || !metadata) {
-      return null;
-    }
-    const scaleFactor = conversionSettings().scale ** 2;
-    const sizeRange = estimateOutputSizeRange(file.size, conversionSettings(), scaleFactor);
-    const megapixels = (metadata.width * metadata.height * scaleFactor) / 1_000_000;
-    const etaRange = estimateEtaRange(metadata.duration, megapixels, conversionSettings());
-    return {
-      sizeLabel: sizeRange.label,
-      etaLabel: etaRange.label,
-    };
-  });
-
-  const recommendedActionLabel = createMemo(() => {
-    const recommendation = recommendedSettings();
-    if (!recommendation) {
-      return undefined;
-    }
-    const qualityLabel = formatQualityLabel(recommendation.quality);
-    const scaleLabel = `${Math.round(recommendation.scale * 100)}%`;
-    return `Apply recommended settings (Quality: ${qualityLabel}, Scale: ${scaleLabel})`;
-  });
-
-  const handleApplyRecommended = () => {
-    const recommendation = recommendedSettings();
-    if (recommendation) {
-      setConversionSettings(recommendation);
-    }
-  };
 
   const handleReduceSettings = () => {
     setConversionSettings({
@@ -284,7 +235,7 @@ const App: Component = () => {
                 showElapsedTime={dropzoneStatus()?.showElapsedTime}
                 startTime={dropzoneStatus()?.startTime}
                 estimatedSecondsRemaining={dropzoneStatus()?.estimatedSecondsRemaining}
-                thumbnailUrl={videoThumbnail()}
+                previewUrl={videoPreviewUrl()}
               />
 
               <Show when={appState() === 'loading-ffmpeg'}>
@@ -318,16 +269,6 @@ const App: Component = () => {
                   fileName={inputFile()!.name}
                   fileSize={inputFile()!.size}
                 />
-
-                <Show when={performanceWarnings().length > 0}>
-                  <InlineWarningBanner
-                    warnings={performanceWarnings()}
-                    actionLabel={recommendedActionLabel()}
-                    onAction={recommendedActionLabel() ? handleApplyRecommended : undefined}
-                    autoApplied={autoAppliedRecommendation()}
-                    estimates={estimates()}
-                  />
-                </Show>
               </Show>
             </div>
 
@@ -398,6 +339,7 @@ const App: Component = () => {
                       originalName={result.originalName}
                       originalSize={result.originalSize}
                       settings={result.settings}
+                      conversionDurationSeconds={result.conversionDurationSeconds}
                       wasTranscoded={result.wasTranscoded}
                       originalCodec={result.originalCodec}
                     />

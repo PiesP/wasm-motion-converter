@@ -9,7 +9,7 @@ import type {
 
 export const [inputFile, setInputFile] = createSignal<File | null>(null);
 export const [videoMetadata, setVideoMetadata] = createSignal<VideoMetadata | null>(null);
-export const [videoThumbnail, setVideoThumbnail] = createSignal<string | null>(null);
+export const [videoPreviewUrl, setVideoPreviewUrl] = createSignal<string | null>(null);
 export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   format: 'gif',
   quality: 'medium',

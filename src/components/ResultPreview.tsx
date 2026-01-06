@@ -1,12 +1,14 @@
 import { type Component, createEffect, createMemo, createSignal, onCleanup, Show } from 'solid-js';
 import type { ConversionSettings } from '../types/conversion-types';
 import { formatBytes } from '../utils/format-bytes';
+import { formatDuration } from '../utils/format-duration';
 
 interface ResultPreviewProps {
   outputBlob: Blob;
   originalName: string;
   originalSize: number;
   settings: ConversionSettings;
+  conversionDurationSeconds?: number;
   wasTranscoded?: boolean;
   originalCodec?: string;
 }
@@ -17,6 +19,12 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     return URL.createObjectURL(props.outputBlob);
   }, '');
   const [loaded, setLoaded] = createSignal(false);
+  const conversionTimeLabel = createMemo(() => {
+    if (typeof props.conversionDurationSeconds !== 'number') {
+      return null;
+    }
+    return formatDuration(props.conversionDurationSeconds);
+  });
 
   createEffect(() => {
     const url = previewUrl();
@@ -79,32 +87,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       <div class="mt-4">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white">Conversion Complete</h3>
 
-        <Show when={props.wasTranscoded}>
-          <div class="mt-3 p-3 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
-            <div class="flex items-start">
-              <div class="flex-shrink-0">
-                <svg
-                  class="h-5 w-5 text-blue-600 dark:text-blue-400"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path
-                    fill-rule="evenodd"
-                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                    clip-rule="evenodd"
-                  />
-                </svg>
-              </div>
-              <div class="ml-3 flex-1">
-                <p class="text-sm text-blue-800 dark:text-blue-200">
-                  Video was transcoded from <span class="font-medium">{props.originalCodec}</span>{' '}
-                  to H.264 for compatibility
-                </p>
-              </div>
-            </div>
-          </div>
-        </Show>
-
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mt-3">
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Original Size</div>
@@ -113,9 +95,21 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             </div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <div class="text-gray-600 dark:text-gray-400">Output Size</div>
-            <div class="font-medium text-gray-900 dark:text-white">
-              {formatBytes(props.outputBlob.size)}
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <div class="text-gray-600 dark:text-gray-400">Output Size</div>
+                <div class="font-medium text-gray-900 dark:text-white">
+                  {formatBytes(props.outputBlob.size)}
+                </div>
+              </div>
+              <Show when={conversionTimeLabel()}>
+                {(label) => (
+                  <div class="text-right">
+                    <div class="text-gray-600 dark:text-gray-400">Conversion Time</div>
+                    <div class="font-medium text-gray-900 dark:text-white">{label()}</div>
+                  </div>
+                )}
+              </Show>
             </div>
           </div>
         </div>
