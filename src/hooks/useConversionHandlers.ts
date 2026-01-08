@@ -32,14 +32,13 @@ import {
   videoPreviewUrl,
 } from '../stores/conversion-store';
 import { showToast } from '../stores/toast-store';
+import type { VideoMetadata } from '../types/conversion-types';
 import { classifyConversionError } from '../utils/classify-conversion-error';
 import { WARN_RESOLUTION_PIXELS } from '../utils/constants';
 import { ETACalculator } from '../utils/eta-calculator';
 import { validateVideoDuration, validateVideoFile } from '../utils/file-validation';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
-
-import type { VideoMetadata } from '../types/conversion-types';
 
 /**
  * Small file size threshold for quick analysis bypass (50 MB)
