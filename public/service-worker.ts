@@ -93,6 +93,7 @@ function classifyRequest(url: URL): RequestType {
 /**
  * Service Worker install event
  * Activates immediately without waiting for existing clients
+ * Phase 4: Initializes fallback cache
  */
 self.addEventListener('install', (event: ExtendableEvent) => {
   console.log(`[SW ${SW_VERSION}] Installing...`);
@@ -100,9 +101,15 @@ self.addEventListener('install', (event: ExtendableEvent) => {
   // Skip waiting to activate immediately (aggressive update strategy)
   self.skipWaiting();
 
-  // Phase 1: No pre-caching yet
-  // Phase 4 will add fallback bundle pre-caching here
-  event.waitUntil(Promise.resolve());
+  // Phase 4: Initialize fallback cache
+  // Note: Actual fallback bundles are populated on first successful CDN load
+  // This ensures fallback cache exists and is ready
+  event.waitUntil(
+    caches.open(CACHE_NAMES.fallback).then(cache => {
+      console.log(`[SW ${SW_VERSION}] Fallback cache initialized`);
+      return Promise.resolve();
+    })
+  );
 });
 
 /**
@@ -191,8 +198,46 @@ const CDN_CONVERTERS = {
 };
 
 /**
+ * CDN performance metrics interface
+ */
+interface CDNMetrics {
+  url: string;
+  cdnName: string;
+  latency: number;
+  success: boolean;
+  status?: number;
+  error?: string;
+  timestamp: number;
+}
+
+/**
+ * Logs CDN performance metrics to console
+ * In production, this could be sent to analytics service
+ *
+ * @param metrics - Performance metrics to log
+ */
+function logCDNMetrics(metrics: CDNMetrics): void {
+  const emoji = metrics.success ? '✓' : '✗';
+  const latencyMs = metrics.latency.toFixed(0);
+
+  if (metrics.success) {
+    console.log(
+      `[SW ${SW_VERSION}] ${emoji} ${metrics.cdnName}: ${latencyMs}ms (HTTP ${metrics.status})`
+    );
+  } else {
+    console.warn(
+      `[SW ${SW_VERSION}] ${emoji} ${metrics.cdnName}: ${latencyMs}ms - ${metrics.error}`
+    );
+  }
+
+  // Could store to IndexedDB for analytics:
+  // await storeMetrics(metrics);
+}
+
+/**
  * Fetches from CDN with multi-provider cascade fallback
  * Tries esm.sh → jsdelivr → unpkg → skypack in order
+ * Logs performance metrics for each attempt
  *
  * @param originalUrl - Original CDN URL
  * @param timeout - Timeout per CDN attempt (default: 15s)
@@ -202,30 +247,88 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
   const errors: Array<{ cdn: string; error: string }> = [];
 
   // Try original URL (esm.sh)
+  const startTime = performance.now();
   try {
     console.log(`[SW ${SW_VERSION}] Trying esm.sh: ${originalUrl}`);
     const response = await fetchWithTimeout(new Request(originalUrl), timeout);
+    const latency = performance.now() - startTime;
+
     if (response.ok) {
-      console.log(`[SW ${SW_VERSION}] Success from esm.sh`);
+      logCDNMetrics({
+        url: originalUrl,
+        cdnName: 'esm.sh',
+        latency,
+        success: true,
+        status: response.status,
+        timestamp: Date.now(),
+      });
       return response;
     }
+
+    logCDNMetrics({
+      url: originalUrl,
+      cdnName: 'esm.sh',
+      latency,
+      success: false,
+      status: response.status,
+      error: `HTTP ${response.status}`,
+      timestamp: Date.now(),
+    });
     errors.push({ cdn: 'esm.sh', error: `HTTP ${response.status}` });
   } catch (error) {
+    const latency = performance.now() - startTime;
+    logCDNMetrics({
+      url: originalUrl,
+      cdnName: 'esm.sh',
+      latency,
+      success: false,
+      error: String(error),
+      timestamp: Date.now(),
+    });
     errors.push({ cdn: 'esm.sh', error: String(error) });
   }
 
   // Try jsdelivr
   const jsdelivrUrl = CDN_CONVERTERS.esmToJsdelivr(originalUrl);
   if (jsdelivrUrl) {
+    const jsdelivrStart = performance.now();
     try {
       console.log(`[SW ${SW_VERSION}] Trying jsdelivr: ${jsdelivrUrl}`);
       const response = await fetchWithTimeout(new Request(jsdelivrUrl), timeout);
+      const latency = performance.now() - jsdelivrStart;
+
       if (response.ok) {
-        console.log(`[SW ${SW_VERSION}] Success from jsdelivr`);
+        logCDNMetrics({
+          url: jsdelivrUrl,
+          cdnName: 'jsdelivr',
+          latency,
+          success: true,
+          status: response.status,
+          timestamp: Date.now(),
+        });
         return response;
       }
+
+      logCDNMetrics({
+        url: jsdelivrUrl,
+        cdnName: 'jsdelivr',
+        latency,
+        success: false,
+        status: response.status,
+        error: `HTTP ${response.status}`,
+        timestamp: Date.now(),
+      });
       errors.push({ cdn: 'jsdelivr', error: `HTTP ${response.status}` });
     } catch (error) {
+      const latency = performance.now() - jsdelivrStart;
+      logCDNMetrics({
+        url: jsdelivrUrl,
+        cdnName: 'jsdelivr',
+        latency,
+        success: false,
+        error: String(error),
+        timestamp: Date.now(),
+      });
       errors.push({ cdn: 'jsdelivr', error: String(error) });
     }
   }
@@ -233,15 +336,44 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
   // Try unpkg
   const unpkgUrl = CDN_CONVERTERS.esmToUnpkg(originalUrl);
   if (unpkgUrl) {
+    const unpkgStart = performance.now();
     try {
       console.log(`[SW ${SW_VERSION}] Trying unpkg: ${unpkgUrl}`);
       const response = await fetchWithTimeout(new Request(unpkgUrl), timeout);
+      const latency = performance.now() - unpkgStart;
+
       if (response.ok) {
-        console.log(`[SW ${SW_VERSION}] Success from unpkg`);
+        logCDNMetrics({
+          url: unpkgUrl,
+          cdnName: 'unpkg',
+          latency,
+          success: true,
+          status: response.status,
+          timestamp: Date.now(),
+        });
         return response;
       }
+
+      logCDNMetrics({
+        url: unpkgUrl,
+        cdnName: 'unpkg',
+        latency,
+        success: false,
+        status: response.status,
+        error: `HTTP ${response.status}`,
+        timestamp: Date.now(),
+      });
       errors.push({ cdn: 'unpkg', error: `HTTP ${response.status}` });
     } catch (error) {
+      const latency = performance.now() - unpkgStart;
+      logCDNMetrics({
+        url: unpkgUrl,
+        cdnName: 'unpkg',
+        latency,
+        success: false,
+        error: String(error),
+        timestamp: Date.now(),
+      });
       errors.push({ cdn: 'unpkg', error: String(error) });
     }
   }
@@ -249,15 +381,44 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
   // Try skypack
   const skypackUrl = CDN_CONVERTERS.esmToSkypack(originalUrl);
   if (skypackUrl) {
+    const skypackStart = performance.now();
     try {
       console.log(`[SW ${SW_VERSION}] Trying skypack: ${skypackUrl}`);
       const response = await fetchWithTimeout(new Request(skypackUrl), timeout);
+      const latency = performance.now() - skypackStart;
+
       if (response.ok) {
-        console.log(`[SW ${SW_VERSION}] Success from skypack`);
+        logCDNMetrics({
+          url: skypackUrl,
+          cdnName: 'skypack',
+          latency,
+          success: true,
+          status: response.status,
+          timestamp: Date.now(),
+        });
         return response;
       }
+
+      logCDNMetrics({
+        url: skypackUrl,
+        cdnName: 'skypack',
+        latency,
+        success: false,
+        status: response.status,
+        error: `HTTP ${response.status}`,
+        timestamp: Date.now(),
+      });
       errors.push({ cdn: 'skypack', error: `HTTP ${response.status}` });
     } catch (error) {
+      const latency = performance.now() - skypackStart;
+      logCDNMetrics({
+        url: skypackUrl,
+        cdnName: 'skypack',
+        latency,
+        success: false,
+        error: String(error),
+        timestamp: Date.now(),
+      });
       errors.push({ cdn: 'skypack', error: String(error) });
     }
   }
@@ -270,6 +431,7 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
 /**
  * Network-first caching strategy for CDN resources
  * Tries network, falls back to cache on failure
+ * Phase 4: Also stores successful responses in fallback cache
  *
  * @param request - Request to handle
  * @param cacheName - Cache storage name
@@ -277,27 +439,41 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
  */
 async function networkFirstStrategy(request: Request, cacheName: string): Promise<Response> {
   const cache = await caches.open(cacheName);
+  const fallbackCache = await caches.open(CACHE_NAMES.fallback);
 
   try {
     // Try network with multi-CDN cascade
     const response = await fetchWithCascade(request.url);
 
-    // Cache successful response
+    // Cache successful response in both main and fallback caches
     if (response.ok) {
+      // Store in main CDN cache
       cache.put(request, response.clone()).catch(err => {
-        console.warn(`[SW ${SW_VERSION}] Cache put failed:`, err);
+        console.warn(`[SW ${SW_VERSION}] Main cache put failed:`, err);
+      });
+
+      // Also store in fallback cache for offline support
+      fallbackCache.put(request, response.clone()).catch(err => {
+        console.warn(`[SW ${SW_VERSION}] Fallback cache put failed:`, err);
       });
     }
 
     return response;
   } catch (error) {
-    console.warn(`[SW ${SW_VERSION}] Network failed, trying cache:`, error);
+    console.warn(`[SW ${SW_VERSION}] Network failed, trying caches:`, error);
 
-    // Try cache as fallback
+    // Try main cache first
     const cachedResponse = await cache.match(request);
     if (cachedResponse) {
-      console.log(`[SW ${SW_VERSION}] Serving from cache: ${request.url}`);
+      console.log(`[SW ${SW_VERSION}] Serving from main cache: ${request.url}`);
       return cachedResponse;
+    }
+
+    // Try fallback cache as last resort
+    const fallbackResponse = await fallbackCache.match(request);
+    if (fallbackResponse) {
+      console.log(`[SW ${SW_VERSION}] Serving from fallback cache: ${request.url}`);
+      return fallbackResponse;
     }
 
     // No cache available, throw original error
@@ -308,6 +484,7 @@ async function networkFirstStrategy(request: Request, cacheName: string): Promis
 /**
  * Cache-first strategy for returning users
  * Checks cache first, updates in background
+ * Phase 4: Also uses fallback cache if main cache misses
  *
  * @param request - Request to handle
  * @param cacheName - Cache storage name
@@ -315,8 +492,9 @@ async function networkFirstStrategy(request: Request, cacheName: string): Promis
  */
 async function cacheFirstStrategy(request: Request, cacheName: string): Promise<Response> {
   const cache = await caches.open(cacheName);
+  const fallbackCache = await caches.open(CACHE_NAMES.fallback);
 
-  // Try cache first
+  // Try main cache first
   const cachedResponse = await cache.match(request);
   if (cachedResponse) {
     console.log(`[SW ${SW_VERSION}] Cache hit: ${request.url}`);
@@ -326,6 +504,7 @@ async function cacheFirstStrategy(request: Request, cacheName: string): Promise<
       .then(response => {
         if (response.ok) {
           cache.put(request, response.clone());
+          fallbackCache.put(request, response.clone());
           console.log(`[SW ${SW_VERSION}] Background updated: ${request.url}`);
         }
       })
@@ -336,12 +515,31 @@ async function cacheFirstStrategy(request: Request, cacheName: string): Promise<
     return cachedResponse;
   }
 
+  // Try fallback cache
+  const fallbackResponse = await fallbackCache.match(request);
+  if (fallbackResponse) {
+    console.log(`[SW ${SW_VERSION}] Fallback cache hit: ${request.url}`);
+
+    // Still do background revalidation
+    fetchWithCascade(request.url)
+      .then(response => {
+        if (response.ok) {
+          cache.put(request, response.clone());
+          fallbackCache.put(request, response.clone());
+        }
+      })
+      .catch(() => {});
+
+    return fallbackResponse;
+  }
+
   // Cache miss - fetch from network
   console.log(`[SW ${SW_VERSION}] Cache miss: ${request.url}`);
   const response = await fetchWithCascade(request.url);
 
   if (response.ok) {
     cache.put(request, response.clone());
+    fallbackCache.put(request, response.clone());
   }
 
   return response;
