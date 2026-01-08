@@ -1,5 +1,6 @@
+import { Show, splitProps } from 'solid-js';
+
 import type { Component } from 'solid-js';
-import { Show } from 'solid-js';
 
 /**
  * Memory usage threshold percentage for critical warning
@@ -37,11 +38,17 @@ interface MemoryWarningProps {
  * ```
  */
 const MemoryWarning: Component<MemoryWarningProps> = (props) => {
+  const [local] = splitProps(props, [
+    'isDuringConversion',
+    'onReduceSettings',
+    'onCancel',
+    'onDismiss',
+  ]);
   const warningTitle = (): string =>
-    props.isDuringConversion ? 'High Memory Usage Detected' : 'High Memory Warning';
+    local.isDuringConversion ? 'High Memory Usage Detected' : 'High Memory Warning';
 
   const warningMessage = (): string =>
-    props.isDuringConversion
+    local.isDuringConversion
       ? `Browser memory usage is critically high (>${MEMORY_CRITICAL_THRESHOLD}% of JS heap). This could cause the conversion to fail or the browser to crash.`
       : `Your browser memory usage is already high (>${MEMORY_CRITICAL_THRESHOLD}% of JS heap). Starting conversion now may cause failures or crashes.`;
 
@@ -71,7 +78,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
           <h3 class="text-sm font-medium text-red-800 dark:text-red-200">{warningTitle()}</h3>
           <div class="mt-2 text-sm text-red-700 dark:text-red-300">
             <p>{warningMessage()}</p>
-            <Show when={!props.isDuringConversion}>
+            <Show when={!local.isDuringConversion}>
               <p class="mt-2">
                 <strong>Recommendation:</strong> Close other browser tabs before starting
                 conversion, or use lower quality settings.
@@ -81,23 +88,23 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
 
           <div class="mt-4 flex flex-wrap gap-3">
             <Show
-              when={props.isDuringConversion}
+              when={local.isDuringConversion}
               fallback={
                 <>
-                  <Show when={props.onDismiss}>
+                  <Show when={local.onDismiss}>
                     <button
                       type="button"
-                      onClick={props.onDismiss}
+                      onClick={local.onDismiss}
                       class="inline-flex items-center px-3 py-2 border border-red-300 dark:border-red-700 text-sm leading-4 font-medium rounded-md text-red-700 dark:text-red-300 bg-white dark:bg-red-950 hover:bg-red-50 dark:hover:bg-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                       aria-label="Close memory warning and try again"
                     >
                       Close Tabs & Try Again
                     </button>
                   </Show>
-                  <Show when={props.onReduceSettings}>
+                  <Show when={local.onReduceSettings}>
                     <button
                       type="button"
-                      onClick={props.onReduceSettings}
+                      onClick={local.onReduceSettings}
                       class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                       aria-label="Reduce quality settings and start conversion"
                     >
@@ -107,20 +114,20 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                 </>
               }
             >
-              <Show when={props.onCancel}>
+              <Show when={local.onCancel}>
                 <button
                   type="button"
-                  onClick={props.onCancel}
+                  onClick={local.onCancel}
                   class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                   aria-label="Cancel ongoing conversion"
                 >
                   Cancel Conversion
                 </button>
               </Show>
-              <Show when={props.onDismiss}>
+              <Show when={local.onDismiss}>
                 <button
                   type="button"
-                  onClick={props.onDismiss}
+                  onClick={local.onDismiss}
                   class="inline-flex items-center px-3 py-2 border border-red-300 dark:border-red-700 text-sm leading-4 font-medium rounded-md text-red-700 dark:text-red-300 bg-white dark:bg-red-950 hover:bg-red-50 dark:hover:bg-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                   aria-label="Dismiss warning and continue conversion"
                 >

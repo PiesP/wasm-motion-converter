@@ -1,8 +1,9 @@
-import type { Component } from 'solid-js';
-
-import type { ConversionFormat } from '../types/conversion-types';
+import { splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
+
+import type { Component } from 'solid-js';
+import type { ConversionFormat } from '../types/conversion-types';
 
 /**
  * Available output format options
@@ -47,16 +48,17 @@ interface FormatSelectorProps {
  * ```
  */
 const FormatSelector: Component<FormatSelectorProps> = (props) => {
+  const [local] = splitProps(props, ['value', 'onChange', 'disabled', 'tooltip']);
   return (
     <OptionSelector
       title="Output Format"
       name="format"
-      value={props.value}
+      value={local.value}
       options={FORMAT_OPTIONS}
-      onChange={props.onChange}
-      disabled={props.disabled}
+      onChange={local.onChange}
+      disabled={local.disabled}
       columns={COLUMNS}
-      tooltip={props.tooltip}
+      tooltip={local.tooltip}
     />
   );
 };

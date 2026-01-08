@@ -10,13 +10,14 @@
  * scaling, FPS capping, and quality recommendations for optimal performance.
  */
 
+import { WARN_DURATION_SECONDS, WARN_FILE_SIZE_HIGH, WARN_RESOLUTION_PIXELS } from './constants';
+
 import type {
   ConversionFormat,
   ConversionQuality,
   ConversionScale,
   VideoMetadata,
 } from '../types/conversion-types';
-import { WARN_DURATION_SECONDS, WARN_FILE_SIZE_HIGH, WARN_RESOLUTION_PIXELS } from './constants';
 
 /**
  * Conversion strategy configuration with codec routing, scaling, FPS, and quality recommendations.

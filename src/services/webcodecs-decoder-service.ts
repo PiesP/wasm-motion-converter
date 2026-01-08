@@ -1,7 +1,4 @@
-// External dependencies
-
-// Type imports
-import type { VideoMetadata } from '../types/conversion-types';
+// Internal dependencies
 import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
@@ -10,6 +7,9 @@ import {
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
 } from './webcodecs-support-service';
+
+// Type imports
+import type { VideoMetadata } from '../types/conversion-types';
 
 /**
  * Frame format type for WebCodecs output

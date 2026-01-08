@@ -1,4 +1,4 @@
-import { For, Show } from 'solid-js';
+import { For, Show, splitProps } from 'solid-js';
 import Icon from './ui/Icon';
 import Tooltip from './Tooltip';
 
@@ -91,8 +91,18 @@ interface OptionSelectorProps<T extends OptionValue> {
  * ```
  */
 const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) => {
+  const [local] = splitProps(props, [
+    'title',
+    'name',
+    'value',
+    'options',
+    'onChange',
+    'disabled',
+    'columns',
+    'tooltip',
+  ]);
   const columns = (): 2 | 3 =>
-    props.columns ?? (props.options.length >= 3 ? DEFAULT_COLUMNS_MANY : DEFAULT_COLUMNS_FEW);
+    local.columns ?? (local.options.length >= 3 ? DEFAULT_COLUMNS_MANY : DEFAULT_COLUMNS_FEW);
 
   const optionClass = (selected: boolean): string =>
     `${BASE_OPTION_CLASS} ${selected ? SELECTED_OPTION_CLASS : DEFAULT_OPTION_CLASS}`;
@@ -102,19 +112,19 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
 
   return (
     <fieldset
-      class={`mb-6 ${props.disabled ? 'opacity-50 pointer-events-none' : ''}`}
-      disabled={props.disabled}
-      aria-label={props.title}
+      class={`mb-6 ${local.disabled ? 'opacity-50 pointer-events-none' : ''}`}
+      disabled={local.disabled}
+      aria-label={local.title}
     >
       <legend class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-        {props.title}
-        <Show when={props.tooltip}>
-          <Tooltip content={props.tooltip!}>
+        {local.title}
+        <Show when={local.tooltip}>
+          <Tooltip content={local.tooltip!}>
             <button
               type="button"
               tabIndex={0}
               class="focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-              aria-label={`Information about ${props.title}`}
+              aria-label={`Information about ${local.title}`}
             >
               <Icon name="info" size="sm" class="text-gray-400 dark:text-gray-600 cursor-help" />
             </button>
@@ -123,27 +133,27 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
       </legend>
       <div
         role="radiogroup"
-        aria-labelledby={props.name}
+        aria-labelledby={local.name}
         class={`grid gap-3 ${gridColumnsClass()}`}
       >
-        <For each={props.options}>
+        <For each={local.options}>
           {(option) => {
             const descriptionId = option.description
-              ? `${props.name}-${option.value}-desc`
+              ? `${local.name}-${option.value}-desc`
               : undefined;
             const ariaLabel = option.description
               ? `${option.label}: ${option.description}`
               : option.label;
 
             return (
-              <label class={optionClass(option.value === props.value)}>
+              <label class={optionClass(option.value === local.value)}>
                 <input
                   type="radio"
-                  name={props.name}
+                  name={local.name}
                   value={String(option.value)}
-                  checked={option.value === props.value}
-                  onChange={() => props.onChange(option.value)}
-                  disabled={props.disabled}
+                  checked={option.value === local.value}
+                  onChange={() => local.onChange(option.value)}
+                  disabled={local.disabled}
                   class="sr-only"
                   aria-label={ariaLabel}
                   aria-describedby={descriptionId}

@@ -44,6 +44,7 @@ import {
   videoPreviewUrl,
 } from './stores/conversion-store';
 import { debounce } from './utils/debounce';
+import { logger } from './utils/logger';
 import { isMemoryCritical } from './utils/memory-monitor';
 
 // Lazy loaded components (conditionally shown - reduces initial bundle by ~15KB)
@@ -127,7 +128,9 @@ const App: Component = () => {
     if (isFastNetwork) {
       runIdle(() => {
         void ffmpegService.prefetchCoreAssets().catch((error) => {
-          console.debug('[FFmpeg] Prefetch skipped', error);
+          logger.debug('prefetch', 'FFmpeg prefetch skipped', {
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
       });
     }

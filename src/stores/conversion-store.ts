@@ -7,11 +7,7 @@
  */
 
 // External dependencies
-import { createSignal } from 'solid-js';
-
-// Internal imports
-import { logger } from '../utils/logger';
-
+import { batch, createSignal } from 'solid-js';
 // Type imports
 import type {
   ConversionResult,
@@ -20,6 +16,8 @@ import type {
   PerformanceWarning,
   VideoMetadata,
 } from '../types/conversion-types';
+// Internal imports
+import { logger } from '../utils/logger';
 
 /**
  * Input video file selected by user
@@ -191,20 +189,23 @@ export const [autoAppliedRecommendation, setAutoAppliedRecommendation] =
  * Use when starting a new conversion or returning to idle state.
  */
 export const resetConversionStore = (): void => {
-  setInputFile(null);
-  setVideoMetadata(null);
   // Revoke video preview URL to prevent memory leak
   const previewUrl = videoPreviewUrl();
   if (previewUrl) {
     URL.revokeObjectURL(previewUrl);
   }
-  setVideoPreviewUrl(null);
-  // conversionSettings is not reset (persisted)
-  setPerformanceWarnings([]);
-  setConversionProgress(0);
-  setConversionStatusMessage('');
-  setConversionResults([]);
-  setErrorMessage(null);
-  setErrorContext(null);
-  setAutoAppliedRecommendation(false);
+
+  batch(() => {
+    setInputFile(null);
+    setVideoMetadata(null);
+    setVideoPreviewUrl(null);
+    // conversionSettings is not reset (persisted)
+    setPerformanceWarnings([]);
+    setConversionProgress(0);
+    setConversionStatusMessage('');
+    setConversionResults([]);
+    setErrorMessage(null);
+    setErrorContext(null);
+    setAutoAppliedRecommendation(false);
+  });
 };

@@ -1,6 +1,5 @@
 import type { Component } from 'solid-js';
 import { createSignal, onMount, Show } from 'solid-js';
-
 import { logger } from '../utils/logger';
 
 /**
@@ -60,12 +59,6 @@ const EnvironmentWarning: Component = () => {
       hasSharedArrayBuffer,
       isCrossOriginIsolated,
     });
-
-    // Use console group for structured output
-    console.group('🧪 Environment Test Results');
-    console.log('SharedArrayBuffer:', hasSharedArrayBuffer ? '✅ Available' : '❌ Unavailable');
-    console.log('crossOriginIsolated:', isCrossOriginIsolated ? '✅ true' : '❌ false');
-    console.groupEnd();
 
     // Alert for immediate feedback (acceptable for test utility)
     alert(

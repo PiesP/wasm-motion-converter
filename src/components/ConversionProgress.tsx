@@ -1,6 +1,8 @@
-import type { Component } from 'solid-js';
+import { splitProps } from 'solid-js';
 
 import ProgressBar from './ProgressBar';
+
+import type { Component } from 'solid-js';
 
 /**
  * Conversion progress component props
@@ -36,7 +38,14 @@ interface ConversionProgressProps {
  * ```
  */
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {
-  const isInProgress = () => props.progress < 100;
+  const [local] = splitProps(props, [
+    'progress',
+    'status',
+    'statusMessage',
+    'showElapsedTime',
+    'startTime',
+  ]);
+  const isInProgress = () => local.progress < 100;
 
   return (
     <div
@@ -47,12 +56,12 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
       aria-busy={isInProgress()}
     >
       <ProgressBar
-        progress={props.progress}
-        status={props.status}
-        statusMessage={props.statusMessage}
+        progress={local.progress}
+        status={local.status}
+        statusMessage={local.statusMessage}
         showSpinner={true}
-        showElapsedTime={props.showElapsedTime}
-        startTime={props.startTime}
+        showElapsedTime={local.showElapsedTime}
+        startTime={local.startTime}
         layout="horizontal"
       />
     </div>

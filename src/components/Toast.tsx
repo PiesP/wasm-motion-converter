@@ -1,8 +1,9 @@
-import type { Component } from 'solid-js';
+import { splitProps } from 'solid-js';
 
 import { removeToast } from '../stores/toast-store';
 import Icon from './ui/Icon';
 
+import type { Component } from 'solid-js';
 import type { Toast as ToastType } from '../stores/toast-store';
 
 /**
@@ -38,11 +39,12 @@ interface ToastProps {
  * @returns Toast notification element
  */
 const Toast: Component<ToastProps> = (props) => {
+  const [local] = splitProps(props, ['toast']);
   /**
    * Get icon name based on toast type
    */
   const getIconName = (): 'success' | 'error' | 'warning' | 'info' => {
-    switch (props.toast.type) {
+    switch (local.toast.type) {
       case 'success':
         return 'success' as const;
       case 'error':
@@ -64,7 +66,7 @@ const Toast: Component<ToastProps> = (props) => {
     text: string;
     button: string;
   } => {
-    switch (props.toast.type) {
+    switch (local.toast.type) {
       case 'success':
         return {
           bg: 'bg-green-50 dark:bg-green-950',
@@ -111,10 +113,10 @@ const Toast: Component<ToastProps> = (props) => {
       aria-live="polite"
     >
       <Icon name={getIconName()} size="md" class={colors.icon} />
-      <p class={`${colors.text} text-sm flex-1`}>{props.toast.message}</p>
+      <p class={`${colors.text} text-sm flex-1`}>{local.toast.message}</p>
       <button
         type="button"
-        onClick={() => removeToast(props.toast.id)}
+        onClick={() => removeToast(local.toast.id)}
         class={`${colors.button} focus:outline-none focus:ring-2 focus:ring-offset-2 rounded`}
         aria-label={DISMISS_LABEL}
       >

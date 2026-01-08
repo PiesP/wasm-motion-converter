@@ -1,5 +1,6 @@
+import { createSignal, Show, splitProps } from 'solid-js';
+
 import type { Component, JSX } from 'solid-js';
-import { createSignal, Show } from 'solid-js';
 
 /**
  * Z-index for tooltip overlay
@@ -37,6 +38,7 @@ interface TooltipProps {
  * @returns Tooltip wrapper with trigger and content
  */
 const Tooltip: Component<TooltipProps> = (props) => {
+  const [local] = splitProps(props, ['content', 'children']);
   const [show, setShow] = createSignal<boolean>(false);
 
   return (
@@ -47,14 +49,14 @@ const Tooltip: Component<TooltipProps> = (props) => {
         onFocus={() => setShow(true)}
         onBlur={() => setShow(false)}
       >
-        {props.children}
+        {local.children}
       </div>
       <Show when={show()}>
         <div
           class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-white bg-gray-900 dark:bg-gray-700 rounded-lg shadow-lg ${TOOLTIP_OFFSET_TOP} left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none`}
           role="tooltip"
         >
-          {props.content}
+          {local.content}
           <div
             class={`absolute ${TOOLTIP_ARROW_SIZE} bg-gray-900 dark:bg-gray-700 rotate-45 left-1/2 -translate-x-1/2 -bottom-1`}
           />

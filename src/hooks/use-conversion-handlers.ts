@@ -1,4 +1,3 @@
-import type { Setter } from 'solid-js';
 import { batch } from 'solid-js';
 
 import { convertVideo } from '../services/conversion-service';
@@ -39,6 +38,7 @@ import { validateVideoDuration, validateVideoFile } from '../utils/file-validati
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
 
+import type { Setter } from 'solid-js';
 import type { VideoMetadata } from '../types/conversion-types';
 
 /**

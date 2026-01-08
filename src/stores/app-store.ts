@@ -6,7 +6,7 @@
  */
 
 // External dependencies
-import { createSignal } from 'solid-js';
+import { batch, createSignal } from 'solid-js';
 
 // Type imports
 import type { AppState } from '../types/app-types';
@@ -59,8 +59,10 @@ export const [environmentSupported, setEnvironmentSupported] = createSignal<bool
  * or recovering from errors.
  */
 export const resetAppStore = (): void => {
-  setAppState('idle');
-  setLoadingProgress(0);
-  setLoadingStatusMessage('');
-  // Note: environmentSupported is not reset (determined at startup)
+  batch(() => {
+    setAppState('idle');
+    setLoadingProgress(0);
+    setLoadingStatusMessage('');
+    // Note: environmentSupported is not reset (determined at startup)
+  });
 };

@@ -1,7 +1,8 @@
-import type { Component } from 'solid-js';
-import { createSignal, Show } from 'solid-js';
+import { createSignal, Show, splitProps } from 'solid-js';
 
 import ProgressBar from './ProgressBar';
+
+import type { Component } from 'solid-js';
 
 /**
  * Duration for visual feedback after file selection (ms)
@@ -51,13 +52,24 @@ interface FileDropzoneProps {
  * ```
  */
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
+  const [local] = splitProps(props, [
+    'onFileSelected',
+    'disabled',
+    'progress',
+    'status',
+    'statusMessage',
+    'showElapsedTime',
+    'startTime',
+    'estimatedSecondsRemaining',
+    'previewUrl',
+  ]);
   const [isDragging, setIsDragging] = createSignal(false);
   const [justSelected, setJustSelected] = createSignal(false);
 
-  const isBusy = (): boolean => Boolean(props.status);
-  const isInteractive = (): boolean => !props.disabled && !isBusy();
+  const isBusy = (): boolean => Boolean(local.status);
+  const isInteractive = (): boolean => !local.disabled && !isBusy();
   const progressValue = (): number => {
-    const raw = props.progress ?? 0;
+    const raw = local.progress ?? 0;
     if (!Number.isFinite(raw)) {
       return 0;
     }
@@ -69,7 +81,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     if (file) {
       setJustSelected(true);
       setTimeout(() => setJustSelected(false), SELECTION_FEEDBACK_DURATION);
-      props.onFileSelected(file);
+      local.onFileSelected(file);
     }
   };
 
@@ -113,7 +125,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   };
 
   const opacityClass = (): string => {
-    return props.disabled && !isBusy() ? 'opacity-60 cursor-not-allowed' : '';
+    return local.disabled && !isBusy() ? 'opacity-60 cursor-not-allowed' : '';
   };
 
   return (
@@ -139,7 +151,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         fallback={
           <>
             <Show
-              when={props.previewUrl}
+              when={local.previewUrl}
               fallback={
                 <svg
                   class="mx-auto h-12 w-12 text-gray-400 dark:text-gray-600"
@@ -158,7 +170,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               }
             >
               <video
-                src={props.previewUrl!}
+                src={local.previewUrl!}
                 class="mx-auto w-full max-w-md rounded-lg shadow-md bg-black"
                 controls
                 playsinline
@@ -178,7 +190,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                   class="sr-only"
                   accept="video/*"
                   onChange={handleFileInput}
-                  disabled={props.disabled}
+                  disabled={local.disabled}
                   aria-label="Select video file for conversion"
                   aria-required="true"
                 />
@@ -194,12 +206,12 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         <div class="max-w-md mx-auto">
           <ProgressBar
             progress={progressValue()}
-            status={props.status || 'Processing'}
-            statusMessage={props.statusMessage}
+            status={local.status || 'Processing'}
+            statusMessage={local.statusMessage}
             showSpinner={true}
-            showElapsedTime={props.showElapsedTime}
-            startTime={props.startTime}
-            estimatedSecondsRemaining={props.estimatedSecondsRemaining}
+            showElapsedTime={local.showElapsedTime}
+            startTime={local.startTime}
+            estimatedSecondsRemaining={local.estimatedSecondsRemaining}
             layout="vertical"
           />
         </div>

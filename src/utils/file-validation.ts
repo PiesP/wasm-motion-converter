@@ -29,6 +29,7 @@ import {
   WEBP_MAX_DURATION_MS,
   WEBP_MAX_FRAMES,
 } from './constants';
+import { logger } from './logger';
 
 /**
  * Result of file validation with error message if invalid
@@ -329,7 +330,9 @@ export async function validateVideoDuration(
     // The conversion service will eventually handle errors if the video is truly unreadable.
     // This approach: fail gracefully rather than blocking valid videos
     // (some obscure codecs may work in FFmpeg even if HTML5 Video API fails)
-    console.warn('Failed to extract duration, proceeding without validation:', error);
+    logger.warn('general', 'Failed to extract duration, proceeding without validation', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       valid: true, // Don't block conversion on extraction failure
       duration: 0, // Unknown duration

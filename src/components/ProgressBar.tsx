@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
+import { createEffect, createSignal, onCleanup, Show, splitProps } from 'solid-js';
 
 import { formatDuration } from '../utils/format-duration';
 
@@ -54,16 +54,26 @@ interface ProgressBarProps {
  * ```
  */
 const ProgressBar: Component<ProgressBarProps> = (props) => {
+  const [local] = splitProps(props, [
+    'progress',
+    'status',
+    'statusMessage',
+    'showSpinner',
+    'showElapsedTime',
+    'startTime',
+    'estimatedSecondsRemaining',
+    'layout',
+  ]);
   const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
 
   createEffect(() => {
-    if (!props.showElapsedTime || !props.startTime) {
+    if (!local.showElapsedTime || !local.startTime) {
       return;
     }
 
     const updateElapsed = () => {
       const now = Date.now();
-      setElapsedSeconds(Math.floor((now - (props.startTime || now)) / 1000));
+      setElapsedSeconds(Math.floor((now - (local.startTime || now)) / 1000));
     };
 
     // Initial update
@@ -77,7 +87,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     });
   });
 
-  const isHorizontal = (): boolean => props.layout === 'horizontal';
+  const isHorizontal = (): boolean => local.layout === 'horizontal';
 
   return (
     <div class="flex flex-col gap-2">
@@ -85,7 +95,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       <div
         class={`flex items-center ${isHorizontal() ? 'justify-between' : 'justify-center'} text-sm font-medium text-gray-700 dark:text-gray-300`}
       >
-        <Show when={props.showSpinner}>
+        <Show when={local.showSpinner}>
           <svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" aria-hidden="true">
             <circle
               class="opacity-25"
@@ -102,9 +112,9 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
             />
           </svg>
         </Show>
-        <span class={isHorizontal() ? '' : 'mr-2'}>{props.status}</span>
+        <span class={isHorizontal() ? '' : 'mr-2'}>{local.status}</span>
         <span class={`text-gray-600 dark:text-gray-400 ${isHorizontal() ? '' : 'ml-2'}`}>
-          {props.progress}%
+          {local.progress}%
         </span>
       </div>
 
@@ -112,37 +122,37 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       <div
         class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5"
         role="progressbar"
-        aria-valuenow={props.progress}
+        aria-valuenow={local.progress}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label={props.status}
+        aria-label={local.status}
       >
         <div
           class="bg-blue-600 dark:bg-blue-500 h-2.5 rounded-full transition-all duration-300"
-          style={{ width: `${Math.max(0, Math.min(100, props.progress))}%` }}
+          style={{ width: `${Math.max(0, Math.min(100, local.progress))}%` }}
         />
       </div>
 
       {/* Elapsed time and ETA */}
-      <Show when={props.showElapsedTime && props.startTime}>
+      <Show when={local.showElapsedTime && local.startTime}>
         <div class="text-xs text-gray-600 dark:text-gray-400 text-center font-mono">
           <span>Elapsed: {formatDuration(elapsedSeconds())}</span>
           <Show
-            when={props.estimatedSecondsRemaining != null && props.estimatedSecondsRemaining > 0}
+            when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
-            <span> | ETA: {formatDuration(props.estimatedSecondsRemaining!)}</span>
+            <span> | ETA: {formatDuration(local.estimatedSecondsRemaining!)}</span>
           </Show>
         </div>
       </Show>
 
       {/* Status message */}
-      <Show when={props.statusMessage}>
+      <Show when={local.statusMessage}>
         <p
           class="text-xs text-gray-600 dark:text-gray-400 text-center italic"
           role="status"
           aria-live="polite"
         >
-          {props.statusMessage}
+          {local.statusMessage}
         </p>
       </Show>
     </div>

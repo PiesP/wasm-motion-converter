@@ -1,5 +1,6 @@
-import type { ConversionQuality } from '../types/conversion-types';
 import { QUALITY_PRESETS } from './constants';
+
+import type { ConversionQuality } from '../types/conversion-types';
 
 /**
  * Supported output formats for conversion

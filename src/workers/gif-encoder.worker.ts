@@ -1,7 +1,8 @@
 import * as Comlink from 'comlink';
 import { logger } from '../utils/logger';
-import type { ModernGifOptions } from '../services/modern-gif-service';
 import { ModernGifService } from '../services/modern-gif-service';
+
+import type { ModernGifOptions } from '../services/modern-gif-service';
 import type { SerializableImageData } from '../types/worker-types';
 
 /**

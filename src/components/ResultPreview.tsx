@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, onCleanup, Show, splitProps } from 'solid-js';
 
 import { formatBytes } from '../utils/format-bytes';
 import { formatDuration } from '../utils/format-duration';
@@ -55,17 +55,26 @@ interface ResultPreviewProps {
  * ```
  */
 const ResultPreview: Component<ResultPreviewProps> = (props) => {
+  const [local] = splitProps(props, [
+    'outputBlob',
+    'originalName',
+    'originalSize',
+    'settings',
+    'conversionDurationSeconds',
+    'wasTranscoded',
+    'originalCodec',
+  ]);
   // Create blob URL with cleanup handled by onCleanup
   const previewUrl = createMemo<string>(() => {
-    return URL.createObjectURL(props.outputBlob);
+    return URL.createObjectURL(local.outputBlob);
   }, '');
   const [loaded, setLoaded] = createSignal(INITIAL_LOADED_STATE);
 
   const conversionTimeLabel = createMemo((): string | null => {
-    if (typeof props.conversionDurationSeconds !== 'number') {
+    if (typeof local.conversionDurationSeconds !== 'number') {
       return null;
     }
-    return formatDuration(props.conversionDurationSeconds);
+    return formatDuration(local.conversionDurationSeconds);
   });
 
   const sizeGridClass = createMemo((): string =>
@@ -85,12 +94,12 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const handleDownload = () => {
     const url = previewUrl();
     const extension =
-      props.outputBlob.type === 'image/gif'
+      local.outputBlob.type === 'image/gif'
         ? 'gif'
-        : props.outputBlob.type === 'image/webp'
+        : local.outputBlob.type === 'image/webp'
           ? 'webp'
           : 'webp';
-    const originalName = props.originalName.trim();
+    const originalName = local.originalName.trim();
     const lastDotIndex = originalName.lastIndexOf('.');
     const baseName =
       originalName && lastDotIndex > 0 ? originalName.slice(0, lastDotIndex) : originalName;
@@ -139,13 +148,13 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Original Size</div>
             <div class="font-medium text-gray-900 dark:text-white">
-              {formatBytes(props.originalSize)}
+              {formatBytes(local.originalSize)}
             </div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Output Size</div>
             <div class="font-medium text-gray-900 dark:text-white">
-              {formatBytes(props.outputBlob.size)}
+              {formatBytes(local.outputBlob.size)}
             </div>
           </div>
           <Show when={conversionTimeLabel()}>
@@ -162,19 +171,19 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Format</div>
             <div class="font-medium text-gray-900 dark:text-white uppercase">
-              {props.settings.format}
+              {local.settings.format}
             </div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Quality</div>
             <div class="font-medium text-gray-900 dark:text-white capitalize">
-              {props.settings.quality}
+              {local.settings.quality}
             </div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <div class="text-gray-600 dark:text-gray-400">Scale</div>
             <div class="font-medium text-gray-900 dark:text-white">
-              {(props.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%
+              {(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%
             </div>
           </div>
         </div>

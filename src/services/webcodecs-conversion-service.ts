@@ -1,4 +1,4 @@
-// External dependencies
+// Internal dependencies
 
 // Type imports
 import type {
@@ -1329,13 +1329,6 @@ class WebCodecsConversionService {
         stack: errorStack?.substring(0, 500), // Truncate stack for readability
       };
       logger.error('conversion', 'WebCodecs direct path failed', detailedError);
-      // Also log to console for debugging in browser dev tools
-      if (typeof console !== 'undefined' && console.error) {
-        console.error('[WebCodecs direct] Error:', errorMessage);
-        if (errorStack) {
-          console.error('[WebCodecs direct] Stack:', errorStack.substring(0, 500));
-        }
-      }
       return null;
     }
   }

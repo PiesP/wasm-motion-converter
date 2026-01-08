@@ -1,8 +1,8 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import type {
-  ConversionOutputBlob,
   ConversionOptions,
+  ConversionOutputBlob,
   ConversionQuality,
   VideoMetadata,
 } from '../types/conversion-types';
@@ -1145,7 +1145,9 @@ class FFmpegService {
       this.loaded = true;
     } catch (error) {
       this.terminateFFmpeg();
-      console.error('FFmpeg initialization failed:', error);
+      logger.error('ffmpeg', 'FFmpeg initialization failed', {
+        error: getErrorMessage(error),
+      });
       if (error instanceof Error && error.message.includes('called FFmpeg.terminate()')) {
         throw new Error(
           'FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers or strict browser security settings. Try disabling ad blockers, using an InPrivate window, or testing another browser.'
@@ -2137,7 +2139,9 @@ class FFmpegService {
       await this.ensureInputFile(file);
 
       if (isMemoryCritical()) {
-        console.warn('[FFmpeg Service] Critical memory usage detected - conversion may fail');
+        logger.warn('conversion', 'Critical memory usage detected - conversion may fail', {
+          operation: 'gif',
+        });
       }
 
       // Proactive codec transcoding check
@@ -2285,10 +2289,6 @@ class FFmpegService {
           throw error;
         }
 
-        console.warn(
-          '[FFmpeg Service] Palette generation failed, falling back to direct conversion:',
-          error
-        );
         logger.warn('conversion', 'Palette generation failed, using fallback', {
           error: errorMessage,
         });
@@ -2594,7 +2594,9 @@ class FFmpegService {
       await this.ensureInputFile(file);
 
       if (isMemoryCritical()) {
-        console.warn('[FFmpeg Service] Critical memory usage detected - conversion may fail');
+        logger.warn('conversion', 'Critical memory usage detected - conversion may fail', {
+          operation: 'webp',
+        });
       }
 
       // Proactive codec transcoding check
@@ -3381,7 +3383,9 @@ class FFmpegService {
       try {
         this.ffmpeg.terminate();
       } catch (error) {
-        console.error('[FFmpeg Service] Error during termination:', error);
+        logger.error('ffmpeg', 'Error during termination', {
+          error: getErrorMessage(error),
+        });
       }
       this.ffmpeg = null;
       this.loaded = false;

@@ -1,6 +1,6 @@
-import type { Component } from 'solid-js';
-import { createMemo, onMount, Show } from 'solid-js';
+import { createMemo, onMount, Show, splitProps } from 'solid-js';
 
+import type { Component } from 'solid-js';
 import type { ConversionErrorType } from '../types/conversion-types';
 
 /**
@@ -40,6 +40,14 @@ interface ErrorDisplayProps {
  * ```
  */
 const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
+  const [local] = splitProps(props, [
+    'message',
+    'suggestion',
+    'errorType',
+    'onRetry',
+    'onSelectNewFile',
+    'onDismiss',
+  ]);
   let retryButtonRef: HTMLButtonElement | undefined;
 
   // Focus retry button when error is displayed
@@ -50,26 +58,26 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
   });
 
   // Determine if retry is possible based on error type
-  const canRetry = createMemo(() => props.errorType !== 'format' && props.errorType !== 'codec');
+  const canRetry = createMemo(() => local.errorType !== 'format' && local.errorType !== 'codec');
 
   // User-friendly error messages
   const userFriendlyMessage = createMemo(() => {
-    if (!props.errorType) return props.message;
+    if (!local.errorType) return local.message;
 
     const friendlyMessages: Record<ConversionErrorType, string> = {
       format: 'This video format is not supported. Please try a different file.',
       codec: 'This video codec cannot be processed. Please try a different file.',
       timeout: 'Conversion took too long. Try a shorter video or lower quality settings.',
       memory: 'Ran out of memory. Close other browser tabs or use lower quality settings.',
-      general: props.message,
+      general: local.message,
     };
 
-    return friendlyMessages[props.errorType] || props.message;
+    return friendlyMessages[local.errorType] || local.message;
   });
 
   // Error type icon (for future enhancement)
   const errorIcon = createMemo(() => {
-    switch (props.errorType) {
+    switch (local.errorType) {
       case 'timeout':
         return '⏱️';
       case 'memory':
@@ -88,10 +96,10 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
       role="alert"
       aria-live="assertive"
     >
-      <Show when={props.onDismiss}>
+      <Show when={local.onDismiss}>
         <button
           type="button"
-          onClick={props.onDismiss}
+          onClick={local.onDismiss}
           class="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-red-100 dark:hover:bg-red-900"
           aria-label="Dismiss error message"
         >
@@ -131,9 +139,9 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
             Conversion Failed {errorIcon() && <span class="ml-1">{errorIcon()}</span>}
           </h3>
           <p class="mt-2 text-sm text-red-700 dark:text-red-400">{userFriendlyMessage()}</p>
-          <Show when={props.suggestion}>
+          <Show when={local.suggestion}>
             <div class="mt-2 p-3 bg-red-100 dark:bg-red-900 rounded text-sm text-red-700 dark:text-red-300">
-              <strong>Suggestion:</strong> {props.suggestion}
+              <strong>Suggestion:</strong> {local.suggestion}
             </div>
           </Show>
           <div class="mt-4 flex gap-3">
@@ -143,7 +151,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 <button
                   type="button"
                   class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900"
-                  onClick={props.onSelectNewFile}
+                  onClick={local.onSelectNewFile}
                   aria-label="Select a different video file to convert"
                 >
                   Select Different File
@@ -155,7 +163,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 type="button"
                 data-error-retry-button
                 class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900"
-                onClick={props.onRetry}
+                onClick={local.onRetry}
                 aria-label="Retry conversion with the same file"
               >
                 Retry with Same File
@@ -163,7 +171,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               <button
                 type="button"
                 class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 dark:focus:ring-offset-gray-900"
-                onClick={props.onSelectNewFile}
+                onClick={local.onSelectNewFile}
                 aria-label="Select a different video file to convert"
               >
                 Select Different File

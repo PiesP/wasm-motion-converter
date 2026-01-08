@@ -1,7 +1,9 @@
-import type { Component } from 'solid-js';
-import type { ConversionQuality } from '../types/conversion-types';
+import { splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
+
+import type { Component } from 'solid-js';
+import type { ConversionQuality } from '../types/conversion-types';
 
 /**
  * Default number of columns for quality selector grid
@@ -49,16 +51,17 @@ interface QualitySelectorProps {
  */
 
 const QualitySelector: Component<QualitySelectorProps> = (props) => {
+  const [local] = splitProps(props, ['value', 'onChange', 'disabled', 'tooltip']);
   return (
     <OptionSelector
       title="Quality Preset"
       name="quality"
-      value={props.value}
+      value={local.value}
       options={QUALITY_OPTIONS}
-      onChange={props.onChange}
-      disabled={props.disabled}
+      onChange={local.onChange}
+      disabled={local.disabled}
       columns={DEFAULT_COLUMNS}
-      tooltip={props.tooltip}
+      tooltip={local.tooltip}
     />
   );
 };

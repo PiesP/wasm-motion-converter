@@ -1,8 +1,9 @@
-import type { Component } from 'solid-js';
+import { splitProps } from 'solid-js';
 
 import { formatBytes } from '../utils/format-bytes';
 import { formatDuration } from '../utils/format-duration';
 
+import type { Component } from 'solid-js';
 import type { VideoMetadata } from '../types/conversion-types';
 
 /**
@@ -37,11 +38,12 @@ interface VideoMetadataDisplayProps {
  * @returns Video metadata display card
  */
 const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
+  const [local] = splitProps(props, ['metadata', 'fileName', 'fileSize']);
   /**
    * Get formatted codec display text
    */
   const codecDisplay = (): string => {
-    return props.metadata.codec === UNKNOWN_CODEC ? DETECTING_LABEL : props.metadata.codec;
+    return local.metadata.codec === UNKNOWN_CODEC ? DETECTING_LABEL : local.metadata.codec;
   };
 
   return (
@@ -51,19 +53,19 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
         <div class="flex justify-between">
           <span class="text-gray-600 dark:text-gray-400">File:</span>
           <span class="font-medium text-gray-900 dark:text-white truncate ml-2">
-            {props.fileName}
+            {local.fileName}
           </span>
         </div>
         <div class="flex justify-between">
           <span class="text-gray-600 dark:text-gray-400">Resolution:</span>
           <span class="font-medium text-gray-900 dark:text-white">
-            {props.metadata.width}x{props.metadata.height}
+            {local.metadata.width}x{local.metadata.height}
           </span>
         </div>
         <div class="flex justify-between">
           <span class="text-gray-600 dark:text-gray-400">Duration:</span>
           <span class="font-medium text-gray-900 dark:text-white">
-            {formatDuration(props.metadata.duration)}
+            {formatDuration(local.metadata.duration)}
           </span>
         </div>
         <div class="flex justify-between">
@@ -73,7 +75,7 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
         <div class="flex justify-between">
           <span class="text-gray-600 dark:text-gray-400">File Size:</span>
           <span class="font-medium text-gray-900 dark:text-white">
-            {formatBytes(props.fileSize)}
+            {formatBytes(local.fileSize)}
           </span>
         </div>
       </div>

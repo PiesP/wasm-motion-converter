@@ -1,6 +1,9 @@
+import { splitProps } from 'solid-js';
+
+import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
+
 import type { Component } from 'solid-js';
 import type { ConversionScale, VideoMetadata } from '../types/conversion-types';
-import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
 /**
  * Default number of columns for scale selector grid
@@ -48,12 +51,13 @@ interface ScaleSelectorProps {
  * ```
  */
 const ScaleSelector: Component<ScaleSelectorProps> = (props) => {
+  const [local] = splitProps(props, ['value', 'onChange', 'disabled', 'tooltip', 'inputMetadata']);
   const getOutputResolution = (scale: ConversionScale): string | undefined => {
-    if (!props.inputMetadata) {
+    if (!local.inputMetadata) {
       return undefined;
     }
-    const width = Math.round(props.inputMetadata.width * scale);
-    const height = Math.round(props.inputMetadata.height * scale);
+    const width = Math.round(local.inputMetadata.width * scale);
+    const height = Math.round(local.inputMetadata.height * scale);
     return `${width}x${height}`;
   };
 
@@ -71,12 +75,12 @@ const ScaleSelector: Component<ScaleSelectorProps> = (props) => {
     <OptionSelector
       title="Output Scale"
       name="scale"
-      value={props.value}
+      value={local.value}
       options={options()}
-      onChange={props.onChange}
-      disabled={props.disabled}
+      onChange={local.onChange}
+      disabled={local.disabled}
       columns={DEFAULT_COLUMNS}
-      tooltip={props.tooltip}
+      tooltip={local.tooltip}
     />
   );
 };

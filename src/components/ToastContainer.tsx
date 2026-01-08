@@ -1,8 +1,9 @@
-import type { Component } from 'solid-js';
 import { For } from 'solid-js';
 
 import { toasts } from '../stores/toast-store';
 import Toast from './Toast';
+
+import type { Component } from 'solid-js';
 
 /**
  * Maximum number of toasts to display simultaneously

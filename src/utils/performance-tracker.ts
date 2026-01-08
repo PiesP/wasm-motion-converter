@@ -144,7 +144,10 @@ class PerformanceTracker {
       return;
     }
 
-    console.table(report.summary);
+    // Keep console.table for dev ergonomics, but avoid direct console output in production.
+    if (import.meta.env.DEV) {
+      console.table(report.summary);
+    }
     logger.info('performance', 'Performance report exported to console', {
       totalTime: Math.round(report.totalTime),
     });
