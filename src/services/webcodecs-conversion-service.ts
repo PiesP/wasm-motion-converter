@@ -15,7 +15,7 @@ import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
 import { getOptimalFPS } from '../utils/quality-optimizer';
 import { muxAnimatedWebP } from '../utils/webp-muxer';
 import { ffmpegService } from './ffmpeg-service';
-import { ModernGifService } from './modern-gif-service';
+import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { isComplexCodec } from './webcodecs/codec-utils';
 import { MIN_WEBP_FRAME_DURATION_MS, WEBP_BACKGROUND_COLOR } from './webcodecs/webp-constants';
 import {
@@ -473,6 +473,13 @@ class WebCodecsConversionService {
 
       logger.warn('conversion', 'WebCodecs path failed, falling back to FFmpeg', {
         error: errorMessage,
+        codec: metadata?.codec,
+        fallbackReason: 'webcodecs_failed',
+      });
+
+      logger.debug('conversion', 'Returning null for FFmpeg fallback', {
+        reason: 'webcodecs_failed',
+        originalError: errorMessage,
       });
       return null;
     }
@@ -1014,7 +1021,7 @@ class WebCodecsConversionService {
     const { quality, scale } = options;
     const settings =
       format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
-    const useModernGif = format === 'gif' && ModernGifService.isSupported();
+    const useModernGif = format === 'gif' && isModernGifSupported();
 
     // GIF format: Always prefer FFmpeg direct path for better performance
     // WebCodecs frame extraction + FFmpeg GIF encoding is 3x slower than direct FFmpeg encoding
@@ -1116,6 +1123,7 @@ class WebCodecsConversionService {
           // If WebCodecs path fails, fall through to direct FFmpeg path
           logger.warn('conversion', 'WebCodecs direct path failed, trying FFmpeg fallback', {
             codec: metadata?.codec,
+            fallbackReason: 'webcodecs_direct_failed',
           });
         } catch (error) {
           const errorMessage = getErrorMessage(error);
@@ -1127,9 +1135,15 @@ class WebCodecsConversionService {
             throw error;
           }
 
-          logger.warn('conversion', 'H.264 intermediate path error, trying direct WebCodecs', {
+          logger.warn('conversion', 'WebCodecs direct path error, trying FFmpeg fallback', {
             error: errorMessage,
             codec: metadata?.codec,
+            fallbackReason: 'webcodecs_direct_error',
+          });
+
+          logger.debug('conversion', 'Continuing to FFmpeg fallback after WebCodecs error', {
+            reason: 'webcodecs_direct_error',
+            originalError: errorMessage,
           });
         }
       }
@@ -1416,7 +1430,7 @@ class WebCodecsConversionService {
             error: errorMessage,
           });
           try {
-            outputBlob = await ModernGifService.encode(capturedFrames, {
+            outputBlob = await encodeModernGif(capturedFrames, {
               width: decodeResult.width,
               height: decodeResult.height,
               fps: targetFps,
@@ -1433,7 +1447,7 @@ class WebCodecsConversionService {
       } else if (useModernGif) {
         // Fallback to main thread if workers unavailable
         try {
-          outputBlob = await ModernGifService.encode(capturedFrames, {
+          outputBlob = await encodeModernGif(capturedFrames, {
             width: decodeResult.width,
             height: decodeResult.height,
             fps: targetFps,

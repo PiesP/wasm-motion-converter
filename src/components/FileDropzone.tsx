@@ -136,13 +136,20 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
 
   return (
     <div
-      class={`border-2 border-dashed rounded-lg p-4 sm:p-6 md:p-8 lg:p-12 text-center transition-colors ${dropzoneStateClass()} ${opacityClass()}`}
+      class={`border-2 border-dashed rounded-lg p-4 sm:p-6 md:p-8 lg:p-12 text-center transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900 ${dropzoneStateClass()} ${opacityClass()}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       role="region"
-      aria-label="Video file dropzone"
+      aria-label="Video file dropzone - Press Enter or Space to select a file"
       aria-busy={isBusy()}
+      tabIndex={isInteractive() ? 0 : -1}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && isInteractive()) {
+          e.preventDefault();
+          openFilePicker();
+        }
+      }}
     >
       <Show
         when={isBusy()}
@@ -197,7 +204,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 disabled={local.disabled}
                 tabIndex={-1}
                 aria-label="Select video file for conversion"
-                aria-required="true"
+                required
               />
             </div>
             <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">or drag and drop</p>

@@ -1,9 +1,8 @@
 import * as Comlink from 'comlink';
-import { logger } from '../utils/logger';
-import { ModernGifService } from '../services/modern-gif-service';
-
 import type { ModernGifOptions } from '../services/modern-gif-service';
+import { encodeModernGif } from '../services/modern-gif-service';
 import type { SerializableImageData } from '../types/worker-types';
+import { logger } from '../utils/logger';
 
 /**
  * GIF encoder worker API exposed via Comlink
@@ -19,7 +18,7 @@ const api = {
   /**
    * Encode frames into an animated GIF
    *
-   * Converts serializable frame data to ImageData and encodes using ModernGifService.
+   * Converts serializable frame data to ImageData and encodes using modern-gif.
    * Handles both single frames and frame arrays transparently.
    *
    * @param frames - Single frame or array of frames to encode
@@ -73,7 +72,7 @@ const api = {
         });
       });
 
-      const result = await ModernGifService.encode(imageDataFrames, options);
+      const result = await encodeModernGif(imageDataFrames, options);
 
       logger.info('general', 'GIF encoding completed', {
         frameCount: frameArray.length,

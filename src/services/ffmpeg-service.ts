@@ -6,6 +6,7 @@ import type {
   ConversionQuality,
   VideoMetadata,
 } from '../types/conversion-types';
+import { classifyConversionError } from '../utils/classify-conversion-error';
 import { canFFmpegDecode as canFFmpegDecodeCodec } from '../utils/codec-capabilities';
 import {
   FFMPEG_CORE_BASE_URLS,
@@ -33,10 +34,10 @@ import { getThreadingArgs } from './ffmpeg/threading';
 /**
  * FFmpeg input format override for transcoding operations
  */
-type FFmpegInputOverride = {
+interface FFmpegInputOverride {
   format: 'h264';
   framerate: number;
-};
+}
 
 class FFmpegService {
   private ffmpeg: FFmpeg | null = null;
@@ -1169,6 +1170,8 @@ class FFmpegService {
     const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
+    const encodeSequenceStartTime = performance.now();
+
     try {
       await this.validateFrameSequence(frameCount, format);
       const inputArgs = this.getFrameInputArgs(fps);
@@ -1216,6 +1219,19 @@ class FFmpegService {
         ...(format === 'gif' ? [paletteFileName] : []),
       ]);
 
+      const encodeSequenceDurationMs = Math.round(performance.now() - encodeSequenceStartTime);
+      logger.performance('FFmpeg frame sequence encoding completed', {
+        format,
+        durationMs: encodeSequenceDurationMs,
+        frameCount,
+        fps,
+        outputSize: data.length,
+        throughputFps:
+          encodeSequenceDurationMs > 0
+            ? Math.round(frameCount / (encodeSequenceDurationMs / 1000))
+            : 0,
+      });
+
       return new Blob([new Uint8Array(data as Uint8Array)], {
         type: format === 'gif' ? 'image/gif' : 'image/webp',
       });
@@ -1225,7 +1241,21 @@ class FFmpegService {
       if (format === 'gif') {
         await this.safeDelete(paletteFileName);
       }
-      throw error;
+
+      const errorMessage = getErrorMessage(error);
+      if (
+        errorMessage.includes('cancelled by user') ||
+        (this.cancellationRequested && errorMessage.includes('called FFmpeg.terminate()'))
+      ) {
+        throw error;
+      }
+
+      throw this.enrichConversionError({
+        error,
+        format,
+        options,
+        metadata: undefined,
+      });
     }
   }
 
@@ -2131,6 +2161,22 @@ class FFmpegService {
         outputSize: data.length,
       });
 
+      const estimatedFrames =
+        metadataForConversion?.duration && metadataForConversion.duration > 0
+          ? Math.max(1, Math.round(metadataForConversion.duration * settings.fps))
+          : undefined;
+      logger.performance('FFmpeg GIF conversion completed', {
+        durationMs: duration,
+        outputSize: data.length,
+        quality,
+        scale: effectiveScale,
+        fps: settings.fps,
+        estimatedFrames,
+        throughputFps:
+          estimatedFrames && duration > 0 ? Math.round(estimatedFrames / (duration / 1000)) : 0,
+        wasTranscoded,
+      });
+
       performanceTracker.saveToSessionStorage();
       logger.performance('Performance report saved to sessionStorage');
 
@@ -2146,7 +2192,21 @@ class FFmpegService {
       await this.clearCachedInput();
       await this.safeDelete(paletteFileName);
       await this.safeDelete(outputFileName);
-      throw error;
+
+      const errorMessage = getErrorMessage(error);
+      if (
+        errorMessage.includes('cancelled by user') ||
+        (this.cancellationRequested && errorMessage.includes('called FFmpeg.terminate()'))
+      ) {
+        throw error;
+      }
+
+      throw this.enrichConversionError({
+        error,
+        format: 'gif',
+        options: { ...options, scale: effectiveScale },
+        metadata: metadataForConversion,
+      });
     } finally {
       // Remove both log handlers (conversionLogHandler might not exist if error during palette gen)
       if (ffmpegLogHandler) {
@@ -2586,6 +2646,22 @@ class FFmpegService {
         outputSize: data.length,
       });
 
+      const estimatedFrames =
+        metadataForConversion?.duration && metadataForConversion.duration > 0
+          ? Math.max(1, Math.round(metadataForConversion.duration * settings.fps))
+          : undefined;
+      logger.performance('FFmpeg WebP conversion completed', {
+        durationMs: duration,
+        outputSize: data.length,
+        quality,
+        scale,
+        fps: settings.fps,
+        estimatedFrames,
+        throughputFps:
+          estimatedFrames && duration > 0 ? Math.round(estimatedFrames / (duration / 1000)) : 0,
+        wasTranscoded,
+      });
+
       performanceTracker.saveToSessionStorage();
       logger.performance('Performance report saved to sessionStorage');
 
@@ -2600,7 +2676,21 @@ class FFmpegService {
     } catch (error) {
       await this.clearCachedInput();
       await this.safeDelete(outputFileName);
-      throw error;
+
+      const errorMessage = getErrorMessage(error);
+      if (
+        errorMessage.includes('cancelled by user') ||
+        (this.cancellationRequested && errorMessage.includes('called FFmpeg.terminate()'))
+      ) {
+        throw error;
+      }
+
+      throw this.enrichConversionError({
+        error,
+        format: 'webp',
+        options,
+        metadata: metadataForConversion,
+      });
     } finally {
       if (ffmpegLogHandler) {
         ffmpeg.off('log', ffmpegLogHandler);
@@ -2822,6 +2912,32 @@ class FFmpegService {
 
   getRecentFFmpegLogs(): string[] {
     return [...this.ffmpegLogBuffer];
+  }
+
+  private enrichConversionError(params: {
+    error: unknown;
+    format: 'gif' | 'webp';
+    options: ConversionOptions;
+    metadata?: VideoMetadata;
+  }): Error {
+    const { error, format, options, metadata } = params;
+    const message = getErrorMessage(error);
+
+    const context = classifyConversionError(
+      message,
+      metadata ?? null,
+      { format, quality: options.quality, scale: options.scale },
+      this.getRecentFFmpegLogs()
+    );
+
+    if (error instanceof Error) {
+      (error as unknown as { errorContext?: unknown }).errorContext ??= context;
+      return error;
+    }
+
+    const enriched = new Error(message);
+    (enriched as unknown as { errorContext?: unknown }).errorContext = context;
+    return enriched;
   }
 
   private startProgressHeartbeat(

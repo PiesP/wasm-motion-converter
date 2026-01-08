@@ -1,3 +1,10 @@
+import type {
+  ConversionFormat,
+  ConversionOptions,
+  ConversionOutputBlob,
+  VideoMetadata,
+} from '../types/conversion-types';
+import { classifyConversionError } from '../utils/classify-conversion-error';
 import {
   getCodecCapability,
   getCodecErrorMessage,
@@ -9,13 +16,6 @@ import { logger } from '../utils/logger';
 import { ffmpegService } from './ffmpeg-service';
 import { webcodecsConversionService } from './webcodecs-conversion-service';
 import { isWebCodecsDecodeSupported } from './webcodecs-support-service';
-
-import type {
-  ConversionFormat,
-  ConversionOptions,
-  ConversionOutputBlob,
-  VideoMetadata,
-} from '../types/conversion-types';
 
 /**
  * Codec value indicating unknown or undetected codec
@@ -139,7 +139,22 @@ async function selectConversionPath(
       if (webCodecsAvailable) {
         return webcodecsConversionService.convert(file, format, options, resolvedMetadata);
       }
-      throw error;
+
+      const context = classifyConversionError(
+        errorMessage,
+        resolvedMetadata ?? null,
+        { format, quality: options.quality, scale: options.scale },
+        ffmpegService.getRecentFFmpegLogs()
+      );
+
+      if (error instanceof Error) {
+        (error as unknown as { errorContext?: unknown }).errorContext ??= context;
+        throw error;
+      }
+
+      const enrichedError = new Error(errorMessage);
+      (enrichedError as unknown as { errorContext?: unknown }).errorContext = context;
+      throw enrichedError;
     }
   }
 
@@ -222,6 +237,8 @@ export async function convertVideo(
   // Ensure FFmpeg is ready before proceeding
   await ffmpegInitPromise;
 
+  const routingStartTime = performance.now();
+
   const strategy = getConversionStrategy({ file, format, metadata: resolvedMetadata });
 
   let effectiveOptions: ConversionOptions = { ...options };
@@ -255,6 +272,27 @@ export async function convertVideo(
     webCodecsAvailable,
     format,
     strategyReasons: strategy.reasons,
+  });
+
+  // Log routing performance (always visible in production via performance category)
+  const routingDuration = performance.now() - routingStartTime;
+  const normalizedCodec = codec || UNKNOWN_CODEC;
+  const selectedPath = requiresWebCodecs(codec)
+    ? format === 'gif'
+      ? 'webcodecs+ffmpeg-hybrid'
+      : 'webcodecs'
+    : strategy.forceFFmpeg
+      ? 'ffmpeg'
+      : webCodecsAvailable
+        ? 'webcodecs-first'
+        : 'ffmpeg';
+
+  logger.performance('Codec routing decision completed', {
+    durationMs: Math.round(routingDuration),
+    selectedPath,
+    codec: normalizedCodec,
+    codecCapability,
+    format,
   });
 
   return selectConversionPath(

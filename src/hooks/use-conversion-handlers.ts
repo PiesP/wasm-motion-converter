@@ -35,6 +35,7 @@ import type { VideoMetadata } from '../types/conversion-types';
 import { classifyConversionError } from '../utils/classify-conversion-error';
 import { WARN_RESOLUTION_PIXELS } from '../utils/constants';
 import { createId } from '../utils/create-id';
+import { getErrorMessage } from '../utils/error-utils';
 import { ETACalculator } from '../utils/eta-calculator';
 import { validateVideoDuration, validateVideoFile } from '../utils/file-validation';
 import { logger } from '../utils/logger';
@@ -193,7 +194,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
 
     const validation = validateVideoFile(file);
     if (!validation.valid) {
-      setErrorMessage(validation.error ?? 'Unknown error');
+      setErrorMessage(getErrorMessage(validation.error));
       setAppState('error');
       // Move focus to retry button for keyboard users and screen readers
       queueMicrotask(() => {
@@ -255,7 +256,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
 
       setAppState('idle');
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unknown error occurred');
+      setErrorMessage(getErrorMessage(error));
       setAppState('error');
       // Move focus to retry button for keyboard users and screen readers
       queueMicrotask(() => {
@@ -309,7 +310,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     } catch (validationError) {
       // If validation fails, log warning but allow conversion to proceed
       logger.warn('conversion', 'Duration validation failed, proceeding anyway', {
-        error: validationError instanceof Error ? validationError.message : String(validationError),
+        error: getErrorMessage(validationError),
       });
       await performConversion(file, settings);
     }
@@ -433,7 +434,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       setConversionStatusMessage('');
       setConversionStartTime(0);
 
-      const errorMessage_ = error instanceof Error ? error.message : 'Conversion failed';
+      const errorMessage_ = getErrorMessage(error) || 'Conversion failed';
 
       // Check if the error is due to user cancellation
       if (

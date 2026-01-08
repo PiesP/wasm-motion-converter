@@ -12,10 +12,10 @@ const WORKER_CHECK_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_WORKER_CHECK / 1000;
 /**
  * Worker isolation status for FFmpeg multi-threading support.
  */
-type WorkerIsolationStatus = {
+interface WorkerIsolationStatus {
   sharedArrayBuffer: boolean;
   crossOriginIsolated: boolean;
-};
+}
 
 /**
  * Verify that Web Workers have proper isolation for SharedArrayBuffer.
