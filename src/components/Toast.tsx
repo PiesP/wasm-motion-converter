@@ -1,10 +1,8 @@
+import type { Component } from 'solid-js';
 import { splitProps } from 'solid-js';
-
+import type { Toast as ToastType } from '../stores/toast-store';
 import { removeToast } from '../stores/toast-store';
 import Icon from './ui/Icon';
-
-import type { Component } from 'solid-js';
-import type { Toast as ToastType } from '../stores/toast-store';
 
 /**
  * Minimum width for toast notifications in pixels
@@ -40,6 +38,10 @@ interface ToastProps {
  */
 const Toast: Component<ToastProps> = (props) => {
   const [local] = splitProps(props, ['toast']);
+
+  const getAriaRole = (): 'alert' | 'status' => {
+    return local.toast.type === 'error' || local.toast.type === 'warning' ? 'alert' : 'status';
+  };
   /**
    * Get icon name based on toast type
    */
@@ -109,8 +111,8 @@ const Toast: Component<ToastProps> = (props) => {
   return (
     <div
       class={`${colors.bg} ${colors.border} border-l-4 rounded-lg shadow-lg p-4 flex items-start gap-3 ${MIN_TOAST_WIDTH} ${MAX_TOAST_WIDTH} animate-slide-in`}
-      role="alert"
-      aria-live="polite"
+      role={getAriaRole()}
+      aria-atomic="true"
     >
       <Icon name={getIconName()} size="md" class={colors.icon} />
       <p class={`${colors.text} text-sm flex-1`}>{local.toast.message}</p>

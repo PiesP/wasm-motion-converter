@@ -11,7 +11,6 @@ import {
   FFMPEG_CORE_BASE_URLS,
   QUALITY_PRESETS,
   TIMEOUT_CONVERSION,
-  TIMEOUT_FFMPEG_INIT,
   TIMEOUT_VIDEO_ANALYSIS,
   WARN_DURATION_SECONDS,
   WARN_RESOLUTION_PIXELS,
@@ -24,14 +23,12 @@ import { performanceTracker } from '../utils/performance-tracker';
 import { getOptimalFPS } from '../utils/quality-optimizer';
 import { getTimeoutForFormat } from '../utils/timeout-calculator';
 import { withTimeout } from '../utils/with-timeout';
-import {
-  cacheAwareBlobURL,
-  loadFFmpegAsset,
-  requestIdle,
-  supportsCacheStorage,
-} from './ffmpeg/core-assets';
+import { getProgressLoggingArgs } from './ffmpeg/args';
+import { cacheAwareBlobURL, requestIdle, supportsCacheStorage } from './ffmpeg/core-assets';
+import { getScaleFilter } from './ffmpeg/filters';
+import { initializeFFmpegRuntime } from './ffmpeg/init';
+import { validateOutputBytes } from './ffmpeg/output-validation';
 import { getThreadingArgs } from './ffmpeg/threading';
-import { verifyWorkerIsolation } from './ffmpeg/worker-isolation';
 
 /**
  * FFmpeg input format override for transcoding operations
@@ -40,33 +37,6 @@ type FFmpegInputOverride = {
   format: 'h264';
   framerate: number;
 };
-
-/**
- * Generate FFmpeg arguments for progress logging
- * Enables progress reporting and detailed info-level logging
- *
- * @returns Array of FFmpeg command-line arguments for progress output
- */
-function getProgressLoggingArgs(): string[] {
-  return ['-progress', '-', '-loglevel', 'info'];
-}
-
-/**
- * Generate scale filter string for video resizing
- * Uses quality-appropriate interpolation algorithms
- * Returns null if no scaling needed (scale === 1.0)
- *
- * @param quality - Conversion quality (determines interpolation algorithm)
- * @param scale - Scale factor (0.0-1.0, where 1.0 = 100%)
- * @returns FFmpeg scale filter string or null if no scaling needed
- */
-function getScaleFilter(quality: ConversionQuality, scale: number): string | null {
-  if (scale === 1.0) {
-    return null; // No scaling needed at 100%
-  }
-  const filter = quality === 'high' ? 'lanczos' : quality === 'medium' ? 'bicubic' : 'bilinear';
-  return `scale=iw*${scale}:ih*${scale}:flags=${filter}`;
-}
 
 class FFmpegService {
   private ffmpeg: FFmpeg | null = null;
@@ -570,42 +540,14 @@ class FFmpegService {
       // Read file data (will throw if file doesn't exist)
       const data = await this.safeReadFile(fileName);
 
-      // Check minimum size based on format
-      const minSize =
-        expectedFormat === 'gif'
-          ? FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_GIF_SIZE_BYTES
-          : FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_WEBP_SIZE_BYTES;
-
-      if (data.length < minSize) {
-        logger.warn('conversion', `Output file too small: ${data.length} bytes`, {
-          expectedMinimum: minSize,
+      const validation = validateOutputBytes(new Uint8Array(data), expectedFormat);
+      if (!validation.valid) {
+        logger.warn('conversion', 'Output file failed validation', {
           format: expectedFormat,
+          size: data.length,
+          reason: validation.reason,
         });
-        return {
-          valid: false,
-          reason: `Output file too small (${data.length} bytes, expected ≥${minSize})`,
-        };
-      }
-
-      // Validate file signature (magic bytes)
-      if (expectedFormat === 'gif') {
-        // GIF signature: "GIF89a" or "GIF87a"
-        const gifSignature = String.fromCharCode(...data.slice(0, 6));
-        if (!gifSignature.startsWith('GIF8')) {
-          logger.warn('conversion', 'Invalid GIF signature', { signature: gifSignature });
-          return { valid: false, reason: 'Invalid GIF file signature' };
-        }
-      } else if (expectedFormat === 'webp') {
-        // WebP signature: "RIFF....WEBP"
-        const riffSignature = String.fromCharCode(...data.slice(0, 4));
-        const webpSignature = String.fromCharCode(...data.slice(8, 12));
-        if (riffSignature !== 'RIFF' || webpSignature !== 'WEBP') {
-          logger.warn('conversion', 'Invalid WebP signature', {
-            riff: riffSignature,
-            webp: webpSignature,
-          });
-          return { valid: false, reason: 'Invalid WebP file signature' };
-        }
+        return { valid: false, reason: validation.reason };
       }
 
       logger.debug('conversion', 'Output file validated successfully', {
@@ -872,121 +814,17 @@ class FFmpegService {
         }
       });
 
-      let downloadProgress = 0;
-      const reportProgress = (value: number) => {
-        const clamped = Math.min(100, Math.max(0, Math.round(value)));
-        this.reportInitProgress(clamped);
-      };
-      const applyDownloadProgress = (weight: number, message: string) => (url: string) => {
-        downloadProgress = Math.min(90, downloadProgress + weight);
-        reportProgress(downloadProgress);
-        this.reportInitStatus(message);
-        return url;
-      };
+      await initializeFFmpegRuntime(
+        ffmpeg,
+        {
+          reportProgress: (progress) => this.reportInitProgress(progress),
+          reportStatus: (message) => this.reportInitStatus(message),
+        },
+        { terminate: () => this.terminateFFmpeg() }
+      );
 
-      const resolveFFmpegAssets = async (): Promise<[string, string, string]> => {
-        let lastError: unknown;
-
-        for (const baseURL of FFMPEG_CORE_BASE_URLS) {
-          try {
-            const hostLabel = (() => {
-              try {
-                return new URL(baseURL).host;
-              } catch {
-                return baseURL;
-              }
-            })();
-
-            this.reportInitStatus(`Downloading FFmpeg assets from ${hostLabel}...`);
-
-            performanceTracker.startPhase('ffmpeg-download', { cdn: hostLabel });
-            logger.performance(`Starting FFmpeg asset download from ${hostLabel}`);
-
-            return await Promise.all([
-              loadFFmpegAsset(
-                `${baseURL}/ffmpeg-core.js`,
-                'text/javascript',
-                'FFmpeg core script'
-              ).then(applyDownloadProgress(10, 'FFmpeg core script downloaded.')),
-              loadFFmpegAsset(
-                `${baseURL}/ffmpeg-core.wasm`,
-                'application/wasm',
-                'FFmpeg core WASM'
-              ).then(applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')),
-              loadFFmpegAsset(
-                `${baseURL}/ffmpeg-core.worker.js`,
-                'text/javascript',
-                'FFmpeg worker'
-              ).then(applyDownloadProgress(10, 'FFmpeg worker downloaded.')),
-            ]);
-          } catch (error) {
-            lastError = error;
-          }
-        }
-
-        throw lastError ?? new Error('Unable to download FFmpeg assets from available CDNs.');
-      };
-
-      const slowNetworkTimer =
-        typeof window !== 'undefined'
-          ? window.setTimeout(() => {
-              if (downloadProgress < 25) {
-                this.reportInitStatus(
-                  'Network seems slow. If this persists, check your connection or firewall.'
-                );
-              }
-            }, 12_000)
-          : null;
-
-      try {
-        this.reportInitStatus('Checking FFmpeg worker environment...');
-        reportProgress(2);
-        await verifyWorkerIsolation();
-
-        reportProgress(5);
-        const [coreURL, wasmURL, workerURL] = await resolveFFmpegAssets();
-        performanceTracker.endPhase('ffmpeg-download');
-        logger.performance('FFmpeg asset download complete');
-
-        reportProgress(Math.max(downloadProgress, 90));
-        this.reportInitStatus('Initializing FFmpeg runtime...');
-
-        performanceTracker.startPhase('ffmpeg-init');
-        logger.performance('Starting FFmpeg initialization');
-
-        await withTimeout(
-          ffmpeg.load({
-            coreURL,
-            wasmURL,
-            workerURL,
-          }),
-          TIMEOUT_FFMPEG_INIT,
-          `FFmpeg initialization timed out after ${TIMEOUT_FFMPEG_INIT / 1000} seconds. Please check your internet connection and try again.`,
-          () => this.terminateFFmpeg()
-        );
-        performanceTracker.endPhase('ffmpeg-init');
-        logger.performance('FFmpeg initialization complete');
-
-        reportProgress(100);
-        this.reportInitStatus('FFmpeg ready.');
-        this.loaded = true;
-        resolveInit();
-      } catch (error) {
-        this.terminateFFmpeg();
-        logger.error('ffmpeg', 'FFmpeg initialization failed', {
-          error: getErrorMessage(error),
-        });
-        if (error instanceof Error && error.message.includes('called FFmpeg.terminate()')) {
-          throw new Error(
-            'FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers or strict browser security settings. Try disabling ad blockers, using an InPrivate window, or testing another browser.'
-          );
-        }
-        throw error;
-      } finally {
-        if (slowNetworkTimer) {
-          clearTimeout(slowNetworkTimer);
-        }
-      }
+      this.loaded = true;
+      resolveInit();
     } catch (error) {
       rejectInit(error);
       throw error;

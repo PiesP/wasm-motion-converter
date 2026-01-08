@@ -1,15 +1,18 @@
 // Internal dependencies
+
+// Type imports
+import type { VideoMetadata } from '../types/conversion-types';
 import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
+
+import { canvasToBlob, createCanvas } from './webcodecs/decoder/canvas';
+import { waitForEvent } from './webcodecs/decoder/wait-for-event';
 import {
   getWebCodecsSupportStatus,
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
 } from './webcodecs-support-service';
-
-// Type imports
-import type { VideoMetadata } from '../types/conversion-types';
 
 /**
  * Frame format type for WebCodecs output
@@ -105,17 +108,6 @@ export interface WebCodecsDecodeResult {
 }
 
 /**
- * Canvas context for frame capture
- * Encapsulates canvas, rendering context, and dimensions
- */
-type CaptureContext = {
-  canvas: OffscreenCanvas | HTMLCanvasElement;
-  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-  targetWidth: number;
-  targetHeight: number;
-};
-
-/**
  * Maximum consecutive empty frames before failing
  * Reduced from 3 to 2 for faster AV1 codec fallback detection
  */
@@ -136,118 +128,6 @@ const FRAME_CALLBACK_LAG_CHECK_INTERVAL_MS = 250;
 const FRAME_CALLBACK_LAG_MIN_MEDIA_ADVANCE_SECONDS = 0.75;
 const FRAME_CALLBACK_LAG_MIN_EXPECTED_FRAMES = 8;
 const FRAME_CALLBACK_LAG_MAX_CAPTURED_FRAMES = 1;
-
-/**
- * Wait for event with timeout
- *
- * Creates a promise that resolves when the target event fires or rejects on timeout.
- *
- * @param target - Event target to listen to
- * @param eventName - Name of event to wait for
- * @param timeoutMs - Timeout in milliseconds
- * @returns Promise that resolves with the event or rejects on timeout
- */
-const waitForEvent = (target: EventTarget, eventName: string, timeoutMs: number): Promise<Event> =>
-  new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      cleanup();
-      reject(new Error(`Timed out waiting for ${eventName}`));
-    }, timeoutMs);
-
-    const onEvent = (event: Event) => {
-      cleanup();
-      resolve(event);
-    };
-
-    const cleanup = () => {
-      window.clearTimeout(timer);
-      target.removeEventListener(eventName, onEvent);
-    };
-
-    target.addEventListener(eventName, onEvent, { once: true });
-  });
-
-/**
- * Create canvas for frame capture
- *
- * Creates either OffscreenCanvas or HTMLCanvasElement with 2D context.
- * Configures high-quality image smoothing for better scaling.
- *
- * @param width - Canvas width in pixels
- * @param height - Canvas height in pixels
- * @param willReadFrequently - Optimize context for frequent reads (RGBA extraction)
- * @returns Canvas context wrapper with dimensions
- */
-const createCanvas = (
-  width: number,
-  height: number,
-  willReadFrequently: boolean = false
-): CaptureContext => {
-  // Prefer OffscreenCanvas when available.
-  // In Chrome/Edge, OffscreenCanvas.convertToBlob() is typically faster and can reduce
-  // main-thread blocking during PNG/JPEG encoding, which helps prevent under-capture
-  // (auto modes falling back to slow seek capture).
-  if (typeof OffscreenCanvas !== 'undefined') {
-    const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext('2d', { alpha: false, willReadFrequently });
-    if (!context) {
-      throw new Error('Canvas 2D context not available');
-    }
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = 'high';
-    return { canvas, context, targetWidth: width, targetHeight: height };
-  }
-
-  const hasDocument = typeof document !== 'undefined';
-  if (!hasDocument) {
-    throw new Error('Canvas rendering is not available in this environment.');
-  }
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d', { alpha: false, willReadFrequently });
-  if (!context) {
-    throw new Error('Canvas 2D context not available');
-  }
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = 'high';
-  return { canvas, context, targetWidth: width, targetHeight: height };
-};
-
-/**
- * Convert canvas to Blob
- *
- * Uses OffscreenCanvas.convertToBlob() when available, falls back to toBlob().
- *
- * @param canvas - Canvas to convert
- * @param mimeType - MIME type ('image/png' or 'image/jpeg')
- * @param quality - Optional quality (0.0 to 1.0, for JPEG only)
- * @returns Promise that resolves with Blob
- */
-const canvasToBlob = async (
-  canvas: OffscreenCanvas | HTMLCanvasElement,
-  mimeType: string,
-  quality?: number
-): Promise<Blob> => {
-  if ('convertToBlob' in canvas) {
-    return canvas.convertToBlob({ type: mimeType, quality });
-  }
-
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          resolve(blob);
-          return;
-        }
-        reject(new Error('Failed to capture frame'));
-      },
-      mimeType,
-      quality
-    );
-  });
-};
 
 /**
  * Format frame filename

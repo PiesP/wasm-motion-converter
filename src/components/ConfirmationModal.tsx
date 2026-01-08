@@ -1,8 +1,6 @@
-import { For, onCleanup, onMount, Show } from 'solid-js';
-
-import { cancelDialog, confirmDialog, getConfirmationState } from '../stores/confirmation-store';
-
 import type { Component } from 'solid-js';
+import { createEffect, For, onCleanup, onMount, Show } from 'solid-js';
+import { cancelDialog, confirmDialog, getConfirmationState } from '../stores/confirmation-store';
 import type { ValidationWarning } from '../types/validation-types';
 
 /**
@@ -52,6 +50,7 @@ const ConfirmationModal: Component = () => {
   const state = getConfirmationState;
   let modalRef: HTMLDivElement | undefined;
   let cancelButtonRef: HTMLButtonElement | undefined;
+  let previouslyFocusedElement: HTMLElement | null = null;
 
   // Handle ESC key to close modal
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -66,6 +65,11 @@ const ConfirmationModal: Component = () => {
       const focusableElements = modalRef.querySelectorAll<HTMLElement>(
         'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
       );
+
+      if (focusableElements.length === 0) {
+        return;
+      }
+
       const firstElement = focusableElements[0];
       const lastElement = focusableElements[focusableElements.length - 1];
 
@@ -83,12 +87,23 @@ const ConfirmationModal: Component = () => {
     // Add event listeners for keyboard navigation
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keydown', handleFocusTrap);
+  });
 
-    // Focus first interactive element when modal opens
-    if (state().isVisible) {
+  createEffect(() => {
+    const isVisible = state().isVisible;
+    if (isVisible) {
+      previouslyFocusedElement = (document.activeElement as HTMLElement | null) ?? null;
       queueMicrotask(() => {
         cancelButtonRef?.focus();
       });
+      return;
+    }
+
+    if (previouslyFocusedElement) {
+      queueMicrotask(() => {
+        previouslyFocusedElement?.focus();
+      });
+      previouslyFocusedElement = null;
     }
   });
 
@@ -105,6 +120,7 @@ const ConfirmationModal: Component = () => {
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
+        aria-describedby="modal-description"
         onClick={(e) => {
           // Close modal when clicking backdrop
           if (e.target === e.currentTarget) {
@@ -115,12 +131,13 @@ const ConfirmationModal: Component = () => {
         <div
           ref={modalRef}
           class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6"
+          tabIndex={-1}
         >
           <h2 id="modal-title" class="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">
             Conversion Warning
           </h2>
 
-          <div class="space-y-3 mb-6" role="list">
+          <div id="modal-description" class="space-y-3 mb-6" role="list">
             <For each={state().warnings}>
               {(warning) => (
                 <div
@@ -131,7 +148,6 @@ const ConfirmationModal: Component = () => {
                     'border-blue-500': warning.severity === 'info',
                   }}
                   role="listitem"
-                  aria-live="polite"
                 >
                   <div class="flex items-start gap-2">
                     <span class="text-lg" aria-hidden="true">

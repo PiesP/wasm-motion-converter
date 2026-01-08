@@ -1,9 +1,7 @@
+import type { Component } from 'solid-js';
 import { For } from 'solid-js';
-
 import { toasts } from '../stores/toast-store';
 import Toast from './Toast';
-
-import type { Component } from 'solid-js';
 
 /**
  * Maximum number of toasts to display simultaneously
@@ -29,6 +27,7 @@ const ToastContainer: Component = () => {
       class={`fixed bottom-4 right-4 ${TOAST_Z_INDEX} flex flex-col gap-2 pointer-events-none sm:bottom-4 sm:right-4 max-sm:left-1/2 max-sm:-translate-x-1/2`}
       aria-live="polite"
       aria-atomic="false"
+      aria-relevant="additions text"
     >
       <For each={toasts().slice(-MAX_VISIBLE_TOASTS)}>
         {(toast) => (
