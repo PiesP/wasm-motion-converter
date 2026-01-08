@@ -74,6 +74,8 @@ export interface WebCodecsDecodeOptions {
   maxFrames?: number;
   /** Frame capture mode (auto, track, frame-callback, seek) */
   captureMode?: WebCodecsCaptureMode;
+  /** Optional video codec for timeout optimization (e.g., 'av01', 'vp9', 'avc1') */
+  codec?: string;
   /** Callback invoked for each extracted frame */
   onFrame: (frame: WebCodecsFramePayload) => Promise<void>;
   /** Optional progress callback */
@@ -377,6 +379,7 @@ export class WebCodecsDecoderService {
       frameStartNumber,
       maxFrames,
       captureMode = 'auto',
+      codec,
       onFrame,
       onProgress,
       shouldCancel,
@@ -645,7 +648,8 @@ export class WebCodecsDecoderService {
           targetFps,
           captureFrame,
           shouldCancel,
-          totalFrames
+          totalFrames,
+          codec
         );
       } else if (captureMode === 'seek') {
         effectiveCaptureMode = 'seek';
@@ -657,7 +661,8 @@ export class WebCodecsDecoderService {
           targetFps,
           captureFrame,
           shouldCancel,
-          totalFrames
+          totalFrames,
+          codec
         );
       } else if (supportsTrackProcessor) {
         try {
@@ -726,7 +731,8 @@ export class WebCodecsDecoderService {
           targetFps,
           captureFrame,
           shouldCancel,
-          totalFrames
+          totalFrames,
+          codec
         );
       } else {
         effectiveCaptureMode = 'seek';
@@ -738,7 +744,8 @@ export class WebCodecsDecoderService {
           targetFps,
           captureFrame,
           shouldCancel,
-          totalFrames
+          totalFrames,
+          codec
         );
       }
 
@@ -846,7 +853,8 @@ export class WebCodecsDecoderService {
     targetFps: number,
     captureFrame: (index: number, timestamp: number) => Promise<void>,
     shouldCancel?: () => boolean,
-    maxFrames?: number
+    maxFrames?: number,
+    codec?: string
   ): Promise<void> {
     const start = Date.now();
     try {
@@ -861,7 +869,8 @@ export class WebCodecsDecoderService {
         targetFps,
         captureFrame,
         shouldCancel,
-        maxFrames
+        maxFrames,
+        codec
       );
       return;
     }
@@ -1254,10 +1263,14 @@ export class WebCodecsDecoderService {
     targetFps: number,
     captureFrame: (index: number, timestamp: number) => Promise<void>,
     shouldCancel?: () => boolean,
-    maxFrames?: number
+    maxFrames?: number,
+    codec?: string
   ): Promise<void> {
     const start = Date.now();
     video.pause();
+
+    // Calculate codec-aware seek timeout
+    const seekTimeout = this.getSeekTimeoutForCodec(codec);
 
     // Fast extraction for single-frame formats (WebP)
     // Seek to a representative frame (25% into video or middle) instead of first frame
@@ -1277,7 +1290,7 @@ export class WebCodecsDecoderService {
         position: '25%',
       });
 
-      await this.seekTo(video, representativeTime);
+      await this.seekTo(video, representativeTime, seekTimeout);
       await captureFrame(0, representativeTime);
       return;
     }
@@ -1296,7 +1309,7 @@ export class WebCodecsDecoderService {
       }
 
       const targetTime = Math.min(duration - epsilon, index * frameInterval);
-      await this.seekTo(video, targetTime);
+      await this.seekTo(video, targetTime, seekTimeout);
       await captureFrame(index, targetTime);
     }
 
@@ -1321,7 +1334,42 @@ export class WebCodecsDecoderService {
    * @param time - Target time in seconds
    * @throws Error if time is NaN or seek times out
    */
-  private async seekTo(video: HTMLVideoElement, time: number): Promise<void> {
+  /**
+   * Calculate codec-aware seek timeout
+   *
+   * AV1 and other complex codecs require more time for seeking due to keyframe complexity.
+   * Using a shorter timeout prevents unnecessary waiting on fast seeks.
+   *
+   * @param codec - Video codec string (e.g., 'av01', 'vp9', 'h264')
+   * @returns Timeout in milliseconds
+   */
+  private getSeekTimeoutForCodec(codec?: string): number {
+    if (!codec) {
+      return 1500; // Default timeout for unknown codecs
+    }
+
+    const normalizedCodec = codec.toLowerCase();
+    const isAv1 = normalizedCodec.includes('av1') || normalizedCodec.includes('av01');
+    const isVP9 = normalizedCodec.includes('vp9') || normalizedCodec.includes('vp09');
+    const isHEVC = normalizedCodec.includes('hevc') || normalizedCodec.includes('hvc1');
+
+    // Complex codecs may need more time for seeking
+    if (isAv1 || isHEVC) {
+      return 2000; // 2s for AV1/HEVC (reduced from 5s baseline)
+    }
+    if (isVP9) {
+      return 1800; // 1.8s for VP9
+    }
+
+    // Simple codecs (H.264, VP8, etc.) seek quickly
+    return 1500; // 1.5s for H.264 and other simple codecs
+  }
+
+  private async seekTo(
+    video: HTMLVideoElement,
+    time: number,
+    timeoutMs: number = FFMPEG_INTERNALS.WEBCODECS.SEEK_TIMEOUT_MS
+  ): Promise<void> {
     if (Number.isNaN(time)) {
       throw new Error('Invalid seek time for video decode.');
     }
@@ -1339,7 +1387,7 @@ export class WebCodecsDecoderService {
     } else {
       video.currentTime = clampedTime;
     }
-    await waitForEvent(video, 'seeked', FFMPEG_INTERNALS.WEBCODECS.SEEK_TIMEOUT_MS);
+    await waitForEvent(video, 'seeked', timeoutMs);
   }
 
   /**

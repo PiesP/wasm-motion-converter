@@ -140,9 +140,10 @@ const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
   }
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const riffSize = view.getUint32(4, true); // Little-endian size
+  const riffSize = view.getUint32(4, true); // Little-endian size (excludes first 8 bytes)
   const payloadStart = 12; // Skip RIFF header + 'WEBP'
-  const payloadEnd = Math.min(bytes.length, payloadStart + riffSize);
+  // RIFF size = file size - 8 (RIFF fourCC + size field), so payload ends at 8 + riffSize
+  const payloadEnd = Math.min(bytes.length, 8 + riffSize);
 
   if (payloadEnd <= payloadStart) {
     return bytes;

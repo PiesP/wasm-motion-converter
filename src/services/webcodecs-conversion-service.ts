@@ -1007,6 +1007,7 @@ class WebCodecsConversionService {
           frameStartNumber: 0,
           maxFrames,
           captureMode,
+          codec: metadata?.codec,
           onFrame: async (frame) => {
             // Collect frames for batch VFS write (3-5x faster than sequential)
             if (frame.data && frame.data.byteLength > 0) {
@@ -1524,6 +1525,7 @@ class WebCodecsConversionService {
             maxFrames:
               format === 'webp' ? this.getMaxWebPFrames(targetFps, metadata?.duration) : undefined,
             captureMode,
+            codec: metadata?.codec,
             shouldCancel: () => ffmpegService.isCancellationRequested(),
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
@@ -1675,6 +1677,7 @@ class WebCodecsConversionService {
             frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
             frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
             captureMode: 'auto',
+            codec: metadata?.codec,
             shouldCancel: () => ffmpegService.isCancellationRequested(),
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
