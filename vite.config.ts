@@ -440,6 +440,20 @@ export default defineConfig(({ mode }) => {
     build: {
       target: 'esnext', // Target modern browsers with ESNext features
       rollupOptions: {
+        // External dependencies (loaded from CDN via import map)
+        // Phase 3.1: Externalize comlink (lowest risk)
+        // Phase 3.2: Externalize modern-gif (medium risk)
+        // Phase 3.3: Externalize solid-js (highest risk - requires ?target=esnext)
+        external: [
+          'comlink',
+          'modern-gif',
+          'solid-js',
+          'solid-js/web',
+          'solid-js/store',
+          'solid-js/h',
+          'solid-js/html',
+        ],
+
         output: {
           format: 'es', // ES module format for tree-shaking
 
@@ -447,10 +461,10 @@ export default defineConfig(({ mode }) => {
           // Separates stable vendor code from frequently-changing app code
           // Vendor bundles change rarely, so browsers can cache them longer
           manualChunks: {
-            'vendor-solid': ['solid-js'], // SolidJS framework (~13KB gzipped)
+            // 'vendor-solid': ['solid-js'], // REMOVED: Now loaded from CDN (Phase 3.3)
             'vendor-ffmpeg': ['@ffmpeg/ffmpeg', '@ffmpeg/util'], // FFmpeg WASM (~4.5KB gzipped)
-            'vendor-gif': ['modern-gif'], // GIF encoding library (~24KB gzipped)
-            'vendor-comlink': ['comlink'], // Web Worker communication (~4KB gzipped)
+            // 'vendor-gif': ['modern-gif'], // REMOVED: Now loaded from CDN (Phase 3.2)
+            // 'vendor-comlink': ['comlink'], // REMOVED: Now loaded from CDN (Phase 3.1)
           },
         },
       },

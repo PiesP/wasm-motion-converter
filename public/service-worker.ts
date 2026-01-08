@@ -133,25 +133,265 @@ self.addEventListener('activate', (event: ExtendableEvent) => {
 });
 
 /**
+ * Timeout wrapper for fetch requests
+ * Rejects if request takes longer than specified timeout
+ *
+ * @param request - Request to fetch
+ * @param timeout - Timeout in milliseconds
+ * @returns Response or throws on timeout
+ */
+async function fetchWithTimeout(request: Request, timeout: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(request, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
+/**
+ * CDN URL conversion utilities
+ * Converts URLs between different CDN providers for fallback
+ */
+const CDN_CONVERTERS = {
+  /**
+   * Converts esm.sh URL to jsdelivr format
+   */
+  esmToJsdelivr(url: string): string | null {
+    const match = url.match(/esm\.sh\/([^@]+)@([^/?]+)(\/[^?]*)?(\?.*)?/);
+    if (!match) return null;
+    const [, pkg, version, path = ''] = match;
+    return `https://cdn.jsdelivr.net/npm/${pkg}@${version}${path}/+esm`;
+  },
+
+  /**
+   * Converts esm.sh URL to unpkg format
+   */
+  esmToUnpkg(url: string): string | null {
+    const match = url.match(/esm\.sh\/([^@]+)@([^/?]+)(\/[^?]*)?/);
+    if (!match) return null;
+    const [, pkg, version, path = ''] = match;
+    return `https://unpkg.com/${pkg}@${version}${path}?module`;
+  },
+
+  /**
+   * Converts esm.sh URL to skypack format
+   */
+  esmToSkypack(url: string): string | null {
+    const match = url.match(/esm\.sh\/([^@]+)@([^/?]+)(\/[^?]*)?/);
+    if (!match) return null;
+    const [, pkg, version, path = ''] = match;
+    return `https://cdn.skypack.dev/${pkg}@${version}${path}`;
+  },
+};
+
+/**
+ * Fetches from CDN with multi-provider cascade fallback
+ * Tries esm.sh → jsdelivr → unpkg → skypack in order
+ *
+ * @param originalUrl - Original CDN URL
+ * @param timeout - Timeout per CDN attempt (default: 15s)
+ * @returns Response from successful CDN or throws if all fail
+ */
+async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<Response> {
+  const errors: Array<{ cdn: string; error: string }> = [];
+
+  // Try original URL (esm.sh)
+  try {
+    console.log(`[SW ${SW_VERSION}] Trying esm.sh: ${originalUrl}`);
+    const response = await fetchWithTimeout(new Request(originalUrl), timeout);
+    if (response.ok) {
+      console.log(`[SW ${SW_VERSION}] Success from esm.sh`);
+      return response;
+    }
+    errors.push({ cdn: 'esm.sh', error: `HTTP ${response.status}` });
+  } catch (error) {
+    errors.push({ cdn: 'esm.sh', error: String(error) });
+  }
+
+  // Try jsdelivr
+  const jsdelivrUrl = CDN_CONVERTERS.esmToJsdelivr(originalUrl);
+  if (jsdelivrUrl) {
+    try {
+      console.log(`[SW ${SW_VERSION}] Trying jsdelivr: ${jsdelivrUrl}`);
+      const response = await fetchWithTimeout(new Request(jsdelivrUrl), timeout);
+      if (response.ok) {
+        console.log(`[SW ${SW_VERSION}] Success from jsdelivr`);
+        return response;
+      }
+      errors.push({ cdn: 'jsdelivr', error: `HTTP ${response.status}` });
+    } catch (error) {
+      errors.push({ cdn: 'jsdelivr', error: String(error) });
+    }
+  }
+
+  // Try unpkg
+  const unpkgUrl = CDN_CONVERTERS.esmToUnpkg(originalUrl);
+  if (unpkgUrl) {
+    try {
+      console.log(`[SW ${SW_VERSION}] Trying unpkg: ${unpkgUrl}`);
+      const response = await fetchWithTimeout(new Request(unpkgUrl), timeout);
+      if (response.ok) {
+        console.log(`[SW ${SW_VERSION}] Success from unpkg`);
+        return response;
+      }
+      errors.push({ cdn: 'unpkg', error: `HTTP ${response.status}` });
+    } catch (error) {
+      errors.push({ cdn: 'unpkg', error: String(error) });
+    }
+  }
+
+  // Try skypack
+  const skypackUrl = CDN_CONVERTERS.esmToSkypack(originalUrl);
+  if (skypackUrl) {
+    try {
+      console.log(`[SW ${SW_VERSION}] Trying skypack: ${skypackUrl}`);
+      const response = await fetchWithTimeout(new Request(skypackUrl), timeout);
+      if (response.ok) {
+        console.log(`[SW ${SW_VERSION}] Success from skypack`);
+        return response;
+      }
+      errors.push({ cdn: 'skypack', error: `HTTP ${response.status}` });
+    } catch (error) {
+      errors.push({ cdn: 'skypack', error: String(error) });
+    }
+  }
+
+  // All CDNs failed
+  console.error(`[SW ${SW_VERSION}] All CDNs failed for ${originalUrl}:`, errors);
+  throw new Error(`All CDNs failed: ${errors.map(e => `${e.cdn} (${e.error})`).join(', ')}`);
+}
+
+/**
+ * Network-first caching strategy for CDN resources
+ * Tries network, falls back to cache on failure
+ *
+ * @param request - Request to handle
+ * @param cacheName - Cache storage name
+ * @returns Response from network or cache
+ */
+async function networkFirstStrategy(request: Request, cacheName: string): Promise<Response> {
+  const cache = await caches.open(cacheName);
+
+  try {
+    // Try network with multi-CDN cascade
+    const response = await fetchWithCascade(request.url);
+
+    // Cache successful response
+    if (response.ok) {
+      cache.put(request, response.clone()).catch(err => {
+        console.warn(`[SW ${SW_VERSION}] Cache put failed:`, err);
+      });
+    }
+
+    return response;
+  } catch (error) {
+    console.warn(`[SW ${SW_VERSION}] Network failed, trying cache:`, error);
+
+    // Try cache as fallback
+    const cachedResponse = await cache.match(request);
+    if (cachedResponse) {
+      console.log(`[SW ${SW_VERSION}] Serving from cache: ${request.url}`);
+      return cachedResponse;
+    }
+
+    // No cache available, throw original error
+    throw error;
+  }
+}
+
+/**
+ * Cache-first strategy for returning users
+ * Checks cache first, updates in background
+ *
+ * @param request - Request to handle
+ * @param cacheName - Cache storage name
+ * @returns Response from cache or network
+ */
+async function cacheFirstStrategy(request: Request, cacheName: string): Promise<Response> {
+  const cache = await caches.open(cacheName);
+
+  // Try cache first
+  const cachedResponse = await cache.match(request);
+  if (cachedResponse) {
+    console.log(`[SW ${SW_VERSION}] Cache hit: ${request.url}`);
+
+    // Background revalidation (stale-while-revalidate)
+    fetchWithCascade(request.url)
+      .then(response => {
+        if (response.ok) {
+          cache.put(request, response.clone());
+          console.log(`[SW ${SW_VERSION}] Background updated: ${request.url}`);
+        }
+      })
+      .catch(() => {
+        // Ignore background update failures
+      });
+
+    return cachedResponse;
+  }
+
+  // Cache miss - fetch from network
+  console.log(`[SW ${SW_VERSION}] Cache miss: ${request.url}`);
+  const response = await fetchWithCascade(request.url);
+
+  if (response.ok) {
+    cache.put(request, response.clone());
+  }
+
+  return response;
+}
+
+/**
+ * Checks if this is a returning user (has cache entries)
+ * Used to determine whether to use cache-first or network-first
+ *
+ * @returns True if cache exists (returning user)
+ */
+async function isReturningUser(): Promise<boolean> {
+  const cache = await caches.open(CACHE_NAMES.cdn);
+  const keys = await cache.keys();
+  return keys.length > 0;
+}
+
+/**
  * Service Worker fetch event
  * Routes requests to appropriate caching strategy
  *
- * Phase 1: Pass-through only (no caching)
- * Phase 2: Will add network-first for CDN resources
- * Phase 2.3: Will add cache-first for returning users
+ * Phase 2: Network-first for CDN resources with multi-CDN fallback
+ * Phase 2.3: Cache-first for returning users
  */
 self.addEventListener('fetch', (event: FetchEvent) => {
   const url = new URL(event.request.url);
   const requestType = classifyRequest(url);
 
-  // Phase 1: Log classification but pass through all requests
-  // Caching logic will be added in Phase 2
+  // Only intercept CDN requests
   if (requestType === 'cdn') {
-    console.log(`[SW ${SW_VERSION}] CDN request (pass-through): ${url.href}`);
+    event.respondWith(
+      (async () => {
+        const returning = await isReturningUser();
+
+        if (returning) {
+          // Returning user: cache-first with background revalidation
+          console.log(`[SW ${SW_VERSION}] CDN request (cache-first): ${url.href}`);
+          return cacheFirstStrategy(event.request, CACHE_NAMES.cdn);
+        }
+
+        // First-time user: network-first
+        console.log(`[SW ${SW_VERSION}] CDN request (network-first): ${url.href}`);
+        return networkFirstStrategy(event.request, CACHE_NAMES.cdn);
+      })()
+    );
+    return;
   }
 
-  // Phase 1: No interception, all requests pass through
-  // This ensures SW registration doesn't break existing functionality
+  // Pass through non-CDN requests
+  // FFmpeg and app assets are handled by browser cache
 });
 
 /**
