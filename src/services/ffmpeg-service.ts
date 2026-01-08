@@ -101,6 +101,11 @@ class FFmpegService {
   private activeHeartbeats: Set<ReturnType<typeof setInterval>> = new Set();
   private knownFiles: Set<string> = new Set();
 
+  // ============================================================================
+  // SECTION 1: Core FFmpeg Management
+  // Responsible for: FFmpeg initialization, loading, and basic state management
+  // ============================================================================
+
   private getFFmpeg(): FFmpeg {
     if (!this.ffmpeg || !this.loaded) {
       throw new Error('FFmpeg not initialized');
@@ -237,6 +242,11 @@ class FFmpegService {
     this.lastProgressValue = progress;
     return true;
   }
+
+  // ============================================================================
+  // SECTION 2: Conversion Operations
+  // Responsible for: GIF/WebP conversion, encoding, transcoding, and conversion control
+  // ============================================================================
 
   /**
    * Acquire conversion lock to prevent concurrent conversions
@@ -2874,6 +2884,11 @@ class FFmpegService {
     return this.cancellationRequested;
   }
 
+  // ============================================================================
+  // SECTION 4: Progress & Status Reporting
+  // Responsible for: Progress callbacks, status updates, and external conversion coordination
+  // ============================================================================
+
   async writeVirtualFile(fileName: string, data: Uint8Array | string): Promise<void> {
     await this.safeWriteFile(fileName, data);
   }
@@ -2984,6 +2999,11 @@ class FFmpegService {
     }
   }
 
+  // ============================================================================
+  // SECTION 3: Watchdog & Monitoring
+  // Responsible for: Stall detection, heartbeat monitoring, and log silence detection
+  // ============================================================================
+
   private startWatchdog(metadata?: VideoMetadata, quality?: ConversionQuality): void {
     this.lastProgressTime = Date.now();
     this.lastLogTime = Date.now();
@@ -3058,6 +3078,11 @@ class FFmpegService {
       }
     }, FFMPEG_INTERNALS.WATCHDOG_CHECK_INTERVAL_MS);
   }
+
+  // ============================================================================
+  // SECTION 5: Resource Management & Cleanup
+  // Responsible for: Virtual file I/O, cache management, temp file cleanup, and termination
+  // ============================================================================
 
   private stopWatchdog(): void {
     if (this.watchdogTimer) {
@@ -3264,6 +3289,11 @@ class FFmpegService {
       throw new Error(`Failed to prepare input file: ${message}`);
     }
   }
+
+  // ============================================================================
+  // SECTION 6: Utility & Helper Methods
+  // Responsible for: Private utility functions, initialization callbacks, and helper logic
+  // ============================================================================
 }
 
 export const ffmpegService = new FFmpegService();

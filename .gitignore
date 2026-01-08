@@ -39,8 +39,15 @@ Thumbs.db
 .github/copilot-instructions.md
 .github/prompts
 .vscode
-AGENTS.md
-CLAUDE.md
+!CHANGELOG.md
+!CODE_OF_CONDUCT.md
+!CONTRIBUTING.md
+!README.md
+!SUPPORT.md
+!TESTING.md
+!.github/pull_request_template.md
+!.github/SECURITY.md
+*.md
 
 docs/
 test/
