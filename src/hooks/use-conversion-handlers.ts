@@ -1,5 +1,5 @@
+import type { Setter } from 'solid-js';
 import { batch } from 'solid-js';
-
 import { convertVideo } from '../services/conversion-service';
 import { ffmpegService } from '../services/ffmpeg-service';
 import { checkPerformance, getRecommendedSettings } from '../services/performance-checker-service';
@@ -31,15 +31,14 @@ import {
   videoPreviewUrl,
 } from '../stores/conversion-store';
 import { showToast } from '../stores/toast-store';
+import type { VideoMetadata } from '../types/conversion-types';
 import { classifyConversionError } from '../utils/classify-conversion-error';
 import { WARN_RESOLUTION_PIXELS } from '../utils/constants';
+import { createId } from '../utils/create-id';
 import { ETACalculator } from '../utils/eta-calculator';
 import { validateVideoDuration, validateVideoFile } from '../utils/file-validation';
 import { logger } from '../utils/logger';
 import { isMemoryCritical } from '../utils/memory-monitor';
-
-import type { Setter } from 'solid-js';
-import type { VideoMetadata } from '../types/conversion-types';
 
 /**
  * Small file size threshold for quick analysis bypass (50 MB)
@@ -398,10 +397,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         outputSize: blob.size,
       });
 
-      const resultId =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const resultId = createId();
       const durationSeconds = Math.max(0, duration / MS_PER_SECOND);
       setConversionResults((results) => {
         const newResults = [

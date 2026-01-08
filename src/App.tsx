@@ -6,6 +6,7 @@ import {
   ErrorBoundary,
   For,
   lazy,
+  onCleanup,
   onMount,
   Show,
   Suspense,
@@ -144,6 +145,10 @@ const App: Component = () => {
    * Debounced to 500ms to balance responsiveness with write frequency.
    */
   const debouncedSaveSettings = debounce(saveConversionSettings, 500);
+
+  onCleanup(() => {
+    debouncedSaveSettings.cancel();
+  });
 
   /**
    * Effect to persist conversion settings on change

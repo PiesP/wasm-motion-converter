@@ -11,6 +11,7 @@
 import { createSignal } from 'solid-js';
 
 // Internal dependencies
+import { createId } from '../utils/create-id';
 import { logger } from '../utils/logger';
 
 /**
@@ -84,7 +85,7 @@ export function showToast(
   type: ToastType = 'info',
   duration: number = DEFAULT_TOAST_DURATION
 ): void {
-  const id = crypto.randomUUID();
+  const id = createId();
   const toast: Toast = { id, type, message, duration };
 
   setToasts((prev) => [...prev, toast]);

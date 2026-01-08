@@ -74,6 +74,10 @@ class FFmpegService {
   private progressCallback: ((progress: number) => void) | null = null;
   private statusCallback: ((message: string) => void) | null = null;
 
+  private initializePromise: Promise<void> | null = null;
+  private initProgressCallbacks: Set<(progress: number) => void> = new Set();
+  private initStatusCallbacks: Set<(message: string) => void> = new Set();
+
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private lastProgressTime = 0;
   private lastLogTime = 0;
@@ -92,6 +96,35 @@ class FFmpegService {
   private hasLoggedEnvironment = false;
   private logSilenceInterval: ReturnType<typeof setInterval> | null = null;
   private logSilenceStrikes = 0;
+
+  private isInitializing(): boolean {
+    return Boolean(this.initializePromise) && !this.loaded;
+  }
+
+  private reportInitProgress(progress: number): void {
+    for (const callback of this.initProgressCallbacks) {
+      try {
+        callback(progress);
+      } catch {
+        // Ignore callback errors to avoid breaking initialization
+      }
+    }
+  }
+
+  private reportInitStatus(message: string): void {
+    for (const callback of this.initStatusCallbacks) {
+      try {
+        callback(message);
+      } catch {
+        // Ignore callback errors to avoid breaking initialization
+      }
+    }
+  }
+
+  private clearInitCallbacks(): void {
+    this.initProgressCallbacks.clear();
+    this.initStatusCallbacks.clear();
+  }
 
   // Resource tracking for cleanup
   private activeHeartbeats: Set<ReturnType<typeof setInterval>> = new Set();
@@ -774,168 +807,192 @@ class FFmpegService {
       return;
     }
 
-    const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
-    const isCrossOriginIsolated =
-      typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
-
-    logger.info('ffmpeg', 'FFmpeg initialization environment check', {
-      hasSharedArrayBuffer,
-      isCrossOriginIsolated,
-      canUseMultithreading: hasSharedArrayBuffer && isCrossOriginIsolated,
-    });
-
-    if (!hasSharedArrayBuffer || !isCrossOriginIsolated) {
-      throw new Error(
-        'SharedArrayBuffer is not available. This app requires cross-origin isolation (COOP/COEP headers) to initialize FFmpeg.'
-      );
+    if (onProgress) {
+      this.initProgressCallbacks.add(onProgress);
+    }
+    if (onStatus) {
+      this.initStatusCallbacks.add(onStatus);
     }
 
-    // Wait for any ongoing termination to complete (with timeout protection)
-    await this.waitForTermination();
+    if (this.initializePromise) {
+      await this.initializePromise;
+      return;
+    }
 
-    const ffmpeg = new FFmpeg();
-    this.ffmpeg = ffmpeg;
+    type InitializeResolve = (value?: void | PromiseLike<void>) => void;
+    type InitializeReject = (reason?: unknown) => void;
 
-    ffmpeg.on('progress', ({ progress }) => {
-      const progressPercent = Math.round(progress * 100);
-      const normalizedProgress = Number.isFinite(progressPercent)
-        ? Math.min(100, Math.max(0, progressPercent))
-        : 0;
-
-      if (this.shouldEmitProgress(normalizedProgress)) {
-        if (onProgress && !this.isConverting) {
-          onProgress(normalizedProgress);
-        }
-
-        logger.debug('progress', `FFmpeg progress: ${normalizedProgress}% (source: ffmpeg)`);
-        this.emitProgress(normalizedProgress);
-      }
+    let resolveInit: InitializeResolve = () => {
+      // no-op placeholder; replaced by Promise executor
+    };
+    let rejectInit: InitializeReject = () => {
+      // no-op placeholder; replaced by Promise executor
+    };
+    this.initializePromise = new Promise<void>((resolve, reject) => {
+      resolveInit = resolve;
+      rejectInit = reject;
     });
 
-    let downloadProgress = 0;
-    const reportProgress = (value: number) => {
-      if (!onProgress) {
-        return;
-      }
-      const clamped = Math.min(100, Math.max(0, Math.round(value)));
-      onProgress(clamped);
-    };
-    const applyDownloadProgress = (weight: number, message: string) => (url: string) => {
-      downloadProgress = Math.min(90, downloadProgress + weight);
-      reportProgress(downloadProgress);
-      if (onStatus) {
-        onStatus(message);
-      }
-      return url;
-    };
-
-    const resolveFFmpegAssets = async (): Promise<[string, string, string]> => {
-      let lastError: unknown;
-
-      for (const baseURL of FFMPEG_CORE_BASE_URLS) {
-        try {
-          const hostLabel = (() => {
-            try {
-              return new URL(baseURL).host;
-            } catch {
-              return baseURL;
-            }
-          })();
-
-          if (onStatus) {
-            onStatus(`Downloading FFmpeg assets from ${hostLabel}...`);
-          }
-
-          performanceTracker.startPhase('ffmpeg-download', { cdn: hostLabel });
-          logger.performance(`Starting FFmpeg asset download from ${hostLabel}`);
-
-          return await Promise.all([
-            loadFFmpegAsset(
-              `${baseURL}/ffmpeg-core.js`,
-              'text/javascript',
-              'FFmpeg core script'
-            ).then(applyDownloadProgress(10, 'FFmpeg core script downloaded.')),
-            loadFFmpegAsset(
-              `${baseURL}/ffmpeg-core.wasm`,
-              'application/wasm',
-              'FFmpeg core WASM'
-            ).then(applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')),
-            loadFFmpegAsset(
-              `${baseURL}/ffmpeg-core.worker.js`,
-              'text/javascript',
-              'FFmpeg worker'
-            ).then(applyDownloadProgress(10, 'FFmpeg worker downloaded.')),
-          ]);
-        } catch (error) {
-          lastError = error;
-        }
-      }
-
-      throw lastError ?? new Error('Unable to download FFmpeg assets from available CDNs.');
-    };
-
-    const slowNetworkTimer =
-      typeof window !== 'undefined'
-        ? window.setTimeout(() => {
-            if (downloadProgress < 25 && onStatus) {
-              onStatus('Network seems slow. If this persists, check your connection or firewall.');
-            }
-          }, 12_000)
-        : null;
-
     try {
-      if (onStatus) {
-        onStatus('Checking FFmpeg worker environment...');
-      }
-      reportProgress(2);
-      await verifyWorkerIsolation();
+      const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
+      const isCrossOriginIsolated =
+        typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
 
-      reportProgress(5);
-      const [coreURL, wasmURL, workerURL] = await resolveFFmpegAssets();
-      performanceTracker.endPhase('ffmpeg-download');
-      logger.performance('FFmpeg asset download complete');
-
-      reportProgress(Math.max(downloadProgress, 90));
-      if (onStatus) {
-        onStatus('Initializing FFmpeg runtime...');
-      }
-
-      performanceTracker.startPhase('ffmpeg-init');
-      logger.performance('Starting FFmpeg initialization');
-
-      await withTimeout(
-        ffmpeg.load({
-          coreURL,
-          wasmURL,
-          workerURL,
-        }),
-        TIMEOUT_FFMPEG_INIT,
-        `FFmpeg initialization timed out after ${TIMEOUT_FFMPEG_INIT / 1000} seconds. Please check your internet connection and try again.`,
-        () => this.terminateFFmpeg()
-      );
-      performanceTracker.endPhase('ffmpeg-init');
-      logger.performance('FFmpeg initialization complete');
-
-      reportProgress(100);
-      if (onStatus) {
-        onStatus('FFmpeg ready.');
-      }
-      this.loaded = true;
-    } catch (error) {
-      this.terminateFFmpeg();
-      logger.error('ffmpeg', 'FFmpeg initialization failed', {
-        error: getErrorMessage(error),
+      logger.info('ffmpeg', 'FFmpeg initialization environment check', {
+        hasSharedArrayBuffer,
+        isCrossOriginIsolated,
+        canUseMultithreading: hasSharedArrayBuffer && isCrossOriginIsolated,
       });
-      if (error instanceof Error && error.message.includes('called FFmpeg.terminate()')) {
+
+      if (!hasSharedArrayBuffer || !isCrossOriginIsolated) {
         throw new Error(
-          'FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers or strict browser security settings. Try disabling ad blockers, using an InPrivate window, or testing another browser.'
+          'SharedArrayBuffer is not available. This app requires cross-origin isolation (COOP/COEP headers) to initialize FFmpeg.'
         );
       }
+
+      // Wait for any ongoing termination to complete (with timeout protection)
+      await this.waitForTermination();
+
+      const ffmpeg = new FFmpeg();
+      this.ffmpeg = ffmpeg;
+
+      ffmpeg.on('progress', ({ progress }) => {
+        const progressPercent = Math.round(progress * 100);
+        const normalizedProgress = Number.isFinite(progressPercent)
+          ? Math.min(100, Math.max(0, progressPercent))
+          : 0;
+
+        if (this.shouldEmitProgress(normalizedProgress)) {
+          if (this.isInitializing() && !this.isConverting) {
+            this.reportInitProgress(normalizedProgress);
+          }
+
+          logger.debug('progress', `FFmpeg progress: ${normalizedProgress}% (source: ffmpeg)`);
+          this.emitProgress(normalizedProgress);
+        }
+      });
+
+      let downloadProgress = 0;
+      const reportProgress = (value: number) => {
+        const clamped = Math.min(100, Math.max(0, Math.round(value)));
+        this.reportInitProgress(clamped);
+      };
+      const applyDownloadProgress = (weight: number, message: string) => (url: string) => {
+        downloadProgress = Math.min(90, downloadProgress + weight);
+        reportProgress(downloadProgress);
+        this.reportInitStatus(message);
+        return url;
+      };
+
+      const resolveFFmpegAssets = async (): Promise<[string, string, string]> => {
+        let lastError: unknown;
+
+        for (const baseURL of FFMPEG_CORE_BASE_URLS) {
+          try {
+            const hostLabel = (() => {
+              try {
+                return new URL(baseURL).host;
+              } catch {
+                return baseURL;
+              }
+            })();
+
+            this.reportInitStatus(`Downloading FFmpeg assets from ${hostLabel}...`);
+
+            performanceTracker.startPhase('ffmpeg-download', { cdn: hostLabel });
+            logger.performance(`Starting FFmpeg asset download from ${hostLabel}`);
+
+            return await Promise.all([
+              loadFFmpegAsset(
+                `${baseURL}/ffmpeg-core.js`,
+                'text/javascript',
+                'FFmpeg core script'
+              ).then(applyDownloadProgress(10, 'FFmpeg core script downloaded.')),
+              loadFFmpegAsset(
+                `${baseURL}/ffmpeg-core.wasm`,
+                'application/wasm',
+                'FFmpeg core WASM'
+              ).then(applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')),
+              loadFFmpegAsset(
+                `${baseURL}/ffmpeg-core.worker.js`,
+                'text/javascript',
+                'FFmpeg worker'
+              ).then(applyDownloadProgress(10, 'FFmpeg worker downloaded.')),
+            ]);
+          } catch (error) {
+            lastError = error;
+          }
+        }
+
+        throw lastError ?? new Error('Unable to download FFmpeg assets from available CDNs.');
+      };
+
+      const slowNetworkTimer =
+        typeof window !== 'undefined'
+          ? window.setTimeout(() => {
+              if (downloadProgress < 25) {
+                this.reportInitStatus(
+                  'Network seems slow. If this persists, check your connection or firewall.'
+                );
+              }
+            }, 12_000)
+          : null;
+
+      try {
+        this.reportInitStatus('Checking FFmpeg worker environment...');
+        reportProgress(2);
+        await verifyWorkerIsolation();
+
+        reportProgress(5);
+        const [coreURL, wasmURL, workerURL] = await resolveFFmpegAssets();
+        performanceTracker.endPhase('ffmpeg-download');
+        logger.performance('FFmpeg asset download complete');
+
+        reportProgress(Math.max(downloadProgress, 90));
+        this.reportInitStatus('Initializing FFmpeg runtime...');
+
+        performanceTracker.startPhase('ffmpeg-init');
+        logger.performance('Starting FFmpeg initialization');
+
+        await withTimeout(
+          ffmpeg.load({
+            coreURL,
+            wasmURL,
+            workerURL,
+          }),
+          TIMEOUT_FFMPEG_INIT,
+          `FFmpeg initialization timed out after ${TIMEOUT_FFMPEG_INIT / 1000} seconds. Please check your internet connection and try again.`,
+          () => this.terminateFFmpeg()
+        );
+        performanceTracker.endPhase('ffmpeg-init');
+        logger.performance('FFmpeg initialization complete');
+
+        reportProgress(100);
+        this.reportInitStatus('FFmpeg ready.');
+        this.loaded = true;
+        resolveInit();
+      } catch (error) {
+        this.terminateFFmpeg();
+        logger.error('ffmpeg', 'FFmpeg initialization failed', {
+          error: getErrorMessage(error),
+        });
+        if (error instanceof Error && error.message.includes('called FFmpeg.terminate()')) {
+          throw new Error(
+            'FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers or strict browser security settings. Try disabling ad blockers, using an InPrivate window, or testing another browser.'
+          );
+        }
+        throw error;
+      } finally {
+        if (slowNetworkTimer) {
+          clearTimeout(slowNetworkTimer);
+        }
+      }
+    } catch (error) {
+      rejectInit(error);
       throw error;
     } finally {
-      if (slowNetworkTimer) {
-        clearTimeout(slowNetworkTimer);
-      }
+      this.initializePromise = null;
+      this.clearInitCallbacks();
     }
   }
 

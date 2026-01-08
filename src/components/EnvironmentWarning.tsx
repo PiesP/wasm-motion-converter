@@ -1,5 +1,6 @@
 import type { Component } from 'solid-js';
 import { createSignal, onMount, Show } from 'solid-js';
+import { showToast } from '../stores/toast-store';
 import { logger } from '../utils/logger';
 
 /**
@@ -21,6 +22,9 @@ const STORAGE_KEY = 'envWarningExpanded';
  */
 const EnvironmentWarning: Component = () => {
   const [isExpanded, setIsExpanded] = createSignal(true);
+
+  const hasSharedArrayBuffer = (): boolean => typeof SharedArrayBuffer !== 'undefined';
+  const isCrossOriginIsolated = (): boolean => crossOriginIsolated === true;
 
   // Load state from localStorage on mount
   onMount(() => {
@@ -52,21 +56,21 @@ const EnvironmentWarning: Component = () => {
    * Test environment capabilities and display results
    */
   const handleTestEnvironment = (): void => {
-    const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
-    const isCrossOriginIsolated = crossOriginIsolated;
+    const sharedArrayBufferAvailable = hasSharedArrayBuffer();
+    const crossOriginIsolationEnabled = isCrossOriginIsolated();
 
     // Use WARN so results remain visible in production builds (INFO is filtered).
     logger.warn('general', 'Environment test results', {
-      hasSharedArrayBuffer,
-      isCrossOriginIsolated,
+      hasSharedArrayBuffer: sharedArrayBufferAvailable,
+      isCrossOriginIsolated: crossOriginIsolationEnabled,
     });
 
-    // Alert for immediate feedback (acceptable for test utility)
-    alert(
-      `Environment Test Results:\n\n` +
-        `SharedArrayBuffer: ${hasSharedArrayBuffer ? 'Available' : 'Unavailable'}\n` +
-        `crossOriginIsolated: ${isCrossOriginIsolated ? 'true' : 'false'}\n\n` +
-        `Open DevTools console for logged details.`
+    showToast(
+      `SharedArrayBuffer: ${sharedArrayBufferAvailable ? 'Available' : 'Unavailable'} · crossOriginIsolated: ${
+        crossOriginIsolationEnabled ? 'true' : 'false'
+      } (see DevTools console for details)`,
+      'warning',
+      8000
     );
   };
 
@@ -109,9 +113,25 @@ const EnvironmentWarning: Component = () => {
 
           <Show when={isExpanded()}>
             <div class="mt-2 text-sm text-yellow-700 dark:text-yellow-400">
-              <p>
-                SharedArrayBuffer is not available. This application requires cross-origin isolation
-                to work properly.
+              <Show
+                when={!hasSharedArrayBuffer()}
+                fallback={
+                  <p>
+                    crossOriginIsolated is <strong>false</strong>. This application requires
+                    cross-origin isolation (COOP/COEP headers) to enable SharedArrayBuffer features
+                    reliably.
+                  </p>
+                }
+              >
+                <p>
+                  SharedArrayBuffer is not available. This application requires cross-origin
+                  isolation (COOP/COEP headers) to work properly.
+                </p>
+              </Show>
+              <p class="mt-2">
+                Detected: SharedArrayBuffer{' '}
+                <strong>{hasSharedArrayBuffer() ? 'Available' : 'Unavailable'}</strong>,
+                crossOriginIsolated <strong>{isCrossOriginIsolated() ? 'true' : 'false'}</strong>.
               </p>
               <p class="mt-2">
                 <strong>If you're running this locally:</strong> Make sure you're using the Vite dev
@@ -131,7 +151,7 @@ const EnvironmentWarning: Component = () => {
                 class="inline-flex items-center px-3 py-1.5 border border-yellow-600 dark:border-yellow-500 text-sm font-medium rounded text-yellow-700 dark:text-yellow-300 bg-yellow-100 dark:bg-yellow-900 hover:bg-yellow-200 dark:hover:bg-yellow-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
                 aria-label="Test environment capabilities"
               >
-                🧪 Test Environment
+                Test environment
               </button>
             </div>
           </Show>

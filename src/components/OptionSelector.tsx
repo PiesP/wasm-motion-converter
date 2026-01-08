@@ -1,6 +1,6 @@
 import { For, Show, splitProps } from 'solid-js';
-import Icon from './ui/Icon';
 import Tooltip from './Tooltip';
+import Icon from './ui/Icon';
 
 /**
  * Base CSS classes for option elements
@@ -110,13 +110,18 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
   const gridColumnsClass = (): string =>
     columns() === 3 ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2';
 
+  const legendId = (): string => `${local.name}-legend`;
+
   return (
     <fieldset
       class={`mb-6 ${local.disabled ? 'opacity-50 pointer-events-none' : ''}`}
       disabled={local.disabled}
       aria-label={local.title}
     >
-      <legend class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+      <legend
+        id={legendId()}
+        class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"
+      >
         {local.title}
         <Show when={local.tooltip}>
           <Tooltip content={local.tooltip!}>
@@ -133,7 +138,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
       </legend>
       <div
         role="radiogroup"
-        aria-labelledby={local.name}
+        aria-labelledby={legendId()}
         class={`grid gap-3 ${gridColumnsClass()}`}
       >
         <For each={local.options}>

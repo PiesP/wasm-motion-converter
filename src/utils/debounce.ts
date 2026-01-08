@@ -43,16 +43,45 @@
  *
  * @note The debounced function discards return values from the original function.
  *       Only use debounce for fire-and-forget operations or side effects.
- * @note To cancel a pending debounced call, store the timeout ID separately
- *       or implement a cancel mechanism if needed.
  */
-export function debounce<T extends (...args: Parameters<T>) => ReturnType<T>>(
-  func: T,
-  wait: number
-): (...args: Parameters<T>) => void {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+export type DebouncedFunction<Args extends unknown[]> = ((...args: Args) => void) & {
+  cancel: () => void;
+  flush: () => void;
+};
 
-  return function debounced(...args: Parameters<T>): void {
+export function debounce<Args extends unknown[], Return>(
+  func: (...args: Args) => Return,
+  wait: number
+): DebouncedFunction<Args> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let lastArgs: Args | null = null;
+
+  const cancel = (): void => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    lastArgs = null;
+  };
+
+  const flush = (): void => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+
+    if (!lastArgs) {
+      return;
+    }
+
+    const args = lastArgs;
+    lastArgs = null;
+    func(...args);
+  };
+
+  const debounced = (...args: Args): void => {
+    lastArgs = args;
+
     // Clear existing timer if function called again before delay elapsed
     if (timeoutId !== null) {
       clearTimeout(timeoutId);
@@ -60,9 +89,13 @@ export function debounce<T extends (...args: Parameters<T>) => ReturnType<T>>(
 
     // Schedule function invocation after delay
     timeoutId = setTimeout(() => {
-      func(...args);
-      // Reset timer reference after execution
       timeoutId = null;
+      flush();
     }, wait);
   };
+
+  debounced.cancel = cancel;
+  debounced.flush = flush;
+
+  return debounced;
 }

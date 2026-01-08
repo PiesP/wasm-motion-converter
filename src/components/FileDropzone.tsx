@@ -1,8 +1,6 @@
-import { createSignal, Show, splitProps } from 'solid-js';
-
-import ProgressBar from './ProgressBar';
-
 import type { Component } from 'solid-js';
+import { createSignal, Show, splitProps } from 'solid-js';
+import ProgressBar from './ProgressBar';
 
 /**
  * Duration for visual feedback after file selection (ms)
@@ -65,6 +63,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   ]);
   const [isDragging, setIsDragging] = createSignal(false);
   const [justSelected, setJustSelected] = createSignal(false);
+  let fileInputElement: HTMLInputElement | undefined;
 
   const isBusy = (): boolean => Boolean(local.status);
   const isInteractive = (): boolean => !local.disabled && !isBusy();
@@ -114,6 +113,13 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     selectFile(input.files);
   };
 
+  const openFilePicker = (): void => {
+    if (!isInteractive()) {
+      return;
+    }
+    fileInputElement?.click();
+  };
+
   const dropzoneStateClass = (): string => {
     if (isBusy()) {
       return 'border-blue-500 bg-blue-50 dark:bg-blue-950 dark:border-blue-400';
@@ -134,16 +140,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      tabIndex={isInteractive() ? 0 : -1}
-      onKeyDown={(e) => {
-        if (isInteractive() && (e.key === 'Enter' || e.key === ' ')) {
-          e.preventDefault();
-          document.getElementById('file-upload')?.click();
-        }
-      }}
-      role="button"
-      aria-label="Drop video file here or press Enter to select a file"
-      aria-disabled={!isInteractive()}
+      role="region"
+      aria-label="Video file dropzone"
       aria-busy={isBusy()}
     >
       <Show
@@ -179,22 +177,28 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               />
             </Show>
             <div class="mt-4">
-              <label
-                for="file-upload"
-                class="cursor-pointer inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900"
+              <button
+                type="button"
+                onClick={openFilePicker}
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900"
+                disabled={!isInteractive()}
               >
                 Choose a video file
-                <input
-                  id="file-upload"
-                  type="file"
-                  class="sr-only"
-                  accept="video/*"
-                  onChange={handleFileInput}
-                  disabled={local.disabled}
-                  aria-label="Select video file for conversion"
-                  aria-required="true"
-                />
-              </label>
+              </button>
+              <input
+                ref={(el) => {
+                  fileInputElement = el;
+                }}
+                id="file-upload"
+                type="file"
+                class="sr-only"
+                accept="video/*"
+                onChange={handleFileInput}
+                disabled={local.disabled}
+                tabIndex={-1}
+                aria-label="Select video file for conversion"
+                aria-required="true"
+              />
             </div>
             <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">or drag and drop</p>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">
