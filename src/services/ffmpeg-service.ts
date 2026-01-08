@@ -1,6 +1,7 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import type {
+  ConversionOutputBlob,
   ConversionOptions,
   ConversionQuality,
   VideoMetadata,
@@ -2010,7 +2011,7 @@ class FFmpegService {
     options: ConversionOptions,
     metadata?: VideoMetadata,
     inputOverride?: FFmpegInputOverride
-  ): Promise<Blob> {
+  ): Promise<ConversionOutputBlob> {
     // Acquire conversion lock to prevent concurrent conversions
     if (!this.acquireConversionLock()) {
       throw new Error('Another conversion is already in progress. Please wait for it to complete.');
@@ -2028,7 +2029,7 @@ class FFmpegService {
     options: ConversionOptions,
     metadata?: VideoMetadata,
     inputOverride?: FFmpegInputOverride
-  ): Promise<Blob> {
+  ): Promise<ConversionOutputBlob> {
     const conversionStartTime = Date.now();
 
     // Check if FFmpeg needs reinitialization
@@ -2463,14 +2464,11 @@ class FFmpegService {
       await this.handleConversionCleanup(outputFileName, [paletteFileName]);
 
       const blob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/gif' });
-      // Attach transcoding metadata for UI display
-      // biome-ignore lint/suspicious/noExplicitAny: Dynamic metadata attachment to Blob for UI
-      (blob as any).wasTranscoded = wasTranscoded;
-      if (wasTranscoded) {
-        // biome-ignore lint/suspicious/noExplicitAny: Dynamic metadata attachment to Blob for UI
-        (blob as any).originalCodec = originalCodec;
-      }
-      return blob;
+      const outputBlob: ConversionOutputBlob = Object.assign(blob, {
+        wasTranscoded,
+        originalCodec: wasTranscoded ? originalCodec : undefined,
+      });
+      return outputBlob;
     } catch (error) {
       await this.clearCachedInput();
       await this.safeDelete(paletteFileName);
@@ -2505,7 +2503,7 @@ class FFmpegService {
     options: ConversionOptions,
     metadata?: VideoMetadata,
     inputOverride?: FFmpegInputOverride
-  ): Promise<Blob> {
+  ): Promise<ConversionOutputBlob> {
     // Acquire conversion lock to prevent concurrent conversions
     if (!this.acquireConversionLock()) {
       throw new Error('Another conversion is already in progress. Please wait for it to complete.');
@@ -2523,7 +2521,7 @@ class FFmpegService {
     options: ConversionOptions,
     metadata?: VideoMetadata,
     inputOverride?: FFmpegInputOverride
-  ): Promise<Blob> {
+  ): Promise<ConversionOutputBlob> {
     const conversionStartTime = Date.now();
 
     // Check if FFmpeg needs reinitialization
@@ -2919,14 +2917,11 @@ class FFmpegService {
       await this.handleConversionCleanup(outputFileName);
 
       const blob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'image/webp' });
-      // Attach transcoding metadata for UI display
-      // biome-ignore lint/suspicious/noExplicitAny: Dynamic metadata attachment to Blob for UI
-      (blob as any).wasTranscoded = wasTranscoded;
-      if (wasTranscoded) {
-        // biome-ignore lint/suspicious/noExplicitAny: Dynamic metadata attachment to Blob for UI
-        (blob as any).originalCodec = originalCodec;
-      }
-      return blob;
+      const outputBlob: ConversionOutputBlob = Object.assign(blob, {
+        wasTranscoded,
+        originalCodec: wasTranscoded ? originalCodec : undefined,
+      });
+      return outputBlob;
     } catch (error) {
       await this.clearCachedInput();
       await this.safeDelete(outputFileName);

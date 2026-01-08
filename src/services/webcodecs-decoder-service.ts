@@ -9,7 +9,7 @@ import {
   getWebCodecsSupportStatus,
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
-} from './webcodecs-support';
+} from './webcodecs-support-service';
 
 /**
  * Frame format type for WebCodecs output

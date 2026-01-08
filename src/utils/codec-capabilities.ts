@@ -128,7 +128,7 @@ export function canFFmpegDecode(codec: string | undefined): boolean {
  * Check if a codec can be decoded by WebCodecs
  *
  * Note: This checks theoretical capability based on codec specifications, not actual browser support.
- * Use `webcodecs-support.ts` for runtime browser capability detection.
+ * Use `webcodecs-support-service.ts` for runtime browser capability detection.
  *
  * @param codec - Codec string (e.g., 'av1', 'h264', 'vp9')
  * @returns `true` if WebCodecs supports this codec (in theory), `false` otherwise

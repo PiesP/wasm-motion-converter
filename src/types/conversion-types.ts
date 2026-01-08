@@ -90,6 +90,21 @@ export interface ConversionOptions {
 }
 
 /**
+ * Optional metadata attached to output blobs for UI display
+ */
+export interface ConversionBlobMetadata {
+  /** Whether video was transcoded (re-encoded) */
+  wasTranscoded?: boolean;
+  /** Original video codec */
+  originalCodec?: string;
+}
+
+/**
+ * Output blob with optional conversion metadata
+ */
+export type ConversionOutputBlob = Blob & ConversionBlobMetadata;
+
+/**
  * Conversion result with metadata
  *
  * Complete record of a successful conversion including the output blob,
@@ -113,7 +128,7 @@ export interface ConversionResult {
   /** Unique identifier (UUID) */
   id: string;
   /** Converted video blob */
-  outputBlob: Blob;
+  outputBlob: ConversionOutputBlob;
   /** Original video filename */
   originalName: string;
   /** Original file size in bytes */

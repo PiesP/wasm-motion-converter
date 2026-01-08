@@ -10,7 +10,7 @@
 import { createSignal } from 'solid-js';
 
 // Internal dependencies
-import { logger } from '@utils/logger';
+import { logger } from '../utils/logger';
 
 /**
  * Application theme (light or dark mode)

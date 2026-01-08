@@ -2,31 +2,7 @@ import * as Comlink from 'comlink';
 import { logger } from '../utils/logger';
 import type { ModernGifOptions } from '../services/modern-gif-service';
 import { ModernGifService } from '../services/modern-gif-service';
-
-/**
- * Serializable representation of ImageData for Web Worker message passing
- *
- * Represents a single frame's pixel data in a format that can be transferred
- * via postMessage without issues with different buffer types (ArrayBuffer vs SharedArrayBuffer).
- *
- * @example
- * const frame: SerializableImageData = {
- *   data: pixels,
- *   width: 800,
- *   height: 600,
- *   colorSpace: 'srgb'
- * };
- */
-export interface SerializableImageData {
-  /** Pixel data (RGBA format) */
-  data: Uint8ClampedArray;
-  /** Frame width in pixels */
-  width: number;
-  /** Frame height in pixels */
-  height: number;
-  /** Color space of the image data */
-  colorSpace?: PredefinedColorSpace;
-}
+import type { SerializableImageData } from '../types/worker-types';
 
 /**
  * GIF encoder worker API exposed via Comlink

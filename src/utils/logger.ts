@@ -14,7 +14,7 @@
  *
  * **Log levels**:\n * - DEBUG: Development-only detailed information (filtered in production)\n * - INFO: Important state changes and events (filtered in production except performance)\n * - WARN: Warning conditions and fallback paths (always shown)\n * - ERROR: Error conditions requiring attention (always shown)\n *
  * **Categories**: ffmpeg, conversion, progress, watchdog, general, performance, prefetch, worker-pool\n *
- * **Usage pattern**:\n * ```\n * import { logger } from '@utils/logger';\n * logger.info('conversion', 'Starting conversion', { format, quality, fileSize });\n * logger.error('ffmpeg', 'Failed to initialize', { error });\n * logger.performance('Frame decoded', { durationMs: 25, frameNumber: 42 });\n * ```\n */
+ * **Usage pattern**:\n * ```\n * import { logger } from '../utils/logger';\n * logger.info('conversion', 'Starting conversion', { format, quality, fileSize });\n * logger.error('ffmpeg', 'Failed to initialize', { error });\n * logger.performance('Frame decoded', { durationMs: 25, frameNumber: 42 });\n * ```\n */
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 

@@ -198,7 +198,7 @@ class PerformanceTracker {
  * Use this singleton for measuring timing across the application
  *
  * @example
- * import { performanceTracker } from '@utils/performance-tracker';
+ * import { performanceTracker } from '../utils/performance-tracker';
  *
  * performanceTracker.startPhase('ffmpeg-download', { cdn: 'unpkg' });
  * await downloadFFmpeg();

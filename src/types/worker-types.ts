@@ -1,5 +1,29 @@
 import type { ModernGifOptions } from '../services/modern-gif-service';
-import type { SerializableImageData } from './gif-encoder.worker';
+
+/**
+ * Serializable representation of ImageData for Web Worker message passing
+ *
+ * Represents a single frame's pixel data in a format that can be transferred
+ * via postMessage without issues with different buffer types (ArrayBuffer vs SharedArrayBuffer).
+ *
+ * @example
+ * const frame: SerializableImageData = {
+ *   data: pixels,
+ *   width: 800,
+ *   height: 600,
+ *   colorSpace: 'srgb'
+ * };
+ */
+export interface SerializableImageData {
+  /** Pixel data (RGBA format) */
+  data: Uint8ClampedArray;
+  /** Frame width in pixels */
+  width: number;
+  /** Frame height in pixels */
+  height: number;
+  /** Color space of the image data */
+  colorSpace?: PredefinedColorSpace;
+}
 
 /**
  * Encoder options type alias for worker operations

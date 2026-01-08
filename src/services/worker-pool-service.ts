@@ -6,7 +6,7 @@ import { logger } from '../utils/logger';
 import { getAvailableMemory } from '../utils/memory-monitor';
 
 // Type imports
-import type { EncoderWorkerAPI, WorkerPoolOptions } from '../workers/types';
+import type { EncoderWorkerAPI, WorkerPoolOptions } from '../types/worker-types';
 
 /**
  * CPU concurrency utilization ratio

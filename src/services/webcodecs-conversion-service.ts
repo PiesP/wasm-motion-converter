@@ -1,7 +1,11 @@
 // External dependencies
 
 // Type imports
-import type { ConversionOptions, VideoMetadata } from '../types/conversion-types';
+import type {
+  ConversionOptions,
+  ConversionOutputBlob,
+  VideoMetadata,
+} from '../types/conversion-types';
 import { COMPLEX_CODECS, QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
 import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
@@ -9,12 +13,12 @@ import { logger } from '../utils/logger';
 import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
 import { getOptimalFPS } from '../utils/quality-optimizer';
 import { muxAnimatedWebP } from '../utils/webp-muxer';
-import type { EncoderWorkerAPI } from '../workers/types';
+import type { EncoderWorkerAPI } from '../types/worker-types';
 import { ffmpegService } from './ffmpeg-service';
 import { ModernGifService } from './modern-gif-service';
-import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from './webcodecs-decoder';
-import { WebCodecsDecoderService } from './webcodecs-decoder';
-import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support';
+import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from './webcodecs-decoder-service';
+import { WebCodecsDecoderService } from './webcodecs-decoder-service';
+import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support-service';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
 
 /**
@@ -92,7 +96,7 @@ const isComplexCodec = (codec?: string): boolean => {
  * - Automatic fallback to FFmpeg for unsupported codecs
  * - Memory-aware processing with critical memory checks
  *
- * @see webcodecs-decoder.ts for frame extraction implementation
+ * @see webcodecs-decoder-service.ts for frame extraction implementation
  * @see modern-gif-service.ts for GPU-accelerated GIF encoding
  */
 class WebCodecsConversionService {
@@ -801,7 +805,7 @@ class WebCodecsConversionService {
     format: 'gif' | 'webp',
     options: ConversionOptions,
     metadata?: VideoMetadata
-  ): Promise<Blob | null> {
+  ): Promise<ConversionOutputBlob | null> {
     const useWebCodecs = await this.canConvert(file, metadata);
     if (!useWebCodecs) {
       return null;
@@ -1279,13 +1283,12 @@ class WebCodecsConversionService {
         frameTimestamps: timestampsForEncoding,
       });
 
-      // biome-ignore lint/suspicious/noExplicitAny: Attach metadata for UI display
-      if (!(outputBlob as any).wasTranscoded) {
-        // biome-ignore lint/suspicious/noExplicitAny: Attach metadata for UI display
-        (outputBlob as any).wasTranscoded = true;
+      const outputBlobWithMetadata = outputBlob as ConversionOutputBlob;
+      if (!outputBlobWithMetadata.wasTranscoded) {
+        outputBlobWithMetadata.wasTranscoded = true;
       }
 
-      return outputBlob;
+      return outputBlobWithMetadata;
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       if (
@@ -1357,7 +1360,7 @@ class WebCodecsConversionService {
     format: 'gif' | 'webp',
     options: ConversionOptions,
     metadata?: VideoMetadata
-  ): Promise<Blob> {
+  ): Promise<ConversionOutputBlob> {
     const { quality, scale } = options;
     const settings =
       format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];

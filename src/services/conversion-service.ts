@@ -8,9 +8,14 @@ import { getErrorMessage } from '../utils/error-utils';
 import { logger } from '../utils/logger';
 import { ffmpegService } from './ffmpeg-service';
 import { webcodecsConversionService } from './webcodecs-conversion-service';
-import { isWebCodecsDecodeSupported } from './webcodecs-support';
+import { isWebCodecsDecodeSupported } from './webcodecs-support-service';
 
-import type { ConversionFormat, ConversionOptions, VideoMetadata } from '../types/conversion-types';
+import type {
+  ConversionFormat,
+  ConversionOptions,
+  ConversionOutputBlob,
+  VideoMetadata,
+} from '../types/conversion-types';
 
 /**
  * Codec value indicating unknown or undetected codec
@@ -80,7 +85,7 @@ async function selectConversionPath(
   webCodecsAvailable: boolean,
   codec: string | undefined | null,
   codecCapability: ReturnType<typeof getCodecCapability>
-): Promise<Blob> {
+): Promise<ConversionOutputBlob> {
   // Normalize codec to handle null case
   const normalizedCodec = codec || undefined;
 
@@ -205,7 +210,7 @@ export async function convertVideo(
   format: ConversionFormat,
   options: ConversionOptions,
   metadata?: VideoMetadata
-): Promise<Blob> {
+): Promise<ConversionOutputBlob> {
   // Initialize FFmpeg in parallel with metadata resolution for 1-3s speedup
   const ffmpegInitPromise = ffmpegService.isLoaded()
     ? Promise.resolve()

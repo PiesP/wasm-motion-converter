@@ -413,8 +413,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
             createdAt: Date.now(),
             settings: settings,
             conversionDurationSeconds: durationSeconds,
-            // biome-ignore lint/suspicious/noExplicitAny: Blob metadata attached dynamically by FFmpegService
-            wasTranscoded: (blob as any).wasTranscoded,
+            wasTranscoded: blob.wasTranscoded,
             originalCodec: videoMetadata()?.codec,
           },
           ...results,
