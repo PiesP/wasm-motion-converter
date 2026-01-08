@@ -6,6 +6,7 @@ import type {
   ConversionOutputBlob,
   VideoMetadata,
 } from '../types/conversion-types';
+import type { EncoderWorkerAPI } from '../types/worker-types';
 import { COMPLEX_CODECS, QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
 import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
@@ -13,7 +14,6 @@ import { logger } from '../utils/logger';
 import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
 import { getOptimalFPS } from '../utils/quality-optimizer';
 import { muxAnimatedWebP } from '../utils/webp-muxer';
-import type { EncoderWorkerAPI } from '../types/worker-types';
 import { ffmpegService } from './ffmpeg-service';
 import { ModernGifService } from './modern-gif-service';
 import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from './webcodecs-decoder-service';
