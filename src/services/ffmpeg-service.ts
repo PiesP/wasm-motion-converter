@@ -1,5 +1,5 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { fetchFile } from '@ffmpeg/util';
 import type {
   ConversionOptions,
   ConversionOutputBlob,
@@ -9,12 +9,9 @@ import type {
 import { canFFmpegDecode as canFFmpegDecodeCodec } from '../utils/codec-capabilities';
 import {
   FFMPEG_CORE_BASE_URLS,
-  FFMPEG_CORE_VERSION,
   QUALITY_PRESETS,
   TIMEOUT_CONVERSION,
-  TIMEOUT_FFMPEG_DOWNLOAD,
   TIMEOUT_FFMPEG_INIT,
-  TIMEOUT_FFMPEG_WORKER_CHECK,
   TIMEOUT_VIDEO_ANALYSIS,
   WARN_DURATION_SECONDS,
   WARN_RESOLUTION_PIXELS,
@@ -27,101 +24,14 @@ import { performanceTracker } from '../utils/performance-tracker';
 import { getOptimalFPS } from '../utils/quality-optimizer';
 import { getTimeoutForFormat } from '../utils/timeout-calculator';
 import { withTimeout } from '../utils/with-timeout';
-
-/**
- * Legacy timeout constant for backward compatibility with external timeout values
- */
-const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
-
-/**
- * Legacy timeout constant for backward compatibility with worker check timeout
- */
-const WORKER_CHECK_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_WORKER_CHECK / 1000;
-
-/**
- * Cache name for FFmpeg core assets with version identifier
- */
-const FFMPEG_CACHE_NAME = `ffmpeg-core-${FFMPEG_CORE_VERSION}`;
-
-/**
- * Request idle callback with fallback to setTimeout for browsers that don't support it
- *
- * @param callback - Function to execute during idle time
- * @param options - Idle callback options including timeout
- * @returns Idle callback ID (or setTimeout ID)
- */
-const requestIdle = (callback: IdleRequestCallback, options?: IdleRequestOptions): number => {
-  if (typeof requestIdleCallback !== 'undefined') {
-    return requestIdleCallback(callback, options);
-  }
-  return window.setTimeout(
-    () => callback({ didTimeout: true, timeRemaining: () => 0 }),
-    options?.timeout ?? 0
-  );
-};
-
-/**
- * Check if Cache Storage API is available in current environment
- *
- * @returns True if Cache Storage is supported
- */
-const supportsCacheStorage = (): boolean => typeof caches !== 'undefined';
-
-/**
- * Load blob URL with cache awareness
- * Uses Cache Storage API when available for faster repeat loads
- * Falls back to direct blob URL creation if caching fails
- *
- * @param url - URL to load
- * @param mimeType - MIME type for blob creation
- * @returns Blob URL that can be used to load the asset
- */
-async function cacheAwareBlobURL(url: string, mimeType: string): Promise<string> {
-  if (!supportsCacheStorage()) {
-    return toBlobURL(url, mimeType);
-  }
-
-  const cache = await caches.open(FFMPEG_CACHE_NAME);
-  const cachedResponse = await cache.match(url);
-  if (cachedResponse) {
-    const cachedBlob = await cachedResponse.blob();
-    return URL.createObjectURL(cachedBlob);
-  }
-
-  const response = await fetch(url, { cache: 'force-cache', credentials: 'omit' });
-  if (!response.ok) {
-    return toBlobURL(url, mimeType);
-  }
-
-  await cache.put(url, response.clone());
-  const blob = await response.blob();
-  return URL.createObjectURL(blob);
-}
-
-/**
- * Load FFmpeg asset with timeout protection
- * Wraps cacheAwareBlobURL with configurable timeout for reliability
- *
- * @param url - URL to load
- * @param mimeType - MIME type for blob creation
- * @param label - Human-readable label for error messages
- * @returns Blob URL that can be used to load the asset
- */
-async function loadFFmpegAsset(url: string, mimeType: string, label: string): Promise<string> {
-  return withTimeout(
-    cacheAwareBlobURL(url, mimeType),
-    TIMEOUT_FFMPEG_DOWNLOAD,
-    `Downloading ${label} timed out after ${DOWNLOAD_TIMEOUT_SECONDS} seconds. Please check your network connection and ensure cdn.jsdelivr.net is reachable.`
-  );
-}
-
-/**
- * Worker isolation status for FFmpeg multi-threading support
- */
-type WorkerIsolationStatus = {
-  sharedArrayBuffer: boolean;
-  crossOriginIsolated: boolean;
-};
+import {
+  cacheAwareBlobURL,
+  loadFFmpegAsset,
+  requestIdle,
+  supportsCacheStorage,
+} from './ffmpeg/core-assets';
+import { getThreadingArgs } from './ffmpeg/threading';
+import { verifyWorkerIsolation } from './ffmpeg/worker-isolation';
 
 /**
  * FFmpeg input format override for transcoding operations
@@ -130,138 +40,6 @@ type FFmpegInputOverride = {
   format: 'h264';
   framerate: number;
 };
-
-/**
- * Verify that Web Workers have proper isolation for SharedArrayBuffer
- * FFmpeg multi-threading requires cross-origin isolation (COOP/COEP headers)
- * Tests worker creation and SharedArrayBuffer availability
- *
- * @throws Error if Web Workers are unavailable, worker creation fails, or isolation is insufficient
- */
-async function verifyWorkerIsolation(): Promise<void> {
-  if (typeof Worker === 'undefined') {
-    throw new Error('Web Workers are not available in this browser.');
-  }
-
-  const script = `
-    self.postMessage({
-      sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
-      crossOriginIsolated: self.crossOriginIsolated === true,
-    });
-  `;
-
-  const blobUrl = URL.createObjectURL(new Blob([script], { type: 'text/javascript' }));
-  let worker: Worker | null = null;
-
-  try {
-    worker = new Worker(blobUrl, { type: 'module' });
-    const status = await withTimeout(
-      new Promise<WorkerIsolationStatus>((resolve, reject) => {
-        if (!worker) {
-          reject(new Error('Failed to create FFmpeg worker.'));
-          return;
-        }
-        worker.onmessage = (event) => resolve(event.data as WorkerIsolationStatus);
-        worker.onerror = () =>
-          reject(
-            new Error(
-              'Failed to start FFmpeg worker. Browser extensions or security settings may be blocking blob workers.'
-            )
-          );
-      }),
-      TIMEOUT_FFMPEG_WORKER_CHECK,
-      `FFmpeg worker check timed out after ${WORKER_CHECK_TIMEOUT_SECONDS} seconds.`
-    );
-
-    if (!status.sharedArrayBuffer || !status.crossOriginIsolated) {
-      throw new Error(
-        'FFmpeg worker does not support SharedArrayBuffer. Cross-origin isolation is required for FFmpeg to run.'
-      );
-    }
-  } catch (error) {
-    if (error instanceof Error) {
-      if (
-        error.name === 'SecurityError' ||
-        error.message.includes('Failed to construct') ||
-        error.message.includes('Worker')
-      ) {
-        throw new Error(
-          'FFmpeg worker could not be created. Browser extensions or security settings may be blocking module/blob workers. Try disabling blockers or using an InPrivate window.'
-        );
-      }
-    }
-    throw error;
-  } finally {
-    if (worker) {
-      worker.terminate();
-    }
-    URL.revokeObjectURL(blobUrl);
-  }
-}
-
-/**
- * Calculate optimal thread count for FFmpeg operations
- * Uses 75% of available CPU cores for better performance on modern CPUs
- * Capped at 8 threads to prevent excessive resource usage
- *
- * @returns Optimal number of threads (2-8)
- */
-function getOptimalThreadCount(): number {
-  const cores = navigator.hardwareConcurrency || 2;
-  // Use 75% of available cores for better performance on modern CPUs
-  // Capped at 8 to prevent excessive resource usage
-  return Math.min(Math.floor(cores * 0.75), 8);
-}
-
-/**
- * Unified threading strategy for FFmpeg operations
- * Different operations require different threading approaches to avoid ffmpeg.wasm deadlocks
- *
- * Note: Scale filters with multi-threading can provide 2-4x speedup on modern CPUs
- * Multi-threading is now enabled by default for scale filters with ffmpeg.wasm >= 0.12.15
- * Can be disabled via window.__ENABLE_MULTI_THREAD_SCALE__ = false if issues arise
- */
-
-/**
- * Determine optimal threading arguments for FFmpeg operations
- * Prevents deadlocks by using single-threading for complex filters
- * Implements multi-threading for scale filters (enabled by default, can be disabled via feature flag)
- * @param operation Type of FFmpeg operation: 'filter-complex' | 'scale-filter' | 'simple'
- * @returns Array of FFmpeg threading command-line arguments
- * @note filter-complex always uses single threading to prevent deadlocks
- * @note scale-filter uses multi-threading by default (disable via __ENABLE_MULTI_THREAD_SCALE__ = false)
- * @note simple operations use optimal thread count for maximum performance
- */
-function getThreadingArgs(operation: 'filter-complex' | 'scale-filter' | 'simple'): string[] {
-  // Multi-threaded scale filters enabled by default for better performance
-  // Can be disabled via window.__ENABLE_MULTI_THREAD_SCALE__ = false if issues arise
-  const enableMultiThreadScale =
-    typeof window === 'undefined' ||
-    (window as Window & { __ENABLE_MULTI_THREAD_SCALE__?: boolean })
-      .__ENABLE_MULTI_THREAD_SCALE__ !== false;
-
-  switch (operation) {
-    case 'filter-complex':
-      // Complex filter graphs need single-threaded mode to avoid deadlocks
-      return ['-threads', '1', '-filter_threads', '1', '-filter_complex_threads', '1'];
-    case 'scale-filter': {
-      // Scale filters use multi-threading for 2-3x performance improvement
-      if (enableMultiThreadScale) {
-        // Conservative: Use half of optimal threads for stability
-        // Can be increased to getOptimalThreadCount() after thorough testing
-        const threads = Math.max(2, Math.floor(getOptimalThreadCount() / 2));
-        return ['-threads', threads.toString(), '-filter_threads', threads.toString()];
-      }
-      // Fallback: Single-threaded (only if explicitly disabled)
-      return ['-threads', '1', '-filter_threads', '1'];
-    }
-    case 'simple': {
-      // Simple operations can use multi-threading
-      const threads = getOptimalThreadCount();
-      return ['-threads', threads.toString()];
-    }
-  }
-}
 
 /**
  * Generate FFmpeg arguments for progress logging

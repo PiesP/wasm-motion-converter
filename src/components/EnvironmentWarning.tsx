@@ -55,7 +55,8 @@ const EnvironmentWarning: Component = () => {
     const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
     const isCrossOriginIsolated = crossOriginIsolated;
 
-    logger.info('general', 'Environment test results', {
+    // Use WARN so results remain visible in production builds (INFO is filtered).
+    logger.warn('general', 'Environment test results', {
       hasSharedArrayBuffer,
       isCrossOriginIsolated,
     });
@@ -65,7 +66,7 @@ const EnvironmentWarning: Component = () => {
       `Environment Test Results:\n\n` +
         `SharedArrayBuffer: ${hasSharedArrayBuffer ? 'Available' : 'Unavailable'}\n` +
         `crossOriginIsolated: ${isCrossOriginIsolated ? 'true' : 'false'}\n\n` +
-        `See console for more details.`
+        `Open DevTools console for logged details.`
     );
   };
 
