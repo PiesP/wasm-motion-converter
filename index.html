@@ -44,7 +44,12 @@
     <!-- Branding and accessibility -->
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
 
-    <!-- Performance optimization: Preconnect to CDN servers for FFmpeg.wasm -->
+    <!-- Performance optimization: Preconnect to CDN servers -->
+    <!-- Primary CDN for dependencies (solid-js, modern-gif, comlink) -->
+    <link rel="preconnect" href="https://esm.sh" crossorigin />
+    <link rel="dns-prefetch" href="https://esm.sh" />
+
+    <!-- Fallback CDNs for multi-CDN cascade (Phase 2) -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
     <link rel="preconnect" href="https://unpkg.com" crossorigin />

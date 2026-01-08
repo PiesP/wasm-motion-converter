@@ -6,6 +6,11 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Cache-Control: public, max-age=300, stale-while-revalidate=60
 
+# Service Worker - short cache for updates (Phase 1)
+/service-worker.js
+  Cache-Control: public, max-age=0, must-revalidate
+  X-Content-Type-Options: nosniff
+
 # Static assets - immutable caching
 /assets/*
   Cache-Control: public, max-age=31536000, immutable

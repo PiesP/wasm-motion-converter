@@ -147,10 +147,27 @@ function importMapPlugin(): Plugin {
       // Must be placed before any module scripts to be effective
       const scriptTag = `<script type="importmap">${JSON.stringify(importMap, null, 2)}</script>`;
 
-      // Inject before closing </head> tag
-      const transformed = html.replace('</head>', `  ${scriptTag}\n  </head>`);
+      // Create modulepreload hints for critical dependencies (Phase 5)
+      // Preloads modules during idle time to reduce runtime fetch latency
+      const criticalDeps: Array<keyof typeof importMap.imports> = [
+        'solid-js/web', // Most critical - rendering engine
+        'solid-js', // Core reactivity
+        'modern-gif', // Conversion dependency
+        'comlink', // Worker communication
+      ];
+
+      const modulePreloadHints = criticalDeps
+        .map((dep) => `    <link rel="modulepreload" href="${importMap.imports[dep]}" crossorigin>`)
+        .join('\n');
+
+      // Inject import map and modulepreload hints before closing </head> tag
+      const transformed = html.replace(
+        '</head>',
+        `  ${scriptTag}\n${modulePreloadHints}\n  </head>`
+      );
 
       console.log('ℹ Import map generated with CDN URLs');
+      console.log(`ℹ Added modulepreload hints for ${criticalDeps.length} critical dependencies`);
 
       return transformed;
     },
