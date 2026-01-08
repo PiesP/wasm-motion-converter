@@ -959,21 +959,29 @@ class WebCodecsConversionService {
     };
 
     const getAv1SeekFpsCap = (durationSeconds?: number): number => {
-      const isLong =
+      // Adaptive FPS capping for mixed workload
+      // Short clips: prioritize quality, medium/long: prioritize speed
+      const isShort = !durationSeconds || durationSeconds < 4;
+      const isMedium =
         typeof durationSeconds === 'number' &&
         Number.isFinite(durationSeconds) &&
-        durationSeconds >= 4;
-      if (!isLong) {
-        return 15;
-      }
+        durationSeconds >= 4 &&
+        durationSeconds < 30;
 
-      return options.quality === 'high' ? 12 : 10;
+      if (isShort) {
+        return 12; // Short clips: maintain quality
+      }
+      if (isMedium) {
+        return options.quality === 'high' ? 10 : 8; // Medium: balance speed/quality
+      }
+      // Long videos (>=30s): aggressive FPS capping for speed
+      return options.quality === 'high' ? 8 : 6;
     };
 
     const av1FrameCallbackFailureKey = 'dropconvert:captureReliability:av1:frame-callback:failures';
     const av1FrameCallbackFailures = isAv1 ? readSessionNumber(av1FrameCallbackFailureKey) : 0;
     const shouldSkipAv1FrameCallbackProbe =
-      isAv1 && supportsFrameCallback && av1FrameCallbackFailures >= 2;
+      isAv1 && supportsFrameCallback && av1FrameCallbackFailures >= 1;
 
     try {
       ffmpegService.reportStatus('Extracting frames via WebCodecs...');
@@ -1798,7 +1806,9 @@ class WebCodecsConversionService {
 
         // Batch encode WebP frames in parallel for 3-4x speedup
         if (webpCapturedFrames.length > 0 && webpQualityRatio !== null) {
-          const CHUNK_SIZE = 10; // Encode 10 frames per batch for optimal parallelization
+          // Dynamic chunk size based on CPU cores for better parallelization
+          const hwConcurrency = navigator.hardwareConcurrency || 4;
+          const CHUNK_SIZE = Math.min(20, Math.max(10, hwConcurrency * 2));
           const totalFrames = webpCapturedFrames.length;
 
           logger.info('conversion', 'Parallel WebP frame encoding', {
