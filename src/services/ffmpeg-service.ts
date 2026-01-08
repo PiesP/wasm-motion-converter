@@ -1,6 +1,10 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-
+import type {
+  ConversionOptions,
+  ConversionQuality,
+  VideoMetadata,
+} from '../types/conversion-types';
 import { canFFmpegDecode as canFFmpegDecodeCodec } from '../utils/codec-capabilities';
 import {
   FFMPEG_CORE_BASE_URLS,
@@ -22,12 +26,6 @@ import { performanceTracker } from '../utils/performance-tracker';
 import { getOptimalFPS } from '../utils/quality-optimizer';
 import { getTimeoutForFormat } from '../utils/timeout-calculator';
 import { withTimeout } from '../utils/with-timeout';
-
-import type {
-  ConversionOptions,
-  ConversionQuality,
-  VideoMetadata,
-} from '../types/conversion-types';
 
 /**
  * Legacy timeout constant for backward compatibility with external timeout values
@@ -327,17 +325,17 @@ class FFmpegService {
     return this.ffmpeg;
   }
 
-  private emitProgress(progress: number, isHeartbeat = false): void {
+  private emitProgress(progress: number, _isHeartbeat = false): void {
     if (this.isConverting) {
       const now = Date.now();
       this.lastProgressTime = now;
       this.lastProgressValue = progress;
 
-      // Treat heartbeat-driven progress as encoder activity to avoid false stall detection
-      if (isHeartbeat) {
-        this.lastLogTime = now;
-        this.logSilenceStrikes = 0;
-      }
+      // Treat any progress update as activity to avoid false stall detection.
+      // During WebCodecs-only phases we may not receive FFmpeg logs, but we still
+      // want the watchdog/log-silence monitor to see forward motion.
+      this.lastLogTime = now;
+      this.logSilenceStrikes = 0;
     }
 
     if (this.progressCallback) {
@@ -1481,13 +1479,15 @@ class FFmpegService {
     fps: number;
     durationSeconds: number;
     frameFiles: string[];
+    frameTimestamps?: number[]; // Optional array of frame timestamps in seconds
   }): Promise<Blob> {
     if (!this.loaded || !this.ffmpeg) {
       logger.warn('conversion', 'FFmpeg not initialized, reinitializing...');
       await this.initialize();
     }
     const ffmpeg = this.getFFmpeg();
-    const { format, options, frameCount, fps, durationSeconds, frameFiles } = params;
+    const { format, options, frameCount, fps, durationSeconds, frameFiles, frameTimestamps } =
+      params;
     const outputFileName = format === 'gif' ? 'output.gif' : 'output.webp';
     const paletteFileName = FFMPEG_INTERNALS.PALETTE_FILE_NAME;
     const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
@@ -1520,7 +1520,9 @@ class FFmpegService {
           durationSeconds,
           encodeStart,
           encodeEnd,
-          frameCount
+          frameCount,
+          fps,
+          frameTimestamps
         );
       }
 
@@ -1733,7 +1735,9 @@ class FFmpegService {
     durationSeconds: number,
     encodeStart: number,
     encodeEnd: number,
-    frameCount: number
+    frameCount: number,
+    fps: number,
+    frameTimestamps?: number[]
   ): Promise<void> {
     const isStatic = frameCount === 1;
 
@@ -1782,71 +1786,209 @@ class FFmpegService {
         ffmpeg.off('log', logHandler);
         this.stopProgressHeartbeat(heartbeat);
       }
-    } else {
-      // OPTIMIZED: Direct PNG sequence → WebP encoding (saves 2-3s vs two-pass)
-      // This uses FFmpeg's native libwebp encoder with frame sequence input
-      logger.info('conversion', 'Starting direct WebP encoding', {
+      return;
+    }
+
+    // OPTIMIZED: Direct PNG sequence → WebP encoding (saves 2-3s vs two-pass)
+    // This uses FFmpeg's native libwebp encoder with frame sequence input
+
+    const useTimestampEncoding =
+      frameTimestamps && frameTimestamps.length === frameCount && frameTimestamps.length > 1;
+
+    if (useTimestampEncoding) {
+      logger.info('conversion', 'Starting timestamp-based WebP encoding', {
         frameCount,
-        fps: settings.fps,
+        fps,
         quality: settings.quality,
-        approach: 'PNG frames → WebP (direct)',
+        approach: 'PNG frames → WebP (timestamp-aware)',
+        timestampCount: frameTimestamps?.length ?? 0,
       });
 
-      const frameInputArgs = this.getFrameInputArgs(settings.fps);
-      const webpThreadArgs = getThreadingArgs('scale-filter');
-      const webpCmd = [
-        ...getProgressLoggingArgs(),
-        ...webpThreadArgs,
-        ...frameInputArgs,
-        '-c:v',
-        'libwebp',
-        '-lossless',
-        '0',
-        '-quality',
-        settings.quality.toString(),
-        '-preset',
-        settings.preset,
-        '-compression_level',
-        Math.max(3, Math.min(settings.compressionLevel, 4)).toString(),
-        '-method',
-        Math.min(settings.method, 4).toString(),
-        '-loop',
-        '0',
-        '-frames:v',
-        frameCount.toString(),
+      await this.encodeFramesToWebPWithTimestamps(
+        ffmpeg,
         outputFileName,
-      ];
-
-      logger.info('conversion', 'Encoding PNG frames directly to WebP', {
-        frameCount,
-        fps: settings.fps,
-        quality: settings.quality,
-        output: outputFileName,
-      });
-
-      const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
-      ffmpeg.on('log', webpLogHandler);
-
-      const webpHeartbeat = this.startProgressHeartbeat(
+        settings,
+        durationSeconds,
         encodeStart,
         encodeEnd,
-        Math.max(15, Math.min(durationSeconds, 45))
+        frameCount,
+        frameTimestamps!
       );
+      return;
+    }
 
-      try {
-        await withTimeout(
-          ffmpeg.exec(webpCmd),
-          TIMEOUT_CONVERSION,
-          `Direct WebP encoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
-          () => this.terminateFFmpeg()
-        );
-      } finally {
-        ffmpeg.off('log', webpLogHandler);
-        this.stopProgressHeartbeat(webpHeartbeat);
+    logger.info('conversion', 'Starting direct WebP encoding', {
+      frameCount,
+      fps,
+      quality: settings.quality,
+      approach: 'PNG frames → WebP (direct)',
+    });
+
+    const frameInputArgs = this.getFrameInputArgs(fps);
+    const webpThreadArgs = getThreadingArgs('scale-filter');
+    const webpCmd = [
+      ...getProgressLoggingArgs(),
+      ...webpThreadArgs,
+      ...frameInputArgs,
+      '-c:v',
+      'libwebp',
+      '-lossless',
+      '0',
+      '-quality',
+      settings.quality.toString(),
+      '-preset',
+      settings.preset,
+      '-compression_level',
+      Math.max(3, Math.min(settings.compressionLevel, 4)).toString(),
+      '-method',
+      Math.min(settings.method, 4).toString(),
+      '-loop',
+      '0',
+      '-frames:v',
+      frameCount.toString(),
+      outputFileName,
+    ];
+
+    logger.info('conversion', 'Encoding PNG frames directly to WebP', {
+      frameCount,
+      fps,
+      quality: settings.quality,
+      output: outputFileName,
+    });
+
+    const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
+    ffmpeg.on('log', webpLogHandler);
+
+    const webpHeartbeat = this.startProgressHeartbeat(
+      encodeStart,
+      encodeEnd,
+      Math.max(15, Math.min(durationSeconds, 45))
+    );
+
+    try {
+      await withTimeout(
+        ffmpeg.exec(webpCmd),
+        TIMEOUT_CONVERSION,
+        `Direct WebP encoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+        () => this.terminateFFmpeg()
+      );
+    } finally {
+      ffmpeg.off('log', webpLogHandler);
+      this.stopProgressHeartbeat(webpHeartbeat);
+    }
+
+    logger.info('conversion', 'Direct WebP encoding complete');
+  }
+
+  private async encodeFramesToWebPWithTimestamps(
+    ffmpeg: FFmpeg,
+    outputFileName: string,
+    settings: {
+      fps: number;
+      quality: number;
+      preset: string;
+      compressionLevel: number;
+      method: number;
+    },
+    durationSeconds: number,
+    encodeStart: number,
+    encodeEnd: number,
+    frameCount: number,
+    frameTimestamps: number[]
+  ): Promise<void> {
+    const concatFileName = 'frames_concat.txt';
+    const concatLines: string[] = ['ffconcat version 1.0'];
+
+    for (let i = 0; i < frameCount; i += 1) {
+      const frameIndex = FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER + i;
+      const frameName = `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}${String(frameIndex).padStart(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS, '0')}.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`;
+
+      let frameDuration: number;
+      if (i < frameCount - 1) {
+        frameDuration = Math.max(0.001, frameTimestamps[i + 1]! - frameTimestamps[i]!);
+      } else if (frameCount > 1) {
+        const avgDuration =
+          (frameTimestamps[frameCount - 1]! - frameTimestamps[0]!) / (frameCount - 1);
+        frameDuration = Math.max(0.001, avgDuration);
+      } else {
+        frameDuration = 1.0 / Math.max(1, settings.fps);
       }
 
-      logger.info('conversion', 'Direct WebP encoding complete');
+      concatLines.push(`file '${frameName}'`);
+      concatLines.push(`duration ${frameDuration.toFixed(6)}`);
     }
+
+    const lastFrameIndex = FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER + frameCount - 1;
+    const lastFrameName = `${FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX}${String(lastFrameIndex).padStart(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS, '0')}.${FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT}`;
+    concatLines.push(`file '${lastFrameName}'`);
+
+    const concatContent = concatLines.join('\n');
+    await this.safeWriteFile(concatFileName, concatContent);
+
+    logger.info('conversion', 'Generated concat demuxer file', {
+      fileName: concatFileName,
+      frameCount,
+      totalDuration: durationSeconds.toFixed(3),
+    });
+
+    const webpThreadArgs = getThreadingArgs('scale-filter');
+    const webpCmd = [
+      ...getProgressLoggingArgs(),
+      ...webpThreadArgs,
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      concatFileName,
+      '-c:v',
+      'libwebp',
+      '-lossless',
+      '0',
+      '-quality',
+      settings.quality.toString(),
+      '-preset',
+      settings.preset,
+      '-compression_level',
+      Math.max(3, Math.min(settings.compressionLevel, 4)).toString(),
+      '-method',
+      Math.min(settings.method, 4).toString(),
+      '-loop',
+      '0',
+      outputFileName,
+    ];
+
+    logger.info('conversion', 'Encoding PNG frames to WebP with timestamps', {
+      frameCount,
+      quality: settings.quality,
+      output: outputFileName,
+      firstTimestamp: frameTimestamps[0]?.toFixed(3),
+      lastTimestamp: frameTimestamps[frameCount - 1]?.toFixed(3),
+    });
+
+    const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
+    ffmpeg.on('log', webpLogHandler);
+
+    const webpHeartbeat = this.startProgressHeartbeat(
+      encodeStart,
+      encodeEnd,
+      Math.max(15, Math.min(durationSeconds, 45))
+    );
+
+    try {
+      await withTimeout(
+        ffmpeg.exec(webpCmd),
+        TIMEOUT_CONVERSION,
+        `Timestamp-based WebP encoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+        () => this.terminateFFmpeg()
+      );
+    } finally {
+      ffmpeg.off('log', webpLogHandler);
+      this.stopProgressHeartbeat(webpHeartbeat);
+      await this.safeDelete(concatFileName);
+    }
+
+    logger.info('conversion', 'Timestamp-based WebP encoding complete');
   }
 
   private async cleanupFrameFiles(frameFiles: string[]): Promise<void> {

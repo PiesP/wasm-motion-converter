@@ -19,6 +19,7 @@
  * 3. Check duration warnings to inform or block conversion attempts
  */
 
+import type { DurationValidationResult, ValidationWarning } from '../types/validation';
 import {
   DURATION_WARNING_GIF_LONG,
   DURATION_WARNING_GIF_MEDIUM,
@@ -28,7 +29,6 @@ import {
   WEBP_MAX_DURATION_MS,
   WEBP_MAX_FRAMES,
 } from './constants';
-import type { DurationValidationResult, ValidationWarning } from '../types/validation';
 
 /**
  * Result of file validation with error message if invalid
@@ -219,19 +219,17 @@ function estimateFrameCount(durationMs: number, fps = 30): number {
  * Validate video duration against format-specific constraints and limits
  *
  * Extracts video duration and estimated frame count, then validates against
- * format-specific requirements. WebP has strict hard limits; GIF has soft warnings.
+ * format-specific requirements. WebP has strict constraints; GIF has soft warnings.
  *
- * **WebP constraints (hard limits)**:
+ * **WebP constraints (errors with confirmation required)**:
  * - Maximum 10 seconds duration (WEBP_MAX_DURATION_MS)
  * - Maximum 240 frames estimated (WEBP_MAX_FRAMES)
- * - Both constraints must be satisfied; either violation blocks conversion
- * - Error severity = 'error' with requiresConfirmation=true (user must approve)
+ * - Either violation produces an error warning; users must explicitly confirm to proceed
  *
  * **GIF constraints (soft warnings)**:
  * - ≥60s: Warning that conversion may take 3-5 minutes and produce very large files
  * - 30-60s: Warning that conversion may take 1-2 minutes
  * - <30s: No warning (fast conversion)
- * - Warning severity = 'warning' with requiresConfirmation=true (user can override)
  *
  * **Error handling**: If duration extraction fails (unsupported codec, corrupted file),
  * returns success with info warning. Conversion proceeds with default settings.
@@ -263,8 +261,8 @@ export async function validateVideoDuration(
     const estimatedFrames = estimateFrameCount(duration);
     const warnings: ValidationWarning[] = [];
 
-    // STEP 2a: WebP validation (strict hard limits - no user override)
-    // WebP animated format has strict technical constraints
+    // STEP 2a: WebP validation (strict constraints; confirmation required)
+    // Animated WebP has constraints that may lead to failures or invalid output.
     if (targetFormat === 'webp') {
       // Check duration limit: WebP max 10 seconds (WEBP_MAX_DURATION_MS = 10000ms)
       if (duration > WEBP_MAX_DURATION_MS) {

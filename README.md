@@ -131,7 +131,7 @@ await ffmpeg.load({
 - Quality presets trade speed vs fidelity (Low / Medium / High) for GIF/WebP output.
 - Scale presets: 0.5×, 0.75×, 1× of the original video resolution.
 - Timeouts: FFmpeg init 90s, video analysis 30s, conversion 5m.
-- Warnings surface for very large or long videos to avoid memory issues in-browser.
+- No hard duration limits; memory issues are caught at runtime and reported as appropriate errors.
 
 ### Browser compatibility
 

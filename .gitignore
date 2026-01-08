@@ -42,5 +42,7 @@ Thumbs.db
 AGENTS.md
 CLAUDE.md
 
+docs/
 test/
 *.backup
+CODE_STANDARDS.md

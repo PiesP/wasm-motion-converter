@@ -2,7 +2,6 @@ import type { Component } from 'solid-js';
 import { For, onCleanup, onMount, Show } from 'solid-js';
 
 import { cancelDialog, confirmDialog, getConfirmationState } from '../stores/confirmation-store';
-
 import type { ValidationWarning } from '../types/validation';
 
 /**

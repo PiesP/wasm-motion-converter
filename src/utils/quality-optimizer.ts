@@ -15,9 +15,9 @@ type ConversionFormat = 'gif' | 'webp';
  * - Returns min(sourceFPS, presetFPS) for best balance
  *
  * Examples:
- * - 30 FPS source, high quality (24 FPS preset) → 24 FPS (no wasted upsampling)
- * - 10 FPS source, medium quality (15 FPS preset) → 10 FPS (no fake interpolation)
- * - 60 FPS source, high quality (24 FPS preset) → 24 FPS (reasonable downsampling)
+ * - 30 FPS source, high quality (30 FPS preset) → 30 FPS (perfect match)
+ * - 10 FPS source, medium quality (20 FPS preset) → 10 FPS (no fake interpolation)
+ * - 60 FPS source, high quality (30 FPS preset) → 30 FPS (reasonable downsampling)
  *
  * @param sourceFPS - Original video frame rate (must be > 0)
  * @param quality - Quality preset (low/medium/high)
@@ -26,7 +26,7 @@ type ConversionFormat = 'gif' | 'webp';
  * @throws Error if sourceFPS is not a positive number
  *
  * @example
- * const fps = getOptimalFPS(30, 'high', 'gif'); // Returns 24
+ * const fps = getOptimalFPS(30, 'high', 'gif'); // Returns 30
  * const fps = getOptimalFPS(10, 'medium', 'webp'); // Returns 10
  */
 export function getOptimalFPS(
@@ -64,8 +64,8 @@ export function getOptimalFPS(
  * @throws Error if sourceFPS is not a positive number
  *
  * @example
- * const shouldAdapt = shouldUseAdaptiveFPS(10, 'high', 'gif'); // true (10 < 24)
- * const shouldAdapt = shouldUseAdaptiveFPS(24, 'high', 'gif'); // false (24 == 24)
+ * const shouldAdapt = shouldUseAdaptiveFPS(10, 'high', 'gif'); // true (10 < 30)
+ * const shouldAdapt = shouldUseAdaptiveFPS(30, 'high', 'gif'); // false (30 == 30)
  */
 export function shouldUseAdaptiveFPS(
   sourceFPS: number,

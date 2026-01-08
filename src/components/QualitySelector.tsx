@@ -1,7 +1,7 @@
-import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
-
 import type { Component } from 'solid-js';
 import type { ConversionQuality } from '../types/conversion-types';
+
+import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
 /**
  * Default number of columns for quality selector grid

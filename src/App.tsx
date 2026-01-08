@@ -10,7 +10,18 @@ import {
   Show,
   Suspense,
 } from 'solid-js';
-import { useConversionHandlers } from './hooks/useConversionHandlers';
+// Eagerly loaded components (used immediately)
+import ConfirmationModal from './components/ConfirmationModal';
+import EnvironmentWarning from './components/EnvironmentWarning';
+import FileDropzone from './components/FileDropzone';
+import FormatSelector from './components/FormatSelector';
+import LicenseAttribution from './components/LicenseAttribution';
+import QualitySelector from './components/QualitySelector';
+import ScaleSelector from './components/ScaleSelector';
+import ThemeToggle from './components/ThemeToggle';
+import ToastContainer from './components/ToastContainer';
+import VideoMetadataDisplay from './components/VideoMetadataDisplay';
+import { useConversionHandlers } from './hooks/use-conversion-handlers';
 import { ffmpegService } from './services/ffmpeg-service';
 import {
   appState,
@@ -34,18 +45,6 @@ import {
 } from './stores/conversion-store';
 import { debounce } from './utils/debounce';
 import { isMemoryCritical } from './utils/memory-monitor';
-
-// Eagerly loaded components (used immediately)
-import ConfirmationModal from './components/ConfirmationModal';
-import EnvironmentWarning from './components/EnvironmentWarning';
-import FileDropzone from './components/FileDropzone';
-import FormatSelector from './components/FormatSelector';
-import LicenseAttribution from './components/LicenseAttribution';
-import QualitySelector from './components/QualitySelector';
-import ScaleSelector from './components/ScaleSelector';
-import ThemeToggle from './components/ThemeToggle';
-import ToastContainer from './components/ToastContainer';
-import VideoMetadataDisplay from './components/VideoMetadataDisplay';
 
 // Lazy loaded components (conditionally shown - reduces initial bundle by ~15KB)
 const ConversionProgress = lazy(() => import('./components/ConversionProgress'));

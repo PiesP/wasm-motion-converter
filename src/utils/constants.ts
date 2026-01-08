@@ -143,9 +143,9 @@ export const FFMPEG_CORE_BASE_URLS = [
  */
 export const QUALITY_PRESETS = {
   gif: {
-    low: { fps: 10, colors: 128 },
-    medium: { fps: 15, colors: 256 },
-    high: { fps: 24, colors: 256 },
+    low: { fps: 12, colors: 128 },
+    medium: { fps: 20, colors: 256 },
+    high: { fps: 30, colors: 256 },
   },
   webp: {
     low: { fps: 10, quality: 70, preset: 'default', compressionLevel: 3, method: 4 },

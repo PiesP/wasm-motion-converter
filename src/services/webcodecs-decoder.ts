@@ -1,4 +1,7 @@
 // External dependencies
+
+// Type imports
+import type { VideoMetadata } from '../types/conversion-types';
 import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { logger } from '../utils/logger';
@@ -7,9 +10,6 @@ import {
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
 } from './webcodecs-support';
-
-// Type imports
-import type { VideoMetadata } from '../types/conversion-types';
 
 /**
  * Frame format type for WebCodecs output
@@ -90,6 +90,8 @@ export interface WebCodecsDecodeResult {
   frameFiles: string[];
   /** Total number of extracted frames */
   frameCount: number;
+  /** Effective capture mode used after auto-selection/fallbacks */
+  captureModeUsed?: WebCodecsCaptureMode;
   /** Frame width in pixels (after scaling) */
   width: number;
   /** Frame height in pixels (after scaling) */
@@ -116,6 +118,22 @@ type CaptureContext = {
  * Reduced from 3 to 2 for faster AV1 codec fallback detection
  */
 const MAX_CONSECUTIVE_EMPTY_FRAMES = 2;
+
+/**
+ * If requestVideoFrameCallback produces no callbacks within this window,
+ * abort the realtime capture attempt so callers can fall back quickly.
+ */
+const FRAME_CALLBACK_FIRST_FRAME_TIMEOUT_MS = 1500;
+
+/**
+ * If playback advances but requestVideoFrameCallback under-produces frames
+ * relative to the requested sampling rate, abort quickly and let callers
+ * fall back to seek capture.
+ */
+const FRAME_CALLBACK_LAG_CHECK_INTERVAL_MS = 250;
+const FRAME_CALLBACK_LAG_MIN_MEDIA_ADVANCE_SECONDS = 0.75;
+const FRAME_CALLBACK_LAG_MIN_EXPECTED_FRAMES = 8;
+const FRAME_CALLBACK_LAG_MAX_CAPTURED_FRAMES = 1;
 
 /**
  * Wait for event with timeout
@@ -163,11 +181,12 @@ const createCanvas = (
   height: number,
   willReadFrequently: boolean = false
 ): CaptureContext => {
-  const hasDocument = typeof document !== 'undefined';
-  if (hasDocument) {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+  // Prefer OffscreenCanvas when available.
+  // In Chrome/Edge, OffscreenCanvas.convertToBlob() is typically faster and can reduce
+  // main-thread blocking during PNG/JPEG encoding, which helps prevent under-capture
+  // (auto modes falling back to slow seek capture).
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const canvas = new OffscreenCanvas(width, height);
     const context = canvas.getContext('2d', { alpha: false, willReadFrequently });
     if (!context) {
       throw new Error('Canvas 2D context not available');
@@ -177,18 +196,20 @@ const createCanvas = (
     return { canvas, context, targetWidth: width, targetHeight: height };
   }
 
-  if (typeof OffscreenCanvas === 'undefined') {
+  const hasDocument = typeof document !== 'undefined';
+  if (!hasDocument) {
     throw new Error('Canvas rendering is not available in this environment.');
   }
 
-  const canvas = new OffscreenCanvas(width, height);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext('2d', { alpha: false, willReadFrequently });
   if (!context) {
     throw new Error('Canvas 2D context not available');
   }
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
-
   return { canvas, context, targetWidth: width, targetHeight: height };
 };
 
@@ -369,6 +390,12 @@ export class WebCodecsDecoderService {
     video.playsInline = true;
     video.src = url;
 
+    // IMPORTANT: Keep the video attached to the DOM to reduce throttling.
+    // Some browsers aggressively throttle decode / frame callbacks for off-DOM
+    // or non-rendered media elements, which can cause severe under-capture.
+    // We hide the element off-screen instead of using display:none.
+    this.attachVideoForDecode(video);
+
     try {
       await waitForEvent(video, 'loadedmetadata', FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS);
       const duration = normalizeDuration(video.duration);
@@ -393,7 +420,87 @@ export class WebCodecsDecoderService {
           ? Math.max(1, Math.min(maxFrames, estimatedTotalFrames))
           : estimatedTotalFrames;
 
+      // Total decode timeout: seeking can legitimately take longer because it performs
+      // many discrete seeks (one per frame). Keep fail-fast behavior for realtime modes.
+      const computeMaxTotalDecodeMs = (mode: WebCodecsCaptureMode): number => {
+        if (mode !== 'seek') {
+          return FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS;
+        }
+
+        // Conservative per-frame budget for seek-based capture.
+        // Example: 115 frames → ~230s budget (2s/frame), capped to 240s.
+        const perFrameBudgetMs = 2000;
+        const estimatedMs = totalFrames * perFrameBudgetMs;
+        const upperBoundMs = 240_000;
+        return Math.min(
+          upperBoundMs,
+          Math.max(FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS, estimatedMs)
+        );
+      };
+
+      let effectiveCaptureMode: WebCodecsCaptureMode = captureMode;
+      let maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+
+      logger.info(
+        'conversion',
+        `WebCodecs decode budget: durationSeconds=${duration.toFixed(3)}, targetFps=${targetFps}, estimatedTotalFrames=${estimatedTotalFrames}, maxFrames=${maxFrames ?? 'null'}, totalFrames=${totalFrames}, scale=${scale}, frameFormat=${frameFormat}, captureMode=${captureMode}`,
+        {
+          durationSeconds: duration,
+          targetFps,
+          estimatedTotalFrames,
+          maxFrames: maxFrames ?? null,
+          totalFrames,
+          scale,
+          frameFormat,
+          captureMode,
+        }
+      );
+
       video.currentTime = 0;
+
+      const originalPlaybackRate =
+        typeof video.playbackRate === 'number' && Number.isFinite(video.playbackRate)
+          ? video.playbackRate
+          : 1;
+
+      const applyPlaybackRateForMode = (mode: WebCodecsCaptureMode) => {
+        if (mode === 'seek') {
+          this.resetPlaybackRate(video, originalPlaybackRate);
+          return;
+        }
+
+        const boostRate = this.computePlaybackRateBoost({
+          durationSeconds: duration,
+          targetFps,
+          mode,
+        });
+
+        if (boostRate <= 1) {
+          this.resetPlaybackRate(video, originalPlaybackRate);
+          return;
+        }
+
+        if (Math.abs(video.playbackRate - boostRate) < 0.0001) {
+          return;
+        }
+
+        try {
+          video.playbackRate = boostRate;
+          logger.debug('conversion', 'Applied WebCodecs playbackRate boost', {
+            playbackRate: boostRate,
+            mode,
+            durationSeconds: duration,
+            targetFps,
+            totalFrames,
+          });
+        } catch (error) {
+          logger.debug('conversion', 'Failed to apply playbackRate boost', {
+            error: getErrorMessage(error),
+            mode,
+          });
+          this.resetPlaybackRate(video, originalPlaybackRate);
+        }
+      };
 
       let consecutiveEmptyFrames = 0;
       const startDecodeTime = Date.now();
@@ -405,9 +512,9 @@ export class WebCodecsDecoderService {
 
         // Fail-fast if decode is taking too long (indicates stall)
         const elapsed = Date.now() - startDecodeTime;
-        if (elapsed > FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS) {
+        if (elapsed > maxTotalDecodeMs) {
           throw new Error(
-            `WebCodecs decode exceeded ${FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS}ms timeout at frame ${index}. ` +
+            `WebCodecs decode exceeded ${maxTotalDecodeMs}ms timeout (mode=${effectiveCaptureMode}) at frame ${index}. ` +
               'Codec incompatibility detected. Falling back to FFmpeg.'
           );
         }
@@ -514,6 +621,9 @@ export class WebCodecsDecoderService {
         if (!supportsTrackProcessor) {
           throw new Error('WebCodecs track processor is not supported in this browser.');
         }
+        effectiveCaptureMode = 'track';
+        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        applyPlaybackRateForMode(effectiveCaptureMode);
         await this.captureWithTrackProcessor(
           video,
           duration,
@@ -526,6 +636,9 @@ export class WebCodecsDecoderService {
         if (!supportsFrameCallback) {
           throw new Error('requestVideoFrameCallback is not supported in this browser.');
         }
+        effectiveCaptureMode = 'frame-callback';
+        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        applyPlaybackRateForMode(effectiveCaptureMode);
         await this.captureWithFrameCallback(
           video,
           duration,
@@ -535,6 +648,9 @@ export class WebCodecsDecoderService {
           totalFrames
         );
       } else if (captureMode === 'seek') {
+        effectiveCaptureMode = 'seek';
+        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        applyPlaybackRateForMode(effectiveCaptureMode);
         await this.captureWithSeeking(
           video,
           duration,
@@ -545,6 +661,9 @@ export class WebCodecsDecoderService {
         );
       } else if (supportsTrackProcessor) {
         try {
+          effectiveCaptureMode = 'track';
+          maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+          applyPlaybackRateForMode(effectiveCaptureMode);
           await this.captureWithTrackProcessor(
             video,
             duration,
@@ -567,6 +686,9 @@ export class WebCodecsDecoderService {
               'WebCodecs decoder: Attempting frame-callback fallback mode',
               {}
             );
+            effectiveCaptureMode = 'frame-callback';
+            maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+            applyPlaybackRateForMode(effectiveCaptureMode);
             await this.captureWithFrameCallback(
               video,
               duration,
@@ -581,6 +703,9 @@ export class WebCodecsDecoderService {
               'WebCodecs decoder: frame-callback not supported, using seek fallback',
               {}
             );
+            effectiveCaptureMode = 'seek';
+            maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+            applyPlaybackRateForMode(effectiveCaptureMode);
             await this.captureWithSeeking(
               video,
               duration,
@@ -592,6 +717,9 @@ export class WebCodecsDecoderService {
           }
         }
       } else if (supportsFrameCallback) {
+        effectiveCaptureMode = 'frame-callback';
+        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        applyPlaybackRateForMode(effectiveCaptureMode);
         await this.captureWithFrameCallback(
           video,
           duration,
@@ -601,6 +729,9 @@ export class WebCodecsDecoderService {
           totalFrames
         );
       } else {
+        effectiveCaptureMode = 'seek';
+        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        applyPlaybackRateForMode(effectiveCaptureMode);
         await this.captureWithSeeking(
           video,
           duration,
@@ -614,6 +745,7 @@ export class WebCodecsDecoderService {
       return {
         frameFiles,
         frameCount: frameFiles.length,
+        captureModeUsed: effectiveCaptureMode,
         width: targetWidth,
         height: targetHeight,
         fps: targetFps,
@@ -622,6 +754,77 @@ export class WebCodecsDecoderService {
     } finally {
       this.cleanupVideo(video, url);
     }
+  }
+
+  private attachVideoForDecode(video: HTMLVideoElement): void {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const body = document.body;
+    if (!body) {
+      return;
+    }
+
+    if (video.parentElement) {
+      return;
+    }
+
+    try {
+      video.style.position = 'fixed';
+      // Keep the element inside the viewport so browsers treat it as "rendered".
+      // Some engines may throttle frame callbacks and captureStream for offscreen
+      // or fully transparent videos, which can cause severe under-capture.
+      video.style.right = '0';
+      video.style.bottom = '0';
+      video.style.width = '2px';
+      video.style.height = '2px';
+      // Avoid fully transparent (0) to reduce the chance of "not painted" optimizations.
+      video.style.opacity = '0.001';
+      video.style.pointerEvents = 'none';
+      video.style.zIndex = '0';
+      video.style.background = 'transparent';
+      video.style.contain = 'strict';
+      video.style.transform = 'translateZ(0)';
+      body.appendChild(video);
+    } catch (error) {
+      logger.debug('conversion', 'Failed to attach video element for decode', {
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  private resetPlaybackRate(video: HTMLVideoElement, playbackRate: number): void {
+    try {
+      if (Number.isFinite(playbackRate) && playbackRate > 0) {
+        video.playbackRate = playbackRate;
+      } else {
+        video.playbackRate = 1;
+      }
+    } catch {
+      // Non-fatal; keep going.
+    }
+  }
+
+  private computePlaybackRateBoost(params: {
+    durationSeconds: number;
+    targetFps: number;
+    mode: WebCodecsCaptureMode;
+  }): number {
+    const { durationSeconds, targetFps, mode } = params;
+
+    // Disabled (for now): boosting playbackRate does not increase decode throughput
+    // on software decoders and can worsen under-capture by finishing playback early.
+    // Re-enable only after confirming real wins on hardware-accelerated devices.
+    void durationSeconds;
+    void targetFps;
+
+    // Only apply to realtime playback-based modes.
+    if (mode !== 'track' && mode !== 'frame-callback') {
+      return 1;
+    }
+
+    return 1;
   }
 
   /**
@@ -645,6 +848,7 @@ export class WebCodecsDecoderService {
     shouldCancel?: () => boolean,
     maxFrames?: number
   ): Promise<void> {
+    const start = Date.now();
     try {
       await video.play();
     } catch (error) {
@@ -668,17 +872,37 @@ export class WebCodecsDecoderService {
         ? Math.max(1, Math.min(maxFrames, Math.ceil(duration * targetFps)))
         : Math.max(1, Math.ceil(duration * targetFps));
     const epsilon = 0.001;
+    // IMPORTANT: Keep sampling schedule stable.
+    // Using captureTimestamp + frameInterval accumulates jitter (drift) and can cause
+    // uneven frame selection for complex codecs and downsampled captures.
+    // We instead anchor the schedule to t=0 and compute thresholds from the frame index.
     let nextFrameTime = 0;
     let frameIndex = 0;
 
     await new Promise<void>((resolve, reject) => {
       let finished = false;
       let stallTimer: ReturnType<typeof setTimeout> | null = null;
+      let firstFrameTimer: ReturnType<typeof setTimeout> | null = null;
+      let lagMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
       const clearStallTimer = () => {
         if (stallTimer) {
           clearTimeout(stallTimer);
           stallTimer = null;
+        }
+      };
+
+      const clearFirstFrameTimer = () => {
+        if (firstFrameTimer) {
+          clearTimeout(firstFrameTimer);
+          firstFrameTimer = null;
+        }
+      };
+
+      const clearLagMonitor = () => {
+        if (lagMonitorTimer) {
+          clearInterval(lagMonitorTimer);
+          lagMonitorTimer = null;
         }
       };
 
@@ -689,8 +913,85 @@ export class WebCodecsDecoderService {
             return;
           }
           finished = true;
+          clearFirstFrameTimer();
+          clearLagMonitor();
           reject(new Error('WebCodecs frame capture stalled.'));
         }, FFMPEG_INTERNALS.WEBCODECS.FRAME_STALL_TIMEOUT_MS);
+      };
+
+      const scheduleFirstFrameTimer = () => {
+        clearFirstFrameTimer();
+        firstFrameTimer = setTimeout(() => {
+          if (finished) {
+            return;
+          }
+          if (frameIndex > 0) {
+            return;
+          }
+
+          logger.warn(
+            'conversion',
+            'WebCodecs frame-callback produced no frames quickly; aborting to allow fallback',
+            {
+              timeoutMs: FRAME_CALLBACK_FIRST_FRAME_TIMEOUT_MS,
+              durationSeconds: duration,
+              targetFps,
+              totalFrames,
+            }
+          );
+
+          try {
+            video.pause();
+          } catch {
+            // Non-fatal.
+          }
+
+          finalize();
+        }, FRAME_CALLBACK_FIRST_FRAME_TIMEOUT_MS);
+      };
+
+      const startLagMonitor = () => {
+        clearLagMonitor();
+        lagMonitorTimer = setInterval(() => {
+          if (finished) {
+            return;
+          }
+
+          // Only bail out when playback is clearly advancing but rVFC isn't producing frames.
+          const mediaTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+          if (mediaTime < FRAME_CALLBACK_LAG_MIN_MEDIA_ADVANCE_SECONDS) {
+            return;
+          }
+
+          const expectedFrames = Math.floor(mediaTime * targetFps);
+          const isLaggingBadly =
+            expectedFrames >= FRAME_CALLBACK_LAG_MIN_EXPECTED_FRAMES &&
+            frameIndex <= FRAME_CALLBACK_LAG_MAX_CAPTURED_FRAMES;
+
+          if (!isLaggingBadly) {
+            return;
+          }
+
+          logger.warn(
+            'conversion',
+            'WebCodecs frame-callback is lagging far behind playback; aborting to allow fallback',
+            {
+              mediaTimeSeconds: mediaTime,
+              targetFps,
+              expectedFrames,
+              capturedFrames: frameIndex,
+              intervalMs: FRAME_CALLBACK_LAG_CHECK_INTERVAL_MS,
+            }
+          );
+
+          try {
+            video.pause();
+          } catch {
+            // Non-fatal.
+          }
+
+          finalize();
+        }, FRAME_CALLBACK_LAG_CHECK_INTERVAL_MS);
       };
 
       const finalize = () => {
@@ -699,6 +1000,8 @@ export class WebCodecsDecoderService {
         }
         finished = true;
         clearStallTimer();
+        clearFirstFrameTimer();
+        clearLagMonitor();
         video.removeEventListener('ended', handleEnded);
         video.removeEventListener('error', handleError);
         resolve();
@@ -714,12 +1017,16 @@ export class WebCodecsDecoderService {
         }
         finished = true;
         clearStallTimer();
+        clearFirstFrameTimer();
+        clearLagMonitor();
         reject(new Error('WebCodecs video decode error.'));
       };
 
       video.addEventListener('ended', handleEnded, { once: true });
       video.addEventListener('error', handleError, { once: true });
       scheduleStallTimer();
+      scheduleFirstFrameTimer();
+      startLagMonitor();
 
       const handleFrame = async (
         _now: number,
@@ -731,17 +1038,26 @@ export class WebCodecsDecoderService {
           }
           if (shouldCancel?.()) {
             finished = true;
+            clearFirstFrameTimer();
+            clearLagMonitor();
             reject(new Error('Conversion cancelled by user'));
             return;
+          }
+
+          // If rVFC is working, we'll see frames very quickly.
+          // Once we observe the first frame, stop the bailout timer.
+          if (frameIndex === 0) {
+            clearFirstFrameTimer();
           }
 
           const mediaTime = metadata.mediaTime ?? video.currentTime;
           const shouldCapture = frameIndex === 0 || mediaTime + epsilon >= nextFrameTime;
 
           if (shouldCapture) {
-            await captureFrame(frameIndex, mediaTime);
+            const captureTimestamp = Math.max(0, mediaTime);
+            await captureFrame(frameIndex, captureTimestamp);
             frameIndex += 1;
-            nextFrameTime += frameInterval;
+            nextFrameTime = frameIndex * frameInterval;
             scheduleStallTimer();
           }
 
@@ -757,6 +1073,8 @@ export class WebCodecsDecoderService {
           }
           finished = true;
           clearStallTimer();
+          clearFirstFrameTimer();
+          clearLagMonitor();
           reject(error);
         }
       };
@@ -764,10 +1082,15 @@ export class WebCodecsDecoderService {
       video.requestVideoFrameCallback(handleFrame);
     });
 
-    logger.info('conversion', 'WebCodecs frame-callback capture completed', {
-      capturedFrames: frameIndex,
-      totalFrames,
-    });
+    logger.info(
+      'conversion',
+      `WebCodecs frame-callback capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}`,
+      {
+        capturedFrames: frameIndex,
+        totalFrames,
+        elapsedMs: Date.now() - start,
+      }
+    );
   }
 
   /**
@@ -822,6 +1145,11 @@ export class WebCodecsDecoderService {
         ? Math.max(1, Math.min(maxFrames, Math.ceil(duration * targetFps)))
         : Math.max(1, Math.ceil(duration * targetFps));
     const epsilonUs = 1_000;
+    // TrackProcessor frame timestamps may start with a non-zero offset.
+    // Anchor the sampling schedule to the first observed timestamp to avoid
+    // accidental oversampling (capturing too many frames too fast) when the
+    // initial timestamp is far from 0.
+    let baseTimestampUs: number | null = null;
     let nextFrameTimeUs = 0;
     let frameIndex = 0;
     const startDecodeTime = Date.now();
@@ -868,12 +1196,19 @@ export class WebCodecsDecoderService {
             typeof frame.timestamp === 'number'
               ? frame.timestamp
               : Math.round(video.currentTime * 1_000_000);
+
+          if (baseTimestampUs === null) {
+            baseTimestampUs = timestampUs;
+            nextFrameTimeUs = baseTimestampUs;
+          }
+
           const shouldCapture = frameIndex === 0 || timestampUs + epsilonUs >= nextFrameTimeUs;
 
           if (shouldCapture) {
-            await captureFrame(frameIndex, timestampUs / 1_000_000);
+            const captureTimestampSeconds = Math.max(0, timestampUs / 1_000_000);
+            await captureFrame(frameIndex, captureTimestampSeconds);
             frameIndex += 1;
-            nextFrameTimeUs += frameIntervalUs;
+            nextFrameTimeUs = (baseTimestampUs ?? 0) + frameIndex * frameIntervalUs;
           }
 
           if (timestampUs / 1_000_000 >= duration) {
@@ -887,11 +1222,15 @@ export class WebCodecsDecoderService {
       reader.releaseLock();
       track.stop();
       video.pause();
-      logger.info('conversion', 'WebCodecs track capture completed', {
-        capturedFrames: frameIndex,
-        totalFrames,
-        elapsed: Date.now() - startDecodeTime,
-      });
+      logger.info(
+        'conversion',
+        `WebCodecs track capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}, elapsedMs=${Date.now() - startDecodeTime}`,
+        {
+          capturedFrames: frameIndex,
+          totalFrames,
+          elapsedMs: Date.now() - startDecodeTime,
+        }
+      );
     }
   }
 
@@ -917,6 +1256,7 @@ export class WebCodecsDecoderService {
     shouldCancel?: () => boolean,
     maxFrames?: number
   ): Promise<void> {
+    const start = Date.now();
     video.pause();
 
     // Fast extraction for single-frame formats (WebP)
@@ -960,10 +1300,15 @@ export class WebCodecsDecoderService {
       await captureFrame(index, targetTime);
     }
 
-    logger.info('conversion', 'WebCodecs seek-based capture completed', {
-      capturedFrames: totalFrames,
-      totalFrames,
-    });
+    logger.info(
+      'conversion',
+      `WebCodecs seek-based capture completed: capturedFrames=${totalFrames}, totalFrames=${totalFrames}`,
+      {
+        capturedFrames: totalFrames,
+        totalFrames,
+        elapsedMs: Date.now() - start,
+      }
+    );
   }
 
   /**
@@ -986,7 +1331,14 @@ export class WebCodecsDecoderService {
       return;
     }
 
-    video.currentTime = clampedTime;
+    // Prefer fastSeek() when available (can be faster than setting currentTime
+    // and waiting for a full seek pipeline in some browsers).
+    const maybeFastSeek = video as HTMLVideoElement & { fastSeek?: (time: number) => void };
+    if (typeof maybeFastSeek.fastSeek === 'function') {
+      maybeFastSeek.fastSeek(clampedTime);
+    } else {
+      video.currentTime = clampedTime;
+    }
     await waitForEvent(video, 'seeked', FFMPEG_INTERNALS.WEBCODECS.SEEK_TIMEOUT_MS);
   }
 
@@ -1003,6 +1355,11 @@ export class WebCodecsDecoderService {
       video.pause();
       video.removeAttribute('src');
       video.load();
+
+      // If we attached the element to the DOM for decode, remove it.
+      if (video.parentElement) {
+        video.remove();
+      }
     } catch (error) {
       logger.debug('conversion', 'Video element cleanup failed', {
         error: getErrorMessage(error),

@@ -1,8 +1,7 @@
+import type { Component } from 'solid-js';
 import { createEffect, Show } from 'solid-js';
 
 import { theme, toggleTheme } from '../stores/theme-store';
-
-import type { Component } from 'solid-js';
 
 /**
  * LocalStorage key for theme persistence

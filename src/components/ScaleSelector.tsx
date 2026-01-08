@@ -1,7 +1,6 @@
-import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
-
 import type { Component } from 'solid-js';
 import type { ConversionScale, VideoMetadata } from '../types/conversion-types';
+import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
 /**
  * Default number of columns for scale selector grid
