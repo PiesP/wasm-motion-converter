@@ -1,6 +1,14 @@
 /**
  * Service Worker for CDN Resource Caching
  *
+ * NOTE: This file is compiled to JavaScript during production build.
+ * In development mode, Service Worker registration is skipped.
+ *
+ * Build process:
+ * 1. vite.config.ts compiles this file using esbuild
+ * 2. Output: dist/service-worker.js (minified JavaScript)
+ * 3. Registration code is inlined in HTML <head>
+ *
  * Implements intelligent caching strategy for external dependencies:
  * - First visit: Network-first to populate cache
  * - Return visits: Cache-first with background revalidation

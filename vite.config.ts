@@ -12,12 +12,27 @@
  * @see CODE_STANDARDS.md Section 1 (File Organization)
  * @see AGENTS.md for FFmpeg SharedArrayBuffer requirements
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { build as esbuild } from 'esbuild';
 import { visualizer } from 'rollup-plugin-visualizer';
 import type { Plugin, PluginOption } from 'vite';
 import { defineConfig, loadEnv } from 'vite';
 import solid from 'vite-plugin-solid';
+
+/**
+ * Service Worker compilation plugin API interface
+ */
+interface SWCompilePluginAPI {
+  getCompiledSWRCode: () => string;
+}
+
+/**
+ * Service Worker compilation plugin with typed API
+ */
+interface SWCompilePlugin extends Plugin {
+  api: SWCompilePluginAPI;
+}
 
 /**
  * HTML transform plugin for injecting AdSense code conditionally
@@ -142,9 +157,229 @@ function importMapPlugin(): Plugin {
   };
 }
 
+/**
+ * Service Worker compilation plugin
+ *
+ * Compiles TypeScript service worker files to JavaScript during build.
+ * Uses esbuild for fast, reliable compilation with proper minification.
+ *
+ * Build flow:
+ * 1. buildStart: Compile .ts files to .js using esbuild
+ * 2. closeBundle: Rename temp files and clean up source .ts files
+ *
+ * @returns Vite plugin for service worker compilation
+ */
+function compileServiceWorkerPlugin(): SWCompilePlugin {
+  let isDev = false;
+  let compiledSWCode = '';
+  let compiledSWRCode = '';
+
+  return {
+    name: 'compile-service-worker',
+
+    configResolved(config) {
+      isDev = config.mode === 'development';
+    },
+
+    async buildStart() {
+      if (isDev) {
+        console.log('ℹ Service Worker compilation skipped in dev mode');
+        return;
+      }
+
+      console.log('ℹ Compiling Service Worker files...');
+
+      const projectRoot = process.cwd();
+      const publicDir = path.join(projectRoot, 'public');
+      const tempDir = path.join(projectRoot, '.vite-sw-temp');
+
+      try {
+        // Create temp directory outside dist to avoid Vite cleaning
+        if (!existsSync(tempDir)) {
+          mkdirSync(tempDir, { recursive: true });
+        }
+
+        // Compile service-worker.ts
+        await esbuild({
+          entryPoints: [path.join(publicDir, 'service-worker.ts')],
+          outfile: path.join(tempDir, 'service-worker.js'),
+          bundle: false,
+          format: 'esm',
+          target: 'es2020',
+          minify: true,
+          sourcemap: false,
+          platform: 'browser',
+          logLevel: 'warning',
+        });
+
+        // Compile sw-register.ts
+        await esbuild({
+          entryPoints: [path.join(publicDir, 'sw-register.ts')],
+          outfile: path.join(tempDir, 'sw-register.js'),
+          bundle: false,
+          format: 'esm',
+          target: 'es2020',
+          minify: true,
+          sourcemap: false,
+          platform: 'browser',
+          logLevel: 'warning',
+        });
+
+        // Read compiled code into memory
+        compiledSWCode = readFileSync(path.join(tempDir, 'service-worker.js'), 'utf-8');
+        compiledSWRCode = readFileSync(path.join(tempDir, 'sw-register.js'), 'utf-8');
+
+        console.log('✓ Service Worker files compiled successfully');
+      } catch (error) {
+        console.error('✗ Service Worker compilation failed:', error);
+        throw error;
+      }
+    },
+
+    writeBundle() {
+      if (isDev) return;
+
+      const distDir = path.join(process.cwd(), 'dist');
+
+      try {
+        // Write service-worker.js to dist
+        writeFileSync(path.join(distDir, 'service-worker.js'), compiledSWCode);
+        console.log('✓ Service Worker written to dist/service-worker.js');
+      } catch (error) {
+        console.error('✗ Failed to write service worker:', error);
+        throw error;
+      }
+    },
+
+    closeBundle() {
+      if (isDev) return;
+
+      const projectRoot = process.cwd();
+      const tempDir = path.join(projectRoot, '.vite-sw-temp');
+      const distDir = path.join(projectRoot, 'dist');
+
+      try {
+        // Clean up temp directory
+        if (existsSync(tempDir)) {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+
+        // Delete source TypeScript files from dist/ if they were copied
+        const swTS = path.join(distDir, 'service-worker.ts');
+        const swrTS = path.join(distDir, 'sw-register.ts');
+
+        if (existsSync(swTS)) {
+          unlinkSync(swTS);
+          console.log('✓ Removed service-worker.ts from dist/');
+        }
+
+        if (existsSync(swrTS)) {
+          unlinkSync(swrTS);
+          console.log('✓ Removed sw-register.ts from dist/');
+        }
+      } catch (error) {
+        console.warn('⚠ Service Worker cleanup encountered errors:', error);
+      }
+    },
+
+    // Provide compiled code to injection plugin
+    api: {
+      getCompiledSWRCode() {
+        return compiledSWRCode;
+      },
+    },
+  };
+}
+
+/**
+ * Service Worker registration injection plugin
+ *
+ * Inlines service worker registration code into HTML <head>.
+ * Avoids additional HTTP request and ensures early registration.
+ *
+ * Registration code:
+ * - Checks for Service Worker API support
+ * - Registers /service-worker.js with proper error handling
+ * - Handles update notifications
+ *
+ * @returns Vite plugin for SW registration injection
+ */
+function injectServiceWorkerPlugin(compilePlugin: SWCompilePlugin): Plugin {
+  let isDev = false;
+
+  return {
+    name: 'inject-service-worker-registration',
+
+    configResolved(config) {
+      isDev = config.mode === 'development';
+    },
+
+    transformIndexHtml(html) {
+      if (isDev) {
+        console.log('ℹ Service Worker registration skipped in dev mode');
+        return html;
+      }
+
+      let registrationCode = '';
+
+      // Get compiled code from compilation plugin API
+      const compiledCode = compilePlugin.api.getCompiledSWRCode();
+
+      if (compiledCode) {
+        registrationCode = `
+<script type="module">
+// Service Worker Registration (inlined for immediate execution)
+${compiledCode}
+
+// Auto-register on page load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    registerServiceWorker();
+  });
+} else {
+  registerServiceWorker();
+}
+</script>`;
+      } else {
+        // Fallback registration
+        registrationCode = `
+<script type="module">
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', async () => {
+    try {
+      const registration = await navigator.serviceWorker.register('/service-worker.js', {
+        scope: '/',
+        type: 'classic',
+      });
+      console.log('[SW] Registered successfully:', registration.scope);
+
+      setInterval(() => {
+        registration.update().catch(() => {});
+      }, 60 * 60 * 1000);
+    } catch (error) {
+      console.error('[SW] Registration failed:', error);
+    }
+  });
+} else {
+  console.warn('[SW] Service Workers not supported');
+}
+</script>`;
+      }
+
+      const transformed = html.replace('</head>', `  ${registrationCode}\n  </head>`);
+      console.log('✓ Service Worker registration injected into HTML');
+
+      return transformed;
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   // Load environment variables based on mode (development/production)
   const env = loadEnv(mode, process.cwd(), '');
+
+  // Create service worker compilation plugin (needed by injection plugin)
+  const swCompilePlugin = compileServiceWorkerPlugin();
 
   return {
     // Vite plugins configuration
@@ -153,6 +388,8 @@ export default defineConfig(({ mode }) => {
       htmlTransformPlugin(env), // Inject AdSense code conditionally
       generateAdsTxtPlugin(env), // Generate ads.txt for AdSense verification
       importMapPlugin(), // Generate import map for CDN dependencies (Phase 1)
+      swCompilePlugin, // Compile service worker TypeScript to JavaScript
+      injectServiceWorkerPlugin(swCompilePlugin), // Inline service worker registration in HTML
       visualizer({
         // Bundle analysis tool - generates dist/stats.html
         filename: 'dist/stats.html',
