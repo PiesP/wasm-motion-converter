@@ -743,9 +743,10 @@ class WebCodecsConversionService {
 
       // If auto capture under-extracts frames compared to duration-based target,
       // retry with deterministic seek capture to ensure enough images for smooth motion.
+      // Use actual FPS from decode result (not original targetFps) to avoid false validation failures
       const expectedFramesFromDuration = Math.min(
         maxFrames,
-        Math.max(1, Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, targetFps)))
+        Math.max(1, Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)))
       );
       const requiredFrames = Math.max(1, expectedFramesFromDuration - 1);
 
@@ -814,9 +815,10 @@ class WebCodecsConversionService {
         }
 
         // If we still under-captured, use deterministic seek capture as the final fallback.
+        // Use actual FPS from decode result to avoid false validation failures
         const retryExpectedFramesFromDuration = Math.min(
           maxFrames,
-          Math.max(1, Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, targetFps)))
+          Math.max(1, Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)))
         );
         const retryRequiredFrames = Math.max(1, retryExpectedFramesFromDuration - 1);
 
