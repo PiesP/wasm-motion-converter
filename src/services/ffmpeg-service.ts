@@ -2436,9 +2436,9 @@ class FFmpegService {
           '-preset',
           settings.preset,
           '-compression_level',
-          Math.max(3, Math.min(settings.compressionLevel, 4)).toString(), // Cap at 4 for speed
+          settings.compressionLevel.toString(), // Respect preset values (low=3, medium=4, high=6)
           '-method',
-          Math.min(settings.method, 4).toString(), // Limit method for faster encoding
+          settings.method.toString(), // Respect preset values (low=4, medium=5, high=6)
           '-loop',
           '0',
           outputFileName,

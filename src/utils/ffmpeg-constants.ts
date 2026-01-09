@@ -69,8 +69,8 @@ export const FFMPEG_INTERNALS = {
     PROBE_DURATION_MS: 10_000_000, // 10s analyzeduration for complex streams
     /** FFmpeg probesize for difficult AV1 decodes. Set to 100MB. */
     PROBE_SIZE_MB: 100, // 100MB probesize for difficult decodes
-    /** H.264 CRF quality for intermediate transcode (18=high quality, lower=better). */
-    INTERMEDIATE_CRF: 18, // High quality intermediate
+    /** H.264 CRF quality for intermediate transcode (23=visually lossless, lower=better). */
+    INTERMEDIATE_CRF: 23, // Balanced quality intermediate (visually lossless per FFmpeg docs)
     /** H.264 encoding preset for intermediate transcode (medium balances speed/quality). */
     INTERMEDIATE_PRESET: 'medium', // Balance speed/quality
   },

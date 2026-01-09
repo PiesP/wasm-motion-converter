@@ -37,9 +37,9 @@ export function getThreadingArgs(
     case 'scale-filter': {
       // Scale filters use multi-threading for 2-3x performance improvement
       if (enableMultiThreadScale) {
-        // Conservative: Use half of optimal threads for stability
-        // Can be increased to getOptimalThreadCount() after thorough testing
-        const threads = Math.max(2, Math.floor(getOptimalThreadCount() / 2));
+        // Use 75% of optimal threads for better performance while maintaining stability
+        // Increased from 50% after validation of stability across different hardware
+        const threads = Math.max(2, Math.floor(getOptimalThreadCount() * 0.75));
         return ['-threads', threads.toString(), '-filter_threads', threads.toString()];
       }
       // Fallback: Single-threaded (only if explicitly disabled)
