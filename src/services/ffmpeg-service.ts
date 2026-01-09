@@ -2057,7 +2057,13 @@ class FFmpegService {
             `Detected ${transcodeCheck.codec} codec, attempting retry strategies`
           );
 
-          // TIER 2: Retry with AV1-tuned decoder flags
+          // Check feature flag to skip decoder retry (default: false for safety)
+          const skipDecoderRetry =
+            typeof window !== 'undefined' &&
+            (window as Window & { __SKIP_AV1_DECODER_RETRY__?: boolean })
+              .__SKIP_AV1_DECODER_RETRY__ === true;
+
+          // TIER 2: Retry with AV1-tuned decoder flags (can be skipped via feature flag)
           await this.safeDelete(outputFileName);
           await this.safeDelete(paletteFileName);
           this.emitProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
@@ -2078,11 +2084,19 @@ class FFmpegService {
             outputFileName,
           ];
 
-          const retrySuccess = await this.retryWithAV1DecoderTuning(
-            inputFileName,
-            outputFileName,
-            baseCmd
-          );
+          let retrySuccess = false;
+          if (!skipDecoderRetry) {
+            retrySuccess = await this.retryWithAV1DecoderTuning(
+              inputFileName,
+              outputFileName,
+              baseCmd
+            );
+          } else {
+            logger.info(
+              'conversion',
+              `Skipping decoder retry (feature flag enabled), proceeding directly to transcode`
+            );
+          }
 
           if (retrySuccess) {
             const retryValidation = await this.validateOutputFile(outputFileName, 'gif');
@@ -2527,7 +2541,13 @@ class FFmpegService {
             `Detected ${transcodeCheck.codec} codec, attempting retry strategies`
           );
 
-          // TIER 2: Retry with AV1-tuned decoder flags
+          // Check feature flag to skip decoder retry (default: false for safety)
+          const skipDecoderRetry =
+            typeof window !== 'undefined' &&
+            (window as Window & { __SKIP_AV1_DECODER_RETRY__?: boolean })
+              .__SKIP_AV1_DECODER_RETRY__ === true;
+
+          // TIER 2: Retry with AV1-tuned decoder flags (can be skipped via feature flag)
           await this.safeDelete(outputFileName);
           this.emitProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START);
 
@@ -2551,7 +2571,7 @@ class FFmpegService {
             '-preset',
             settings.preset,
             '-compression_level',
-            Math.max(3, Math.min(settings.compressionLevel, 4)).toString(),
+            settings.compressionLevel.toString(), // Respect preset values (consistency with Phase 1)
             '-method',
             settings.method.toString(),
             '-qmin',
@@ -2563,11 +2583,19 @@ class FFmpegService {
             outputFileName,
           ];
 
-          const retrySuccess = await this.retryWithAV1DecoderTuning(
-            inputFileName,
-            outputFileName,
-            baseCmd
-          );
+          let retrySuccess = false;
+          if (!skipDecoderRetry) {
+            retrySuccess = await this.retryWithAV1DecoderTuning(
+              inputFileName,
+              outputFileName,
+              baseCmd
+            );
+          } else {
+            logger.info(
+              'conversion',
+              `Skipping decoder retry (feature flag enabled), proceeding directly to transcode`
+            );
+          }
 
           if (retrySuccess) {
             const retryValidation = await this.validateOutputFile(outputFileName, 'webp');
