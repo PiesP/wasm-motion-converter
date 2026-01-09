@@ -1,15 +1,15 @@
 /**
  * Calculate optimal thread count for FFmpeg operations.
  * Uses 75% of available CPU cores for better performance on modern CPUs.
- * Capped at 8 threads to prevent excessive resource usage.
+ * Capped at 12 threads to prevent excessive resource usage.
  *
- * @returns Optimal number of threads (2-8)
+ * @returns Optimal number of threads (2-12)
  */
 export function getOptimalThreadCount(): number {
   const cores = navigator.hardwareConcurrency || 2;
   // Use 75% of available cores for better performance on modern CPUs
-  // Capped at 8 to prevent excessive resource usage
-  return Math.min(Math.floor(cores * 0.75), 8);
+  // Capped at 12 to prevent excessive resource usage
+  return Math.min(Math.floor(cores * 0.75), 12);
 }
 
 /**

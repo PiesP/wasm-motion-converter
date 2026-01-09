@@ -19,8 +19,9 @@ const CPU_UTILIZATION_RATIO = 0.75;
  * Maximum worker pool size
  *
  * Cap pool size to prevent excessive resource consumption even on high-core systems.
+ * Increased to 12 (from 8) to better utilize modern high-core CPUs (16-24+ cores).
  */
-const MAX_POOL_SIZE = 8;
+const MAX_POOL_SIZE = 12;
 
 /**
  * Memory allocation per GIF encoder worker (bytes)
@@ -49,7 +50,7 @@ const WORKER_POLL_INTERVAL = 50;
  * @param format - Encoding format ('gif' or 'webp')
  * @param hardwareConcurrency - Number of logical CPU cores
  * @param availableMemory - Available memory in bytes
- * @returns Optimal number of workers (capped at 8)
+ * @returns Optimal number of workers (capped at 12)
  */
 export function getOptimalPoolSize(
   format: 'gif' | 'webp',

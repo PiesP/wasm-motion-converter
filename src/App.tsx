@@ -45,6 +45,7 @@ import {
   videoPreviewUrl,
 } from './stores/conversion-store';
 import { debounce } from './utils/debounce';
+import { isHardwareCacheValid } from './utils/hardware-profile';
 import { logger } from './utils/logger';
 import { isMemoryCritical } from './utils/memory-monitor';
 
@@ -122,6 +123,11 @@ const App: Component = () => {
   onMount(() => {
     const isSupported = typeof SharedArrayBuffer !== 'undefined' && crossOriginIsolated === true;
     setEnvironmentSupported(isSupported);
+
+    // Validate hardware profile and invalidate caches if hardware changed
+    if (!isHardwareCacheValid()) {
+      logger.info('general', 'Hardware profile changed or first run, cache invalidated');
+    }
 
     const connection = (navigator as Navigator & { connection?: { effectiveType?: string } })
       .connection;

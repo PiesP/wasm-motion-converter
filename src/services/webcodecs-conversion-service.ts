@@ -10,8 +10,17 @@ import type { EncoderWorkerAPI } from '../types/worker-types';
 import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
 import { getErrorMessage } from '../utils/error-utils';
 import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
+import { isHardwareCacheValid } from '../utils/hardware-profile';
 import { logger } from '../utils/logger';
 import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
+import {
+  cacheCaptureMode,
+  cacheVFSBatchSize,
+  cacheWebPChunkSize,
+  getCachedCaptureMode,
+  getCachedVFSBatchSize,
+  getCachedWebPChunkSize,
+} from '../utils/session-cache';
 import { getOptimalFPS } from '../utils/quality-optimizer';
 import { muxAnimatedWebP } from '../utils/webp-muxer';
 import { ffmpegService } from './ffmpeg-service';
@@ -689,14 +698,29 @@ class WebCodecsConversionService {
         });
       };
 
+      // Check cache for successful capture mode first
+      const cachedMode = getCachedCaptureMode(metadata?.codec ?? 'unknown');
+
       // For AV1, skip track-based auto mode when rVFC is available.
       // TrackProcessor capture can severely under-capture on some browsers for AV1,
       // costing a full playback duration before we fall back to seek.
-      const initialCaptureMode: WebCodecsCaptureMode = shouldSkipAv1FrameCallbackProbe
-        ? 'seek'
-        : isAv1 && supportsFrameCallback
-          ? 'frame-callback'
-          : 'auto';
+      let initialCaptureMode: WebCodecsCaptureMode;
+
+      if (cachedMode && isHardwareCacheValid()) {
+        // Use cached successful mode
+        initialCaptureMode = cachedMode;
+        logger.info('conversion', 'Using cached successful capture mode for codec', {
+          codec: metadata?.codec ?? 'unknown',
+          cachedMode,
+        });
+      } else {
+        // Fall back to existing logic
+        initialCaptureMode = shouldSkipAv1FrameCallbackProbe
+          ? 'seek'
+          : isAv1 && supportsFrameCallback
+            ? 'frame-callback'
+            : 'auto';
+      }
 
       if (shouldSkipAv1FrameCallbackProbe) {
         logger.info(
@@ -842,6 +866,19 @@ class WebCodecsConversionService {
         }
       }
 
+      // Cache successful capture mode for future conversions
+      if (decodeResult.frameCount >= requiredFrames) {
+        const modeUsed = decodeResult.captureModeUsed ?? initialCaptureMode;
+        // Only cache concrete modes (not 'auto')
+        if (modeUsed !== 'auto') {
+          cacheCaptureMode(metadata?.codec ?? 'unknown', modeUsed);
+          logger.info('conversion', 'Cached successful capture mode for future conversions', {
+            codec: metadata?.codec ?? 'unknown',
+            mode: modeUsed,
+          });
+        }
+      }
+
       // Batch write frames to VFS in parallel for 3-5x speedup
       const orderedFrames = framesByIndex.filter(
         (frame): frame is { name: string; data: Uint8Array } => Boolean(frame)
@@ -851,11 +888,17 @@ class WebCodecsConversionService {
         // Dynamic batch size based on hardware (similar to frame encoding at line 1467)
         // VFS writes are I/O bound and can handle larger batches than CPU-bound encoding
         const hwConcurrency = navigator.hardwareConcurrency || 4;
-        const WRITE_BATCH_SIZE = Math.min(100, Math.max(25, hwConcurrency * 6));
+        const cachedBatchSize = getCachedVFSBatchSize();
+        const WRITE_BATCH_SIZE =
+          cachedBatchSize && isHardwareCacheValid()
+            ? cachedBatchSize
+            : Math.min(100, Math.max(25, hwConcurrency * 6));
+
         logger.info('conversion', 'Batch writing frames to VFS', {
           totalFrames: orderedFrames.length,
           batchSize: WRITE_BATCH_SIZE,
           hwConcurrency,
+          cached: !!cachedBatchSize,
         });
 
         for (let i = 0; i < orderedFrames.length; i += WRITE_BATCH_SIZE) {
@@ -876,6 +919,14 @@ class WebCodecsConversionService {
         logger.info('conversion', 'VFS write complete', {
           framesWritten: frameFiles.length,
         });
+
+        // Cache successful batch size for future conversions
+        if (!cachedBatchSize) {
+          cacheVFSBatchSize(WRITE_BATCH_SIZE);
+          logger.info('conversion', 'Cached VFS batch size for future conversions', {
+            batchSize: WRITE_BATCH_SIZE,
+          });
+        }
       }
 
       const elapsed = Date.now() - startTime;
@@ -1470,13 +1521,18 @@ class WebCodecsConversionService {
         if (webpCapturedFrames.length > 0 && webpQualityRatio !== null) {
           // Dynamic chunk size based on CPU cores for better parallelization
           const hwConcurrency = navigator.hardwareConcurrency || 4;
-          const CHUNK_SIZE = Math.min(20, Math.max(10, hwConcurrency * 2));
+          const cachedChunkSize = getCachedWebPChunkSize();
+          const CHUNK_SIZE =
+            cachedChunkSize && isHardwareCacheValid()
+              ? cachedChunkSize
+              : Math.min(20, Math.max(10, hwConcurrency * 2));
           const totalFrames = webpCapturedFrames.length;
 
           logger.info('conversion', 'Parallel WebP frame encoding', {
             totalFrames,
             chunkSize: CHUNK_SIZE,
             estimatedBatches: Math.ceil(totalFrames / CHUNK_SIZE),
+            cached: !!cachedChunkSize,
           });
 
           // Create encoder function for parallel execution
@@ -1500,6 +1556,14 @@ class WebCodecsConversionService {
           logger.info('conversion', 'Parallel encoding complete', {
             encodedFrames: webpEncodedFrames.length,
           });
+
+          // Cache successful chunk size for future conversions
+          if (!cachedChunkSize && webpEncodedFrames.length > 0) {
+            cacheWebPChunkSize(CHUNK_SIZE);
+            logger.info('conversion', 'Cached WebP chunk size for future conversions', {
+              chunkSize: CHUNK_SIZE,
+            });
+          }
         }
 
         let fallbackReason = 'WebP muxer output failed';

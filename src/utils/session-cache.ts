@@ -1,0 +1,115 @@
+/**
+ * Session cache utilities for performance optimization caching
+ *
+ * Provides type-safe wrappers around sessionStorage for caching
+ * conversion strategy decisions across conversions within a session.
+ */
+
+// ============================================================================
+// Storage Helpers (기존 패턴 확장)
+// ============================================================================
+
+export function readSessionNumber(key: string): number {
+  try {
+    if (typeof sessionStorage === 'undefined') {
+      return 0;
+    }
+    const raw = sessionStorage.getItem(key);
+    if (!raw) {
+      return 0;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0; // Fallback for privacy mode
+  }
+}
+
+export function writeSessionNumber(key: string, value: number): void {
+  try {
+    if (typeof sessionStorage === 'undefined') {
+      return;
+    }
+    sessionStorage.setItem(key, String(value));
+  } catch {
+    // Ignore storage failures (privacy modes)
+  }
+}
+
+export function readSessionString(key: string): string | null {
+  try {
+    if (typeof sessionStorage === 'undefined') {
+      return null;
+    }
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function writeSessionString(key: string, value: string): void {
+  try {
+    if (typeof sessionStorage === 'undefined') {
+      return;
+    }
+    sessionStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures
+  }
+}
+
+// ============================================================================
+// Capture Mode Caching
+// ============================================================================
+
+export type CaptureMode = 'seek' | 'frame-callback' | 'track';
+
+/**
+ * Get cached successful capture mode for a codec
+ */
+export function getCachedCaptureMode(codec: string): CaptureMode | null {
+  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const key = `dropconvert:capture:success:${normalizedCodec}`;
+  const value = readSessionString(key);
+
+  if (value === 'seek' || value === 'frame-callback' || value === 'track') {
+    return value;
+  }
+
+  return null;
+}
+
+/**
+ * Cache successful capture mode for a codec
+ */
+export function cacheCaptureMode(codec: string, mode: CaptureMode): void {
+  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const key = `dropconvert:capture:success:${normalizedCodec}`;
+  writeSessionString(key, mode);
+}
+
+// ============================================================================
+// VFS Batch Size Caching
+// ============================================================================
+
+export function getCachedVFSBatchSize(): number | null {
+  const value = readSessionNumber('dropconvert:vfs:batchSize');
+  return value > 0 ? value : null;
+}
+
+export function cacheVFSBatchSize(batchSize: number): void {
+  writeSessionNumber('dropconvert:vfs:batchSize', batchSize);
+}
+
+// ============================================================================
+// WebP Chunk Size Caching
+// ============================================================================
+
+export function getCachedWebPChunkSize(): number | null {
+  const value = readSessionNumber('dropconvert:webp:chunkSize');
+  return value > 0 ? value : null;
+}
+
+export function cacheWebPChunkSize(chunkSize: number): void {
+  writeSessionNumber('dropconvert:webp:chunkSize', chunkSize);
+}
