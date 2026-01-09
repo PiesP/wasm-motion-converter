@@ -848,10 +848,14 @@ class WebCodecsConversionService {
       );
 
       if (orderedFrames.length > 0) {
-        const WRITE_BATCH_SIZE = 50; // Write 50 frames per batch
+        // Dynamic batch size based on hardware (similar to frame encoding at line 1467)
+        // VFS writes are I/O bound and can handle larger batches than CPU-bound encoding
+        const hwConcurrency = navigator.hardwareConcurrency || 4;
+        const WRITE_BATCH_SIZE = Math.min(100, Math.max(25, hwConcurrency * 6));
         logger.info('conversion', 'Batch writing frames to VFS', {
           totalFrames: orderedFrames.length,
           batchSize: WRITE_BATCH_SIZE,
+          hwConcurrency,
         });
 
         for (let i = 0; i < orderedFrames.length; i += WRITE_BATCH_SIZE) {

@@ -72,8 +72,9 @@ function estimateMemoryUsage(
   resolution: number
 ): MemoryEstimate {
   // Heuristic: estimate memory usage based on video characteristics
-  // Typical conversion uses 5-10x the input file size in memory
-  const estimatedMemoryUsage = videoSize * 7;
+  // WebP conversions typically use 5-7x the input file size in memory
+  // Reduced from 7x to 5x after profiling showed more realistic usage patterns
+  const estimatedMemoryUsage = videoSize * 5;
 
   // Assume a conservative heap limit of 4GB for most modern browsers
   const assumedHeapLimit = 4 * 1024 * 1024 * 1024;
