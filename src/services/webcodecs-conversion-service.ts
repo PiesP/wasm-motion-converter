@@ -867,7 +867,13 @@ class WebCodecsConversionService {
       }
 
       // Cache successful capture mode for future conversions
-      if (decodeResult.frameCount >= requiredFrames) {
+      // Recalculate required frames based on actual FPS used (not original targetFps)
+      const actualRequiredFrames = Math.max(
+        1,
+        Math.min(maxFrames, Math.ceil(decodeResult.duration * decodeResult.fps)) - 1
+      );
+
+      if (decodeResult.frameCount >= actualRequiredFrames) {
         const modeUsed = decodeResult.captureModeUsed ?? initialCaptureMode;
         // Only cache concrete modes (not 'auto')
         if (modeUsed !== 'auto') {
@@ -875,6 +881,8 @@ class WebCodecsConversionService {
           logger.info('conversion', 'Cached successful capture mode for future conversions', {
             codec: metadata?.codec ?? 'unknown',
             mode: modeUsed,
+            actualRequiredFrames,
+            capturedFrames: decodeResult.frameCount,
           });
         }
       }
