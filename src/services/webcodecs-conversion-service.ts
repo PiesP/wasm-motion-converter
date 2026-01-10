@@ -15,9 +15,11 @@ import { logger } from '../utils/logger';
 import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
 import {
   cacheCaptureMode,
+  cacheCapturePerformance,
   cacheVFSBatchSize,
   cacheWebPChunkSize,
   getCachedCaptureMode,
+  getCachedCapturePerformance,
   getCachedVFSBatchSize,
   getCachedWebPChunkSize,
 } from '../utils/session-cache';
@@ -672,6 +674,7 @@ class WebCodecsConversionService {
           maxFrames,
           captureMode,
           codec: metadata?.codec,
+          quality: options.quality,
           onFrame: async (frame) => {
             // Collect frames for batch VFS write (3-5x faster than sequential)
             if (frame.data && frame.data.byteLength > 0) {
@@ -698,7 +701,9 @@ class WebCodecsConversionService {
         });
       };
 
-      // Check cache for successful capture mode first
+      // Check cache for performance metrics first (preferred over simple success cache)
+      const cachedPerf = getCachedCapturePerformance(metadata?.codec ?? 'unknown');
+      // Check cache for successful capture mode (fallback)
       const cachedMode = getCachedCaptureMode(metadata?.codec ?? 'unknown');
 
       // For AV1, skip track-based auto mode when rVFC is available.
@@ -706,8 +711,16 @@ class WebCodecsConversionService {
       // costing a full playback duration before we fall back to seek.
       let initialCaptureMode: WebCodecsCaptureMode;
 
-      if (cachedMode && isHardwareCacheValid()) {
-        // Use cached successful mode
+      if (cachedPerf && isHardwareCacheValid()) {
+        // Use cached fastest mode (performance-based selection)
+        initialCaptureMode = cachedPerf.mode;
+        logger.info('conversion', 'Using cached fastest capture mode for codec', {
+          codec: metadata?.codec ?? 'unknown',
+          mode: cachedPerf.mode,
+          avgMsPerFrame: cachedPerf.avgMsPerFrame.toFixed(2),
+        });
+      } else if (cachedMode && isHardwareCacheValid()) {
+        // Use cached successful mode (fallback to simpler cache)
         initialCaptureMode = cachedMode;
         logger.info('conversion', 'Using cached successful capture mode for codec', {
           codec: metadata?.codec ?? 'unknown',
@@ -739,7 +752,10 @@ class WebCodecsConversionService {
           ? Math.min(targetFps, getAv1SeekFpsCap(metadata?.duration))
           : targetFps;
 
+      // Track decode timing for performance caching
+      const perfStart = Date.now();
       let decodeResult = await runDecode(initialCaptureMode, initialSeekTargetFps);
+      const perfElapsed = Date.now() - perfStart;
 
       // If auto capture under-extracts frames compared to duration-based target,
       // retry with deterministic seek capture to ensure enough images for smooth motion.
@@ -823,27 +839,66 @@ class WebCodecsConversionService {
         const retryRequiredFrames = Math.max(1, retryExpectedFramesFromDuration - 1);
 
         if (decodeResult.frameCount < retryRequiredFrames) {
-          // Clear any partial results before the final retry.
-          framesByIndex.length = 0;
-          // Seek capture for AV1 can be extremely slow (often ~1s/frame on some devices).
-          // To reduce total conversion time while preserving correct playback duration
-          // (via duration-aligned timestamps), cap seek sampling FPS more aggressively
-          // for longer clips. For medium/low quality we prefer speed over maximum smoothness.
-          const av1SeekFpsCap = getAv1SeekFpsCap(decodeResult.duration);
-          const seekTargetFps = isAv1 ? Math.min(targetFps, av1SeekFpsCap) : targetFps;
+          // If initial mode was frame-callback (rVFC) and under-captured, probe track before slow seek
+          const modeUsed = decodeResult.captureModeUsed ?? initialCaptureMode;
+          const supportsTrackProcessor = supportsFrameCallback; // Track is typically available if rVFC is
 
-          if (seekTargetFps !== targetFps) {
-            logger.info('conversion', 'Capping FPS for seek fallback to reduce conversion time', {
-              codec: metadata?.codec ?? 'unknown',
-              requestedFps: targetFps,
-              seekFps: seekTargetFps,
-              seekFpsCap: isAv1 ? av1SeekFpsCap : null,
-              durationSeconds: decodeResult.duration,
-              reason: 'seek fallback for WebCodecs-only codec',
-            });
+          if (supportsTrackProcessor && modeUsed === 'frame-callback') {
+            try {
+              logger.info(
+                'conversion',
+                'Probing track processor before seek fallback (frame-callback under-captured)',
+                {
+                  capturedFrames: decodeResult.frameCount,
+                  requiredFrames: retryRequiredFrames,
+                  previousMode: modeUsed,
+                }
+              );
+
+              framesByIndex.length = 0;
+              decodeResult = await runDecode('track');
+
+              if (decodeResult.frameCount >= retryRequiredFrames) {
+                logger.info(
+                  'conversion',
+                  'Track processor probe succeeded, skipping seek fallback',
+                  {
+                    frameCount: decodeResult.frameCount,
+                  }
+                );
+              }
+            } catch (trackError) {
+              logger.warn('conversion', 'Track probe failed, falling back to seek', {
+                error: getErrorMessage(trackError),
+              });
+              framesByIndex.length = 0;
+            }
           }
 
-          decodeResult = await runDecode('seek', seekTargetFps);
+          // If still under-captured, fall back to seek
+          if (decodeResult.frameCount < retryRequiredFrames) {
+            // Clear any partial results before the final retry.
+            framesByIndex.length = 0;
+            // Seek capture for AV1 can be extremely slow (often ~1s/frame on some devices).
+            // To reduce total conversion time while preserving correct playback duration
+            // (via duration-aligned timestamps), cap seek sampling FPS more aggressively
+            // for longer clips. For medium/low quality we prefer speed over maximum smoothness.
+            const av1SeekFpsCap = getAv1SeekFpsCap(decodeResult.duration);
+            const seekTargetFps = isAv1 ? Math.min(targetFps, av1SeekFpsCap) : targetFps;
+
+            if (seekTargetFps !== targetFps) {
+              logger.info('conversion', 'Capping FPS for seek fallback to reduce conversion time', {
+                codec: metadata?.codec ?? 'unknown',
+                requestedFps: targetFps,
+                seekFps: seekTargetFps,
+                seekFpsCap: isAv1 ? av1SeekFpsCap : null,
+                durationSeconds: decodeResult.duration,
+                reason: 'seek fallback for WebCodecs-only codec',
+              });
+            }
+
+            decodeResult = await runDecode('seek', seekTargetFps);
+          }
         }
 
         const finalExpectedFramesFromDuration = Math.min(
@@ -880,12 +935,25 @@ class WebCodecsConversionService {
         // Only cache concrete modes (not 'auto')
         if (modeUsed !== 'auto') {
           cacheCaptureMode(metadata?.codec ?? 'unknown', modeUsed);
-          logger.info('conversion', 'Cached successful capture mode for future conversions', {
-            codec: metadata?.codec ?? 'unknown',
-            mode: modeUsed,
-            actualRequiredFrames,
-            capturedFrames: decodeResult.frameCount,
-          });
+          // Also cache performance metrics for faster mode selection on repeat conversions
+          cacheCapturePerformance(
+            metadata?.codec ?? 'unknown',
+            modeUsed,
+            perfElapsed,
+            decodeResult.frameCount
+          );
+          logger.info(
+            'conversion',
+            'Cached successful capture mode and performance for future conversions',
+            {
+              codec: metadata?.codec ?? 'unknown',
+              mode: modeUsed,
+              actualRequiredFrames,
+              capturedFrames: decodeResult.frameCount,
+              elapsedMs: perfElapsed,
+              avgMsPerFrame: (perfElapsed / decodeResult.frameCount).toFixed(2),
+            }
+          );
         }
       }
 
@@ -895,14 +963,61 @@ class WebCodecsConversionService {
       );
 
       if (orderedFrames.length > 0) {
-        // Dynamic batch size based on hardware (similar to frame encoding at line 1467)
+        // Dynamic batch size based on hardware and frame dimensions
         // VFS writes are I/O bound and can handle larger batches than CPU-bound encoding
         const hwConcurrency = navigator.hardwareConcurrency || 4;
         const cachedBatchSize = getCachedVFSBatchSize();
+
+        // Calculate memory-aware batch size based on frame dimensions
+        const calculateOptimalVFSBatchSize = (params: {
+          frameWidth: number;
+          frameHeight: number;
+          hwConcurrency: number;
+          quality: 'low' | 'medium' | 'high';
+        }): number => {
+          const { frameWidth, frameHeight, hwConcurrency, quality } = params;
+
+          // Estimate bytes per frame (compressed)
+          // JPEG (low/medium quality): ~0.8 bytes/pixel, PNG (high quality): ~3.5 bytes/pixel
+          const pixelCount = frameWidth * frameHeight;
+          const useJpeg = quality === 'low' || quality === 'medium';
+          const bytesPerPixel = useJpeg ? 0.8 : 3.5;
+          const estimatedFrameSize = pixelCount * bytesPerPixel;
+
+          // Target batch memory budget: 100MB for VFS writes
+          const BATCH_MEMORY_BUDGET = 100 * 1024 * 1024;
+          const framesPerBudget = Math.floor(BATCH_MEMORY_BUDGET / estimatedFrameSize);
+
+          // Calculate final batch size
+          const baseBatchSize = hwConcurrency * 6;
+          const memoryAwareBatchSize = Math.max(
+            10, // Minimum 10 frames per batch
+            Math.min(
+              100, // Maximum 100 frames per batch
+              Math.min(framesPerBudget, baseBatchSize)
+            )
+          );
+
+          logger.debug('conversion', 'Calculated memory-aware VFS batch size', {
+            frameSize: `${frameWidth}x${frameHeight}`,
+            estimatedFrameSizeMB: (estimatedFrameSize / 1024 / 1024).toFixed(2),
+            framesPerBudget,
+            baseBatchSize,
+            finalBatchSize: memoryAwareBatchSize,
+          });
+
+          return memoryAwareBatchSize;
+        };
+
         const WRITE_BATCH_SIZE =
           cachedBatchSize && isHardwareCacheValid()
             ? cachedBatchSize
-            : Math.min(100, Math.max(25, hwConcurrency * 6));
+            : calculateOptimalVFSBatchSize({
+                frameWidth: decodeResult.width,
+                frameHeight: decodeResult.height,
+                hwConcurrency,
+                quality: options.quality,
+              });
 
         logger.info('conversion', 'Batch writing frames to VFS', {
           totalFrames: orderedFrames.length,
@@ -1246,6 +1361,7 @@ class WebCodecsConversionService {
               format === 'webp' ? this.getMaxWebPFrames(targetFps, metadata?.duration) : undefined,
             captureMode,
             codec: metadata?.codec,
+            quality: options.quality,
             shouldCancel: () => ffmpegService.isCancellationRequested(),
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
@@ -1398,6 +1514,7 @@ class WebCodecsConversionService {
             frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
             captureMode: 'auto',
             codec: metadata?.codec,
+            quality: options.quality,
             shouldCancel: () => ffmpegService.isCancellationRequested(),
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {

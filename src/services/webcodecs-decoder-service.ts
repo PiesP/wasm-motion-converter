@@ -79,6 +79,8 @@ export interface WebCodecsDecodeOptions {
   captureMode?: WebCodecsCaptureMode;
   /** Optional video codec for timeout optimization (e.g., 'av01', 'vp9', 'avc1') */
   codec?: string;
+  /** Conversion quality level (low, medium, high) - determines encoding format */
+  quality?: 'low' | 'medium' | 'high';
   /** Callback invoked for each extracted frame */
   onFrame: (frame: WebCodecsFramePayload) => Promise<void>;
   /** Optional progress callback */
@@ -260,6 +262,7 @@ export class WebCodecsDecoderService {
       maxFrames,
       captureMode = 'auto',
       codec,
+      quality,
       onFrame,
       onProgress,
       shouldCancel,
@@ -437,11 +440,42 @@ export class WebCodecsDecoderService {
           }
           consecutiveEmptyFrames = 0;
         } else {
-          const blob = await canvasToBlob(
-            captureContext.canvas,
-            frameFormat === 'png' ? 'image/png' : 'image/jpeg',
-            frameFormat === 'jpeg' ? frameQuality : undefined
-          );
+          // Determine optimal encoding format based on quality preset
+          // Use JPEG for low/medium quality (3-5x faster encoding), PNG for high quality
+          const shouldUseJpeg =
+            frameFormat === 'jpeg' ||
+            (frameFormat === 'png' && quality && (quality === 'low' || quality === 'medium'));
+
+          const encodeMimeType = shouldUseJpeg ? 'image/jpeg' : 'image/png';
+          const encodeQuality = shouldUseJpeg
+            ? quality === 'low'
+              ? 0.75 // Low quality: 75% JPEG
+              : quality === 'medium'
+                ? 0.85 // Medium quality: 85% JPEG
+                : frameQuality // Fallback to provided frameQuality if available
+            : undefined; // PNG: no quality parameter (lossless)
+
+          // Prefer OffscreenCanvas.convertToBlob() when available (non-blocking, faster)
+          // Fall back to HTMLCanvasElement.toBlob() for broader compatibility
+          let blob: Blob;
+          if ('convertToBlob' in captureContext.canvas) {
+            try {
+              blob = await (captureContext.canvas as OffscreenCanvas).convertToBlob({
+                type: encodeMimeType,
+                quality: encodeQuality,
+              });
+            } catch (offscreenError) {
+              // Fall back to canvasToBlob if OffscreenCanvas fails
+              logger.debug('conversion', 'OffscreenCanvas.convertToBlob() failed, using fallback', {
+                error: getErrorMessage(offscreenError),
+              });
+              blob = await canvasToBlob(captureContext.canvas, encodeMimeType, encodeQuality);
+            }
+          } else {
+            // Fallback to HTMLCanvasElement.toBlob()
+            blob = await canvasToBlob(captureContext.canvas, encodeMimeType, encodeQuality);
+          }
+
           if (blob.size === 0) {
             consecutiveEmptyFrames += 1;
             logger.warn('conversion', `WebCodecs produced empty frame ${index}, skipping`, {
@@ -1176,21 +1210,66 @@ export class WebCodecsDecoderService {
     }
 
     // Standard multi-frame extraction
-    const frameInterval = 1 / targetFps;
-    const totalFrames =
+    let frameInterval = 1 / targetFps;
+    let totalFrames =
       maxFrames && maxFrames > 0
         ? Math.max(1, Math.min(maxFrames, Math.ceil(duration * targetFps)))
         : Math.max(1, Math.ceil(duration * targetFps));
     const epsilon = 0.001;
+
+    // Dynamic FPS downshift: measure seek performance and adjust if too slow
+    const {
+      TIMING_SAMPLE_SIZE,
+      SLOW_SEEK_THRESHOLD_MS,
+      FPS_DOWNSHIFT_FACTOR,
+      MIN_FPS_AFTER_DOWNSHIFT,
+    } = FFMPEG_INTERNALS.WEBCODECS.SEEK_PERFORMANCE;
+
+    const seekTimings: number[] = [];
+    let adjustedFps = targetFps;
 
     for (let index = 0; index < totalFrames; index += 1) {
       if (shouldCancel?.()) {
         throw new Error('Conversion cancelled by user');
       }
 
+      // Measure seek performance during warmup phase
+      const seekStart = Date.now();
       const targetTime = Math.min(duration - epsilon, index * frameInterval);
       await this.seekTo(video, targetTime, seekTimeout);
-      await captureFrame(index, targetTime);
+      const seekElapsed = Date.now() - seekStart;
+
+      // Collect timing data during warmup phase
+      if (index < TIMING_SAMPLE_SIZE) {
+        seekTimings.push(seekElapsed);
+
+        // After warmup, check if FPS downshift is needed
+        if (index === TIMING_SAMPLE_SIZE - 1) {
+          const avgSeekTime = seekTimings.reduce((a, b) => a + b) / seekTimings.length;
+
+          if (avgSeekTime > SLOW_SEEK_THRESHOLD_MS) {
+            // Slow seeks detected, reduce FPS
+            adjustedFps = Math.max(
+              MIN_FPS_AFTER_DOWNSHIFT,
+              Math.ceil(targetFps * FPS_DOWNSHIFT_FACTOR)
+            );
+            frameInterval = 1 / adjustedFps;
+            const newTotalFrames = Math.ceil(duration * adjustedFps);
+
+            logger.warn('conversion', 'Slow seek detected, reducing FPS', {
+              avgSeekTimeMs: avgSeekTime.toFixed(1),
+              originalFps: targetFps,
+              adjustedFps,
+              originalFrames: totalFrames,
+              newFrames: newTotalFrames,
+            });
+
+            totalFrames = newTotalFrames;
+          }
+        }
+      }
+
+      await captureFrame(index, Math.min(duration - epsilon, index * frameInterval));
     }
 
     logger.info(

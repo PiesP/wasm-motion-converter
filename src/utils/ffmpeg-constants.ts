@@ -155,6 +155,17 @@ export const FFMPEG_INTERNALS = {
     FRAME_STALL_TIMEOUT_MS: 7000,
     /** Maximum total time for WebCodecs video decode operation (fail-fast if stalling). Set to 60 seconds. */
     MAX_TOTAL_DECODE_MS: 60000, // 60s max for WebCodecs decode (fail-fast if stalling)
+    /** Dynamic FPS downshift configuration (for slow seeks on codecs like AV1/HEVC) */
+    SEEK_PERFORMANCE: {
+      /** Number of seeks to sample for measuring average seek time. Set to 10. */
+      TIMING_SAMPLE_SIZE: 10,
+      /** Threshold in milliseconds above which seek is considered "slow". Set to 350ms. */
+      SLOW_SEEK_THRESHOLD_MS: 350,
+      /** FPS reduction factor when slow seeks detected (e.g., 0.6 = 15fps → 9fps). Set to 0.6. */
+      FPS_DOWNSHIFT_FACTOR: 0.6,
+      /** Minimum FPS after downshift to ensure output quality. Set to 6 FPS. */
+      MIN_FPS_AFTER_DOWNSHIFT: 6,
+    },
   },
 } as const;
 
