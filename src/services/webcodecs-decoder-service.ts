@@ -8,6 +8,7 @@ import { logger } from '../utils/logger';
 
 import { canvasToBlob, createCanvas } from './webcodecs/decoder/canvas';
 import { waitForEvent } from './webcodecs/decoder/wait-for-event';
+import { canUseDemuxer, createDemuxer, detectContainer } from './webcodecs/demuxer/demuxer-factory';
 import {
   getWebCodecsSupportStatus,
   isWebCodecsCodecSupported,
@@ -30,12 +31,13 @@ export type WebCodecsProgressCallback = (current: number, total: number) => void
 
 /**
  * Capture mode for WebCodecs frame extraction
- * - auto: Automatically select best mode (track → frame-callback → seek)
+ * - auto: Automatically select best mode (demuxer → track → frame-callback → seek)
+ * - demuxer: External library demuxing (mp4box/web-demuxer) - eliminates seeking overhead
  * - frame-callback: Use requestVideoFrameCallback API (Chrome/Edge)
  * - seek: Manual seeking with seeked event (universal fallback)
  * - track: MediaStreamTrackProcessor API (experimental)
  */
-export type WebCodecsCaptureMode = 'auto' | 'frame-callback' | 'seek' | 'track';
+export type WebCodecsCaptureMode = 'auto' | 'demuxer' | 'frame-callback' | 'seek' | 'track';
 
 /**
  * Frame payload delivered to onFrame callback
@@ -268,6 +270,49 @@ export class WebCodecsDecoderService {
       shouldCancel,
     } = options;
 
+    // Priority 1: Try demuxer path first (eliminates seeking overhead for AV1/HEVC/VP9)
+    // Only attempt if captureMode is 'auto' or explicitly 'demuxer'
+    if ((captureMode === 'auto' || captureMode === 'demuxer') && canUseDemuxer(file)) {
+      try {
+        logger.info('conversion', 'Attempting demuxer-based frame capture', {
+          fileName: file.name,
+          container: detectContainer(file),
+          codec: codec ?? 'unknown',
+        });
+
+        const demuxerResult = await this.captureWithDemuxer(
+          file,
+          targetFps,
+          scale,
+          frameFormat,
+          frameQuality,
+          framePrefix,
+          frameDigits,
+          frameStartNumber,
+          maxFrames,
+          quality,
+          onFrame,
+          onProgress,
+          shouldCancel
+        );
+
+        if (demuxerResult) {
+          logger.info('conversion', 'Demuxer capture completed successfully', {
+            frameCount: demuxerResult.frameCount,
+            duration: demuxerResult.duration,
+          });
+          return demuxerResult;
+        }
+      } catch (error) {
+        logger.warn('conversion', 'Demuxer path failed, falling back to playback modes', {
+          error: getErrorMessage(error),
+          codec: codec ?? 'unknown',
+        });
+        // Fall through to HTMLVideoElement-based capture modes
+      }
+    }
+
+    // Priority 2-4: HTMLVideoElement-based capture modes (existing logic)
     const url = URL.createObjectURL(file);
     this.activeUrls.add(url);
     const video = document.createElement('video');
@@ -1281,6 +1326,197 @@ export class WebCodecsDecoderService {
         elapsedMs: Date.now() - start,
       }
     );
+  }
+
+  /**
+   * Capture frames using external demuxer + WebCodecs VideoDecoder
+   *
+   * This method bypasses HTMLVideoElement entirely, extracting encoded samples
+   * directly from the container and feeding them to VideoDecoder. This eliminates
+   * seek overhead for codecs like AV1 where seeking is extremely slow.
+   *
+   * @param file - Video file to demux
+   * @param targetFps - Target frames per second
+   * @param scale - Scale factor (0.0-1.0)
+   * @param frameFormat - Output frame format (png, jpeg, rgba)
+   * @param frameQuality - JPEG quality (0.0-1.0)
+   * @param framePrefix - Frame filename prefix
+   * @param frameDigits - Zero-padded digits in filename
+   * @param frameStartNumber - Starting frame number
+   * @param maxFrames - Optional maximum frame count
+   * @param quality - Conversion quality level
+   * @param onFrame - Frame callback
+   * @param onProgress - Progress callback
+   * @param shouldCancel - Cancellation check
+   * @returns Decode result or null if demuxer unavailable
+   */
+  private async captureWithDemuxer(
+    file: File,
+    targetFps: number,
+    scale: number,
+    frameFormat: WebCodecsFrameFormat,
+    _frameQuality: number,
+    framePrefix: string,
+    frameDigits: number,
+    frameStartNumber: number,
+    maxFrames: number | undefined,
+    quality: 'low' | 'medium' | 'high' | undefined,
+    onFrame: (frame: WebCodecsFramePayload) => Promise<void>,
+    onProgress?: WebCodecsProgressCallback,
+    shouldCancel?: () => boolean
+  ): Promise<WebCodecsDecodeResult | null> {
+    const demuxer = await createDemuxer(file);
+    if (!demuxer) {
+      return null;
+    }
+
+    let decoder: VideoDecoder | null = null;
+    const frameFiles: string[] = [];
+    let frameIndex = 0;
+
+    try {
+      // 1. Initialize demuxer and get video configuration
+      const decoderConfig = await demuxer.initialize(file);
+      const demuxerMetadata = demuxer.getMetadata();
+
+      const targetWidth = Math.max(1, Math.round(decoderConfig.codedWidth * scale));
+      const targetHeight = Math.max(1, Math.round(decoderConfig.codedHeight * scale));
+      const totalFrames = maxFrames ?? Math.ceil(demuxerMetadata.duration * targetFps);
+
+      logger.info('conversion', 'Demuxer initialized', {
+        codec: decoderConfig.codec,
+        width: decoderConfig.codedWidth,
+        height: decoderConfig.codedHeight,
+        duration: demuxerMetadata.duration,
+        sourceFps: demuxerMetadata.framerate,
+        targetFps,
+        totalFrames,
+      });
+
+      // 2. Create canvas for frame capture
+      const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba');
+      const shouldUseJpeg = frameFormat !== 'rgba' && (quality === 'low' || quality === 'medium');
+
+      // 3. Create VideoDecoder
+      const decodedFrames: VideoFrame[] = [];
+      decoder = new VideoDecoder({
+        output: (frame: VideoFrame) => {
+          decodedFrames.push(frame);
+        },
+        error: (error: Error) => {
+          logger.error('conversion', 'VideoDecoder error', {
+            error: getErrorMessage(error),
+          });
+          throw error;
+        },
+      });
+
+      decoder.configure(decoderConfig);
+
+      // 4. Extract and decode samples
+      for await (const sample of demuxer.extractSamples(targetFps, maxFrames)) {
+        if (shouldCancel?.()) {
+          throw new Error('Conversion cancelled by user');
+        }
+
+        // Feed encoded sample to decoder
+        const chunk = new EncodedVideoChunk({
+          type: sample.type,
+          timestamp: sample.timestamp,
+          duration: sample.duration,
+          data: sample.data,
+        });
+
+        decoder.decode(chunk);
+
+        // Flush decoder to get decoded frames (prevents queue buildup)
+        await decoder.flush();
+
+        // 5. Process all decoded frames
+        for (const videoFrame of decodedFrames) {
+          const timestampSeconds = videoFrame.timestamp / 1_000_000;
+
+          // Draw VideoFrame to canvas
+          captureContext.context.drawImage(
+            videoFrame,
+            0,
+            0,
+            captureContext.targetWidth,
+            captureContext.targetHeight
+          );
+
+          // Extract frame data (PNG/JPEG/RGBA)
+          let data: Uint8Array | undefined;
+          let imageData: ImageData | undefined;
+
+          if (frameFormat === 'rgba') {
+            imageData = captureContext.context.getImageData(
+              0,
+              0,
+              captureContext.targetWidth,
+              captureContext.targetHeight
+            );
+          } else {
+            const encodeMimeType = shouldUseJpeg ? 'image/jpeg' : 'image/png';
+            const encodeQuality = shouldUseJpeg ? (quality === 'low' ? 0.75 : 0.85) : undefined;
+
+            const blob = await (captureContext.canvas as OffscreenCanvas).convertToBlob({
+              type: encodeMimeType,
+              quality: encodeQuality,
+            });
+
+            data = new Uint8Array(await blob.arrayBuffer());
+          }
+
+          // Emit frame via callback
+          const frameName = formatFrameName(
+            framePrefix,
+            frameDigits,
+            frameStartNumber + frameIndex,
+            frameFormat
+          );
+
+          await onFrame({
+            name: frameName,
+            data,
+            imageData,
+            index: frameIndex,
+            timestamp: timestampSeconds,
+          });
+
+          frameFiles.push(frameName);
+          frameIndex++;
+
+          // Report progress
+          onProgress?.(frameIndex, totalFrames);
+
+          // Clean up VideoFrame
+          videoFrame.close();
+        }
+
+        decodedFrames.length = 0; // Clear array for next iteration
+      }
+
+      logger.info('conversion', 'Demuxer capture completed', {
+        frameCount: frameIndex,
+        duration: demuxerMetadata.duration,
+        avgFps: frameIndex / demuxerMetadata.duration,
+      });
+
+      return {
+        frameFiles,
+        frameCount: frameIndex,
+        captureModeUsed: 'demuxer',
+        width: targetWidth,
+        height: targetHeight,
+        fps: targetFps,
+        duration: demuxerMetadata.duration,
+      };
+    } finally {
+      // Cleanup resources
+      decoder?.close();
+      demuxer?.destroy();
+    }
   }
 
   /**

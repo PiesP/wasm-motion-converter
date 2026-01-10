@@ -30,6 +30,7 @@ type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
  * - **performance**: Performance metrics and timing (always logged in all environments)
  * - **prefetch**: Prefetching and resource loading
  * - **worker-pool**: Web Worker pool management and task distribution
+ * - **demuxer**: Demuxer library loading, container parsing, sample extraction
  */
 type LogCategory =
   | 'ffmpeg'
@@ -39,7 +40,8 @@ type LogCategory =
   | 'general'
   | 'performance'
   | 'prefetch'
-  | 'worker-pool';
+  | 'worker-pool'
+  | 'demuxer';
 
 /**
  * Structured logger for application-wide logging with filtering and categorization

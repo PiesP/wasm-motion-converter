@@ -62,7 +62,7 @@ export function writeSessionString(key: string, value: string): void {
 // Capture Mode Caching
 // ============================================================================
 
-export type CaptureMode = 'seek' | 'frame-callback' | 'track';
+export type CaptureMode = 'seek' | 'frame-callback' | 'track' | 'demuxer';
 
 /**
  * Get cached successful capture mode for a codec
@@ -72,7 +72,7 @@ export function getCachedCaptureMode(codec: string): CaptureMode | null {
   const key = `dropconvert:capture:success:${normalizedCodec}`;
   const value = readSessionString(key);
 
-  if (value === 'seek' || value === 'frame-callback' || value === 'track') {
+  if (value === 'seek' || value === 'frame-callback' || value === 'track' || value === 'demuxer') {
     return value;
   }
 
