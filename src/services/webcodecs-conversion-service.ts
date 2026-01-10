@@ -13,6 +13,7 @@ import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
 import { isHardwareCacheValid } from '../utils/hardware-profile';
 import { logger } from '../utils/logger';
 import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
+import { getOptimalFPS } from '../utils/quality-optimizer';
 import {
   cacheCaptureMode,
   cacheCapturePerformance,
@@ -23,11 +24,11 @@ import {
   getCachedVFSBatchSize,
   getCachedWebPChunkSize,
 } from '../utils/session-cache';
-import { getOptimalFPS } from '../utils/quality-optimizer';
 import { muxAnimatedWebP } from '../utils/webp-muxer';
 import { ffmpegService } from './ffmpeg-service';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { isComplexCodec } from './webcodecs/codec-utils';
+import { canUseDemuxer, detectContainer } from './webcodecs/demuxer/demuxer-factory';
 import { MIN_WEBP_FRAME_DURATION_MS, WEBP_BACKGROUND_COLOR } from './webcodecs/webp-constants';
 import {
   buildDurationAlignedTimestamps as buildDurationAlignedTimestampsUtil,
@@ -593,6 +594,16 @@ class WebCodecsConversionService {
         }
       ).requestVideoFrameCallback === 'function';
 
+    // Prefer demuxer-based extraction for complex codecs when eligible.
+    // This avoids extremely slow per-frame seeking for AV1/HEVC/VP9 in many browsers.
+    const demuxerEligible = canUseDemuxer(file, metadata);
+    if (demuxerEligible) {
+      logger.info('conversion', 'Demuxer path eligible for complex codec extraction', {
+        codec: metadata?.codec ?? 'unknown',
+        container: detectContainer(file),
+      });
+    }
+
     // Cache capture mode reliability per-session to avoid repeatedly spending time
     // probing a mode that consistently under-captures on this device/browser.
     // This is intentionally session-scoped (sessionStorage) to avoid sticky behavior
@@ -711,7 +722,15 @@ class WebCodecsConversionService {
       // costing a full playback duration before we fall back to seek.
       let initialCaptureMode: WebCodecsCaptureMode;
 
-      if (cachedPerf && isHardwareCacheValid()) {
+      if (demuxerEligible) {
+        // Try strict demuxer mode first. If it fails, we fall back explicitly to the
+        // existing AV1-optimized probe order.
+        initialCaptureMode = 'demuxer';
+        logger.info('conversion', 'Starting complex codec capture with demuxer mode', {
+          codec: metadata?.codec ?? 'unknown',
+          container: detectContainer(file),
+        });
+      } else if (cachedPerf && isHardwareCacheValid()) {
         // Use cached fastest mode (performance-based selection)
         initialCaptureMode = cachedPerf.mode;
         logger.info('conversion', 'Using cached fastest capture mode for codec', {
@@ -754,7 +773,38 @@ class WebCodecsConversionService {
 
       // Track decode timing for performance caching
       const perfStart = Date.now();
-      let decodeResult = await runDecode(initialCaptureMode, initialSeekTargetFps);
+      let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>>;
+
+      try {
+        decodeResult = await runDecode(initialCaptureMode, initialSeekTargetFps);
+      } catch (error) {
+        if (initialCaptureMode !== 'demuxer') {
+          throw error;
+        }
+
+        logger.warn(
+          'conversion',
+          'Demuxer capture failed; falling back to playback capture modes',
+          {
+            codec: metadata?.codec ?? 'unknown',
+            container: detectContainer(file),
+            error: getErrorMessage(error),
+          }
+        );
+
+        const fallbackInitial: WebCodecsCaptureMode = shouldSkipAv1FrameCallbackProbe
+          ? 'seek'
+          : isAv1 && supportsFrameCallback
+            ? 'frame-callback'
+            : 'auto';
+
+        const fallbackSeekTargetFps =
+          fallbackInitial === 'seek' && isAv1
+            ? Math.min(targetFps, getAv1SeekFpsCap(metadata?.duration))
+            : targetFps;
+
+        decodeResult = await runDecode(fallbackInitial, fallbackSeekTargetFps);
+      }
       const perfElapsed = Date.now() - perfStart;
 
       // If auto capture under-extracts frames compared to duration-based target,

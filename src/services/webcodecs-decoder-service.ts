@@ -270,9 +270,29 @@ export class WebCodecsDecoderService {
       shouldCancel,
     } = options;
 
+    // Some demuxer eligibility checks benefit from having a codec value available.
+    // We pass a minimal metadata object so canUseDemuxer() can log and filter more accurately.
+    const demuxerMetadata: VideoMetadata | undefined = codec
+      ? {
+          width: 0,
+          height: 0,
+          duration: 0,
+          codec,
+          framerate: 0,
+          bitrate: 0,
+        }
+      : undefined;
+
     // Priority 1: Try demuxer path first (eliminates seeking overhead for AV1/HEVC/VP9)
     // Only attempt if captureMode is 'auto' or explicitly 'demuxer'
-    if ((captureMode === 'auto' || captureMode === 'demuxer') && canUseDemuxer(file)) {
+    if (captureMode === 'demuxer' && !canUseDemuxer(file, demuxerMetadata)) {
+      throw new Error('Demuxer capture mode requested but is not available for this file.');
+    }
+
+    if (
+      (captureMode === 'auto' || captureMode === 'demuxer') &&
+      canUseDemuxer(file, demuxerMetadata)
+    ) {
       try {
         logger.info('conversion', 'Attempting demuxer-based frame capture', {
           fileName: file.name,
@@ -293,7 +313,8 @@ export class WebCodecsDecoderService {
           quality,
           onFrame,
           onProgress,
-          shouldCancel
+          shouldCancel,
+          demuxerMetadata
         );
 
         if (demuxerResult) {
@@ -308,6 +329,12 @@ export class WebCodecsDecoderService {
           error: getErrorMessage(error),
           codec: codec ?? 'unknown',
         });
+
+        // If the caller explicitly requested demuxer mode, do not silently fall back.
+        // This lets higher-level routing choose the next best strategy deterministically.
+        if (captureMode === 'demuxer') {
+          throw error;
+        }
         // Fall through to HTMLVideoElement-based capture modes
       }
     }
@@ -1363,9 +1390,10 @@ export class WebCodecsDecoderService {
     quality: 'low' | 'medium' | 'high' | undefined,
     onFrame: (frame: WebCodecsFramePayload) => Promise<void>,
     onProgress?: WebCodecsProgressCallback,
-    shouldCancel?: () => boolean
+    shouldCancel?: () => boolean,
+    metadata?: VideoMetadata
   ): Promise<WebCodecsDecodeResult | null> {
-    const demuxer = await createDemuxer(file);
+    const demuxer = await createDemuxer(file, metadata);
     if (!demuxer) {
       return null;
     }
@@ -1398,6 +1426,8 @@ export class WebCodecsDecoderService {
       const shouldUseJpeg = frameFormat !== 'rgba' && (quality === 'low' || quality === 'medium');
 
       // 3. Create VideoDecoder
+      // Collect decoded frames and process them after batched flushes.
+      // Flushing once per sample is significantly slower on some browsers.
       const decodedFrames: VideoFrame[] = [];
       decoder = new VideoDecoder({
         output: (frame: VideoFrame) => {
@@ -1413,13 +1443,81 @@ export class WebCodecsDecoderService {
 
       decoder.configure(decoderConfig);
 
+      const processDecodedFrames = async () => {
+        if (!decodedFrames.length) {
+          return;
+        }
+
+        for (const videoFrame of decodedFrames) {
+          try {
+            if (shouldCancel?.()) {
+              throw new Error('Conversion cancelled by user');
+            }
+
+            const timestampSeconds = videoFrame.timestamp / 1_000_000;
+
+            // Draw VideoFrame to canvas
+            captureContext.context.drawImage(
+              videoFrame,
+              0,
+              0,
+              captureContext.targetWidth,
+              captureContext.targetHeight
+            );
+
+            // Extract frame data (PNG/JPEG/RGBA)
+            let data: Uint8Array | undefined;
+            let imageData: ImageData | undefined;
+
+            if (frameFormat === 'rgba') {
+              imageData = captureContext.context.getImageData(
+                0,
+                0,
+                captureContext.targetWidth,
+                captureContext.targetHeight
+              );
+            } else {
+              const encodeMimeType = shouldUseJpeg ? 'image/jpeg' : 'image/png';
+              const encodeQuality = shouldUseJpeg ? (quality === 'low' ? 0.75 : 0.85) : undefined;
+              const blob = await canvasToBlob(captureContext.canvas, encodeMimeType, encodeQuality);
+              data = new Uint8Array(await blob.arrayBuffer());
+            }
+
+            const frameName = formatFrameName(
+              framePrefix,
+              frameDigits,
+              frameStartNumber + frameIndex,
+              frameFormat
+            );
+
+            await onFrame({
+              name: frameName,
+              data,
+              imageData,
+              index: frameIndex,
+              timestamp: timestampSeconds,
+            });
+
+            frameFiles.push(frameName);
+            frameIndex++;
+            onProgress?.(frameIndex, totalFrames);
+          } finally {
+            videoFrame.close();
+          }
+        }
+
+        decodedFrames.length = 0;
+      };
+
+      const FLUSH_BATCH_SIZE = 8;
+      let pendingInBatch = 0;
+
       // 4. Extract and decode samples
       for await (const sample of demuxer.extractSamples(targetFps, maxFrames)) {
         if (shouldCancel?.()) {
           throw new Error('Conversion cancelled by user');
         }
 
-        // Feed encoded sample to decoder
         const chunk = new EncodedVideoChunk({
           type: sample.type,
           timestamp: sample.timestamp,
@@ -1428,74 +1526,19 @@ export class WebCodecsDecoderService {
         });
 
         decoder.decode(chunk);
+        pendingInBatch += 1;
 
-        // Flush decoder to get decoded frames (prevents queue buildup)
-        await decoder.flush();
-
-        // 5. Process all decoded frames
-        for (const videoFrame of decodedFrames) {
-          const timestampSeconds = videoFrame.timestamp / 1_000_000;
-
-          // Draw VideoFrame to canvas
-          captureContext.context.drawImage(
-            videoFrame,
-            0,
-            0,
-            captureContext.targetWidth,
-            captureContext.targetHeight
-          );
-
-          // Extract frame data (PNG/JPEG/RGBA)
-          let data: Uint8Array | undefined;
-          let imageData: ImageData | undefined;
-
-          if (frameFormat === 'rgba') {
-            imageData = captureContext.context.getImageData(
-              0,
-              0,
-              captureContext.targetWidth,
-              captureContext.targetHeight
-            );
-          } else {
-            const encodeMimeType = shouldUseJpeg ? 'image/jpeg' : 'image/png';
-            const encodeQuality = shouldUseJpeg ? (quality === 'low' ? 0.75 : 0.85) : undefined;
-
-            const blob = await (captureContext.canvas as OffscreenCanvas).convertToBlob({
-              type: encodeMimeType,
-              quality: encodeQuality,
-            });
-
-            data = new Uint8Array(await blob.arrayBuffer());
-          }
-
-          // Emit frame via callback
-          const frameName = formatFrameName(
-            framePrefix,
-            frameDigits,
-            frameStartNumber + frameIndex,
-            frameFormat
-          );
-
-          await onFrame({
-            name: frameName,
-            data,
-            imageData,
-            index: frameIndex,
-            timestamp: timestampSeconds,
-          });
-
-          frameFiles.push(frameName);
-          frameIndex++;
-
-          // Report progress
-          onProgress?.(frameIndex, totalFrames);
-
-          // Clean up VideoFrame
-          videoFrame.close();
+        // Flush in batches to reduce overhead.
+        if (pendingInBatch >= FLUSH_BATCH_SIZE || decoder.decodeQueueSize > FLUSH_BATCH_SIZE * 2) {
+          await decoder.flush();
+          await processDecodedFrames();
+          pendingInBatch = 0;
         }
-
-        decodedFrames.length = 0; // Clear array for next iteration
       }
+
+      // Final drain
+      await decoder.flush();
+      await processDecodedFrames();
 
       logger.info('conversion', 'Demuxer capture completed', {
         frameCount: frameIndex,
