@@ -18,15 +18,15 @@
  * 4. Mux frames into final animated WebP using webp-muxer
  */
 
-import type * as Comlink from 'comlink';
-import type { AnimatedWebPOptions, WebPFrame } from '@utils/webp-muxer';
-import { muxAnimatedWebP } from '@utils/webp-muxer';
-import { buildWebPFrameDurations, resolveWebPFps } from '@services/webcodecs/webp-timing';
 import {
   WEBP_ANIMATION_MAX_FRAMES,
   WEBP_BACKGROUND_COLOR,
 } from '@services/webcodecs/webp-constants';
+import { buildWebPFrameDurations, resolveWebPFps } from '@services/webcodecs/webp-timing';
 import { logger } from '@utils/logger';
+import type { AnimatedWebPOptions, WebPFrame } from '@utils/webp-muxer';
+import { muxAnimatedWebP } from '@utils/webp-muxer';
+import type * as Comlink from 'comlink';
 import type { EncoderAdapter, EncoderRequest } from '../encoder-interface';
 
 /**

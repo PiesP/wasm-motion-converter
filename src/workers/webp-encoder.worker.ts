@@ -15,8 +15,8 @@
  * Main thread → Worker (via Comlink) → OffscreenCanvas.convertToBlob() → ArrayBuffer
  */
 
-import * as Comlink from 'comlink';
 import { logger } from '@utils/logger';
+import * as Comlink from 'comlink';
 
 /**
  * WebP encoder worker API implementation
