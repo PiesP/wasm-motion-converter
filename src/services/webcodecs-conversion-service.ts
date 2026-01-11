@@ -632,7 +632,7 @@ class WebCodecsConversionService {
     };
 
     const av1CaptureFpsCap = isAv1 ? getAv1CaptureFpsCap(metadata?.duration) : requestedTargetFps;
-    const effectiveTargetFps = isAv1
+    let effectiveTargetFps = isAv1
       ? Math.max(1, Math.min(requestedTargetFps, av1CaptureFpsCap))
       : requestedTargetFps;
 
@@ -647,7 +647,7 @@ class WebCodecsConversionService {
       });
     }
 
-    const maxFrames = this.getMaxWebPFrames(effectiveTargetFps, metadata?.duration);
+    let maxFrames = this.getMaxWebPFrames(effectiveTargetFps, metadata?.duration);
 
     // Prefer demuxer-based extraction for complex codecs when eligible.
     // This avoids extremely slow per-frame seeking for AV1/HEVC/VP9 in many browsers.
@@ -782,6 +782,38 @@ class WebCodecsConversionService {
       const cachedPerf = getCachedCapturePerformance(metadata?.codec ?? 'unknown');
       // Check cache for successful capture mode (fallback)
       const cachedMode = getCachedCaptureMode(metadata?.codec ?? 'unknown');
+
+      // If this device/browser is consistently slow at AV1 extraction, reduce the
+      // extraction FPS further for subsequent conversions in this session.
+      // NOTE: This primarily reduces per-frame canvas encoding overhead; decode cost
+      // may still dominate on software-only AV1 decoders.
+      if (isAv1 && cachedPerf && isHardwareCacheValid()) {
+        const avgMsPerFrame = cachedPerf.avgMsPerFrame;
+        const slowThresholdMs = 900;
+        const downshiftTargetFps = 8;
+
+        if (Number.isFinite(avgMsPerFrame) && avgMsPerFrame > slowThresholdMs) {
+          const nextFps = Math.max(1, Math.min(effectiveTargetFps, downshiftTargetFps));
+          if (nextFps !== effectiveTargetFps) {
+            logger.info(
+              'conversion',
+              'Downshifting AV1 extraction FPS due to slow cached performance',
+              {
+                codec: metadata?.codec ?? 'unknown',
+                requestedFps: requestedTargetFps,
+                previousEffectiveFps: effectiveTargetFps,
+                downshiftedFps: nextFps,
+                cachedMode: cachedPerf.mode,
+                avgMsPerFrame: Number(avgMsPerFrame.toFixed(2)),
+                thresholdMs: slowThresholdMs,
+                durationSeconds: metadata?.duration ?? null,
+              }
+            );
+          }
+          effectiveTargetFps = nextFps;
+          maxFrames = this.getMaxWebPFrames(effectiveTargetFps, metadata?.duration);
+        }
+      }
 
       // For AV1, skip track-based auto mode when rVFC is available.
       // TrackProcessor capture can severely under-capture on some browsers for AV1,
