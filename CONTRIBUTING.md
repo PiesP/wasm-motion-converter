@@ -83,6 +83,52 @@ pnpm dev
 - Keep diffs small and focused; preserve clear loading/progress/error states.
 - Prefer explicit, user-visible feedback for long-running actions.
 
+## Code Review Checklist (Enforced)
+
+All pull requests must adhere to the following **import structure rules**. These are verified during code review:
+
+### ✅ Required (Import Patterns)
+
+- [ ] **Alias imports only:** All internal imports use `@alias/module` (e.g., `@components/Button`, `@services/conversion-service`)
+- [ ] **Leaf module imports:** No barrel imports (e.g., `❌ @components`, `✅ @components/Button`)
+- [ ] **No relative imports:** Deeply nested imports use aliases, not `../` paths
+- [ ] **No absolute `src/` paths:** Never `src/components/Button`; use `@components/Button`
+
+### ❌ Forbidden (Will be requested to fix)
+
+| Pattern          | Example                            | Reason                                      |
+| ---------------- | ---------------------------------- | ------------------------------------------- |
+| Barrel imports   | `import x from "@components"`      | Defeats tree-shaking; obscures dependencies |
+| Relative imports | `import x from "../utils/logger"`  | Fragile during refactoring; unscalable      |
+| Absolute `src/`  | `import x from "src/utils/logger"` | Bypasses alias safety; inconsistent         |
+
+### Example PR Check
+
+**Before (❌ rejected):**
+
+```typescript
+import { Button } from "@components"; // Barrel
+import { logger } from "../utils/logger"; // Relative
+import { Task } from "src/types/task-types"; // Absolute src/
+```
+
+**After (✅ approved):**
+
+```typescript
+import { Button } from "@components/Button";
+import { logger } from "@utils/logger";
+import type { Task } from "@types/task-types";
+```
+
+**Why this matters:**
+
+- Easier refactoring (move files without breaking imports)
+- Better tree-shaking (dead code elimination)
+- Clearer module boundaries (circular dependency prevention)
+- Consistent IDE navigation across the codebase
+
+For detailed import rules, see [CODE_STANDARDS.md](CODE_STANDARDS.md#1-file-organization).
+
 ## License
 
 By contributing, you agree your contributions are licensed under the project license (see `LICENSE` and `public/LICENSES.md`).
