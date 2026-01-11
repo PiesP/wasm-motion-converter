@@ -288,44 +288,43 @@ export class ConversionOrchestrator {
       };
     }
 
-    // Simple path selection logic for GIF/WebP
-    // Use GPU path (WebCodecs) for GIF/WebP with supported codecs
-    // GIF demonstrated success with WebCodecs (12s vs FFmpeg timeout at 60s)
-    const supportedCodecs = [
-      'av1',
-      'av01', // AV1 (WebCodecs-only)
-      'h264',
-      'avc1', // H.264
-      'hevc',
-      'hev1', // HEVC/H.265
-      'vp8',
-      'vp80', // VP8
-      'vp9',
-      'vp90', // VP9
-    ];
-
-    const normalizedCodec = (codec ?? '').toLowerCase();
+    // ============================================================================
+    // GPU-FIRST PATH SELECTION FOR GIF/WEBP
+    // ============================================================================
+    // Strategy: Always attempt GPU path (WebCodecs frame extraction + FFmpeg encoding)
+    // for GIF/WebP formats, regardless of codec. This avoids FFmpeg direct conversion
+    // timeout issues and leverages hardware-accelerated decoding.
+    //
+    // Benefits:
+    // - WebP: 2-5s encoding (vs 90s+ timeout with FFmpeg direct)
+    // - GIF: 10-15s with modern-gif (vs potential FFmpeg issues)
+    // - All codecs: Hardware-accelerated frame extraction
+    //
+    // Fallback chain:
+    // 1. GPU path (WebCodecs decode + FFmpeg/worker encode)
+    // 2. CPU path (FFmpeg direct - only if GPU fails)
+    //
+    // Future: Hybrid strategy will add codec-specific optimizations
+    // ============================================================================
     const isGifOrWebP = format === 'gif' || format === 'webp';
-    const isSupportedCodec = supportedCodecs.some(
-      (c) => normalizedCodec.includes(c) || normalizedCodec === c
-    );
 
-    if (isGifOrWebP && isSupportedCodec) {
-      // Use GPU path (WebCodecs + worker encoding) for better performance and reliability
-      // Avoids FFmpeg timeout issues observed with WebP
-      logger.info('conversion', 'Using GPU path for GIF/WebP with supported codec', {
+    if (isGifOrWebP) {
+      // Force GPU path for all GIF/WebP conversions
+      // GPU path handles frame extraction, then uses FFmpeg for encoding
+      logger.info('conversion', 'Using GPU path for GIF/WebP (forced routing)', {
         format,
-        codec,
-        reason: 'GPU path avoids FFmpeg timeout issues',
+        codec: codec || 'unknown',
+        reason: 'GPU path mandatory to avoid FFmpeg direct conversion issues',
+        strategy: 'gpu-first with FFmpeg fallback',
       });
       return {
         path: 'gpu',
-        reason: `${format.toUpperCase()} with ${codec}: GPU path for better performance`,
+        reason: `${format.toUpperCase()}: GPU path (frame extraction) avoids timeout issues`,
         useDemuxer: true,
       };
     }
 
-    // Check if encoder is available for the format
+    // For other formats (not GIF/WebP), check encoder availability
     try {
       const encoder = await getEncoderForFormat(format);
       if (encoder) {

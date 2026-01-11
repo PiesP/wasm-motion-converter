@@ -188,3 +188,79 @@ export interface ConversionStatus {
   /** Current phase (e.g., 'initializing', 'decoding', 'encoding') */
   phase?: string;
 }
+
+// ============================================================================
+// HYBRID STRATEGY TYPES (Future Implementation)
+// ============================================================================
+// These types define the structure for codec-specific optimization strategies
+// that will be implemented in future iterations to fine-tune conversion paths
+// based on codec capabilities and performance characteristics.
+// ============================================================================
+
+/**
+ * Codec-specific path preference
+ *
+ * Defines optimal conversion path for specific codec + format combinations.
+ * This enables fine-grained control over routing decisions.
+ *
+ * @example
+ * ```ts
+ * const h264WebpPreference: CodecPathPreference = {
+ *   codec: 'h264',
+ *   format: 'webp',
+ *   preferredPath: 'gpu',
+ *   fallbackPath: 'cpu',
+ *   reason: 'H.264 hardware decode + FFmpeg libwebp faster than CPU direct'
+ * };
+ * ```
+ */
+export interface CodecPathPreference {
+  /** Codec identifier (e.g., 'h264', 'av1', 'vp9') */
+  codec: string;
+  /** Target format (gif, webp, mp4) */
+  format: ConversionFormat;
+  /** Preferred conversion path */
+  preferredPath: ConversionPath;
+  /** Fallback path if preferred fails */
+  fallbackPath: ConversionPath;
+  /** Reason for preference (for logging) */
+  reason: string;
+  /** Optional performance metrics */
+  benchmarks?: {
+    /** Average conversion time in seconds */
+    avgTimeSeconds: number;
+    /** Success rate (0-1) */
+    successRate: number;
+  };
+}
+
+/**
+ * Hybrid strategy configuration
+ *
+ * Advanced configuration for codec-aware path selection.
+ * Allows per-codec, per-format routing rules.
+ *
+ * @example
+ * ```ts
+ * const strategy: HybridStrategyConfig = {
+ *   enableCodecOptimization: true,
+ *   codecPreferences: [
+ *     { codec: 'h264', format: 'gif', preferredPath: 'cpu', fallbackPath: 'gpu' },
+ *     { codec: 'h264', format: 'webp', preferredPath: 'gpu', fallbackPath: 'cpu' },
+ *     { codec: 'av1', format: 'gif', preferredPath: 'gpu', fallbackPath: 'cpu' }
+ *   ],
+ *   defaultPath: 'gpu',
+ *   fallbackChain: ['gpu', 'cpu']
+ * };
+ * ```
+ */
+export interface HybridStrategyConfig {
+  /** Whether to enable codec-specific optimizations */
+  enableCodecOptimization: boolean;
+  /** Codec-specific path preferences */
+  codecPreferences: CodecPathPreference[];
+  /** Default path when no specific preference matches */
+  defaultPath: ConversionPath;
+  /** Fallback chain if all preferred paths fail */
+  fallbackChain: ConversionPath[];
+}
