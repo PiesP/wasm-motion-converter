@@ -11,12 +11,9 @@
  * 4. Cleanup: await encoder.dispose()
  */
 
-import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
+import type { ConversionFormat } from '@t/conversion-types';
 import { logger } from '@utils/logger';
-import type {
-  EncoderAdapter,
-  EncoderPreferences,
-} from './encoder-interface';
+import type { EncoderAdapter, EncoderPreferences } from './encoder-interface';
 
 /**
  * Encoder factory class
@@ -173,8 +170,17 @@ class EncoderFactoryClass {
       return null;
     }
 
+    // Get first available encoder (safely, since length > 0)
+    const firstEncoder = availableEncoders[0];
+    if (!firstEncoder) {
+      logger.error('encoder-factory', `Failed to get first encoder for format: ${format}`, {
+        format,
+      });
+      return null;
+    }
+
     // Apply preferences to select best encoder
-    let selected = availableEncoders[0];
+    let selected: EncoderAdapter = firstEncoder;
 
     // Prefer worker-based encoders if requested
     if (preferences.preferWorkers) {

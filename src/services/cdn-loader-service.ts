@@ -11,12 +11,7 @@
  * - Error handling and logging
  */
 
-import {
-  CDN_PROVIDERS,
-  CDN_REQUEST_TIMEOUT,
-  convertCDNUrl,
-  getCDNUrl,
-} from '@utils/cdn-constants';
+import { CDN_PROVIDERS, CDN_REQUEST_TIMEOUT, convertCDNUrl, getCDNUrl } from '@utils/cdn-constants';
 import { logger } from '@utils/logger';
 import { withTimeout } from '@utils/with-timeout';
 

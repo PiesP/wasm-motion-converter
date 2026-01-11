@@ -1,11 +1,7 @@
 // Internal dependencies
 
 // Type imports
-import type {
-  ConversionOptions,
-  ConversionOutputBlob,
-  VideoMetadata,
-} from '@t/conversion-types';
+import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
 import type { EncoderWorkerAPI } from '@t/worker-types';
 import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';

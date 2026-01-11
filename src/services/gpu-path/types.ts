@@ -173,10 +173,7 @@ export interface DecoderManager {
   /**
    * Decode encoded chunk to VideoFrame
    */
-  decode(
-    decoder: VideoDecoder,
-    chunk: EncodedVideoChunk
-  ): Promise<VideoFrame>;
+  decode(decoder: VideoDecoder, chunk: EncodedVideoChunk): Promise<VideoFrame>;
 
   /**
    * Flush decoder and wait for all frames

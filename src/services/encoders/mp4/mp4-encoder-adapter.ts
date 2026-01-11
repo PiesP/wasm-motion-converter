@@ -44,7 +44,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
    *
    * Not yet implemented.
    */
-  async encode(request: EncoderRequest): Promise<Blob> {
+  async encode(_request: EncoderRequest): Promise<Blob> {
     logger.error('mp4-encoder', 'MP4 encoder not yet implemented');
     throw new Error('MP4 encoding not yet implemented');
   }

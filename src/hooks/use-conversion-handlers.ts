@@ -1,6 +1,7 @@
 import type { Setter } from 'solid-js';
 import { batch } from 'solid-js';
-import { convertVideo } from '@services/conversion-service';
+// Use new refactored orchestrator API
+import { convertVideo } from '@services/orchestration/conversion-orchestrator';
 import { ffmpegService } from '@services/ffmpeg-service';
 import { checkPerformance, getRecommendedSettings } from '@services/performance-checker-service';
 import { analyzeVideo, analyzeVideoQuick } from '@services/video-analyzer-service';

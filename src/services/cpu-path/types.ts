@@ -144,9 +144,7 @@ export interface FFmpegEncoder {
   /**
    * Encode frame sequence to target format
    */
-  encodeFrameSequence(
-    request: FFmpegFrameSequenceRequest
-  ): Promise<ConversionOutputBlob>;
+  encodeFrameSequence(request: FFmpegFrameSequenceRequest): Promise<ConversionOutputBlob>;
 }
 
 /**

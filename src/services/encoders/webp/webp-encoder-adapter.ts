@@ -43,7 +43,7 @@ export class WebPEncoderAdapter implements EncoderAdapter {
    *
    * Currently throws error - WebP encoding goes through FFmpeg.
    */
-  async encode(request: EncoderRequest): Promise<Blob> {
+  async encode(_request: EncoderRequest): Promise<Blob> {
     logger.error('webp-encoder', 'WebP encoder stub called - should use FFmpeg fallback');
     throw new Error(
       'WebP encoder not yet implemented. This should not be called - ' +

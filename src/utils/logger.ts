@@ -31,6 +31,11 @@ type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
  * - **prefetch**: Prefetching and resource loading
  * - **worker-pool**: Web Worker pool management and task distribution
  * - **demuxer**: Demuxer library loading, container parsing, sample extraction
+ * - **encoders**: Encoder factory and initialization
+ * - **encoder-factory**: Encoder factory operations and selection
+ * - **gif-encoder**: GIF encoder operations
+ * - **mp4-encoder**: MP4 encoder operations
+ * - **webp-encoder**: WebP encoder operations
  */
 type LogCategory =
   | 'ffmpeg'
@@ -41,7 +46,12 @@ type LogCategory =
   | 'performance'
   | 'prefetch'
   | 'worker-pool'
-  | 'demuxer';
+  | 'demuxer'
+  | 'encoders'
+  | 'encoder-factory'
+  | 'gif-encoder'
+  | 'mp4-encoder'
+  | 'webp-encoder';
 
 /**
  * Structured logger for application-wide logging with filtering and categorization

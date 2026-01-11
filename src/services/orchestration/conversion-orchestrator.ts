@@ -12,11 +12,7 @@
  * 4. Return result with metadata
  */
 
-import type {
-  ConversionFormat,
-  ConversionOptions,
-  VideoMetadata,
-} from '@t/conversion-types';
+import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -44,7 +40,6 @@ export class ConversionOrchestrator {
   };
 
   private progressReporter: ProgressReporter | null = null;
-  private cancelled = false;
 
   /**
    * Convert video using optimal path
@@ -57,7 +52,6 @@ export class ConversionOrchestrator {
    */
   async convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
     const startTime = Date.now();
-    this.cancelled = false;
 
     try {
       // Update status
@@ -117,7 +111,7 @@ export class ConversionOrchestrator {
         originalCodec: metadata?.codec,
       };
 
-      let blob;
+      let blob: Blob;
 
       // Execute based on selected path
       switch (pathSelection.path) {
@@ -129,7 +123,6 @@ export class ConversionOrchestrator {
           blob = await this.convertViaHybridPath(request, metadata, conversionMetadata);
           break;
 
-        case 'cpu':
         default:
           blob = await this.convertViaCPUPath(request, metadata, conversionMetadata);
           break;
@@ -166,11 +159,7 @@ export class ConversionOrchestrator {
       };
 
       const errorMessage = getErrorMessage(error);
-      const errorContext = classifyConversionError(error, {
-        file: request.file,
-        format: request.format,
-        options: request.options,
-      });
+      const errorContext = classifyConversionError(errorMessage, null);
 
       logger.error('conversion', 'Conversion failed', {
         file: request.file.name,
@@ -196,15 +185,8 @@ export class ConversionOrchestrator {
    * Cancel current conversion
    */
   cancel(): void {
-    this.cancelled = true;
+    // TODO: Implement cancellation mechanism
     logger.info('conversion', 'Conversion cancelled by user');
-  }
-
-  /**
-   * Check if conversion was cancelled
-   */
-  private isCancelled(): boolean {
-    return this.cancelled;
   }
 
   /**
@@ -241,7 +223,7 @@ export class ConversionOrchestrator {
    * Select conversion path
    */
   private async selectPath(
-    file: File,
+    _file: File,
     format: ConversionFormat,
     metadata?: VideoMetadata
   ): Promise<PathSelection> {
@@ -332,7 +314,7 @@ export class ConversionOrchestrator {
     request: ConversionRequest,
     metadata: VideoMetadata | undefined,
     conversionMetadata: ConversionMetadata
-  ) {
+  ): Promise<Blob> {
     logger.info('conversion', 'Executing CPU path conversion (FFmpeg direct)', {
       format: request.format,
     });
@@ -341,18 +323,14 @@ export class ConversionOrchestrator {
     conversionMetadata.path = 'cpu';
 
     // Use legacy FFmpeg service (will be replaced with ffmpeg-pipeline in Phase 4)
-    const blob = await ffmpegService.convertToFormat({
-      file: request.file,
-      format: request.format,
-      options: request.options,
-      metadata,
-      onProgress: (progress) => {
-        request.onProgress?.(progress);
-      },
-      shouldCancel: () => this.isCancelled(),
-    });
-
-    return blob;
+    // Call the appropriate method based on format
+    if (request.format === 'gif') {
+      return await ffmpegService.convertToGIF(request.file, request.options, metadata);
+    } else if (request.format === 'webp') {
+      return await ffmpegService.convertToWebP(request.file, request.options, metadata);
+    } else {
+      throw new Error(`Unsupported format for CPU path: ${request.format}`);
+    }
   }
 }
 
@@ -378,9 +356,7 @@ const orchestrator = new ConversionOrchestrator();
  *   onProgress: (p) => console.log(`${p}%`)
  * });
  */
-export async function convertVideo(
-  request: ConversionRequest
-): Promise<ConversionResponse> {
+export async function convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
   return orchestrator.convertVideo(request);
 }
 

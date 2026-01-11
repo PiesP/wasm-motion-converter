@@ -16,6 +16,9 @@ import { render } from 'solid-js/web';
 import App from './App';
 import './index.css';
 
+// Initialize encoder registry
+import '@services/encoders/init';
+
 /**
  * Initialize application by rendering App component
  *

@@ -5,7 +5,6 @@
  * Supports both main-thread and worker-based encoding.
  */
 
-import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { encodeModernGif, isModernGifSupported } from '../../modern-gif-service';
@@ -58,34 +57,17 @@ export class GIFEncoderAdapter implements EncoderAdapter {
       throw new Error('No frames to encode');
     }
 
-    // Get quality settings from preset
-    const preset = QUALITY_PRESETS.gif[quality];
-    const paletteSize = 'paletteSize' in preset ? preset.paletteSize : 256;
-
     try {
-      // Convert ImageData to format expected by modern-gif
-      const gifFrames = frames.map((frame, index) => {
-        if (shouldCancel?.()) {
-          throw new Error('Encoding cancelled');
-        }
-
-        return {
-          data: frame.data,
-          width: frame.width,
-          height: frame.height,
-        };
-      });
-
-      // Encode GIF
-      const blob = await encodeModernGif({
-        frames: gifFrames,
+      // Encode GIF - pass frames directly with options
+      const blob = await encodeModernGif(frames, {
         width,
         height,
         fps,
-        paletteSize,
-        onProgress: (current, total) => {
+        quality,
+        onProgress: (current: number, total: number) => {
           onProgress?.(current, total);
         },
+        shouldCancel,
       });
 
       logger.info('gif-encoder', 'GIF encoding complete', {
