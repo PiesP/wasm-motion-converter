@@ -266,27 +266,6 @@ export class ConversionOrchestrator {
 
     const codec = metadata?.codec?.toLowerCase();
 
-    // Check if format is supported by encoders
-    try {
-      const encoder = await getEncoderForFormat(format);
-      if (encoder) {
-        logger.debug('conversion', 'Found encoder for format', {
-          format,
-          encoder: encoder.name,
-        });
-      }
-    } catch (error) {
-      logger.warn('conversion', 'No encoder found for format, using FFmpeg fallback', {
-        format,
-        error: getErrorMessage(error),
-      });
-
-      return {
-        path: 'cpu',
-        reason: 'No encoder available for format',
-      };
-    }
-
     // WebAV path for MP4 (20x faster than FFmpeg)
     if (format === 'mp4') {
       const webavAvailable = await this.webavService.isAvailable();
@@ -310,26 +289,64 @@ export class ConversionOrchestrator {
     }
 
     // Simple path selection logic for GIF/WebP
-    // WebCodecs-only codecs must use GPU/WebCodecs path
-    if (codec === 'av1' || codec === 'av01') {
-      // AV1 codec: Use WebCodecs path (FFmpeg.wasm 5.1.4 does not support AV1)
+    // Use GPU path (WebCodecs) for GIF/WebP with supported codecs
+    // GIF demonstrated success with WebCodecs (12s vs FFmpeg timeout at 60s)
+    const supportedCodecs = [
+      'av1',
+      'av01', // AV1 (WebCodecs-only)
+      'h264',
+      'avc1', // H.264
+      'hevc',
+      'hev1', // HEVC/H.265
+      'vp8',
+      'vp80', // VP8
+      'vp9',
+      'vp90', // VP9
+    ];
+
+    const normalizedCodec = (codec ?? '').toLowerCase();
+    const isGifOrWebP = format === 'gif' || format === 'webp';
+    const isSupportedCodec = supportedCodecs.some(
+      (c) => normalizedCodec.includes(c) || normalizedCodec === c
+    );
+
+    if (isGifOrWebP && isSupportedCodec) {
+      // Use GPU path (WebCodecs + worker encoding) for better performance and reliability
+      // Avoids FFmpeg timeout issues observed with WebP
+      logger.info('conversion', 'Using GPU path for GIF/WebP with supported codec', {
+        format,
+        codec,
+        reason: 'GPU path avoids FFmpeg timeout issues',
+      });
       return {
         path: 'gpu',
-        reason: 'AV1 codec requires WebCodecs path (FFmpeg.wasm lacks AV1 decoder)',
+        reason: `${format.toUpperCase()} with ${codec}: GPU path for better performance`,
         useDemuxer: true,
       };
     }
 
-    if (codec === 'vp9' || codec === 'hevc') {
-      // VP9 and HEVC: Use hybrid path (GPU decode, FFmpeg encode)
+    // Check if encoder is available for the format
+    try {
+      const encoder = await getEncoderForFormat(format);
+      if (encoder) {
+        logger.debug('conversion', 'Found encoder for format', {
+          format,
+          encoder: encoder.name,
+        });
+      }
+    } catch (error) {
+      logger.warn('conversion', 'No encoder found for format, using FFmpeg fallback', {
+        format,
+        error: getErrorMessage(error),
+      });
+
       return {
-        path: 'hybrid',
-        reason: `Complex codec (${codec}) requires WebCodecs decode`,
-        useDemuxer: true,
+        path: 'cpu',
+        reason: 'No encoder available for format',
       };
     }
 
-    // Default to CPU path for GIF/WebP
+    // Default to CPU path for unsupported codecs or other formats
     return {
       path: 'cpu',
       reason: 'Default path selection',
