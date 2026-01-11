@@ -561,12 +561,6 @@ export class FFmpegEncoder {
 
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
 
-      // Start watchdog
-      monitoring.startWatchdog({
-        metadata,
-        quality,
-      });
-
       // Build input args
       const inputArgs = this.buildInputArgs(inputFileName, inputOverride);
 
@@ -688,7 +682,6 @@ export class FFmpegEncoder {
         metadata,
       });
     } finally {
-      monitoring.stopWatchdog();
       this.releaseConversionLock();
       performanceTracker.endPhase('conversion');
     }
@@ -738,12 +731,6 @@ export class FFmpegEncoder {
       const conversionTimeout = getTimeoutForFormat('webp');
 
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START);
-
-      // Start watchdog
-      monitoring.startWatchdog({
-        metadata,
-        quality,
-      });
 
       // Build input args
       const inputArgs = this.buildInputArgs(inputFileName, inputOverride);
@@ -845,7 +832,6 @@ export class FFmpegEncoder {
         metadata,
       });
     } finally {
-      monitoring.stopWatchdog();
       this.releaseConversionLock();
       performanceTracker.endPhase('conversion');
     }
