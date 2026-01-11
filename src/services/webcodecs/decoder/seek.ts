@@ -14,13 +14,13 @@ export const getSeekTimeoutForCodec = (codec?: string): number => {
 
   const normalizedCodec = codec.toLowerCase();
   const isAv1 = normalizedCodec.includes('av1') || normalizedCodec.includes('av01');
-  const isVP9 = normalizedCodec.includes('vp9') || normalizedCodec.includes('vp09');
-  const isHEVC = normalizedCodec.includes('hevc') || normalizedCodec.includes('hvc1');
+  const isVp9 = normalizedCodec.includes('vp9') || normalizedCodec.includes('vp09');
+  const isHevc = normalizedCodec.includes('hevc') || normalizedCodec.includes('hvc1');
 
-  if (isAv1 || isHEVC) {
+  if (isAv1 || isHevc) {
     return 2000;
   }
-  if (isVP9) {
+  if (isVp9) {
     return 1800;
   }
 

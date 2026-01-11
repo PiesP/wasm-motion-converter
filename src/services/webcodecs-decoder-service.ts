@@ -1420,7 +1420,7 @@ export class WebCodecsDecoderService {
       let lastOutputAtMs = decodeStartedAtMs;
       let outputFramesTotal = 0;
       let lastDevStatsAtMs = 0;
-      const DEV_STATS_INTERVAL_MS = 2000;
+      const DevStatsIntervalMs = 2000;
 
       // When using a demuxer, we must decode all encoded samples in the time window
       // to preserve reference chains. We downsample AFTER decode by selecting decoded
@@ -1435,10 +1435,10 @@ export class WebCodecsDecoderService {
 
       // If flush() hangs, prefer a partial demuxer result over a slow seek fallback,
       // but only when we captured enough frames and covered (most of) the time window.
-      const PARTIAL_ACCEPT_RATIO = 0.75;
+      const PartialAcceptRatio = 0.75;
       const partialAcceptFrames = Math.max(
         2,
-        Math.min(totalFrames, Math.max(8, Math.floor(totalFrames * PARTIAL_ACCEPT_RATIO)))
+        Math.min(totalFrames, Math.max(8, Math.floor(totalFrames * PartialAcceptRatio)))
       );
 
       const hasCoveredTimeWindow = (): boolean => {
@@ -1474,7 +1474,7 @@ export class WebCodecsDecoderService {
       );
       let processedSamples = 0;
       let lastProgressTickAt = 0;
-      const PROGRESS_TICK_INTERVAL_MS = 400;
+      const ProgressTickIntervalMs = 400;
 
       const tickProgress = (forceComplete = false) => {
         if (!onProgress) {
@@ -1487,7 +1487,7 @@ export class WebCodecsDecoderService {
         }
 
         const now = Date.now();
-        if (now - lastProgressTickAt < PROGRESS_TICK_INTERVAL_MS) {
+        if (now - lastProgressTickAt < ProgressTickIntervalMs) {
           return;
         }
         lastProgressTickAt = now;
@@ -1520,7 +1520,7 @@ export class WebCodecsDecoderService {
         }
 
         const now = Date.now();
-        if (now - lastDevStatsAtMs < DEV_STATS_INTERVAL_MS) {
+        if (now - lastDevStatsAtMs < DevStatsIntervalMs) {
           return;
         }
         lastDevStatsAtMs = now;
@@ -1743,8 +1743,8 @@ export class WebCodecsDecoderService {
       // Some browsers throw if a non-keyframe is decoded immediately after a flush.
       // To maximize compatibility (especially for AV1), we only flush once at the end
       // and apply backpressure via decodeQueueSize + cooperative yielding.
-      const MAX_DECODE_QUEUE_SIZE = 16;
-      const MAX_PENDING_OUTPUT_FRAMES = 6;
+      const MaxDecodeQueueSize = 16;
+      const MaxPendingOutputFrames = 6;
       let needsKeyFrame = true;
       let skippedUntilKey = 0;
 
@@ -1800,7 +1800,7 @@ export class WebCodecsDecoderService {
         }
 
         // Opportunistically process output frames without flushing.
-        if (decodedFrames.length >= MAX_PENDING_OUTPUT_FRAMES) {
+        if (decodedFrames.length >= MaxPendingOutputFrames) {
           await processDecodedFrames();
 
           maybeLogDevStats('output-drain');
@@ -1817,7 +1817,7 @@ export class WebCodecsDecoderService {
         }
 
         // Backpressure: yield control to allow decoder output callbacks to run.
-        if (decoder.decodeQueueSize > MAX_DECODE_QUEUE_SIZE) {
+        if (decoder.decodeQueueSize > MaxDecodeQueueSize) {
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
           await processDecodedFrames();
           tickProgress();
@@ -1850,7 +1850,7 @@ export class WebCodecsDecoderService {
       if (skipFlush) {
         tickProgress(true);
       } else {
-        const FLUSH_TIMEOUT_MS = 12_000;
+        const FlushTimeoutMs = 12_000;
 
         const hasProcessedAllSamples = (): boolean => processedSamples >= estimatedSamplesTotal;
 
@@ -1860,7 +1860,7 @@ export class WebCodecsDecoderService {
           totalFrames,
           processedSamples,
           decodeQueueSize: decoder.decodeQueueSize,
-          timeoutMs: FLUSH_TIMEOUT_MS,
+          timeoutMs: FlushTimeoutMs,
         });
 
         // Some browsers will continue delivering decoded frames while flush() is pending.
@@ -1880,9 +1880,9 @@ export class WebCodecsDecoderService {
           }
         );
 
-        const FLUSH_POLL_INTERVAL_MS = 50;
-        while (!flushSettled && Date.now() - flushStartedAtMs < FLUSH_TIMEOUT_MS) {
-          await new Promise<void>((resolve) => setTimeout(resolve, FLUSH_POLL_INTERVAL_MS));
+        const FlushPollIntervalMs = 50;
+        while (!flushSettled && Date.now() - flushStartedAtMs < FlushTimeoutMs) {
+          await new Promise<void>((resolve) => setTimeout(resolve, FlushPollIntervalMs));
           await processDecodedFrames();
           tickProgress();
           maybeLogDevStats('drain-wait', {
@@ -1909,7 +1909,7 @@ export class WebCodecsDecoderService {
             decodeQueueSize: decoder.decodeQueueSize,
             baseTimestampMicros,
             lastCapturedTimestampMicros,
-            timeoutMs: FLUSH_TIMEOUT_MS,
+            timeoutMs: FlushTimeoutMs,
           });
 
           // If we made substantial progress, prefer a partial demuxer result over a slow
@@ -1952,7 +1952,7 @@ export class WebCodecsDecoderService {
           }
 
           throw new Error(
-            `VideoDecoder flush timed out after ${Math.round(FLUSH_TIMEOUT_MS / 1000)}s`
+            `VideoDecoder flush timed out after ${Math.round(FlushTimeoutMs / 1000)}s`
           );
         }
 
@@ -2043,14 +2043,14 @@ export class WebCodecsDecoderService {
 
     const normalizedCodec = codec.toLowerCase();
     const isAv1 = normalizedCodec.includes('av1') || normalizedCodec.includes('av01');
-    const isVP9 = normalizedCodec.includes('vp9') || normalizedCodec.includes('vp09');
-    const isHEVC = normalizedCodec.includes('hevc') || normalizedCodec.includes('hvc1');
+    const isVp9 = normalizedCodec.includes('vp9') || normalizedCodec.includes('vp09');
+    const isHevc = normalizedCodec.includes('hevc') || normalizedCodec.includes('hvc1');
 
     // Complex codecs may need more time for seeking
-    if (isAv1 || isHEVC) {
+    if (isAv1 || isHevc) {
       return 2000; // 2s for AV1/HEVC (reduced from 5s baseline)
     }
-    if (isVP9) {
+    if (isVp9) {
       return 1800; // 1.8s for VP9
     }
 

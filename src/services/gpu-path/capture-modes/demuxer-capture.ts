@@ -121,7 +121,7 @@ export class DemuxerCaptureAdapter {
       let lastOutputAtMs = decodeStartedAtMs;
       let outputFramesTotal = 0;
       let lastDevStatsAtMs = 0;
-      const DEV_STATS_INTERVAL_MS = 2000;
+      const DevStatsIntervalMs = 2000;
 
       // Downsampling parameters
       const captureIntervalMicros = Math.max(1, Math.round(1_000_000 / targetFps));
@@ -133,10 +133,10 @@ export class DemuxerCaptureAdapter {
       let lastCapturedTimestampMicros: number | null = null;
 
       // Partial acceptance thresholds
-      const PARTIAL_ACCEPT_RATIO = 0.75;
+      const PartialAcceptRatio = 0.75;
       const partialAcceptFrames = Math.max(
         2,
-        Math.min(totalFrames, Math.max(8, Math.floor(totalFrames * PARTIAL_ACCEPT_RATIO)))
+        Math.min(totalFrames, Math.max(8, Math.floor(totalFrames * PartialAcceptRatio)))
       );
 
       const hasCoveredTimeWindow = (): boolean => {
@@ -169,7 +169,7 @@ export class DemuxerCaptureAdapter {
       );
       let processedSamples = 0;
       let lastProgressTickAt = 0;
-      const PROGRESS_TICK_INTERVAL_MS = 400;
+      const ProgressTickIntervalMs = 400;
 
       const tickProgress = (forceComplete = false) => {
         if (!onProgress) {
@@ -182,7 +182,7 @@ export class DemuxerCaptureAdapter {
         }
 
         const now = Date.now();
-        if (now - lastProgressTickAt < PROGRESS_TICK_INTERVAL_MS) {
+        if (now - lastProgressTickAt < ProgressTickIntervalMs) {
           return;
         }
         lastProgressTickAt = now;
@@ -215,7 +215,7 @@ export class DemuxerCaptureAdapter {
         }
 
         const now = Date.now();
-        if (now - lastDevStatsAtMs < DEV_STATS_INTERVAL_MS) {
+        if (now - lastDevStatsAtMs < DevStatsIntervalMs) {
           return;
         }
         lastDevStatsAtMs = now;
@@ -420,8 +420,8 @@ export class DemuxerCaptureAdapter {
       };
 
       // Decode loop with backpressure
-      const MAX_DECODE_QUEUE_SIZE = 16;
-      const MAX_PENDING_OUTPUT_FRAMES = 6;
+      const MaxDecodeQueueSize = 16;
+      const MaxPendingOutputFrames = 6;
       let needsKeyFrame = true;
       let skippedUntilKey = 0;
 
@@ -475,7 +475,7 @@ export class DemuxerCaptureAdapter {
         }
 
         // Process output frames
-        if (decodedFrames.length >= MAX_PENDING_OUTPUT_FRAMES) {
+        if (decodedFrames.length >= MaxPendingOutputFrames) {
           await processDecodedFrames();
           maybeLogDevStats('output-drain');
 
@@ -491,7 +491,7 @@ export class DemuxerCaptureAdapter {
         }
 
         // Backpressure
-        if (decoder.decodeQueueSize > MAX_DECODE_QUEUE_SIZE) {
+        if (decoder.decodeQueueSize > MaxDecodeQueueSize) {
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
           await processDecodedFrames();
           tickProgress();
@@ -520,7 +520,7 @@ export class DemuxerCaptureAdapter {
       if (skipFlush) {
         tickProgress(true);
       } else {
-        const FLUSH_TIMEOUT_MS = 12_000;
+        const FlushTimeoutMs = 12_000;
         const hasProcessedAllSamples = (): boolean => processedSamples >= estimatedSamplesTotal;
 
         logger.debug('conversion', 'Draining VideoDecoder', {
@@ -529,7 +529,7 @@ export class DemuxerCaptureAdapter {
           totalFrames,
           processedSamples,
           decodeQueueSize: decoder.decodeQueueSize,
-          timeoutMs: FLUSH_TIMEOUT_MS,
+          timeoutMs: FlushTimeoutMs,
         });
 
         const flushPromise = decoder.flush();
@@ -546,9 +546,9 @@ export class DemuxerCaptureAdapter {
           }
         );
 
-        const FLUSH_POLL_INTERVAL_MS = 50;
-        while (!flushSettled && Date.now() - flushStartedAtMs < FLUSH_TIMEOUT_MS) {
-          await new Promise<void>((resolve) => setTimeout(resolve, FLUSH_POLL_INTERVAL_MS));
+        const FlushPollIntervalMs = 50;
+        while (!flushSettled && Date.now() - flushStartedAtMs < FlushTimeoutMs) {
+          await new Promise<void>((resolve) => setTimeout(resolve, FlushPollIntervalMs));
           await processDecodedFrames();
           tickProgress();
           maybeLogDevStats('drain-wait', {
@@ -572,7 +572,7 @@ export class DemuxerCaptureAdapter {
             decodeQueueSize: decoder.decodeQueueSize,
             baseTimestampMicros,
             lastCapturedTimestampMicros,
-            timeoutMs: FLUSH_TIMEOUT_MS,
+            timeoutMs: FlushTimeoutMs,
           });
 
           const acceptPartial =
@@ -605,7 +605,7 @@ export class DemuxerCaptureAdapter {
           }
 
           throw new Error(
-            `VideoDecoder flush timed out after ${Math.round(FLUSH_TIMEOUT_MS / 1000)}s`
+            `VideoDecoder flush timed out after ${Math.round(FlushTimeoutMs / 1000)}s`
           );
         }
 

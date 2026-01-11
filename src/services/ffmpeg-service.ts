@@ -147,24 +147,24 @@ class FFmpegService {
     }
 
     const runPrefetch = async () => {
-      const MAX_RETRIES = 2;
-      const RETRY_BACKOFF_MS = 500;
+      const MaxRetries = 2;
+      const RetryBackoffMs = 500;
 
       /**
        * Attempt to load all assets from a single CDN mirror in parallel
        * @param baseURL CDN mirror URL
        * @returns Array of blob URLs on success, null on failure
        */
-      const tryLoadAllAssets = async (baseURL: string): Promise<string[] | null> => {
+      const tryLoadAllAssets = async (baseUrl: string): Promise<string[] | null> => {
         try {
           const urls = await Promise.all([
-            cacheAwareBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            cacheAwareBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            cacheAwareBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+            cacheAwareBlobURL(`${baseUrl}/ffmpeg-core.js`, 'text/javascript'),
+            cacheAwareBlobURL(`${baseUrl}/ffmpeg-core.wasm`, 'application/wasm'),
+            cacheAwareBlobURL(`${baseUrl}/ffmpeg-core.worker.js`, 'text/javascript'),
           ]);
           return urls;
         } catch (error) {
-          logger.debug('prefetch', `Failed to load from ${baseURL}`, {
+          logger.debug('prefetch', `Failed to load from ${baseUrl}`, {
             error: getErrorMessage(error),
           });
           return null;
@@ -176,39 +176,39 @@ class FFmpegService {
        * @param baseURL CDN mirror URL
        * @returns Blob URLs array on success
        */
-      const loadWithRetry = async (baseURL: string): Promise<string[]> => {
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-          const urls = await tryLoadAllAssets(baseURL);
+      const loadWithRetry = async (baseUrl: string): Promise<string[]> => {
+        for (let attempt = 0; attempt <= MaxRetries; attempt++) {
+          const urls = await tryLoadAllAssets(baseUrl);
           if (urls) {
             const retryLog =
               attempt > 0
                 ? ` (succeeded after ${attempt} ${attempt === 1 ? 'retry' : 'retries'})`
                 : '';
-            logger.debug('prefetch', `Loaded assets from ${baseURL}${retryLog}`);
+            logger.debug('prefetch', `Loaded assets from ${baseUrl}${retryLog}`);
             return urls;
           }
 
           // Exponential backoff before retrying
-          if (attempt < MAX_RETRIES) {
-            const waitTime = RETRY_BACKOFF_MS * 2 ** attempt;
+          if (attempt < MaxRetries) {
+            const waitTime = RetryBackoffMs * 2 ** attempt;
             await new Promise((resolve) => setTimeout(resolve, waitTime));
           }
         }
-        throw new Error(`Failed to load from ${baseURL} after ${MAX_RETRIES + 1} attempts`);
+        throw new Error(`Failed to load from ${baseUrl} after ${MaxRetries + 1} attempts`);
       };
 
       // Try each CDN mirror in sequence
       let lastError: unknown;
-      for (const baseURL of FFMPEG_CORE_BASE_URLS) {
+      for (const baseUrl of FFMPEG_CORE_BASE_URLS) {
         try {
-          const urls = await loadWithRetry(baseURL);
+          const urls = await loadWithRetry(baseUrl);
           // Cleanup blob URLs after caching (they're already cached)
           urls.forEach((url) => URL.revokeObjectURL(url));
-          logger.debug('prefetch', `Successfully cached FFmpeg core assets from ${baseURL}`);
+          logger.debug('prefetch', `Successfully cached FFmpeg core assets from ${baseUrl}`);
           return;
         } catch (error) {
           lastError = error;
-          logger.debug('prefetch', `Mirror ${baseURL} exhausted retries`, {
+          logger.debug('prefetch', `Mirror ${baseUrl} exhausted retries`, {
             error: getErrorMessage(error),
           });
         }
@@ -1375,7 +1375,7 @@ class FFmpegService {
 
     // Validate frame files exist and are not empty
     const ffmpeg = this.getFFmpeg();
-    const MIN_VALID_PNG_SIZE = 500; // PNG header + minimal pixel data
+    const MinValidPngSize = 500; // PNG header + minimal pixel data
 
     // Sample-based validation: Check first, last, and 5 random frames
     // This reduces validation time from 2-5s to <0.5s for 240-frame sequences
@@ -1418,14 +1418,14 @@ class FFmpegService {
           );
         }
 
-        if (fileData.length < MIN_VALID_PNG_SIZE) {
+        if (fileData.length < MinValidPngSize) {
           logger.error('conversion', `Undersized frame detected: ${frameName}`, {
             size: fileData.length,
-            minRequired: MIN_VALID_PNG_SIZE,
+            minRequired: MinValidPngSize,
             frameIndex: i,
           });
           throw new Error(
-            `Invalid frame ${frameName} (${fileData.length} bytes < ${MIN_VALID_PNG_SIZE} minimum). ` +
+            `Invalid frame ${frameName} (${fileData.length} bytes < ${MinValidPngSize} minimum). ` +
               'WebCodecs produced corrupted frame data. Falling back to FFmpeg.'
           );
         }

@@ -32,7 +32,7 @@ import type { EncoderAdapter, EncoderRequest } from '../encoder-interface';
 /**
  * WebP encoder worker API
  */
-interface WebPEncoderWorkerAPI {
+interface WebPEncoderWorkerApi {
   /**
    * Encode single frame to WebP
    */
@@ -63,7 +63,7 @@ export class WebPEncoderAdapter implements EncoderAdapter {
     maxDimension: undefined,
   };
 
-  private workers: Array<Comlink.Remote<WebPEncoderWorkerAPI>> = [];
+  private workers: Array<Comlink.Remote<WebPEncoderWorkerApi>> = [];
   private Comlink: typeof import('comlink') | null = null;
 
   /**
@@ -223,7 +223,7 @@ export class WebPEncoderAdapter implements EncoderAdapter {
           type: 'module',
         }
       );
-      const wrappedWorker = this.Comlink.wrap<WebPEncoderWorkerAPI>(worker);
+      const wrappedWorker = this.Comlink.wrap<WebPEncoderWorkerApi>(worker);
       this.workers.push(wrappedWorker);
     }
 

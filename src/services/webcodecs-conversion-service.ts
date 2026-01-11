@@ -279,7 +279,7 @@ class WebCodecsConversionService {
     timestamps: number[],
     fps: number,
     frameCount: number,
-    sourceFPS?: number,
+    sourceFps?: number,
     codec?: string,
     durationSeconds?: number
   ): number[] {
@@ -287,7 +287,7 @@ class WebCodecsConversionService {
       timestamps,
       fps,
       frameCount,
-      sourceFPS,
+      sourceFPS: sourceFps,
       codec,
       durationSeconds,
     });
@@ -1133,7 +1133,7 @@ class WebCodecsConversionService {
         const cachedBatchSize = getCachedVFSBatchSize();
 
         // Calculate memory-aware batch size based on frame dimensions
-        const calculateOptimalVFSBatchSize = (params: {
+        const calculateOptimalVfsBatchSize = (params: {
           frameWidth: number;
           frameHeight: number;
           hwConcurrency: number;
@@ -1149,8 +1149,8 @@ class WebCodecsConversionService {
           const estimatedFrameSize = pixelCount * bytesPerPixel;
 
           // Target batch memory budget: 100MB for VFS writes
-          const BATCH_MEMORY_BUDGET = 100 * 1024 * 1024;
-          const framesPerBudget = Math.floor(BATCH_MEMORY_BUDGET / estimatedFrameSize);
+          const BatchMemoryBudget = 100 * 1024 * 1024;
+          const framesPerBudget = Math.floor(BatchMemoryBudget / estimatedFrameSize);
 
           // Calculate final batch size
           const baseBatchSize = hwConcurrency * 6;
@@ -1173,10 +1173,10 @@ class WebCodecsConversionService {
           return memoryAwareBatchSize;
         };
 
-        const WRITE_BATCH_SIZE =
+        const WriteBatchSize =
           cachedBatchSize && isHardwareCacheValid()
             ? cachedBatchSize
-            : calculateOptimalVFSBatchSize({
+            : calculateOptimalVfsBatchSize({
                 frameWidth: decodeResult.width,
                 frameHeight: decodeResult.height,
                 hwConcurrency,
@@ -1185,16 +1185,13 @@ class WebCodecsConversionService {
 
         logger.info('conversion', 'Batch writing frames to VFS', {
           totalFrames: orderedFrames.length,
-          batchSize: WRITE_BATCH_SIZE,
+          batchSize: WriteBatchSize,
           hwConcurrency,
           cached: !!cachedBatchSize,
         });
 
-        for (let i = 0; i < orderedFrames.length; i += WRITE_BATCH_SIZE) {
-          const batch = orderedFrames.slice(
-            i,
-            Math.min(i + WRITE_BATCH_SIZE, orderedFrames.length)
-          );
+        for (let i = 0; i < orderedFrames.length; i += WriteBatchSize) {
+          const batch = orderedFrames.slice(i, Math.min(i + WriteBatchSize, orderedFrames.length));
 
           // Write batch in parallel
           await Promise.all(
@@ -1211,9 +1208,9 @@ class WebCodecsConversionService {
 
         // Cache successful batch size for future conversions
         if (!cachedBatchSize) {
-          cacheVFSBatchSize(WRITE_BATCH_SIZE);
+          cacheVFSBatchSize(WriteBatchSize);
           logger.info('conversion', 'Cached VFS batch size for future conversions', {
-            batchSize: WRITE_BATCH_SIZE,
+            batchSize: WriteBatchSize,
           });
         }
       }
@@ -1394,8 +1391,8 @@ class WebCodecsConversionService {
     let lastValidEncodedFrame: Uint8Array | null = null;
 
     // Determine if we need RGBA frames (for modern-gif or static WebP)
-    const needsRGBA = useModernGif || format === 'webp';
-    const frameFormat: WebCodecsFrameFormat = needsRGBA
+    const needsRgba = useModernGif || format === 'webp';
+    const frameFormat: WebCodecsFrameFormat = needsRgba
       ? 'rgba'
       : FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT;
 
@@ -1814,7 +1811,7 @@ class WebCodecsConversionService {
           // Dynamic chunk size based on CPU cores for better parallelization
           const hwConcurrency = navigator.hardwareConcurrency || 4;
           const cachedChunkSize = getCachedWebPChunkSize();
-          const CHUNK_SIZE =
+          const ChunkSize =
             cachedChunkSize && isHardwareCacheValid()
               ? cachedChunkSize
               : Math.min(20, Math.max(10, hwConcurrency * 2));
@@ -1822,8 +1819,8 @@ class WebCodecsConversionService {
 
           logger.info('conversion', 'Parallel WebP frame encoding', {
             totalFrames,
-            chunkSize: CHUNK_SIZE,
-            estimatedBatches: Math.ceil(totalFrames / CHUNK_SIZE),
+            chunkSize: ChunkSize,
+            estimatedBatches: Math.ceil(totalFrames / ChunkSize),
             cached: !!cachedChunkSize,
           });
 
@@ -1831,8 +1828,8 @@ class WebCodecsConversionService {
           const encodeFrame = this.createWebPFrameEncoder(webpQualityRatio);
 
           // Process frames in batches
-          for (let i = 0; i < totalFrames; i += CHUNK_SIZE) {
-            const chunk = webpCapturedFrames.slice(i, Math.min(i + CHUNK_SIZE, totalFrames));
+          for (let i = 0; i < totalFrames; i += ChunkSize) {
+            const chunk = webpCapturedFrames.slice(i, Math.min(i + ChunkSize, totalFrames));
 
             // Encode chunk in parallel using Promise.all
             const encodedChunk = await Promise.all(
@@ -1851,9 +1848,9 @@ class WebCodecsConversionService {
 
           // Cache successful chunk size for future conversions
           if (!cachedChunkSize && webpEncodedFrames.length > 0) {
-            cacheWebPChunkSize(CHUNK_SIZE);
+            cacheWebPChunkSize(ChunkSize);
             logger.info('conversion', 'Cached WebP chunk size for future conversions', {
-              chunkSize: CHUNK_SIZE,
+              chunkSize: ChunkSize,
             });
           }
         }

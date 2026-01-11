@@ -132,10 +132,10 @@ const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
     return bytes;
   }
 
-  const isRIFF = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46; // 'RIFF'
-  const isWEBP = bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50; // 'WEBP'
+  const isRiff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46; // 'RIFF'
+  const isWebp = bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50; // 'WEBP'
 
-  if (!isRIFF || !isWEBP) {
+  if (!isRiff || !isWebp) {
     return bytes;
   }
 
@@ -158,7 +158,7 @@ const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
  * @param value - Value to encode (0 to 4294967295)
  * @returns 4-byte buffer in little-endian format
  */
-function writeUint32LE(value: number): Uint8Array {
+function writeUint32le(value: number): Uint8Array {
   const buffer = new Uint8Array(4);
   buffer[0] = value & 0xff;
   buffer[1] = (value >> 8) & 0xff;
@@ -173,7 +173,7 @@ function writeUint32LE(value: number): Uint8Array {
  * @param value - Value to encode (0 to 16777215)
  * @returns 3-byte buffer in little-endian format
  */
-function writeUint24LE(value: number): Uint8Array {
+function writeUint24le(value: number): Uint8Array {
   const buffer = new Uint8Array(3);
   buffer[0] = value & 0xff;
   buffer[1] = (value >> 8) & 0xff;
@@ -188,7 +188,7 @@ function writeUint24LE(value: number): Uint8Array {
  * @returns 4-byte buffer containing ASCII characters
  * @throws Error if fourcc is not exactly 4 characters
  */
-function writeFourCC(fourcc: string): Uint8Array {
+function writeFourCc(fourcc: string): Uint8Array {
   if (fourcc.length !== 4) {
     throw new Error(`FourCC must be exactly 4 characters, got: "${fourcc}"`);
   }
@@ -209,16 +209,16 @@ function writeFourCC(fourcc: string): Uint8Array {
  * @param hasAlpha - Whether frames contain alpha channel
  * @returns Complete VP8X chunk (FourCC + size + payload)
  */
-function createVP8XChunk(width: number, height: number, hasAlpha: boolean): Uint8Array {
+function createVp8xChunk(width: number, height: number, hasAlpha: boolean): Uint8Array {
   const chunkSize = 10;
   const flags = 0x10 | (hasAlpha ? 0x08 : 0x00); // ANIMATION | ALPHA
 
   const chunks: Uint8Array[] = [
-    writeFourCC('VP8X'),
-    writeUint32LE(chunkSize),
+    writeFourCc('VP8X'),
+    writeUint32le(chunkSize),
     new Uint8Array([flags, 0, 0, 0]), // Flags (4 bytes)
-    writeUint24LE(width - 1), // Canvas width - 1 (24 bits)
-    writeUint24LE(height - 1), // Canvas height - 1 (24 bits)
+    writeUint24le(width - 1), // Canvas width - 1 (24 bits)
+    writeUint24le(height - 1), // Canvas height - 1 (24 bits)
   ];
 
   const totalLength = 4 + 4 + chunkSize; // FourCC + chunk size + payload
@@ -234,15 +234,15 @@ function createVP8XChunk(width: number, height: number, hasAlpha: boolean): Uint
  * @param loopCount - Number of loops (0 = infinite, max 65535)
  * @returns Complete ANIM chunk (FourCC + size + payload)
  */
-function createANIMChunk(
+function createAnimChunk(
   backgroundColor: { r: number; g: number; b: number; a: number },
   loopCount: number
 ): Uint8Array {
   const chunkSize = 6;
 
   const chunks: Uint8Array[] = [
-    writeFourCC('ANIM'),
-    writeUint32LE(chunkSize),
+    writeFourCc('ANIM'),
+    writeUint32le(chunkSize),
     new Uint8Array([backgroundColor.r, backgroundColor.g, backgroundColor.b, backgroundColor.a]),
     new Uint8Array([loopCount & 0xff, (loopCount >> 8) & 0xff]), // Loop count (16 bits)
   ];
@@ -262,7 +262,7 @@ function createANIMChunk(
  * @param height - Canvas height in pixels
  * @returns Complete ANMF chunk (FourCC + size + header + payload + padding if needed)
  */
-function createANMFChunk(
+function createAnmfChunk(
   frameData: ArrayBuffer,
   duration: number,
   width: number,
@@ -275,13 +275,13 @@ function createANMFChunk(
   const normalizedDuration = normalizeDuration(duration);
 
   const chunks: Uint8Array[] = [
-    writeFourCC('ANMF'),
-    writeUint32LE(chunkSize),
-    writeUint24LE(0), // Frame X (24 bits) - always 0 for full-frame
-    writeUint24LE(0), // Frame Y (24 bits) - always 0 for full-frame
-    writeUint24LE(width - 1), // Frame width - 1 (24 bits)
-    writeUint24LE(height - 1), // Frame height - 1 (24 bits)
-    writeUint24LE(normalizedDuration), // Duration in milliseconds (24 bits)
+    writeFourCc('ANMF'),
+    writeUint32le(chunkSize),
+    writeUint24le(0), // Frame X (24 bits) - always 0 for full-frame
+    writeUint24le(0), // Frame Y (24 bits) - always 0 for full-frame
+    writeUint24le(width - 1), // Frame width - 1 (24 bits)
+    writeUint24le(height - 1), // Frame height - 1 (24 bits)
+    writeUint24le(normalizedDuration), // Duration in milliseconds (24 bits)
     new Uint8Array([0]), // Flags: 0 = no blending, no disposal
     frameBytes, // Encoded frame data
   ];
@@ -355,10 +355,10 @@ export async function muxAnimatedWebP(
     });
 
     // Build chunks
-    const vp8xChunk = createVP8XChunk(width, height, hasAlpha);
-    const animChunk = createANIMChunk(backgroundColor, loopCount);
+    const vp8xChunk = createVp8xChunk(width, height, hasAlpha);
+    const animChunk = createAnimChunk(backgroundColor, loopCount);
     const anmfChunks = frames.map((frame) =>
-      createANMFChunk(frame.data, frame.duration, width, height)
+      createAnmfChunk(frame.data, frame.duration, width, height)
     );
 
     // Calculate total size
@@ -369,9 +369,9 @@ export async function muxAnimatedWebP(
 
     // RIFF header
     const riffHeader = new Uint8Array(12);
-    riffHeader.set(writeFourCC('RIFF'), 0);
-    riffHeader.set(writeUint32LE(4 + webpPayloadSize), 4); // File size - 8 (RIFF header)
-    riffHeader.set(writeFourCC('WEBP'), 8);
+    riffHeader.set(writeFourCc('RIFF'), 0);
+    riffHeader.set(writeUint32le(4 + webpPayloadSize), 4); // File size - 8 (RIFF header)
+    riffHeader.set(writeFourCc('WEBP'), 8);
 
     // Combine all chunks
     const totalSize = riffHeader.length + webpPayloadSize;

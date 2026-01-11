@@ -150,7 +150,7 @@ export interface StrategyResolver {
   /**
    * Get optimal FPS for quality level
    */
-  getOptimalFPS(sourceFPS: number, quality: string, format: ConversionFormat): number;
+  getOptimalFPS(sourceFps: number, quality: string, format: ConversionFormat): number;
 }
 
 /**

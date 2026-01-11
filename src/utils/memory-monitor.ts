@@ -40,14 +40,14 @@ function getMemoryInfo(): MemoryInfo | null {
     return null;
   }
 
-  const usedJSHeapSize = memory.usedJSHeapSize;
-  const totalJSHeapSize = memory.totalJSHeapSize;
+  const usedJsHeapSize = memory.usedJSHeapSize;
+  const totalJsHeapSize = memory.totalJSHeapSize;
   const jsHeapSizeLimit = memory.jsHeapSizeLimit;
-  const usagePercentage = (usedJSHeapSize / jsHeapSizeLimit) * 100;
+  const usagePercentage = (usedJsHeapSize / jsHeapSizeLimit) * 100;
 
   return {
-    usedJSHeapSize,
-    totalJSHeapSize,
+    usedJSHeapSize: usedJsHeapSize,
+    totalJSHeapSize: totalJsHeapSize,
     jsHeapSizeLimit,
     usagePercentage,
   };

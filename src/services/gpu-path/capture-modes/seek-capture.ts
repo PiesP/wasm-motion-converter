@@ -36,14 +36,14 @@ export class SeekCaptureAdapter implements CaptureAdapter {
 
     const normalizedCodec = codec.toLowerCase();
     const isAv1 = normalizedCodec.includes('av1') || normalizedCodec.includes('av01');
-    const isVP9 = normalizedCodec.includes('vp9') || normalizedCodec.includes('vp09');
-    const isHEVC = normalizedCodec.includes('hevc') || normalizedCodec.includes('hvc1');
+    const isVp9 = normalizedCodec.includes('vp9') || normalizedCodec.includes('vp09');
+    const isHevc = normalizedCodec.includes('hevc') || normalizedCodec.includes('hvc1');
 
     // Complex codecs may need more time for seeking
-    if (isAv1 || isHEVC) {
+    if (isAv1 || isHevc) {
       return 2000; // 2s for AV1/HEVC
     }
-    if (isVP9) {
+    if (isVp9) {
       return 1800; // 1.8s for VP9
     }
 

@@ -129,7 +129,7 @@ async function fetchFromCacheOrNetwork(
  * @param options - Load options
  * @returns Load result or throws on failure
  */
-async function tryLoadFromCDN(
+async function tryLoadFromCdn(
   url: string,
   provider: CDNProvider,
   options: Required<CDNLoadOptions>
@@ -216,7 +216,7 @@ export async function loadFromCDN(
     const url = getCDNUrl(dependency, provider, subExport);
 
     try {
-      return await tryLoadFromCDN(url, provider, opts);
+      return await tryLoadFromCdn(url, provider, opts);
     } catch (error) {
       errors.push({
         provider,
@@ -269,7 +269,7 @@ export async function loadWithCascade(
   const primaryProvider = CDN_PROVIDERS.find((p) => originalDomain.includes(p)) ?? CDN_PROVIDERS[0];
 
   try {
-    return await tryLoadFromCDN(originalUrl, primaryProvider, opts);
+    return await tryLoadFromCdn(originalUrl, primaryProvider, opts);
   } catch (error) {
     errors.push({
       provider: primaryProvider,
@@ -285,7 +285,7 @@ export async function loadWithCascade(
     if (!alternativeUrl) continue; // Couldn't convert URL
 
     try {
-      return await tryLoadFromCDN(alternativeUrl, provider, opts);
+      return await tryLoadFromCdn(alternativeUrl, provider, opts);
     } catch (error) {
       errors.push({
         provider,

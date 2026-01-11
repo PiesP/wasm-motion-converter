@@ -289,10 +289,10 @@ export function buildWebPFrameDurations(params: {
   }
 
   // Validate sourceFPS before using it
-  const hasValidSourceFPS =
+  const hasValidSourceFps =
     sourceFPS && Number.isFinite(sourceFPS) && sourceFPS > 0 && sourceFPS <= 120; // Sanity check
 
-  if (!hasValidSourceFPS && sourceFPS) {
+  if (!hasValidSourceFps && sourceFPS) {
     logger.warn('conversion', 'Invalid source FPS detected, using variable durations', {
       sourceFPS,
       reason: sourceFPS <= 0 ? 'non-positive' : sourceFPS > 120 ? 'unrealistic' : 'non-finite',
@@ -304,7 +304,7 @@ export function buildWebPFrameDurations(params: {
 
   // Detect if significant FPS downsampling occurred or if complex codec requires uniform timing
   const useUniformDurations =
-    isComplexCodecSource || (hasValidSourceFPS && sourceFPS / fps > FPS_DOWNSAMPLING_THRESHOLD);
+    isComplexCodecSource || (hasValidSourceFps && sourceFPS / fps > FPS_DOWNSAMPLING_THRESHOLD);
 
   let durations: number[] = [];
 

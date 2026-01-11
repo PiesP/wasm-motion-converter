@@ -23,15 +23,15 @@ import solid from 'vite-plugin-solid';
 /**
  * Service Worker compilation plugin API interface
  */
-interface SWCompilePluginAPI {
+interface SwCompilePluginApi {
   getCompiledSWRCode: () => string;
 }
 
 /**
  * Service Worker compilation plugin with typed API
  */
-interface SWCompilePlugin extends Plugin {
-  api: SWCompilePluginAPI;
+interface SwCompilePlugin extends Plugin {
+  api: SwCompilePluginApi;
 }
 
 /**
@@ -186,10 +186,10 @@ function importMapPlugin(): Plugin {
  *
  * @returns Vite plugin for service worker compilation
  */
-function compileServiceWorkerPlugin(): SWCompilePlugin {
+function compileServiceWorkerPlugin(): SwCompilePlugin {
   let isDev = false;
-  let compiledSWCode = '';
-  let compiledSWRCode = '';
+  let compiledSwCode = '';
+  let compiledSwrCode = '';
 
   return {
     name: 'compile-service-worker',
@@ -243,8 +243,8 @@ function compileServiceWorkerPlugin(): SWCompilePlugin {
         });
 
         // Read compiled code into memory
-        compiledSWCode = readFileSync(path.join(tempDir, 'service-worker.js'), 'utf-8');
-        compiledSWRCode = readFileSync(path.join(tempDir, 'sw-register.js'), 'utf-8');
+        compiledSwCode = readFileSync(path.join(tempDir, 'service-worker.js'), 'utf-8');
+        compiledSwrCode = readFileSync(path.join(tempDir, 'sw-register.js'), 'utf-8');
 
         console.log('✓ Service Worker files compiled successfully');
       } catch (error) {
@@ -260,7 +260,7 @@ function compileServiceWorkerPlugin(): SWCompilePlugin {
 
       try {
         // Write service-worker.js to dist
-        writeFileSync(path.join(distDir, 'service-worker.js'), compiledSWCode);
+        writeFileSync(path.join(distDir, 'service-worker.js'), compiledSwCode);
         console.log('✓ Service Worker written to dist/service-worker.js');
       } catch (error) {
         console.error('✗ Failed to write service worker:', error);
@@ -282,16 +282,16 @@ function compileServiceWorkerPlugin(): SWCompilePlugin {
         }
 
         // Delete source TypeScript files from dist/ if they were copied
-        const swTS = path.join(distDir, 'service-worker.ts');
-        const swrTS = path.join(distDir, 'sw-register.ts');
+        const swTs = path.join(distDir, 'service-worker.ts');
+        const swrTs = path.join(distDir, 'sw-register.ts');
 
-        if (existsSync(swTS)) {
-          unlinkSync(swTS);
+        if (existsSync(swTs)) {
+          unlinkSync(swTs);
           console.log('✓ Removed service-worker.ts from dist/');
         }
 
-        if (existsSync(swrTS)) {
-          unlinkSync(swrTS);
+        if (existsSync(swrTs)) {
+          unlinkSync(swrTs);
           console.log('✓ Removed sw-register.ts from dist/');
         }
       } catch (error) {
@@ -302,7 +302,7 @@ function compileServiceWorkerPlugin(): SWCompilePlugin {
     // Provide compiled code to injection plugin
     api: {
       getCompiledSWRCode() {
-        return compiledSWRCode;
+        return compiledSwrCode;
       },
     },
   };
@@ -321,7 +321,7 @@ function compileServiceWorkerPlugin(): SWCompilePlugin {
  *
  * @returns Vite plugin for SW registration injection
  */
-function injectServiceWorkerPlugin(compilePlugin: SWCompilePlugin): Plugin {
+function injectServiceWorkerPlugin(compilePlugin: SwCompilePlugin): Plugin {
   let isDev = false;
 
   return {

@@ -31,25 +31,25 @@ type ConversionFormat = 'gif' | 'webp';
  * const fps = getOptimalFPS(10, 'medium', 'webp'); // Returns 10
  */
 export function getOptimalFPS(
-  sourceFPS: number,
+  sourceFps: number,
   quality: ConversionQuality,
   format: ConversionFormat
 ): number {
   // Validate input
-  if (!Number.isFinite(sourceFPS) || sourceFPS <= 0) {
-    throw new Error(`Invalid sourceFPS: ${sourceFPS}. Must be a positive number.`);
+  if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
+    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
   }
 
   // Get preset FPS for this quality/format combination
   const preset = QUALITY_PRESETS[format][quality];
-  const presetFPS = 'fps' in preset ? preset.fps : 15;
+  const presetFps = 'fps' in preset ? preset.fps : 15;
 
   // Don't exceed source FPS (no point in upsampling frames)
   // Don't go below preset FPS (maintains quality baseline)
-  const optimalFPS = Math.min(sourceFPS, presetFPS);
+  const optimalFps = Math.min(sourceFps, presetFps);
 
   // Ensure we have a valid FPS (at least 1, at most 60)
-  return Math.max(1, Math.min(60, Math.round(optimalFPS)));
+  return Math.max(1, Math.min(60, Math.round(optimalFps)));
 }
 
 /**
@@ -69,19 +69,19 @@ export function getOptimalFPS(
  * const shouldAdapt = shouldUseAdaptiveFPS(30, 'high', 'gif'); // false (30 == 30)
  */
 export function shouldUseAdaptiveFPS(
-  sourceFPS: number,
+  sourceFps: number,
   quality: ConversionQuality,
   format: ConversionFormat
 ): boolean {
-  if (!Number.isFinite(sourceFPS) || sourceFPS <= 0) {
-    throw new Error(`Invalid sourceFPS: ${sourceFPS}. Must be a positive number.`);
+  if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
+    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
   }
 
   const preset = QUALITY_PRESETS[format][quality];
-  const presetFPS = 'fps' in preset ? preset.fps : 15;
-  const optimalFPS = getOptimalFPS(sourceFPS, quality, format);
+  const presetFps = 'fps' in preset ? preset.fps : 15;
+  const optimalFps = getOptimalFPS(sourceFps, quality, format);
 
-  return optimalFPS !== presetFPS;
+  return optimalFps !== presetFps;
 }
 
 /**
@@ -107,26 +107,26 @@ export function shouldUseAdaptiveFPS(
  * // Returns: undefined (no optimization needed)
  */
 export function getFPSOptimizationMessage(
-  sourceFPS: number,
+  sourceFps: number,
   quality: ConversionQuality,
   format: ConversionFormat
 ): string | undefined {
-  if (!Number.isFinite(sourceFPS) || sourceFPS <= 0) {
-    throw new Error(`Invalid sourceFPS: ${sourceFPS}. Must be a positive number.`);
+  if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
+    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
   }
 
-  const optimalFPS = getOptimalFPS(sourceFPS, quality, format);
+  const optimalFps = getOptimalFPS(sourceFps, quality, format);
   const preset = QUALITY_PRESETS[format][quality];
-  const presetFPS = 'fps' in preset ? preset.fps : 15;
+  const presetFps = 'fps' in preset ? preset.fps : 15;
 
-  if (optimalFPS === presetFPS) {
+  if (optimalFps === presetFps) {
     return undefined;
   }
 
-  if (optimalFPS < presetFPS) {
-    return `Matched output FPS to source (${optimalFPS} FPS) to avoid unnecessary interpolation`;
+  if (optimalFps < presetFps) {
+    return `Matched output FPS to source (${optimalFps} FPS) to avoid unnecessary interpolation`;
   }
 
   // This shouldn't happen due to min() logic, but included for completeness
-  return `Limited output FPS to preset maximum (${optimalFPS} FPS)`;
+  return `Limited output FPS to preset maximum (${optimalFps} FPS)`;
 }

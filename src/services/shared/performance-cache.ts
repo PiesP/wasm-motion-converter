@@ -20,11 +20,11 @@ import {
   type CapturePerformance,
   cacheCaptureMode as _cacheCaptureMode,
   cacheCapturePerformance as _cacheCapturePerformance,
-  cacheVFSBatchSize as _cacheVFSBatchSize,
+  cacheVFSBatchSize as _cacheVfsBatchSize,
   cacheWebPChunkSize as _cacheWebPChunkSize,
   getCachedCaptureMode as _getCachedCaptureMode,
   getCachedCapturePerformance as _getCachedCapturePerformance,
-  getCachedVFSBatchSize as _getCachedVFSBatchSize,
+  getCachedVFSBatchSize as _getCachedVfsBatchSize,
   getCachedWebPChunkSize as _getCachedWebPChunkSize,
 } from '@utils/session-cache';
 
@@ -158,7 +158,7 @@ export function getCachedVFSBatchSize(requireHardwareValidity = true): number | 
     return null;
   }
 
-  return _getCachedVFSBatchSize();
+  return _getCachedVfsBatchSize();
 }
 
 /**
@@ -172,7 +172,7 @@ export function getCachedVFSBatchSize(requireHardwareValidity = true): number | 
  * cacheVFSBatchSize(40);
  */
 export function cacheVFSBatchSize(batchSize: number): void {
-  _cacheVFSBatchSize(batchSize);
+  _cacheVfsBatchSize(batchSize);
 }
 
 /**

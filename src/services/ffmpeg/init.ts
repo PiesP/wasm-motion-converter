@@ -43,13 +43,13 @@ export async function initializeFFmpegRuntime(
   const resolveFFmpegAssets = async (): Promise<[string, string, string]> => {
     let lastError: unknown;
 
-    for (const baseURL of FFMPEG_CORE_BASE_URLS) {
+    for (const baseUrl of FFMPEG_CORE_BASE_URLS) {
       try {
         const hostLabel = (() => {
           try {
-            return new URL(baseURL).host;
+            return new URL(baseUrl).host;
           } catch {
-            return baseURL;
+            return baseUrl;
           }
         })();
 
@@ -60,17 +60,17 @@ export async function initializeFFmpegRuntime(
 
         return await Promise.all([
           loadFFmpegAsset(
-            `${baseURL}/ffmpeg-core.js`,
+            `${baseUrl}/ffmpeg-core.js`,
             'text/javascript',
             'FFmpeg core script'
           ).then(applyDownloadProgress(10, 'FFmpeg core script downloaded.')),
           loadFFmpegAsset(
-            `${baseURL}/ffmpeg-core.wasm`,
+            `${baseUrl}/ffmpeg-core.wasm`,
             'application/wasm',
             'FFmpeg core WASM'
           ).then(applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')),
           loadFFmpegAsset(
-            `${baseURL}/ffmpeg-core.worker.js`,
+            `${baseUrl}/ffmpeg-core.worker.js`,
             'text/javascript',
             'FFmpeg worker'
           ).then(applyDownloadProgress(10, 'FFmpeg worker downloaded.')),
@@ -100,7 +100,7 @@ export async function initializeFFmpegRuntime(
     await verifyWorkerIsolation();
 
     reportProgress(5);
-    const [coreURL, wasmURL, workerURL] = await resolveFFmpegAssets();
+    const [coreUrl, wasmUrl, workerUrl] = await resolveFFmpegAssets();
     performanceTracker.endPhase('ffmpeg-download');
     logger.performance('FFmpeg asset download complete');
 
@@ -112,9 +112,9 @@ export async function initializeFFmpegRuntime(
 
     await withTimeout(
       ffmpeg.load({
-        coreURL,
-        wasmURL,
-        workerURL,
+        coreURL: coreUrl,
+        wasmURL: wasmUrl,
+        workerURL: workerUrl,
       }),
       TIMEOUT_FFMPEG_INIT,
       `FFmpeg initialization timed out after ${TIMEOUT_FFMPEG_INIT / 1000} seconds. Please check your internet connection and try again.`,

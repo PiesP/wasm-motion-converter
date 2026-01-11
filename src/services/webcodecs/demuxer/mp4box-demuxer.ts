@@ -18,25 +18,25 @@ import type {
  * Supported codecs: H.264, H.265/HEVC, AV1, VP9 (in MP4)
  */
 
-type MP4BoxFileInstance = object & {
+type Mp4BoxFileInstance = object & {
   appendBuffer: (buffer: ArrayBuffer & { fileStart: number }) => void;
   flush: () => void;
   start: () => void;
   stop: () => void;
   setExtractionOptions: (trackId: number, user: unknown, options: Record<string, unknown>) => void;
-  onReady?: (info: MP4BoxInfo) => void;
+  onReady?: (info: Mp4BoxInfo) => void;
   onError?: (error: Error) => void;
-  onSamples?: (trackId: number, user: unknown, samples: MP4BoxSample[]) => void;
+  onSamples?: (trackId: number, user: unknown, samples: Mp4BoxSample[]) => void;
 };
 
-type MP4BoxInfo = {
+type Mp4BoxInfo = {
   duration: number;
   timescale: number;
-  videoTracks?: MP4BoxTrack[];
+  videoTracks?: Mp4BoxTrack[];
   brands?: string[];
 };
 
-type MP4BoxTrack = {
+type Mp4BoxTrack = {
   id: number;
   codec: string;
   fourCC?: string;
@@ -53,21 +53,21 @@ type MP4BoxTrack = {
   codec_private_data?: Uint8Array | ArrayBuffer | number[];
 };
 
-type MP4BoxSample = {
+type Mp4BoxSample = {
   data: ArrayBuffer | Uint8Array;
   cts: number;
   duration: number;
   is_sync: boolean;
 };
 
-type MP4BoxModule = {
-  createFile: () => MP4BoxFileInstance;
-  default?: { createFile: () => MP4BoxFileInstance };
+type Mp4BoxModule = {
+  createFile: () => Mp4BoxFileInstance;
+  default?: { createFile: () => Mp4BoxFileInstance };
 };
 
 export class MP4BoxDemuxer implements DemuxerAdapter {
-  private mp4boxFile: MP4BoxFileInstance | null = null;
-  private videoTrack: MP4BoxTrack | null = null;
+  private mp4boxFile: Mp4BoxFileInstance | null = null;
+  private videoTrack: Mp4BoxTrack | null = null;
   private initialized = false;
 
   /**
@@ -82,16 +82,16 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    */
   async initialize(file: File): Promise<VideoDecoderConfig> {
     try {
-      const MP4Box = await this.loadMP4Box();
-      this.mp4boxFile = (MP4Box as MP4BoxModule).createFile();
+      const Mp4Box = await this.loadMP4Box();
+      this.mp4boxFile = (Mp4Box as Mp4BoxModule).createFile();
 
       const mp4boxFile = this.mp4boxFile;
       if (!mp4boxFile) {
         throw new Error('MP4Box file not initialized');
       }
 
-      const infoPromise = new Promise<MP4BoxInfo>((resolve, reject) => {
-        mp4boxFile.onReady = (info: MP4BoxInfo) => {
+      const infoPromise = new Promise<Mp4BoxInfo>((resolve, reject) => {
+        mp4boxFile.onReady = (info: Mp4BoxInfo) => {
           logger.info('demuxer', 'MP4Box parsed container', {
             duration: info.duration,
             timescale: info.timescale,
@@ -181,7 +181,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
     }
 
     try {
-      const sampleQueue: MP4BoxSample[] = [];
+      const sampleQueue: Mp4BoxSample[] = [];
       let samplesReceived = false;
       const mp4boxFile = this.mp4boxFile;
       const videoTrack = this.videoTrack;
@@ -237,7 +237,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
           }, 250);
         };
 
-        mp4boxFile.onSamples = (trackId: number, _user: unknown, samples: MP4BoxSample[]) => {
+        mp4boxFile.onSamples = (trackId: number, _user: unknown, samples: Mp4BoxSample[]) => {
           logger.info('demuxer', 'Received samples from MP4Box', {
             trackId,
             sampleCount: samples.length,
@@ -407,7 +407,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @returns VideoDecoderConfig with codec, dimensions, and optional description
    * @internal Private method, use initialize() instead
    */
-  private extractDecoderConfig(track: MP4BoxTrack, fileBytes?: ArrayBuffer): VideoDecoderConfig {
+  private extractDecoderConfig(track: Mp4BoxTrack, fileBytes?: ArrayBuffer): VideoDecoderConfig {
     const codec = this.buildCodecString(track);
     const description = this.extractCodecDescription(track, fileBytes);
 
@@ -433,19 +433,19 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @throws Error if codec string cannot be determined
    * @internal Private method
    */
-  private buildCodecString(track: MP4BoxTrack): string {
-    const fourCC = track.codec || track.fourCC;
+  private buildCodecString(track: Mp4BoxTrack): string {
+    const fourCc = track.codec || track.fourCC;
 
     if (track.codec_string) {
       return track.codec_string;
     }
 
-    if (fourCC) {
+    if (fourCc) {
       logger.warn('demuxer', 'Using FourCC as codec string', {
-        fourCC,
+        fourCC: fourCc,
         message: 'Detailed codec string unavailable - may cause VideoDecoder issues',
       });
-      return fourCC;
+      return fourCc;
     }
 
     throw new Error('Unable to determine codec string from track');
@@ -553,7 +553,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
   }
 
   private extractCodecDescription(
-    track: MP4BoxTrack,
+    track: Mp4BoxTrack,
     fileBytes?: ArrayBuffer
   ): Uint8Array | undefined {
     const descriptionSources = [
@@ -629,8 +629,8 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @throws Error if all CDN sources fail
    * @internal Private method, called during initialize()
    */
-  private async loadMP4Box(): Promise<MP4BoxModule> {
-    return loadFromCDN<MP4BoxModule>('mp4box.js', [
+  private async loadMP4Box(): Promise<Mp4BoxModule> {
+    return loadFromCDN<Mp4BoxModule>('mp4box.js', [
       'https://esm.sh/mp4box@0.5.2',
       'https://cdn.jsdelivr.net/npm/mp4box@0.5.2/+esm',
       'https://unpkg.com/mp4box@0.5.2/+esm',

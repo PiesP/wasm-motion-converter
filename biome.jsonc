@@ -20,7 +20,7 @@
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    // Enforce 100 character line width for readability
+    // CODE_STANDARDS § 1: Enforce 100 character line width for readability
     "lineWidth": 100,
     "lineEnding": "lf"
   },
@@ -29,65 +29,66 @@
     "rules": {
       "recommended": true,
       "correctness": {
-        // Warn about unused imports to keep code clean
+        // CODE_STANDARDS § 1: Warn about unused imports to keep code clean
         "noUnusedImports": "warn",
-        // Warn about unused variables to prevent dead code
+        // CODE_STANDARDS § 8/9: Warn about unused variables to prevent dead code
         "noUnusedVariables": "warn",
-        // Allow unknown media features for Tailwind CSS
+        // CODE_STANDARDS § 1: Allow unknown media features for Tailwind CSS
         "noUnknownMediaFeatureName": "off"
       },
       "style": {
-        // Allow non-null assertions when type safety is guaranteed
+        // CODE_STANDARDS § 3: Allow non-null assertions when type safety is guaranteed
         "noNonNullAssertion": "off",
-        // Enforce const over let for immutable variables (CODE_STANDARDS: Constants)
+        // CODE_STANDARDS § 2: Enforce const over let for immutable variables
         "useConst": "error",
-        // Warn against parameter reassignment for clarity
+        // CODE_STANDARDS § 2: Warn against parameter reassignment for clarity
         "noParameterAssign": "warn"
       },
       "suspicious": {
-        // Enforce explicit typing, avoid 'any' (CODE_STANDARDS: TypeScript Standards)
+        // CODE_STANDARDS § 3: Enforce explicit typing, avoid 'any'
         "noExplicitAny": "error",
-        // Allow void type for flexibility
+        // CODE_STANDARDS § 1: Allow void type for flexibility
         "noConfusingVoidType": "off",
-        // Allow control characters in regex
+        // CODE_STANDARDS § 1: Allow control characters in regex
         "noControlCharactersInRegex": "off",
-        // Allow unknown CSS at-rules for Tailwind
+        // CODE_STANDARDS § 1: Allow unknown CSS at-rules for Tailwind
         "noUnknownAtRules": "off",
-        // Allow assignments in expressions (common pattern)
+        // CODE_STANDARDS § 1: Allow assignments in expressions (common pattern)
         "noAssignInExpressions": "off",
-        // Allow document.cookie usage
+        // CODE_STANDARDS § 1: Allow document.cookie usage
         "noDocumentCookie": "off",
-        // Allow callbacks without explicit return
-        "useIterableCallbackReturn": "off"
+        // CODE_STANDARDS § 1: Allow callbacks without explicit return
+        "useIterableCallbackReturn": "off",
+        // CODE_STANDARDS § 8: Enforce error classification for handling
+        "noImplicitAnyLet": "error"
       },
       "complexity": {
-        // Allow forEach for readability in some cases
+        // CODE_STANDARDS § 12: Allow forEach for readability in some cases
         "noForEach": "off",
-        // Allow static-only classes (singleton pattern)
+        // CODE_STANDARDS § 6: Allow static-only classes (singleton pattern)
         "noStaticOnlyClass": "off"
       },
       "a11y": {
-        // Relax some a11y rules for UI flexibility while maintaining core accessibility
-        // Note: Manual ARIA attributes are added where needed per CODE_STANDARDS section 11
+        // CODE_STANDARDS § 11: Manual ARIA attributes are added where needed
         "noStaticElementInteractions": "off",
         "useKeyWithClickEvents": "off",
         "useMediaCaption": "off",
         "noSvgWithoutTitle": "off",
         "useAriaPropsSupportedByRole": "off",
-        // Allow semantic flexibility for custom components
+        // CODE_STANDARDS § 11: Ensure semantic flexibility for custom components
         "useSemanticElements": "off"
       }
     }
   },
   "javascript": {
     "formatter": {
-      // Enforce single quotes for consistency (CODE_STANDARDS)
+      // CODE_STANDARDS § 1: Enforce single quotes for consistency
       "quoteStyle": "single",
-      // Always use semicolons (CODE_STANDARDS)
+      // CODE_STANDARDS § 1: Always use semicolons
       "semicolons": "always",
-      // Use ES5 trailing commas for better diffs
+      // CODE_STANDARDS § 1: Use ES5 trailing commas for better diffs
       "trailingCommas": "es5",
-      // Always use parentheses for arrow functions
+      // CODE_STANDARDS § 2: Always use parentheses for arrow functions
       "arrowParentheses": "always"
     }
   },
@@ -99,15 +100,16 @@
   },
   "css": {
     "parser": {
-      // Enable Tailwind CSS directive parsing
+      // CODE_STANDARDS § 1: Enable Tailwind CSS directive parsing
       "tailwindDirectives": true
     }
   },
+
   "assist": {
     "enabled": true,
     "actions": {
       "source": {
-        // Auto-organize imports on save (CODE_STANDARDS: Import Order)
+        // CODE_STANDARDS § 1: Auto-organize imports on save (external → alias → relative)
         "organizeImports": "on"
       }
     }

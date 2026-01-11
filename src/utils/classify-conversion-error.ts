@@ -110,7 +110,7 @@ export function classifyConversionError(
     message.includes('decode')
   ) {
     // Detect specific codec failures
-    const isAV1Issue =
+    const isAv1Issue =
       metadata?.codec?.toLowerCase().includes('av1') ||
       metadata?.codec?.toLowerCase().includes('av01') ||
       message.includes('av1') ||
@@ -118,11 +118,11 @@ export function classifyConversionError(
       ffmpegLogs?.some((log) => log.toLowerCase().includes('av1')) ||
       ffmpegLogs?.some((log) => log.toLowerCase().includes('av01'));
 
-    const isGIFConversionWithAV1 =
-      isAV1Issue &&
+    const isGifConversionWithAv1 =
+      isAv1Issue &&
       (message.includes('gif') || ffmpegLogs?.some((log) => log.toLowerCase().includes('gif')));
 
-    if (isGIFConversionWithAV1) {
+    if (isGifConversionWithAv1) {
       return {
         type: 'codec',
         ...baseContext,
@@ -135,8 +135,8 @@ export function classifyConversionError(
     return {
       type: 'codec',
       ...baseContext,
-      phase: isAV1Issue ? 'av1_decode_failure' : 'codec_error',
-      suggestion: isAV1Issue
+      phase: isAv1Issue ? 'av1_decode_failure' : 'codec_error',
+      suggestion: isAv1Issue
         ? 'AV1 video codec requires WebCodecs support. The converter will automatically use this method. If it fails, try reducing quality to "low" or scaling down the video.'
         : 'The video format or codec is not supported. Try converting the video to H.264/MP4 format first using another tool.',
     };
