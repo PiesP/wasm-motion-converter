@@ -11,11 +11,12 @@
  *
  * - `gif`: Animated GIF format (widely supported, larger file sizes)
  * - `webp`: Animated WebP format (better compression, modern browsers)
+ * - `mp4`: MP4 video format (H.264, best compression, requires WebCodecs support)
  *
  * @example
  * const format: ConversionFormat = 'gif';
  */
-export type ConversionFormat = 'gif' | 'webp';
+export type ConversionFormat = 'gif' | 'webp' | 'mp4';
 
 /**
  * Conversion quality levels

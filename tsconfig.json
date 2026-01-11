@@ -8,14 +8,14 @@
   // @see CODE_STANDARDS.md Section 3 (TypeScript Standards)
 
   "compilerOptions": {
-    // Target ES2020 for modern browser support
-    "target": "ES2020",
+    // Target ESNext for modern browser support
+    "target": "ESNext",
 
     // Use ESNext module system (handled by Vite bundler)
     "module": "ESNext",
 
-    // Type definitions for ES2020, DOM APIs, and Web Workers
-    "lib": ["ES2020", "DOM", "DOM.Iterable", "WebWorker"],
+    // Type definitions for ESNext, DOM APIs, and Web Workers
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
 
     // SolidJS JSX configuration
     "jsx": "preserve", // Preserve JSX for Vite plugin transformation

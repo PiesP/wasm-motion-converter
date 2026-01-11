@@ -108,7 +108,12 @@ async function selectConversionPath(
         codec: normalizedCodec,
         reasons: ['AV1/WebCodecs-only codec cannot use direct FFmpeg GIF path'],
       });
-      return webcodecsConversionService.convert(file, format, options, resolvedMetadata);
+      return webcodecsConversionService.convert(
+        file,
+        format as 'gif' | 'webp',
+        options,
+        resolvedMetadata
+      );
     }
 
     // WebCodecs-only codec with WebP: Use WebCodecs path
@@ -116,7 +121,12 @@ async function selectConversionPath(
       codec: normalizedCodec,
       format,
     });
-    return webcodecsConversionService.convert(file, format, options, resolvedMetadata);
+    return webcodecsConversionService.convert(
+      file,
+      format as 'gif' | 'webp',
+      options,
+      resolvedMetadata
+    );
   }
 
   // Priority 2: Format-specific constraints (GIF prefers direct FFmpeg)
@@ -137,7 +147,12 @@ async function selectConversionPath(
           codecCapability === 'both' ? 'codec supports both paths' : 'codec unsupported by FFmpeg',
       });
       if (webCodecsAvailable) {
-        return webcodecsConversionService.convert(file, format, options, resolvedMetadata);
+        return webcodecsConversionService.convert(
+          file,
+          format as 'gif' | 'webp',
+          options,
+          resolvedMetadata
+        );
       }
 
       const context = classifyConversionError(
@@ -166,7 +181,7 @@ async function selectConversionPath(
     });
     const result = await webcodecsConversionService.maybeConvert(
       file,
-      format,
+      format as 'gif' | 'webp',
       options,
       resolvedMetadata
     );
