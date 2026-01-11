@@ -13,12 +13,12 @@
  */
 
 import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
-import { classifyConversionError } from '@utils/classify-conversion-error';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { getEncoderForFormat } from '../encoders/encoder-factory';
 import { ffmpegService } from '../ffmpeg-service'; // Legacy service (will be replaced in Phase 4)
 import { ProgressReporter } from '../shared/progress-reporter';
+import { createWebAVMP4Service } from '../webav/webav-mp4-service';
 import type {
   ConversionMetadata,
   ConversionRequest,
@@ -40,6 +40,7 @@ export class ConversionOrchestrator {
   };
 
   private progressReporter: ProgressReporter | null = null;
+  private webavService = createWebAVMP4Service();
 
   /**
    * Convert video using optimal path
@@ -115,6 +116,10 @@ export class ConversionOrchestrator {
 
       // Execute based on selected path
       switch (pathSelection.path) {
+        case 'webav':
+          blob = await this.convertViaWebAVPath(request, metadata, conversionMetadata);
+          break;
+
         case 'gpu':
           blob = await this.convertViaGPUPath(request, metadata, conversionMetadata);
           break;
@@ -159,13 +164,13 @@ export class ConversionOrchestrator {
       };
 
       const errorMessage = getErrorMessage(error);
-      const errorContext = classifyConversionError(errorMessage, null);
 
+      // Log the error without full classification (will be done in consumer)
+      // to avoid redundant error processing and potential stack overflow
       logger.error('conversion', 'Conversion failed', {
         file: request.file.name,
         format: request.format,
         error: errorMessage,
-        errorType: errorContext.type,
       });
 
       throw error;
@@ -232,7 +237,7 @@ export class ConversionOrchestrator {
 
     const codec = metadata?.codec?.toLowerCase();
 
-    // Check if format is supported
+    // Check if format is supported by encoders
     try {
       const encoder = await getEncoderForFormat(format);
       if (encoder) {
@@ -253,7 +258,29 @@ export class ConversionOrchestrator {
       };
     }
 
-    // Simple path selection logic
+    // WebAV path for MP4 (20x faster than FFmpeg)
+    if (format === 'mp4') {
+      const webavAvailable = await this.webavService.isAvailable();
+      if (webavAvailable) {
+        logger.info('conversion', 'Using WebAV for MP4 conversion', {
+          codec,
+          reason: 'WebAV available for fast MP4 encoding',
+        });
+        return {
+          path: 'webav',
+          reason: 'WebAV MP4 encoding (20x faster)',
+        };
+      }
+      logger.warn('conversion', 'WebAV not available, falling back to FFmpeg for MP4', {
+        codec,
+      });
+      return {
+        path: 'cpu',
+        reason: 'WebAV not available, using FFmpeg fallback',
+      };
+    }
+
+    // Simple path selection logic for GIF/WebP
     // WebCodecs-only codecs must use GPU path
     if (codec === 'av1' || codec === 'vp9' || codec === 'hevc') {
       return {
@@ -263,11 +290,55 @@ export class ConversionOrchestrator {
       };
     }
 
-    // Default to CPU path for now (will be enhanced with proper path selection)
+    // Default to CPU path for GIF/WebP
     return {
       path: 'cpu',
       reason: 'Default path selection',
     };
+  }
+
+  /**
+   * Convert via WebAV path (native WebCodecs MP4 encoding)
+   */
+  private async convertViaWebAVPath(
+    request: ConversionRequest,
+    metadata: VideoMetadata | undefined,
+    conversionMetadata: ConversionMetadata
+  ) {
+    logger.info('conversion', 'Executing WebAV path conversion', {
+      format: request.format,
+      codec: metadata?.codec,
+    });
+
+    conversionMetadata.encoder = 'webav';
+    conversionMetadata.path = 'webav';
+
+    try {
+      const blob = await this.webavService.convertToMP4(
+        request.file,
+        request.options,
+        (progress: number) => {
+          // Map 0-100 to conversion phase progress
+          const phaseProgress = Math.round(progress);
+          this.progressReporter?.report(phaseProgress / 100);
+          request.onProgress?.(phaseProgress);
+        }
+      );
+
+      logger.info('conversion', 'WebAV MP4 conversion completed', {
+        outputSize: `${(blob.size / 1024 / 1024).toFixed(1)}MB`,
+      });
+
+      return blob;
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      logger.error('conversion', 'WebAV MP4 conversion failed, falling back to FFmpeg', {
+        error: errorMessage,
+      });
+
+      // Fall back to FFmpeg if WebAV fails
+      return this.convertViaCPUPath(request, metadata, conversionMetadata);
+    }
   }
 
   /**

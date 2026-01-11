@@ -52,6 +52,7 @@ type LogCategory =
   | 'gif-encoder'
   | 'mp4-encoder'
   | 'webp-encoder'
+  | 'webav-mp4'
   | 'capture-mode-selector'
   | 'decoder-manager'
   | 'demuxer-manager'

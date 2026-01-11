@@ -592,12 +592,27 @@ export class FFmpegEncoder {
       logger.performance('Starting GIF palette generation');
 
       try {
-        await withTimeout(
-          ffmpeg.exec(paletteCmd),
-          conversionTimeout,
-          `GIF palette generation timed out after ${conversionTimeout / 1000} seconds.`,
-          () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
-        );
+        try {
+          await withTimeout(
+            ffmpeg.exec(paletteCmd),
+            conversionTimeout,
+            `GIF palette generation timed out after ${conversionTimeout / 1000} seconds.`,
+            () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
+          );
+        } catch (execError) {
+          // Wrap FFmpeg exec errors to prevent stack overflow during error handling
+          if (
+            execError instanceof Error &&
+            execError.message === 'Maximum call stack size exceeded'
+          ) {
+            logger.error('ffmpeg', 'Stack overflow detected in FFmpeg execution', {
+              command: 'palette-gen',
+              cmdLength: paletteCmd.length,
+            });
+            throw new Error('FFmpeg palette generation failed: stack overflow in execution');
+          }
+          throw execError;
+        }
       } finally {
         monitoring.stopProgressHeartbeat(paletteHeartbeat);
       }
@@ -633,12 +648,28 @@ export class FFmpegEncoder {
       logger.performance('Starting GIF encoding');
 
       try {
-        await withTimeout(
-          ffmpeg.exec(gifCmd),
-          conversionTimeout,
-          `GIF conversion timed out after ${conversionTimeout / 1000} seconds.`,
-          () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
-        );
+        try {
+          await withTimeout(
+            ffmpeg.exec(gifCmd),
+            conversionTimeout,
+            `GIF conversion timed out after ${conversionTimeout / 1000} seconds.`,
+            () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
+          );
+        } catch (execError) {
+          // Wrap FFmpeg exec errors to prevent stack overflow during error handling
+          if (
+            execError instanceof Error &&
+            execError.message === 'Maximum call stack size exceeded'
+          ) {
+            logger.error('ffmpeg', 'Stack overflow detected in FFmpeg execution', {
+              command: 'gif-encode',
+              cmdLength: gifCmd.length,
+            });
+            throw new Error('FFmpeg GIF encoding failed: stack overflow in execution');
+          }
+          logger.warn('conversion', 'GIF conversion failed, will attempt cleanup');
+          throw execError;
+        }
       } catch (error) {
         logger.warn('conversion', 'GIF conversion failed, will attempt cleanup');
         throw error;
@@ -784,12 +815,27 @@ export class FFmpegEncoder {
         logger.performance('Starting WebP encoding');
 
         try {
-          await withTimeout(
-            ffmpeg.exec(webpCmd),
-            conversionTimeout,
-            `WebP conversion timed out after ${conversionTimeout / 1000} seconds.`,
-            () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
-          );
+          try {
+            await withTimeout(
+              ffmpeg.exec(webpCmd),
+              conversionTimeout,
+              `WebP conversion timed out after ${conversionTimeout / 1000} seconds.`,
+              () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
+            );
+          } catch (execError) {
+            // Wrap FFmpeg exec errors to prevent stack overflow during error handling
+            if (
+              execError instanceof Error &&
+              execError.message === 'Maximum call stack size exceeded'
+            ) {
+              logger.error('ffmpeg', 'Stack overflow detected in FFmpeg execution', {
+                command: 'webp-encode',
+                cmdLength: webpCmd.length,
+              });
+              throw new Error('FFmpeg WebP encoding failed: stack overflow in execution');
+            }
+            throw execError;
+          }
         } finally {
           monitoring.stopProgressHeartbeat(heartbeat);
         }

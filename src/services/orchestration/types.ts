@@ -15,7 +15,7 @@ import type {
 /**
  * Conversion path types
  */
-export type ConversionPath = 'gpu' | 'cpu' | 'hybrid';
+export type ConversionPath = 'gpu' | 'cpu' | 'hybrid' | 'webav';
 
 /**
  * Conversion request

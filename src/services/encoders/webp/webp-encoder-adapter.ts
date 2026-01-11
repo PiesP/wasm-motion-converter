@@ -82,24 +82,36 @@ export class WebPEncoderAdapter implements EncoderAdapter {
         return false;
       }
 
-      // Check WebP encoding support
-      const canvas = new OffscreenCanvas(1, 1);
-      const blob = await canvas.convertToBlob({ type: 'image/webp' });
-      if (!blob || blob.type !== 'image/webp') {
-        logger.debug('webp-encoder', 'WebP encoding not supported');
-        return false;
-      }
-
       // Check Worker support
       if (typeof Worker === 'undefined') {
         logger.debug('webp-encoder', 'Worker not available');
         return false;
       }
 
+      // Check WebP encoding support
+      // Note: convertToBlob may throw in some browsers or return a different mime type
+      let supportsWebP = false;
+      try {
+        const canvas = new OffscreenCanvas(1, 1);
+        const blob = await canvas.convertToBlob({ type: 'image/webp' });
+        // Some browsers may not honor the type request, check size as fallback
+        supportsWebP = blob && (blob.type === 'image/webp' || blob.size > 0);
+      } catch {
+        // convertToBlob failed, WebP not supported
+        supportsWebP = false;
+      }
+
+      if (!supportsWebP) {
+        logger.debug('webp-encoder', 'WebP encoding not supported');
+        return false;
+      }
+
       logger.debug('webp-encoder', 'WebP encoder available');
       return true;
     } catch (error) {
-      logger.debug('webp-encoder', 'WebP encoder availability check failed', { error });
+      logger.debug('webp-encoder', 'WebP encoder availability check failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }

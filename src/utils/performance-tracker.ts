@@ -11,7 +11,8 @@ type PerformancePhase =
   | 'palette-gen'
   | 'webp-encode'
   | 'gif-fallback'
-  | 'webp-fallback';
+  | 'webp-fallback'
+  | 'webav-mp4-conversion';
 
 /**
  * Timing entry for a single performance phase
