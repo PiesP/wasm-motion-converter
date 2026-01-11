@@ -16,6 +16,7 @@
  */
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
+import type { VideoMetadata } from '@t/conversion-types';
 import { FFMPEG_CORE_BASE_URLS, TIMEOUT_VIDEO_ANALYSIS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
@@ -23,7 +24,6 @@ import { logger } from '@utils/logger';
 import { withTimeout } from '@utils/with-timeout';
 import { cacheAwareBlobURL, requestIdle, supportsCacheStorage } from '../ffmpeg/core-assets';
 import { initializeFFmpegRuntime } from '../ffmpeg/init';
-import type { VideoMetadata } from '@t/conversion-types';
 
 /**
  * Initialization callbacks
