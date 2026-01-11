@@ -15,18 +15,17 @@
  * @module orchestration/strategy-resolver
  */
 
-import {
-  WARN_DURATION_SECONDS,
-  WARN_FILE_SIZE_HIGH,
-  WARN_RESOLUTION_PIXELS,
-} from '@utils/constants';
-
 import type {
   ConversionFormat,
   ConversionQuality,
   ConversionScale,
   VideoMetadata,
 } from '@t/conversion-types';
+import {
+  WARN_DURATION_SECONDS,
+  WARN_FILE_SIZE_HIGH,
+  WARN_RESOLUTION_PIXELS,
+} from '@utils/constants';
 
 /**
  * Conversion strategy configuration with codec routing, scaling, FPS, and quality recommendations.

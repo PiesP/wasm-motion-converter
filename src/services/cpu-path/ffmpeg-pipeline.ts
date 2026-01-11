@@ -404,6 +404,9 @@ export class FFmpegPipeline {
    * @param data File data
    */
   async writeVirtualFile(fileName: string, data: Uint8Array | string): Promise<void> {
+    if (!this.isLoaded()) {
+      throw new Error('FFmpeg not initialized. Call initialize() first.');
+    }
     await this.vfs.writeFile(this.getFFmpeg(), fileName, data);
   }
 
@@ -413,6 +416,10 @@ export class FFmpegPipeline {
    * @param fileNames Array of file names to delete
    */
   async deleteVirtualFiles(fileNames: string[]): Promise<void> {
+    if (!this.isLoaded()) {
+      logger.debug('general', 'FFmpeg not initialized, skipping file deletion');
+      return;
+    }
     await this.vfs.deleteFiles(this.getFFmpeg(), fileNames);
   }
 
@@ -420,8 +427,13 @@ export class FFmpegPipeline {
    * Clear cached input file
    *
    * Removes cached input file from VFS and clears cache tracking.
+   * Safe to call even if FFmpeg is not initialized.
    */
   async clearCachedInput(): Promise<void> {
+    if (!this.isLoaded()) {
+      logger.debug('general', 'FFmpeg not initialized, skipping cache clear');
+      return;
+    }
     await this.vfs.clearCachedInput(this.getFFmpeg());
   }
 
