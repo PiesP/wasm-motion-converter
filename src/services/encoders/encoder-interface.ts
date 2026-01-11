@@ -1,0 +1,258 @@
+/**
+ * Encoder Interface
+ *
+ * Defines the common interface for all encoder implementations (GIF, WebP, MP4).
+ * This pluggable architecture allows:
+ * - Easy addition of new output formats
+ * - Multiple encoder implementations per format
+ * - Capability-based encoder selection
+ * - Worker vs main-thread encoding strategies
+ *
+ * All encoders must implement the EncoderAdapter interface to be registered
+ * in the encoder factory and used by the conversion pipeline.
+ */
+
+import type { ConversionFormat, ConversionQuality } from '../../types/conversion-types';
+
+/**
+ * Serializable ImageData for transfer to workers
+ *
+ * ImageData cannot be directly transferred to workers (non-transferable),
+ * so we use this serializable format with transferable ArrayBuffer.
+ */
+export interface SerializableImageData {
+  /** Image pixel data (RGBA format, 4 bytes per pixel) */
+  data: Uint8ClampedArray;
+  /** Image width in pixels */
+  width: number;
+  /** Image height in pixels */
+  height: number;
+}
+
+/**
+ * Encoder input request
+ *
+ * Parameters passed to encoder.encode() method. Contains all information
+ * needed to encode a sequence of video frames into the target format.
+ *
+ * @example
+ * const request: EncoderRequest = {
+ *   frames: [imageData1, imageData2, imageData3],
+ *   width: 640,
+ *   height: 480,
+ *   fps: 10,
+ *   quality: 'high',
+ *   onProgress: (current, total) => console.log(`${current}/${total}`),
+ *   shouldCancel: () => false
+ * };
+ */
+export interface EncoderRequest {
+  /** Array of video frames to encode (RGBA ImageData) */
+  frames: ImageData[];
+  /** Frame width in pixels */
+  width: number;
+  /** Frame height in pixels */
+  height: number;
+  /** Frames per second (target playback rate) */
+  fps: number;
+  /** Quality level (affects palette size, compression, bitrate) */
+  quality: ConversionQuality;
+  /** Optional progress callback (current frame, total frames) */
+  onProgress?: (current: number, total: number) => void;
+  /** Optional cancellation check (returns true to abort) */
+  shouldCancel?: () => boolean;
+}
+
+/**
+ * Encoder capability flags
+ *
+ * Describes what an encoder can do and what it requires. Used by
+ * encoder factory to select the appropriate encoder based on:
+ * - Output format needed
+ * - Browser capabilities (workers, SharedArrayBuffer)
+ * - Input constraints (max frames, max dimensions)
+ *
+ * @example
+ * const capabilities: EncoderCapabilities = {
+ *   formats: ['gif'],
+ *   supportsWorkers: true,
+ *   requiresSharedArrayBuffer: false,
+ *   maxFrames: 240,
+ *   maxDimension: 2048
+ * };
+ */
+export interface EncoderCapabilities {
+  /** Output formats this encoder can produce */
+  formats: ConversionFormat[];
+  /** Whether encoder can run in workers for parallel encoding */
+  supportsWorkers: boolean;
+  /** Whether encoder requires SharedArrayBuffer (for WASM multithreading) */
+  requiresSharedArrayBuffer: boolean;
+  /** Maximum number of frames (undefined = no limit) */
+  maxFrames?: number;
+  /** Maximum frame dimension (width or height, undefined = no limit) */
+  maxDimension?: number;
+}
+
+/**
+ * Encoder adapter interface
+ *
+ * All encoder implementations must implement this interface. The interface
+ * provides a consistent API for:
+ * - Capability detection (isAvailable)
+ * - Encoding frames to blob (encode)
+ * - Resource cleanup (dispose)
+ *
+ * Encoders are stateless - each encode() call is independent. For stateful
+ * encoding (e.g., streaming), use dispose() to reset state between conversions.
+ *
+ * @example
+ * class MyEncoder implements EncoderAdapter {
+ *   name = 'my-encoder';
+ *   capabilities = {
+ *     formats: ['gif'],
+ *     supportsWorkers: true,
+ *     requiresSharedArrayBuffer: false
+ *   };
+ *
+ *   async isAvailable(): Promise<boolean> {
+ *     return typeof Worker !== 'undefined';
+ *   }
+ *
+ *   async encode(request: EncoderRequest): Promise<Blob> {
+ *     // Encoding logic here
+ *     return new Blob([encodedData], { type: 'image/gif' });
+ *   }
+ *
+ *   async dispose(): Promise<void> {
+ *     // Cleanup resources
+ *   }
+ * }
+ */
+export interface EncoderAdapter {
+  /**
+   * Encoder name (unique identifier)
+   *
+   * Used for logging, debugging, and encoder selection.
+   * Should be lowercase with hyphens (e.g., 'modern-gif', 'libwebp-wasm').
+   */
+  name: string;
+
+  /**
+   * Encoder capabilities
+   *
+   * Describes what formats this encoder supports, whether it can use workers,
+   * and any constraints (max frames, max dimensions).
+   */
+  capabilities: EncoderCapabilities;
+
+  /**
+   * Check if encoder is available in current environment
+   *
+   * Tests browser capabilities, WASM support, worker availability, etc.
+   * Encoder factory calls this before using an encoder to ensure it will work.
+   *
+   * @returns Promise resolving to true if encoder can be used
+   *
+   * @example
+   * async isAvailable(): Promise<boolean> {
+   *   // Check for worker support
+   *   if (this.capabilities.supportsWorkers && typeof Worker === 'undefined') {
+   *     return false;
+   *   }
+   *
+   *   // Check for SharedArrayBuffer if required
+   *   if (this.capabilities.requiresSharedArrayBuffer && typeof SharedArrayBuffer === 'undefined') {
+   *     return false;
+   *   }
+   *
+   *   // Check for specific APIs
+   *   try {
+   *     await someLibrary.init();
+   *     return true;
+   *   } catch {
+   *     return false;
+   *   }
+   * }
+   */
+  isAvailable(): Promise<boolean>;
+
+  /**
+   * Encode frames to target format
+   *
+   * Core encoding method. Takes array of ImageData frames and produces
+   * encoded blob in target format (GIF, WebP, MP4). Must be stateless -
+   * each call is independent.
+   *
+   * @param request - Encoding parameters (frames, dimensions, fps, quality)
+   * @returns Promise resolving to encoded blob
+   * @throws {Error} If encoding fails or is cancelled
+   *
+   * @example
+   * async encode(request: EncoderRequest): Promise<Blob> {
+   *   const { frames, width, height, fps, quality, onProgress, shouldCancel } = request;
+   *
+   *   const encoder = await this.initEncoder(width, height, fps, quality);
+   *
+   *   for (let i = 0; i < frames.length; i++) {
+   *     if (shouldCancel?.()) {
+   *       throw new Error('Encoding cancelled');
+   *     }
+   *
+   *     await encoder.addFrame(frames[i]);
+   *     onProgress?.(i + 1, frames.length);
+   *   }
+   *
+   *   const data = await encoder.finalize();
+   *   return new Blob([data], { type: 'image/gif' });
+   * }
+   */
+  encode(request: EncoderRequest): Promise<Blob>;
+
+  /**
+   * Clean up resources
+   *
+   * Called when encoder is no longer needed. Should:
+   * - Terminate workers
+   * - Free WASM memory
+   * - Clear caches
+   * - Reset state
+   *
+   * @returns Promise resolving when cleanup is complete
+   *
+   * @example
+   * async dispose(): Promise<void> {
+   *   // Terminate worker pool
+   *   await this.workerPool?.terminate();
+   *   this.workerPool = null;
+   *
+   *   // Free WASM instance
+   *   this.wasmInstance?.free();
+   *   this.wasmInstance = null;
+   * }
+   */
+  dispose(): Promise<void>;
+}
+
+/**
+ * Encoder selection preferences
+ *
+ * Hints for encoder factory to select the best encoder for a use case.
+ * These are preferences, not requirements - factory will fall back if
+ * preferred encoder is unavailable.
+ *
+ * @example
+ * const preferences: EncoderPreferences = {
+ *   preferWorkers: true,          // Try worker-based encoders first
+ *   quality: 'high',               // Optimize for quality
+ *   environment: 'worker'          // Running in worker context
+ * };
+ */
+export interface EncoderPreferences {
+  /** Prefer worker-based encoders for parallel processing */
+  preferWorkers?: boolean;
+  /** Quality level (may influence encoder selection) */
+  quality?: ConversionQuality;
+  /** Execution environment (affects encoder availability) */
+  environment?: 'main' | 'worker';
+}
