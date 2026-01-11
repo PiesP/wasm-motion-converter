@@ -2092,24 +2092,87 @@ export class WebCodecsDecoderService {
    * @param url - Blob URL to revoke
    */
   private cleanupVideo(video: HTMLVideoElement, url: string): void {
+    const cleanupStart = Date.now();
+
     try {
-      video.pause();
-      video.removeAttribute('src');
-      video.load();
+      logger.debug('conversion', 'WebCodecs: Starting video cleanup');
+
+      // Pause playback
+      try {
+        video.pause();
+        logger.debug('conversion', 'WebCodecs: Video paused');
+      } catch (error) {
+        logger.debug('conversion', 'WebCodecs: Failed to pause video', {
+          error: getErrorMessage(error),
+        });
+      }
+
+      // Remove src attribute and clear srcObject
+      try {
+        video.removeAttribute('src');
+        video.srcObject = null;
+        logger.debug('conversion', 'WebCodecs: Src attribute and srcObject cleared');
+      } catch (error) {
+        logger.debug('conversion', 'WebCodecs: Failed to remove src attribute/srcObject', {
+          error: getErrorMessage(error),
+        });
+      }
+
+      // Trigger media load reset
+      try {
+        video.load();
+        logger.debug('conversion', 'WebCodecs: Load called to reset media');
+      } catch (error) {
+        logger.debug('conversion', 'WebCodecs: Failed to call load', {
+          error: getErrorMessage(error),
+        });
+      }
+
+      // Reset media element properties to ensure clean state
+      try {
+        video.currentTime = 0;
+        video.autoplay = false;
+        video.controls = false;
+        logger.debug('conversion', 'WebCodecs: Media element properties reset');
+      } catch (error) {
+        logger.debug('conversion', 'WebCodecs: Failed to reset media element properties', {
+          error: getErrorMessage(error),
+        });
+      }
 
       // If we attached the element to the DOM for decode, remove it.
       if (video.parentElement) {
-        video.remove();
+        try {
+          video.remove();
+          logger.debug('conversion', 'WebCodecs: Video element removed from DOM');
+        } catch (error) {
+          logger.debug('conversion', 'WebCodecs: Failed to remove video from DOM', {
+            error: getErrorMessage(error),
+          });
+        }
       }
     } catch (error) {
-      logger.debug('conversion', 'Video element cleanup failed', {
+      logger.debug('conversion', 'WebCodecs: Video element cleanup failed', {
         error: getErrorMessage(error),
       });
     }
 
-    if (this.activeUrls.has(url)) {
-      URL.revokeObjectURL(url);
-      this.activeUrls.delete(url);
+    // Revoke object URL
+    try {
+      if (this.activeUrls.has(url)) {
+        URL.revokeObjectURL(url);
+        this.activeUrls.delete(url);
+        logger.debug('conversion', 'WebCodecs: Object URL revoked');
+      }
+    } catch (error) {
+      logger.debug('conversion', 'WebCodecs: Failed to revoke object URL', {
+        error: getErrorMessage(error),
+      });
     }
+
+    const cleanupTime = Date.now() - cleanupStart;
+    logger.debug('conversion', 'WebCodecs: Video cleanup complete', {
+      elapsedMs: cleanupTime,
+    });
   }
 }

@@ -116,6 +116,36 @@ export class FFmpegEncoder {
   }
 
   /**
+   * Validate that FFmpeg is properly initialized
+   *
+   * Checks FFmpeg state and logs diagnostic information.
+   *
+   * @throws Error if FFmpeg is not in valid state
+   */
+  private validateFFmpegState(): void {
+    const { core } = this.getDeps();
+
+    if (!core.isLoaded()) {
+      logger.error('conversion', 'FFmpeg validation failed: not loaded', {
+        isLoaded: core.isLoaded(),
+        isInitializing: core.isInitializing(),
+      });
+      throw new Error('FFmpeg is not loaded. Please initialize FFmpeg first.');
+    }
+
+    try {
+      // This will throw if FFmpeg instance is null or invalid
+      core.getFFmpeg();
+      logger.debug('conversion', 'FFmpeg state validation passed');
+    } catch (error) {
+      logger.error('conversion', 'FFmpeg validation failed: instance check', {
+        error: getErrorMessage(error),
+      });
+      throw new Error(`FFmpeg instance invalid: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
    * Create FFmpeg log handler for conversion operations
    */
   private createFFmpegLogHandler(
@@ -275,15 +305,6 @@ export class FFmpegEncoder {
     }
   }
 
-  /**
-   * Encode frame sequence to GIF or WebP
-   *
-   * Encodes pre-extracted frames from WebCodecs to final format.
-   * Used by hybrid GPU decode + FFmpeg encode path.
-   *
-   * @param params - Encoding parameters
-   * @returns Converted video blob
-   */
   async encodeFrameSequence(params: {
     format: 'gif' | 'webp';
     options: ConversionOptions;
@@ -308,6 +329,16 @@ export class FFmpegEncoder {
     }
 
     try {
+      // Validate FFmpeg state before attempting encoding
+      logger.debug('conversion', 'Starting frame sequence encoding', {
+        format,
+        frameCount,
+        fps,
+        quality: options.quality,
+      });
+
+      this.validateFFmpegState();
+
       const ffmpeg = core.getFFmpeg();
       const outputFileName = format === 'gif' ? 'output.gif' : 'output.webp';
 

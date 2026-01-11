@@ -331,6 +331,7 @@ export class FFmpegCore {
    */
   async initialize(callbacks?: InitializationCallbacks): Promise<void> {
     if (this.loaded) {
+      logger.debug('ffmpeg', 'FFmpeg already loaded, skipping reinitialization');
       return;
     }
 
@@ -342,6 +343,7 @@ export class FFmpegCore {
     }
 
     if (this.initializePromise) {
+      logger.debug('ffmpeg', 'FFmpeg initialization in progress, waiting for existing promise');
       await this.initializePromise;
       return;
     }
@@ -360,26 +362,36 @@ export class FFmpegCore {
       rejectInit = reject;
     });
 
+    const initStartTime = Date.now();
+
     try {
       const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
       const isCrossOriginIsolated =
         typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
 
-      logger.info('ffmpeg', 'FFmpeg initialization environment check', {
+      logger.info('ffmpeg', 'FFmpeg initialization starting', {
         hasSharedArrayBuffer,
         isCrossOriginIsolated,
         canUseMultithreading: hasSharedArrayBuffer && isCrossOriginIsolated,
       });
 
       if (!hasSharedArrayBuffer || !isCrossOriginIsolated) {
-        throw new Error(
+        const error = new Error(
           'SharedArrayBuffer is not available. This app requires cross-origin isolation (COOP/COEP headers) to initialize FFmpeg.'
         );
+        logger.error('ffmpeg', 'Environment validation failed', {
+          hasSharedArrayBuffer,
+          isCrossOriginIsolated,
+          error: getErrorMessage(error),
+        });
+        throw error;
       }
 
       // Wait for any ongoing termination to complete (with timeout protection)
+      logger.debug('ffmpeg', 'Waiting for any ongoing termination to complete');
       await this.waitForTermination();
 
+      logger.debug('ffmpeg', 'Creating FFmpeg instance');
       const ffmpeg = new FFmpeg();
       this.ffmpeg = ffmpeg;
 
@@ -401,6 +413,7 @@ export class FFmpegCore {
       });
 
       // Initialize FFmpeg runtime
+      logger.debug('ffmpeg', 'Initializing FFmpeg runtime');
       await initializeFFmpegRuntime(
         ffmpeg,
         {
@@ -410,9 +423,23 @@ export class FFmpegCore {
         { terminate: () => this.terminateCallback?.() }
       );
 
+      const initTime = Date.now() - initStartTime;
       this.loaded = true;
+      logger.info('ffmpeg', 'FFmpeg initialization successful', {
+        elapsedMs: initTime,
+      });
       resolveInit();
     } catch (error) {
+      const initTime = Date.now() - initStartTime;
+      const errorMsg = getErrorMessage(error);
+      logger.error('ffmpeg', 'FFmpeg initialization failed', {
+        elapsedMs: initTime,
+        error: errorMsg,
+        state: {
+          ffmpegExists: Boolean(this.ffmpeg),
+          isLoaded: this.loaded,
+        },
+      });
       rejectInit(error);
       throw error;
     } finally {

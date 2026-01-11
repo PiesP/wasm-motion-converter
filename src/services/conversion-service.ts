@@ -118,7 +118,7 @@ export async function convertVideo(
     format,
   });
 
-  return selectConversionPath({
+  const result = await selectConversionPath({
     file,
     format,
     options: effectiveOptions,
@@ -126,4 +126,10 @@ export async function convertVideo(
     strategy,
     webCodecsAvailable,
   });
+
+  // Add inter-conversion delay to allow WebCodecs state cleanup
+  // This helps prevent VideoFrame garbage collection issues in consecutive conversions
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  return result;
 }
