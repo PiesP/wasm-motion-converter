@@ -13,12 +13,9 @@
  * @module cpu-path/ffmpeg-monitoring
  */
 
-import type { ConversionQuality, VideoMetadata } from "@t/conversion-types";
-import {
-  calculateAdaptiveWatchdogTimeout,
-  FFMPEG_INTERNALS,
-} from "@utils/ffmpeg-constants";
-import { logger } from "@utils/logger";
+import type { ConversionQuality, VideoMetadata } from '@t/conversion-types';
+import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { logger } from '@utils/logger';
 
 /**
  * Monitoring callbacks
@@ -60,8 +57,7 @@ export class FFmpegMonitoring {
   private lastProgressValue = -1;
   private logSilenceStrikes = 0;
   private isConverting = false;
-  private currentWatchdogTimeout: number =
-    FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS;
+  private currentWatchdogTimeout: number = FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS;
 
   private callbacks: MonitoringCallbacks = {};
 
@@ -121,22 +117,18 @@ export class FFmpegMonitoring {
     this.currentWatchdogTimeout = calculateAdaptiveWatchdogTimeout(
       FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS,
       {
-        resolution: metadata
-          ? { width: metadata.width, height: metadata.height }
-          : undefined,
+        resolution: metadata ? { width: metadata.width, height: metadata.height } : undefined,
         duration: metadata?.duration,
         quality,
       }
     );
 
-    logger.debug("watchdog", "Watchdog started", {
+    logger.debug('watchdog', 'Watchdog started', {
       baseTimeout: `${FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS / 1000}s`,
       adaptiveTimeout: `${this.currentWatchdogTimeout / 1000}s`,
-      resolution: metadata ? `${metadata.width}x${metadata.height}` : "unknown",
-      duration: metadata?.duration
-        ? `${metadata.duration.toFixed(1)}s`
-        : "unknown",
-      quality: quality || "unknown",
+      resolution: metadata ? `${metadata.width}x${metadata.height}` : 'unknown',
+      duration: metadata?.duration ? `${metadata.duration.toFixed(1)}s` : 'unknown',
+      quality: quality || 'unknown',
     });
 
     // Clear existing timers
@@ -151,26 +143,20 @@ export class FFmpegMonitoring {
         const silenceMs = Date.now() - this.lastLogTime;
         if (silenceMs > FFMPEG_INTERNALS.LOG_SILENCE_TIMEOUT_MS) {
           this.logSilenceStrikes += 1;
-          logger.warn("ffmpeg", "No FFmpeg logs detected for extended period", {
+          logger.warn('ffmpeg', 'No FFmpeg logs detected for extended period', {
             silenceMs,
             strike: this.logSilenceStrikes,
             maxStrikes: FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES,
           });
 
-          this.callbacks.onStatus?.(
-            "FFmpeg encoder is unresponsive, checking..."
-          );
+          this.callbacks.onStatus?.('FFmpeg encoder is unresponsive, checking...');
 
-          if (
-            this.logSilenceStrikes >= FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES
-          ) {
+          if (this.logSilenceStrikes >= FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES) {
             logger.error(
-              "ffmpeg",
-              "FFmpeg produced no output after multiple checks, terminating as stalled"
+              'ffmpeg',
+              'FFmpeg produced no output after multiple checks, terminating as stalled'
             );
-            this.callbacks.onStatus?.(
-              "Conversion stalled - terminating (no encoder output)..."
-            );
+            this.callbacks.onStatus?.('Conversion stalled - terminating (no encoder output)...');
             this.callbacks.onTerminate?.();
           }
         }
@@ -181,27 +167,25 @@ export class FFmpegMonitoring {
     this.watchdogTimer = setInterval(() => {
       const timeSinceProgress = Date.now() - this.lastProgressTime;
       logger.debug(
-        "watchdog",
-        `Watchdog check: ${(timeSinceProgress / 1000).toFixed(
-          1
-        )}s since last progress (timeout: ${
+        'watchdog',
+        `Watchdog check: ${(timeSinceProgress / 1000).toFixed(1)}s since last progress (timeout: ${
           this.currentWatchdogTimeout / 1000
         }s)`
       );
 
       if (timeSinceProgress > this.currentWatchdogTimeout) {
         logger.error(
-          "watchdog",
-          `Conversion stalled - no progress for ${(
-            this.currentWatchdogTimeout / 1000
-          ).toFixed(1)}s`,
+          'watchdog',
+          `Conversion stalled - no progress for ${(this.currentWatchdogTimeout / 1000).toFixed(
+            1
+          )}s`,
           {
             lastProgress: this.lastProgressValue,
             timeSinceProgress: `${(timeSinceProgress / 1000).toFixed(1)}s`,
             timeout: `${(this.currentWatchdogTimeout / 1000).toFixed(1)}s`,
           }
         );
-        this.callbacks.onStatus?.("Conversion stalled - terminating...");
+        this.callbacks.onStatus?.('Conversion stalled - terminating...');
         this.callbacks.onTerminate?.();
       }
     }, FFMPEG_INTERNALS.WATCHDOG_CHECK_INTERVAL_MS);
@@ -218,14 +202,14 @@ export class FFmpegMonitoring {
     if (this.watchdogTimer) {
       clearInterval(this.watchdogTimer);
       this.watchdogTimer = null;
-      logger.debug("watchdog", "Watchdog timer cleared");
+      logger.debug('watchdog', 'Watchdog timer cleared');
     }
 
     // Stop log silence detection
     if (this.logSilenceInterval) {
       clearInterval(this.logSilenceInterval);
       this.logSilenceInterval = null;
-      logger.debug("watchdog", "Log silence monitor cleared");
+      logger.debug('watchdog', 'Log silence monitor cleared');
     }
 
     // Stop all active heartbeats
@@ -236,7 +220,7 @@ export class FFmpegMonitoring {
 
     // Mark conversion as complete
     this.isConverting = false;
-    logger.debug("watchdog", "Monitoring state reset");
+    logger.debug('watchdog', 'Monitoring state reset');
   }
 
   /**
@@ -259,21 +243,18 @@ export class FFmpegMonitoring {
     const progressRange = endProgress - startProgress;
 
     logger.debug(
-      "progress",
+      'progress',
       `Starting heartbeat: ${startProgress}% -> ${endProgress}% (estimated ${estimatedDurationSeconds}s)`
     );
 
     const interval = setInterval(() => {
       const elapsedSeconds = (Date.now() - startTime) / 1000;
-      const progressFraction = Math.min(
-        elapsedSeconds / estimatedDurationSeconds,
-        0.99
-      );
+      const progressFraction = Math.min(elapsedSeconds / estimatedDurationSeconds, 0.99);
       const currentProgress = startProgress + progressRange * progressFraction;
       const roundedProgress = Math.round(currentProgress);
 
       logger.debug(
-        "progress",
+        'progress',
         `Heartbeat update: ${roundedProgress}% (elapsed: ${elapsedSeconds.toFixed(
           1
         )}s, source: heartbeat)`
@@ -291,13 +272,11 @@ export class FFmpegMonitoring {
    *
    * @param intervalId - Interval ID from startProgressHeartbeat
    */
-  stopProgressHeartbeat(
-    intervalId: ReturnType<typeof setInterval> | null
-  ): void {
+  stopProgressHeartbeat(intervalId: ReturnType<typeof setInterval> | null): void {
     if (intervalId) {
       clearInterval(intervalId);
       this.activeHeartbeats.delete(intervalId);
-      logger.debug("progress", "Heartbeat stopped");
+      logger.debug('progress', 'Heartbeat stopped');
     }
   }
 
@@ -326,7 +305,7 @@ export class FFmpegMonitoring {
       this.logSilenceStrikes = 0;
     }
 
-    logger.debug("general", "Monitoring resources cleaned up");
+    logger.debug('general', 'Monitoring resources cleaned up');
   }
 
   /**

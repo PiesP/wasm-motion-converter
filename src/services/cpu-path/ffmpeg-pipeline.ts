@@ -20,21 +20,21 @@
  * @module cpu-path/ffmpeg-pipeline
  */
 
-import type { FFmpeg } from "@ffmpeg/ffmpeg";
+import type { FFmpeg } from '@ffmpeg/ffmpeg';
 import type {
   ConversionOptions,
   ConversionOutputBlob,
   ConversionQuality,
   VideoMetadata,
-} from "@t/conversion-types";
-import { getErrorMessage } from "@utils/error-utils";
-import { logger } from "@utils/logger";
-import { isMemoryCritical } from "@utils/memory-monitor";
-import { FFmpegCore } from "./ffmpeg-core";
-import type { FFmpegInputOverride } from "./ffmpeg-encoder";
-import { FFmpegEncoder } from "./ffmpeg-encoder";
-import { FFmpegMonitoring } from "./ffmpeg-monitoring";
-import { FFmpegVFS } from "./ffmpeg-vfs";
+} from '@t/conversion-types';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
+import { isMemoryCritical } from '@utils/memory-monitor';
+import { FFmpegCore } from './ffmpeg-core';
+import type { FFmpegInputOverride } from './ffmpeg-encoder';
+import { FFmpegEncoder } from './ffmpeg-encoder';
+import { FFmpegMonitoring } from './ffmpeg-monitoring';
+import { FFmpegVFS } from './ffmpeg-vfs';
 
 /**
  * Pipeline callbacks for conversion operations
@@ -52,7 +52,7 @@ export interface PipelineCallbacks {
  * Frame sequence encoding parameters
  */
 export interface FrameSequenceParams {
-  format: "gif" | "webp";
+  format: 'gif' | 'webp';
   options: ConversionOptions;
   frameCount: number;
   fps: number;
@@ -127,7 +127,7 @@ export class FFmpegPipeline {
   private getFFmpeg(): FFmpeg {
     const instance = this.core.getFFmpeg();
     if (!instance) {
-      throw new Error("FFmpeg not initialized");
+      throw new Error('FFmpeg not initialized');
     }
     return instance;
   }
@@ -136,8 +136,8 @@ export class FFmpegPipeline {
    * Handle termination request from monitoring
    */
   private handleTermination(): void {
-    logger.warn("general", "Termination requested by monitoring system");
-    this.callbacks.onStatusUpdate?.("Terminating FFmpeg due to stall...");
+    logger.warn('general', 'Termination requested by monitoring system');
+    this.callbacks.onStatusUpdate?.('Terminating FFmpeg due to stall...');
     this.terminate();
   }
 
@@ -150,11 +150,11 @@ export class FFmpegPipeline {
    */
   private acquireConversionLock(): boolean {
     if (this.conversionLock) {
-      logger.warn("general", "Conversion lock already held");
+      logger.warn('general', 'Conversion lock already held');
       return false;
     }
     this.conversionLock = true;
-    logger.debug("general", "Conversion lock acquired");
+    logger.debug('general', 'Conversion lock acquired');
     return true;
   }
 
@@ -163,7 +163,7 @@ export class FFmpegPipeline {
    */
   private releaseConversionLock(): void {
     this.conversionLock = false;
-    logger.debug("general", "Conversion lock released");
+    logger.debug('general', 'Conversion lock released');
   }
 
   /**
@@ -216,7 +216,7 @@ export class FFmpegPipeline {
    */
   async getVideoMetadata(file: File): Promise<VideoMetadata> {
     if (!this.isLoaded()) {
-      throw new Error("FFmpeg not initialized");
+      throw new Error('FFmpeg not initialized');
     }
 
     return this.core.getVideoMetadata(file, (file: File) =>
@@ -245,9 +245,7 @@ export class FFmpegPipeline {
   ): Promise<ConversionOutputBlob> {
     // Acquire lock
     if (!this.acquireConversionLock()) {
-      throw new Error(
-        "Another conversion is already in progress. Please wait for it to complete."
-      );
+      throw new Error('Another conversion is already in progress. Please wait for it to complete.');
     }
 
     // Store callbacks
@@ -256,7 +254,7 @@ export class FFmpegPipeline {
     try {
       // Ensure FFmpeg is initialized
       if (!this.isLoaded()) {
-        logger.warn("general", "FFmpeg not initialized, initializing now...");
+        logger.warn('general', 'FFmpeg not initialized, initializing now...');
         await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
       }
 
@@ -271,12 +269,7 @@ export class FFmpegPipeline {
       });
 
       // Execute conversion
-      const result = await this.encoder.convertToGIF(
-        file,
-        options,
-        metadata,
-        inputOverride
-      );
+      const result = await this.encoder.convertToGIF(file, options, metadata, inputOverride);
 
       // Stop monitoring
       this.monitoring.stopWatchdog();
@@ -311,9 +304,7 @@ export class FFmpegPipeline {
   ): Promise<ConversionOutputBlob> {
     // Acquire lock
     if (!this.acquireConversionLock()) {
-      throw new Error(
-        "Another conversion is already in progress. Please wait for it to complete."
-      );
+      throw new Error('Another conversion is already in progress. Please wait for it to complete.');
     }
 
     // Store callbacks
@@ -322,7 +313,7 @@ export class FFmpegPipeline {
     try {
       // Ensure FFmpeg is initialized
       if (!this.isLoaded()) {
-        logger.warn("general", "FFmpeg not initialized, initializing now...");
+        logger.warn('general', 'FFmpeg not initialized, initializing now...');
         await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
       }
 
@@ -337,12 +328,7 @@ export class FFmpegPipeline {
       });
 
       // Execute conversion
-      const result = await this.encoder.convertToWebP(
-        file,
-        options,
-        metadata,
-        inputOverride
-      );
+      const result = await this.encoder.convertToWebP(file, options, metadata, inputOverride);
 
       // Stop monitoring
       this.monitoring.stopWatchdog();
@@ -372,9 +358,7 @@ export class FFmpegPipeline {
   ): Promise<Blob> {
     // Acquire lock
     if (!this.acquireConversionLock()) {
-      throw new Error(
-        "Another conversion is already in progress. Please wait for it to complete."
-      );
+      throw new Error('Another conversion is already in progress. Please wait for it to complete.');
     }
 
     // Store callbacks
@@ -383,7 +367,7 @@ export class FFmpegPipeline {
     try {
       // Ensure FFmpeg is initialized
       if (!this.isLoaded()) {
-        logger.warn("general", "FFmpeg not initialized, initializing now...");
+        logger.warn('general', 'FFmpeg not initialized, initializing now...');
         await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
       }
 
@@ -415,7 +399,7 @@ export class FFmpegPipeline {
    * at the next safe checkpoint.
    */
   cancelConversion(): void {
-    logger.info("general", "Cancellation requested");
+    logger.info('general', 'Cancellation requested');
     this.encoder.cancelConversion();
   }
 
@@ -425,12 +409,9 @@ export class FFmpegPipeline {
    * @param fileName File name in VFS
    * @param data File data
    */
-  async writeVirtualFile(
-    fileName: string,
-    data: Uint8Array | string
-  ): Promise<void> {
+  async writeVirtualFile(fileName: string, data: Uint8Array | string): Promise<void> {
     if (!this.isLoaded()) {
-      throw new Error("FFmpeg not initialized. Call initialize() first.");
+      throw new Error('FFmpeg not initialized. Call initialize() first.');
     }
     await this.vfs.writeFile(this.getFFmpeg(), fileName, data);
   }
@@ -442,7 +423,7 @@ export class FFmpegPipeline {
    */
   async deleteVirtualFiles(fileNames: string[]): Promise<void> {
     if (!this.isLoaded()) {
-      logger.debug("general", "FFmpeg not initialized, skipping file deletion");
+      logger.debug('general', 'FFmpeg not initialized, skipping file deletion');
       return;
     }
     await this.vfs.deleteFiles(this.getFFmpeg(), fileNames);
@@ -456,7 +437,7 @@ export class FFmpegPipeline {
    */
   async clearCachedInput(): Promise<void> {
     if (!this.isLoaded()) {
-      logger.debug("general", "FFmpeg not initialized, skipping cache clear");
+      logger.debug('general', 'FFmpeg not initialized, skipping cache clear');
       return;
     }
     await this.vfs.clearCachedInput(this.getFFmpeg());
@@ -518,9 +499,7 @@ export class FFmpegPipeline {
    *
    * @param intervalId Interval ID from startProgressHeartbeat
    */
-  stopProgressHeartbeat(
-    intervalId: ReturnType<typeof setInterval> | null
-  ): void {
+  stopProgressHeartbeat(intervalId: ReturnType<typeof setInterval> | null): void {
     this.monitoring.stopProgressHeartbeat(intervalId);
   }
 
@@ -539,7 +518,7 @@ export class FFmpegPipeline {
     quality?: ConversionQuality,
     options?: { enableLogSilenceCheck?: boolean }
   ): void {
-    logger.debug("general", "Beginning external conversion monitoring");
+    logger.debug('general', 'Beginning external conversion monitoring');
     this.monitoring.startWatchdog({
       metadata,
       quality,
@@ -558,12 +537,9 @@ export class FFmpegPipeline {
     try {
       this.monitoring.updateProgress(100, false);
       this.monitoring.stopWatchdog();
-      logger.debug(
-        "watchdog",
-        "Watchdog stopped (external conversion complete)"
-      );
+      logger.debug('watchdog', 'Watchdog stopped (external conversion complete)');
     } catch (error) {
-      logger.warn("watchdog", "Error during watchdog cleanup", {
+      logger.warn('watchdog', 'Error during watchdog cleanup', {
         error: getErrorMessage(error),
       });
     }
@@ -587,7 +563,7 @@ export class FFmpegPipeline {
    * After termination, FFmpeg must be reinitialized before use.
    */
   terminate(): void {
-    logger.info("general", "Terminating FFmpeg pipeline");
+    logger.info('general', 'Terminating FFmpeg pipeline');
 
     try {
       // Stop all monitoring
@@ -609,10 +585,10 @@ export class FFmpegPipeline {
       // Clear callbacks
       this.callbacks = {};
 
-      logger.debug("general", "FFmpeg pipeline terminated successfully");
+      logger.debug('general', 'FFmpeg pipeline terminated successfully');
     } catch (error) {
       const message = getErrorMessage(error);
-      logger.error("general", "Error during termination", { error: message });
+      logger.error('general', 'Error during termination', { error: message });
     }
   }
 
@@ -623,7 +599,7 @@ export class FFmpegPipeline {
    * Safe to call between conversions.
    */
   async cleanup(): Promise<void> {
-    logger.debug("general", "Cleaning up resources");
+    logger.debug('general', 'Cleaning up resources');
 
     try {
       // Clean up temp files
@@ -631,14 +607,14 @@ export class FFmpegPipeline {
 
       // Handle input cache based on memory status
       if (isMemoryCritical()) {
-        logger.debug("general", "Memory critical - clearing cached input");
+        logger.debug('general', 'Memory critical - clearing cached input');
         await this.vfs.clearCachedInput(this.core.getFFmpeg());
       }
 
-      logger.debug("general", "Resource cleanup complete");
+      logger.debug('general', 'Resource cleanup complete');
     } catch (error) {
       const message = getErrorMessage(error);
-      logger.warn("general", "Error during cleanup (non-critical)", {
+      logger.warn('general', 'Error during cleanup (non-critical)', {
         error: message,
       });
     }
@@ -655,4 +631,4 @@ export function createFFmpegPipeline(): FFmpegPipeline {
 }
 
 // Re-export types from encoder module
-export type { FFmpegInputOverride } from "./ffmpeg-encoder";
+export type { FFmpegInputOverride } from './ffmpeg-encoder';
