@@ -581,8 +581,8 @@ class WebCodecsConversionService {
     // sequence length, which then causes validateFrameSequence() to look for a non-existent
     // last frame and fail with an FS error.
     const framesByIndex: Array<{ name: string; data: Uint8Array } | undefined> = [];
-    const maxFrames = this.getMaxWebPFrames(targetFps, metadata?.duration);
 
+    const requestedTargetFps = targetFps;
     const normalizedCodec = metadata?.codec?.toLowerCase() ?? '';
     const isAv1 = normalizedCodec.includes('av1') || normalizedCodec.includes('av01');
     const supportsFrameCallback =
@@ -593,6 +593,61 @@ class WebCodecsConversionService {
           requestVideoFrameCallback?: unknown;
         }
       ).requestVideoFrameCallback === 'function';
+
+    const getAv1CaptureFpsCap = (durationSeconds?: number): number => {
+      // AV1 frame extraction is often dominated by canvas encoding (PNG) rather than FFmpeg.
+      // Capping extraction FPS significantly reduces total time while preserving overall
+      // animation duration via duration-aligned timestamps.
+      const isShort = !durationSeconds || durationSeconds < 4;
+      const isMedium =
+        typeof durationSeconds === 'number' &&
+        Number.isFinite(durationSeconds) &&
+        durationSeconds >= 4 &&
+        durationSeconds < 30;
+
+      if (isShort) {
+        // Short clips: keep motion smooth.
+        return 15;
+      }
+
+      if (isMedium) {
+        // Medium clips: balance speed and smoothness.
+        if (options.quality === 'high') {
+          return 12;
+        }
+        if (options.quality === 'medium') {
+          return 10;
+        }
+        return 8;
+      }
+
+      // Long clips: prioritize speed.
+      if (options.quality === 'high') {
+        return 10;
+      }
+      if (options.quality === 'medium') {
+        return 8;
+      }
+      return 6;
+    };
+
+    const av1CaptureFpsCap = isAv1 ? getAv1CaptureFpsCap(metadata?.duration) : requestedTargetFps;
+    const effectiveTargetFps = isAv1
+      ? Math.max(1, Math.min(requestedTargetFps, av1CaptureFpsCap))
+      : requestedTargetFps;
+
+    if (isAv1 && effectiveTargetFps !== requestedTargetFps) {
+      logger.info('conversion', 'Capping AV1 WebCodecs extraction FPS to reduce conversion time', {
+        codec: metadata?.codec ?? 'unknown',
+        requestedFps: requestedTargetFps,
+        cappedFps: effectiveTargetFps,
+        durationSeconds: metadata?.duration ?? null,
+        quality: options.quality,
+        reason: 'AV1 frame extraction is CPU-heavy (decode + canvas encode)',
+      });
+    }
+
+    const maxFrames = this.getMaxWebPFrames(effectiveTargetFps, metadata?.duration);
 
     // Prefer demuxer-based extraction for complex codecs when eligible.
     // This avoids extremely slow per-frame seeking for AV1/HEVC/VP9 in many browsers.
@@ -671,7 +726,7 @@ class WebCodecsConversionService {
 
       const runDecode = async (
         captureMode: WebCodecsCaptureMode,
-        overrideTargetFps: number = targetFps
+        overrideTargetFps: number = effectiveTargetFps
       ) => {
         return await decoder.decodeToFrames({
           file,
@@ -714,7 +769,7 @@ class WebCodecsConversionService {
 
       const runDecodeWithTiming = async (
         captureMode: WebCodecsCaptureMode,
-        overrideTargetFps: number = targetFps
+        overrideTargetFps: number = effectiveTargetFps
       ) => {
         const start = Date.now();
         const result = await runDecode(captureMode, overrideTargetFps);
@@ -779,8 +834,8 @@ class WebCodecsConversionService {
 
       const initialSeekTargetFps =
         initialCaptureMode === 'seek' && isAv1
-          ? Math.min(targetFps, getAv1SeekFpsCap(metadata?.duration))
-          : targetFps;
+          ? Math.min(effectiveTargetFps, getAv1SeekFpsCap(metadata?.duration))
+          : effectiveTargetFps;
 
       // Track decode timing for performance caching (use the final successful attempt)
       let perfElapsed = 0;
@@ -813,8 +868,8 @@ class WebCodecsConversionService {
 
         const fallbackSeekTargetFps =
           fallbackInitial === 'seek' && isAv1
-            ? Math.min(targetFps, getAv1SeekFpsCap(metadata?.duration))
-            : targetFps;
+            ? Math.min(effectiveTargetFps, getAv1SeekFpsCap(metadata?.duration))
+            : effectiveTargetFps;
 
         const attempt = await runDecodeWithTiming(fallbackInitial, fallbackSeekTargetFps);
         decodeResult = attempt.result;
@@ -849,7 +904,8 @@ class WebCodecsConversionService {
             capturedFrames: decodeResult.frameCount,
             expectedFramesFromDuration,
             requiredFrames,
-            targetFps,
+            requestedFps: requestedTargetFps,
+            effectiveTargetFps,
             durationSeconds: decodeResult.duration,
             maxFrames,
             scale,
@@ -874,7 +930,8 @@ class WebCodecsConversionService {
                 capturedFrames: decodeResult.frameCount,
                 requiredFrames,
                 expectedFramesFromDuration,
-                targetFps,
+                requestedFps: requestedTargetFps,
+                effectiveTargetFps,
                 durationSeconds: decodeResult.duration,
                 maxFrames,
                 scale,
@@ -956,12 +1013,15 @@ class WebCodecsConversionService {
             // (via duration-aligned timestamps), cap seek sampling FPS more aggressively
             // for longer clips. For medium/low quality we prefer speed over maximum smoothness.
             const av1SeekFpsCap = getAv1SeekFpsCap(decodeResult.duration);
-            const seekTargetFps = isAv1 ? Math.min(targetFps, av1SeekFpsCap) : targetFps;
+            const seekTargetFps = isAv1
+              ? Math.min(effectiveTargetFps, av1SeekFpsCap)
+              : effectiveTargetFps;
 
-            if (seekTargetFps !== targetFps) {
+            if (seekTargetFps !== effectiveTargetFps) {
               logger.info('conversion', 'Capping FPS for seek fallback to reduce conversion time', {
                 codec: metadata?.codec ?? 'unknown',
-                requestedFps: targetFps,
+                requestedFps: requestedTargetFps,
+                effectiveTargetFps,
                 seekFps: seekTargetFps,
                 seekFpsCap: isAv1 ? av1SeekFpsCap : null,
                 durationSeconds: decodeResult.duration,
@@ -1138,14 +1198,15 @@ class WebCodecsConversionService {
 
       logger.info(
         'conversion',
-        `Frame extraction complete: frameCount=${decodeResult.frameCount}, durationSeconds=${decodeResult.duration.toFixed(3)}, targetFps=${targetFps}, maxFramesRequested=${maxFrames}, queuedFrames=${orderedFrames.length}, writtenFrames=${frameFiles.length}`,
+        `Frame extraction complete: frameCount=${decodeResult.frameCount}, durationSeconds=${decodeResult.duration.toFixed(3)}, requestedFps=${requestedTargetFps}, effectiveTargetFps=${effectiveTargetFps}, maxFramesRequested=${maxFrames}, queuedFrames=${orderedFrames.length}, writtenFrames=${frameFiles.length}`,
         {
           frameCount: decodeResult.frameCount,
           duration: decodeResult.duration,
           elapsed: `${elapsed}ms`,
           format,
           capturedFramesCount: capturedFrames?.length ?? 0,
-          targetFps,
+          requestedFps: requestedTargetFps,
+          effectiveTargetFps,
           decodeFps: decodeResult.fps,
           maxFramesRequested: maxFrames,
           estimatedFramesFromDuration: estimatedFramesFromCapturedDuration,
@@ -1157,20 +1218,20 @@ class WebCodecsConversionService {
       ffmpegService.reportStatus(`Converting frames to ${format.toUpperCase()}...`);
       const animationDurationSeconds = this.resolveAnimationDurationSeconds(
         frameFiles.length,
-        targetFps,
+        effectiveTargetFps,
         metadata,
         decodeResult.duration
       );
 
       const fpsForEncoding = this.resolveWebPFps(
         frameFiles.length,
-        targetFps,
+        effectiveTargetFps,
         animationDurationSeconds
       );
 
-      if (fpsForEncoding !== targetFps) {
+      if (fpsForEncoding !== effectiveTargetFps) {
         logger.info('conversion', 'Adjusted WebP FPS to match captured pacing', {
-          targetFps,
+          targetFps: effectiveTargetFps,
           adjustedFps: fpsForEncoding,
           frameCount: frameFiles.length,
           durationSeconds: animationDurationSeconds ?? decodeResult.duration,
