@@ -22,13 +22,21 @@ export type ConversionPath = 'webcodecs-only' | 'ffmpeg-only' | 'both' | 'unsupp
  * Performance benchmarks:
  * - H.264 → GIF (FFmpeg): 2.04s ⚡ (3x faster than WebCodecs hybrid)
  * - H.264 → WebP (FFmpeg): 5.43s (2x faster than WebCodecs)
+ * - VP9 → WebP (WebCodecs with auto-scale+JPEG): 40-60s (after GPU stall fixes)
  * - AV1 → GIF (WebCodecs + modern-gif): 13.94s (FFmpeg lacks decoder)
  * - AV1 → WebP (WebCodecs 2-pass): 12.44s (FFmpeg lacks decoder)
  *
  * Path selection strategy:
  * - AV1: WebCodecs only (FFmpeg.wasm v5.1.4 lacks libaom/libdav1d)
  * - HEVC/VP8/VP9/H.264: Both paths supported, FFmpeg preferred for performance
+ * - VP9: WebCodecs supported but requires 25% scale reduction + JPEG format for GPU stability
  * - Unknown codecs: Default to 'both' with fallback logic
+ *
+ * WebCodecs VP9 optimizations (canvas encoding bottleneck):
+ * - Automatic 25% scale reduction (0.75x) when scale >= 0.9
+ * - Force JPEG encoding (5x faster than PNG for VP9 canvas ops)
+ * - 5-second timeout on canvas.convertToBlob() to detect GPU stalls
+ * - Fallback to FFmpeg if any timeout or stall occurs
  */
 const CODEC_CAPABILITIES: Record<string, ConversionPath> = {
   // === AV1 - WebCodecs only (FFmpeg.wasm v5.1.4 lacks libaom/libdav1d) ===

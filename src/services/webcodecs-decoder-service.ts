@@ -24,6 +24,12 @@ import {
 export type WebCodecsFrameFormat = 'png' | 'jpeg' | 'rgba';
 
 /**
+ * Maximum time (ms) allowed for canvas.convertToBlob() operation
+ * VP9/complex codecs may stall during GPU->CPU readback; timeout forces fallback to FFmpeg
+ */
+const CANVAS_ENCODE_TIMEOUT_MS = 5000;
+
+/**
  * Progress callback type for frame extraction
  * Reports current frame count and total expected frames
  */
@@ -368,9 +374,25 @@ export class WebCodecsDecoderService {
         await waitForEvent(video, 'loadeddata', FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS);
       }
 
-      const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
-      const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+      // VP9/HEVC codec workaround: Automatic scale reduction
+      // VP9/complex codecs can cause GPU memory pressure & stalls during canvas encoding.
+      // Reduce canvas size by 25% (0.75 scale) to alleviate GPU memory bottlenecks.
+      const isComplexCodec = codec && /vp9|hevc|h\.265|h265|hvc1|hev1/i.test(codec);
+      const effectiveScale = isComplexCodec && scale >= 0.9 ? scale * 0.75 : scale;
+
+      const targetWidth = Math.max(1, Math.round(sourceWidth * effectiveScale));
+      const targetHeight = Math.max(1, Math.round(sourceHeight * effectiveScale));
       const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba');
+
+      if (isComplexCodec && effectiveScale !== scale) {
+        logger.info('conversion', 'Applied VP9/HEVC codec scale reduction', {
+          originalScale: scale,
+          effectiveScale,
+          targetWidth,
+          targetHeight,
+          codec,
+        });
+      }
       const frameFiles: string[] = [];
       const estimatedTotalFrames = Math.max(1, Math.ceil(duration * targetFps));
       const totalFrames =
@@ -401,7 +423,11 @@ export class WebCodecsDecoderService {
 
       logger.info(
         'conversion',
-        `WebCodecs decode budget: durationSeconds=${duration.toFixed(3)}, targetFps=${targetFps}, estimatedTotalFrames=${estimatedTotalFrames}, maxFrames=${maxFrames ?? 'null'}, totalFrames=${totalFrames}, scale=${scale}, frameFormat=${frameFormat}, captureMode=${captureMode}`,
+        `WebCodecs decode budget: durationSeconds=${duration.toFixed(
+          3
+        )}, targetFps=${targetFps}, estimatedTotalFrames=${estimatedTotalFrames}, maxFrames=${
+          maxFrames ?? 'null'
+        }, totalFrames=${totalFrames}, scale=${scale}, frameFormat=${frameFormat}, captureMode=${captureMode}`,
         {
           durationSeconds: duration,
           targetFps,
@@ -512,9 +538,12 @@ export class WebCodecsDecoderService {
           }
           consecutiveEmptyFrames = 0;
         } else {
-          // Determine optimal encoding format based on quality preset
+          // Determine optimal encoding format based on quality preset & codec
           // Use JPEG for low/medium quality (3-5x faster encoding), PNG for high quality
+          // VP9/HEVC: Force JPEG to reduce canvas encoding latency (avoid GPU stalls)
+          const forceJpegForComplexCodec = isComplexCodec;
           const shouldUseJpeg =
+            forceJpegForComplexCodec ||
             frameFormat === 'jpeg' ||
             (frameFormat === 'png' && quality && (quality === 'low' || quality === 'medium'));
 
@@ -529,23 +558,66 @@ export class WebCodecsDecoderService {
 
           // Prefer OffscreenCanvas.convertToBlob() when available (non-blocking, faster)
           // Fall back to HTMLCanvasElement.toBlob() for broader compatibility
-          let blob: Blob;
-          if ('convertToBlob' in captureContext.canvas) {
-            try {
-              blob = await (captureContext.canvas as OffscreenCanvas).convertToBlob({
-                type: encodeMimeType,
-                quality: encodeQuality,
-              });
-            } catch (offscreenError) {
-              // Fall back to canvasToBlob if OffscreenCanvas fails
-              logger.debug('conversion', 'OffscreenCanvas.convertToBlob() failed, using fallback', {
-                error: getErrorMessage(offscreenError),
-              });
-              blob = await canvasToBlob(captureContext.canvas, encodeMimeType, encodeQuality);
+          // Add timeout to detect GPU stalls (VP9/HEVC can cause blocking encodes)
+          const convertBlobWithTimeout = async (): Promise<Blob> => {
+            const timeoutPromise = new Promise<Blob>((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `Canvas encoding timeout (${CANVAS_ENCODE_TIMEOUT_MS}ms) - GPU stall detected`
+                    )
+                  ),
+                CANVAS_ENCODE_TIMEOUT_MS
+              )
+            );
+
+            if ('convertToBlob' in captureContext.canvas) {
+              try {
+                const blobPromise = (captureContext.canvas as OffscreenCanvas).convertToBlob({
+                  type: encodeMimeType,
+                  quality: encodeQuality,
+                });
+                return Promise.race([blobPromise, timeoutPromise]);
+              } catch (offscreenError) {
+                // Fall back to canvasToBlob if OffscreenCanvas fails
+                logger.debug(
+                  'conversion',
+                  'OffscreenCanvas.convertToBlob() failed, using fallback',
+                  {
+                    error: getErrorMessage(offscreenError),
+                  }
+                );
+                const blobPromise = canvasToBlob(
+                  captureContext.canvas,
+                  encodeMimeType,
+                  encodeQuality
+                );
+                return Promise.race([blobPromise, timeoutPromise]);
+              }
             }
-          } else {
             // Fallback to HTMLCanvasElement.toBlob()
-            blob = await canvasToBlob(captureContext.canvas, encodeMimeType, encodeQuality);
+            const blobPromise = canvasToBlob(captureContext.canvas, encodeMimeType, encodeQuality);
+            return Promise.race([blobPromise, timeoutPromise]);
+          };
+
+          let blob: Blob;
+          try {
+            blob = await convertBlobWithTimeout();
+          } catch (timeoutError) {
+            const errorMsg = getErrorMessage(timeoutError);
+            logger.warn('conversion', 'Canvas encoding timeout detected - likely GPU stall', {
+              error: errorMsg,
+              codec,
+              frameIndex: index,
+              canvasWidth: captureContext.targetWidth,
+              canvasHeight: captureContext.targetHeight,
+            });
+            // Timeout during canvas encode suggests codec incompatibility or GPU saturation
+            throw new Error(
+              `Canvas encoding stalled at frame ${index}. ` +
+                'This may indicate codec incompatibility or GPU memory exhaustion. Falling back to FFmpeg.'
+            );
           }
 
           if (blob.size === 0) {
@@ -1228,7 +1300,9 @@ export class WebCodecsDecoderService {
       video.pause();
       logger.info(
         'conversion',
-        `WebCodecs track capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}, elapsedMs=${Date.now() - startDecodeTime}`,
+        `WebCodecs track capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}, elapsedMs=${
+          Date.now() - startDecodeTime
+        }`,
         {
           capturedFrames: frameIndex,
           totalFrames,
@@ -2086,7 +2160,9 @@ export class WebCodecsDecoderService {
 
     // Prefer fastSeek() when available (can be faster than setting currentTime
     // and waiting for a full seek pipeline in some browsers).
-    const maybeFastSeek = video as HTMLVideoElement & { fastSeek?: (time: number) => void };
+    const maybeFastSeek = video as HTMLVideoElement & {
+      fastSeek?: (time: number) => void;
+    };
     if (typeof maybeFastSeek.fastSeek === 'function') {
       maybeFastSeek.fastSeek(clampedTime);
     } else {
