@@ -417,7 +417,7 @@ export class FFmpegEncoder {
 
     // Generate palette
     const paletteThreadArgs = getThreadingArgs('filter-complex');
-    const inputPattern = 'frame_%05d.png';
+    const inputPattern = 'frame_%06d.png';
     // Use concat instead of spread to prevent stack overflow
     const paletteCmd = ([] as string[])
       .concat(Array.from(paletteThreadArgs))
@@ -515,7 +515,7 @@ export class FFmpegEncoder {
     const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
-    const inputPattern = 'frame_%05d.png';
+    const inputPattern = 'frame_%06d.png';
     const webpThreadArgs = getThreadingArgs('simple');
 
     // Use concat instead of spread to prevent stack overflow
