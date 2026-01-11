@@ -1,7 +1,5 @@
-import type { Setter } from 'solid-js';
-import { batch } from 'solid-js';
-// Use new refactored orchestrator API
-import { convertVideo } from '@services/orchestration/conversion-orchestrator';
+// Use conversion service API
+import { convertVideo } from '@services/conversion-service';
 import { ffmpegService } from '@services/ffmpeg-service';
 import { checkPerformance, getRecommendedSettings } from '@services/performance-checker-service';
 import { analyzeVideo, analyzeVideoQuick } from '@services/video-analyzer-service';
@@ -32,7 +30,7 @@ import {
   videoPreviewUrl,
 } from '@stores/conversion-store';
 import { showToast } from '@stores/toast-store';
-import type { VideoMetadata } from '@t/conversion-types';
+import type { ConversionResult, VideoMetadata } from '@t/conversion-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { WARN_RESOLUTION_PIXELS } from '@utils/constants';
 import { createId } from '@utils/create-id';
@@ -41,6 +39,8 @@ import { ETACalculator } from '@utils/eta-calculator';
 import { validateVideoDuration, validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
+import type { Setter } from 'solid-js';
+import { batch } from 'solid-js';
 
 /**
  * Small file size threshold for quick analysis bypass (50 MB)
@@ -401,22 +401,19 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
 
       const resultId = createId();
       const durationSeconds = Math.max(0, duration / MS_PER_SECOND);
+      const newResult: ConversionResult = {
+        id: resultId,
+        outputBlob: blob,
+        originalName: file.name,
+        originalSize: file.size,
+        createdAt: Date.now(),
+        settings: settings,
+        conversionDurationSeconds: durationSeconds,
+        wasTranscoded: blob.wasTranscoded,
+        originalCodec: videoMetadata()?.codec,
+      };
       setConversionResults((results) => {
-        const newResults = [
-          {
-            id: resultId,
-            outputBlob: blob,
-            originalName: file.name,
-            originalSize: file.size,
-            createdAt: Date.now(),
-            settings: settings,
-            conversionDurationSeconds: durationSeconds,
-            wasTranscoded: blob.wasTranscoded,
-            originalCodec: videoMetadata()?.codec,
-          },
-          ...results,
-        ];
-        return newResults.slice(0, MAX_RESULTS);
+        return [newResult, ...results].slice(0, MAX_RESULTS);
       });
       setAppState('done');
       setConversionStatusMessage('');
