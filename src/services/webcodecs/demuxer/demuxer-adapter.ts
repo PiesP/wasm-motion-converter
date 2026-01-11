@@ -94,9 +94,12 @@ export interface DemuxerAdapter {
   /**
    * Extract encoded video samples for frame extraction
    *
-   * Returns an async generator that yields encoded samples at the target FPS.
-   * Samples are extracted with appropriate stride to downsample from source FPS
-   * to target FPS (e.g., 30 FPS source → 15 FPS target = every 2nd sample).
+   * Returns an async generator that yields encoded samples for decoding.
+   *
+   * Important: do NOT drop (stride-skip) encoded samples for inter-frame codecs
+   * (AV1/VP9/H.264/HEVC). Skipping encoded samples can break reference chains
+   * and cause VideoDecoder to error. Downsample after decode by selecting a
+   * subset of decoded VideoFrames based on timestamps.
    *
    * Uses AsyncGenerator to prevent memory exhaustion - samples are streamed
    * incrementally rather than buffered in memory.

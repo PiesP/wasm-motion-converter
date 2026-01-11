@@ -103,7 +103,10 @@ export class WebMDemuxer implements DemuxerAdapter {
    *
    * Returns an async generator yielding encoded samples at target FPS.
    * Streams samples incrementally instead of buffering to prevent memory exhaustion
-   * on large video files. Applies stride to downsample from source FPS to target FPS.
+   * on large video files.
+   *
+   * Note: Do not stride-skip encoded samples for inter-frame codecs (VP9/AV1/etc.).
+   * Downsample after decode by selecting decoded frames based on timestamps.
    *
    * @param targetFps - Target frames per second for sampling
    * @param maxFrames - Optional maximum frame count to extract
@@ -120,42 +123,58 @@ export class WebMDemuxer implements DemuxerAdapter {
 
     try {
       const sourceFps = this.metadata.framerate ?? targetFps;
-      const sampleStride = Math.max(1, Math.round(sourceFps / targetFps));
+
+      // Derive a time cap from the requested output budget.
+      const maxDurationSeconds = maxFrames ? maxFrames / targetFps : undefined;
+      const maxDurationMicros = maxDurationSeconds
+        ? Math.round(maxDurationSeconds * 1_000_000)
+        : undefined;
+      const durationSlackMicros = Math.round(1_000_000);
 
       logger.info('demuxer', 'Extracting WebM samples', {
         totalSamples: this.metadata.sampleCount,
         sourceFps: sourceFps.toFixed(2),
         targetFps,
-        sampleStride,
-        estimatedOutputFrames: Math.ceil(this.metadata.sampleCount / sampleStride),
+        maxDurationSeconds: maxDurationSeconds?.toFixed(3) ?? 'full',
       });
 
-      let frameIndex = 0;
+      let yieldedSamples = 0;
       let sampleIndex = 0;
+      let baseTimestampMicros: number | null = null;
 
-      while (sampleIndex < this.metadata.sampleCount && (!maxFrames || frameIndex < maxFrames)) {
+      while (sampleIndex < this.metadata.sampleCount) {
         const sample = await this.demuxer.readVideoSample(sampleIndex);
 
         if (!sample) {
           break;
         }
 
-        if (sampleIndex % sampleStride === 0) {
-          yield {
-            type: sample.type === 'key' ? 'key' : 'delta',
-            timestamp: sample.timestamp ?? 0,
-            duration: sample.duration ?? 0,
-            data: new Uint8Array(sample.data),
-          };
-
-          frameIndex++;
+        const timestamp = sample.timestamp ?? 0;
+        if (baseTimestampMicros === null) {
+          baseTimestampMicros = timestamp;
         }
+
+        if (
+          maxDurationMicros !== undefined &&
+          timestamp > baseTimestampMicros + maxDurationMicros + durationSlackMicros
+        ) {
+          break;
+        }
+
+        yield {
+          type: sample.type === 'key' ? 'key' : 'delta',
+          timestamp,
+          duration: sample.duration ?? 0,
+          data: new Uint8Array(sample.data),
+        };
+
+        yieldedSamples++;
 
         sampleIndex++;
       }
 
       logger.info('demuxer', 'WebM sample extraction completed', {
-        yieldedFrames: frameIndex,
+        yieldedSamples,
       });
     } catch (error) {
       logger.error('demuxer', 'WebM sample extraction failed', {

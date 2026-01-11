@@ -473,10 +473,14 @@ class FFmpegService {
   private async safeWriteFile(fileName: string, data: Uint8Array | string): Promise<void> {
     const ffmpeg = this.getFFmpeg();
     try {
+      const size = typeof data === 'string' ? data.length : data.byteLength;
+      if (size === 0) {
+        logger.warn('conversion', `Writing 0-byte file to VFS: ${fileName}`);
+      }
       await ffmpeg.writeFile(fileName, data);
       this.knownFiles.add(fileName);
       logger.debug('conversion', `Wrote file: ${fileName}`, {
-        size: typeof data === 'string' ? data.length : data.byteLength,
+        size,
       });
     } catch (error) {
       const message = getErrorMessage(error);
@@ -2890,9 +2894,13 @@ class FFmpegService {
     this.statusCallback = callback;
   }
 
-  beginExternalConversion(metadata?: VideoMetadata, quality?: ConversionQuality): void {
+  beginExternalConversion(
+    metadata?: VideoMetadata,
+    quality?: ConversionQuality,
+    options?: { enableLogSilenceCheck?: boolean }
+  ): void {
     this.cancellationRequested = false;
-    this.startWatchdog(metadata, quality);
+    this.startWatchdog(metadata, quality, options);
     this.resetFFmpegLogBuffer();
   }
 
@@ -3032,13 +3040,19 @@ class FFmpegService {
   // Responsible for: Stall detection, heartbeat monitoring, and log silence detection
   // ============================================================================
 
-  private startWatchdog(metadata?: VideoMetadata, quality?: ConversionQuality): void {
+  private startWatchdog(
+    metadata?: VideoMetadata,
+    quality?: ConversionQuality,
+    options?: { enableLogSilenceCheck?: boolean }
+  ): void {
     this.lastProgressTime = Date.now();
     this.lastLogTime = Date.now();
     this.logSilenceStrikes = 0;
     this.isConverting = true;
     this.lastProgressEmitTime = 0;
     this.lastProgressValue = -1;
+
+    const enableLogSilenceCheck = options?.enableLogSilenceCheck ?? true;
 
     // Calculate adaptive timeout based on video characteristics
     this.currentWatchdogTimeout = calculateAdaptiveWatchdogTimeout(
@@ -3060,29 +3074,33 @@ class FFmpegService {
 
     if (this.logSilenceInterval) {
       clearInterval(this.logSilenceInterval);
+      this.logSilenceInterval = null;
     }
-    this.logSilenceInterval = setInterval(() => {
-      const silenceMs = Date.now() - this.lastLogTime;
-      if (silenceMs > FFMPEG_INTERNALS.LOG_SILENCE_TIMEOUT_MS) {
-        this.logSilenceStrikes += 1;
-        logger.warn('ffmpeg', 'No FFmpeg logs detected for extended period', {
-          silenceMs,
-          strike: this.logSilenceStrikes,
-          maxStrikes: FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES,
-        });
 
-        this.updateStatus('FFmpeg encoder is unresponsive, checking...');
+    if (enableLogSilenceCheck) {
+      this.logSilenceInterval = setInterval(() => {
+        const silenceMs = Date.now() - this.lastLogTime;
+        if (silenceMs > FFMPEG_INTERNALS.LOG_SILENCE_TIMEOUT_MS) {
+          this.logSilenceStrikes += 1;
+          logger.warn('ffmpeg', 'No FFmpeg logs detected for extended period', {
+            silenceMs,
+            strike: this.logSilenceStrikes,
+            maxStrikes: FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES,
+          });
 
-        if (this.logSilenceStrikes >= FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES) {
-          logger.error(
-            'ffmpeg',
-            'FFmpeg produced no output after multiple checks, terminating as stalled'
-          );
-          this.updateStatus('Conversion stalled - terminating (no encoder output)...');
-          this.terminateFFmpeg();
+          this.updateStatus('FFmpeg encoder is unresponsive, checking...');
+
+          if (this.logSilenceStrikes >= FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES) {
+            logger.error(
+              'ffmpeg',
+              'FFmpeg produced no output after multiple checks, terminating as stalled'
+            );
+            this.updateStatus('Conversion stalled - terminating (no encoder output)...');
+            this.terminateFFmpeg();
+          }
         }
-      }
-    }, FFMPEG_INTERNALS.LOG_SILENCE_CHECK_INTERVAL_MS);
+      }, FFMPEG_INTERNALS.LOG_SILENCE_CHECK_INTERVAL_MS);
+    }
 
     this.watchdogTimer = setInterval(() => {
       const timeSinceProgress = Date.now() - this.lastProgressTime;

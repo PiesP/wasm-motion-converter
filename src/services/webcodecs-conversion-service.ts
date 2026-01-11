@@ -712,6 +712,17 @@ class WebCodecsConversionService {
         });
       };
 
+      const runDecodeWithTiming = async (
+        captureMode: WebCodecsCaptureMode,
+        overrideTargetFps: number = targetFps
+      ) => {
+        const start = Date.now();
+        const result = await runDecode(captureMode, overrideTargetFps);
+        const elapsedMs = Date.now() - start;
+        const modeUsed = result.captureModeUsed ?? captureMode;
+        return { result, elapsedMs, modeUsed };
+      };
+
       // Check cache for performance metrics first (preferred over simple success cache)
       const cachedPerf = getCachedCapturePerformance(metadata?.codec ?? 'unknown');
       // Check cache for successful capture mode (fallback)
@@ -771,12 +782,14 @@ class WebCodecsConversionService {
           ? Math.min(targetFps, getAv1SeekFpsCap(metadata?.duration))
           : targetFps;
 
-      // Track decode timing for performance caching
-      const perfStart = Date.now();
+      // Track decode timing for performance caching (use the final successful attempt)
+      let perfElapsed = 0;
       let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>>;
 
       try {
-        decodeResult = await runDecode(initialCaptureMode, initialSeekTargetFps);
+        const attempt = await runDecodeWithTiming(initialCaptureMode, initialSeekTargetFps);
+        decodeResult = attempt.result;
+        perfElapsed = attempt.elapsedMs;
       } catch (error) {
         if (initialCaptureMode !== 'demuxer') {
           throw error;
@@ -803,9 +816,10 @@ class WebCodecsConversionService {
             ? Math.min(targetFps, getAv1SeekFpsCap(metadata?.duration))
             : targetFps;
 
-        decodeResult = await runDecode(fallbackInitial, fallbackSeekTargetFps);
+        const attempt = await runDecodeWithTiming(fallbackInitial, fallbackSeekTargetFps);
+        decodeResult = attempt.result;
+        perfElapsed = attempt.elapsedMs;
       }
-      const perfElapsed = Date.now() - perfStart;
 
       // If auto capture under-extracts frames compared to duration-based target,
       // retry with deterministic seek capture to ensure enough images for smooth motion.
@@ -868,7 +882,11 @@ class WebCodecsConversionService {
               }
             );
 
-            decodeResult = await runDecode('frame-callback');
+            {
+              const attempt = await runDecodeWithTiming('frame-callback');
+              decodeResult = attempt.result;
+              perfElapsed = attempt.elapsedMs;
+            }
           } catch (frameCallbackError) {
             logger.warn(
               'conversion',
@@ -906,7 +924,11 @@ class WebCodecsConversionService {
               );
 
               framesByIndex.length = 0;
-              decodeResult = await runDecode('track');
+              {
+                const attempt = await runDecodeWithTiming('track');
+                decodeResult = attempt.result;
+                perfElapsed = attempt.elapsedMs;
+              }
 
               if (decodeResult.frameCount >= retryRequiredFrames) {
                 logger.info(
@@ -947,7 +969,11 @@ class WebCodecsConversionService {
               });
             }
 
-            decodeResult = await runDecode('seek', seekTargetFps);
+            {
+              const attempt = await runDecodeWithTiming('seek', seekTargetFps);
+              decodeResult = attempt.result;
+              perfElapsed = attempt.elapsedMs;
+            }
           }
         }
 
@@ -1311,7 +1337,7 @@ class WebCodecsConversionService {
       ffmpegService.reportProgress(Math.round(progress));
     };
 
-    ffmpegService.beginExternalConversion(metadata, quality);
+    ffmpegService.beginExternalConversion(metadata, quality, { enableLogSilenceCheck: false });
 
     let externalEnded = false;
     const endConversion = () => {

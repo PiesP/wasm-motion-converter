@@ -137,7 +137,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
         throw new Error('Video track not initialized');
       }
 
-      const config = this.extractDecoderConfig(videoTrack);
+      const config = this.extractDecoderConfig(videoTrack, arrayBuffer);
       this.initialized = true;
 
       logger.info('demuxer', 'MP4BoxDemuxer initialized', {
@@ -159,9 +159,10 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
   /**
    * Extract encoded video samples for WebCodecs frame processing
    *
-   * Returns an async generator that yields encoded samples at the target FPS.
-   * Samples are extracted with appropriate stride to downsample from source FPS
-   * to target FPS (e.g., 30 FPS source → 15 FPS target = every 2nd sample).
+   * Returns an async generator that yields encoded samples for decoding.
+   *
+   * Note: Do not stride-skip encoded samples for inter-frame codecs (AV1/VP9/H.264/HEVC).
+   * Downsample after decode by selecting decoded frames based on timestamps.
    *
    * Uses AsyncGenerator to stream samples incrementally instead of buffering
    * in memory, preventing exhaustion on large video files.
@@ -185,54 +186,117 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
       const mp4boxFile = this.mp4boxFile;
       const videoTrack = this.videoTrack;
 
+      // Derive a time cap from the requested output budget.
+      // We still need to decode all samples within this window to preserve
+      // reference chains, but we can stop yielding samples after the window.
+      const maxDurationSeconds = maxFrames ? maxFrames / targetFps : undefined;
+      const maxDurationMicros = maxDurationSeconds
+        ? Math.round(maxDurationSeconds * 1_000_000)
+        : undefined;
+      const durationSlackMicros = Math.round(1_000_000); // 1s slack for rounding/edits
+
       if (!mp4boxFile || !videoTrack) {
         throw new Error('Demuxer not initialized');
       }
 
+      const extractionStartedAtMs = Date.now();
+      let firstSamplesAtMs: number | null = null;
+
       const samplePromise = new Promise<void>((resolve, reject) => {
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        const clearIdle = () => {
+          if (idleTimer) {
+            clearTimeout(idleTimer);
+            idleTimer = undefined;
+          }
+        };
+
+        const timeoutTimer = setTimeout(() => {
+          clearIdle();
+          if (!samplesReceived) {
+            reject(new Error('Sample extraction timeout'));
+          } else {
+            // We got some samples but mp4box didn't call again; proceed with what we have.
+            resolve();
+          }
+        }, 60000);
+
+        const settleIfComplete = () => {
+          // Resolve when we have all samples, otherwise resolve after a short idle period.
+          if (videoTrack.nb_samples > 0 && sampleQueue.length >= videoTrack.nb_samples) {
+            clearIdle();
+            clearTimeout(timeoutTimer);
+            resolve();
+            return;
+          }
+
+          clearIdle();
+          idleTimer = setTimeout(() => {
+            clearTimeout(timeoutTimer);
+            resolve();
+          }, 250);
+        };
+
         mp4boxFile.onSamples = (trackId: number, _user: unknown, samples: MP4BoxSample[]) => {
           logger.info('demuxer', 'Received samples from MP4Box', {
             trackId,
             sampleCount: samples.length,
           });
+
+          if (firstSamplesAtMs === null) {
+            firstSamplesAtMs = Date.now();
+            logger.debug('demuxer', 'First MP4Box samples received', {
+              trackId,
+              firstBatchSamples: samples.length,
+              waitMs: firstSamplesAtMs - extractionStartedAtMs,
+            });
+          }
+
           sampleQueue.push(...samples);
           samplesReceived = true;
-          resolve();
+          settleIfComplete();
         };
-
-        setTimeout(() => {
-          if (!samplesReceived) {
-            reject(new Error('Sample extraction timeout'));
-          }
-        }, 60000);
       });
 
       mp4boxFile.setExtractionOptions(videoTrack.id, null, {
-        nbSamples: maxFrames ?? Number.POSITIVE_INFINITY,
+        // mp4box's nbSamples is the batch size per callback.
+        nbSamples: 1024,
+        // Align extraction to random access points when possible to avoid
+        // starting a decode from a non-keyframe.
+        rapAlignment: true,
       });
 
       mp4boxFile.start();
       await samplePromise;
       mp4boxFile.stop();
 
+      logger.debug('demuxer', 'MP4Box sample queue ready', {
+        queuedSamples: sampleQueue.length,
+        expectedSamples: videoTrack.nb_samples,
+        waitMs: Date.now() - extractionStartedAtMs,
+        firstSamplesWaitMs: firstSamplesAtMs ? firstSamplesAtMs - extractionStartedAtMs : null,
+      });
+
       const sourceFps =
         videoTrack.nb_samples / (videoTrack.movie_duration / videoTrack.movie_timescale);
-      const sampleStride = Math.max(1, Math.round(sourceFps / targetFps));
 
       logger.info('demuxer', 'Extracting samples', {
         totalSamples: sampleQueue.length,
         sourceFps: sourceFps.toFixed(2),
         targetFps,
-        sampleStride,
-        estimatedOutputFrames: Math.ceil(sampleQueue.length / sampleStride),
+        maxDurationSeconds: maxDurationSeconds?.toFixed(3) ?? 'full',
       });
 
-      let frameIndex = 0;
-      for (
-        let i = 0;
-        i < sampleQueue.length && (!maxFrames || frameIndex < maxFrames);
-        i += sampleStride
-      ) {
+      let yieldedSamples = 0;
+      let keySamples = 0;
+      let deltaSamples = 0;
+      const firstSample = sampleQueue[0];
+      const baseTimestampMicros = firstSample
+        ? Math.round((firstSample.cts / videoTrack.timescale) * 1_000_000)
+        : 0;
+      let lastTimestampMicros = baseTimestampMicros;
+
+      for (let i = 0; i < sampleQueue.length; i += 1) {
         const sample = sampleQueue[i];
         if (!sample) {
           break;
@@ -240,6 +304,14 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
 
         const timestampMicros = Math.round((sample.cts / videoTrack.timescale) * 1_000_000);
         const durationMicros = Math.round((sample.duration / videoTrack.timescale) * 1_000_000);
+        lastTimestampMicros = timestampMicros;
+
+        if (
+          maxDurationMicros !== undefined &&
+          timestampMicros > baseTimestampMicros + maxDurationMicros + durationSlackMicros
+        ) {
+          break;
+        }
 
         yield {
           type: sample.is_sync ? 'key' : 'delta',
@@ -248,11 +320,25 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
           data: new Uint8Array(sample.data),
         };
 
-        frameIndex++;
+        yieldedSamples++;
+        if (sample.is_sync) {
+          keySamples += 1;
+        } else {
+          deltaSamples += 1;
+        }
       }
 
       logger.info('demuxer', 'Sample extraction completed', {
-        yieldedFrames: frameIndex,
+        yieldedSamples,
+      });
+
+      logger.debug('demuxer', 'MP4Box sample extraction stats', {
+        yieldedSamples,
+        keySamples,
+        deltaSamples,
+        baseTimestampMicros,
+        lastTimestampMicros,
+        durationMicros: Math.max(0, lastTimestampMicros - baseTimestampMicros),
       });
     } catch (error) {
       logger.error('demuxer', 'Sample extraction failed', {
@@ -321,9 +407,9 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @returns VideoDecoderConfig with codec, dimensions, and optional description
    * @internal Private method, use initialize() instead
    */
-  private extractDecoderConfig(track: MP4BoxTrack): VideoDecoderConfig {
+  private extractDecoderConfig(track: MP4BoxTrack, fileBytes?: ArrayBuffer): VideoDecoderConfig {
     const codec = this.buildCodecString(track);
-    const description = this.extractCodecDescription(track);
+    const description = this.extractCodecDescription(track, fileBytes);
 
     return {
       codec,
@@ -380,7 +466,96 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @returns Codec description data, or undefined if not found
    * @internal Private method
    */
-  private extractCodecDescription(track: MP4BoxTrack): Uint8Array | undefined {
+  /**
+   * Attempt to locate a codec configuration box payload directly from MP4 bytes.
+   *
+   * This is primarily needed for AV1 MP4 where mp4box@0.5.2 may not surface av1C
+   * on the track object, yet WebCodecs VideoDecoder requires it.
+   */
+  private findIsobmffBoxPayload(
+    fileBytes: ArrayBuffer,
+    boxType: string,
+    maxBoxSizeBytes: number = 4096
+  ): Uint8Array | undefined {
+    const u8 = new Uint8Array(fileBytes);
+    const view = new DataView(fileBytes);
+
+    if (boxType.length !== 4) {
+      return undefined;
+    }
+
+    const t0 = boxType.charCodeAt(0);
+    const t1 = boxType.charCodeAt(1);
+    const t2 = boxType.charCodeAt(2);
+    const t3 = boxType.charCodeAt(3);
+
+    let bestPayload: Uint8Array | undefined;
+
+    // Scan for [size][type] patterns. We validate size bounds to reduce false positives.
+    for (let i = 0; i <= u8.length - 8; i += 1) {
+      if (u8[i + 4] !== t0 || u8[i + 5] !== t1 || u8[i + 6] !== t2 || u8[i + 7] !== t3) {
+        continue;
+      }
+
+      const size32 = view.getUint32(i, false);
+      let headerSize = 8;
+      let boxSize = size32;
+      let payloadStart = i + 8;
+
+      if (size32 === 1) {
+        // 64-bit largesize
+        if (typeof view.getBigUint64 !== 'function') {
+          continue;
+        }
+        if (i + 16 > u8.length) {
+          continue;
+        }
+        const largeSize = Number(view.getBigUint64(i + 8, false));
+        if (!Number.isFinite(largeSize)) {
+          continue;
+        }
+        headerSize = 16;
+        boxSize = largeSize;
+        payloadStart = i + 16;
+      }
+
+      // Basic sanity checks
+      if (!Number.isFinite(boxSize) || boxSize < headerSize) {
+        continue;
+      }
+
+      const payloadLen = boxSize - headerSize;
+      if (payloadLen <= 0) {
+        continue;
+      }
+
+      // Config boxes are expected to be small.
+      if (payloadLen > maxBoxSizeBytes) {
+        continue;
+      }
+
+      const payloadEnd = payloadStart + payloadLen;
+      if (payloadStart < 0 || payloadEnd > u8.length) {
+        continue;
+      }
+
+      const payload = u8.slice(payloadStart, payloadEnd);
+      if (!bestPayload || payload.byteLength < bestPayload.byteLength) {
+        bestPayload = payload;
+        // Early exit for very small payloads (typical for av1C/hvcC/avcC)
+        if (bestPayload.byteLength <= 32) {
+          break;
+        }
+      }
+    }
+
+    return bestPayload;
+  }
+
+  private extractCodecDescription(
+    track: MP4BoxTrack,
+    fileBytes?: ArrayBuffer
+  ): Uint8Array | undefined {
     const descriptionSources = [
       track.avcC,
       track.hvcC,
@@ -399,6 +574,38 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
         }
         if (Array.isArray(source)) {
           return new Uint8Array(source);
+        }
+      }
+    }
+
+    const codecHint = (track.codec_string || track.codec || track.fourCC || '').toLowerCase();
+
+    if (fileBytes) {
+      const candidateBoxes: string[] = [];
+
+      if (codecHint.includes('av01') || codecHint.includes('av1')) {
+        candidateBoxes.push('av1C');
+      }
+      if (codecHint.includes('hvc1') || codecHint.includes('hev1') || codecHint.includes('hevc')) {
+        candidateBoxes.push('hvcC');
+      }
+      if (codecHint.includes('avc1') || codecHint.includes('avc') || codecHint.includes('h264')) {
+        candidateBoxes.push('avcC');
+      }
+      if (codecHint.includes('vp09') || codecHint.includes('vp9')) {
+        // ISO-BMFF VP9 config record box
+        candidateBoxes.push('vpcC');
+      }
+
+      for (const boxType of candidateBoxes) {
+        const payload = this.findIsobmffBoxPayload(fileBytes, boxType);
+        if (payload && payload.byteLength > 0) {
+          logger.info('demuxer', 'Extracted codec description from MP4 bytes', {
+            codec: track.codec || track.fourCC,
+            boxType,
+            byteLength: payload.byteLength,
+          });
+          return payload;
         }
       }
     }
