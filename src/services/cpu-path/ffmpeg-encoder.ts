@@ -165,6 +165,15 @@ export class FFmpegEncoder {
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
+      logger.debug('ffmpeg', 'Parsed progress from time=', {
+        hours,
+        minutes,
+        seconds,
+        currentTime,
+        totalDuration,
+        progressRatio,
+        calculatedProgress: Math.round(calculatedProgress),
+      });
       return;
     }
 
@@ -177,6 +186,13 @@ export class FFmpegEncoder {
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
+      logger.debug('ffmpeg', 'Parsed progress from out_time_ms=', {
+        outTimeMs: outTimeMsMatch[1],
+        currentTime,
+        totalDuration,
+        progressRatio,
+        calculatedProgress: Math.round(calculatedProgress),
+      });
     }
   }
 
@@ -716,6 +732,21 @@ export class FFmpegEncoder {
 
       logger.performance('Starting GIF encoding');
 
+      // Register log handler for progress tracking
+      const estimatedDuration = metadata?.duration || 30;
+      const gifLogHandler = this.createFFmpegLogHandler(
+        estimatedDuration,
+        FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START,
+        FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END
+      );
+      ffmpeg.on('log', gifLogHandler);
+
+      const heartbeat = monitoring.startProgressHeartbeat(
+        FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START,
+        FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END,
+        estimatedDuration
+      );
+
       try {
         try {
           await withTimeout(
@@ -742,6 +773,9 @@ export class FFmpegEncoder {
       } catch (error) {
         logger.warn('conversion', 'GIF conversion failed, will attempt cleanup');
         throw error;
+      } finally {
+        ffmpeg.off('log', gifLogHandler);
+        monitoring.stopProgressHeartbeat(heartbeat);
       }
 
       logger.performance('GIF encoding complete');
@@ -841,7 +875,15 @@ export class FFmpegEncoder {
 
       // Try main conversion
       try {
-        const estimatedDuration = 30;
+        // Register log handler for progress tracking
+        const estimatedDuration = metadata?.duration || 30;
+        const webpLogHandler = this.createFFmpegLogHandler(
+          estimatedDuration,
+          FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
+          FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END
+        );
+        ffmpeg.on('log', webpLogHandler);
+
         const heartbeat = monitoring.startProgressHeartbeat(
           FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
           FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END,
@@ -947,6 +989,7 @@ export class FFmpegEncoder {
             throw execError;
           }
         } finally {
+          ffmpeg.off('log', webpLogHandler);
           monitoring.stopProgressHeartbeat(heartbeat);
         }
 

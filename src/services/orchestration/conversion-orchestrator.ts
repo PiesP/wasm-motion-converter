@@ -310,10 +310,20 @@ export class ConversionOrchestrator {
     }
 
     // Simple path selection logic for GIF/WebP
-    // WebCodecs-only codecs must use GPU path
-    if (codec === 'av1' || codec === 'vp9' || codec === 'hevc') {
+    // WebCodecs-only codecs must use GPU/WebCodecs path
+    if (codec === 'av1' || codec === 'av01') {
+      // AV1 codec: Use WebCodecs path (FFmpeg.wasm 5.1.4 does not support AV1)
       return {
-        path: 'hybrid', // GPU decode, FFmpeg encode (for now)
+        path: 'gpu',
+        reason: 'AV1 codec requires WebCodecs path (FFmpeg.wasm lacks AV1 decoder)',
+        useDemuxer: true,
+      };
+    }
+
+    if (codec === 'vp9' || codec === 'hevc') {
+      // VP9 and HEVC: Use hybrid path (GPU decode, FFmpeg encode)
+      return {
+        path: 'hybrid',
         reason: `Complex codec (${codec}) requires WebCodecs decode`,
         useDemuxer: true,
       };
@@ -380,11 +390,36 @@ export class ConversionOrchestrator {
   ) {
     logger.info('conversion', 'Executing GPU path conversion', {
       format: request.format,
+      codec: metadata?.codec,
     });
 
-    // TODO: Implement GPU path using frame-extractor and encoder-factory
-    // For now, fall back to CPU path
-    logger.warn('conversion', 'GPU path not yet implemented, falling back to CPU');
+    // GPU path only supports GIF/WebP formats
+    if (request.format !== 'gif' && request.format !== 'webp') {
+      logger.warn('conversion', 'GPU path does not support this format, falling back to FFmpeg', {
+        format: request.format,
+      });
+      return this.convertViaCPUPath(request, metadata, conversionMetadata);
+    }
+
+    // For AV1 and other WebCodecs-required codecs, use WebCodecs service
+    conversionMetadata.encoder = 'webcodecs';
+    conversionMetadata.path = 'gpu';
+
+    // Use WebCodecs conversion service for GPU-accelerated decoding
+    const { webcodecsConversionService } = await import('../webcodecs-conversion-service');
+    const result = await webcodecsConversionService.convert(
+      request.file,
+      request.format,
+      request.options,
+      metadata
+    );
+
+    if (result) {
+      return result;
+    }
+
+    // Fallback to CPU if WebCodecs fails
+    logger.warn('conversion', 'GPU path (WebCodecs) failed, falling back to FFmpeg');
     return this.convertViaCPUPath(request, metadata, conversionMetadata);
   }
 
