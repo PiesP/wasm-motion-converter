@@ -530,10 +530,12 @@ export class FFmpegPipeline {
    * End external conversion
    *
    * Notifies monitoring that an external conversion has completed.
-   * Resets watchdog state but doesn't stop it.
+   * Stops watchdog to prevent false positive timeouts after conversion completion.
    */
   endExternalConversion(): void {
     this.monitoring.updateProgress(100, false);
+    this.monitoring.stopWatchdog();
+    logger.debug('watchdog', 'Watchdog stopped (external conversion complete)');
   }
 
   /**
