@@ -1,7 +1,12 @@
 // Internal dependencies
 
 // Type imports
-import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
+import type {
+  ConversionOptions,
+  ConversionOutputBlob,
+  ConversionQuality,
+  VideoMetadata,
+} from '@t/conversion-types';
 import type { EncoderWorkerAPI } from '@t/worker-types';
 import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
@@ -571,6 +576,10 @@ class WebCodecsConversionService {
       format,
     });
 
+    // Force high quality for PNG frame extraction to ensure FFmpeg can decode frames correctly.
+    // Regardless of user's conversion quality setting, PNG frames must be lossless for FFmpeg input.
+    const frameEncodingQuality: ConversionQuality = 'high';
+
     const frameFiles: string[] = [];
     // Collect frames by index to avoid duplicate names inflating the final frameCount.
     // A duplicated name (e.g. frame_000005.png twice) can make frameFiles.length > actual
@@ -736,7 +745,7 @@ class WebCodecsConversionService {
           maxFrames,
           captureMode,
           codec: metadata?.codec,
-          quality: options.quality,
+          quality: frameEncodingQuality, // Use forced high quality for PNG
           onFrame: async (frame) => {
             // Collect frames for batch VFS write (3-5x faster than sequential)
             if (frame.data && frame.data.byteLength > 0) {

@@ -516,11 +516,14 @@ export class FFmpegEncoder {
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
     const inputPattern = 'frame_%06d.png';
-    const webpThreadArgs = getThreadingArgs('simple');
+
+    // WebP encoding in WASM: use minimal threading to avoid stalls
+    // Single thread prevents libwebp encoder blocking issues in WASM environment
+    const webpThreadArgs = ['-threads', '1', '-filter_threads', '1'];
 
     // Use concat instead of spread to prevent stack overflow
     const webpCmd = ([] as string[])
-      .concat(Array.from(webpThreadArgs))
+      .concat(webpThreadArgs)
       .concat([
         '-framerate',
         fps.toString(),

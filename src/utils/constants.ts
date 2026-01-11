@@ -148,9 +148,11 @@ export const QUALITY_PRESETS = {
     high: { fps: 30, colors: 256 },
   },
   webp: {
-    low: { fps: 10, quality: 70, preset: 'default', compressionLevel: 3, method: 4 },
-    medium: { fps: 15, quality: 85, preset: 'default', compressionLevel: 4, method: 5 },
-    high: { fps: 24, quality: 95, preset: 'default', compressionLevel: 6, method: 6 },
+    // WASM-optimized settings for libwebp encoding in FFmpeg
+    // Lower method & compressionLevel prevent encoding stalls in WASM environment
+    low: { fps: 10, quality: 60, preset: 'fast', compressionLevel: 2, method: 2 },
+    medium: { fps: 15, quality: 75, preset: 'default', compressionLevel: 3, method: 4 },
+    high: { fps: 24, quality: 85, preset: 'default', compressionLevel: 4, method: 5 },
   },
 } as const;
 
@@ -209,9 +211,11 @@ export interface TimeoutConfig {
 
 export const TIMEOUT_CONFIG: Record<string, TimeoutConfig> = {
   webp: {
-    baseTimeout: 60_000,
-    perSecondMultiplier: 6_000,
-    maxTimeout: 120_000,
+    // WASM WebP encoding is slower than expected
+    // 5.75s video took ~60s, so we need generous timeout for frame encoding
+    baseTimeout: 90_000,
+    perSecondMultiplier: 10_000,
+    maxTimeout: 180_000,
   },
   gif: {
     baseTimeout: 90_000,
