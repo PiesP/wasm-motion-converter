@@ -1,5 +1,5 @@
 import * as Comlink from 'comlink';
-import { logger } from '../utils/logger';
+import { logger } from '@utils/logger';
 
 /**
  * WebP encoder worker API interface

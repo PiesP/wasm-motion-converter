@@ -1,10 +1,10 @@
 import { splitProps } from 'solid-js';
 
-import { formatBytes } from '../utils/format-bytes';
-import { formatDuration } from '../utils/format-duration';
+import { formatBytes } from '@utils/format-bytes';
+import { formatDuration } from '@utils/format-duration';
 
 import type { Component } from 'solid-js';
-import type { VideoMetadata } from '../types/conversion-types';
+import type { VideoMetadata } from '@t/conversion-types';
 
 /**
  * Codec value when detection is in progress or unknown

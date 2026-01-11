@@ -1,6 +1,6 @@
 import { encode } from 'modern-gif';
 
-import { logger } from '../utils/logger';
+import { logger } from '@utils/logger';
 
 /**
  * Options for modern-gif encoding

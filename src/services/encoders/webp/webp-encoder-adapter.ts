@@ -7,7 +7,7 @@
  * TODO (Phase 3): Implement proper libwebp-wasm encoding with worker support
  */
 
-import { logger } from '../../../utils/logger';
+import { logger } from '@utils/logger';
 import type { EncoderAdapter, EncoderRequest } from '../encoder-interface';
 
 /**

@@ -10,7 +10,7 @@
 import { createSignal } from 'solid-js';
 
 // Type imports
-import type { ValidationWarning } from '../types/validation-types';
+import type { ValidationWarning } from '@t/validation-types';
 
 /**
  * Confirmation dialog state

@@ -16,10 +16,10 @@ import type {
   ConversionFormat,
   ConversionOptions,
   VideoMetadata,
-} from '../../types/conversion-types';
-import { classifyConversionError } from '../../utils/classify-conversion-error';
-import { getErrorMessage } from '../../utils/error-utils';
-import { logger } from '../../utils/logger';
+} from '@t/conversion-types';
+import { classifyConversionError } from '@utils/classify-conversion-error';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 import { getEncoderForFormat } from '../encoders/encoder-factory';
 import { ffmpegService } from '../ffmpeg-service'; // Legacy service (will be replaced in Phase 4)
 import { ProgressReporter } from '../shared/progress-reporter';

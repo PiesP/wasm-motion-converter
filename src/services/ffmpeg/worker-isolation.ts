@@ -1,6 +1,6 @@
 // Internal imports
-import { TIMEOUT_FFMPEG_WORKER_CHECK } from '../../utils/constants';
-import { withTimeout } from '../../utils/with-timeout';
+import { TIMEOUT_FFMPEG_WORKER_CHECK } from '@utils/constants';
+import { withTimeout } from '@utils/with-timeout';
 
 /**
  * Legacy timeout constant for backward compatibility with worker check timeout.

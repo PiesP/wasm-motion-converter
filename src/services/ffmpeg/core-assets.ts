@@ -2,8 +2,8 @@
 import { toBlobURL } from '@ffmpeg/util';
 
 // Internal imports
-import { FFMPEG_CORE_VERSION, TIMEOUT_FFMPEG_DOWNLOAD } from '../../utils/constants';
-import { withTimeout } from '../../utils/with-timeout';
+import { FFMPEG_CORE_VERSION, TIMEOUT_FFMPEG_DOWNLOAD } from '@utils/constants';
+import { withTimeout } from '@utils/with-timeout';
 
 /**
  * Legacy timeout constant for backward compatibility with external timeout values.

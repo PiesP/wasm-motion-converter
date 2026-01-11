@@ -10,7 +10,7 @@ import type {
   ConversionOptions,
   ConversionOutputBlob,
   VideoMetadata,
-} from '../../types/conversion-types';
+} from '@t/conversion-types';
 
 /**
  * FFmpeg conversion request

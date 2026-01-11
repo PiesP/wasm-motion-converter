@@ -117,7 +117,7 @@ import { Task } from "src/types/task-types"; // Absolute src/
 ```typescript
 import { Button } from "@components/Button";
 import { logger } from "@utils/logger";
-import type { Task } from "@types/task-types";
+import type { Task } from "@t/task-types";
 ```
 
 **Why this matters:**

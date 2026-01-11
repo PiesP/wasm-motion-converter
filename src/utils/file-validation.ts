@@ -19,7 +19,7 @@
  * 3. Check duration warnings to inform or block conversion attempts
  */
 
-import type { DurationValidationResult, ValidationWarning } from '../types/validation-types';
+import type { DurationValidationResult, ValidationWarning } from '@t/validation-types';
 import {
   DURATION_WARNING_GIF_LONG,
   DURATION_WARNING_GIF_MEDIUM,

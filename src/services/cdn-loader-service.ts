@@ -16,11 +16,11 @@ import {
   CDN_REQUEST_TIMEOUT,
   convertCDNUrl,
   getCDNUrl,
-} from '../utils/cdn-constants';
-import { logger } from '../utils/logger';
-import { withTimeout } from '../utils/with-timeout';
+} from '@utils/cdn-constants';
+import { logger } from '@utils/logger';
+import { withTimeout } from '@utils/with-timeout';
 
-import type { CDNProvider, DependencyName } from '../utils/cdn-constants';
+import type { CDNProvider, DependencyName } from '@utils/cdn-constants';
 
 /**
  * CDN load result with metadata

@@ -47,12 +47,17 @@
       "@services/*": ["src/services/*"], // Service layer
       "@utils/*": ["src/utils/*"], // Utility functions
       "@stores/*": ["src/stores/*"], // Signal stores
-      "@types/*": ["src/types/*"] // Type definitions
+      "@t/*": ["src/types/*"] // Type definitions (use @t to avoid TypeScript @types confusion)
     }
   },
 
   // Files to include in compilation
-  "include": ["src/**/*", "vite.config.ts", "scripts/**/*"],
+  "include": [
+    "src/**/*",
+    "vite.config.ts",
+    "scripts/**/*",
+    "tmp/convert-imports-v2.js"
+  ],
 
   // Files to exclude from compilation
   "exclude": ["node_modules", "dist"]

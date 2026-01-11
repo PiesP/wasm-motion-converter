@@ -12,7 +12,7 @@
  * in the encoder factory and used by the conversion pipeline.
  */
 
-import type { ConversionFormat, ConversionQuality } from '../../types/conversion-types';
+import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
 
 /**
  * Serializable ImageData for transfer to workers

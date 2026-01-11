@@ -5,7 +5,7 @@
  * Defines contracts between frame extraction, capture modes, demuxers, and decoders.
  */
 
-import type { VideoMetadata } from '../../types/conversion-types';
+import type { VideoMetadata } from '@t/conversion-types';
 
 /**
  * Capture modes for frame extraction

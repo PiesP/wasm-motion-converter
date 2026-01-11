@@ -1,4 +1,4 @@
-import type { ModernGifOptions } from '../services/modern-gif-service';
+import type { ModernGifOptions } from '@services/modern-gif-service';
 
 /**
  * Serializable representation of ImageData for Web Worker message passing

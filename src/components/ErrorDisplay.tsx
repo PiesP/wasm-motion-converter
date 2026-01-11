@@ -1,7 +1,7 @@
 import { createMemo, onMount, Show, splitProps } from 'solid-js';
 
 import type { Component } from 'solid-js';
-import type { ConversionErrorType } from '../types/conversion-types';
+import type { ConversionErrorType } from '@t/conversion-types';
 
 /**
  * Error display component props

@@ -1,9 +1,9 @@
 import type { DemuxerAdapter } from './demuxer-adapter';
 import { MP4BoxDemuxer } from './mp4box-demuxer';
 import { WebMDemuxer } from './webm-demuxer';
-import type { VideoMetadata } from '../../../types/conversion-types';
-import { getErrorMessage } from '../../../utils/error-utils';
-import { logger } from '../../../utils/logger';
+import type { VideoMetadata } from '@t/conversion-types';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 
 /**
  * Container format types

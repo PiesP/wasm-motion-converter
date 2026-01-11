@@ -3,7 +3,7 @@ import { splitProps } from 'solid-js';
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
 import type { Component } from 'solid-js';
-import type { ConversionFormat } from '../types/conversion-types';
+import type { ConversionFormat } from '@t/conversion-types';
 
 /**
  * Available output format options

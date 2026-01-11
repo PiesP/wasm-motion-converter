@@ -11,7 +11,7 @@
  * ```
  */
 
-import { logger } from '../../utils/logger';
+import { logger } from '@utils/logger';
 import { EncoderFactory } from './encoder-factory';
 import { GIFEncoderAdapter } from './gif/gif-encoder-adapter';
 import { MP4EncoderAdapter } from './mp4/mp4-encoder-adapter';

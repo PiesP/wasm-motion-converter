@@ -17,9 +17,9 @@
  * - Quality settings
  */
 
-import type { ConversionQuality } from '../../types/conversion-types';
-import { getAvailableMemory } from '../../utils/memory-monitor';
-import { logger } from '../../utils/logger';
+import type { ConversionQuality } from '@t/conversion-types';
+import { getAvailableMemory } from '@utils/memory-monitor';
+import { logger } from '@utils/logger';
 
 /**
  * VFS batch size calculation parameters

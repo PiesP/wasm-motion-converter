@@ -1,5 +1,5 @@
-import type { VideoMetadata } from '../../types/conversion-types';
-import { logger } from '../../utils/logger';
+import type { VideoMetadata } from '@t/conversion-types';
+import { logger } from '@utils/logger';
 import { isComplexCodec } from './codec-utils';
 import {
   FPS_DOWNSAMPLING_THRESHOLD,

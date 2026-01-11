@@ -9,7 +9,7 @@
 import { batch, createSignal } from 'solid-js';
 
 // Type imports
-import type { AppState } from '../types/app-types';
+import type { AppState } from '@t/app-types';
 
 /**
  * Current application state

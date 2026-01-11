@@ -1,6 +1,6 @@
 import type { Component } from 'solid-js';
 import { For } from 'solid-js';
-import { toasts } from '../stores/toast-store';
+import { toasts } from '@stores/toast-store';
 import Toast from './Toast';
 
 /**

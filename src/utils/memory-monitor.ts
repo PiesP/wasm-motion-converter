@@ -5,7 +5,7 @@
  * with fallback estimation for browsers without the performance.memory API.
  */
 
-import type { ConversionFormat, ConversionScale } from '../types/conversion-types';
+import type { ConversionFormat, ConversionScale } from '@t/conversion-types';
 
 export type MemoryWarningLevel = 'safe' | 'warning' | 'critical';
 

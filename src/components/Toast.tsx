@@ -1,7 +1,7 @@
 import type { Component } from 'solid-js';
 import { splitProps } from 'solid-js';
-import type { Toast as ToastType } from '../stores/toast-store';
-import { removeToast } from '../stores/toast-store';
+import type { Toast as ToastType } from '@stores/toast-store';
+import { removeToast } from '@stores/toast-store';
 import Icon from './ui/Icon';
 
 /**

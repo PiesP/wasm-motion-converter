@@ -1,4 +1,4 @@
-import type { ConversionQuality } from '../../types/conversion-types';
+import type { ConversionQuality } from '@t/conversion-types';
 
 /**
  * Generate scale filter string for video resizing.

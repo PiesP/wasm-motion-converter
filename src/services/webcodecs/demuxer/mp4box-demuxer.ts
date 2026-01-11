@@ -1,6 +1,6 @@
-import { loadFromCDN } from '../../../utils/cdn-loader';
-import { getErrorMessage } from '../../../utils/error-utils';
-import { logger } from '../../../utils/logger';
+import { loadFromCDN } from '@utils/cdn-loader';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 import type {
   DemuxerAdapter,
   DemuxerMetadata,

@@ -3,7 +3,7 @@ import { splitProps } from 'solid-js';
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
 import type { Component } from 'solid-js';
-import type { ConversionQuality } from '../types/conversion-types';
+import type { ConversionQuality } from '@t/conversion-types';
 
 /**
  * Default number of columns for quality selector grid

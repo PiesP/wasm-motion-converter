@@ -7,7 +7,7 @@
  * TODO (Phase 3): Implement WebCodecs VideoEncoder for H.264/AV1 encoding
  */
 
-import { logger } from '../../../utils/logger';
+import { logger } from '@utils/logger';
 import type { EncoderAdapter, EncoderRequest } from '../encoder-interface';
 
 /**

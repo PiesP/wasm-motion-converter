@@ -1,9 +1,9 @@
 // External dependencies
-import { getErrorMessage } from '../utils/error-utils';
-import { logger } from '../utils/logger';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 
 // Type imports
-import type { VideoMetadata } from '../types/conversion-types';
+import type { VideoMetadata } from '@t/conversion-types';
 
 /**
  * WebCodecs API support status

@@ -14,7 +14,7 @@
  * profile validity to avoid using stale data after system changes.
  */
 
-import { isHardwareCacheValid } from '../../utils/hardware-profile';
+import { isHardwareCacheValid } from '@utils/hardware-profile';
 import {
   type CaptureMode,
   type CapturePerformance,
@@ -26,7 +26,7 @@ import {
   getCachedCapturePerformance as _getCachedCapturePerformance,
   getCachedVFSBatchSize as _getCachedVFSBatchSize,
   getCachedWebPChunkSize as _getCachedWebPChunkSize,
-} from '../../utils/session-cache';
+} from '@utils/session-cache';
 
 // Re-export types for convenience
 export type { CaptureMode, CapturePerformance };

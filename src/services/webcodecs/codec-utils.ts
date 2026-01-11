@@ -1,5 +1,5 @@
 // Internal imports
-import { COMPLEX_CODECS } from '../../utils/constants';
+import { COMPLEX_CODECS } from '@utils/constants';
 
 /**
  * Check if codec is complex (requires special handling).

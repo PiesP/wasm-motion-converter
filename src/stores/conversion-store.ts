@@ -15,9 +15,9 @@ import type {
   ErrorContext,
   PerformanceWarning,
   VideoMetadata,
-} from '../types/conversion-types';
+} from '@t/conversion-types';
 // Internal imports
-import { logger } from '../utils/logger';
+import { logger } from '@utils/logger';
 
 /**
  * Input video file selected by user

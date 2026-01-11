@@ -5,16 +5,16 @@ import {
   WARN_FILE_SIZE_CRITICAL,
   WARN_FILE_SIZE_HIGH,
   WARN_RESOLUTION_PIXELS,
-} from '../utils/constants';
-import { formatBytes } from '../utils/format-bytes';
-import { formatDuration } from '../utils/format-duration';
+} from '@utils/constants';
+import { formatBytes } from '@utils/format-bytes';
+import { formatDuration } from '@utils/format-duration';
 
 import type {
   ConversionScale,
   ConversionSettings,
   PerformanceWarning,
   VideoMetadata,
-} from '../types/conversion-types';
+} from '@t/conversion-types';
 
 /**
  * Scale factor: 50% of original resolution

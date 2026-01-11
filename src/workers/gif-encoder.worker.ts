@@ -1,8 +1,8 @@
 import * as Comlink from 'comlink';
-import type { ModernGifOptions } from '../services/modern-gif-service';
-import { encodeModernGif } from '../services/modern-gif-service';
-import type { SerializableImageData } from '../types/worker-types';
-import { logger } from '../utils/logger';
+import type { ModernGifOptions } from '@services/modern-gif-service';
+import { encodeModernGif } from '@services/modern-gif-service';
+import type { SerializableImageData } from '@t/worker-types';
+import { logger } from '@utils/logger';
 
 /**
  * GIF encoder worker API exposed via Comlink

@@ -1,10 +1,10 @@
 import { createEffect, createMemo, createSignal, onCleanup, Show, splitProps } from 'solid-js';
 
-import { formatBytes } from '../utils/format-bytes';
-import { formatDuration } from '../utils/format-duration';
+import { formatBytes } from '@utils/format-bytes';
+import { formatDuration } from '@utils/format-duration';
 
 import type { Component } from 'solid-js';
-import type { ConversionSettings } from '../types/conversion-types';
+import type { ConversionSettings } from '@t/conversion-types';
 
 /**
  * Scale percentage multiplier for display

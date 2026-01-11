@@ -1,10 +1,10 @@
 import type { FFmpeg } from '@ffmpeg/ffmpeg';
 
-import { FFMPEG_CORE_BASE_URLS, TIMEOUT_FFMPEG_INIT } from '../../utils/constants';
-import { getErrorMessage } from '../../utils/error-utils';
-import { logger } from '../../utils/logger';
-import { performanceTracker } from '../../utils/performance-tracker';
-import { withTimeout } from '../../utils/with-timeout';
+import { FFMPEG_CORE_BASE_URLS, TIMEOUT_FFMPEG_INIT } from '@utils/constants';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
+import { performanceTracker } from '@utils/performance-tracker';
+import { withTimeout } from '@utils/with-timeout';
 import { loadFFmpegAsset } from './core-assets';
 import { verifyWorkerIsolation } from './worker-isolation';
 

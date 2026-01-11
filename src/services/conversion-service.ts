@@ -3,16 +3,16 @@ import type {
   ConversionOptions,
   ConversionOutputBlob,
   VideoMetadata,
-} from '../types/conversion-types';
-import { classifyConversionError } from '../utils/classify-conversion-error';
+} from '@t/conversion-types';
+import { classifyConversionError } from '@utils/classify-conversion-error';
 import {
   getCodecCapability,
   getCodecErrorMessage,
   requiresWebCodecs,
-} from '../utils/codec-capabilities';
-import { getConversionStrategy } from '../utils/conversion-strategy';
-import { getErrorMessage } from '../utils/error-utils';
-import { logger } from '../utils/logger';
+} from '@utils/codec-capabilities';
+import { getConversionStrategy } from '@utils/conversion-strategy';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 import { ffmpegService } from './ffmpeg-service';
 import { webcodecsConversionService } from './webcodecs-conversion-service';
 import { isWebCodecsDecodeSupported } from './webcodecs-support-service';

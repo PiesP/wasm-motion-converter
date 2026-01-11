@@ -17,7 +17,7 @@ import type {
   ConversionQuality,
   ConversionScale,
   VideoMetadata,
-} from '../types/conversion-types';
+} from '@t/conversion-types';
 
 /**
  * Conversion strategy configuration with codec routing, scaling, FPS, and quality recommendations.

@@ -1,10 +1,10 @@
 // Internal dependencies
 
 // Type imports
-import type { VideoMetadata } from '../types/conversion-types';
-import { getErrorMessage } from '../utils/error-utils';
-import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
-import { logger } from '../utils/logger';
+import type { VideoMetadata } from '@t/conversion-types';
+import { getErrorMessage } from '@utils/error-utils';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { logger } from '@utils/logger';
 
 import { canvasToBlob, createCanvas } from './webcodecs/decoder/canvas';
 import { waitForEvent } from './webcodecs/decoder/wait-for-event';

@@ -8,7 +8,7 @@
  */
 
 // Types
-import type { ConversionSettings, ErrorContext, VideoMetadata } from '../types/conversion-types';
+import type { ConversionSettings, ErrorContext, VideoMetadata } from '@t/conversion-types';
 
 /**
  * Maximum total pixel count threshold for browser conversion

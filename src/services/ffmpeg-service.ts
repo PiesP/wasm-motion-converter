@@ -5,9 +5,9 @@ import type {
   ConversionOutputBlob,
   ConversionQuality,
   VideoMetadata,
-} from '../types/conversion-types';
-import { classifyConversionError } from '../utils/classify-conversion-error';
-import { canFFmpegDecode as canFFmpegDecodeCodec } from '../utils/codec-capabilities';
+} from '@t/conversion-types';
+import { classifyConversionError } from '@utils/classify-conversion-error';
+import { canFFmpegDecode as canFFmpegDecodeCodec } from '@utils/codec-capabilities';
 import {
   FFMPEG_CORE_BASE_URLS,
   QUALITY_PRESETS,
@@ -15,15 +15,15 @@ import {
   TIMEOUT_VIDEO_ANALYSIS,
   WARN_DURATION_SECONDS,
   WARN_RESOLUTION_PIXELS,
-} from '../utils/constants';
-import { getErrorMessage } from '../utils/error-utils';
-import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
-import { logger } from '../utils/logger';
-import { isMemoryCritical } from '../utils/memory-monitor';
-import { performanceTracker } from '../utils/performance-tracker';
-import { getOptimalFPS } from '../utils/quality-optimizer';
-import { getTimeoutForFormat } from '../utils/timeout-calculator';
-import { withTimeout } from '../utils/with-timeout';
+} from '@utils/constants';
+import { getErrorMessage } from '@utils/error-utils';
+import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { logger } from '@utils/logger';
+import { isMemoryCritical } from '@utils/memory-monitor';
+import { performanceTracker } from '@utils/performance-tracker';
+import { getOptimalFPS } from '@utils/quality-optimizer';
+import { getTimeoutForFormat } from '@utils/timeout-calculator';
+import { withTimeout } from '@utils/with-timeout';
 import { getProgressLoggingArgs } from './ffmpeg/args';
 import { cacheAwareBlobURL, requestIdle, supportsCacheStorage } from './ffmpeg/core-assets';
 import { getScaleFilter } from './ffmpeg/filters';

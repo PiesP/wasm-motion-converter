@@ -2,11 +2,11 @@
 import * as Comlink from 'comlink';
 
 // Internal imports
-import { logger } from '../utils/logger';
-import { getAvailableMemory } from '../utils/memory-monitor';
+import { logger } from '@utils/logger';
+import { getAvailableMemory } from '@utils/memory-monitor';
 
 // Type imports
-import type { EncoderWorkerAPI, WorkerPoolOptions } from '../types/worker-types';
+import type { EncoderWorkerAPI, WorkerPoolOptions } from '@t/worker-types';
 
 /**
  * CPU concurrency utilization ratio
@@ -87,7 +87,7 @@ export function getOptimalPoolSize(
  *
  * @example
  * const pool = new WorkerPool<GifEncoderWorkerAPI>(
- *   new URL('../workers/gif-encoder.worker.ts', import.meta.url),
+ *   new URL('@workers/gif-encoder.worker.ts', import.meta.url),
  *   { maxWorkers: 4 }
  * );
  *

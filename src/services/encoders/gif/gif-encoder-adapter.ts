@@ -5,9 +5,9 @@
  * Supports both main-thread and worker-based encoding.
  */
 
-import { QUALITY_PRESETS } from '../../../utils/constants';
-import { getErrorMessage } from '../../../utils/error-utils';
-import { logger } from '../../../utils/logger';
+import { QUALITY_PRESETS } from '@utils/constants';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 import { encodeModernGif, isModernGifSupported } from '../../modern-gif-service';
 import type { EncoderAdapter, EncoderRequest } from '../encoder-interface';
 

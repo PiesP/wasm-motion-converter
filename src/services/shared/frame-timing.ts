@@ -15,9 +15,9 @@
  * provide detailed logging for debugging timing issues.
  */
 
-import type { ConversionQuality, VideoMetadata } from '../../types/conversion-types';
-import { QUALITY_PRESETS } from '../../utils/constants';
-import { logger } from '../../utils/logger';
+import type { ConversionQuality, VideoMetadata } from '@t/conversion-types';
+import { QUALITY_PRESETS } from '@utils/constants';
+import { logger } from '@utils/logger';
 import { isComplexCodec } from '../webcodecs/codec-utils';
 import {
   FPS_DOWNSAMPLING_THRESHOLD,

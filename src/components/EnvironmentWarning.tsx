@@ -1,7 +1,7 @@
 import type { Component } from 'solid-js';
 import { createSignal, onMount, Show } from 'solid-js';
-import { showToast } from '../stores/toast-store';
-import { logger } from '../utils/logger';
+import { showToast } from '@stores/toast-store';
+import { logger } from '@utils/logger';
 
 /**
  * LocalStorage key for storing expanded state

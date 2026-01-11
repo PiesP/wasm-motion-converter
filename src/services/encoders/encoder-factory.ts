@@ -11,8 +11,8 @@
  * 4. Cleanup: await encoder.dispose()
  */
 
-import type { ConversionFormat, ConversionQuality } from '../../types/conversion-types';
-import { logger } from '../../utils/logger';
+import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
+import { logger } from '@utils/logger';
 import type {
   EncoderAdapter,
   EncoderPreferences,

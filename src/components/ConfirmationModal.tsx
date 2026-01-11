@@ -1,7 +1,7 @@
 import type { Component } from 'solid-js';
 import { createEffect, For, onCleanup, onMount, Show } from 'solid-js';
-import { cancelDialog, confirmDialog, getConfirmationState } from '../stores/confirmation-store';
-import type { ValidationWarning } from '../types/validation-types';
+import { cancelDialog, confirmDialog, getConfirmationState } from '@stores/confirmation-store';
+import type { ValidationWarning } from '@t/validation-types';
 
 /**
  * Get Tailwind color classes based on warning severity

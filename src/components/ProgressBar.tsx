@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show, splitProps } from 'solid-js';
 
-import { formatDuration } from '../utils/format-duration';
+import { formatDuration } from '@utils/format-duration';
 
 import type { Component } from 'solid-js';
 

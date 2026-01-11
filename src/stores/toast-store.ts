@@ -11,8 +11,8 @@
 import { createSignal } from 'solid-js';
 
 // Internal dependencies
-import { createId } from '../utils/create-id';
-import { logger } from '../utils/logger';
+import { createId } from '@utils/create-id';
+import { logger } from '@utils/logger';
 
 /**
  * Toast notification type

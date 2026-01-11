@@ -5,15 +5,15 @@ import type {
   ConversionOptions,
   ConversionOutputBlob,
   VideoMetadata,
-} from '../types/conversion-types';
-import type { EncoderWorkerAPI } from '../types/worker-types';
-import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '../utils/constants';
-import { getErrorMessage } from '../utils/error-utils';
-import { FFMPEG_INTERNALS } from '../utils/ffmpeg-constants';
-import { isHardwareCacheValid } from '../utils/hardware-profile';
-import { logger } from '../utils/logger';
-import { getAvailableMemory, isMemoryCritical } from '../utils/memory-monitor';
-import { getOptimalFPS } from '../utils/quality-optimizer';
+} from '@t/conversion-types';
+import type { EncoderWorkerAPI } from '@t/worker-types';
+import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '@utils/constants';
+import { getErrorMessage } from '@utils/error-utils';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { isHardwareCacheValid } from '@utils/hardware-profile';
+import { logger } from '@utils/logger';
+import { getAvailableMemory, isMemoryCritical } from '@utils/memory-monitor';
+import { getOptimalFPS } from '@utils/quality-optimizer';
 import {
   cacheCaptureMode,
   cacheCapturePerformance,
@@ -23,8 +23,8 @@ import {
   getCachedCapturePerformance,
   getCachedVFSBatchSize,
   getCachedWebPChunkSize,
-} from '../utils/session-cache';
-import { muxAnimatedWebP } from '../utils/webp-muxer';
+} from '@utils/session-cache';
+import { muxAnimatedWebP } from '@utils/webp-muxer';
 import { ffmpegService } from './ffmpeg-service';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { isComplexCodec } from './webcodecs/codec-utils';
@@ -80,7 +80,7 @@ class WebCodecsConversionService {
       });
 
       this.gifWorkerPool = new WorkerPool(
-        new URL('../workers/gif-encoder.worker.ts', import.meta.url),
+        new URL('@workers/gif-encoder.worker.ts', import.meta.url),
         { lazyInit: true, maxWorkers: optimalGifWorkers }
       );
     }

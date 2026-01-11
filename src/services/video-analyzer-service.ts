@@ -1,6 +1,6 @@
 import { ffmpegService } from './ffmpeg-service';
 
-import type { VideoMetadata } from '../types/conversion-types';
+import type { VideoMetadata } from '@t/conversion-types';
 
 /**
  * Timeout for video metadata loading (5 seconds)

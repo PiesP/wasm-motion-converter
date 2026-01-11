@@ -1,4 +1,4 @@
-import { FFMPEG_INTERNALS } from '../../utils/ffmpeg-constants';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 
 export type OutputValidationResult = { valid: true } | { valid: false; reason: string };
 

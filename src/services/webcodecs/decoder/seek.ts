@@ -1,4 +1,4 @@
-import { FFMPEG_INTERNALS } from '../../../utils/ffmpeg-constants';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 
 import { waitForEvent } from './wait-for-event';
 

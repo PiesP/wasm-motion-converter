@@ -1,16 +1,16 @@
 import type { Setter } from 'solid-js';
 import { batch } from 'solid-js';
-import { convertVideo } from '../services/conversion-service';
-import { ffmpegService } from '../services/ffmpeg-service';
-import { checkPerformance, getRecommendedSettings } from '../services/performance-checker-service';
-import { analyzeVideo, analyzeVideoQuick } from '../services/video-analyzer-service';
+import { convertVideo } from '@services/conversion-service';
+import { ffmpegService } from '@services/ffmpeg-service';
+import { checkPerformance, getRecommendedSettings } from '@services/performance-checker-service';
+import { analyzeVideo, analyzeVideoQuick } from '@services/video-analyzer-service';
 import {
   appState,
   setAppState,
   setLoadingProgress,
   setLoadingStatusMessage,
-} from '../stores/app-store';
-import { showConfirmation } from '../stores/confirmation-store';
+} from '@stores/app-store';
+import { showConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
   DEFAULT_CONVERSION_SETTINGS,
@@ -29,17 +29,17 @@ import {
   setVideoPreviewUrl,
   videoMetadata,
   videoPreviewUrl,
-} from '../stores/conversion-store';
-import { showToast } from '../stores/toast-store';
-import type { VideoMetadata } from '../types/conversion-types';
-import { classifyConversionError } from '../utils/classify-conversion-error';
-import { WARN_RESOLUTION_PIXELS } from '../utils/constants';
-import { createId } from '../utils/create-id';
-import { getErrorMessage } from '../utils/error-utils';
-import { ETACalculator } from '../utils/eta-calculator';
-import { validateVideoDuration, validateVideoFile } from '../utils/file-validation';
-import { logger } from '../utils/logger';
-import { isMemoryCritical } from '../utils/memory-monitor';
+} from '@stores/conversion-store';
+import { showToast } from '@stores/toast-store';
+import type { VideoMetadata } from '@t/conversion-types';
+import { classifyConversionError } from '@utils/classify-conversion-error';
+import { WARN_RESOLUTION_PIXELS } from '@utils/constants';
+import { createId } from '@utils/create-id';
+import { getErrorMessage } from '@utils/error-utils';
+import { ETACalculator } from '@utils/eta-calculator';
+import { validateVideoDuration, validateVideoFile } from '@utils/file-validation';
+import { logger } from '@utils/logger';
+import { isMemoryCritical } from '@utils/memory-monitor';
 
 /**
  * Small file size threshold for quick analysis bypass (50 MB)
