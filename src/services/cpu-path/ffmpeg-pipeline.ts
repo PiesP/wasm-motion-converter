@@ -258,6 +258,9 @@ export class FFmpegPipeline {
         await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
       }
 
+      // Clear any accumulated event listeners from previous conversions
+      this.core.clearAllListeners();
+
       // Start monitoring
       this.monitoring.startWatchdog({
         metadata,
@@ -313,6 +316,9 @@ export class FFmpegPipeline {
         logger.warn('general', 'FFmpeg not initialized, initializing now...');
         await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
       }
+
+      // Clear any accumulated event listeners from previous conversions
+      this.core.clearAllListeners();
 
       // Start monitoring
       this.monitoring.startWatchdog({

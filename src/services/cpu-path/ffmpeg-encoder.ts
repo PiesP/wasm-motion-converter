@@ -204,6 +204,9 @@ export class FFmpegEncoder {
 
   /**
    * Enrich conversion error with context
+   *
+   * Safely adds error context without causing stack overflow.
+   * If error classification fails, returns the original error.
    */
   private enrichConversionError(params: {
     error: unknown;
@@ -212,24 +215,48 @@ export class FFmpegEncoder {
     metadata?: VideoMetadata;
   }): Error {
     const { error, format, options, metadata } = params;
-    const { core } = this.getDeps();
     const message = getErrorMessage(error);
 
-    const context = classifyConversionError(
-      message,
-      metadata ?? null,
-      { format, quality: options.quality, scale: options.scale },
-      core.getRecentLogs()
-    );
+    // Prevent stack overflow during error handling
+    try {
+      const { core } = this.getDeps();
 
-    if (error instanceof Error) {
-      (error as unknown as { errorContext?: unknown }).errorContext ??= context;
-      return error;
+      // Safely get logs with fallback
+      let ffmpegLogs: string[] | undefined;
+      try {
+        ffmpegLogs = core.getRecentLogs();
+      } catch {
+        ffmpegLogs = undefined;
+      }
+
+      const context = classifyConversionError(
+        message,
+        metadata ?? null,
+        { format, quality: options.quality, scale: options.scale },
+        ffmpegLogs
+      );
+
+      if (error instanceof Error) {
+        (error as unknown as { errorContext?: unknown }).errorContext ??= context;
+        return error;
+      }
+
+      const enriched = new Error(message);
+      (enriched as unknown as { errorContext?: unknown }).errorContext = context;
+      return enriched;
+    } catch (enrichError) {
+      // If error enrichment fails, return original error
+      logger.warn('conversion', 'Failed to enrich error context', {
+        originalError: message,
+        enrichError: getErrorMessage(enrichError),
+      });
+
+      if (error instanceof Error) {
+        return error;
+      }
+
+      return new Error(message);
     }
-
-    const enriched = new Error(message);
-    (enriched as unknown as { errorContext?: unknown }).errorContext = context;
-    return enriched;
   }
 
   /**
@@ -364,18 +391,20 @@ export class FFmpegEncoder {
     // Generate palette
     const paletteThreadArgs = getThreadingArgs('filter-complex');
     const inputPattern = 'frame%05d.png';
-    const paletteCmd = [
-      ...paletteThreadArgs,
-      '-framerate',
-      fps.toString(),
-      '-i',
-      inputPattern,
-      '-vf',
-      `palettegen=max_colors=${qualitySettings.colors}`,
-      '-update',
-      '1',
-      paletteFileName,
-    ];
+    // Use concat instead of spread to prevent stack overflow
+    const paletteCmd = ([] as string[])
+      .concat(Array.from(paletteThreadArgs))
+      .concat([
+        '-framerate',
+        fps.toString(),
+        '-i',
+        inputPattern,
+        '-vf',
+        `palettegen=max_colors=${qualitySettings.colors}`,
+        '-update',
+        '1',
+        paletteFileName,
+      ]);
 
     const paletteLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, paletteEnd);
     ffmpeg.on('log', paletteLogHandler);
@@ -401,18 +430,20 @@ export class FFmpegEncoder {
     // Convert frames to GIF using palette
     const conversionThreadArgs = getThreadingArgs('filter-complex');
     const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
-    const conversionCmd = [
-      ...conversionThreadArgs,
-      '-framerate',
-      fps.toString(),
-      '-i',
-      inputPattern,
-      '-i',
-      paletteFileName,
-      '-filter_complex',
-      `paletteuse=dither=${ditherMode}`,
-      outputFileName,
-    ];
+    // Use concat instead of spread to prevent stack overflow
+    const conversionCmd = ([] as string[])
+      .concat(Array.from(conversionThreadArgs))
+      .concat([
+        '-framerate',
+        fps.toString(),
+        '-i',
+        inputPattern,
+        '-i',
+        paletteFileName,
+        '-filter_complex',
+        `paletteuse=dither=${ditherMode}`,
+        outputFileName,
+      ]);
 
     const conversionLogHandler = this.createFFmpegLogHandler(
       durationSeconds,
@@ -460,28 +491,30 @@ export class FFmpegEncoder {
     const inputPattern = 'frame%05d.png';
     const webpThreadArgs = getThreadingArgs('simple');
 
-    const webpCmd = [
-      ...webpThreadArgs,
-      '-framerate',
-      fps.toString(),
-      '-i',
-      inputPattern,
-      '-c:v',
-      'libwebp',
-      '-lossless',
-      '0',
-      '-quality',
-      qualitySettings.quality.toString(),
-      '-preset',
-      qualitySettings.preset,
-      '-compression_level',
-      qualitySettings.compressionLevel.toString(),
-      '-method',
-      qualitySettings.method.toString(),
-      '-loop',
-      '0',
-      outputFileName,
-    ];
+    // Use concat instead of spread to prevent stack overflow
+    const webpCmd = ([] as string[])
+      .concat(Array.from(webpThreadArgs))
+      .concat([
+        '-framerate',
+        fps.toString(),
+        '-i',
+        inputPattern,
+        '-c:v',
+        'libwebp',
+        '-lossless',
+        '0',
+        '-quality',
+        qualitySettings.quality.toString(),
+        '-preset',
+        qualitySettings.preset,
+        '-compression_level',
+        qualitySettings.compressionLevel.toString(),
+        '-method',
+        qualitySettings.method.toString(),
+        '-loop',
+        '0',
+        outputFileName,
+      ]);
 
     logger.info('conversion', 'Encoding PNG frames directly to WebP', {
       frameCount,
@@ -570,17 +603,17 @@ export class FFmpegEncoder {
         ? `${scaleFilter},fps=${fps},palettegen=max_colors=${qualitySettings.colors}`
         : `fps=${fps},palettegen=max_colors=${qualitySettings.colors}`;
 
-      const paletteCmd = [
-        ...paletteThreadArgs,
-        ...inputArgs,
-        '-vf',
-        paletteFilterChain,
-        '-update',
-        '1',
-        paletteFileName,
-      ];
+      // Use concat instead of spread to prevent stack overflow
+      const paletteCmd = ([] as string[])
+        .concat(Array.from(paletteThreadArgs))
+        .concat(inputArgs)
+        .concat(['-vf', paletteFilterChain, '-update', '1', paletteFileName]);
 
-      logger.debug('ffmpeg', 'Palette generation command', { cmd: paletteCmd.join(' ') });
+      // Log command safely without join() to prevent stack overflow
+      logger.info('ffmpeg', 'Palette generation command', {
+        cmdLength: paletteCmd.length,
+        cmdPreview: paletteCmd.slice(0, 5),
+      });
 
       const paletteHeartbeat = monitoring.startProgressHeartbeat(
         FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START,
@@ -593,23 +626,58 @@ export class FFmpegEncoder {
 
       try {
         try {
+          // Validate command array depth to prevent stack overflow
+          const maxCmdLength = 200; // Reasonable limit for command array
+          if (paletteCmd.length > maxCmdLength) {
+            logger.error('ffmpeg', 'Command array too large, potential stack overflow', {
+              cmdLength: paletteCmd.length,
+              maxAllowed: maxCmdLength,
+            });
+            throw new Error(
+              `FFmpeg command array too large (${paletteCmd.length} elements). ` +
+                'This may indicate a configuration error.'
+            );
+          }
+
+          logger.info('ffmpeg', 'Executing palette generation', {
+            cmdLength: paletteCmd.length,
+            timeout: conversionTimeout,
+          });
+
           await withTimeout(
             ffmpeg.exec(paletteCmd),
             conversionTimeout,
             `GIF palette generation timed out after ${conversionTimeout / 1000} seconds.`,
             () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
           );
+
+          logger.debug('ffmpeg', 'Palette generation completed successfully');
         } catch (execError) {
+          // Log detailed error information
+          const errorMsg = execError instanceof Error ? execError.message : String(execError);
+          const errorStack = execError instanceof Error ? execError.stack : undefined;
+
+          logger.error('ffmpeg', 'Palette generation failed', {
+            error: errorMsg,
+            errorType: execError instanceof Error ? execError.constructor.name : typeof execError,
+            stackPreview: errorStack?.split('\n').slice(0, 3),
+          });
+
           // Wrap FFmpeg exec errors to prevent stack overflow during error handling
           if (
             execError instanceof Error &&
-            execError.message === 'Maximum call stack size exceeded'
+            (execError.message.includes('Maximum call stack size exceeded') ||
+              execError.message.includes('stack overflow'))
           ) {
             logger.error('ffmpeg', 'Stack overflow detected in FFmpeg execution', {
               command: 'palette-gen',
               cmdLength: paletteCmd.length,
+              cmdPreview: paletteCmd.slice(0, 10).join(' '),
             });
-            throw new Error('FFmpeg palette generation failed: stack overflow in execution');
+            throw new Error(
+              'FFmpeg palette generation failed: stack overflow in execution. ' +
+                'Try restarting the browser or using a simpler video file.'
+            );
           }
           throw execError;
         }
@@ -632,18 +700,19 @@ export class FFmpegEncoder {
         ? `${scaleFilter},fps=${fps}[v];[v][1:v]paletteuse=dither=${ditherMode}`
         : `fps=${fps}[v];[v][1:v]paletteuse=dither=${ditherMode}`;
 
-      const gifCmd = [
-        ...conversionThreadArgs,
-        ...inputArgs,
-        '-i',
-        paletteFileName,
-        '-lavfi',
-        gifFilterChain,
-        ...getProgressLoggingArgs(),
-        outputFileName,
-      ];
+      // Use concat instead of spread to prevent stack overflow
+      const gifCmd = ([] as string[])
+        .concat(Array.from(conversionThreadArgs))
+        .concat(inputArgs)
+        .concat(['-i', paletteFileName, '-lavfi', gifFilterChain])
+        .concat(Array.from(getProgressLoggingArgs()))
+        .concat([outputFileName]);
 
-      logger.debug('ffmpeg', 'GIF conversion command', { cmd: gifCmd.join(' ') });
+      // Log command safely without join() to prevent stack overflow
+      logger.debug('ffmpeg', 'GIF conversion command', {
+        cmdLength: gifCmd.length,
+        cmdPreview: gifCmd.slice(0, 5),
+      });
 
       logger.performance('Starting GIF encoding');
 
@@ -786,53 +855,94 @@ export class FFmpegEncoder {
 
         const webpFilterArgs = scaleFilter ? `${scaleFilter},fps=${fps}` : `fps=${fps}`;
 
-        const webpCmd = [
-          ...webpThreadArgs,
-          ...inputArgs,
-          '-vf',
-          webpFilterArgs,
-          '-c:v',
-          'libwebp',
-          '-lossless',
-          '0',
-          '-quality',
-          qualitySettings.quality.toString(),
-          '-preset',
-          qualitySettings.preset,
-          '-compression_level',
-          qualitySettings.compressionLevel.toString(),
-          '-method',
-          qualitySettings.method.toString(),
-          '-loop',
-          '0',
-          ...getProgressLoggingArgs(),
-          outputFileName,
-        ];
+        // Use concat instead of spread to prevent stack overflow
+        const webpCmd = ([] as string[])
+          .concat(Array.from(webpThreadArgs))
+          .concat(inputArgs)
+          .concat([
+            '-vf',
+            webpFilterArgs,
+            '-c:v',
+            'libwebp',
+            '-lossless',
+            '0',
+            '-quality',
+            qualitySettings.quality.toString(),
+            '-preset',
+            qualitySettings.preset,
+            '-compression_level',
+            qualitySettings.compressionLevel.toString(),
+            '-method',
+            qualitySettings.method.toString(),
+            '-loop',
+            '0',
+          ])
+          .concat(Array.from(getProgressLoggingArgs()))
+          .concat([outputFileName]);
 
-        logger.debug('ffmpeg', 'WebP conversion command', { cmd: webpCmd.join(' ') });
+        // Log command safely without join() to prevent stack overflow
+        logger.info('ffmpeg', 'WebP conversion command', {
+          cmdLength: webpCmd.length,
+          cmdPreview: webpCmd.slice(0, 5),
+        });
 
         performanceTracker.startPhase('webp-encode');
         logger.performance('Starting WebP encoding');
 
         try {
           try {
+            // Validate command array depth to prevent stack overflow
+            const maxCmdLength = 200; // Reasonable limit for command array
+            if (webpCmd.length > maxCmdLength) {
+              logger.error('ffmpeg', 'Command array too large, potential stack overflow', {
+                cmdLength: webpCmd.length,
+                maxAllowed: maxCmdLength,
+              });
+              throw new Error(
+                `FFmpeg command array too large (${webpCmd.length} elements). ` +
+                  'This may indicate a configuration error.'
+              );
+            }
+
+            logger.info('ffmpeg', 'Executing WebP conversion', {
+              cmdLength: webpCmd.length,
+              timeout: conversionTimeout,
+            });
+
             await withTimeout(
               ffmpeg.exec(webpCmd),
               conversionTimeout,
               `WebP conversion timed out after ${conversionTimeout / 1000} seconds.`,
               () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
             );
+
+            logger.debug('ffmpeg', 'WebP conversion completed successfully');
           } catch (execError) {
+            // Log detailed error information
+            const errorMsg = execError instanceof Error ? execError.message : String(execError);
+            const errorStack = execError instanceof Error ? execError.stack : undefined;
+
+            logger.error('ffmpeg', 'WebP conversion failed', {
+              error: errorMsg,
+              errorType: execError instanceof Error ? execError.constructor.name : typeof execError,
+              stackPreview: errorStack?.split('\n').slice(0, 3),
+            });
+
             // Wrap FFmpeg exec errors to prevent stack overflow during error handling
             if (
               execError instanceof Error &&
-              execError.message === 'Maximum call stack size exceeded'
+              (execError.message.includes('Maximum call stack size exceeded') ||
+                execError.message.includes('stack overflow'))
             ) {
               logger.error('ffmpeg', 'Stack overflow detected in FFmpeg execution', {
                 command: 'webp-encode',
                 cmdLength: webpCmd.length,
+                cmdPreview: webpCmd.slice(0, 10),
               });
-              throw new Error('FFmpeg WebP encoding failed: stack overflow in execution');
+              throw new Error(
+                'FFmpeg WebP encoding failed: stack overflow in execution. ' +
+                  'Try restarting the browser or using a simpler video file.'
+              );
             }
             throw execError;
           }

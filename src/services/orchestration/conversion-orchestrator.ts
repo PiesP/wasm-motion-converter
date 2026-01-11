@@ -205,6 +205,9 @@ export class ConversionOrchestrator {
 
   /**
    * Resolve video metadata
+   *
+   * For complex codecs (AV1, VP9, HEVC), metadata is mandatory for proper processing.
+   * This prevents issues with timeout calculation and codec detection.
    */
   private async resolveMetadata(
     file: File,
@@ -215,10 +218,36 @@ export class ConversionOrchestrator {
     }
 
     try {
-      return await ffmpegService.getVideoMetadata(file);
+      const probed = await ffmpegService.getVideoMetadata(file);
+
+      // For complex codecs, metadata is mandatory
+      const codec = probed?.codec?.toLowerCase();
+      if (codec === 'av1' || codec === 'vp9' || codec === 'hevc') {
+        if (!probed || !probed.duration || probed.duration === 0) {
+          throw new Error(
+            `Failed to extract metadata for ${codec.toUpperCase()} codec. ` +
+              'This codec requires complete metadata for processing. ' +
+              'The file may be corrupted or in an unsupported format.'
+          );
+        }
+        logger.info('conversion', 'Mandatory metadata extracted for complex codec', {
+          codec: probed.codec,
+          duration: probed.duration,
+          resolution: `${probed.width}x${probed.height}`,
+        });
+      }
+
+      return probed;
     } catch (error) {
+      const errorMsg = getErrorMessage(error);
+
+      // Re-throw if it's our mandatory metadata error
+      if (errorMsg.includes('Failed to extract metadata')) {
+        throw error;
+      }
+
       logger.warn('conversion', 'Metadata probe failed, continuing without codec', {
-        error: getErrorMessage(error),
+        error: errorMsg,
       });
       return metadata;
     }

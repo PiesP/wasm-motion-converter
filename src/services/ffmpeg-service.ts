@@ -207,7 +207,8 @@ class FFmpegService {
    */
   reportProgress(progress: number): void {
     this.progressCallback?.(progress);
-    this.pipeline.reportProgress(progress);
+    // Do NOT call pipeline.reportProgress here - it creates infinite recursion
+    // The pipeline already calls this method via the onProgress callback
   }
 
   /**
@@ -217,7 +218,8 @@ class FFmpegService {
    */
   reportStatus(message: string): void {
     this.statusCallback?.(message);
-    this.pipeline.reportStatus(message);
+    // Do NOT call pipeline.reportStatus here - it creates infinite recursion
+    // The pipeline already calls this method via the onStatus callback
   }
 
   /**
