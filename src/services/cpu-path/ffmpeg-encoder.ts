@@ -39,6 +39,29 @@ import type { FFmpegMonitoring } from './ffmpeg-monitoring';
 import type { FFmpegVFS } from './ffmpeg-vfs';
 
 /**
+ * Detect frame file extension from frame file list
+ * Returns 'png' or 'jpeg' based on first frame file extension
+ */
+function detectFrameExtension(frameFiles?: string[]): 'png' | 'jpeg' {
+  if (!frameFiles || frameFiles.length === 0) {
+    return 'png'; // Default to PNG for backward compatibility
+  }
+
+  const firstFrame = frameFiles[0];
+  if (!firstFrame) {
+    return 'png';
+  }
+
+  const extension = firstFrame.split('.').pop()?.toLowerCase();
+
+  if (extension === 'jpg' || extension === 'jpeg') {
+    return 'jpeg';
+  }
+
+  return 'png';
+}
+
+/**
  * FFmpeg input format override for transcoding operations
  */
 export interface FFmpegInputOverride {
@@ -350,14 +373,16 @@ export class FFmpegEncoder {
           ffmpeg,
           outputFileName,
           { fps, frameCount, quality: options.quality },
-          durationSeconds
+          durationSeconds,
+          providedFrameFiles
         );
       } else {
         await this.encodeFramesToWebP(
           ffmpeg,
           outputFileName,
           { fps, frameCount, quality: options.quality },
-          durationSeconds
+          durationSeconds,
+          providedFrameFiles
         );
       }
 
@@ -428,7 +453,8 @@ export class FFmpegEncoder {
     ffmpeg: FFmpeg,
     outputFileName: string,
     settings: { fps: number; frameCount: number; quality: ConversionQuality },
-    durationSeconds: number
+    durationSeconds: number,
+    frameFiles?: string[]
   ): Promise<void> {
     const { monitoring } = this.getDeps();
 
@@ -440,15 +466,19 @@ export class FFmpegEncoder {
     const paletteEnd = 70;
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
+    // Detect frame file extension (PNG or JPEG) for correct FFmpeg input pattern
+    const frameExtension = detectFrameExtension(frameFiles);
+    const inputPattern = `frame_%06d.${frameExtension}`;
+
     logger.info('conversion', 'Generating GIF palette from frame sequence', {
       frameCount,
       fps,
       colors: qualitySettings.colors,
+      frameFormat: frameExtension,
     });
 
     // Generate palette
     const paletteThreadArgs = getThreadingArgs('filter-complex');
-    const inputPattern = 'frame_%06d.png';
     // Use concat instead of spread to prevent stack overflow
     const paletteCmd = ([] as string[])
       .concat(Array.from(paletteThreadArgs))
@@ -536,7 +566,8 @@ export class FFmpegEncoder {
     ffmpeg: FFmpeg,
     outputFileName: string,
     settings: { fps: number; frameCount: number; quality: ConversionQuality },
-    durationSeconds: number
+    durationSeconds: number,
+    frameFiles?: string[]
   ): Promise<void> {
     const { monitoring } = this.getDeps();
 
@@ -546,7 +577,9 @@ export class FFmpegEncoder {
     const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
-    const inputPattern = 'frame_%06d.png';
+    // Detect frame file extension (PNG or JPEG) for correct FFmpeg input pattern
+    const frameExtension = detectFrameExtension(frameFiles);
+    const inputPattern = `frame_%06d.${frameExtension}`;
 
     // WebP encoding in WASM: use minimal threading to avoid stalls
     // Single thread prevents libwebp encoder blocking issues in WASM environment
@@ -577,11 +610,12 @@ export class FFmpegEncoder {
         outputFileName,
       ]);
 
-    logger.info('conversion', 'Encoding PNG frames directly to WebP', {
+    logger.info('conversion', 'Encoding frames directly to WebP', {
       frameCount,
       fps,
       quality: qualitySettings.quality,
       output: outputFileName,
+      frameFormat: frameExtension,
     });
 
     const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);

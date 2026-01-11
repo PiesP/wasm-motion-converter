@@ -389,7 +389,10 @@ export class DemuxerCaptureAdapter {
               data = new Uint8Array(await blob.arrayBuffer());
             }
 
-            const frameName = `${framePrefix}${String(frameStartNumber + frameIndex).padStart(frameDigits, '0')}.${frameFormat}`;
+            // Use actual encoded format for filename extension to match blob content
+            // Critical: FFmpeg PNG decoder fails on JPEG data (signature 0xFFD8FFE0 vs 0x89504E47)
+            const actualFormat = frameFormat === 'rgba' ? 'rgba' : shouldUseJpeg ? 'jpeg' : 'png';
+            const frameName = `${framePrefix}${String(frameStartNumber + frameIndex).padStart(frameDigits, '0')}.${actualFormat}`;
 
             await onFrame({
               name: frameName,

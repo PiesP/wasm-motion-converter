@@ -318,7 +318,15 @@ export class FrameExtractor {
           consecutiveEmptyFrames = 0;
         }
 
-        const frameName = `${framePrefix}${String(frameStartNumber + index).padStart(frameDigits, '0')}.${frameFormat}`;
+        // Use actual encoded format for filename extension to match blob content
+        // Critical: FFmpeg PNG decoder fails on JPEG data (signature 0xFFD8FFE0 vs 0x89504E47)
+        const actualFormat =
+          frameFormat === 'jpeg'
+            ? 'jpeg'
+            : frameFormat === 'png' && quality && (quality === 'low' || quality === 'medium')
+              ? 'jpeg'
+              : frameFormat;
+        const frameName = `${framePrefix}${String(frameStartNumber + index).padStart(frameDigits, '0')}.${actualFormat}`;
         frameFiles.push(frameName);
         onProgress?.(frameFiles.length, totalFrames);
       };

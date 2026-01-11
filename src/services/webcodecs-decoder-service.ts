@@ -582,11 +582,20 @@ export class WebCodecsDecoderService {
           }
           consecutiveEmptyFrames = 0; // Reset counter on successful frame
         }
+
+        // Use actual encoded format for filename extension to match blob content
+        // Critical: FFmpeg PNG decoder fails on JPEG data (signature 0xFFD8FFE0 vs 0x89504E47)
+        const actualFormat =
+          frameFormat === 'jpeg'
+            ? 'jpeg'
+            : quality && (quality === 'low' || quality === 'medium')
+              ? 'jpeg'
+              : 'png';
         const frameName = formatFrameName(
           framePrefix,
           frameDigits,
           frameStartNumber + index,
-          frameFormat
+          actualFormat
         );
         try {
           await onFrame({ name: frameName, data, imageData, index, timestamp });
@@ -1704,11 +1713,14 @@ export class WebCodecsDecoderService {
               data = new Uint8Array(await blob.arrayBuffer());
             }
 
+            // Use actual encoded format for filename extension to match blob content
+            // Critical: FFmpeg PNG decoder fails on JPEG data (signature 0xFFD8FFE0 vs 0x89504E47)
+            const actualFormat = frameFormat === 'rgba' ? 'rgba' : shouldUseJpeg ? 'jpeg' : 'png';
             const frameName = formatFrameName(
               framePrefix,
               frameDigits,
               frameStartNumber + frameIndex,
-              frameFormat
+              actualFormat
             );
 
             await onFrame({
