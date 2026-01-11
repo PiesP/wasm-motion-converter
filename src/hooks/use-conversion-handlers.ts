@@ -1,5 +1,5 @@
-// Use conversion service API
-import { convertVideo } from '@services/conversion-service';
+// Use new refactored orchestrator API
+import { convertVideo } from '@services/orchestration/conversion-orchestrator';
 import { ffmpegService } from '@services/ffmpeg-service';
 import { checkPerformance, getRecommendedSettings } from '@services/performance-checker-service';
 import { analyzeVideo, analyzeVideoQuick } from '@services/video-analyzer-service';
@@ -373,19 +373,26 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         });
       };
 
+      // NOTE: FFmpeg callbacks still needed until Phase 4 (ffmpeg-pipeline.ts)
+      // because orchestrator's CPU path calls FFmpeg service directly
       ffmpegService.setProgressCallback(progressCallback);
       ffmpegService.setStatusCallback(setConversionStatusMessage);
 
-      const blob = await convertVideo(
+      const result = await convertVideo({
         file,
-        settings.format,
-        {
+        format: settings.format,
+        options: {
           quality: settings.quality,
           scale: settings.scale,
           duration: videoDuration ? videoDuration / MS_PER_SECOND : undefined, // Convert ms to seconds
         },
-        videoMetadata() ?? undefined
-      );
+        metadata: videoMetadata() ?? undefined,
+        // Also passed to orchestrator for future GPU/hybrid paths (Phase 2+)
+        onProgress: progressCallback,
+        onStatus: setConversionStatusMessage,
+      });
+
+      const blob = result.blob;
 
       clearConversionCallbacks();
       if (memoryCheckTimer) {

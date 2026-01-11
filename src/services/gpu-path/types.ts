@@ -82,24 +82,42 @@ export interface FrameExtractionResult {
 }
 
 /**
+ * Frame capture callback type
+ *
+ * Invoked for each captured frame during extraction.
+ */
+export type FrameCaptureCallback = (index: number, timestamp: number) => Promise<void>;
+
+/**
  * Capture mode adapter interface
  *
- * Implements a specific capture mode (demuxer, frame-callback, seek, track).
+ * Implements a specific capture mode (frame-callback, seek, track).
  * Each adapter knows how to extract frames using its specific technique.
+ *
+ * Note: Demuxer capture has a different API (takes File instead of HTMLVideoElement)
+ * and is handled separately.
  */
 export interface CaptureAdapter {
-  /** Capture mode identifier */
-  mode: CaptureMode;
-
-  /**
-   * Check if this capture mode is available
-   */
-  isAvailable(): Promise<boolean>;
-
   /**
    * Capture frames using this mode
+   *
+   * @param video - Video element to capture from
+   * @param duration - Video duration in seconds
+   * @param targetFps - Target frames per second
+   * @param captureFrame - Callback invoked for each frame
+   * @param shouldCancel - Optional cancellation check
+   * @param maxFrames - Optional maximum frame count
+   * @param codec - Optional codec string for optimization
    */
-  capture(request: FrameExtractionRequest): Promise<FrameExtractionResult>;
+  capture(
+    video: HTMLVideoElement,
+    duration: number,
+    targetFps: number,
+    captureFrame: FrameCaptureCallback,
+    shouldCancel?: () => boolean,
+    maxFrames?: number,
+    codec?: string
+  ): Promise<void>;
 }
 
 /**

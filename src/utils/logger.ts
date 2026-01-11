@@ -51,7 +51,11 @@ type LogCategory =
   | 'encoder-factory'
   | 'gif-encoder'
   | 'mp4-encoder'
-  | 'webp-encoder';
+  | 'webp-encoder'
+  | 'capture-mode-selector'
+  | 'decoder-manager'
+  | 'demuxer-manager'
+  | 'frame-extractor';
 
 /**
  * Structured logger for application-wide logging with filtering and categorization
