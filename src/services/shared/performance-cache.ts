@@ -259,9 +259,7 @@ export function getPerformanceCache(
     captureMode:
       codec && !checkValidity ? getCachedCaptureMode(codec, false) || undefined : undefined,
     capturePerformance:
-      codec && !checkValidity
-        ? getCachedCapturePerformance(codec, false) || undefined
-        : undefined,
+      codec && !checkValidity ? getCachedCapturePerformance(codec, false) || undefined : undefined,
     vfsBatchSize: !checkValidity ? getCachedVFSBatchSize(false) || undefined : undefined,
     webpChunkSize: !checkValidity ? getCachedWebPChunkSize(false) || undefined : undefined,
   };

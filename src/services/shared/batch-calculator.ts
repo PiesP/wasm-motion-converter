@@ -311,7 +311,10 @@ export function calculateOptimalWorkerPoolSize(params: WorkerPoolSizeParams): Ba
   const { workerType, hwConcurrency, availableMemory } = params;
 
   // CPU-based limit (75% utilization)
-  const cpuLimit = Math.max(MIN_WORKER_POOL_SIZE, Math.floor(hwConcurrency * WORKER_CPU_UTILIZATION));
+  const cpuLimit = Math.max(
+    MIN_WORKER_POOL_SIZE,
+    Math.floor(hwConcurrency * WORKER_CPU_UTILIZATION)
+  );
 
   // Memory-based limit
   const workerMemoryBudget =
