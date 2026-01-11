@@ -290,9 +290,17 @@ export class FFmpegEncoder {
     frameCount: number;
     fps: number;
     durationSeconds: number;
+    frameFiles?: string[];
     frameTimestamps?: number[];
   }): Promise<ConversionOutputBlob> {
-    const { format, options, frameCount, fps, durationSeconds } = params;
+    const {
+      format,
+      options,
+      frameCount,
+      fps,
+      durationSeconds,
+      frameFiles: providedFrameFiles,
+    } = params;
     const { core, vfs } = this.getDeps();
 
     if (!this.acquireConversionLock()) {
@@ -337,14 +345,17 @@ export class FFmpegEncoder {
       }) as ConversionOutputBlob;
 
       // Cleanup
-      const frameFiles: string[] = [];
-      for (let i = 0; i < frameCount; i++) {
-        frameFiles.push(`frame${i.toString().padStart(5, '0')}.png`);
+      const frameFilesToClean = providedFrameFiles || [];
+      if (frameFilesToClean.length === 0) {
+        // Fallback: reconstruct frame file names if not provided (old behavior for CPU path)
+        for (let i = 0; i < frameCount; i++) {
+          frameFilesToClean.push(`frame${i.toString().padStart(5, '0')}.png`);
+        }
       }
       await vfs.handleConversionCleanup(
         ffmpeg,
         outputFileName,
-        [...frameFiles, FFMPEG_INTERNALS.PALETTE_FILE_NAME],
+        [...frameFilesToClean, FFMPEG_INTERNALS.PALETTE_FILE_NAME],
         isMemoryCritical
       );
 
@@ -406,7 +417,7 @@ export class FFmpegEncoder {
 
     // Generate palette
     const paletteThreadArgs = getThreadingArgs('filter-complex');
-    const inputPattern = 'frame%05d.png';
+    const inputPattern = 'frame_%05d.png';
     // Use concat instead of spread to prevent stack overflow
     const paletteCmd = ([] as string[])
       .concat(Array.from(paletteThreadArgs))
@@ -504,7 +515,7 @@ export class FFmpegEncoder {
     const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
-    const inputPattern = 'frame%05d.png';
+    const inputPattern = 'frame_%05d.png';
     const webpThreadArgs = getThreadingArgs('simple');
 
     // Use concat instead of spread to prevent stack overflow
