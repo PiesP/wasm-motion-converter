@@ -1,70 +1,111 @@
+/**
+ * WebP Encoder Worker
+ *
+ * Worker thread for encoding video frames to WebP format using browser's
+ * native OffscreenCanvas API. Enables parallel frame encoding across
+ * multiple workers for improved performance.
+ *
+ * Features:
+ * - OffscreenCanvas-based WebP encoding
+ * - Quality control (0.0 to 1.0)
+ * - Transferable ArrayBuffer results
+ * - Comlink RPC interface
+ *
+ * Architecture:
+ * Main thread → Worker (via Comlink) → OffscreenCanvas.convertToBlob() → ArrayBuffer
+ */
+
 import * as Comlink from 'comlink';
 import { logger } from '@utils/logger';
 
 /**
- * WebP encoder worker API interface
+ * WebP encoder worker API implementation
  *
- * @remarks
- * WebP encoding is currently handled via FFmpeg in the main conversion service.
- * This worker interface is retained for potential future use with alternative
- * WebP encoders (e.g., libwebp-wasm or other optimized implementations).
- *
- * @example
- * const worker = Comlink.wrap<WebPEncoderWorkerAPI>(new Worker(...));
- * // Currently throws as encoding is handled in main service
+ * Exposes encodeFrame method via Comlink for main thread communication.
  */
-interface WebPEncoderWorkerAPI {
+const api = {
   /**
-   * Encode frames to WebP format
+   * Encode single frame to WebP format
    *
-   * @remarks
-   * This method is not yet implemented. WebP encoding is currently handled
-   * by the FFmpeg service in the main thread for stability and compatibility.
+   * Uses OffscreenCanvas.convertToBlob() for native WebP encoding.
+   * This is hardware-accelerated in most modern browsers.
    *
-   * @returns Promise that rejects with informative error message
-   * @throws {Error} Always throws as feature is not implemented
-   *
-   * @see {@link https://github.com/GoogleChromeLabs/libwebp-wasm} libwebp-wasm
+   * @param imageData - Frame pixel data (RGBA format)
+   * @param quality - Encoding quality (0.0 to 1.0, where 1.0 is best quality)
+   * @returns Encoded WebP frame as ArrayBuffer
+   * @throws {Error} If encoding fails or OffscreenCanvas is not available
    */
-  encode(): Promise<Blob>;
+  async encodeFrame(
+    imageData: { data: Uint8ClampedArray; width: number; height: number },
+    quality: number
+  ): Promise<ArrayBuffer> {
+    try {
+      // Validate input
+      if (!imageData || !imageData.data || imageData.width <= 0 || imageData.height <= 0) {
+        throw new Error('Invalid image data for WebP encoding');
+      }
+
+      // Clamp quality to valid range
+      const clampedQuality = Math.max(0, Math.min(1, quality));
+
+      // Create OffscreenCanvas
+      if (typeof OffscreenCanvas === 'undefined') {
+        throw new Error('OffscreenCanvas not available in worker');
+      }
+
+      const canvas = new OffscreenCanvas(imageData.width, imageData.height);
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        throw new Error('Failed to get 2D context from OffscreenCanvas');
+      }
+
+      // Create ImageData from raw data
+      const imgData = new ImageData(
+        new Uint8ClampedArray(imageData.data),
+        imageData.width,
+        imageData.height
+      );
+
+      // Draw to canvas
+      ctx.putImageData(imgData, 0, 0);
+
+      // Encode to WebP
+      const blob = await canvas.convertToBlob({
+        type: 'image/webp',
+        quality: clampedQuality,
+      });
+
+      // Convert Blob to ArrayBuffer
+      const arrayBuffer = await blob.arrayBuffer();
+
+      logger.debug('webp-encoder', 'Frame encoded', {
+        width: imageData.width,
+        height: imageData.height,
+        quality: clampedQuality,
+        size: arrayBuffer.byteLength,
+      });
+
+      return arrayBuffer;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('webp-encoder', 'Frame encoding failed', {
+        error: message,
+        width: imageData?.width,
+        height: imageData?.height,
+      });
+      throw new Error(`WebP frame encoding failed: ${message}`);
+    }
+  },
 
   /**
    * Terminate the worker and clean up resources
    *
-   * @remarks
-   * Stops the worker execution and closes the worker context.
-   * Must be called when the worker is no longer needed to prevent
-   * memory leaks and free up thread resources.
+   * Closes the worker context. Must be called from main thread
+   * when the worker is no longer needed.
    */
-  terminate(): void;
-}
-
-/**
- * WebP encoder worker API implementation
- *
- * @remarks
- * Currently a placeholder that delegates to FFmpeg in the main service.
- * The worker infrastructure is preserved for future enhancement when
- * alternative WebP encoders become available or needed.
- */
-const api: WebPEncoderWorkerAPI = {
-  async encode(): Promise<Blob> {
-    const errorMessage = 'WebP encoding is currently handled via FFmpeg in the main service';
-
-    logger.info('general', 'WebP encoder worker received encode request', {
-      note: 'Feature not yet implemented in worker',
-    });
-
-    const error = new Error(errorMessage);
-    logger.error('general', 'WebP encoding requested but not available in worker', {
-      error: errorMessage,
-    });
-
-    throw error;
-  },
-
   terminate(): void {
-    logger.info('general', 'WebP encoder worker terminating');
+    logger.debug('webp-encoder', 'Worker terminating');
     self.close();
   },
 };

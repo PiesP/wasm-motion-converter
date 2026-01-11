@@ -11,11 +11,11 @@
  * - Automatic fallback handling
  */
 
-import type { CaptureMode } from './types';
 import type { VideoMetadata } from '@t/conversion-types';
+import { logger } from '@utils/logger';
 import { canUseDemuxer } from '../webcodecs/demuxer/demuxer-factory';
 import { getWebCodecsSupportStatus } from '../webcodecs-support-service';
-import { logger } from '@utils/logger';
+import type { CaptureMode } from './types';
 
 /**
  * Browser capabilities for capture modes

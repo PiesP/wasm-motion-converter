@@ -11,14 +11,14 @@
  */
 
 import type { VideoMetadata } from '@t/conversion-types';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 import type { DemuxerAdapter } from '../webcodecs/demuxer/demuxer-adapter';
 import {
   canUseDemuxer,
   createDemuxer,
   detectContainer,
 } from '../webcodecs/demuxer/demuxer-factory';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
 
 /**
  * Demuxer manager class

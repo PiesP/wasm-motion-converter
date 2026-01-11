@@ -17,18 +17,18 @@
  * - Cancellation support
  */
 
-import type { CaptureMode, FrameFormat } from './types';
 import type { VideoMetadata } from '@t/conversion-types';
+import { getErrorMessage } from '@utils/error-utils';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { logger } from '@utils/logger';
+import { waitForEvent } from '../webcodecs/decoder/wait-for-event';
+import { createCanvas, drawVideoFrame, encodeCanvasToFormat } from './canvas-processor';
+import { captureModeSelector } from './capture-mode-selector';
 import { DemuxerCaptureAdapter } from './capture-modes/demuxer-capture';
 import { FrameCallbackCaptureAdapter } from './capture-modes/frame-callback-capture';
 import { SeekCaptureAdapter } from './capture-modes/seek-capture';
 import { TrackCaptureAdapter } from './capture-modes/track-capture';
-import { captureModeSelector } from './capture-mode-selector';
-import { createCanvas, drawVideoFrame, encodeCanvasToFormat } from './canvas-processor';
-import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
-import { waitForEvent } from '../webcodecs/decoder/wait-for-event';
+import type { CaptureMode, FrameFormat } from './types';
 
 /**
  * Frame extraction options
