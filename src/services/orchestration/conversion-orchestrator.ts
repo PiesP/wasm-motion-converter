@@ -89,6 +89,10 @@ class ConversionOrchestrator {
         phase: 'initializing',
       };
 
+      // Ensure log output is annotated with a progress indicator from the very beginning
+      // of the conversion lifecycle, even before the first progress tick is emitted.
+      logger.setConversionProgress(0);
+
       // Create progress reporter
       this.progressReporter = new ProgressReporter({
         onProgress: (progress) => {
@@ -360,6 +364,9 @@ class ConversionOrchestrator {
 
       this.progressReporter = null;
       this.abortController = null;
+
+      // Defensive: ensure the progress decoration never leaks into subsequent logs.
+      logger.clearConversionProgress();
     }
   }
 
