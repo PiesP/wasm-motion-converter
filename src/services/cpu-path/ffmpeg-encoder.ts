@@ -92,6 +92,25 @@ export class FFmpegEncoder {
   private cancellationRequested = false;
   private dependencies: EncoderDependencies | null = null;
 
+  private getDurationMs(
+    metadata?: VideoMetadata,
+    options?: ConversionOptions
+  ): number | undefined {
+    // Prefer analyzed metadata when available. Fall back to options.duration when
+    // callers already provided it (both are expressed in seconds).
+    const durationSeconds = metadata?.duration ?? options?.duration;
+
+    if (
+      !Number.isFinite(durationSeconds) ||
+      !durationSeconds ||
+      durationSeconds <= 0
+    ) {
+      return undefined;
+    }
+
+    return Math.round(durationSeconds * 1000);
+  }
+
   private isFFmpegProgressKeyValueLine(line: string): boolean {
     // FFmpeg `-progress pipe:1` emits key/value pairs on stdout.
     // Logging each line is extremely noisy and makes captured dev logs hard to read.
@@ -817,7 +836,10 @@ export class FFmpegEncoder {
         colors: qualitySettings.colors,
       });
 
-      const conversionTimeout = getTimeoutForFormat("gif");
+      const conversionTimeout = getTimeoutForFormat(
+        "gif",
+        this.getDurationMs(metadata, options)
+      );
 
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
 
@@ -1133,7 +1155,10 @@ export class FFmpegEncoder {
         fps,
       });
 
-      const conversionTimeout = getTimeoutForFormat("webp");
+      const conversionTimeout = getTimeoutForFormat(
+        "webp",
+        this.getDurationMs(metadata, options)
+      );
 
       monitoring.updateProgress(
         FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START
