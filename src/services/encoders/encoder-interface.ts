@@ -42,6 +42,14 @@ export interface EncoderRequest {
   fps: number;
   /** Quality level (affects palette size, compression, bitrate) */
   quality: ConversionQuality;
+  /** Optional capture timestamps (seconds), one per frame */
+  timestamps?: number[];
+  /** Optional animation duration (seconds) used to avoid pacing drift */
+  durationSeconds?: number;
+  /** Optional codec string (e.g., 'av01', 'vp09', 'hvc1') for heuristics */
+  codec?: string;
+  /** Optional source FPS hint (used to detect downsampling and reduce stutter) */
+  sourceFPS?: number;
   /** Optional progress callback (current frame, total frames) */
   onProgress?: (current: number, total: number) => void;
   /** Optional cancellation check (returns true to abort) */

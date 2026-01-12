@@ -165,7 +165,7 @@ class EncoderFactoryClass {
     }
 
     if (availableEncoders.length === 0) {
-      logger.error('encoder-factory', `No available encoders for format: ${format}`, {
+      logger.warn('encoder-factory', `No available encoders for format: ${format}`, {
         format,
         candidates: candidates.map((e) => e.name),
       });

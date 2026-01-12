@@ -15,6 +15,7 @@ import { logger } from '@utils/logger';
 import { EncoderFactory } from './encoder-factory';
 import { GIFEncoderAdapter } from './gif/gif-encoder-adapter';
 import { MP4EncoderAdapter } from './mp4/mp4-encoder-adapter';
+import { WebPCanvasEncoderAdapter } from './webp/webp-canvas-encoder-adapter';
 import { WebPEncoderAdapter } from './webp/webp-encoder-adapter';
 
 /**
@@ -26,8 +27,11 @@ function initializeEncoders(): void {
   // Register GIF encoder (fully implemented)
   EncoderFactory.register(new GIFEncoderAdapter());
 
-  // Register WebP encoder (stub - will be implemented in Phase 3)
+  // Register WebP encoders
+  // - webp-native: worker-based OffscreenCanvas.convertToBlob
+  // - webp-canvas: main-thread HTMLCanvasElement.toBlob fallback
   EncoderFactory.register(new WebPEncoderAdapter());
+  EncoderFactory.register(new WebPCanvasEncoderAdapter());
 
   // Register MP4 encoder (stub - will be implemented in Phase 3)
   EncoderFactory.register(new MP4EncoderAdapter());

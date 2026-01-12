@@ -1430,6 +1430,12 @@ class WebCodecsConversionService {
         });
       }
 
+      const timestampsForEncoding = this.buildDurationAlignedTimestamps({
+        frameCount: orderedImageData.length,
+        durationSeconds: animationDurationSeconds ?? decodeResult.duration,
+        fallbackFps: fpsForEncoding,
+      });
+
       let outputBlob: Blob | null = null;
 
       // Prefer worker-based WebP encoding when available.
@@ -1469,6 +1475,10 @@ class WebCodecsConversionService {
               height: decodeResult.height,
               fps: fpsForEncoding,
               quality: options.quality,
+              timestamps: timestampsForEncoding,
+              durationSeconds: animationDurationSeconds,
+              codec: metadata?.codec,
+              sourceFPS: metadata?.framerate,
               onProgress: reportEncodeProgress,
               shouldCancel: shouldCancelOrDefault,
             });
@@ -1526,15 +1536,9 @@ class WebCodecsConversionService {
 
         ffmpegService.reportStatus('Muxing WebP frames...');
 
-        const timestampsForMuxing = this.buildDurationAlignedTimestamps({
-          frameCount: encodedFrames.length,
-          durationSeconds: animationDurationSeconds ?? decodeResult.duration,
-          fallbackFps: fpsForEncoding,
-        });
-
         outputBlob = await this.muxWebPFrames({
           encodedFrames,
-          timestamps: timestampsForMuxing,
+          timestamps: timestampsForEncoding,
           width: decodeResult.width,
           height: decodeResult.height,
           fps: fpsForEncoding,

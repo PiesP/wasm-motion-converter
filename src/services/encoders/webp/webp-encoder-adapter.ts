@@ -124,7 +124,19 @@ export class WebPEncoderAdapter implements EncoderAdapter {
    * @returns Animated WebP blob
    */
   async encode(request: EncoderRequest): Promise<Blob> {
-    const { frames, width, height, fps, quality, onProgress, shouldCancel } = request;
+    const {
+      frames,
+      width,
+      height,
+      fps,
+      quality,
+      timestamps,
+      durationSeconds,
+      codec,
+      sourceFPS,
+      onProgress,
+      shouldCancel,
+    } = request;
 
     if (frames.length === 0) {
       throw new Error('No frames to encode');
@@ -136,6 +148,10 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       height,
       fps,
       quality,
+      hasTimestamps: Boolean(timestamps && timestamps.length > 0),
+      durationSeconds,
+      codec,
+      sourceFPS,
     });
 
     const startTime = performance.now();
@@ -161,13 +177,20 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       }
 
       // Calculate frame durations
-      const effectiveFps = resolveWebPFps(encodedFrames.length, fps);
-      const timestamps = Array.from({ length: encodedFrames.length }, (_, i) => i / effectiveFps);
+      const frameCount = encodedFrames.length;
+      const effectiveFps = resolveWebPFps(frameCount, fps, durationSeconds);
+      const timestampsForDurations =
+        timestamps && timestamps.length >= frameCount
+          ? timestamps.slice(0, frameCount)
+          : Array.from({ length: frameCount }, (_, i) => i / Math.max(1, effectiveFps));
+
       const durations = buildWebPFrameDurations({
-        timestamps,
+        timestamps: timestampsForDurations,
         fps: effectiveFps,
-        frameCount: encodedFrames.length,
-        sourceFPS: fps,
+        frameCount,
+        sourceFPS: sourceFPS ?? fps,
+        codec,
+        durationSeconds,
       });
 
       // Prepare WebP frames with durations
