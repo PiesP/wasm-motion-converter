@@ -10,12 +10,12 @@ import type {
   ConversionOptions,
   ConversionOutputBlob,
   VideoMetadata,
-} from '@t/conversion-types';
+} from "@t/conversion-types";
 
 /**
  * Conversion path types
  */
-export type ConversionPath = 'gpu' | 'cpu' | 'hybrid' | 'webav';
+export type ConversionPath = "gpu" | "cpu" | "hybrid" | "webav";
 
 /**
  * Conversion request
@@ -62,6 +62,8 @@ export interface ConversionMetadata {
   path: ConversionPath;
   /** Encoder name (e.g., 'modern-gif', 'libwebp-wasm', 'ffmpeg') */
   encoder: string;
+  /** WebCodecs capture mode used during GPU decoding (best-effort; e.g., 'demuxer', 'seek'). */
+  captureModeUsed?: string | null;
   /** Total conversion time in milliseconds */
   conversionTimeMs: number;
   /** Number of frames processed */
