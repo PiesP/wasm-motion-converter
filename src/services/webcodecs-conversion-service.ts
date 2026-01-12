@@ -2039,14 +2039,24 @@ class WebCodecsConversionService {
             colorSpace: frame.colorSpace,
           }));
 
-          outputBlob = await this.gifWorkerPool.execute(async (worker) => {
-            return await worker.encode(serializableFrames, {
-              width: decodeResult.width,
-              height: decodeResult.height,
-              fps: targetFps,
-              quality,
+          const encodeHeartbeat = ffmpegService.startProgressHeartbeat(
+            FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START,
+            FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END,
+            Math.min(180, Math.max(20, Math.round(serializableFrames.length / 4)))
+          );
+
+          try {
+            outputBlob = await this.gifWorkerPool.execute(async (worker) => {
+              return await worker.encode(serializableFrames, {
+                width: decodeResult.width,
+                height: decodeResult.height,
+                fps: targetFps,
+                quality,
+              });
             });
-          });
+          } finally {
+            ffmpegService.stopProgressHeartbeat(encodeHeartbeat);
+          }
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           logger.warn('conversion', 'GIF worker encoding failed, retrying on main thread', {

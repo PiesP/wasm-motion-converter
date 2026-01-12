@@ -71,6 +71,17 @@ function shouldLogVfsFileOperation(fileName: string): boolean {
   return true;
 }
 
+const UNTRACKED_DELETE_CANDIDATES = new Set<string>([
+  FFMPEG_INTERNALS.PALETTE_FILE_NAME,
+  'output.gif',
+  'output.webp',
+  FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE,
+]);
+
+function shouldAttemptDeleteWhenUntracked(fileName: string): boolean {
+  return UNTRACKED_DELETE_CANDIDATES.has(fileName);
+}
+
 /**
  * FFmpeg VFS manager
  *
@@ -202,6 +213,13 @@ export class FFmpegVFS {
     if (!ffmpeg) {
       return;
     }
+
+    // Avoid noisy duplicate deletes for files we explicitly track.
+    // Still attempt deletes for known FFmpeg-produced artifacts even when untracked.
+    if (!this.knownFiles.has(fileName) && !shouldAttemptDeleteWhenUntracked(fileName)) {
+      return;
+    }
+
     try {
       const deleteStartTime = Date.now();
       await ffmpeg.deleteFile(fileName);
@@ -216,6 +234,14 @@ export class FFmpegVFS {
       // Silent failure is expected when cleanup runs after earlier partial cleanup,
       // or when optional intermediates were not produced.
       if (isProbablyMissingFileDeleteError(error)) {
+        return;
+      }
+
+      // Optional intermediates can legitimately not exist. Avoid scary logs.
+      if (
+        fileName === FFMPEG_INTERNALS.PALETTE_FILE_NAME ||
+        fileName === FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE
+      ) {
         return;
       }
 
@@ -385,8 +411,10 @@ export class FFmpegVFS {
       return;
     }
 
+    const uniqueFileNames = Array.from(new Set(fileNames));
+
     const startTime = Date.now();
-    const totalFiles = fileNames.length;
+    const totalFiles = uniqueFileNames.length;
 
     logger.debug('conversion', 'Starting batch file deletion', {
       fileCount: totalFiles,
@@ -399,7 +427,7 @@ export class FFmpegVFS {
     try {
       // Use Promise.all() for parallel deletion (critical optimization for 86+ frame deletes)
       // This reduces ~30s sequential delete time to <2s
-      await Promise.all(fileNames.map((file) => this.deleteFile(ffmpeg, file)));
+      await Promise.all(uniqueFileNames.map((file) => this.deleteFile(ffmpeg, file)));
 
       const elapsedTime = Date.now() - startTime;
       logger.debug('conversion', 'Batch file deletion complete', {
