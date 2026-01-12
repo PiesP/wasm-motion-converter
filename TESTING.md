@@ -53,7 +53,7 @@ This checklist focuses on the SPA that converts a single video to GIF or WebP us
 ### Result preview & download
 
 - Preview shows the generated loop.
-- Download saves with the correct extension (`.mp4` or `.gif`) and the file opens/plays correctly.
+- Download saves with the correct extension (`.gif` or `.webp`) and the file opens/plays correctly.
 - Size stats make sense (output vs. input).
 
 ### Reset / convert another
@@ -67,7 +67,7 @@ This checklist focuses on the SPA that converts a single video to GIF or WebP us
 - Oversized image beyond limits → friendly error or warning.
 - Missing isolation (no COOP/COEP) → environment warning banner appears.
 - Network offline during FFmpeg download → init timeout with guidance to retry.
-- If a conversion fails, the error message includes a suggestion to proceed (lower quality/scale, try GIF/MP4 alternate).
+- If a conversion fails, the error message includes a suggestion to proceed (lower quality/scale, try GIF/WebP alternate).
 
 ## Accessibility
 
@@ -81,12 +81,12 @@ This checklist focuses on the SPA that converts a single video to GIF or WebP us
 - `pnpm quality` passes (lint, format check, typecheck).
 - `pnpm build` succeeds without errors.
 - `pnpm preview` serves the built app with COOP/COEP headers; `crossOriginIsolated` remains `true`.
-- Conversion succeeds for both MP4 and GIF outputs.
+- Conversion succeeds for both GIF and WebP outputs.
 
 ## Success criteria
 
 - Cross-origin isolation confirmed.
 - FFmpeg loads and shows progress on first run.
-- Single-image flow completes with working MP4 and GIF outputs.
+- Single-video flow completes with working GIF and WebP outputs.
 - Clear progress, error, and warning messages at every stage.
 - Accessible and theme-consistent UI.

@@ -623,16 +623,15 @@ class ConversionOrchestrator {
       return blob;
     } catch (error) {
       const errorMessage = getErrorMessage(error);
-      logger.error(
-        "conversion",
-        "WebAV MP4 conversion failed, falling back to FFmpeg",
-        {
-          error: errorMessage,
-        }
-      );
+      logger.error("conversion", "WebAV MP4 conversion failed", {
+        error: errorMessage,
+      });
 
-      // Fall back to FFmpeg if WebAV fails
-      return this.convertViaCPUPath(request, metadata, conversionMetadata);
+      // MP4 output is currently WebAV-only. The FFmpeg CPU path only supports GIF/WebP.
+      // Keep this failure explicit to avoid masking the root cause with an unrelated error.
+      throw new Error(
+        `MP4 conversion failed. This build currently requires WebAV support for MP4 output. Original error: ${errorMessage}`
+      );
     }
   }
 
