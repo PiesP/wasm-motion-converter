@@ -4,15 +4,14 @@
  * Configures PostCSS processing for the application.
  * Uses Tailwind CSS 4+ PostCSS plugin for modern CSS processing.
  *
- * Note: This file uses .cjs extension for CommonJS compatibility
- * with build tools that may not fully support ESM configuration files.
+ * Note: This file uses .ts extension with ES module syntax to maintain
+ * consistency with the project's "type": "module" configuration.
  *
  * @see https://tailwindcss.com/docs/installation/vite
+ * @see CODE_STANDARDS.md Section 1 (File Organization)
  */
-module.exports = {
+export default {
   plugins: {
-    // Tailwind CSS 4+ PostCSS plugin
-    // Processes Tailwind directives and generates utility classes
     '@tailwindcss/postcss': {},
   },
 };

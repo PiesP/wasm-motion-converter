@@ -449,13 +449,20 @@ export default defineConfig(({ mode }) => {
     // Dependency optimization configuration
     // Exclude @ffmpeg/ffmpeg from pre-bundling to prevent worker URL rewriting issues
     // Vite's dependency pre-bundling can break FFmpeg's internal worker module resolution
+    // Include solid-js for faster dev server startup
     optimizeDeps: {
       exclude: ['@ffmpeg/ffmpeg'],
+      include: ['solid-js/web', 'solid-js/store'],
     },
 
     // Production build configuration
     build: {
       target: 'esnext', // Target modern browsers with ESNext features
+      chunkSizeWarningLimit: 1000, // Increase limit for FFmpeg bundles (1MB)
+      cssCodeSplit: true, // Enable CSS code splitting for better caching
+      sourcemap: false, // Disable source maps for smaller bundle
+      minify: 'esbuild', // Use esbuild for faster minification
+
       rollupOptions: {
         // External dependencies (loaded from CDN via import map)
         // Phase 3.1: Externalize comlink (lowest risk)
@@ -474,14 +481,54 @@ export default defineConfig(({ mode }) => {
         output: {
           format: 'es', // ES module format for tree-shaking
 
+          // Optimized file naming for better caching
+          entryFileNames: 'assets/[name].[hash].js',
+          chunkFileNames: 'assets/[name].[hash].js',
+          assetFileNames: 'assets/[name].[hash].[ext]',
+
+          // Improve tree-shaking
+          preserveModules: false,
+          exports: 'auto',
+
+          // Compact output for smaller bundles
+          compact: true,
+
           // Manual code splitting for optimal long-term caching
-          // Separates stable vendor code from frequently-changing app code
-          // Vendor bundles change rarely, so browsers can cache them longer
-          manualChunks: {
-            // 'vendor-solid': ['solid-js'], // REMOVED: Now loaded from CDN (Phase 3.3)
-            'vendor-ffmpeg': ['@ffmpeg/ffmpeg', '@ffmpeg/util'], // FFmpeg WASM (~4.5KB gzipped)
-            // 'vendor-gif': ['modern-gif'], // REMOVED: Now loaded from CDN (Phase 3.2)
-            // 'vendor-comlink': ['comlink'], // REMOVED: Now loaded from CDN (Phase 3.1)
+          // Separates stable vendor/service code from frequently-changing app code
+          // Service bundles change less frequently than main app, enabling better caching
+          manualChunks(id) {
+            // FFmpeg core bundle
+            if (id.includes('@ffmpeg/ffmpeg') || id.includes('@ffmpeg/util')) {
+              return 'vendor-ffmpeg';
+            }
+
+            // Core services (orchestration, strategy) - changes rarely
+            if (id.includes('src/services/orchestration')) {
+              return 'services-core';
+            }
+
+            // WebCodecs services - separate chunk for GPU path
+            if (
+              id.includes('webcodecs-conversion-service') ||
+              id.includes('webcodecs-support') ||
+              id.includes('webcodecs-decoder')
+            ) {
+              return 'services-webcodecs';
+            }
+
+            // FFmpeg service - separate chunk for CPU path
+            if (id.includes('ffmpeg-service')) {
+              return 'services-ffmpeg';
+            }
+
+            // UI components - can be lazy-loaded
+            if (
+              id.includes('FileDropzone') ||
+              id.includes('ConversionProgress') ||
+              id.includes('ProgressBar')
+            ) {
+              return 'components-ui';
+            }
           },
         },
       },

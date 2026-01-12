@@ -11,7 +11,7 @@
       "src/**",
       "vite.config.ts",
       "tailwind.config.ts",
-      "postcss.config.cjs",
+      "postcss.config.ts",
       "index.html"
     ],
     "ignoreUnknown": true
@@ -67,6 +67,10 @@
         "noForEach": "off",
         // CODE_STANDARDS § 6: Allow static-only classes (singleton pattern)
         "noStaticOnlyClass": "off"
+      },
+      "performance": {
+        // CODE_STANDARDS § 12: Prevent accidental spread accumulation performance issues
+        "noAccumulatingSpread": "warn"
       },
       "a11y": {
         // CODE_STANDARDS § 11: Manual ARIA attributes are added where needed

@@ -24,6 +24,11 @@
   "ignore": [
     "dist/**",
     "tmp/**",
-    "docs/**"
-  ]
+    "docs/**",
+    ".vite-sw-temp/**",
+    "**/*.test.{ts,tsx}",
+    "**/*.spec.{ts,tsx}",
+    "**/*.d.ts"
+  ],
+  "ignoreExportsUsedInFile": true
 }

@@ -14,6 +14,10 @@
     // Use ESNext module system (handled by Vite bundler)
     "module": "ESNext",
 
+    // Enable incremental compilation for faster rebuilds (CODE_STANDARDS § 12)
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo",
+
     // Type definitions for ESNext, DOM APIs, and Web Workers
     "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
 
@@ -55,10 +59,20 @@
   "include": [
     "src/**/*",
     "vite.config.ts",
+    "tailwind.config.ts",
+    "postcss.config.ts",
     "scripts/**/*",
-    "tmp/convert-imports-v2.js"
+    "public/service-worker.ts",
+    "public/sw-register.ts"
   ],
 
   // Files to exclude from compilation
-  "exclude": ["node_modules", "dist"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tmp/**",
+    ".vite-sw-temp/**",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ]
 }

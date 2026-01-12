@@ -105,7 +105,7 @@ self.addEventListener('install', (event: ExtendableEvent) => {
   // Note: Actual fallback bundles are populated on first successful CDN load
   // This ensures fallback cache exists and is ready
   event.waitUntil(
-    caches.open(CACHE_NAMES.fallback).then(cache => {
+    caches.open(CACHE_NAMES.fallback).then(() => {
       console.log(`[SW ${SW_VERSION}] Fallback cache initialized`);
       return Promise.resolve();
     })
@@ -123,9 +123,10 @@ self.addEventListener('activate', (event: ExtendableEvent) => {
     (async () => {
       // Clean up old cache versions
       const cacheNames = await caches.keys();
+      const validCacheNames = ALL_CACHE_NAMES as readonly string[];
       await Promise.all(
         cacheNames.map(cacheName => {
-          if (!ALL_CACHE_NAMES.includes(cacheName)) {
+          if (!validCacheNames.includes(cacheName)) {
             console.log(`[SW ${SW_VERSION}] Deleting old cache: ${cacheName}`);
             return caches.delete(cacheName);
           }
