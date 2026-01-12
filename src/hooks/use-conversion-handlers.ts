@@ -401,7 +401,9 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       }
 
       const duration = Date.now() - conversionStartTime();
-      logger.info('conversion', 'Conversion completed successfully', {
+      // The orchestrator already logs a top-level "Conversion completed successfully".
+      // Avoid duplicating the same info-level log from the UI layer.
+      logger.debug('conversion', 'Conversion result received by UI layer', {
         duration: `${(duration / MS_PER_SECOND).toFixed(2)}s`,
         outputSize: blob.size,
       });
