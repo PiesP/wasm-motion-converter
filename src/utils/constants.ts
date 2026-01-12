@@ -40,26 +40,35 @@ export const WARN_DURATION_SECONDS = 30;
  * Codecs requiring advanced hardware acceleration or special handling.
  * These codecs benefit significantly from GPU decoding via WebCodecs.
  */
-export const COMPLEX_CODECS = ['hevc', 'h265', 'hvc1', 'hev1', 'vp9', 'vp09', 'av1', 'av01'];
+export const COMPLEX_CODECS = [
+  "hevc",
+  "h265",
+  "hvc1",
+  "hev1",
+  "vp9",
+  "vp09",
+  "av1",
+  "av01",
+];
 
 /**
  * Codecs with efficient GPU-accelerated decoding support via WebCodecs API.
  * These are the primary targets for hardware acceleration when available.
  */
 export const WEBCODECS_ACCELERATED = [
-  'av1',
-  'av01',
-  'hevc',
-  'h265',
-  'hvc1',
-  'hev1',
-  'vp9',
-  'vp09',
-  'vp8',
-  'vp08',
-  'h264',
-  'avc1',
-  'avc3',
+  "av1",
+  "av01",
+  "hevc",
+  "h265",
+  "hvc1",
+  "hev1",
+  "vp9",
+  "vp09",
+  "vp8",
+  "vp08",
+  "h264",
+  "avc1",
+  "avc3",
 ];
 
 // ============================================================================
@@ -71,17 +80,17 @@ export const WEBCODECS_ACCELERATED = [
  * Used for file input validation (accept attribute) and format detection.
  */
 export const SUPPORTED_VIDEO_MIMES = [
-  'video/mp4',
-  'video/quicktime',
-  'video/webm',
-  'video/x-msvideo',
-  'video/x-matroska',
-  'video/x-m4v',
-  'video/ogg',
-  'video/mpeg',
-  'video/mp2t',
-  'video/x-ms-wmv',
-  'video/x-flv',
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+  "video/x-msvideo",
+  "video/x-matroska",
+  "video/x-m4v",
+  "video/ogg",
+  "video/mpeg",
+  "video/mp2t",
+  "video/x-ms-wmv",
+  "video/x-flv",
 ];
 
 /**
@@ -89,20 +98,20 @@ export const SUPPORTED_VIDEO_MIMES = [
  * Used for filename-based validation as fallback.
  */
 export const SUPPORTED_VIDEO_EXTENSIONS = [
-  'mp4',
-  'mov',
-  'webm',
-  'avi',
-  'mkv',
-  'm4v',
-  'ogv',
-  'mpg',
-  'mpeg',
-  'ts',
-  'mts',
-  'm2ts',
-  'wmv',
-  'flv',
+  "mp4",
+  "mov",
+  "webm",
+  "avi",
+  "mkv",
+  "m4v",
+  "ogv",
+  "mpg",
+  "mpeg",
+  "ts",
+  "mts",
+  "m2ts",
+  "wmv",
+  "flv",
 ];
 
 // ============================================================================
@@ -110,7 +119,7 @@ export const SUPPORTED_VIDEO_EXTENSIONS = [
 // ============================================================================
 
 /** FFmpeg.wasm core version (multithreaded build) */
-export const FFMPEG_CORE_VERSION = '0.12.6';
+export const FFMPEG_CORE_VERSION = "0.12.6";
 
 /**
  * CDN URLs for FFmpeg core files (JavaScript, WebAssembly, workers).
@@ -156,21 +165,21 @@ export const QUALITY_PRESETS = {
       quality: 50,
       // libwebp preset values are limited to: default/picture/photo/drawing/icon/text
       // ("fast" is NOT a valid libwebp preset and causes FFmpeg to fail.)
-      preset: 'picture',
+      preset: "picture",
       compressionLevel: 2,
       method: 2,
     },
     medium: {
       fps: 15,
       quality: 55,
-      preset: 'picture',
+      preset: "picture",
       compressionLevel: 2,
       method: 2,
     },
     high: {
       fps: 20,
       quality: 70,
-      preset: 'default',
+      preset: "default",
       compressionLevel: 3,
       method: 3,
     },
@@ -192,12 +201,6 @@ export const TIMEOUT_FFMPEG_WORKER_CHECK = 10_000;
 
 /** Timeout for video metadata analysis (30 seconds) */
 export const TIMEOUT_VIDEO_ANALYSIS = 30_000;
-
-/**
- * @deprecated Use `TIMEOUT_CONFIG` with `calculateTimeout()` instead.
- * Kept for backward compatibility. Default conversion timeout (60 seconds).
- */
-export const TIMEOUT_CONVERSION = 60_000;
 
 // ============================================================================
 // DYNAMIC TIMEOUT CONFIGURATION
@@ -221,7 +224,7 @@ export const TIMEOUT_CONVERSION = 60_000;
  * - Base: 60s, per-second: 2s, max: 180s (3 minutes)
  * - A 30s video gets 60 + 60 = 120s timeout
  */
-export interface TimeoutConfig {
+interface TimeoutConfig {
   /** Base timeout in milliseconds */
   baseTimeout: number;
   /** Additional time per second of video duration (milliseconds) */

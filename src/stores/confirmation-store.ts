@@ -7,10 +7,10 @@
  */
 
 // External dependencies
-import { createSignal } from 'solid-js';
+import { createSignal } from "solid-js";
 
 // Type imports
-import type { ValidationWarning } from '@t/validation-types';
+import type { ValidationWarning } from "@t/validation-types";
 
 /**
  * Confirmation dialog state
@@ -18,7 +18,7 @@ import type { ValidationWarning } from '@t/validation-types';
  * Represents the state of the confirmation modal including visibility,
  * warnings to display, and callback functions for user actions.
  */
-export interface ConfirmationState {
+interface ConfirmationState {
   /** Whether the confirmation dialog is visible */
   isVisible: boolean;
   /** Warnings requiring user confirmation */
@@ -34,17 +34,18 @@ export interface ConfirmationState {
  *
  * Tracks visibility, warnings, and callback functions for the confirmation modal.
  */
-const [confirmationState, setConfirmationState] = createSignal<ConfirmationState>({
-  isVisible: false,
-  warnings: [],
-});
+const [confirmationState, setConfirmationState] =
+  createSignal<ConfirmationState>({
+    isVisible: false,
+    warnings: [],
+  });
 
 /**
  * Get current confirmation state
  *
  * @returns Current confirmation dialog state
  */
-export const getConfirmationState = (): ConfirmationState => {
+export const getConfirmationState = () => {
   return confirmationState();
 };
 
@@ -98,23 +99,4 @@ export const cancelDialog = (): void => {
   const state = confirmationState();
   setConfirmationState({ ...state, isVisible: false });
   state.onCancel?.();
-};
-
-/**
- * Hide confirmation dialog
- *
- * Clears all state and hides the dialog without executing callbacks.
- * Use when dismissing the dialog without user action.
- */
-export const hideConfirmation = (): void => {
-  setConfirmationState({ isVisible: false, warnings: [] });
-};
-
-/**
- * Reset confirmation store to initial state
- *
- * Clears all confirmation state including callbacks.
- */
-export const resetConfirmationStore = (): void => {
-  setConfirmationState({ isVisible: false, warnings: [] });
 };

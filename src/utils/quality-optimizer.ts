@@ -1,11 +1,11 @@
-import { QUALITY_PRESETS } from './constants';
+import { QUALITY_PRESETS } from "./constants";
 
-import type { ConversionQuality } from '@t/conversion-types';
+import type { ConversionQuality } from "@t/conversion-types";
 
 /**
  * Supported output formats for conversion
  */
-type ConversionFormat = 'gif' | 'webp';
+type ConversionFormat = "gif" | "webp";
 
 /**
  * Calculate optimal FPS based on source video FPS and quality preset
@@ -37,12 +37,14 @@ export function getOptimalFPS(
 ): number {
   // Validate input
   if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
-    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
+    throw new Error(
+      `Invalid sourceFPS: ${sourceFps}. Must be a positive number.`
+    );
   }
 
   // Get preset FPS for this quality/format combination
   const preset = QUALITY_PRESETS[format][quality];
-  const presetFps = 'fps' in preset ? preset.fps : 15;
+  const presetFps = "fps" in preset ? preset.fps : 15;
 
   // Don't exceed source FPS (no point in upsampling frames)
   // Don't go below preset FPS (maintains quality baseline)
@@ -50,83 +52,4 @@ export function getOptimalFPS(
 
   // Ensure we have a valid FPS (at least 1, at most 60)
   return Math.max(1, Math.min(60, Math.round(optimalFps)));
-}
-
-/**
- * Check if adaptive FPS would provide benefit over preset FPS
- *
- * Adaptive FPS is beneficial when the source FPS differs significantly from
- * the preset FPS, allowing for optimization based on actual input characteristics.
- *
- * @param sourceFPS - Original video frame rate (must be > 0)
- * @param quality - Quality preset (low/medium/high)
- * @param format - Output format (gif/webp)
- * @returns True if adaptive FPS differs from preset FPS, false otherwise
- * @throws Error if sourceFPS is not a positive number
- *
- * @example
- * const shouldAdapt = shouldUseAdaptiveFPS(10, 'high', 'gif'); // true (10 < 30)
- * const shouldAdapt = shouldUseAdaptiveFPS(30, 'high', 'gif'); // false (30 == 30)
- */
-export function shouldUseAdaptiveFPS(
-  sourceFps: number,
-  quality: ConversionQuality,
-  format: ConversionFormat
-): boolean {
-  if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
-    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
-  }
-
-  const preset = QUALITY_PRESETS[format][quality];
-  const presetFps = 'fps' in preset ? preset.fps : 15;
-  const optimalFps = getOptimalFPS(sourceFps, quality, format);
-
-  return optimalFps !== presetFps;
-}
-
-/**
- * Get FPS optimization explanation for user display
- *
- * Provides a human-readable explanation of why and how the FPS was adjusted
- * based on source FPS and quality preset. Useful for transparency in UI.
- *
- * @param sourceFPS - Original video frame rate (must be > 0)
- * @param quality - Quality preset (low/medium/high)
- * @param format - Output format (gif/webp)
- * @returns Human-readable explanation or undefined if no optimization applied
- * @throws Error if sourceFPS is not a positive number
- *
- * @example
- * // For 10 FPS source with 15 FPS preset
- * const msg = getFPSOptimizationMessage(10, 'medium', 'gif');
- * // Returns: "Matched output FPS to source (10 FPS) to avoid unnecessary interpolation"
- *
- * @example
- * // For 30 FPS source with 24 FPS preset
- * const msg = getFPSOptimizationMessage(30, 'high', 'webp');
- * // Returns: undefined (no optimization needed)
- */
-export function getFPSOptimizationMessage(
-  sourceFps: number,
-  quality: ConversionQuality,
-  format: ConversionFormat
-): string | undefined {
-  if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
-    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
-  }
-
-  const optimalFps = getOptimalFPS(sourceFps, quality, format);
-  const preset = QUALITY_PRESETS[format][quality];
-  const presetFps = 'fps' in preset ? preset.fps : 15;
-
-  if (optimalFps === presetFps) {
-    return undefined;
-  }
-
-  if (optimalFps < presetFps) {
-    return `Matched output FPS to source (${optimalFps} FPS) to avoid unnecessary interpolation`;
-  }
-
-  // This shouldn't happen due to min() logic, but included for completeness
-  return `Limited output FPS to preset maximum (${optimalFps} FPS)`;
 }

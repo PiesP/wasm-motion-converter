@@ -12,28 +12,28 @@ import {
   Suspense,
 } from 'solid-js';
 // Eagerly loaded components (used immediately)
-import ConfirmationModal from './components/ConfirmationModal';
-import EnvironmentWarning from './components/EnvironmentWarning';
-import FileDropzone from './components/FileDropzone';
-import FormatSelector from './components/FormatSelector';
-import LicenseAttribution from './components/LicenseAttribution';
-import QualitySelector from './components/QualitySelector';
-import ScaleSelector from './components/ScaleSelector';
-import ThemeToggle from './components/ThemeToggle';
-import ToastContainer from './components/ToastContainer';
-import VideoMetadataDisplay from './components/VideoMetadataDisplay';
-import { useConversionHandlers } from './hooks/use-conversion-handlers';
-import { ffmpegService } from './services/ffmpeg-service';
-import { extendedCapabilityService } from './services/video-pipeline/extended-capability-service';
-import { strategyRegistryService } from './services/orchestration/strategy-registry-service';
-import { strategyHistoryService } from './services/orchestration/strategy-history-service';
+import ConfirmationModal from '@components/ConfirmationModal';
+import EnvironmentWarning from '@components/EnvironmentWarning';
+import FileDropzone from '@components/FileDropzone';
+import FormatSelector from '@components/FormatSelector';
+import LicenseAttribution from '@components/LicenseAttribution';
+import QualitySelector from '@components/QualitySelector';
+import ScaleSelector from '@components/ScaleSelector';
+import ThemeToggle from '@components/ThemeToggle';
+import ToastContainer from '@components/ToastContainer';
+import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
+import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
+import { ffmpegService } from '@services/ffmpeg-service';
+import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
+import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
+import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
 import {
   appState,
   environmentSupported,
   loadingProgress,
   loadingStatusMessage,
   setEnvironmentSupported,
-} from './stores/app-store';
+} from '@stores/app-store';
 import {
   conversionProgress,
   conversionResults,
@@ -46,18 +46,18 @@ import {
   setConversionSettings,
   videoMetadata,
   videoPreviewUrl,
-} from './stores/conversion-store';
-import { debounce } from './utils/debounce';
-import { getErrorMessage } from './utils/error-utils';
-import { isHardwareCacheValid } from './utils/hardware-profile';
-import { logger } from './utils/logger';
-import { isMemoryCritical } from './utils/memory-monitor';
+} from '@stores/conversion-store';
+import { debounce } from '@utils/debounce';
+import { getErrorMessage } from '@utils/error-utils';
+import { isHardwareCacheValid } from '@utils/hardware-profile';
+import { logger } from '@utils/logger';
+import { isMemoryCritical } from '@utils/memory-monitor';
 
 // Lazy loaded components (conditionally shown - reduces initial bundle by ~15KB)
-const ConversionProgress = lazy(() => import('./components/ConversionProgress'));
-const ErrorDisplay = lazy(() => import('./components/ErrorDisplay'));
-const MemoryWarning = lazy(() => import('./components/MemoryWarning'));
-const ResultPreview = lazy(() => import('./components/ResultPreview'));
+const ConversionProgress = lazy(() => import('@components/ConversionProgress'));
+const ErrorDisplay = lazy(() => import('@components/ErrorDisplay'));
+const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
+const ResultPreview = lazy(() => import('@components/ResultPreview'));
 
 /**
  * Main application component orchestrating the video conversion workflow

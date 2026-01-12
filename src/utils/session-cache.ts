@@ -6,12 +6,12 @@
  */
 
 // ============================================================================
-// Storage Helpers (기존 패턴 확장)
+// Storage Helpers (sessionStorage wrappers)
 // ============================================================================
 
-export function readSessionNumber(key: string): number {
+function readSessionNumber(key: string): number {
   try {
-    if (typeof sessionStorage === 'undefined') {
+    if (typeof sessionStorage === "undefined") {
       return 0;
     }
     const raw = sessionStorage.getItem(key);
@@ -25,9 +25,9 @@ export function readSessionNumber(key: string): number {
   }
 }
 
-export function writeSessionNumber(key: string, value: number): void {
+function writeSessionNumber(key: string, value: number): void {
   try {
-    if (typeof sessionStorage === 'undefined') {
+    if (typeof sessionStorage === "undefined") {
       return;
     }
     sessionStorage.setItem(key, String(value));
@@ -38,7 +38,7 @@ export function writeSessionNumber(key: string, value: number): void {
 
 export function readSessionString(key: string): string | null {
   try {
-    if (typeof sessionStorage === 'undefined') {
+    if (typeof sessionStorage === "undefined") {
       return null;
     }
     return sessionStorage.getItem(key);
@@ -49,7 +49,7 @@ export function readSessionString(key: string): string | null {
 
 export function writeSessionString(key: string, value: string): void {
   try {
-    if (typeof sessionStorage === 'undefined') {
+    if (typeof sessionStorage === "undefined") {
       return;
     }
     sessionStorage.setItem(key, value);
@@ -62,17 +62,22 @@ export function writeSessionString(key: string, value: string): void {
 // Capture Mode Caching
 // ============================================================================
 
-export type CaptureMode = 'seek' | 'frame-callback' | 'track' | 'demuxer';
+export type CaptureMode = "seek" | "frame-callback" | "track" | "demuxer";
 
 /**
  * Get cached successful capture mode for a codec
  */
 export function getCachedCaptureMode(codec: string): CaptureMode | null {
-  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, "");
   const key = `dropconvert:capture:success:${normalizedCodec}`;
   const value = readSessionString(key);
 
-  if (value === 'seek' || value === 'frame-callback' || value === 'track' || value === 'demuxer') {
+  if (
+    value === "seek" ||
+    value === "frame-callback" ||
+    value === "track" ||
+    value === "demuxer"
+  ) {
     return value;
   }
 
@@ -83,7 +88,7 @@ export function getCachedCaptureMode(codec: string): CaptureMode | null {
  * Cache successful capture mode for a codec
  */
 export function cacheCaptureMode(codec: string, mode: CaptureMode): void {
-  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, "");
   const key = `dropconvert:capture:success:${normalizedCodec}`;
   writeSessionString(key, mode);
 }
@@ -93,12 +98,12 @@ export function cacheCaptureMode(codec: string, mode: CaptureMode): void {
 // ============================================================================
 
 export function getCachedVFSBatchSize(): number | null {
-  const value = readSessionNumber('dropconvert:vfs:batchSize');
+  const value = readSessionNumber("dropconvert:vfs:batchSize");
   return value > 0 ? value : null;
 }
 
 export function cacheVFSBatchSize(batchSize: number): void {
-  writeSessionNumber('dropconvert:vfs:batchSize', batchSize);
+  writeSessionNumber("dropconvert:vfs:batchSize", batchSize);
 }
 
 // ============================================================================
@@ -106,12 +111,12 @@ export function cacheVFSBatchSize(batchSize: number): void {
 // ============================================================================
 
 export function getCachedWebPChunkSize(): number | null {
-  const value = readSessionNumber('dropconvert:webp:chunkSize');
+  const value = readSessionNumber("dropconvert:webp:chunkSize");
   return value > 0 ? value : null;
 }
 
 export function cacheWebPChunkSize(chunkSize: number): void {
-  writeSessionNumber('dropconvert:webp:chunkSize', chunkSize);
+  writeSessionNumber("dropconvert:webp:chunkSize", chunkSize);
 }
 
 // ============================================================================
@@ -137,8 +142,10 @@ export interface CapturePerformance {
  *
  * Returns null if cache is missing, invalid, or stale (>5 minutes old)
  */
-export function getCachedCapturePerformance(codec: string): CapturePerformance | null {
-  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, '');
+export function getCachedCapturePerformance(
+  codec: string
+): CapturePerformance | null {
+  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, "");
   const key = `dropconvert:capture:perf:${normalizedCodec}`;
   const json = readSessionString(key);
 
@@ -150,7 +157,12 @@ export function getCachedCapturePerformance(codec: string): CapturePerformance |
     const perf = JSON.parse(json) as CapturePerformance;
 
     // Validate performance data
-    if (!perf.mode || !perf.avgMsPerFrame || !perf.sampleSize || !perf.timestamp) {
+    if (
+      !perf.mode ||
+      !perf.avgMsPerFrame ||
+      !perf.sampleSize ||
+      !perf.timestamp
+    ) {
       return null;
     }
 
@@ -175,7 +187,7 @@ export function cacheCapturePerformance(
   totalMs: number,
   frameCount: number
 ): void {
-  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalizedCodec = codec.toLowerCase().replace(/[^a-z0-9]/g, "");
   const avgMsPerFrame = frameCount > 0 ? totalMs / frameCount : 0;
 
   const perf: CapturePerformance = {

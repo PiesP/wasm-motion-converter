@@ -6,10 +6,10 @@
  */
 
 // External dependencies
-import { batch, createSignal } from 'solid-js';
+import { createSignal } from "solid-js";
 
 // Type imports
-import type { AppState } from '@t/app-types';
+import type { AppState } from "@t/app-types";
 
 /**
  * Current application state
@@ -22,7 +22,7 @@ import type { AppState } from '@t/app-types';
  * - 'done': Conversion completed successfully
  * - 'error': Error occurred
  */
-export const [appState, setAppState] = createSignal<AppState>('idle');
+export const [appState, setAppState] = createSignal<AppState>("idle");
 
 /**
  * FFmpeg loading progress (0-100)
@@ -38,7 +38,8 @@ export const [loadingProgress, setLoadingProgress] = createSignal<number>(0);
  * Human-readable status message during FFmpeg initialization.
  * Examples: "Downloading FFmpeg core...", "Initializing worker..."
  */
-export const [loadingStatusMessage, setLoadingStatusMessage] = createSignal<string>('');
+export const [loadingStatusMessage, setLoadingStatusMessage] =
+  createSignal<string>("");
 
 /**
  * Environment support status
@@ -50,19 +51,5 @@ export const [loadingStatusMessage, setLoadingStatusMessage] = createSignal<stri
  *
  * Set to false if critical features are missing.
  */
-export const [environmentSupported, setEnvironmentSupported] = createSignal<boolean>(true);
-
-/**
- * Reset app store to initial state
- *
- * Clears all app-level state. Use when starting a new conversion
- * or recovering from errors.
- */
-export const resetAppStore = (): void => {
-  batch(() => {
-    setAppState('idle');
-    setLoadingProgress(0);
-    setLoadingStatusMessage('');
-    // Note: environmentSupported is not reset (determined at startup)
-  });
-};
+export const [environmentSupported, setEnvironmentSupported] =
+  createSignal<boolean>(true);
