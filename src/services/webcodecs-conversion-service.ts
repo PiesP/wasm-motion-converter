@@ -2263,13 +2263,16 @@ class WebCodecsConversionService {
         });
       }
 
-      // Force cleanup of any lingering intervals (defensive)
-      try {
-        ffmpegService.getMonitoring()?.forceCleanupAll();
-      } catch (monitoringError) {
-        logger.warn('conversion', 'Force cleanup failed (non-critical)', {
-          error: getErrorMessage(monitoringError),
-        });
+      // Force cleanup of any lingering intervals only if endExternalConversion failed.
+      // endExternalConversion already calls forceCleanupAll() on success.
+      if (!externalEnded) {
+        try {
+          ffmpegService.getMonitoring()?.forceCleanupAll();
+        } catch (monitoringError) {
+          logger.warn('conversion', 'Force cleanup failed (non-critical)', {
+            error: getErrorMessage(monitoringError),
+          });
+        }
       }
     }
   }

@@ -28,6 +28,7 @@ class FFmpegService {
   private pipeline: FFmpegPipeline;
   private progressCallback: ((progress: number) => void) | null = null;
   private statusCallback: ((message: string) => void) | null = null;
+  private isReportingPipelineProgress = false;
 
   constructor() {
     this.pipeline = new FFmpegPipeline();
@@ -101,7 +102,12 @@ class FFmpegService {
   ): Promise<ConversionOutputBlob> {
     return this.pipeline.convertToGIF(file, options, metadata, inputOverride, {
       onProgress: (progress) => {
-        this.reportProgress(progress);
+        this.isReportingPipelineProgress = true;
+        try {
+          this.reportProgress(progress);
+        } finally {
+          this.isReportingPipelineProgress = false;
+        }
       },
       onStatusUpdate: (message) => {
         this.reportStatus(message);
@@ -129,7 +135,12 @@ class FFmpegService {
   ): Promise<ConversionOutputBlob> {
     return this.pipeline.convertToWebP(file, options, metadata, inputOverride, {
       onProgress: (progress) => {
-        this.reportProgress(progress);
+        this.isReportingPipelineProgress = true;
+        try {
+          this.reportProgress(progress);
+        } finally {
+          this.isReportingPipelineProgress = false;
+        }
       },
       onStatusUpdate: (message) => {
         this.reportStatus(message);
@@ -150,7 +161,12 @@ class FFmpegService {
   async encodeFrameSequence(params: FrameSequenceParams): Promise<Blob> {
     return this.pipeline.encodeFrameSequence(params, {
       onProgress: (progress) => {
-        this.reportProgress(progress);
+        this.isReportingPipelineProgress = true;
+        try {
+          this.reportProgress(progress);
+        } finally {
+          this.isReportingPipelineProgress = false;
+        }
       },
       onStatusUpdate: (message) => {
         this.reportStatus(message);
@@ -217,8 +233,13 @@ class FFmpegService {
    */
   reportProgress(progress: number): void {
     this.progressCallback?.(progress);
-    // Do NOT call pipeline.reportProgress here - it creates infinite recursion
-    // The pipeline already calls this method via the onProgress callback
+    // External callers (e.g., WebCodecs path) use this method directly.
+    // In that case, we also need to update the watchdog's progress timestamp.
+    // When progress originates from the pipeline callback, updating the pipeline again
+    // would cause recursion; guard with a local flag.
+    if (!this.isReportingPipelineProgress) {
+      this.pipeline.reportProgress(progress);
+    }
   }
 
   /**

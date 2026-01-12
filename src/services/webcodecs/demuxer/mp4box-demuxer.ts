@@ -65,6 +65,8 @@ type Mp4BoxModule = {
   default?: { createFile: () => Mp4BoxFileInstance };
 };
 
+let mp4boxModulePromise: Promise<Mp4BoxModule> | null = null;
+
 export class MP4BoxDemuxer implements DemuxerAdapter {
   private mp4boxFile: Mp4BoxFileInstance | null = null;
   private videoTrack: Mp4BoxTrack | null = null;
@@ -124,7 +126,9 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
       });
 
       const arrayBuffer = await file.arrayBuffer();
-      const bufferWithFileStart = arrayBuffer as ArrayBuffer & { fileStart: number };
+      const bufferWithFileStart = arrayBuffer as ArrayBuffer & {
+        fileStart: number;
+      };
       bufferWithFileStart.fileStart = 0;
 
       mp4boxFile.appendBuffer(bufferWithFileStart);
@@ -630,10 +634,18 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @internal Private method, called during initialize()
    */
   private async loadMP4Box(): Promise<Mp4BoxModule> {
-    return loadFromCDN<Mp4BoxModule>('mp4box.js', [
-      'https://esm.sh/mp4box@0.5.2',
-      'https://cdn.jsdelivr.net/npm/mp4box@0.5.2/+esm',
-      'https://unpkg.com/mp4box@0.5.2/+esm',
-    ]);
+    if (!mp4boxModulePromise) {
+      mp4boxModulePromise = loadFromCDN<Mp4BoxModule>('mp4box.js', [
+        'https://esm.sh/mp4box@0.5.2',
+        'https://cdn.jsdelivr.net/npm/mp4box@0.5.2/+esm',
+        'https://unpkg.com/mp4box@0.5.2/+esm',
+      ]);
+    }
+
+    return mp4boxModulePromise.catch((error) => {
+      // Allow retry on subsequent attempts if CDN loading failed.
+      mp4boxModulePromise = null;
+      throw error;
+    });
   }
 }

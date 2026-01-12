@@ -24,6 +24,12 @@ import { validateOutputBytes } from '@services/ffmpeg/output-validation';
 function isProbablyMissingFileDeleteError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase();
 
+  // Some Emscripten FS errors surface as opaque objects that stringify to
+  // "[object Object]". During cleanup, treat these as missing-file noise.
+  if (message === 'object' || message === '[object object]') {
+    return true;
+  }
+
   // Common platform / Node-like patterns (may appear in dev tooling or polyfills)
   if (
     message.includes('enoent') ||
@@ -51,6 +57,18 @@ function isProbablyMissingFileDeleteError(error: unknown): boolean {
   }
 
   return false;
+}
+
+function shouldLogVfsFileOperation(fileName: string): boolean {
+  // Frame sequences can involve hundreds of files; per-file logs are extremely noisy.
+  if (
+    fileName.startsWith(FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX) ||
+    /^frame_\d+\./.test(fileName)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -135,7 +153,9 @@ export class FFmpegVFS {
       }
       await ffmpeg.writeFile(fileName, data);
       this.knownFiles.add(fileName);
-      logger.debug('conversion', `Wrote file: ${fileName}`, { size });
+      if (shouldLogVfsFileOperation(fileName)) {
+        logger.debug('conversion', `Wrote file: ${fileName}`, { size });
+      }
     } catch (error) {
       const message = getErrorMessage(error);
       logger.error('conversion', `Failed to write ${fileName}`, {
@@ -187,7 +207,11 @@ export class FFmpegVFS {
       await ffmpeg.deleteFile(fileName);
       this.knownFiles.delete(fileName);
       const deleteTime = Date.now() - deleteStartTime;
-      logger.debug('conversion', `Deleted ${fileName}`, { timeMs: deleteTime });
+      if (shouldLogVfsFileOperation(fileName)) {
+        logger.debug('conversion', `Deleted ${fileName}`, {
+          timeMs: deleteTime,
+        });
+      }
     } catch (error) {
       // Silent failure is expected when cleanup runs after earlier partial cleanup,
       // or when optional intermediates were not produced.
@@ -195,9 +219,11 @@ export class FFmpegVFS {
         return;
       }
 
-      logger.debug('conversion', `Could not delete ${fileName} (non-critical)`, {
-        error: getErrorMessage(error),
-      });
+      if (shouldLogVfsFileOperation(fileName)) {
+        logger.debug('conversion', `Could not delete ${fileName} (non-critical)`, {
+          error: getErrorMessage(error),
+        });
+      }
     }
   }
 

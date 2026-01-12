@@ -68,13 +68,18 @@ export async function encodeModernGif(
     maxColors,
   });
 
+  const totalFrames = frames.length;
+  const maxBeforeEncode = Math.max(0, totalFrames - 1);
+
   // Convert ImageData frames to UnencodedFrame format
   const gifFrames = frames.map((imageData, index) => {
     if (shouldCancel?.()) {
       throw new Error('Conversion cancelled by user');
     }
 
-    onProgress?.(index + 1, frames.length);
+    // Reserve the final progress step for after encode() completes.
+    const progressCurrent = Math.min(index + 1, maxBeforeEncode);
+    onProgress?.(progressCurrent, totalFrames);
 
     return {
       data: imageData.data,
@@ -82,23 +87,49 @@ export async function encodeModernGif(
     };
   });
 
-  const blob = await encode({
-    width,
-    height,
-    frames: gifFrames,
-    maxColors,
-    format: 'blob',
-  });
+  // modern-gif does not expose granular progress during encode().
+  // Emit a lightweight keepalive so external watchdog monitoring doesn't flag
+  // a false stall during the encode step.
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let cancelledDuringEncode = false;
 
-  const duration = performance.now() - startTime;
+  try {
+    heartbeatTimer = setInterval(() => {
+      if (shouldCancel?.()) {
+        cancelledDuringEncode = true;
+      }
 
-  logger.info('conversion', 'modern-gif encoding completed', {
-    frameCount: frames.length,
-    fileSize: blob.size,
-    duration: Math.round(duration),
-    fps,
-    maxColors,
-  });
+      onProgress?.(maxBeforeEncode, totalFrames);
+    }, 1_000);
 
-  return blob;
+    const blob = await encode({
+      width,
+      height,
+      frames: gifFrames,
+      maxColors,
+      format: 'blob',
+    });
+
+    if (cancelledDuringEncode || shouldCancel?.()) {
+      throw new Error('Conversion cancelled by user');
+    }
+
+    onProgress?.(totalFrames, totalFrames);
+
+    const duration = performance.now() - startTime;
+
+    logger.info('conversion', 'modern-gif encoding completed', {
+      frameCount: frames.length,
+      fileSize: blob.size,
+      duration: Math.round(duration),
+      fps,
+      maxColors,
+    });
+
+    return blob;
+  } finally {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+    }
+  }
 }
