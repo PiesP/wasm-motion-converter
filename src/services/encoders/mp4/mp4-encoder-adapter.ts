@@ -19,8 +19,11 @@
  * ImageData frames → VideoFrame → VideoEncoder → EncodedVideoChunk → MP4 container
  */
 
-import { logger } from '@utils/logger';
-import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface';
+import { logger } from "@utils/logger";
+import type {
+  EncoderAdapter,
+  EncoderRequest,
+} from "@services/encoders/encoder-interface";
 
 /**
  * MP4 encoder adapter
@@ -29,10 +32,10 @@ import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-
  * Uses H.264 codec with baseline profile for maximum compatibility.
  */
 export class MP4EncoderAdapter implements EncoderAdapter {
-  name = 'mp4-webcodecs';
+  name = "mp4-webcodecs";
 
   capabilities = {
-    formats: ['mp4' as const],
+    formats: ["mp4" as const],
     supportsWorkers: false, // VideoEncoder is main-thread only
     requiresSharedArrayBuffer: false,
     maxFrames: undefined, // No practical limit for MP4
@@ -52,14 +55,14 @@ export class MP4EncoderAdapter implements EncoderAdapter {
   async isAvailable(): Promise<boolean> {
     try {
       // Check VideoEncoder support
-      if (typeof VideoEncoder === 'undefined') {
-        logger.debug('mp4-encoder', 'VideoEncoder API not available');
+      if (typeof VideoEncoder === "undefined") {
+        logger.debug("mp4-encoder", "VideoEncoder API not available");
         return false;
       }
 
       // Check H.264 codec support (baseline profile, level 3.0)
       const config: VideoEncoderConfig = {
-        codec: 'avc1.42001E', // H.264 Baseline Profile Level 3.0
+        codec: "avc1.42001E", // H.264 Baseline Profile Level 3.0
         width: 640,
         height: 480,
         bitrate: 1_000_000,
@@ -68,14 +71,14 @@ export class MP4EncoderAdapter implements EncoderAdapter {
 
       const support = await VideoEncoder.isConfigSupported(config);
       if (!support.supported) {
-        logger.debug('mp4-encoder', 'H.264 codec not supported');
+        logger.debug("mp4-encoder", "H.264 codec not supported");
         return false;
       }
 
-      logger.debug('mp4-encoder', 'MP4 encoder available (WebCodecs H.264)');
+      logger.debug("mp4-encoder", "MP4 encoder available (WebCodecs H.264)");
       return true;
     } catch (error) {
-      logger.debug('mp4-encoder', 'MP4 encoder availability check failed', {
+      logger.debug("mp4-encoder", "MP4 encoder availability check failed", {
         error,
       });
       return false;
@@ -89,13 +92,14 @@ export class MP4EncoderAdapter implements EncoderAdapter {
    * @returns MP4 video blob
    */
   async encode(request: EncoderRequest): Promise<Blob> {
-    const { frames, width, height, fps, quality, onProgress, shouldCancel } = request;
+    const { frames, width, height, fps, quality, onProgress, shouldCancel } =
+      request;
 
     if (frames.length === 0) {
-      throw new Error('No frames to encode');
+      throw new Error("No frames to encode");
     }
 
-    logger.info('mp4-encoder', 'Starting MP4 encoding', {
+    logger.info("mp4-encoder", "Starting MP4 encoding", {
       frameCount: frames.length,
       width,
       height,
@@ -111,17 +115,17 @@ export class MP4EncoderAdapter implements EncoderAdapter {
 
       // Configure and create encoder
       const config: VideoEncoderConfig = {
-        codec: 'avc1.42001E', // H.264 Baseline Profile Level 3.0
+        codec: "avc1.42001E", // H.264 Baseline Profile Level 3.0
         width,
         height,
         bitrate,
         framerate: fps,
-        hardwareAcceleration: 'prefer-hardware',
+        hardwareAcceleration: "prefer-hardware",
         // Baseline profile: no B-frames, simpler encoding
-        avc: { format: 'avc' },
+        avc: { format: "avc" },
       };
 
-      logger.debug('mp4-encoder', 'Creating VideoEncoder', { config });
+      logger.debug("mp4-encoder", "Creating VideoEncoder", { config });
 
       this.chunks = [];
       this.encoder = await this.createEncoder(config);
@@ -132,7 +136,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
 
       for (let i = 0; i < frames.length; i++) {
         if (shouldCancel?.()) {
-          throw new Error('Encoding cancelled');
+          throw new Error("Encoding cancelled");
         }
 
         const frame = frames[i];
@@ -143,7 +147,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
         // Create VideoFrame from ImageData
         // VideoFrame constructor requires buffer + BufferInit, not ImageData directly
         const videoFrame = new VideoFrame(frame.data.buffer, {
-          format: 'RGBA',
+          format: "RGBA",
           codedWidth: width,
           codedHeight: height,
           timestamp: i * frameDurationUs,
@@ -173,7 +177,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       const blob = await this.createMP4Blob(this.chunks, width, height, fps);
 
       const duration = performance.now() - startTime;
-      logger.performance('MP4 encoding completed', {
+      logger.performance("MP4 encoding completed", {
         frameCount: frames.length,
         durationMs: Math.round(duration),
         outputSize: blob.size,
@@ -184,7 +188,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       return blob;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error('mp4-encoder', 'MP4 encoding failed', { error: message });
+      logger.error("mp4-encoder", "MP4 encoding failed", { error: message });
       throw error;
     } finally {
       await this.dispose();
@@ -198,13 +202,14 @@ export class MP4EncoderAdapter implements EncoderAdapter {
     width: number,
     height: number,
     fps: number,
-    quality: 'low' | 'medium' | 'high'
+    quality: "low" | "medium" | "high"
   ): number {
     // Base bitrate: pixels per second * bits per pixel
     const pixelsPerSecond = width * height * fps;
 
     // Bits per pixel based on quality
-    const bitsPerPixel = quality === 'low' ? 0.1 : quality === 'medium' ? 0.15 : 0.2;
+    const bitsPerPixel =
+      quality === "low" ? 0.1 : quality === "medium" ? 0.15 : 0.2;
 
     const baseBitrate = pixelsPerSecond * bitsPerPixel;
 
@@ -218,7 +223,9 @@ export class MP4EncoderAdapter implements EncoderAdapter {
   /**
    * Create VideoEncoder with error handling
    */
-  private async createEncoder(config: VideoEncoderConfig): Promise<VideoEncoder> {
+  private async createEncoder(
+    config: VideoEncoderConfig
+  ): Promise<VideoEncoder> {
     return new Promise((resolve, reject) => {
       let resolved = false;
 
@@ -228,7 +235,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
 
           // Log first chunk metadata for debugging
           if (this.chunks.length === 1 && metadata) {
-            logger.debug('mp4-encoder', 'First chunk encoded', {
+            logger.debug("mp4-encoder", "First chunk encoded", {
               type: chunk.type,
               timestamp: chunk.timestamp,
               byteLength: chunk.byteLength,
@@ -237,8 +244,9 @@ export class MP4EncoderAdapter implements EncoderAdapter {
           }
         },
         error: (error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          logger.error('mp4-encoder', 'VideoEncoder error', { error: message });
+          const message =
+            error instanceof Error ? error.message : String(error);
+          logger.error("mp4-encoder", "VideoEncoder error", { error: message });
 
           if (!resolved) {
             resolved = true;
@@ -253,7 +261,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
         resolve(encoder);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        logger.error('mp4-encoder', 'VideoEncoder configuration failed', {
+        logger.error("mp4-encoder", "VideoEncoder configuration failed", {
           error: message,
           config,
         });
@@ -269,11 +277,19 @@ export class MP4EncoderAdapter implements EncoderAdapter {
   /**
    * Create MP4 blob from encoded chunks
    *
-   * Creates a minimal fragmented MP4 (fMP4) container with encoded H.264 data.
-   * This is a simplified implementation for basic MP4 output.
+   * Current Implementation: Simplified H.264 elementary stream
+   * Creates a concatenation of encoded chunks without proper MP4 container structure.
+   * This works in some players but may have compatibility issues.
    *
-   * Note: For production use, consider using a full-featured MP4 muxer library
-   * like mp4-muxer (https://github.com/Vanilagy/mp4-muxer) for better compatibility.
+   * TODO: Implement proper MP4 muxing with correct box structure:
+   * - ftyp: File type box
+   * - moov: Movie metadata box
+   * - mdat: Media data box (or moof/mdat for fragmented MP4)
+   *
+   * Recommendation: Use mp4-muxer library for production
+   * (https://github.com/Vanilagy/mp4-muxer)
+   *
+   * Note: This is marked as a TODO for Phase 2 optimization when MP4 becomes a priority format.
    */
   private async createMP4Blob(
     chunks: EncodedVideoChunk[],
@@ -282,10 +298,10 @@ export class MP4EncoderAdapter implements EncoderAdapter {
     fps: number
   ): Promise<Blob> {
     if (chunks.length === 0) {
-      throw new Error('No encoded chunks available');
+      throw new Error("No encoded chunks available");
     }
 
-    logger.debug('mp4-encoder', 'Creating MP4 blob', {
+    logger.debug("mp4-encoder", "Creating MP4 blob", {
       chunkCount: chunks.length,
       width,
       height,
@@ -303,13 +319,15 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       totalSize += chunk.byteLength;
     }
 
-    // For now, create a simple concatenation of chunks
+    // Simplified MP4 format: concatenation of H.264 chunks
     // This creates a raw H.264 stream, not a proper MP4 container
-    // TODO: Implement proper MP4 muxing with ftyp, moov, mdat boxes
-
-    logger.warn('mp4-encoder', 'Using simplified MP4 format (H.264 elementary stream)', {
-      note: 'For full MP4 container support, consider adding mp4-muxer library',
-    });
+    logger.warn(
+      "mp4-encoder",
+      "Using simplified MP4 format (H.264 elementary stream)",
+      {
+        note: "For full MP4 container support, add mp4-muxer library in Phase 2",
+      }
+    );
 
     // Concatenate all chunks
     const mp4Data = new Uint8Array(totalSize);
@@ -322,7 +340,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
 
     // Create blob with MP4 MIME type
     // Note: This is a simplified format that may not play in all players
-    return new Blob([mp4Data], { type: 'video/mp4' });
+    return new Blob([mp4Data], { type: "video/mp4" });
   }
 
   /**
@@ -331,17 +349,17 @@ export class MP4EncoderAdapter implements EncoderAdapter {
   async dispose(): Promise<void> {
     if (this.encoder) {
       try {
-        if (this.encoder.state !== 'closed') {
+        if (this.encoder.state !== "closed") {
           this.encoder.close();
         }
       } catch (error) {
-        logger.debug('mp4-encoder', 'Error closing encoder', { error });
+        logger.debug("mp4-encoder", "Error closing encoder", { error });
       }
       this.encoder = null;
     }
 
     this.chunks = [];
 
-    logger.debug('mp4-encoder', 'MP4 encoder disposed');
+    logger.debug("mp4-encoder", "MP4 encoder disposed");
   }
 }
