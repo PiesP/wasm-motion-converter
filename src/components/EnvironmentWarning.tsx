@@ -1,6 +1,5 @@
 import type { Component } from 'solid-js';
 import { createSignal, onMount, Show } from 'solid-js';
-import { showToast } from '@stores/toast-store';
 import { logger } from '@utils/logger';
 
 /**
@@ -64,14 +63,6 @@ const EnvironmentWarning: Component = () => {
       hasSharedArrayBuffer: sharedArrayBufferAvailable,
       isCrossOriginIsolated: crossOriginIsolationEnabled,
     });
-
-    showToast(
-      `SharedArrayBuffer: ${sharedArrayBufferAvailable ? 'Available' : 'Unavailable'} · crossOriginIsolated: ${
-        crossOriginIsolationEnabled ? 'true' : 'false'
-      } (see DevTools console for details)`,
-      'warning',
-      8000
-    );
   };
 
   return (
@@ -149,9 +140,9 @@ const EnvironmentWarning: Component = () => {
                 type="button"
                 onClick={handleTestEnvironment}
                 class="inline-flex items-center px-3 py-1.5 border border-yellow-600 dark:border-yellow-500 text-sm font-medium rounded text-yellow-700 dark:text-yellow-300 bg-yellow-100 dark:bg-yellow-900 hover:bg-yellow-200 dark:hover:bg-yellow-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
-                aria-label="Test environment capabilities"
+                aria-label="Log environment capabilities to the DevTools console"
               >
-                Test environment
+                Log to console
               </button>
             </div>
           </Show>

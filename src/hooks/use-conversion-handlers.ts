@@ -29,7 +29,6 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
-import { showToast } from '@stores/toast-store';
 import type { ConversionResult, VideoMetadata } from '@t/conversion-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { WARN_RESOLUTION_PIXELS } from '@utils/constants';
@@ -418,7 +417,6 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       setAppState('done');
       setConversionStatusMessage('');
       setConversionStartTime(0);
-      showToast('Conversion complete! Click download to save.', 'success');
       // Move focus to download button for keyboard users and screen readers
       queueMicrotask(() => {
         document.querySelector<HTMLButtonElement>('[data-download-button]')?.focus();

@@ -20,7 +20,6 @@ import LicenseAttribution from '@components/LicenseAttribution';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
 import ThemeToggle from '@components/ThemeToggle';
-import ToastContainer from '@components/ToastContainer';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
 import { ffmpegService } from '@services/ffmpeg-service';
@@ -524,7 +523,6 @@ const App: Component = () => {
         </main>
 
         <LicenseAttribution />
-        <ToastContainer />
         <ConfirmationModal />
       </div>
     </ErrorBoundary>
