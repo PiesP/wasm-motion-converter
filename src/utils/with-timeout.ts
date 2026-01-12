@@ -80,7 +80,7 @@ export async function withTimeout<T>(
 
       // Force terminate FFmpeg to break hung encoder (prevents resource leaks)
       try {
-        import('../services/ffmpeg-service').then(({ ffmpegService }) => {
+        import('@services/ffmpeg-service').then(({ ffmpegService }) => {
           if (ffmpegService.isLoaded()) {
             logger.info('general', 'Terminating FFmpeg due to timeout');
             ffmpegService.terminate();

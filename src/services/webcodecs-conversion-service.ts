@@ -1166,8 +1166,12 @@ class WebCodecsConversionService {
 
         throw new Error(
           `Frame extraction incomplete: captured only ${decodeResult.frameCount} of ${validationExpectedFrames} ` +
-            `expected frames (${(captureRatio * 100).toFixed(1)}%). This would cause FFmpeg encoder hang. ` +
-            `Minimum required: ${minRequiredRatio * 100}% capture ratio or ${minAbsoluteFrames} absolute frames. ` +
+            `expected frames (${(captureRatio * 100).toFixed(
+              1
+            )}%). This would cause FFmpeg encoder hang. ` +
+            `Minimum required: ${
+              minRequiredRatio * 100
+            }% capture ratio or ${minAbsoluteFrames} absolute frames. ` +
             `Please try a different video or report this issue if it persists.`
         );
       }
@@ -1771,6 +1775,35 @@ class WebCodecsConversionService {
           throw fallbackError;
         }
 
+        // CRITICAL: Validate fallback frame capture completeness
+        // Incomplete sequences here will definitely hang the FFmpeg encoder
+        const validationExpectedFrames = Math.max(
+          1,
+          Math.ceil(Math.max(0, fallbackResult.duration) * Math.max(1, targetFps))
+        );
+        const captureRatio = fallbackResult.frameCount / validationExpectedFrames;
+        const minRequiredRatio = 0.5;
+        const minAbsoluteFrames = 10;
+
+        if (fallbackResult.frameCount < minAbsoluteFrames || captureRatio < minRequiredRatio) {
+          // Cleanup files before throwing
+          if (fallbackFrameFiles.length > 0) {
+            await ffmpegService.deleteVirtualFiles(fallbackFrameFiles);
+          }
+
+          const errorMsg =
+            `Fallback frame extraction incomplete: captured ${fallbackResult.frameCount} of ${validationExpectedFrames} frames ` +
+            `(${(captureRatio * 100).toFixed(1)}%). Minimum required: ${minRequiredRatio * 100}%.`;
+
+          logger.error('conversion', errorMsg, {
+            captured: fallbackResult.frameCount,
+            expected: validationExpectedFrames,
+            duration: fallbackResult.duration,
+          });
+
+          throw new Error(errorMsg);
+        }
+
         const fallbackDurationSeconds = this.resolveAnimationDurationSeconds(
           fallbackResult.frameCount,
           targetFps,
@@ -2037,6 +2070,16 @@ class WebCodecsConversionService {
       } catch (endError) {
         logger.warn('conversion', 'Error during endConversion cleanup', {
           error: getErrorMessage(endError),
+        });
+      }
+
+      // Force cleanup of any lingering intervals (defensive)
+      try {
+        const ffmpegSvc = await import('./ffmpeg-service');
+        ffmpegSvc.ffmpegService.getMonitoring()?.forceCleanupAll();
+      } catch (monitoringError) {
+        logger.warn('conversion', 'Force cleanup failed (non-critical)', {
+          error: getErrorMessage(monitoringError),
         });
       }
     }

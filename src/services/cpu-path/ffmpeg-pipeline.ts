@@ -533,6 +533,13 @@ export class FFmpegPipeline {
   }
 
   /**
+   * get monitoring instance
+   */
+  getMonitoring(): FFmpegMonitoring {
+    return this.monitoring;
+  }
+
+  /**
    * End external conversion
    *
    * Notifies monitoring that an external conversion has completed.

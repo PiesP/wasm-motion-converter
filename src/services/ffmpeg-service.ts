@@ -193,6 +193,13 @@ class FFmpegService {
   }
 
   /**
+   * Get monitoring instance
+   */
+  getMonitoring() {
+    return this.pipeline.getMonitoring();
+  }
+
+  /**
    * Get recent FFmpeg logs
    *
    * Returns recent FFmpeg log output for debugging and error classification.

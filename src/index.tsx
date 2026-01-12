@@ -19,6 +19,8 @@ import './index.css';
 // Initialize encoder registry
 import '@services/encoders/init';
 
+import { capabilityService } from '@services/video-pipeline/capability-service';
+
 /**
  * Initialize application by rendering App component
  *
@@ -36,3 +38,9 @@ if (!root) {
 }
 
 render(() => <App />, root);
+
+// Fire-and-forget capability probing on first load.
+// Conversions MUST still verify caps before starting; this is a warm-up/caching step.
+capabilityService.detectCapabilities().catch(() => {
+  // Non-critical: conversion flow will re-check and handle unsupported environments.
+});

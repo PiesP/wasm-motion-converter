@@ -5,7 +5,9 @@ import type {
   VideoMetadata,
 } from '@t/conversion-types';
 import { getCodecCapability, requiresWebCodecs } from '@utils/codec-capabilities';
+import { isAv1Codec } from '@utils/codec-utils';
 import { logger } from '@utils/logger';
+import { capabilityService } from '@services/video-pipeline/capability-service';
 import { ffmpegService } from './ffmpeg-service';
 import { resolveMetadata, selectConversionPath } from './orchestration/path-selector';
 import { getConversionStrategy } from './orchestration/strategy-resolver';
@@ -49,6 +51,10 @@ export async function convertVideo(
   options: ConversionOptions,
   metadata?: VideoMetadata
 ): Promise<ConversionOutputBlob> {
+  // Probe runtime decode/encode capabilities early (required for the new pipeline spec).
+  // Run in parallel with FFmpeg init + metadata resolution to avoid extra latency.
+  const capsPromise = capabilityService.detectCapabilities();
+
   // Initialize FFmpeg in parallel with metadata resolution for 1-3s speedup
   const ffmpegInitPromise = ffmpegService.isLoaded()
     ? Promise.resolve()
@@ -57,12 +63,25 @@ export async function convertVideo(
   // Resolve metadata (may use FFmpeg if needed)
   const resolvedMetadata = await resolveMetadata(file, metadata);
 
+  const caps = await capsPromise;
+  logger.info('conversion', '[VideoCaps]', caps);
+
+  // Fail-fast: AV1 must NOT fall back to FFmpeg.
+  // If WebCodecs cannot decode AV1, stop here with a user-facing error.
+  if (isAv1Codec(resolvedMetadata?.codec) && !caps.av1) {
+    throw new Error('AV1 decoding is not supported by WebCodecs in this browser.');
+  }
+
   // Ensure FFmpeg is ready before proceeding
   await ffmpegInitPromise;
 
   const routingStartTime = performance.now();
 
-  const strategy = getConversionStrategy({ file, format, metadata: resolvedMetadata });
+  const strategy = getConversionStrategy({
+    file,
+    format,
+    metadata: resolvedMetadata,
+  });
 
   let effectiveOptions: ConversionOptions = { ...options };
 
@@ -81,7 +100,10 @@ export async function convertVideo(
       to: strategy.recommendedQuality,
       reasons: strategy.reasons,
     });
-    effectiveOptions = { ...effectiveOptions, quality: strategy.recommendedQuality };
+    effectiveOptions = {
+      ...effectiveOptions,
+      quality: strategy.recommendedQuality,
+    };
   }
 
   // Codec-aware routing: Route to optimal conversion path based on codec capabilities
