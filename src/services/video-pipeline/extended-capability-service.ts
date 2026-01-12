@@ -72,8 +72,6 @@ const DEFAULT_EXTENDED_CAPS: ExtendedCapabilities = {
 class ExtendedCapabilityService {
   private cached: ExtendedCapabilities | null = null;
 
-  constructor() {}
-
   /**
    * Get cached capabilities (in-memory, localStorage, or defaults).
    *

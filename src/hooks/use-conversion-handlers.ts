@@ -1,15 +1,24 @@
 // Use new refactored orchestrator API
-import { convertVideo } from '@services/orchestration/conversion-orchestrator';
-import { ffmpegService } from '@services/ffmpeg-service';
-import { checkPerformance, getRecommendedSettings } from '@services/performance-checker-service';
-import { analyzeVideo, analyzeVideoQuick } from '@services/video-analyzer-service';
+import {
+  cancelConversion,
+  convertVideo,
+} from "@services/orchestration/conversion-orchestrator";
+import { ffmpegService } from "@services/ffmpeg-service";
+import {
+  checkPerformance,
+  getRecommendedSettings,
+} from "@services/performance-checker-service";
+import {
+  analyzeVideo,
+  analyzeVideoQuick,
+} from "@services/video-analyzer-service";
 import {
   appState,
   setAppState,
   setLoadingProgress,
   setLoadingStatusMessage,
-} from '@stores/app-store';
-import { showConfirmation } from '@stores/confirmation-store';
+} from "@stores/app-store";
+import { showConfirmation } from "@stores/confirmation-store";
 import {
   conversionSettings,
   DEFAULT_CONVERSION_SETTINGS,
@@ -28,19 +37,22 @@ import {
   setVideoPreviewUrl,
   videoMetadata,
   videoPreviewUrl,
-} from '@stores/conversion-store';
-import { showToast } from '@stores/toast-store';
-import type { ConversionResult, VideoMetadata } from '@t/conversion-types';
-import { classifyConversionError } from '@utils/classify-conversion-error';
-import { WARN_RESOLUTION_PIXELS } from '@utils/constants';
-import { createId } from '@utils/create-id';
-import { getErrorMessage } from '@utils/error-utils';
-import { ETACalculator } from '@utils/eta-calculator';
-import { validateVideoDuration, validateVideoFile } from '@utils/file-validation';
-import { logger } from '@utils/logger';
-import { isMemoryCritical } from '@utils/memory-monitor';
-import type { Setter } from 'solid-js';
-import { batch } from 'solid-js';
+} from "@stores/conversion-store";
+import { showToast } from "@stores/toast-store";
+import type { ConversionResult, VideoMetadata } from "@t/conversion-types";
+import { classifyConversionError } from "@utils/classify-conversion-error";
+import { WARN_RESOLUTION_PIXELS } from "@utils/constants";
+import { createId } from "@utils/create-id";
+import { getErrorMessage } from "@utils/error-utils";
+import { ETACalculator } from "@utils/eta-calculator";
+import {
+  validateVideoDuration,
+  validateVideoFile,
+} from "@utils/file-validation";
+import { logger } from "@utils/logger";
+import { isMemoryCritical } from "@utils/memory-monitor";
+import type { Setter } from "solid-js";
+import { batch } from "solid-js";
 
 /**
  * Small file size threshold for quick analysis bypass (50 MB)
@@ -117,15 +129,23 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
    * @param metadata - Quick metadata (if available)
    * @returns True if full analysis is required
    */
-  const shouldRunFullAnalysis = (file: File, metadata: VideoMetadata | null): boolean => {
+  const shouldRunFullAnalysis = (
+    file: File,
+    metadata: VideoMetadata | null
+  ): boolean => {
     if (!metadata) {
       return true;
     }
-    if (metadata.codec === 'unknown' || metadata.framerate <= 0 || metadata.bitrate <= 0) {
+    if (
+      metadata.codec === "unknown" ||
+      metadata.framerate <= 0 ||
+      metadata.bitrate <= 0
+    ) {
       return true;
     }
     const isSmallFile = file.size <= SMALL_FILE_SIZE_THRESHOLD;
-    const isShort = metadata.duration > 0 ? metadata.duration <= SHORT_VIDEO_DURATION : false;
+    const isShort =
+      metadata.duration > 0 ? metadata.duration <= SHORT_VIDEO_DURATION : false;
     const isLowRes = metadata.width * metadata.height <= WARN_RESOLUTION_PIXELS;
     return !(isSmallFile && isShort && isLowRes);
   };
@@ -135,7 +155,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
    */
   const resetConversionRuntimeState = (): void => {
     setConversionProgress(0);
-    setConversionStatusMessage('');
+    setConversionStatusMessage("");
     setConversionStartTime(0);
     setEstimatedSecondsRemaining(null);
     setMemoryWarning(false);
@@ -168,7 +188,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
    */
   const resetOutputState = (): void => {
     setLoadingProgress(0);
-    setLoadingStatusMessage('');
+    setLoadingStatusMessage("");
   };
 
   /**
@@ -196,10 +216,12 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     const validation = validateVideoFile(file);
     if (!validation.valid) {
       setErrorMessage(getErrorMessage(validation.error));
-      setAppState('error');
+      setAppState("error");
       // Move focus to retry button for keyboard users and screen readers
       queueMicrotask(() => {
-        document.querySelector<HTMLButtonElement>('[data-error-retry-button]')?.focus();
+        document
+          .querySelector<HTMLButtonElement>("[data-error-retry-button]")
+          ?.focus();
       });
       return;
     }
@@ -220,7 +242,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         : Promise.resolve();
 
       if (needsInit) {
-        setAppState('loading-ffmpeg');
+        setAppState("loading-ffmpeg");
       }
 
       let quickMetadata: VideoMetadata | null = null;
@@ -239,7 +261,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       let finalMetadata: VideoMetadata | null = quickMetadata;
 
       if (requiresFullAnalysis) {
-        setAppState('analyzing');
+        setAppState("analyzing");
         const metadata = await analyzeVideo(file);
         finalMetadata = metadata;
         setVideoMetadata(metadata);
@@ -247,7 +269,11 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       }
 
       if (finalMetadata) {
-        const recommendation = getRecommendedSettings(file, finalMetadata, conversionSettings());
+        const recommendation = getRecommendedSettings(
+          file,
+          finalMetadata,
+          conversionSettings()
+        );
         const applied = Boolean(recommendation);
         setAutoAppliedRecommendation(applied);
         if (recommendation) {
@@ -255,13 +281,15 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         }
       }
 
-      setAppState('idle');
+      setAppState("idle");
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
-      setAppState('error');
+      setAppState("error");
       // Move focus to retry button for keyboard users and screen readers
       queueMicrotask(() => {
-        document.querySelector<HTMLButtonElement>('[data-error-retry-button]')?.focus();
+        document
+          .querySelector<HTMLButtonElement>("[data-error-retry-button]")
+          ?.focus();
       });
     }
   };
@@ -282,10 +310,15 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
 
     // Validate video duration before starting conversion
     try {
-      const durationValidation = await validateVideoDuration(file, settings.format);
+      const durationValidation = await validateVideoDuration(
+        file,
+        settings.format
+      );
 
       // Check if any warnings require user confirmation
-      const needsConfirmation = durationValidation.warnings.some((w) => w.requiresConfirmation);
+      const needsConfirmation = durationValidation.warnings.some(
+        (w) => w.requiresConfirmation
+      );
 
       if (needsConfirmation) {
         // Show confirmation modal and wait for user decision
@@ -299,7 +332,10 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
             },
             () => {
               // User cancelled
-              logger.info('conversion', 'User cancelled conversion after duration warning');
+              logger.info(
+                "conversion",
+                "User cancelled conversion after duration warning"
+              );
               resolve();
             }
           );
@@ -310,9 +346,13 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       await performConversion(file, settings, durationValidation.duration);
     } catch (validationError) {
       // If validation fails, log warning but allow conversion to proceed
-      logger.warn('conversion', 'Duration validation failed, proceeding anyway', {
-        error: getErrorMessage(validationError),
-      });
+      logger.warn(
+        "conversion",
+        "Duration validation failed, proceeding anyway",
+        {
+          error: getErrorMessage(validationError),
+        }
+      );
       await performConversion(file, settings);
     }
   };
@@ -330,9 +370,9 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     videoDuration?: number
   ): Promise<void> => {
     try {
-      setAppState('converting');
+      setAppState("converting");
       setConversionProgress(0);
-      setConversionStatusMessage('');
+      setConversionStatusMessage("");
       setConversionStartTime(Date.now());
       setErrorContext(null);
       etaCalculator.reset();
@@ -340,13 +380,15 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       lastEtaUpdate = 0;
       setMemoryWarning(false);
 
-      logger.info('conversion', 'Starting conversion', {
+      logger.info("conversion", "Starting conversion", {
         format: settings.format,
         quality: settings.quality,
         scale: settings.scale,
         fileSize: file.size,
         fileName: file.name,
-        duration: videoDuration ? `${(videoDuration / 1000).toFixed(1)}s` : 'unknown',
+        duration: videoDuration
+          ? `${(videoDuration / 1000).toFixed(1)}s`
+          : "unknown",
       });
 
       if (memoryCheckTimer) {
@@ -401,7 +443,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       }
 
       const duration = Date.now() - conversionStartTime();
-      logger.info('conversion', 'Conversion completed successfully', {
+      logger.info("conversion", "Conversion completed successfully", {
         duration: `${(duration / MS_PER_SECOND).toFixed(2)}s`,
         outputSize: blob.size,
       });
@@ -422,20 +464,22 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       setConversionResults((results) => {
         return [newResult, ...results].slice(0, MAX_RESULTS);
       });
-      setAppState('done');
-      setConversionStatusMessage('');
+      setAppState("done");
+      setConversionStatusMessage("");
       setConversionStartTime(0);
-      showToast('Conversion complete! Click download to save.', 'success');
+      showToast("Conversion complete! Click download to save.", "success");
       // Move focus to download button for keyboard users and screen readers
       queueMicrotask(() => {
-        document.querySelector<HTMLButtonElement>('[data-download-button]')?.focus();
+        document
+          .querySelector<HTMLButtonElement>("[data-download-button]")
+          ?.focus();
       });
     } catch (error) {
       // CRITICAL: Wrap cleanup in try-catch to ensure one failure doesn't prevent others
       try {
         clearConversionCallbacks();
       } catch (callbackError) {
-        logger.warn('conversion', 'Error clearing callbacks', {
+        logger.warn("conversion", "Error clearing callbacks", {
           error: getErrorMessage(callbackError),
         });
       }
@@ -446,23 +490,23 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
           memoryCheckTimer = null;
         }
       } catch (timerError) {
-        logger.warn('conversion', 'Error clearing memory timer', {
+        logger.warn("conversion", "Error clearing memory timer", {
           error: getErrorMessage(timerError),
         });
       }
 
-      const errorMessage_ = getErrorMessage(error) || 'Conversion failed';
+      const errorMessage_ = getErrorMessage(error) || "Conversion failed";
 
       // Check if the error is due to user cancellation
       if (
-        errorMessage_.includes('cancelled by user') ||
-        errorMessage_.includes('called FFmpeg.terminate()')
+        errorMessage_.includes("cancelled by user") ||
+        errorMessage_.includes("called FFmpeg.terminate()")
       ) {
         // User cancelled - use batch to ensure atomic state update
         batch(() => {
-          setConversionStatusMessage('');
+          setConversionStatusMessage("");
           setConversionStartTime(0);
-          setAppState('idle');
+          setAppState("idle");
         });
         return;
       }
@@ -475,7 +519,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         ffmpegService.getRecentFFmpegLogs()
       );
 
-      logger.error('conversion', 'Conversion failed', {
+      logger.error("conversion", "Conversion failed", {
         error: errorMessage_,
         settings,
         errorType: context.type,
@@ -484,16 +528,18 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       // CRITICAL: Use batch to ensure ALL state updates happen atomically
       // This prevents partial state updates that could leave button disabled
       batch(() => {
-        setConversionStatusMessage('');
+        setConversionStatusMessage("");
         setConversionStartTime(0);
         setErrorMessage(context.originalError);
         setErrorContext(context);
-        setAppState('error'); // MUST happen for button to re-enable
+        setAppState("error"); // MUST happen for button to re-enable
       });
 
       // Move focus to retry button (outside batch for better UX)
       queueMicrotask(() => {
-        document.querySelector<HTMLButtonElement>('[data-error-retry-button]')?.focus();
+        document
+          .querySelector<HTMLButtonElement>("[data-error-retry-button]")
+          ?.focus();
       });
     }
   };
@@ -516,7 +562,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     resetOutputState();
     setConversionSettings(DEFAULT_CONVERSION_SETTINGS);
     void ffmpegService.clearCachedInput();
-    setAppState('idle');
+    setAppState("idle");
   };
 
   /**
@@ -525,10 +571,10 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
    * Cancels ongoing conversion and returns to idle state.
    */
   const handleCancelConversion = (): void => {
-    ffmpegService.cancelConversion();
+    cancelConversion();
     clearConversionCallbacks();
     resetConversionRuntimeState();
-    setAppState('idle');
+    setAppState("idle");
   };
 
   /**
@@ -538,7 +584,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
    */
   const handleRetry = (): void => {
     const file = inputFile();
-    if (file && appState() === 'error') {
+    if (file && appState() === "error") {
       handleFileSelected(file);
     } else {
       handleReset();
@@ -551,9 +597,9 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
    * Clears error state while preserving file, metadata, and settings.
    */
   const handleDismissError = (): void => {
-    logger.info('general', 'User dismissed error message');
+    logger.info("general", "User dismissed error message");
     resetErrorState();
-    setAppState('idle');
+    setAppState("idle");
     // inputFile, videoMetadata, and settings remain intact
     // User can now modify settings and click Convert again
   };
