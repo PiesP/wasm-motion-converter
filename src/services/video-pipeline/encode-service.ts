@@ -7,25 +7,21 @@
  * evolve to provide worker-backed encoders (gifski, FFmpeg, etc.).
  */
 
-export type EncodePath = 'gifski' | 'ffmpeg' | 'webcodecs-webp';
+import { createSingleton } from "@services/shared/singleton-service";
+
+export type EncodePath = "gifski" | "ffmpeg" | "webcodecs-webp";
 
 class EncodeService {
-  private static instance: EncodeService | null = null;
-
-  static getInstance(): EncodeService {
-    EncodeService.instance ??= new EncodeService();
-    return EncodeService.instance;
-  }
-
-  private constructor() {}
-
-  selectEncodePath(params: { format: 'gif' | 'webp' }): EncodePath {
-    if (params.format === 'gif') {
-      return 'gifski';
+  selectEncodePath(params: { format: "gif" | "webp" }): EncodePath {
+    if (params.format === "gif") {
+      return "gifski";
     }
 
-    return 'webcodecs-webp';
+    return "webcodecs-webp";
   }
 }
 
-export const encodeService = EncodeService.getInstance();
+export const encodeService = createSingleton(
+  "EncodeService",
+  () => new EncodeService()
+);

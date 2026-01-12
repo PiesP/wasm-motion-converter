@@ -4,30 +4,34 @@
  * Maps container formats to demuxers that can produce WebCodecs EncodedVideoChunk objects.
  */
 
-import type { VideoDemuxer, VideoTrackInfo } from '@t/video-pipeline-types';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
-import { detectContainerFormat, isDemuxableContainer } from '@utils/container-utils';
+import type { VideoDemuxer, VideoTrackInfo } from "@t/video-pipeline-types";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
+import { createSingleton } from "@services/shared/singleton-service";
+import {
+  detectContainerFormat,
+  isDemuxableContainer,
+} from "@utils/container-utils";
 
 import type {
   DemuxerAdapter,
   EncodedVideoChunk as DemuxedEncodedVideoChunk,
-} from '@services/webcodecs/demuxer/demuxer-adapter';
-import { MP4BoxDemuxer } from '@services/webcodecs/demuxer/mp4box-demuxer';
-import { WebMDemuxer } from '@services/webcodecs/demuxer/webm-demuxer';
+} from "@services/webcodecs/demuxer/demuxer-adapter";
+import { MP4BoxDemuxer } from "@services/webcodecs/demuxer/mp4box-demuxer";
+import { WebMDemuxer } from "@services/webcodecs/demuxer/webm-demuxer";
 
 const DEFAULT_TARGET_FPS = 30;
 const DEFAULT_MAX_FRAMES = 900;
 
 class DemuxerWrapper implements VideoDemuxer {
-  readonly name: 'mp4box' | 'web-demuxer';
+  readonly name: "mp4box" | "web-demuxer";
 
   private adapter: DemuxerAdapter;
   private initialized = false;
   private trackInfo: VideoTrackInfo | null = null;
 
   constructor(params: {
-    name: 'mp4box' | 'web-demuxer';
+    name: "mp4box" | "web-demuxer";
     adapter: DemuxerAdapter;
   }) {
     this.name = params.name;
@@ -61,15 +65,17 @@ class DemuxerWrapper implements VideoDemuxer {
 
   getTrackInfo(): VideoTrackInfo {
     if (!this.trackInfo) {
-      throw new Error('Demuxer not initialized (track info unavailable)');
+      throw new Error("Demuxer not initialized (track info unavailable)");
     }
 
     return this.trackInfo;
   }
 
   async extractChunks(file: File): Promise<EncodedVideoChunk[]> {
-    if (typeof EncodedVideoChunk === 'undefined') {
-      throw new Error('WebCodecs EncodedVideoChunk is not available in this browser.');
+    if (typeof EncodedVideoChunk === "undefined") {
+      throw new Error(
+        "WebCodecs EncodedVideoChunk is not available in this browser."
+      );
     }
 
     await this.initialize(file);
@@ -86,7 +92,7 @@ class DemuxerWrapper implements VideoDemuxer {
 
       return chunks;
     } catch (error) {
-      logger.error('demuxer', 'Failed to extract chunks', {
+      logger.error("demuxer", "Failed to extract chunks", {
         demuxer: this.name,
         error: getErrorMessage(error),
       });
@@ -98,14 +104,16 @@ class DemuxerWrapper implements VideoDemuxer {
     try {
       this.adapter.destroy();
     } catch (error) {
-      logger.warn('demuxer', 'Demuxer cleanup failed (non-critical)', {
+      logger.warn("demuxer", "Demuxer cleanup failed (non-critical)", {
         demuxer: this.name,
         error: getErrorMessage(error),
       });
     }
   }
 
-  private toWebCodecsChunk(sample: DemuxedEncodedVideoChunk): EncodedVideoChunk {
+  private toWebCodecsChunk(
+    sample: DemuxedEncodedVideoChunk
+  ): EncodedVideoChunk {
     return new EncodedVideoChunk({
       type: sample.type,
       timestamp: sample.timestamp,
@@ -116,15 +124,6 @@ class DemuxerWrapper implements VideoDemuxer {
 }
 
 class DemuxerService {
-  private static instance: DemuxerService | null = null;
-
-  static getInstance(): DemuxerService {
-    DemuxerService.instance ??= new DemuxerService();
-    return DemuxerService.instance;
-  }
-
-  private constructor() {}
-
   getDemuxerForFile(file: File): VideoDemuxer {
     const container = detectContainerFormat(file);
 
@@ -133,17 +132,17 @@ class DemuxerService {
     }
 
     switch (container) {
-      case 'mp4':
-      case 'mov':
-      case 'm4v':
+      case "mp4":
+      case "mov":
+      case "m4v":
         return new DemuxerWrapper({
-          name: 'mp4box',
+          name: "mp4box",
           adapter: new MP4BoxDemuxer(),
         });
-      case 'webm':
-      case 'mkv':
+      case "webm":
+      case "mkv":
         return new DemuxerWrapper({
-          name: 'web-demuxer',
+          name: "web-demuxer",
           adapter: new WebMDemuxer(),
         });
       default:
@@ -153,4 +152,7 @@ class DemuxerService {
   }
 }
 
-export const demuxerService = DemuxerService.getInstance();
+export const demuxerService = createSingleton(
+  "DemuxerService",
+  () => new DemuxerService()
+);

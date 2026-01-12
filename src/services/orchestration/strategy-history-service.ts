@@ -11,12 +11,13 @@
  * - Confidence = min(recordCount / 5, 1.0) (high confidence after 5+ conversions)
  */
 
-import type { ConversionFormat } from '@t/conversion-types';
-import type { ConversionPath } from '@services/orchestration/types';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
+import type { ConversionFormat } from "@t/conversion-types";
+import type { ConversionPath } from "@services/orchestration/types";
+import { createSingleton } from "@services/shared/singleton-service";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
 
-const STORAGE_KEY = 'strategy_history_v1' as const;
+const STORAGE_KEY = "strategy_history_v1" as const;
 const MAX_RECORDS = 50 as const;
 const HIGH_CONFIDENCE_THRESHOLD = 5 as const; // 5+ conversions for high confidence
 
@@ -67,17 +68,9 @@ interface HistoryStorage {
 }
 
 class StrategyHistoryService {
-  private static instance: StrategyHistoryService | null = null;
-
-  static getInstance(): StrategyHistoryService {
-    StrategyHistoryService.instance ??= new StrategyHistoryService();
-    return StrategyHistoryService.instance;
-  }
-
   private records: ConversionRecord[] = [];
 
-  // Enforce singleton
-  private constructor() {
+  constructor() {
     this.loadFromStorage();
   }
 
@@ -98,7 +91,7 @@ class StrategyHistoryService {
     // Persist to sessionStorage
     this.saveToStorage();
 
-    logger.debug('conversion', 'Conversion recorded to history', {
+    logger.debug("conversion", "Conversion recorded to history", {
       codec: record.codec,
       format: record.format,
       path: record.path,
@@ -115,12 +108,16 @@ class StrategyHistoryService {
    * @param format - Output format
    * @returns Conversion history or null if no records exist
    */
-  getHistory(codec: string, format: ConversionFormat): ConversionHistory | null {
+  getHistory(
+    codec: string,
+    format: ConversionFormat
+  ): ConversionHistory | null {
     const normalizedCodec = this.normalizeCodec(codec);
 
     // Filter records for this codec+format
     const filtered = this.records.filter(
-      (r) => this.normalizeCodec(r.codec) === normalizedCodec && r.format === format
+      (r) =>
+        this.normalizeCodec(r.codec) === normalizedCodec && r.format === format
     );
 
     if (filtered.length === 0) {
@@ -159,7 +156,10 @@ class StrategyHistoryService {
    * @param format - Output format
    * @returns Recommended path with confidence, or null if insufficient data
    */
-  getRecommendedPath(codec: string, format: ConversionFormat): RecommendedPath | null {
+  getRecommendedPath(
+    codec: string,
+    format: ConversionFormat
+  ): RecommendedPath | null {
     const history = this.getHistory(codec, format);
     if (!history) {
       return null;
@@ -171,7 +171,10 @@ class StrategyHistoryService {
     }
 
     // Calculate confidence (0-1, based on number of successful conversions)
-    const confidence = Math.min(successfulRecords.length / HIGH_CONFIDENCE_THRESHOLD, 1.0);
+    const confidence = Math.min(
+      successfulRecords.length / HIGH_CONFIDENCE_THRESHOLD,
+      1.0
+    );
 
     // Get average duration for preferred path
     const preferredPathRecords = successfulRecords.filter(
@@ -209,7 +212,7 @@ class StrategyHistoryService {
     // Convert to ConversionHistory objects
     const histories: ConversionHistory[] = [];
     for (const [key, records] of grouped) {
-      const parts = key.split(':');
+      const parts = key.split(":");
       if (parts.length !== 2) continue; // Skip invalid keys
 
       const codec = parts[0]!; // Safe because we checked parts.length === 2
@@ -220,8 +223,8 @@ class StrategyHistoryService {
         const totalConversions = records.length;
         const successRate = successfulRecords.length / totalConversions;
         const avgDurationMs =
-          successfulRecords.reduce((sum, r) => sum + r.durationMs, 0) / successfulRecords.length ||
-          0;
+          successfulRecords.reduce((sum, r) => sum + r.durationMs, 0) /
+            successfulRecords.length || 0;
         const pathStats = this.calculatePathStatistics(successfulRecords);
         const preferredPath = this.selectPreferredPath(pathStats);
 
@@ -248,14 +251,17 @@ class StrategyHistoryService {
   clearHistory(): void {
     this.records = [];
     this.saveToStorage();
-    logger.debug('conversion', 'Conversion history cleared');
+    logger.debug("conversion", "Conversion history cleared");
   }
 
   /**
    * Load records from sessionStorage
    */
   private loadFromStorage(): void {
-    if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
+    if (
+      typeof window === "undefined" ||
+      typeof window.sessionStorage === "undefined"
+    ) {
       return;
     }
 
@@ -269,23 +275,35 @@ class StrategyHistoryService {
 
       // Validate version
       if (storage.version !== 1) {
-        logger.debug('conversion', 'Strategy history version mismatch, clearing', {
-          storedVersion: storage.version,
-          currentVersion: 1,
-        });
+        logger.debug(
+          "conversion",
+          "Strategy history version mismatch, clearing",
+          {
+            storedVersion: storage.version,
+            currentVersion: 1,
+          }
+        );
         window.sessionStorage.removeItem(STORAGE_KEY);
         return;
       }
 
       // Load records
       this.records = storage.records || [];
-      logger.debug('conversion', 'Strategy history loaded from sessionStorage', {
-        recordCount: this.records.length,
-      });
+      logger.debug(
+        "conversion",
+        "Strategy history loaded from sessionStorage",
+        {
+          recordCount: this.records.length,
+        }
+      );
     } catch (error) {
-      logger.warn('conversion', 'Failed to load strategy history (non-critical)', {
-        error: getErrorMessage(error),
-      });
+      logger.warn(
+        "conversion",
+        "Failed to load strategy history (non-critical)",
+        {
+          error: getErrorMessage(error),
+        }
+      );
     }
   }
 
@@ -293,7 +311,10 @@ class StrategyHistoryService {
    * Save records to sessionStorage
    */
   private saveToStorage(): void {
-    if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
+    if (
+      typeof window === "undefined" ||
+      typeof window.sessionStorage === "undefined"
+    ) {
       return;
     }
 
@@ -306,9 +327,13 @@ class StrategyHistoryService {
 
       window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
     } catch (error) {
-      logger.warn('conversion', 'Failed to save strategy history (non-critical)', {
-        error: getErrorMessage(error),
-      });
+      logger.warn(
+        "conversion",
+        "Failed to save strategy history (non-critical)",
+        {
+          error: getErrorMessage(error),
+        }
+      );
     }
   }
 
@@ -373,10 +398,10 @@ class StrategyHistoryService {
     >
   ): ConversionPath {
     if (pathStats.size === 0) {
-      return 'cpu'; // Default fallback
+      return "cpu"; // Default fallback
     }
 
-    let preferredPath: ConversionPath = 'cpu';
+    let preferredPath: ConversionPath = "cpu";
     let maxCount = 0;
     let minAvgDuration = Number.POSITIVE_INFINITY;
 
@@ -404,14 +429,22 @@ class StrategyHistoryService {
   private normalizeCodec(codec: string): string {
     const lower = codec.toLowerCase();
 
-    if (lower.includes('h264') || lower.includes('avc')) return 'h264';
-    if (lower.includes('hevc') || lower.includes('h265') || lower.includes('hvc')) return 'hevc';
-    if (lower.includes('av1') || lower.includes('av01')) return 'av1';
-    if (lower.includes('vp09') || lower.includes('vp9')) return 'vp9';
-    if (lower.includes('vp08') || lower.includes('vp8')) return 'vp8';
+    if (lower.includes("h264") || lower.includes("avc")) return "h264";
+    if (
+      lower.includes("hevc") ||
+      lower.includes("h265") ||
+      lower.includes("hvc")
+    )
+      return "hevc";
+    if (lower.includes("av1") || lower.includes("av01")) return "av1";
+    if (lower.includes("vp09") || lower.includes("vp9")) return "vp9";
+    if (lower.includes("vp08") || lower.includes("vp8")) return "vp8";
 
     return lower;
   }
 }
 
-export const strategyHistoryService = StrategyHistoryService.getInstance();
+export const strategyHistoryService = createSingleton(
+  "StrategyHistoryService",
+  () => new StrategyHistoryService()
+);
