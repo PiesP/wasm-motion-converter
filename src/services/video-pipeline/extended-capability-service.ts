@@ -46,9 +46,18 @@ const DEFAULT_EXTENDED_CAPS: ExtendedCapabilities = {
   webpEncode: false,
   hardwareAccelerated: false,
 
+  // Best-effort per-codec hardware decode hints (populated by capability service when available)
+  h264HardwareDecode: false,
+  hevcHardwareDecode: false,
+  av1HardwareDecode: false,
+
   // Extended codec support
   vp8: false,
   vp9: false,
+
+  // Optional per-codec hardware decode hints for extended codecs
+  vp8HardwareDecode: false,
+  vp9HardwareDecode: false,
 
   // Encoder capabilities
   gifEncode: true, // Always true (modern-gif WASM)
@@ -297,10 +306,17 @@ class ExtendedCapabilityService {
     const baseCaps = await capabilityService.detectCapabilities();
 
     // Test VP8/VP9 decode support
-    const vp8 = await this.testDecode({
+    const vp8Hw = await this.testDecode({
       codec: 'vp8',
-      prefer: 'prefer-software',
+      prefer: 'prefer-hardware',
     });
+    const vp8Sw = vp8Hw
+      ? true
+      : await this.testDecode({
+          codec: 'vp8',
+          prefer: 'prefer-software',
+        });
+
     const vp9Hw = await this.testDecode({
       codec: 'vp09.00.10.08',
       prefer: 'prefer-hardware',
@@ -331,8 +347,12 @@ class ExtendedCapabilityService {
       ...baseCaps,
 
       // Extended codec support
-      vp8,
+      vp8: vp8Sw,
       vp9: vp9Sw,
+
+      // Hardware decode hint signals for extended codecs
+      vp8HardwareDecode: vp8Hw,
+      vp9HardwareDecode: vp9Hw,
 
       // Encoder capabilities
       gifEncode,

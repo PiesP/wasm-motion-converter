@@ -20,6 +20,11 @@ const DEFAULT_CAPS: VideoCapabilities = {
   av1: false,
   webpEncode: false,
   hardwareAccelerated: false,
+
+  // Best-effort per-codec hardware decode hints
+  h264HardwareDecode: false,
+  hevcHardwareDecode: false,
+  av1HardwareDecode: false,
 };
 
 type VideoDecoderConfigWithAcceleration = VideoDecoderConfig & {
@@ -123,6 +128,11 @@ class CapabilityService {
         av1: parsed.av1 === true,
         webpEncode: parsed.webpEncode === true,
         hardwareAccelerated: parsed.hardwareAccelerated === true,
+
+        // Optional fields (default to false when missing)
+        h264HardwareDecode: parsed.h264HardwareDecode === true,
+        hevcHardwareDecode: parsed.hevcHardwareDecode === true,
+        av1HardwareDecode: parsed.av1HardwareDecode === true,
       };
 
       return safe;
@@ -250,6 +260,11 @@ class CapabilityService {
       av1: av1Sw,
       webpEncode,
       hardwareAccelerated: anyHw,
+
+      // Preserve the per-codec hardware decode signal so strategies can make more nuanced choices.
+      h264HardwareDecode: h264Hw,
+      hevcHardwareDecode: hevcHw,
+      av1HardwareDecode: av1Hw,
     };
 
     return caps;

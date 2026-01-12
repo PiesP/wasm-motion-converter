@@ -19,6 +19,14 @@ export interface VideoCapabilities {
   av1: boolean;
   webpEncode: boolean;
   hardwareAccelerated: boolean;
+
+  // Optional per-codec hardware decode hints.
+  // These are best-effort signals derived from VideoDecoder.isConfigSupported() with
+  // hardwareAcceleration: 'prefer-hardware'. They are not guaranteed to imply true GPU decode,
+  // but are useful as additional strategy inputs.
+  h264HardwareDecode?: boolean;
+  hevcHardwareDecode?: boolean;
+  av1HardwareDecode?: boolean;
 }
 
 /**
@@ -31,6 +39,10 @@ export interface ExtendedCapabilities extends VideoCapabilities {
   // Additional codec support
   vp8: boolean;
   vp9: boolean;
+
+  // Optional per-codec hardware decode hints for extended codecs.
+  vp8HardwareDecode?: boolean;
+  vp9HardwareDecode?: boolean;
 
   // Encoder capabilities
   gifEncode: boolean; // Always true (modern-gif WASM)

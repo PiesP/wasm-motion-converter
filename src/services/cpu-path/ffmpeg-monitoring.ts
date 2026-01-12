@@ -388,7 +388,17 @@ export class FFmpegMonitoring {
    * to guarantee no timers continue running.
    */
   forceCleanupAll(): void {
-    logger.debug('watchdog', 'Force cleanup initiated (clearing all timers)');
+    const hadWatchdogTimer = Boolean(this.watchdogTimer);
+    const hadLogSilenceMonitor = Boolean(this.logSilenceInterval);
+    const heartbeatCount = this.activeHeartbeats.size;
+    const wasConverting = this.isConverting;
+
+    const didAnything =
+      hadWatchdogTimer || hadLogSilenceMonitor || heartbeatCount > 0 || wasConverting;
+
+    if (didAnything) {
+      logger.debug('watchdog', 'Force cleanup initiated (clearing all timers)');
+    }
 
     // Clear watchdog timer
     if (this.watchdogTimer) {
@@ -404,7 +414,6 @@ export class FFmpegMonitoring {
     }
 
     // Clear ALL active heartbeats
-    const heartbeatCount = this.activeHeartbeats.size;
     for (const interval of this.activeHeartbeats) {
       clearInterval(interval);
     }
@@ -416,11 +425,15 @@ export class FFmpegMonitoring {
     // Stop annotating log prefixes once we force-stop conversion monitoring.
     logger.clearConversionProgress();
 
-    logger.info('watchdog', 'Force cleanup complete', {
-      heartbeatsCleared: heartbeatCount,
-      watchdogCleared: true,
-      logMonitorCleared: true,
-    });
+    // Avoid redundant cleanup logs when forceCleanupAll() is called defensively after resources
+    // were already cleared (e.g., stopWatchdog() ran first on successful conversions).
+    if (didAnything) {
+      logger.info('watchdog', 'Force cleanup complete', {
+        heartbeatsCleared: heartbeatCount,
+        watchdogCleared: hadWatchdogTimer,
+        logMonitorCleared: hadLogSilenceMonitor,
+      });
+    }
   }
 
   /**
