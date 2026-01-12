@@ -1140,6 +1140,38 @@ class WebCodecsConversionService {
         }
       }
 
+      // CRITICAL: Validate frame capture completeness before passing to FFmpeg
+      // Incomplete frame sequences cause FFmpeg libwebp encoder to hang indefinitely
+      const minRequiredRatio = 0.5; // Must capture ≥50% of expected frames
+      const minAbsoluteFrames = 10; // Or ≥10 frames minimum for very short videos
+
+      // Calculate expected frames for validation
+      const validationExpectedFrames = Math.min(
+        maxFrames,
+        Math.max(1, Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)))
+      );
+      const captureRatio = decodeResult.frameCount / validationExpectedFrames;
+
+      if (decodeResult.frameCount < minAbsoluteFrames || captureRatio < minRequiredRatio) {
+        logger.error('conversion', 'WebCodecs frame capture critically incomplete - failing fast', {
+          capturedFrames: decodeResult.frameCount,
+          expectedFrames: validationExpectedFrames,
+          captureRatio: `${(captureRatio * 100).toFixed(1)}%`,
+          minRequiredRatio: `${minRequiredRatio * 100}%`,
+          minAbsoluteFrames,
+          codec: metadata?.codec,
+          captureModeUsed: decodeResult.captureModeUsed,
+          duration: decodeResult.duration,
+        });
+
+        throw new Error(
+          `Frame extraction incomplete: captured only ${decodeResult.frameCount} of ${validationExpectedFrames} ` +
+            `expected frames (${(captureRatio * 100).toFixed(1)}%). This would cause FFmpeg encoder hang. ` +
+            `Minimum required: ${minRequiredRatio * 100}% capture ratio or ${minAbsoluteFrames} absolute frames. ` +
+            `Please try a different video or report this issue if it persists.`
+        );
+      }
+
       // Batch write frames to VFS in parallel for 3-5x speedup
       const orderedFrames = framesByIndex.filter(
         (frame): frame is { name: string; data: Uint8Array } => Boolean(frame)
@@ -1998,7 +2030,15 @@ class WebCodecsConversionService {
       }
       throw error;
     } finally {
-      endConversion();
+      // Ensure external monitoring is stopped
+      // endExternalConversion now includes forceCleanupAll (see Step 5)
+      try {
+        endConversion();
+      } catch (endError) {
+        logger.warn('conversion', 'Error during endConversion cleanup', {
+          error: getErrorMessage(endError),
+        });
+      }
     }
   }
 

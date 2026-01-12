@@ -320,6 +320,46 @@ export class FFmpegMonitoring {
   }
 
   /**
+   * Force cleanup of ALL monitoring resources (emergency cleanup)
+   *
+   * More aggressive than stopWatchdog() and cleanupResources() - clears everything
+   * regardless of state and resets isConverting flag. Used in error/timeout paths
+   * to guarantee no timers continue running.
+   */
+  forceCleanupAll(): void {
+    logger.debug('watchdog', 'Force cleanup initiated (clearing all timers)');
+
+    // Clear watchdog timer
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+
+    // Clear log silence monitor
+    if (this.logSilenceInterval) {
+      clearInterval(this.logSilenceInterval);
+      this.logSilenceInterval = null;
+      this.logSilenceStrikes = 0;
+    }
+
+    // Clear ALL active heartbeats
+    const heartbeatCount = this.activeHeartbeats.size;
+    for (const interval of this.activeHeartbeats) {
+      clearInterval(interval);
+    }
+    this.activeHeartbeats.clear();
+
+    // Reset conversion state
+    this.isConverting = false;
+
+    logger.info('watchdog', 'Force cleanup complete', {
+      heartbeatsCleared: heartbeatCount,
+      watchdogCleared: true,
+      logMonitorCleared: true,
+    });
+  }
+
+  /**
    * Check if watchdog is currently active
    */
   isActive(): boolean {

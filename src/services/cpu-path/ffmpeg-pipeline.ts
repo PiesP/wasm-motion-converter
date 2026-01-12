@@ -543,11 +543,24 @@ export class FFmpegPipeline {
     try {
       this.monitoring.updateProgress(100, false);
       this.monitoring.stopWatchdog();
-      logger.debug('watchdog', 'Watchdog stopped (external conversion complete)');
+
+      // Force cleanup to ensure ALL timers cleared (defensive)
+      this.monitoring.forceCleanupAll();
+
+      logger.debug('watchdog', 'External conversion monitoring stopped and cleaned up');
     } catch (error) {
       logger.warn('watchdog', 'Error during watchdog cleanup', {
         error: getErrorMessage(error),
       });
+
+      // Even if error occurs, attempt force cleanup
+      try {
+        this.monitoring.forceCleanupAll();
+      } catch (cleanupError) {
+        logger.error('watchdog', 'Force cleanup failed after error', {
+          error: getErrorMessage(cleanupError),
+        });
+      }
     }
   }
 

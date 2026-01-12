@@ -647,8 +647,13 @@ export class FFmpegEncoder {
         `Direct WebP encoding timed out after ${webpTimeout / 1000} seconds.`,
         () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
       );
+    } catch (error) {
+      // CRITICAL: Stop heartbeat immediately on error to prevent interval leaks
+      monitoring.stopProgressHeartbeat(webpHeartbeat);
+      throw error;
     } finally {
       ffmpeg.off('log', webpLogHandler);
+      // Defensive: Ensure heartbeat stopped (safe to call twice)
       monitoring.stopProgressHeartbeat(webpHeartbeat);
     }
 
@@ -789,7 +794,12 @@ export class FFmpegEncoder {
           }
           throw execError;
         }
+      } catch (error) {
+        // CRITICAL: Stop heartbeat immediately on error to prevent interval leaks
+        monitoring.stopProgressHeartbeat(paletteHeartbeat);
+        throw error;
       } finally {
+        // Defensive: Ensure heartbeat stopped (safe to call twice)
         monitoring.stopProgressHeartbeat(paletteHeartbeat);
       }
 
@@ -863,10 +873,13 @@ export class FFmpegEncoder {
           throw execError;
         }
       } catch (error) {
+        // CRITICAL: Stop heartbeat immediately on error to prevent interval leaks
+        monitoring.stopProgressHeartbeat(heartbeat);
         logger.warn('conversion', 'GIF conversion failed, will attempt cleanup');
         throw error;
       } finally {
         ffmpeg.off('log', gifLogHandler);
+        // Defensive: Ensure heartbeat stopped (safe to call twice)
         monitoring.stopProgressHeartbeat(heartbeat);
       }
 
@@ -1080,8 +1093,13 @@ export class FFmpegEncoder {
             }
             throw execError;
           }
+        } catch (error) {
+          // CRITICAL: Stop heartbeat immediately on error to prevent interval leaks
+          monitoring.stopProgressHeartbeat(heartbeat);
+          throw error;
         } finally {
           ffmpeg.off('log', webpLogHandler);
+          // Defensive: Ensure heartbeat stopped (safe to call twice)
           monitoring.stopProgressHeartbeat(heartbeat);
         }
 

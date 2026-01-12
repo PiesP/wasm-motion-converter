@@ -1,3 +1,4 @@
+import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
 
 /**
@@ -72,7 +73,25 @@ export async function withTimeout<T>(
         });
       }
 
-      logger.warn('general', 'Promise timeout reached', { timeoutMs, message: errorMessage });
+      logger.warn('general', 'Promise timeout reached - terminating stuck operation', {
+        timeoutMs,
+        message: errorMessage,
+      });
+
+      // Force terminate FFmpeg to break hung encoder (prevents resource leaks)
+      try {
+        import('../services/ffmpeg-service').then(({ ffmpegService }) => {
+          if (ffmpegService.isLoaded()) {
+            logger.info('general', 'Terminating FFmpeg due to timeout');
+            ffmpegService.terminate();
+          }
+        });
+      } catch (terminateError) {
+        logger.warn('general', 'Failed to terminate FFmpeg on timeout (non-critical)', {
+          error: getErrorMessage(terminateError),
+        });
+      }
+
       reject(new Error(errorMessage));
     }, timeoutMs);
   });

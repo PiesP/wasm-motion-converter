@@ -431,13 +431,25 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         document.querySelector<HTMLButtonElement>('[data-download-button]')?.focus();
       });
     } catch (error) {
-      clearConversionCallbacks();
-      if (memoryCheckTimer) {
-        clearInterval(memoryCheckTimer);
-        memoryCheckTimer = null;
+      // CRITICAL: Wrap cleanup in try-catch to ensure one failure doesn't prevent others
+      try {
+        clearConversionCallbacks();
+      } catch (callbackError) {
+        logger.warn('conversion', 'Error clearing callbacks', {
+          error: getErrorMessage(callbackError),
+        });
       }
-      setConversionStatusMessage('');
-      setConversionStartTime(0);
+
+      try {
+        if (memoryCheckTimer) {
+          clearInterval(memoryCheckTimer);
+          memoryCheckTimer = null;
+        }
+      } catch (timerError) {
+        logger.warn('conversion', 'Error clearing memory timer', {
+          error: getErrorMessage(timerError),
+        });
+      }
 
       const errorMessage_ = getErrorMessage(error) || 'Conversion failed';
 
@@ -446,11 +458,16 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         errorMessage_.includes('cancelled by user') ||
         errorMessage_.includes('called FFmpeg.terminate()')
       ) {
-        // User cancelled - just return to idle without showing error
-        setAppState('idle');
+        // User cancelled - use batch to ensure atomic state update
+        batch(() => {
+          setConversionStatusMessage('');
+          setConversionStartTime(0);
+          setAppState('idle');
+        });
         return;
       }
 
+      // Classify error
       const context = classifyConversionError(
         errorMessage_,
         videoMetadata(),
@@ -464,10 +481,17 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         errorType: context.type,
       });
 
-      setErrorMessage(context.originalError);
-      setErrorContext(context);
-      setAppState('error');
-      // Move focus to retry button for keyboard users and screen readers
+      // CRITICAL: Use batch to ensure ALL state updates happen atomically
+      // This prevents partial state updates that could leave button disabled
+      batch(() => {
+        setConversionStatusMessage('');
+        setConversionStartTime(0);
+        setErrorMessage(context.originalError);
+        setErrorContext(context);
+        setAppState('error'); // MUST happen for button to re-enable
+      });
+
+      // Move focus to retry button (outside batch for better UX)
       queueMicrotask(() => {
         document.querySelector<HTMLButtonElement>('[data-error-retry-button]')?.focus();
       });
