@@ -12,7 +12,9 @@
 
 /// <reference types="vite/client" />
 
-import type { VideoCapabilities } from '@t/video-pipeline-types';
+import type { ExtendedCapabilities, VideoCapabilities } from '@t/video-pipeline-types';
+import type { CodecPathPreference } from '@services/orchestration/types';
+import type { ConversionHistory } from '@services/orchestration/strategy-history-service';
 
 /* ============================================================================
    Vite Environment Variables
@@ -193,5 +195,17 @@ declare global {
   interface Window {
     /** Cached runtime video capabilities (capability-service.ts) */
     __VIDEO_CAPS__?: VideoCapabilities;
+    /** Extended video capabilities with additional codecs and environment info (extended-capability-service.ts) */
+    __EXTENDED_VIDEO_CAPS__?: ExtendedCapabilities;
+    /** Debug interface for testing conversion strategies (dev mode only) */
+    __CONVERSION_DEBUG__?: {
+      capabilities: ExtendedCapabilities;
+      strategies: CodecPathPreference[];
+      history: () => ConversionHistory[];
+      testStrategy: (
+        codec: string,
+        format: 'gif' | 'webp' | 'mp4'
+      ) => CodecPathPreference & { confidence: 'high' | 'medium' | 'low' };
+    };
   }
 }

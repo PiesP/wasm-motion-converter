@@ -24,6 +24,9 @@ import ToastContainer from './components/ToastContainer';
 import VideoMetadataDisplay from './components/VideoMetadataDisplay';
 import { useConversionHandlers } from './hooks/use-conversion-handlers';
 import { ffmpegService } from './services/ffmpeg-service';
+import { extendedCapabilityService } from './services/video-pipeline/extended-capability-service';
+import { strategyRegistryService } from './services/orchestration/strategy-registry-service';
+import { strategyHistoryService } from './services/orchestration/strategy-history-service';
 import {
   appState,
   environmentSupported,
@@ -45,6 +48,7 @@ import {
   videoPreviewUrl,
 } from './stores/conversion-store';
 import { debounce } from './utils/debounce';
+import { getErrorMessage } from './utils/error-utils';
 import { isHardwareCacheValid } from './utils/hardware-profile';
 import { logger } from './utils/logger';
 import { isMemoryCritical } from './utils/memory-monitor';
@@ -141,6 +145,60 @@ const App: Component = () => {
         });
       });
     }
+
+    // Extended capability detection (idle-scheduled, non-blocking)
+    runIdle(async () => {
+      try {
+        const caps = await extendedCapabilityService.detectCapabilities();
+
+        // Log comprehensive capability matrix in dev mode
+        if (import.meta.env.DEV) {
+          logger.info('general', '=== Extended Video Capabilities ===');
+          logger.info('general', 'Codec Decode Support', {
+            h264: caps.h264,
+            hevc: caps.hevc,
+            av1: caps.av1,
+            vp8: caps.vp8,
+            vp9: caps.vp9,
+          });
+          logger.info('general', 'Encoder Support', {
+            gif: caps.gifEncode,
+            webp: caps.webpEncode,
+            mp4: caps.mp4Encode,
+          });
+          logger.info('general', 'Hardware Features', {
+            hardwareAcceleration: caps.hardwareAccelerated,
+            sharedArrayBuffer: caps.sharedArrayBuffer,
+            crossOriginIsolated: caps.crossOriginIsolated,
+            estimatedCores: caps.hardwareDecodeCores,
+          });
+          logger.info('general', '=====================================');
+
+          // Expose debug interface (dev mode only)
+          if (typeof window !== 'undefined') {
+            window.__EXTENDED_VIDEO_CAPS__ = caps;
+            window.__CONVERSION_DEBUG__ = {
+              capabilities: caps,
+              strategies: strategyRegistryService.getAllStrategies(),
+              history: () => strategyHistoryService.getAllHistory(),
+              testStrategy: (codec: string, format: 'gif' | 'webp' | 'mp4') => {
+                return strategyRegistryService.getStrategy({
+                  codec,
+                  format,
+                  container: 'mp4',
+                  capabilities: caps,
+                });
+              },
+            };
+            logger.info('general', 'Debug interface available: window.__CONVERSION_DEBUG__');
+          }
+        }
+      } catch (error) {
+        logger.warn('general', 'Extended capability detection failed (non-critical)', {
+          error: getErrorMessage(error),
+        });
+      }
+    });
   });
 
   /**

@@ -264,3 +264,34 @@ export interface HybridStrategyConfig {
   /** Fallback chain if all preferred paths fail */
   fallbackChain: ConversionPath[];
 }
+
+/**
+ * Strategy decision reasoning
+ *
+ * Provides detailed information about why a particular conversion path was selected.
+ * Used for dev mode logging and debugging.
+ */
+export interface StrategyReasoning {
+  /** The conversion path that was selected */
+  decision: ConversionPath;
+  /** Factors that influenced the decision */
+  factors: {
+    /** Whether the codec is supported by the selected path */
+    codecSupport: boolean;
+    /** Whether the container format is supported */
+    containerSupport: boolean;
+    /** Whether hardware acceleration is available */
+    hardwareAcceleration: boolean;
+    /** Whether this path succeeded before for this codec+format */
+    historicalSuccess: boolean;
+    /** Performance benchmark in milliseconds (if available) */
+    performanceBenchmark?: number;
+  };
+  /** Alternative paths that were considered but rejected */
+  alternativesConsidered: Array<{
+    /** The alternative path */
+    path: ConversionPath;
+    /** Why this path was not selected */
+    rejectionReason: string;
+  }>;
+}

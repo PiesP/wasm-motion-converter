@@ -22,6 +22,35 @@ export interface VideoCapabilities {
 }
 
 /**
+ * Extended video capabilities with additional codec and environment detection.
+ *
+ * Stored in localStorage under `extended_video_caps_v2` with 7-day TTL.
+ * Exposed on `window.__EXTENDED_VIDEO_CAPS__` in dev mode.
+ */
+export interface ExtendedCapabilities extends VideoCapabilities {
+  // Additional codec support
+  vp8: boolean;
+  vp9: boolean;
+
+  // Encoder capabilities
+  gifEncode: boolean; // Always true (modern-gif WASM)
+  mp4Encode: boolean; // WebAV availability
+
+  // Environment features
+  sharedArrayBuffer: boolean;
+  crossOriginIsolated: boolean;
+  workerSupport: boolean;
+
+  // Performance indicators
+  hardwareDecodeCores?: number; // navigator.hardwareConcurrency
+  estimatedMemoryMB?: number; // performance.memory if available
+
+  // Detection metadata
+  detectedAt: number; // timestamp
+  detectionVersion: number; // for cache invalidation
+}
+
+/**
  * Container formats supported by the pipeline selector.
  */
 export type ContainerFormat = 'mp4' | 'mov' | 'm4v' | 'webm' | 'mkv' | 'avi' | 'wmv' | 'unknown';

@@ -15,7 +15,10 @@
 import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
 import type { VideoTrackInfo } from '@t/video-pipeline-types';
 import { capabilityService } from '@services/video-pipeline/capability-service';
+import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
 import { videoPipelineService } from '@services/video-pipeline/video-pipeline-service';
+import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
+import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
 import { isAv1Codec, isH264Codec, isHevcCodec, normalizeCodecString } from '@utils/codec-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -90,6 +93,7 @@ export class ConversionOrchestrator {
       // Warm up capability probing early to reduce latency for the planning step.
       // Intentionally non-blocking to keep UI responsive.
       void capabilityService.detectCapabilities().catch(() => undefined);
+      void extendedCapabilityService.detectCapabilities().catch(() => undefined);
       this.progressReporter.report(1.0);
 
       // Phase 2: Analysis
@@ -115,6 +119,28 @@ export class ConversionOrchestrator {
         reason: pathSelection.reason,
         codec: metadata?.codec,
       });
+
+      // Enhanced strategy logging (dev mode)
+      if (import.meta.env.DEV && metadata?.codec) {
+        try {
+          const container = pathSelection.useDemuxer ? 'mp4' : 'unknown';
+          const extendedCaps = extendedCapabilityService.getCached();
+          const reasoning = strategyRegistryService.getStrategyReasoning({
+            codec: metadata.codec,
+            format: request.format,
+            container: container as import('@t/video-pipeline-types').ContainerFormat,
+            capabilities: extendedCaps,
+          });
+
+          logger.debug('conversion', 'Strategy Decision Factors', reasoning.factors);
+          logger.debug('conversion', 'Alternatives Considered', reasoning.alternativesConsidered);
+        } catch (error) {
+          // Non-critical - don't block conversion
+          logger.debug('conversion', 'Strategy reasoning generation failed (non-critical)', {
+            error: getErrorMessage(error),
+          });
+        }
+      }
 
       // Phase 3: Conversion
       this.progressReporter.startPhase('conversion', 'Converting...');
@@ -167,6 +193,42 @@ export class ConversionOrchestrator {
         durationMs: conversionMetadata.conversionTimeMs,
       });
 
+      // Record successful conversion to history
+      if (metadata?.codec) {
+        try {
+          strategyHistoryService.recordConversion({
+            codec: metadata.codec,
+            format: request.format,
+            path: conversionMetadata.path,
+            durationMs: conversionMetadata.conversionTimeMs,
+            success: true,
+            timestamp: Date.now(),
+          });
+        } catch (error) {
+          // Non-critical - don't block return
+          logger.debug('conversion', 'Failed to record conversion history (non-critical)', {
+            error: getErrorMessage(error),
+          });
+        }
+      }
+
+      // Performance metrics logging (always visible, even in production)
+      logger.performance('Conversion Strategy Executed', {
+        codec: metadata?.codec,
+        format: request.format,
+        path: conversionMetadata.path,
+        plannedPath: pathSelection.path,
+        hadFallback: conversionMetadata.path !== pathSelection.path,
+        durationMs: conversionMetadata.conversionTimeMs,
+        outputSizeMB: (blob.size / (1024 * 1024)).toFixed(2),
+        performanceRating:
+          conversionMetadata.conversionTimeMs < 10000
+            ? 'fast'
+            : conversionMetadata.conversionTimeMs < 30000
+              ? 'medium'
+              : 'slow',
+      });
+
       return {
         blob,
         metadata: conversionMetadata,
@@ -187,6 +249,25 @@ export class ConversionOrchestrator {
         format: request.format,
         error: errorMessage,
       });
+
+      // Record failed conversion to history (if we have enough info)
+      if (request.metadata?.codec) {
+        try {
+          strategyHistoryService.recordConversion({
+            codec: request.metadata.codec,
+            format: request.format,
+            path: 'cpu', // Unknown at this point, use default
+            durationMs: Date.now() - startTime,
+            success: false,
+            timestamp: Date.now(),
+          });
+        } catch (historyError) {
+          // Non-critical - don't mask original error
+          logger.debug('conversion', 'Failed to record conversion failure (non-critical)', {
+            error: getErrorMessage(historyError),
+          });
+        }
+      }
 
       throw error;
     } finally {
