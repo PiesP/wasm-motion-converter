@@ -10,15 +10,15 @@
  * - Eligibility checking
  */
 
-import type { VideoMetadata } from '@t/conversion-types';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
-import type { DemuxerAdapter } from '../webcodecs/demuxer/demuxer-adapter';
+import type { VideoMetadata } from "@t/conversion-types";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
+import type { DemuxerAdapter } from "@services/webcodecs/demuxer/demuxer-adapter";
 import {
   canUseDemuxer,
   createDemuxer,
   detectContainer,
-} from '../webcodecs/demuxer/demuxer-factory';
+} from "@services/webcodecs/demuxer/demuxer-factory";
 
 /**
  * Demuxer manager class
@@ -65,12 +65,15 @@ export class DemuxerManager {
    * @returns DemuxerAdapter instance or null if not eligible
    * @throws Error if demuxer creation fails
    */
-  async create(file: File, metadata?: VideoMetadata): Promise<DemuxerAdapter | null> {
+  async create(
+    file: File,
+    metadata?: VideoMetadata
+  ): Promise<DemuxerAdapter | null> {
     const demuxer = await createDemuxer(file, metadata);
 
     if (demuxer) {
       this.activeDemuxers.add(demuxer);
-      logger.debug('demuxer-manager', 'Created demuxer', {
+      logger.debug("demuxer-manager", "Created demuxer", {
         container: detectContainer(file),
         fileName: file.name,
         activeCount: this.activeDemuxers.size,
@@ -95,11 +98,11 @@ export class DemuxerManager {
     try {
       demuxer.destroy();
       this.activeDemuxers.delete(demuxer);
-      logger.debug('demuxer-manager', 'Destroyed demuxer', {
+      logger.debug("demuxer-manager", "Destroyed demuxer", {
         remainingCount: this.activeDemuxers.size,
       });
     } catch (error) {
-      logger.warn('demuxer-manager', 'Error destroying demuxer', {
+      logger.warn("demuxer-manager", "Error destroying demuxer", {
         error: getErrorMessage(error),
       });
       // Still remove from tracking even if destroy fails
@@ -118,7 +121,7 @@ export class DemuxerManager {
       return;
     }
 
-    logger.debug('demuxer-manager', 'Destroying all demuxers', {
+    logger.debug("demuxer-manager", "Destroying all demuxers", {
       count,
     });
 

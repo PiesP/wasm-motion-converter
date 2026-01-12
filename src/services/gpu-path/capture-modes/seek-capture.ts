@@ -12,10 +12,14 @@
  * - fastSeek() optimization when available
  */
 
-import type { CaptureAdapter, FrameCaptureCallback } from '../../gpu-path/types';
-import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
-import { logger } from '@utils/logger';
-import { waitForEvent } from '../../webcodecs/decoder/wait-for-event';
+import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
+import { logger } from "@utils/logger";
+
+import type {
+  CaptureAdapter,
+  FrameCaptureCallback,
+} from "@services/gpu-path/types";
+import { waitForEvent } from "@services/webcodecs/decoder/wait-for-event";
 
 /**
  * Seek-based capture adapter
@@ -35,9 +39,12 @@ export class SeekCaptureAdapter implements CaptureAdapter {
     }
 
     const normalizedCodec = codec.toLowerCase();
-    const isAv1 = normalizedCodec.includes('av1') || normalizedCodec.includes('av01');
-    const isVp9 = normalizedCodec.includes('vp9') || normalizedCodec.includes('vp09');
-    const isHevc = normalizedCodec.includes('hevc') || normalizedCodec.includes('hvc1');
+    const isAv1 =
+      normalizedCodec.includes("av1") || normalizedCodec.includes("av01");
+    const isVp9 =
+      normalizedCodec.includes("vp9") || normalizedCodec.includes("vp09");
+    const isHevc =
+      normalizedCodec.includes("hevc") || normalizedCodec.includes("hvc1");
 
     // Complex codecs may need more time for seeking
     if (isAv1 || isHevc) {
@@ -64,7 +71,7 @@ export class SeekCaptureAdapter implements CaptureAdapter {
     timeoutMs: number = FFMPEG_INTERNALS.WEBCODECS.SEEK_TIMEOUT_MS
   ): Promise<void> {
     if (Number.isNaN(time)) {
-      throw new Error('Invalid seek time for video decode.');
+      throw new Error("Invalid seek time for video decode.");
     }
 
     const clampedTime = Math.max(0, time);
@@ -73,13 +80,15 @@ export class SeekCaptureAdapter implements CaptureAdapter {
     }
 
     // Prefer fastSeek() when available (can be faster than setting currentTime)
-    const maybeFastSeek = video as HTMLVideoElement & { fastSeek?: (time: number) => void };
-    if (typeof maybeFastSeek.fastSeek === 'function') {
+    const maybeFastSeek = video as HTMLVideoElement & {
+      fastSeek?: (time: number) => void;
+    };
+    if (typeof maybeFastSeek.fastSeek === "function") {
       maybeFastSeek.fastSeek(clampedTime);
     } else {
       video.currentTime = clampedTime;
     }
-    await waitForEvent(video, 'seeked', timeoutMs);
+    await waitForEvent(video, "seeked", timeoutMs);
   }
 
   /**
@@ -112,18 +121,21 @@ export class SeekCaptureAdapter implements CaptureAdapter {
     // Seek to a representative frame (25% into video or middle) instead of first frame
     if (maxFrames === 1) {
       if (shouldCancel?.()) {
-        throw new Error('Conversion cancelled by user');
+        throw new Error("Conversion cancelled by user");
       }
 
       // Choose representative frame: 25% duration mark, clamped to valid range
       // This provides better representation than first frame (often black/fade-in)
       const epsilon = 0.001;
-      const representativeTime = Math.min(duration - epsilon, Math.max(epsilon, duration * 0.25));
+      const representativeTime = Math.min(
+        duration - epsilon,
+        Math.max(epsilon, duration * 0.25)
+      );
 
-      logger.info('conversion', 'Fast single-frame extraction', {
+      logger.info("conversion", "Fast single-frame extraction", {
         duration,
         targetTime: representativeTime,
-        position: '25%',
+        position: "25%",
       });
 
       await this.seekTo(video, representativeTime, seekTimeout);
@@ -152,7 +164,7 @@ export class SeekCaptureAdapter implements CaptureAdapter {
 
     for (let index = 0; index < totalFrames; index += 1) {
       if (shouldCancel?.()) {
-        throw new Error('Conversion cancelled by user');
+        throw new Error("Conversion cancelled by user");
       }
 
       // Measure seek performance during warmup phase
@@ -167,7 +179,8 @@ export class SeekCaptureAdapter implements CaptureAdapter {
 
         // After warmup, check if FPS downshift is needed
         if (index === TIMING_SAMPLE_SIZE - 1) {
-          const avgSeekTime = seekTimings.reduce((a, b) => a + b) / seekTimings.length;
+          const avgSeekTime =
+            seekTimings.reduce((a, b) => a + b) / seekTimings.length;
 
           if (avgSeekTime > SLOW_SEEK_THRESHOLD_MS) {
             // Slow seeks detected, reduce FPS
@@ -178,7 +191,7 @@ export class SeekCaptureAdapter implements CaptureAdapter {
             frameInterval = 1 / adjustedFps;
             const newTotalFrames = Math.ceil(duration * adjustedFps);
 
-            logger.warn('conversion', 'Slow seek detected, reducing FPS', {
+            logger.warn("conversion", "Slow seek detected, reducing FPS", {
               avgSeekTimeMs: avgSeekTime.toFixed(1),
               originalFps: targetFps,
               adjustedFps,
@@ -191,11 +204,14 @@ export class SeekCaptureAdapter implements CaptureAdapter {
         }
       }
 
-      await captureFrame(index, Math.min(duration - epsilon, index * frameInterval));
+      await captureFrame(
+        index,
+        Math.min(duration - epsilon, index * frameInterval)
+      );
     }
 
     logger.info(
-      'conversion',
+      "conversion",
       `WebCodecs seek-based capture completed: capturedFrames=${totalFrames}, totalFrames=${totalFrames}`,
       {
         capturedFrames: totalFrames,

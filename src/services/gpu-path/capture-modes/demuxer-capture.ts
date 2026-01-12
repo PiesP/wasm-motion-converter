@@ -15,11 +15,18 @@
  * This is the fastest path for AV1/HEVC/VP9 where seeking is extremely slow.
  */
 
-import type { VideoMetadata } from '@t/conversion-types';
-import { createDemuxer, detectContainer } from '../../webcodecs/demuxer/demuxer-factory';
-import { canvasToBlob, createCanvas } from '../canvas-processor';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
+import type { VideoMetadata } from "@t/conversion-types";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
+
+import {
+  canvasToBlob,
+  createCanvas,
+} from "@services/gpu-path/canvas-processor";
+import {
+  createDemuxer,
+  detectContainer,
+} from "@services/webcodecs/demuxer/demuxer-factory";
 
 /**
  * Frame payload delivered to capture callback
@@ -83,12 +90,12 @@ export class DemuxerCaptureAdapter {
     file: File,
     targetFps: number,
     scale: number,
-    frameFormat: 'png' | 'jpeg' | 'rgba',
+    frameFormat: "png" | "jpeg" | "rgba",
     framePrefix: string,
     frameDigits: number,
     frameStartNumber: number,
     maxFrames: number | undefined,
-    quality: 'low' | 'medium' | 'high' | undefined,
+    quality: "low" | "medium" | "high" | undefined,
     onFrame: (frame: DemuxerFramePayload) => Promise<void>,
     onProgress?: DemuxerProgressCallback,
     shouldCancel?: () => boolean,
@@ -110,9 +117,16 @@ export class DemuxerCaptureAdapter {
       const decoderConfig = await demuxer.initialize(file);
       const demuxerMetadata = demuxer.getMetadata();
 
-      const targetWidth = Math.max(1, Math.round(decoderConfig.codedWidth * scale));
-      const targetHeight = Math.max(1, Math.round(decoderConfig.codedHeight * scale));
-      const totalFrames = maxFrames ?? Math.ceil(demuxerMetadata.duration * targetFps);
+      const targetWidth = Math.max(
+        1,
+        Math.round(decoderConfig.codedWidth * scale)
+      );
+      const targetHeight = Math.max(
+        1,
+        Math.round(decoderConfig.codedHeight * scale)
+      );
+      const totalFrames =
+        maxFrames ?? Math.ceil(demuxerMetadata.duration * targetFps);
       const requiredFramesForSuccess = Math.max(1, totalFrames - 1);
 
       // Dev-only diagnostics (rate-limited)
@@ -124,8 +138,13 @@ export class DemuxerCaptureAdapter {
       const DevStatsIntervalMs = 2000;
 
       // Downsampling parameters
-      const captureIntervalMicros = Math.max(1, Math.round(1_000_000 / targetFps));
-      const maxDurationSeconds = maxFrames ? maxFrames / targetFps : demuxerMetadata.duration;
+      const captureIntervalMicros = Math.max(
+        1,
+        Math.round(1_000_000 / targetFps)
+      );
+      const maxDurationSeconds = maxFrames
+        ? maxFrames / targetFps
+        : demuxerMetadata.duration;
       const maxDurationMicros = Math.round(maxDurationSeconds * 1_000_000);
       const durationSlackMicros = Math.round(1_000_000);
       let baseTimestampMicros: number | null = null;
@@ -136,11 +155,17 @@ export class DemuxerCaptureAdapter {
       const PartialAcceptRatio = 0.75;
       const partialAcceptFrames = Math.max(
         2,
-        Math.min(totalFrames, Math.max(8, Math.floor(totalFrames * PartialAcceptRatio)))
+        Math.min(
+          totalFrames,
+          Math.max(8, Math.floor(totalFrames * PartialAcceptRatio))
+        )
       );
 
       const hasCoveredTimeWindow = (): boolean => {
-        if (baseTimestampMicros === null || lastCapturedTimestampMicros === null) {
+        if (
+          baseTimestampMicros === null ||
+          lastCapturedTimestampMicros === null
+        ) {
           return false;
         }
         const targetEndMicros = baseTimestampMicros + maxDurationMicros;
@@ -162,7 +187,8 @@ export class DemuxerCaptureAdapter {
             maxDurationSeconds *
               Math.max(
                 1,
-                demuxerMetadata.framerate ?? demuxerMetadata.sampleCount / maxDurationSeconds
+                demuxerMetadata.framerate ??
+                  demuxerMetadata.sampleCount / maxDurationSeconds
               )
           )
         )
@@ -193,13 +219,15 @@ export class DemuxerCaptureAdapter {
           0,
           Math.min(
             Math.max(0, totalFrames - 1),
-            Math.floor(Math.min(1, Math.max(0, ratio)) * Math.max(1, totalFrames))
+            Math.floor(
+              Math.min(1, Math.max(0, ratio)) * Math.max(1, totalFrames)
+            )
           )
         );
         onProgress(pseudoCurrent, totalFrames);
       };
 
-      logger.info('conversion', 'Demuxer initialized', {
+      logger.info("conversion", "Demuxer initialized", {
         codec: decoderConfig.codec,
         width: decoderConfig.codedWidth,
         height: decoderConfig.codedHeight,
@@ -209,7 +237,10 @@ export class DemuxerCaptureAdapter {
         totalFrames,
       });
 
-      const maybeLogDevStats = (phase: string, extra?: Record<string, unknown>) => {
+      const maybeLogDevStats = (
+        phase: string,
+        extra?: Record<string, unknown>
+      ) => {
         if (!isDev) {
           return;
         }
@@ -220,7 +251,7 @@ export class DemuxerCaptureAdapter {
         }
         lastDevStatsAtMs = now;
 
-        logger.debug('conversion', 'Demuxer decode stats', {
+        logger.debug("conversion", "Demuxer decode stats", {
           phase,
           elapsedMs: now - decodeStartedAtMs,
           processedSamples,
@@ -237,8 +268,13 @@ export class DemuxerCaptureAdapter {
       };
 
       // 2. Create canvas for frame capture
-      const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba');
-      const shouldUseJpeg = frameFormat !== 'rgba' && (quality === 'low' || quality === 'medium');
+      const captureContext = createCanvas(
+        targetWidth,
+        targetHeight,
+        frameFormat === "rgba"
+      );
+      const shouldUseJpeg =
+        frameFormat !== "rgba" && (quality === "low" || quality === "medium");
 
       // 3. Create VideoDecoder
       decoder = new VideoDecoder({
@@ -248,9 +284,10 @@ export class DemuxerCaptureAdapter {
           lastOutputAtMs = Date.now();
         },
         error: (error: Error) => {
-          const wrapped = error instanceof Error ? error : new Error(getErrorMessage(error));
+          const wrapped =
+            error instanceof Error ? error : new Error(getErrorMessage(error));
           decoderError = wrapped;
-          logger.error('conversion', 'VideoDecoder error', {
+          logger.error("conversion", "VideoDecoder error", {
             error: getErrorMessage(wrapped),
           });
         },
@@ -259,14 +296,14 @@ export class DemuxerCaptureAdapter {
       // Select decoder config (prefer hardware)
       const selectDecoderConfig = async (): Promise<VideoDecoderConfig> => {
         if (
-          typeof VideoDecoder === 'undefined' ||
-          typeof VideoDecoder.isConfigSupported !== 'function'
+          typeof VideoDecoder === "undefined" ||
+          typeof VideoDecoder.isConfigSupported !== "function"
         ) {
           return decoderConfig;
         }
 
         type DecoderConfigWithAcceleration = VideoDecoderConfig & {
-          hardwareAcceleration?: 'prefer-hardware' | 'prefer-software';
+          hardwareAcceleration?: "prefer-hardware" | "prefer-software";
         };
 
         const baseConfig = decoderConfig as DecoderConfigWithAcceleration;
@@ -276,17 +313,19 @@ export class DemuxerCaptureAdapter {
         }
 
         const candidates: DecoderConfigWithAcceleration[] = [
-          { ...baseConfig, hardwareAcceleration: 'prefer-hardware' },
-          { ...baseConfig, hardwareAcceleration: 'prefer-software' },
+          { ...baseConfig, hardwareAcceleration: "prefer-hardware" },
+          { ...baseConfig, hardwareAcceleration: "prefer-software" },
           baseConfig,
         ];
 
         for (const candidate of candidates) {
           try {
-            const support = await VideoDecoder.isConfigSupported(candidate as VideoDecoderConfig);
+            const support = await VideoDecoder.isConfigSupported(
+              candidate as VideoDecoderConfig
+            );
             if (support.supported) {
               if (isDev) {
-                logger.debug('conversion', 'Selected VideoDecoder config', {
+                logger.debug("conversion", "Selected VideoDecoder config", {
                   codec: candidate.codec,
                   width: candidate.codedWidth,
                   height: candidate.codedHeight,
@@ -298,11 +337,15 @@ export class DemuxerCaptureAdapter {
             }
           } catch (error) {
             if (isDev) {
-              logger.debug('conversion', 'VideoDecoder.isConfigSupported failed for candidate', {
-                codec: candidate.codec,
-                hardwareAcceleration: candidate.hardwareAcceleration ?? null,
-                error: getErrorMessage(error),
-              });
+              logger.debug(
+                "conversion",
+                "VideoDecoder.isConfigSupported failed for candidate",
+                {
+                  codec: candidate.codec,
+                  hardwareAcceleration: candidate.hardwareAcceleration ?? null,
+                  error: getErrorMessage(error),
+                }
+              );
             }
           }
         }
@@ -328,7 +371,7 @@ export class DemuxerCaptureAdapter {
         for (const videoFrame of framesToProcess) {
           try {
             if (shouldCancel?.()) {
-              throw new Error('Conversion cancelled by user');
+              throw new Error("Conversion cancelled by user");
             }
 
             if (decoderError) {
@@ -349,7 +392,10 @@ export class DemuxerCaptureAdapter {
             // Respect requested time window
             if (
               timestampMicros >
-              baseTimestampMicros + maxDurationMicros + durationSlackMicros + captureIntervalMicros
+              baseTimestampMicros +
+                maxDurationMicros +
+                durationSlackMicros +
+                captureIntervalMicros
             ) {
               continue;
             }
@@ -375,7 +421,7 @@ export class DemuxerCaptureAdapter {
             let data: Uint8Array | undefined;
             let imageData: ImageData | undefined;
 
-            if (frameFormat === 'rgba') {
+            if (frameFormat === "rgba") {
               imageData = captureContext.context.getImageData(
                 0,
                 0,
@@ -383,16 +429,27 @@ export class DemuxerCaptureAdapter {
                 captureContext.targetHeight
               );
             } else {
-              const encodeMimeType = shouldUseJpeg ? 'image/jpeg' : 'image/png';
-              const encodeQuality = shouldUseJpeg ? (quality === 'low' ? 0.75 : 0.85) : undefined;
-              const blob = await canvasToBlob(captureContext.canvas, encodeMimeType, encodeQuality);
+              const encodeMimeType = shouldUseJpeg ? "image/jpeg" : "image/png";
+              const encodeQuality = shouldUseJpeg
+                ? quality === "low"
+                  ? 0.75
+                  : 0.85
+                : undefined;
+              const blob = await canvasToBlob(
+                captureContext.canvas,
+                encodeMimeType,
+                encodeQuality
+              );
               data = new Uint8Array(await blob.arrayBuffer());
             }
 
             // Use actual encoded format for filename extension to match blob content
             // Critical: FFmpeg PNG decoder fails on JPEG data (signature 0xFFD8FFE0 vs 0x89504E47)
-            const actualFormat = frameFormat === 'rgba' ? 'rgba' : shouldUseJpeg ? 'jpeg' : 'png';
-            const frameName = `${framePrefix}${String(frameStartNumber + frameIndex).padStart(frameDigits, '0')}.${actualFormat}`;
+            const actualFormat =
+              frameFormat === "rgba" ? "rgba" : shouldUseJpeg ? "jpeg" : "png";
+            const frameName = `${framePrefix}${String(
+              frameStartNumber + frameIndex
+            ).padStart(frameDigits, "0")}.${actualFormat}`;
 
             await onFrame({
               name: frameName,
@@ -411,10 +468,13 @@ export class DemuxerCaptureAdapter {
             if (nextCaptureTimestampMicros !== null) {
               const intervalsPassed = Math.max(
                 1,
-                Math.floor((timestampMicros - nextCaptureTimestampMicros) / captureIntervalMicros) +
-                  1
+                Math.floor(
+                  (timestampMicros - nextCaptureTimestampMicros) /
+                    captureIntervalMicros
+                ) + 1
               );
-              nextCaptureTimestampMicros += intervalsPassed * captureIntervalMicros;
+              nextCaptureTimestampMicros +=
+                intervalsPassed * captureIntervalMicros;
             }
           } finally {
             videoFrame.close();
@@ -430,7 +490,7 @@ export class DemuxerCaptureAdapter {
 
       for await (const sample of demuxer.extractSamples(targetFps, maxFrames)) {
         if (shouldCancel?.()) {
-          throw new Error('Conversion cancelled by user');
+          throw new Error("Conversion cancelled by user");
         }
 
         if (decoderError) {
@@ -439,26 +499,30 @@ export class DemuxerCaptureAdapter {
 
         // Ensure first chunk is keyframe
         if (needsKeyFrame) {
-          if (sample.type !== 'key') {
+          if (sample.type !== "key") {
             skippedUntilKey += 1;
             processedSamples += 1;
             tickProgress();
-            maybeLogDevStats('waiting-for-keyframe', { skippedUntilKey });
+            maybeLogDevStats("waiting-for-keyframe", { skippedUntilKey });
             continue;
           }
 
           if (skippedUntilKey > 0) {
-            logger.warn('conversion', 'Skipping non-key samples until first keyframe', {
-              skippedSamples: skippedUntilKey,
-              codec: decoderConfig.codec,
-            });
+            logger.warn(
+              "conversion",
+              "Skipping non-key samples until first keyframe",
+              {
+                skippedSamples: skippedUntilKey,
+                codec: decoderConfig.codec,
+              }
+            );
           }
           needsKeyFrame = false;
         }
 
         processedSamples += 1;
         tickProgress();
-        maybeLogDevStats('decode-loop');
+        maybeLogDevStats("decode-loop");
 
         const chunk = new EncodedVideoChunk({
           type: sample.type,
@@ -470,7 +534,9 @@ export class DemuxerCaptureAdapter {
         try {
           decoder.decode(chunk);
         } catch (error) {
-          throw error instanceof Error ? error : new Error(getErrorMessage(error));
+          throw error instanceof Error
+            ? error
+            : new Error(getErrorMessage(error));
         }
 
         if (decoderError) {
@@ -480,15 +546,19 @@ export class DemuxerCaptureAdapter {
         // Process output frames
         if (decodedFrames.length >= MaxPendingOutputFrames) {
           await processDecodedFrames();
-          maybeLogDevStats('output-drain');
+          maybeLogDevStats("output-drain");
 
           if (frameIndex >= requiredFramesForSuccess) {
-            logger.info('conversion', 'Demuxer output budget reached; stopping decode early', {
-              frameCount: frameIndex,
-              requiredFrames: requiredFramesForSuccess,
-              totalFrames,
-              processedSamples,
-            });
+            logger.info(
+              "conversion",
+              "Demuxer output budget reached; stopping decode early",
+              {
+                frameCount: frameIndex,
+                requiredFrames: requiredFramesForSuccess,
+                totalFrames,
+                processedSamples,
+              }
+            );
             break;
           }
         }
@@ -498,16 +568,20 @@ export class DemuxerCaptureAdapter {
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
           await processDecodedFrames();
           tickProgress();
-          maybeLogDevStats('backpressure-yield');
+          maybeLogDevStats("backpressure-yield");
 
           if (frameIndex >= requiredFramesForSuccess) {
-            logger.info('conversion', 'Demuxer output budget reached; stopping decode early', {
-              frameCount: frameIndex,
-              requiredFrames: requiredFramesForSuccess,
-              totalFrames,
-              processedSamples,
-              decodeQueueSize: decoder.decodeQueueSize,
-            });
+            logger.info(
+              "conversion",
+              "Demuxer output budget reached; stopping decode early",
+              {
+                frameCount: frameIndex,
+                requiredFrames: requiredFramesForSuccess,
+                totalFrames,
+                processedSamples,
+                decodeQueueSize: decoder.decodeQueueSize,
+              }
+            );
             break;
           }
         }
@@ -515,18 +589,20 @@ export class DemuxerCaptureAdapter {
 
       // Final drain
       await processDecodedFrames();
-      maybeLogDevStats('pre-drain');
+      maybeLogDevStats("pre-drain");
 
       const skipFlush =
-        frameIndex >= requiredFramesForSuccess || (hasCoveredTimeWindow() && canAcceptPartial());
+        frameIndex >= requiredFramesForSuccess ||
+        (hasCoveredTimeWindow() && canAcceptPartial());
 
       if (skipFlush) {
         tickProgress(true);
       } else {
         const FlushTimeoutMs = 12_000;
-        const hasProcessedAllSamples = (): boolean => processedSamples >= estimatedSamplesTotal;
+        const hasProcessedAllSamples = (): boolean =>
+          processedSamples >= estimatedSamplesTotal;
 
-        logger.debug('conversion', 'Draining VideoDecoder', {
+        logger.debug("conversion", "Draining VideoDecoder", {
           frameCount: frameIndex,
           requiredFrames: requiredFramesForSuccess,
           totalFrames,
@@ -550,11 +626,16 @@ export class DemuxerCaptureAdapter {
         );
 
         const FlushPollIntervalMs = 50;
-        while (!flushSettled && Date.now() - flushStartedAtMs < FlushTimeoutMs) {
-          await new Promise<void>((resolve) => setTimeout(resolve, FlushPollIntervalMs));
+        while (
+          !flushSettled &&
+          Date.now() - flushStartedAtMs < FlushTimeoutMs
+        ) {
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, FlushPollIntervalMs)
+          );
           await processDecodedFrames();
           tickProgress();
-          maybeLogDevStats('drain-wait', {
+          maybeLogDevStats("drain-wait", {
             flushElapsedMs: Date.now() - flushStartedAtMs,
             baseTimestampMicros,
             lastCapturedTimestampMicros,
@@ -565,37 +646,48 @@ export class DemuxerCaptureAdapter {
           void flushPromise.catch(() => undefined);
           await processDecodedFrames();
 
-          logger.warn('conversion', 'VideoDecoder flush timed out; evaluating partial success', {
-            frameCount: frameIndex,
-            requiredFrames: requiredFramesForSuccess,
-            totalFrames,
-            partialAcceptFrames,
-            processedSamples,
-            estimatedSamplesTotal,
-            decodeQueueSize: decoder.decodeQueueSize,
-            baseTimestampMicros,
-            lastCapturedTimestampMicros,
-            timeoutMs: FlushTimeoutMs,
-          });
+          logger.warn(
+            "conversion",
+            "VideoDecoder flush timed out; evaluating partial success",
+            {
+              frameCount: frameIndex,
+              requiredFrames: requiredFramesForSuccess,
+              totalFrames,
+              partialAcceptFrames,
+              processedSamples,
+              estimatedSamplesTotal,
+              decodeQueueSize: decoder.decodeQueueSize,
+              baseTimestampMicros,
+              lastCapturedTimestampMicros,
+              timeoutMs: FlushTimeoutMs,
+            }
+          );
 
           const acceptPartial =
             frameIndex >= requiredFramesForSuccess ||
-            ((hasCoveredTimeWindow() || hasProcessedAllSamples()) && canAcceptPartial());
+            ((hasCoveredTimeWindow() || hasProcessedAllSamples()) &&
+              canAcceptPartial());
 
           if (acceptPartial) {
             tickProgress(true);
 
-            logger.warn('conversion', 'Accepting partial demuxer result after flush timeout', {
-              frameCount: frameIndex,
-              totalFrames,
-              partialAcceptFrames,
-              processedSamples,
-              coveredTimeWindow: hasCoveredTimeWindow(),
-              processedAllSamples: hasProcessedAllSamples(),
-            });
+            logger.warn(
+              "conversion",
+              "Accepting partial demuxer result after flush timeout",
+              {
+                frameCount: frameIndex,
+                totalFrames,
+                partialAcceptFrames,
+                processedSamples,
+                coveredTimeWindow: hasCoveredTimeWindow(),
+                processedAllSamples: hasProcessedAllSamples(),
+              }
+            );
 
             const effectiveFps =
-              demuxerMetadata.duration > 0 ? frameIndex / demuxerMetadata.duration : targetFps;
+              demuxerMetadata.duration > 0
+                ? frameIndex / demuxerMetadata.duration
+                : targetFps;
 
             return {
               frameFiles,
@@ -608,15 +700,19 @@ export class DemuxerCaptureAdapter {
           }
 
           throw new Error(
-            `VideoDecoder flush timed out after ${Math.round(FlushTimeoutMs / 1000)}s`
+            `VideoDecoder flush timed out after ${Math.round(
+              FlushTimeoutMs / 1000
+            )}s`
           );
         }
 
         if (flushError) {
-          throw flushError instanceof Error ? flushError : new Error(getErrorMessage(flushError));
+          throw flushError instanceof Error
+            ? flushError
+            : new Error(getErrorMessage(flushError));
         }
 
-        maybeLogDevStats('drain-flushed', {
+        maybeLogDevStats("drain-flushed", {
           flushElapsedMs: Date.now() - flushStartedAtMs,
         });
 
@@ -628,14 +724,16 @@ export class DemuxerCaptureAdapter {
         tickProgress(true);
       }
 
-      logger.info('conversion', 'Demuxer capture completed', {
+      logger.info("conversion", "Demuxer capture completed", {
         frameCount: frameIndex,
         duration: demuxerMetadata.duration,
         avgFps: frameIndex / demuxerMetadata.duration,
       });
 
       const effectiveFps =
-        demuxerMetadata.duration > 0 ? frameIndex / demuxerMetadata.duration : targetFps;
+        demuxerMetadata.duration > 0
+          ? frameIndex / demuxerMetadata.duration
+          : targetFps;
 
       return {
         frameFiles,
@@ -665,7 +763,7 @@ export class DemuxerCaptureAdapter {
       try {
         demuxer?.destroy();
       } catch (error) {
-        logger.debug('conversion', 'Demuxer destroy failed (non-fatal)', {
+        logger.debug("conversion", "Demuxer destroy failed (non-fatal)", {
           error: getErrorMessage(error),
         });
       }

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "index.html",
+    "src/index.tsx",
+    "public/service-worker.ts",
+    "public/sw-register.ts",
+    "scripts/**/*.ts",
+    "src/workers/**/*.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "public/*.ts",
+    "scripts/**/*.ts"
+  ],
+  "paths": {
+    "@": ["src"],
+    "@components": ["src/components"],
+    "@services": ["src/services"],
+    "@utils": ["src/utils"],
+    "@stores": ["src/stores"],
+    "@t": ["src/types"]
+  },
+  "ignore": [
+    "dist/**",
+    "tmp/**",
+    "docs/**"
+  ]
+}

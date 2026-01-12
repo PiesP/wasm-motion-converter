@@ -12,11 +12,15 @@
  * - Automatic fallback on failure
  */
 
-import type { CaptureAdapter, FrameCaptureCallback } from '../../gpu-path/types';
-import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
-import { SeekCaptureAdapter } from './seek-capture';
+import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
+
+import type {
+  CaptureAdapter,
+  FrameCaptureCallback,
+} from "@services/gpu-path/types";
+import { SeekCaptureAdapter } from "./seek-capture";
 
 /**
  * If requestVideoFrameCallback produces no callbacks within this window,
@@ -64,9 +68,13 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
     try {
       await video.play();
     } catch (error) {
-      logger.warn('conversion', 'Autoplay blocked, falling back to seek capture', {
-        error: getErrorMessage(error),
-      });
+      logger.warn(
+        "conversion",
+        "Autoplay blocked, falling back to seek capture",
+        {
+          error: getErrorMessage(error),
+        }
+      );
       await this.seekFallback.capture(
         video,
         duration,
@@ -128,7 +136,7 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
           finished = true;
           clearFirstFrameTimer();
           clearLagMonitor();
-          reject(new Error('WebCodecs frame capture stalled.'));
+          reject(new Error("WebCodecs frame capture stalled."));
         }, FFMPEG_INTERNALS.WEBCODECS.FRAME_STALL_TIMEOUT_MS);
       };
 
@@ -143,8 +151,8 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
           }
 
           logger.warn(
-            'conversion',
-            'WebCodecs frame-callback produced no frames quickly; aborting to allow fallback',
+            "conversion",
+            "WebCodecs frame-callback produced no frames quickly; aborting to allow fallback",
             {
               timeoutMs: FRAME_CALLBACK_FIRST_FRAME_TIMEOUT_MS,
               durationSeconds: duration,
@@ -171,7 +179,9 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
           }
 
           // Only bail out when playback is clearly advancing but rVFC isn't producing frames.
-          const mediaTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+          const mediaTime = Number.isFinite(video.currentTime)
+            ? video.currentTime
+            : 0;
           if (mediaTime < FRAME_CALLBACK_LAG_MIN_MEDIA_ADVANCE_SECONDS) {
             return;
           }
@@ -186,8 +196,8 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
           }
 
           logger.warn(
-            'conversion',
-            'WebCodecs frame-callback is lagging far behind playback; aborting to allow fallback',
+            "conversion",
+            "WebCodecs frame-callback is lagging far behind playback; aborting to allow fallback",
             {
               mediaTimeSeconds: mediaTime,
               targetFps,
@@ -215,8 +225,8 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
         clearStallTimer();
         clearFirstFrameTimer();
         clearLagMonitor();
-        video.removeEventListener('ended', handleEnded);
-        video.removeEventListener('error', handleError);
+        video.removeEventListener("ended", handleEnded);
+        video.removeEventListener("error", handleError);
         resolve();
       };
 
@@ -232,11 +242,11 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
         clearStallTimer();
         clearFirstFrameTimer();
         clearLagMonitor();
-        reject(new Error('WebCodecs video decode error.'));
+        reject(new Error("WebCodecs video decode error."));
       };
 
-      video.addEventListener('ended', handleEnded, { once: true });
-      video.addEventListener('error', handleError, { once: true });
+      video.addEventListener("ended", handleEnded, { once: true });
+      video.addEventListener("error", handleError, { once: true });
       scheduleStallTimer();
       scheduleFirstFrameTimer();
       startLagMonitor();
@@ -253,7 +263,7 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
             finished = true;
             clearFirstFrameTimer();
             clearLagMonitor();
-            reject(new Error('Conversion cancelled by user'));
+            reject(new Error("Conversion cancelled by user"));
             return;
           }
 
@@ -264,7 +274,8 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
           }
 
           const mediaTime = metadata.mediaTime ?? video.currentTime;
-          const shouldCapture = frameIndex === 0 || mediaTime + epsilon >= nextFrameTime;
+          const shouldCapture =
+            frameIndex === 0 || mediaTime + epsilon >= nextFrameTime;
 
           if (shouldCapture) {
             const captureTimestamp = Math.max(0, mediaTime);
@@ -274,7 +285,11 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
             scheduleStallTimer();
           }
 
-          if (frameIndex >= totalFrames || mediaTime + epsilon >= duration || video.ended) {
+          if (
+            frameIndex >= totalFrames ||
+            mediaTime + epsilon >= duration ||
+            video.ended
+          ) {
             finalize();
             return;
           }
@@ -296,7 +311,7 @@ export class FrameCallbackCaptureAdapter implements CaptureAdapter {
     });
 
     logger.info(
-      'conversion',
+      "conversion",
       `WebCodecs frame-callback capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}`,
       {
         capturedFrames: frameIndex,

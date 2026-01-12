@@ -1,6 +1,6 @@
 ---
 # Dependabot configuration for dropconvert-wasm
-# Stack: Vite + React + TypeScript + Tailwind + ffmpeg.wasm
+# Stack: Vite + SolidJS + TypeScript + Tailwind + ffmpeg.wasm
 
 version: 2
 updates:
@@ -30,12 +30,10 @@ updates:
           - "minor"
           - "patch"
 
-      react:
+      solid:
         patterns:
-          - "react"
-          - "react-dom"
-          - "@types/react"
-          - "@types/react-dom"
+          - "solid-js"
+          - "vite-plugin-solid"
         update-types:
           - "minor"
           - "patch"
@@ -52,7 +50,6 @@ updates:
         patterns:
           - "tailwindcss"
           - "postcss"
-          - "autoprefixer"
         update-types:
           - "minor"
           - "patch"
@@ -78,11 +75,6 @@ updates:
     ignore:
       # Vite major updates need careful review
       - dependency-name: "vite"
-        update-types: ["version-update:semver-major"]
-      # React major updates need careful review
-      - dependency-name: "react"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "react-dom"
         update-types: ["version-update:semver-major"]
       # ffmpeg.wasm major updates need careful review
       - dependency-name: "@ffmpeg/ffmpeg"

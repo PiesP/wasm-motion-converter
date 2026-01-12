@@ -15,22 +15,22 @@
  * provide detailed logging for debugging timing issues.
  */
 
-import type { ConversionQuality, VideoMetadata } from '@t/conversion-types';
-import { QUALITY_PRESETS } from '@utils/constants';
-import { logger } from '@utils/logger';
-import { isComplexCodec } from '../webcodecs/codec-utils';
+import type { ConversionQuality, VideoMetadata } from "@t/conversion-types";
+import { QUALITY_PRESETS } from "@utils/constants";
+import { logger } from "@utils/logger";
+import { isComplexCodec } from "@services/webcodecs/codec-utils";
 import {
   FPS_DOWNSAMPLING_THRESHOLD,
   MAX_WEBP_DURATION_24BIT,
   MIN_WEBP_FRAME_DURATION_MS,
   WEBP_ANIMATION_MAX_DURATION_SECONDS,
   WEBP_ANIMATION_MAX_FRAMES,
-} from '../webcodecs/webp-constants';
+} from "@services/webcodecs/webp-constants";
 
 /**
  * Supported output formats for FPS optimization
  */
-type ConversionFormat = 'gif' | 'webp';
+type ConversionFormat = "gif" | "webp";
 
 // ============================================================================
 // FPS Optimization (from quality-optimizer.ts)
@@ -66,12 +66,14 @@ export function getOptimalFPS(
 ): number {
   // Validate input
   if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
-    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
+    throw new Error(
+      `Invalid sourceFPS: ${sourceFps}. Must be a positive number.`
+    );
   }
 
   // Get preset FPS for this quality/format combination
   const preset = QUALITY_PRESETS[format][quality];
-  const presetFps = 'fps' in preset ? preset.fps : 15;
+  const presetFps = "fps" in preset ? preset.fps : 15;
 
   // Don't exceed source FPS (no point in upsampling frames)
   // Don't go below preset FPS (maintains quality baseline)
@@ -103,11 +105,13 @@ export function shouldUseAdaptiveFPS(
   format: ConversionFormat
 ): boolean {
   if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
-    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
+    throw new Error(
+      `Invalid sourceFPS: ${sourceFps}. Must be a positive number.`
+    );
   }
 
   const preset = QUALITY_PRESETS[format][quality];
-  const presetFps = 'fps' in preset ? preset.fps : 15;
+  const presetFps = "fps" in preset ? preset.fps : 15;
   const optimalFps = getOptimalFPS(sourceFps, quality, format);
 
   return optimalFps !== presetFps;
@@ -136,12 +140,14 @@ export function getFPSOptimizationMessage(
   format: ConversionFormat
 ): string | undefined {
   if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
-    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
+    throw new Error(
+      `Invalid sourceFPS: ${sourceFps}. Must be a positive number.`
+    );
   }
 
   const optimalFps = getOptimalFPS(sourceFps, quality, format);
   const preset = QUALITY_PRESETS[format][quality];
-  const presetFps = 'fps' in preset ? preset.fps : 15;
+  const presetFps = "fps" in preset ? preset.fps : 15;
 
   if (optimalFps === presetFps) {
     return undefined;
@@ -173,25 +179,32 @@ export function getFPSOptimizationMessage(
  * const maxFrames = getMaxWebPFrames(10, 5); // Returns 50 (5s * 10fps)
  * const maxFrames = getMaxWebPFrames(30, 15); // Returns 240 (capped at max)
  */
-export function getMaxWebPFrames(targetFps: number, durationSeconds?: number): number {
+export function getMaxWebPFrames(
+  targetFps: number,
+  durationSeconds?: number
+): number {
   // NOTE: FFmpeg metadata probing can return duration=0 for some containers/codecs.
   // Treat non-positive / non-finite durations as unknown to avoid clamping the
   // extraction window to 1s (which severely under-samples frames and causes choppy motion).
   if (durationSeconds !== undefined) {
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
       logger.warn(
-        'conversion',
-        'Invalid duration provided for WebP frame budget; falling back to default budget window',
+        "conversion",
+        "Invalid duration provided for WebP frame budget; falling back to default budget window",
         {
           durationSeconds,
           targetFps,
         }
       );
     } else if (durationSeconds < 1) {
-      logger.debug('conversion', 'Short duration provided for WebP frame budget; using default', {
-        durationSeconds,
-        targetFps,
-      });
+      logger.debug(
+        "conversion",
+        "Short duration provided for WebP frame budget; using default",
+        {
+          durationSeconds,
+          targetFps,
+        }
+      );
     }
   }
 
@@ -208,19 +221,23 @@ export function getMaxWebPFrames(targetFps: number, durationSeconds?: number): n
     )
   );
   const estimatedFrames = Math.ceil(cappedDuration * Math.max(1, targetFps));
-  const maxFrames = Math.max(1, Math.min(estimatedFrames, WEBP_ANIMATION_MAX_FRAMES));
+  const maxFrames = Math.max(
+    1,
+    Math.min(estimatedFrames, WEBP_ANIMATION_MAX_FRAMES)
+  );
 
   logger.debug(
-    'conversion',
+    "conversion",
     `Computed WebP frame extraction budget: targetFps=${targetFps}, durationUsedSeconds=${(
       safeDurationSeconds ?? WEBP_ANIMATION_MAX_DURATION_SECONDS
-    ).toFixed(
+    ).toFixed(3)}, cappedDurationSeconds=${cappedDuration.toFixed(
       3
-    )}, cappedDurationSeconds=${cappedDuration.toFixed(3)}, estimatedFrames=${estimatedFrames}, maxFrames=${maxFrames}`,
+    )}, estimatedFrames=${estimatedFrames}, maxFrames=${maxFrames}`,
     {
       targetFps,
       durationSeconds: durationSeconds ?? null,
-      durationUsedSeconds: safeDurationSeconds ?? WEBP_ANIMATION_MAX_DURATION_SECONDS,
+      durationUsedSeconds:
+        safeDurationSeconds ?? WEBP_ANIMATION_MAX_DURATION_SECONDS,
       cappedDurationSeconds: cappedDuration,
       estimatedFrames,
       maxFrames,
@@ -258,7 +275,11 @@ export function resolveAnimationDurationSeconds(
 
   const durationCandidates: number[] = [];
 
-  if (metadata?.duration && Number.isFinite(metadata.duration) && metadata.duration > 0) {
+  if (
+    metadata?.duration &&
+    Number.isFinite(metadata.duration) &&
+    metadata.duration > 0
+  ) {
     durationCandidates.push(metadata.duration);
   }
 
@@ -275,8 +296,14 @@ export function resolveAnimationDurationSeconds(
   }
 
   const maxDurationSeconds = Math.max(...durationCandidates);
-  const cappedDurationSeconds = Math.min(maxDurationSeconds, WEBP_ANIMATION_MAX_DURATION_SECONDS);
-  const minimumDurationSeconds = Math.max(0.016, 1 / Math.max(targetFps || 1, 60));
+  const cappedDurationSeconds = Math.min(
+    maxDurationSeconds,
+    WEBP_ANIMATION_MAX_DURATION_SECONDS
+  );
+  const minimumDurationSeconds = Math.max(
+    0.016,
+    1 / Math.max(targetFps || 1, 60)
+  );
 
   return Math.max(minimumDurationSeconds, cappedDurationSeconds);
 }
@@ -354,7 +381,10 @@ export function buildDurationAlignedTimestamps(params: {
       : frameCount / Math.max(1, fallbackFps);
 
   const minStepSeconds = MIN_WEBP_FRAME_DURATION_MS / 1000;
-  const stepSeconds = Math.max(minStepSeconds, safeDurationSeconds / frameCount);
+  const stepSeconds = Math.max(
+    minStepSeconds,
+    safeDurationSeconds / frameCount
+  );
 
   return Array.from({ length: frameCount }, (_, index) => index * stepSeconds);
 }
@@ -418,14 +448,18 @@ function normalizeWebPDurationsToTotal(params: {
 
   const target = Math.max(0, Math.round(targetTotalMs));
   const normalized = durations.map((duration) =>
-    Math.min(MAX_WEBP_DURATION_24BIT, Math.max(MIN_WEBP_FRAME_DURATION_MS, Math.round(duration)))
+    Math.min(
+      MAX_WEBP_DURATION_24BIT,
+      Math.max(MIN_WEBP_FRAME_DURATION_MS, Math.round(duration))
+    )
   );
 
   let currentTotal = normalized.reduce((sum, value) => sum + value, 0);
   let diff = target - currentTotal;
 
   // Usually diff is small (rounding error). Adjust by 1ms steps without violating bounds.
-  const maxIterations = normalized.length * 4 + Math.min(10_000, Math.abs(diff));
+  const maxIterations =
+    normalized.length * 4 + Math.min(10_000, Math.abs(diff));
   let iterations = 0;
 
   while (diff !== 0 && iterations < maxIterations) {
@@ -451,11 +485,15 @@ function normalizeWebPDurationsToTotal(params: {
 
   currentTotal = normalized.reduce((sum, value) => sum + value, 0);
   if (currentTotal !== target) {
-    logger.warn('conversion', 'Failed to perfectly align WebP durations to target total', {
-      targetTotalMs: target,
-      currentTotalMs: currentTotal,
-      frameCount: normalized.length,
-    });
+    logger.warn(
+      "conversion",
+      "Failed to perfectly align WebP durations to target total",
+      {
+        targetTotalMs: target,
+        currentTotalMs: currentTotal,
+        frameCount: normalized.length,
+      }
+    );
   }
 
   return normalized;
@@ -494,12 +532,19 @@ export function buildWebPFrameDurations(params: {
   codec?: string;
   durationSeconds?: number;
 }): number[] {
-  const { timestamps, fps, frameCount, sourceFPS, codec, durationSeconds } = params;
+  const { timestamps, fps, frameCount, sourceFPS, codec, durationSeconds } =
+    params;
 
-  const defaultDuration = Math.max(MIN_WEBP_FRAME_DURATION_MS, Math.round(1000 / Math.max(1, fps)));
+  const defaultDuration = Math.max(
+    MIN_WEBP_FRAME_DURATION_MS,
+    Math.round(1000 / Math.max(1, fps))
+  );
   const targetTotalDurationMs =
     durationSeconds && durationSeconds > 0
-      ? Math.max(frameCount * MIN_WEBP_FRAME_DURATION_MS, Math.round(durationSeconds * 1000))
+      ? Math.max(
+          frameCount * MIN_WEBP_FRAME_DURATION_MS,
+          Math.round(durationSeconds * 1000)
+        )
       : null;
 
   if (frameCount <= 1 || timestamps.length <= 1) {
@@ -514,18 +559,33 @@ export function buildWebPFrameDurations(params: {
       MAX_WEBP_DURATION_24BIT,
       Math.max(MIN_WEBP_FRAME_DURATION_MS, defaultDuration)
     );
-    return Array.from({ length: Math.max(1, frameCount) }, () => fallbackDuration);
+    return Array.from(
+      { length: Math.max(1, frameCount) },
+      () => fallbackDuration
+    );
   }
 
   // Validate sourceFPS before using it
   const hasValidSourceFps =
-    sourceFPS && Number.isFinite(sourceFPS) && sourceFPS > 0 && sourceFPS <= 120; // Sanity check
+    sourceFPS &&
+    Number.isFinite(sourceFPS) &&
+    sourceFPS > 0 &&
+    sourceFPS <= 120; // Sanity check
 
   if (!hasValidSourceFps && sourceFPS) {
-    logger.warn('conversion', 'Invalid source FPS detected, using variable durations', {
-      sourceFPS,
-      reason: sourceFPS <= 0 ? 'non-positive' : sourceFPS > 120 ? 'unrealistic' : 'non-finite',
-    });
+    logger.warn(
+      "conversion",
+      "Invalid source FPS detected, using variable durations",
+      {
+        sourceFPS,
+        reason:
+          sourceFPS <= 0
+            ? "non-positive"
+            : sourceFPS > 120
+            ? "unrealistic"
+            : "non-finite",
+      }
+    );
   }
 
   // Force uniform durations for complex codecs to prevent stuttering
@@ -533,47 +593,65 @@ export function buildWebPFrameDurations(params: {
 
   // Detect if significant FPS downsampling occurred or if complex codec requires uniform timing
   const useUniformDurations =
-    isComplexCodecSource || (hasValidSourceFps && sourceFPS / fps > FPS_DOWNSAMPLING_THRESHOLD);
+    isComplexCodecSource ||
+    (hasValidSourceFps && sourceFPS / fps > FPS_DOWNSAMPLING_THRESHOLD);
 
   let durations: number[] = [];
 
   if (useUniformDurations) {
     const uniformDuration = targetTotalDurationMs
       ? null
-      : Math.min(MAX_WEBP_DURATION_24BIT, Math.max(MIN_WEBP_FRAME_DURATION_MS, defaultDuration));
+      : Math.min(
+          MAX_WEBP_DURATION_24BIT,
+          Math.max(MIN_WEBP_FRAME_DURATION_MS, defaultDuration)
+        );
 
     // UNIFORM MODE: Use fixed duration to avoid stutter
-    logger.info('conversion', 'Using uniform frame durations to prevent downsampling stutter', {
-      sourceFPS: sourceFPS ?? 'unknown',
-      targetFPS: fps,
-      ratio: sourceFPS ? (sourceFPS / fps).toFixed(2) : 'N/A',
-      duration: uniformDuration ?? 'duration-aligned',
-      frameCount,
-      isComplexCodec: isComplexCodecSource,
-      codec: codec ?? 'unknown',
-    });
+    logger.info(
+      "conversion",
+      "Using uniform frame durations to prevent downsampling stutter",
+      {
+        sourceFPS: sourceFPS ?? "unknown",
+        targetFPS: fps,
+        ratio: sourceFPS ? (sourceFPS / fps).toFixed(2) : "N/A",
+        duration: uniformDuration ?? "duration-aligned",
+        frameCount,
+        isComplexCodec: isComplexCodecSource,
+        codec: codec ?? "unknown",
+      }
+    );
 
     durations = targetTotalDurationMs
-      ? buildUniformWebPDurations({ frameCount, totalDurationMs: targetTotalDurationMs })
-      : Array.from({ length: frameCount }, () => uniformDuration ?? defaultDuration);
+      ? buildUniformWebPDurations({
+          frameCount,
+          totalDurationMs: targetTotalDurationMs,
+        })
+      : Array.from(
+          { length: frameCount },
+          () => uniformDuration ?? defaultDuration
+        );
   } else {
     // VARIABLE MODE: Use timestamp deltas for VFR or near-matching FPS
-    logger.info('conversion', 'Using variable frame durations based on timestamps', {
-      sourceFPS: sourceFPS ?? 'unknown',
-      targetFPS: fps,
-      ratio: sourceFPS ? (sourceFPS / fps).toFixed(2) : 'N/A',
-      frameCount,
-    });
+    logger.info(
+      "conversion",
+      "Using variable frame durations based on timestamps",
+      {
+        sourceFPS: sourceFPS ?? "unknown",
+        targetFPS: fps,
+        ratio: sourceFPS ? (sourceFPS / fps).toFixed(2) : "N/A",
+        frameCount,
+      }
+    );
 
     for (let i = 0; i < frameCount; i += 1) {
       const currentTimestamp: number =
-        typeof timestamps[i] === 'number' && Number.isFinite(timestamps[i])
+        typeof timestamps[i] === "number" && Number.isFinite(timestamps[i])
           ? (timestamps[i] as number)
-          : i > 0 && typeof timestamps[i - 1] === 'number'
-            ? (timestamps[i - 1] as number)
-            : 0;
+          : i > 0 && typeof timestamps[i - 1] === "number"
+          ? (timestamps[i - 1] as number)
+          : 0;
       const nextTimestamp = timestamps[i + 1];
-      if (typeof nextTimestamp === 'number' && Number.isFinite(nextTimestamp)) {
+      if (typeof nextTimestamp === "number" && Number.isFinite(nextTimestamp)) {
         const deltaMs = Math.max(
           MIN_WEBP_FRAME_DURATION_MS,
           Math.round((nextTimestamp - currentTimestamp) * 1000)
@@ -588,7 +666,9 @@ export function buildWebPFrameDurations(params: {
   // Ensure the last frame has a duration
   if (durations.length < frameCount) {
     durations.push(
-      targetTotalDurationMs ? Math.round(targetTotalDurationMs / frameCount) : defaultDuration
+      targetTotalDurationMs
+        ? Math.round(targetTotalDurationMs / frameCount)
+        : defaultDuration
     );
   }
 

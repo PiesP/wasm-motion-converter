@@ -4,7 +4,7 @@
   "license": "MIT",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.27.0",
+  "packageManager": "pnpm@10.28.0",
   "engines": {
     "node": ">=22.16.0",
     "pnpm": "^10.27.0"
@@ -25,13 +25,15 @@
     "fmt": "biome format .",
     "fmt:fix": "biome format --write .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "knip": "knip --dependencies",
+    "knip:full": "knip --files --exports --dependencies --reporter compact --max-show-issues 50 --no-exit-code",
     "licenses:generate": "tsx scripts/generate-third-party-licenses.ts",
     "prebuild": "pnpm -s licenses:generate && pnpm quality",
     "build": "vite build",
     "analyze": "vite build && echo '\nBundle analysis generated at dist/stats.html'",
     "preview": "vite preview",
     "clean": "rimraf dist node_modules/.vite",
-    "quality": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s typecheck"
+    "quality": "pnpm -s knip && pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s typecheck"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
@@ -39,16 +41,14 @@
     "@webav/av-cliper": "^1.2.7",
     "comlink": "^4.4.2",
     "modern-gif": "^2.0.4",
-    "mp4box": "^2.3.0",
-    "solid-js": "^1.9.10",
-    "web-demuxer": "^4.0.0"
+    "solid-js": "^1.9.10"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.11",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^25.0.3",
-    "autoprefixer": "^10.4.23",
     "esbuild": "0.27.2",
+    "knip": "^5.80.2",
     "postcss": "^8.5.6",
     "rimraf": "^6.1.2",
     "rollup-plugin-visualizer": "^6.0.5",

@@ -17,18 +17,22 @@
  * - Cancellation support
  */
 
-import type { VideoMetadata } from '@t/conversion-types';
-import { getErrorMessage } from '@utils/error-utils';
-import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
-import { logger } from '@utils/logger';
-import { waitForEvent } from '../webcodecs/decoder/wait-for-event';
-import { createCanvas, drawVideoFrame, encodeCanvasToFormat } from './canvas-processor';
-import { captureModeSelector } from './capture-mode-selector';
-import { DemuxerCaptureAdapter } from './capture-modes/demuxer-capture';
-import { FrameCallbackCaptureAdapter } from './capture-modes/frame-callback-capture';
-import { SeekCaptureAdapter } from './capture-modes/seek-capture';
-import { TrackCaptureAdapter } from './capture-modes/track-capture';
-import type { CaptureMode, FrameFormat } from './types';
+import type { VideoMetadata } from "@t/conversion-types";
+import { getErrorMessage } from "@utils/error-utils";
+import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
+import { logger } from "@utils/logger";
+import { waitForEvent } from "@services/webcodecs/decoder/wait-for-event";
+import {
+  createCanvas,
+  drawVideoFrame,
+  encodeCanvasToFormat,
+} from "./canvas-processor";
+import { captureModeSelector } from "./capture-mode-selector";
+import { DemuxerCaptureAdapter } from "./capture-modes/demuxer-capture";
+import { FrameCallbackCaptureAdapter } from "./capture-modes/frame-callback-capture";
+import { SeekCaptureAdapter } from "./capture-modes/seek-capture";
+import { TrackCaptureAdapter } from "./capture-modes/track-capture";
+import type { CaptureMode, FrameFormat } from "./types";
 
 /**
  * Frame extraction options
@@ -57,7 +61,7 @@ export interface FrameExtractionOptions {
   /** Optional codec hint */
   codec?: string;
   /** Conversion quality level */
-  quality?: 'low' | 'medium' | 'high';
+  quality?: "low" | "medium" | "high";
   /** Video metadata (optional, for optimizations) */
   metadata?: VideoMetadata;
   /** Progress callback */
@@ -110,17 +114,19 @@ export class FrameExtractor {
    * @param options - Extraction options
    * @returns Promise resolving to extraction result
    */
-  async extractFrames(options: FrameExtractionOptions): Promise<FrameExtractionResult> {
+  async extractFrames(
+    options: FrameExtractionOptions
+  ): Promise<FrameExtractionResult> {
     const {
       file,
       targetFps,
       scale,
       frameFormat,
-      framePrefix = 'frame_',
+      framePrefix = "frame_",
       frameDigits = 6,
       frameStartNumber = 0,
       maxFrames,
-      captureMode = 'auto',
+      captureMode = "auto",
       quality,
       metadata,
       onProgress,
@@ -128,8 +134,12 @@ export class FrameExtractor {
     } = options;
 
     // Select capture mode
-    const selection = captureModeSelector.selectMode(file, captureMode, metadata);
-    logger.info('frame-extractor', 'Starting frame extraction', {
+    const selection = captureModeSelector.selectMode(
+      file,
+      captureMode,
+      metadata
+    );
+    logger.info("frame-extractor", "Starting frame extraction", {
       file: file.name,
       targetFps,
       scale,
@@ -140,8 +150,9 @@ export class FrameExtractor {
 
     // Try demuxer path first for eligible files
     if (
-      selection.mode === 'demuxer' ||
-      (selection.mode === 'auto' && (await DemuxerCaptureAdapter.canUse(file, metadata)))
+      selection.mode === "demuxer" ||
+      (selection.mode === "auto" &&
+        (await DemuxerCaptureAdapter.canUse(file, metadata)))
     ) {
       try {
         const result = await this.demuxerAdapter.capture(
@@ -163,11 +174,11 @@ export class FrameExtractor {
         );
 
         if (result) {
-          captureModeSelector.recordSuccess(file, 'demuxer', metadata);
+          captureModeSelector.recordSuccess(file, "demuxer", metadata);
           return {
             frameFiles: result.frameFiles,
             frameCount: result.frameCount,
-            captureModeUsed: 'demuxer',
+            captureModeUsed: "demuxer",
             width: result.width,
             height: result.height,
             fps: result.fps,
@@ -175,17 +186,23 @@ export class FrameExtractor {
           };
         }
       } catch (error) {
-        logger.warn('frame-extractor', 'Demuxer path failed, falling back to video element', {
-          error: getErrorMessage(error),
-        });
+        logger.warn(
+          "frame-extractor",
+          "Demuxer path failed, falling back to video element",
+          {
+            error: getErrorMessage(error),
+          }
+        );
         // Fall through to HTMLVideoElement path
       }
     }
 
     // HTMLVideoElement-based path
     // At this point, mode should not be 'auto' or 'demuxer' (already tried demuxer above)
-    const mode: Exclude<CaptureMode, 'auto' | 'demuxer'> =
-      selection.mode === 'auto' || selection.mode === 'demuxer' ? 'seek' : selection.mode;
+    const mode: Exclude<CaptureMode, "auto" | "demuxer"> =
+      selection.mode === "auto" || selection.mode === "demuxer"
+        ? "seek"
+        : selection.mode;
     return this.extractViaVideoElement(options, mode);
   }
 
@@ -196,7 +213,7 @@ export class FrameExtractor {
    */
   private async extractViaVideoElement(
     options: FrameExtractionOptions,
-    selectedMode: Exclude<CaptureMode, 'auto' | 'demuxer'>
+    selectedMode: Exclude<CaptureMode, "auto" | "demuxer">
   ): Promise<FrameExtractionResult> {
     const {
       file,
@@ -204,7 +221,7 @@ export class FrameExtractor {
       scale,
       frameFormat,
       frameQuality = 0.95,
-      framePrefix = 'frame_',
+      framePrefix = "frame_",
       frameDigits = 6,
       frameStartNumber = 0,
       maxFrames,
@@ -216,8 +233,8 @@ export class FrameExtractor {
 
     const url = URL.createObjectURL(file);
     this.activeVideoUrls.add(url);
-    const video = document.createElement('video');
-    video.preload = 'auto';
+    const video = document.createElement("video");
+    video.preload = "auto";
     video.muted = true;
     video.playsInline = true;
     video.src = url;
@@ -227,22 +244,34 @@ export class FrameExtractor {
 
     try {
       // Load metadata
-      await waitForEvent(video, 'loadedmetadata', FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS);
+      await waitForEvent(
+        video,
+        "loadedmetadata",
+        FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS
+      );
       const duration = Number.isFinite(video.duration) ? video.duration : 0;
       const sourceWidth = video.videoWidth || 0;
       const sourceHeight = video.videoHeight || 0;
 
       if (!sourceWidth || !sourceHeight || !duration) {
-        throw new Error('Video metadata not available for frame extraction');
+        throw new Error("Video metadata not available for frame extraction");
       }
 
       if (video.readyState < 2) {
-        await waitForEvent(video, 'loadeddata', FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS);
+        await waitForEvent(
+          video,
+          "loadeddata",
+          FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS
+        );
       }
 
       const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
       const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
-      const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba');
+      const captureContext = createCanvas(
+        targetWidth,
+        targetHeight,
+        frameFormat === "rgba"
+      );
       const frameFiles: string[] = [];
       const estimatedTotalFrames = Math.max(1, Math.ceil(duration * targetFps));
       const totalFrames =
@@ -253,31 +282,48 @@ export class FrameExtractor {
       let consecutiveEmptyFrames = 0;
 
       // Frame capture callback
-      const captureFrame = async (index: number, _timestamp: number): Promise<void> => {
+      const captureFrame = async (
+        index: number,
+        _timestamp: number
+      ): Promise<void> => {
         if (shouldCancel?.()) {
-          throw new Error('Conversion cancelled by user');
+          throw new Error("Conversion cancelled by user");
         }
 
         // Draw frame
-        drawVideoFrame(captureContext.context, video, targetWidth, targetHeight);
+        drawVideoFrame(
+          captureContext.context,
+          video,
+          targetWidth,
+          targetHeight
+        );
 
         // Encode frame
         let data: Uint8Array | undefined;
         let imageData: ImageData | undefined;
 
-        if (frameFormat === 'rgba') {
-          imageData = captureContext.context.getImageData(0, 0, targetWidth, targetHeight);
+        if (frameFormat === "rgba") {
+          imageData = captureContext.context.getImageData(
+            0,
+            0,
+            targetWidth,
+            targetHeight
+          );
           if (imageData.data.length === 0) {
             consecutiveEmptyFrames += 1;
-            logger.warn('frame-extractor', `Empty RGBA frame ${index}, skipping`, {
-              consecutiveEmptyFrames,
-              maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
-            });
+            logger.warn(
+              "frame-extractor",
+              `Empty RGBA frame ${index}, skipping`,
+              {
+                consecutiveEmptyFrames,
+                maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
+              }
+            );
 
             if (consecutiveEmptyFrames >= MAX_CONSECUTIVE_EMPTY_FRAMES) {
               throw new Error(
                 `Frame extraction produced ${consecutiveEmptyFrames} consecutive empty frames. ` +
-                  'This typically indicates codec incompatibility.'
+                  "This typically indicates codec incompatibility."
               );
             }
             return;
@@ -286,23 +332,29 @@ export class FrameExtractor {
         } else {
           // Determine encoding format based on quality
           const shouldUseJpeg =
-            frameFormat === 'jpeg' ||
-            (frameFormat === 'png' && quality && (quality === 'low' || quality === 'medium'));
+            frameFormat === "jpeg" ||
+            (frameFormat === "png" &&
+              quality &&
+              (quality === "low" || quality === "medium"));
 
-          const format = shouldUseJpeg ? 'jpeg' : frameFormat;
+          const format = shouldUseJpeg ? "jpeg" : frameFormat;
           const encodeQuality = shouldUseJpeg
-            ? quality === 'low'
+            ? quality === "low"
               ? 0.75
-              : quality === 'medium'
-                ? 0.85
-                : frameQuality
+              : quality === "medium"
+              ? 0.85
+              : frameQuality
             : frameQuality;
 
-          data = await encodeCanvasToFormat(captureContext.canvas, format, encodeQuality);
+          data = await encodeCanvasToFormat(
+            captureContext.canvas,
+            format,
+            encodeQuality
+          );
 
           if (data.byteLength === 0) {
             consecutiveEmptyFrames += 1;
-            logger.warn('frame-extractor', `Empty frame ${index}, skipping`, {
+            logger.warn("frame-extractor", `Empty frame ${index}, skipping`, {
               consecutiveEmptyFrames,
               maxAllowed: MAX_CONSECUTIVE_EMPTY_FRAMES,
             });
@@ -310,7 +362,7 @@ export class FrameExtractor {
             if (consecutiveEmptyFrames >= MAX_CONSECUTIVE_EMPTY_FRAMES) {
               throw new Error(
                 `Frame extraction produced ${consecutiveEmptyFrames} consecutive empty frames. ` +
-                  'This typically indicates codec incompatibility.'
+                  "This typically indicates codec incompatibility."
               );
             }
             return;
@@ -321,12 +373,16 @@ export class FrameExtractor {
         // Use actual encoded format for filename extension to match blob content
         // Critical: FFmpeg PNG decoder fails on JPEG data (signature 0xFFD8FFE0 vs 0x89504E47)
         const actualFormat =
-          frameFormat === 'jpeg'
-            ? 'jpeg'
-            : frameFormat === 'png' && quality && (quality === 'low' || quality === 'medium')
-              ? 'jpeg'
-              : frameFormat;
-        const frameName = `${framePrefix}${String(frameStartNumber + index).padStart(frameDigits, '0')}.${actualFormat}`;
+          frameFormat === "jpeg"
+            ? "jpeg"
+            : frameFormat === "png" &&
+              quality &&
+              (quality === "low" || quality === "medium")
+            ? "jpeg"
+            : frameFormat;
+        const frameName = `${framePrefix}${String(
+          frameStartNumber + index
+        ).padStart(frameDigits, "0")}.${actualFormat}`;
         frameFiles.push(frameName);
         onProgress?.(frameFiles.length, totalFrames);
       };
@@ -335,7 +391,7 @@ export class FrameExtractor {
       let effectiveMode = selectedMode;
 
       try {
-        if (effectiveMode === 'track') {
+        if (effectiveMode === "track") {
           await this.trackAdapter.capture(
             video,
             duration,
@@ -344,7 +400,7 @@ export class FrameExtractor {
             shouldCancel,
             maxFrames
           );
-        } else if (effectiveMode === 'frame-callback') {
+        } else if (effectiveMode === "frame-callback") {
           await this.frameCallbackAdapter.capture(
             video,
             duration,
@@ -367,7 +423,11 @@ export class FrameExtractor {
         }
 
         // Record success
-        captureModeSelector.recordSuccess(file, effectiveMode, options.metadata);
+        captureModeSelector.recordSuccess(
+          file,
+          effectiveMode,
+          options.metadata
+        );
 
         return {
           frameFiles,
@@ -381,14 +441,18 @@ export class FrameExtractor {
       } catch (error) {
         // Try fallback
         const fallback = captureModeSelector.getNextFallback(effectiveMode);
-        if (fallback && fallback !== 'auto' && fallback !== 'demuxer') {
-          logger.warn('frame-extractor', `${effectiveMode} mode failed, trying ${fallback}`, {
-            error: getErrorMessage(error),
-          });
+        if (fallback && fallback !== "auto" && fallback !== "demuxer") {
+          logger.warn(
+            "frame-extractor",
+            `${effectiveMode} mode failed, trying ${fallback}`,
+            {
+              error: getErrorMessage(error),
+            }
+          );
 
           effectiveMode = fallback;
 
-          if (fallback === 'frame-callback') {
+          if (fallback === "frame-callback") {
             await this.frameCallbackAdapter.capture(
               video,
               duration,
@@ -398,7 +462,7 @@ export class FrameExtractor {
               maxFrames,
               codec
             );
-          } else if (fallback === 'seek') {
+          } else if (fallback === "seek") {
             await this.seekAdapter.capture(
               video,
               duration,
@@ -434,25 +498,29 @@ export class FrameExtractor {
    * Prevents browser throttling by keeping video in viewport.
    */
   private attachVideoForDecode(video: HTMLVideoElement): void {
-    if (typeof document === 'undefined' || !document.body || video.parentElement) {
+    if (
+      typeof document === "undefined" ||
+      !document.body ||
+      video.parentElement
+    ) {
       return;
     }
 
     try {
-      video.style.position = 'fixed';
-      video.style.right = '0';
-      video.style.bottom = '0';
-      video.style.width = '2px';
-      video.style.height = '2px';
-      video.style.opacity = '0.001';
-      video.style.pointerEvents = 'none';
-      video.style.zIndex = '0';
-      video.style.background = 'transparent';
-      video.style.contain = 'strict';
-      video.style.transform = 'translateZ(0)';
+      video.style.position = "fixed";
+      video.style.right = "0";
+      video.style.bottom = "0";
+      video.style.width = "2px";
+      video.style.height = "2px";
+      video.style.opacity = "0.001";
+      video.style.pointerEvents = "none";
+      video.style.zIndex = "0";
+      video.style.background = "transparent";
+      video.style.contain = "strict";
+      video.style.transform = "translateZ(0)";
       document.body.appendChild(video);
     } catch (error) {
-      logger.debug('frame-extractor', 'Failed to attach video element', {
+      logger.debug("frame-extractor", "Failed to attach video element", {
         error: getErrorMessage(error),
       });
     }
@@ -464,14 +532,14 @@ export class FrameExtractor {
   private cleanupVideo(video: HTMLVideoElement, url: string): void {
     try {
       video.pause();
-      video.removeAttribute('src');
+      video.removeAttribute("src");
       video.load();
 
       if (video.parentElement) {
         video.remove();
       }
     } catch (error) {
-      logger.debug('frame-extractor', 'Video cleanup failed', {
+      logger.debug("frame-extractor", "Video cleanup failed", {
         error: getErrorMessage(error),
       });
     }
