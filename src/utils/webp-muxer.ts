@@ -327,7 +327,9 @@ function writeFourCc(fourcc: string): Uint8Array {
 /**
  * Create VP8X (Extended Format) chunk
  *
- * Flags: 0x10 (ANIMATION_FLAG) | 0x08 (ALPHA_FLAG if needed)
+ * VP8X Feature Flags (per libwebp):
+ * - ANIMATION_FLAG: 0x02
+ * - ALPHA_FLAG: 0x10
  *
  * @param width - Canvas width in pixels
  * @param height - Canvas height in pixels
@@ -336,7 +338,12 @@ function writeFourCc(fourcc: string): Uint8Array {
  */
 function createVp8xChunk(width: number, height: number, hasAlpha: boolean): Uint8Array {
   const chunkSize = 10;
-  const flags = 0x10 | (hasAlpha ? 0x08 : 0x00); // ANIMATION | ALPHA
+  // IMPORTANT: These values must match the WebP spec / libwebp feature flags.
+  // Incorrect flags can produce WebP files that are syntactically RIFF/WEBP,
+  // but fail to decode in browsers/viewers.
+  const ANIMATION_FLAG = 0x02;
+  const ALPHA_FLAG = 0x10;
+  const flags = ANIMATION_FLAG | (hasAlpha ? ALPHA_FLAG : 0x00);
 
   const chunks: Uint8Array[] = [
     writeFourCc('VP8X'),

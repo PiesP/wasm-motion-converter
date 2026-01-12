@@ -333,6 +333,65 @@ class WebCodecsConversionService {
 
     const isAnimatedWebP = containsFourCc(scanBytes, 'ANIM') || containsFourCc(scanBytes, 'ANMF');
 
+    // Quick structural sanity check: animated WebP requires VP8X with the animation flag set.
+    // If we accidentally produce ANIM/ANMF without VP8X.animation, many decoders will reject
+    // the file (and users will see an "empty"/unopenable output).
+    const tryReadVp8xFlags = (bytes: Uint8Array): number | null => {
+      if (bytes.length < 12) {
+        return null;
+      }
+
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const readFourCcAt = (offset: number): string =>
+        String.fromCharCode(
+          bytes[offset] ?? 0,
+          bytes[offset + 1] ?? 0,
+          bytes[offset + 2] ?? 0,
+          bytes[offset + 3] ?? 0
+        );
+
+      let offset = 12;
+      while (offset + 8 <= bytes.length) {
+        const fourcc = readFourCcAt(offset);
+        const chunkSize = view.getUint32(offset + 4, true);
+        const payloadStart = offset + 8;
+        const payloadEnd = payloadStart + chunkSize;
+
+        if (payloadEnd > bytes.length) {
+          return null;
+        }
+
+        if (fourcc === 'VP8X') {
+          if (chunkSize < 1) {
+            return null;
+          }
+          return bytes[payloadStart] ?? null;
+        }
+
+        offset = payloadEnd + (chunkSize % 2);
+      }
+
+      return null;
+    };
+
+    if (isAnimatedWebP) {
+      const vp8xFlags = tryReadVp8xFlags(scanBytes);
+      if (vp8xFlags === null) {
+        return {
+          valid: false,
+          reason: 'Animated WebP missing VP8X header chunk',
+        };
+      }
+
+      const VP8X_ANIMATION_FLAG = 0x02;
+      if ((vp8xFlags & VP8X_ANIMATION_FLAG) === 0) {
+        return {
+          valid: false,
+          reason: 'Animated WebP missing VP8X animation flag',
+        };
+      }
+    }
+
     const tryDecodeWithImageElement = async (): Promise<void> => {
       if (typeof document === 'undefined') {
         throw new Error('Document unavailable for WebP decode check');
