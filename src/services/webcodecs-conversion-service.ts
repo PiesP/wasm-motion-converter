@@ -245,11 +245,81 @@ class WebCodecsConversionService {
       };
     }
 
+    // Animated WebP decode support differs across browsers/APIs.
+    // `createImageBitmap()` may fail even for valid animated WebP files.
+    // Detect animation chunks and treat decode failures as non-fatal in that case.
+    const scanLimitBytes = Math.min(blob.size, 256 * 1024);
+    const scanBytes = new Uint8Array(await blob.slice(0, scanLimitBytes).arrayBuffer());
+
+    const containsFourCc = (bytes: Uint8Array, fourcc: string): boolean => {
+      if (fourcc.length !== 4 || bytes.length < 4) {
+        return false;
+      }
+
+      const a = fourcc.charCodeAt(0);
+      const b = fourcc.charCodeAt(1);
+      const c = fourcc.charCodeAt(2);
+      const d = fourcc.charCodeAt(3);
+
+      for (let i = 0; i <= bytes.length - 4; i++) {
+        if (bytes[i] === a && bytes[i + 1] === b && bytes[i + 2] === c && bytes[i + 3] === d) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const isAnimatedWebP = containsFourCc(scanBytes, 'ANIM') || containsFourCc(scanBytes, 'ANMF');
+
+    const tryDecodeWithImageElement = async (): Promise<void> => {
+      if (typeof document === 'undefined') {
+        throw new Error('Document unavailable for WebP decode check');
+      }
+
+      const url = URL.createObjectURL(blob);
+      try {
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = url;
+
+        if (typeof img.decode === 'function') {
+          await img.decode();
+          return;
+        }
+
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error('Image element failed to decode WebP'));
+        });
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+
     if (typeof createImageBitmap === 'function') {
       try {
         const bitmap = await createImageBitmap(blob);
         bitmap.close();
       } catch (error) {
+        if (isAnimatedWebP) {
+          // Best-effort fallback decode check.
+          try {
+            await tryDecodeWithImageElement();
+            return { valid: true };
+          } catch (imgError) {
+            logger.warn(
+              'conversion',
+              'Animated WebP decode check failed; accepting based on container validation',
+              {
+                size: blob.size,
+                createImageBitmapError: getErrorMessage(error),
+                imageDecodeError: getErrorMessage(imgError),
+              }
+            );
+            return { valid: true };
+          }
+        }
+
         return {
           valid: false,
           reason: `WebP decode failed: ${getErrorMessage(error)}`,
@@ -1800,7 +1870,24 @@ class WebCodecsConversionService {
             duration: fallbackResult.duration,
           });
 
-          throw new Error(errorMsg);
+          // Last-resort fallback: avoid hard-failing when WebCodecs frame capture is incomplete.
+          // This can happen on some devices/browsers even when FFmpeg can still transcode directly.
+          logger.warn(
+            'conversion',
+            'Falling back to FFmpeg direct conversion after incomplete frame capture',
+            {
+              format,
+              captured: fallbackResult.frameCount,
+              expected: validationExpectedFrames,
+              captureRatio,
+              minRequiredRatio,
+              minAbsoluteFrames,
+            }
+          );
+
+          return format === 'webp'
+            ? await ffmpegService.convertToWebP(file, options, metadata)
+            : await ffmpegService.convertToGIF(file, options, metadata);
         }
 
         const fallbackDurationSeconds = this.resolveAnimationDurationSeconds(

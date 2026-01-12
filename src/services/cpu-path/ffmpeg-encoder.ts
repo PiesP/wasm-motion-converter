@@ -586,6 +586,24 @@ export class FFmpegEncoder {
     const { fps, frameCount, quality } = settings;
     const qualitySettings = QUALITY_PRESETS.webp[quality];
 
+    const isValidLibwebpPreset = (preset: string): boolean =>
+      preset === 'default' ||
+      preset === 'picture' ||
+      preset === 'photo' ||
+      preset === 'drawing' ||
+      preset === 'icon' ||
+      preset === 'text';
+
+    const presetArgs = isValidLibwebpPreset(qualitySettings.preset)
+      ? (['-preset', qualitySettings.preset] as const)
+      : null;
+
+    if (!presetArgs) {
+      logger.warn('conversion', 'Skipping unsupported libwebp preset', {
+        preset: qualitySettings.preset,
+      });
+    }
+
     const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
@@ -614,8 +632,9 @@ export class FFmpegEncoder {
         '0',
         '-quality',
         qualitySettings.quality.toString(),
-        '-preset',
-        qualitySettings.preset,
+      ])
+      .concat(presetArgs ? Array.from(presetArgs) : [])
+      .concat([
         '-compression_level',
         qualitySettings.compressionLevel.toString(),
         '-method',
@@ -985,6 +1004,24 @@ export class FFmpegEncoder {
       const qualitySettings = QUALITY_PRESETS.webp[quality];
       const scaleFilter = getScaleFilter(quality, scale);
 
+      const isValidLibwebpPreset = (preset: string): boolean =>
+        preset === 'default' ||
+        preset === 'picture' ||
+        preset === 'photo' ||
+        preset === 'drawing' ||
+        preset === 'icon' ||
+        preset === 'text';
+
+      const presetArgs = isValidLibwebpPreset(qualitySettings.preset)
+        ? (['-preset', qualitySettings.preset] as const)
+        : null;
+
+      if (!presetArgs) {
+        logger.warn('conversion', 'Skipping unsupported libwebp preset', {
+          preset: qualitySettings.preset,
+        });
+      }
+
       logger.info('conversion', 'Starting WebP conversion', {
         quality,
         scale,
@@ -1039,8 +1076,9 @@ export class FFmpegEncoder {
             '0',
             '-quality',
             qualitySettings.quality.toString(),
-            '-preset',
-            qualitySettings.preset,
+          ])
+          .concat(presetArgs ? Array.from(presetArgs) : [])
+          .concat([
             '-compression_level',
             qualitySettings.compressionLevel.toString(),
             '-method',

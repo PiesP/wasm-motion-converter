@@ -154,14 +154,16 @@ export const QUALITY_PRESETS = {
     low: {
       fps: 10,
       quality: 50,
-      preset: 'fast',
+      // libwebp preset values are limited to: default/picture/photo/drawing/icon/text
+      // ("fast" is NOT a valid libwebp preset and causes FFmpeg to fail.)
+      preset: 'picture',
       compressionLevel: 2,
       method: 2,
     },
     medium: {
       fps: 15,
       quality: 55,
-      preset: 'fast',
+      preset: 'picture',
       compressionLevel: 2,
       method: 2,
     },
