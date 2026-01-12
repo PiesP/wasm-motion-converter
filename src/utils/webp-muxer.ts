@@ -1,4 +1,4 @@
-import { logger } from "./logger";
+import { logger } from './logger';
 
 /**
  * Custom Animated WebP Muxer
@@ -80,10 +80,7 @@ const normalizeDuration = (duration: number): number =>
  * @returns Normalized dimension
  * @throws Error if value is invalid or exceeds 24-bit range
  */
-const normalizeDimension = (
-  value: number,
-  label: "width" | "height"
-): number => {
+const normalizeDimension = (value: number, label: 'width' | 'height'): number => {
   if (!Number.isFinite(value) || value < MIN_DIMENSION) {
     throw new Error(`Invalid ${label} for animated WebP: ${value}`);
   }
@@ -101,8 +98,7 @@ const normalizeDimension = (
  * @param value - Color channel value
  * @returns Clamped value between 0 and 255
  */
-const clampColorChannel = (value: number): number =>
-  Math.min(255, Math.max(0, Math.round(value)));
+const clampColorChannel = (value: number): number => Math.min(255, Math.max(0, Math.round(value)));
 
 /**
  * Concatenate multiple Uint8Array chunks into a single buffer
@@ -111,10 +107,7 @@ const clampColorChannel = (value: number): number =>
  * @param totalLength - Expected total length (for validation)
  * @returns Concatenated buffer
  */
-const concatChunks = (
-  chunks: Uint8Array[],
-  totalLength: number
-): Uint8Array => {
+const concatChunks = (chunks: Uint8Array[], totalLength: number): Uint8Array => {
   const result = new Uint8Array(totalLength);
   let offset = 0;
   for (const chunk of chunks) {
@@ -156,11 +149,7 @@ const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
-  const isRiff =
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46; // 'RIFF'
+  const isRiff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46; // 'RIFF'
   const isWebp =
     bytes.length >= 12 &&
     bytes[8] === 0x57 &&
@@ -168,10 +157,7 @@ const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
     bytes[10] === 0x42 &&
     bytes[11] === 0x50; // 'WEBP'
 
-  const extractAllowedChunks = (
-    startOffset: number,
-    endOffset: number
-  ): Uint8Array => {
+  const extractAllowedChunks = (startOffset: number, endOffset: number): Uint8Array => {
     let offset = startOffset;
     let alphChunk: Uint8Array | null = null;
     let imageChunk: Uint8Array | null = null;
@@ -191,19 +177,14 @@ const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
       }
 
       const paddedEnd = chunkDataEnd + (chunkSize % 2);
-      const chunkWithPadding = bytes.slice(
-        offset,
-        Math.min(paddedEnd, endOffset)
-      );
+      const chunkWithPadding = bytes.slice(offset, Math.min(paddedEnd, endOffset));
 
-      if (fourcc === "ALPH") {
+      if (fourcc === 'ALPH') {
         // Keep the first alpha chunk only.
         alphChunk ??= chunkWithPadding;
-      } else if (fourcc === "VP8 " || fourcc === "VP8L") {
+      } else if (fourcc === 'VP8 ' || fourcc === 'VP8L') {
         if (imageChunk) {
-          throw new Error(
-            "WebP frame contains multiple image payload chunks (VP8/VP8L)."
-          );
+          throw new Error('WebP frame contains multiple image payload chunks (VP8/VP8L).');
         }
         imageChunk = chunkWithPadding;
       }
@@ -213,15 +194,12 @@ const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
 
     if (!imageChunk) {
       throw new Error(
-        "WebP frame does not contain VP8/VP8L payload suitable for animation muxing."
+        'WebP frame does not contain VP8/VP8L payload suitable for animation muxing.'
       );
     }
 
     if (alphChunk) {
-      return concatChunks(
-        [alphChunk, imageChunk],
-        alphChunk.length + imageChunk.length
-      );
+      return concatChunks([alphChunk, imageChunk], alphChunk.length + imageChunk.length);
     }
     return imageChunk;
   };
@@ -231,7 +209,7 @@ const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
     const payloadStart = 12; // Skip RIFF header + 'WEBP'
     const payloadEnd = Math.min(bytes.length, 8 + riffSize);
     if (payloadEnd <= payloadStart) {
-      throw new Error("Invalid RIFF WebP container (empty payload).");
+      throw new Error('Invalid RIFF WebP container (empty payload).');
     }
     return extractAllowedChunks(payloadStart, payloadEnd);
   }
@@ -264,11 +242,7 @@ const webPFrameHasAlphaChunk = (data: ArrayBuffer): boolean => {
       bytes[offset + 3] ?? 0
     );
 
-  const isRiff =
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46; // 'RIFF'
+  const isRiff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46; // 'RIFF'
   const isWebp =
     bytes.length >= 12 &&
     bytes[8] === 0x57 &&
@@ -293,7 +267,7 @@ const webPFrameHasAlphaChunk = (data: ArrayBuffer): boolean => {
       return false;
     }
 
-    if (fourcc === "ALPH") {
+    if (fourcc === 'ALPH') {
       return true;
     }
 
@@ -360,16 +334,12 @@ function writeFourCc(fourcc: string): Uint8Array {
  * @param hasAlpha - Whether frames contain alpha channel
  * @returns Complete VP8X chunk (FourCC + size + payload)
  */
-function createVp8xChunk(
-  width: number,
-  height: number,
-  hasAlpha: boolean
-): Uint8Array {
+function createVp8xChunk(width: number, height: number, hasAlpha: boolean): Uint8Array {
   const chunkSize = 10;
   const flags = 0x10 | (hasAlpha ? 0x08 : 0x00); // ANIMATION | ALPHA
 
   const chunks: Uint8Array[] = [
-    writeFourCc("VP8X"),
+    writeFourCc('VP8X'),
     writeUint32le(chunkSize),
     new Uint8Array([flags, 0, 0, 0]), // Flags (4 bytes)
     writeUint24le(width - 1), // Canvas width - 1 (24 bits)
@@ -396,14 +366,9 @@ function createAnimChunk(
   const chunkSize = 6;
 
   const chunks: Uint8Array[] = [
-    writeFourCc("ANIM"),
+    writeFourCc('ANIM'),
     writeUint32le(chunkSize),
-    new Uint8Array([
-      backgroundColor.r,
-      backgroundColor.g,
-      backgroundColor.b,
-      backgroundColor.a,
-    ]),
+    new Uint8Array([backgroundColor.r, backgroundColor.g, backgroundColor.b, backgroundColor.a]),
     new Uint8Array([loopCount & 0xff, (loopCount >> 8) & 0xff]), // Loop count (16 bits)
   ];
 
@@ -435,7 +400,7 @@ function createAnmfChunk(
   const normalizedDuration = normalizeDuration(duration);
 
   const chunks: Uint8Array[] = [
-    writeFourCc("ANMF"),
+    writeFourCc('ANMF'),
     writeUint32le(chunkSize),
     writeUint24le(0), // Frame X (24 bits) - always 0 for full-frame
     writeUint24le(0), // Frame Y (24 bits) - always 0 for full-frame
@@ -487,18 +452,15 @@ export async function muxAnimatedWebP(
   options: AnimatedWebPOptions
 ): Promise<ArrayBuffer> {
   if (frames.length === 0) {
-    const error = "No frames provided for animated WebP";
-    logger.error("general", error);
+    const error = 'No frames provided for animated WebP';
+    logger.error('general', error);
     throw new Error(error);
   }
 
   try {
-    const width = normalizeDimension(options.width, "width");
-    const height = normalizeDimension(options.height, "height");
-    const loopCount = Math.max(
-      0,
-      Math.min(0xffff, Math.round(options.loopCount))
-    );
+    const width = normalizeDimension(options.width, 'width');
+    const height = normalizeDimension(options.height, 'height');
+    const loopCount = Math.max(0, Math.min(0xffff, Math.round(options.loopCount)));
     const backgroundColor = {
       r: clampColorChannel(options.backgroundColor?.r ?? 0),
       g: clampColorChannel(options.backgroundColor?.g ?? 0),
@@ -508,11 +470,9 @@ export async function muxAnimatedWebP(
 
     // Determine alpha usage. For video-derived frames this is usually false,
     // but we auto-detect to avoid producing invalid VP8X flags.
-    const hasAlpha =
-      options.hasAlpha ??
-      frames.some((frame) => webPFrameHasAlphaChunk(frame.data));
+    const hasAlpha = options.hasAlpha ?? frames.some((frame) => webPFrameHasAlphaChunk(frame.data));
 
-    logger.info("performance", "Starting WebP muxing", {
+    logger.info('performance', 'Starting WebP muxing', {
       frameCount: frames.length,
       width,
       height,
@@ -535,18 +495,15 @@ export async function muxAnimatedWebP(
 
     // RIFF header
     const riffHeader = new Uint8Array(12);
-    riffHeader.set(writeFourCc("RIFF"), 0);
+    riffHeader.set(writeFourCc('RIFF'), 0);
     riffHeader.set(writeUint32le(4 + webpPayloadSize), 4); // File size - 8 (RIFF header)
-    riffHeader.set(writeFourCc("WEBP"), 8);
+    riffHeader.set(writeFourCc('WEBP'), 8);
 
     // Combine all chunks
     const totalSize = riffHeader.length + webpPayloadSize;
-    const result = concatChunks(
-      [riffHeader, vp8xChunk, animChunk, ...anmfChunks],
-      totalSize
-    );
+    const result = concatChunks([riffHeader, vp8xChunk, animChunk, ...anmfChunks], totalSize);
 
-    logger.info("performance", "WebP muxing completed", {
+    logger.info('performance', 'WebP muxing completed', {
       frameCount: frames.length,
       outputSize: result.byteLength,
     });
@@ -555,7 +512,7 @@ export async function muxAnimatedWebP(
     return result.buffer as ArrayBuffer;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.error("general", "WebP muxing failed", {
+    logger.error('general', 'WebP muxing failed', {
       error: message,
       frameCount: frames.length,
     });
