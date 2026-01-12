@@ -52,6 +52,7 @@ export class FFmpegCore {
   // Progress tracking
   private lastProgressEmitTime = 0;
   private lastProgressValue = -1;
+  private hasSeenNonTerminalProgressSinceLastTerminal = false;
 
   // Callback management
   private initProgressCallbacks: Set<(progress: number) => void> = new Set();
@@ -401,6 +402,20 @@ export class FFmpegCore {
         const normalizedProgress = Number.isFinite(progressPercent)
           ? Math.min(100, Math.max(0, progressPercent))
           : 0;
+
+        // Some FFmpeg operations (notably frame-sequence/image2) can emit an
+        // immediate terminal progress value (100%) before any real progress.
+        // This creates misleading logs (100% -> 16% -> ...) and can confuse
+        // consumers. Ignore terminal-only emissions unless we've observed at
+        // least one non-terminal progress value since the last terminal event.
+        if (normalizedProgress === 100) {
+          if (!this.hasSeenNonTerminalProgressSinceLastTerminal) {
+            return;
+          }
+          this.hasSeenNonTerminalProgressSinceLastTerminal = false;
+        } else {
+          this.hasSeenNonTerminalProgressSinceLastTerminal = true;
+        }
 
         if (this.shouldEmitProgress(normalizedProgress)) {
           if (this.isInitializing()) {

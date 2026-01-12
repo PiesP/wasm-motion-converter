@@ -396,16 +396,13 @@ export class FFmpegEncoder {
         );
       }
 
-      // Validate output
-      const validation = await vfs.validateOutputFile(ffmpeg, outputFileName, format);
-      if (!validation.valid) {
-        throw new Error(
-          `Output validation failed: ${validation.reason || 'Unknown validation error'}`
-        );
-      }
-
-      // Read output
-      const outputData = await vfs.readFile(ffmpeg, outputFileName);
+      // Read + validate output (single pass to avoid double-reading the same file)
+      const outputData = await vfs.readValidatedOutputFile(
+        ffmpeg,
+        outputFileName,
+        format,
+        'Output validation failed'
+      );
       const blob = new Blob([new Uint8Array(outputData)], {
         type: format === 'gif' ? 'image/gif' : 'image/webp',
       }) as ConversionOutputBlob;
@@ -937,16 +934,13 @@ export class FFmpegEncoder {
 
       logger.performance('GIF encoding complete');
 
-      // Validate output
-      const validation = await vfs.validateOutputFile(ffmpeg, outputFileName, 'gif');
-      if (!validation.valid) {
-        throw new Error(
-          `GIF output validation failed: ${validation.reason || 'Unknown validation error'}`
-        );
-      }
-
-      // Read output
-      const outputData = await vfs.readFile(ffmpeg, outputFileName);
+      // Read + validate output (single pass to avoid double-reading the same file)
+      const outputData = await vfs.readValidatedOutputFile(
+        ffmpeg,
+        outputFileName,
+        'gif',
+        'GIF output validation failed'
+      );
       const blob = new Blob([new Uint8Array(outputData)], {
         type: 'image/gif',
       }) as ConversionOutputBlob;
@@ -1185,16 +1179,13 @@ export class FFmpegEncoder {
         throw error;
       }
 
-      // Validate output
-      const validation = await vfs.validateOutputFile(ffmpeg, outputFileName, 'webp');
-      if (!validation.valid) {
-        throw new Error(
-          `WebP output validation failed: ${validation.reason || 'Unknown validation error'}`
-        );
-      }
-
-      // Read output
-      const outputData = await vfs.readFile(ffmpeg, outputFileName);
+      // Read + validate output (single pass to avoid double-reading the same file)
+      const outputData = await vfs.readValidatedOutputFile(
+        ffmpeg,
+        outputFileName,
+        'webp',
+        'WebP output validation failed'
+      );
       const blob = new Blob([new Uint8Array(outputData)], {
         type: 'image/webp',
       }) as ConversionOutputBlob;

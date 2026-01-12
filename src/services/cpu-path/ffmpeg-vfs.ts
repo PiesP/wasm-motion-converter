@@ -363,6 +363,41 @@ export class FFmpegVFS {
   }
 
   /**
+   * Read and validate an FFmpeg output file in a single pass.
+   *
+   * This avoids double-reading (and duplicate logs) when callers validate and
+   * then immediately read the same output to build a Blob.
+   *
+   * @param ffmpeg - FFmpeg instance
+   * @param fileName - Output file to read
+   * @param expectedFormat - Expected output format (gif/webp)
+   * @returns Output bytes
+   * @throws Error if output is invalid or unreadable
+   */
+  async readValidatedOutputFile(
+    ffmpeg: FFmpeg,
+    fileName: string,
+    expectedFormat: 'gif' | 'webp',
+    validationErrorPrefix: string = 'Output validation failed'
+  ): Promise<Uint8Array> {
+    const data = await this.readFile(ffmpeg, fileName);
+
+    const validation = validateOutputBytes(data, expectedFormat);
+    if (!validation.valid) {
+      logger.warn('conversion', 'Output file failed validation', {
+        format: expectedFormat,
+        size: data.length,
+        reason: validation.reason,
+      });
+      throw new Error(
+        `${validationErrorPrefix}: ${validation.reason || 'Unknown validation error'}`
+      );
+    }
+
+    return data;
+  }
+
+  /**
    * Clean up temporary files in FFmpeg virtual filesystem
    *
    * Deletes all known temporary files to prevent orphaned files and memory leaks.
