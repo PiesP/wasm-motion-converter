@@ -160,7 +160,9 @@ export function canUseDemuxer(file: File, metadata?: VideoMetadata): boolean {
     }
   }
 
-  logger.info('demuxer', 'Demuxer path is eligible', {
+  // canUseDemuxer() is called from multiple layers (eligibility check, decoder, factory).
+  // Keep eligibility visibility in dev logs without spamming info-level output.
+  logger.debug('demuxer', 'Demuxer path is eligible', {
     container,
     codec: metadata?.codec ?? 'unknown',
   });
