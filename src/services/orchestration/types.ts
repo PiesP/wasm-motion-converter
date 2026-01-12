@@ -10,12 +10,12 @@ import type {
   ConversionOptions,
   ConversionOutputBlob,
   VideoMetadata,
-} from "@t/conversion-types";
+} from '@t/conversion-types';
 
 /**
  * Conversion path types
  */
-export type ConversionPath = "gpu" | "cpu" | "hybrid" | "webav";
+export type ConversionPath = 'gpu' | 'cpu' | 'hybrid' | 'webav';
 
 /**
  * Conversion request

@@ -1,8 +1,6 @@
-import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 
-type OutputValidationResult =
-  | { valid: true }
-  | { valid: false; reason: string };
+type OutputValidationResult = { valid: true } | { valid: false; reason: string };
 
 /**
  * Validate an output file payload for basic correctness.
@@ -10,10 +8,10 @@ type OutputValidationResult =
  */
 export const validateOutputBytes = (
   data: Uint8Array,
-  expectedFormat: "gif" | "webp"
+  expectedFormat: 'gif' | 'webp'
 ): OutputValidationResult => {
   const minSize =
-    expectedFormat === "gif"
+    expectedFormat === 'gif'
       ? FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_GIF_SIZE_BYTES
       : FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_WEBP_SIZE_BYTES;
 
@@ -24,10 +22,10 @@ export const validateOutputBytes = (
     };
   }
 
-  if (expectedFormat === "gif") {
+  if (expectedFormat === 'gif') {
     // GIF signature: "GIF89a" or "GIF87a"
     const gifSignature = String.fromCharCode(...data.slice(0, 6));
-    if (!gifSignature.startsWith("GIF8")) {
+    if (!gifSignature.startsWith('GIF8')) {
       return {
         valid: false,
         reason: `Invalid GIF file signature (${gifSignature})`,
@@ -35,11 +33,11 @@ export const validateOutputBytes = (
     }
   }
 
-  if (expectedFormat === "webp") {
+  if (expectedFormat === 'webp') {
     // WebP signature: "RIFF....WEBP"
     const riffSignature = String.fromCharCode(...data.slice(0, 4));
     const webpSignature = String.fromCharCode(...data.slice(8, 12));
-    if (riffSignature !== "RIFF" || webpSignature !== "WEBP") {
+    if (riffSignature !== 'RIFF' || webpSignature !== 'WEBP') {
       return {
         valid: false,
         reason: `Invalid WebP file signature (${riffSignature}/${webpSignature})`,

@@ -12,7 +12,7 @@
  * in the encoder factory and used by the conversion pipeline.
  */
 
-import type { ConversionFormat, ConversionQuality } from "@t/conversion-types";
+import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
 
 /**
  * Encoder input request
@@ -239,5 +239,5 @@ export interface EncoderPreferences {
   /** Quality level (may influence encoder selection) */
   quality?: ConversionQuality;
   /** Execution environment (affects encoder availability) */
-  environment?: "main" | "worker";
+  environment?: 'main' | 'worker';
 }
