@@ -127,7 +127,6 @@ export class FFmpegEncoder {
       return false;
     }
     this.conversionLock = true;
-    logger.debug('conversion', 'Conversion lock acquired');
     return true;
   }
 
@@ -136,7 +135,6 @@ export class FFmpegEncoder {
    */
   private releaseConversionLock(): void {
     this.conversionLock = false;
-    logger.debug('conversion', 'Conversion lock released');
   }
 
   /**
