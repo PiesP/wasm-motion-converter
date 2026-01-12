@@ -166,16 +166,19 @@ class FFmpegService {
    *
    * @param metadata Video metadata for adaptive timeout
    * @param quality Conversion quality for adaptive timeout
+   * @param format Output format (affects watchdog timeout - WebP needs longer)
    * @param options Watchdog options
    */
   beginExternalConversion(
     metadata?: VideoMetadata,
     quality?: string,
+    format?: 'gif' | 'webp' | 'mp4',
     options?: { enableLogSilenceCheck?: boolean }
   ): void {
     this.pipeline.beginExternalConversion(
       metadata,
       quality as 'low' | 'medium' | 'high' | undefined,
+      format,
       options
     );
   }

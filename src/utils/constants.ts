@@ -150,9 +150,28 @@ export const QUALITY_PRESETS = {
   webp: {
     // WASM-optimized settings for libwebp encoding in FFmpeg
     // Lower method & compressionLevel prevent encoding stalls in WASM environment
-    low: { fps: 10, quality: 60, preset: 'fast', compressionLevel: 2, method: 2 },
-    medium: { fps: 15, quality: 75, preset: 'default', compressionLevel: 3, method: 4 },
-    high: { fps: 24, quality: 85, preset: 'default', compressionLevel: 4, method: 5 },
+    // VP9/complex codec optimization: Reduced quality (75→55 for medium) to prevent GPU saturation
+    low: {
+      fps: 10,
+      quality: 50,
+      preset: 'fast',
+      compressionLevel: 2,
+      method: 2,
+    },
+    medium: {
+      fps: 15,
+      quality: 55,
+      preset: 'fast',
+      compressionLevel: 2,
+      method: 2,
+    },
+    high: {
+      fps: 20,
+      quality: 70,
+      preset: 'default',
+      compressionLevel: 3,
+      method: 3,
+    },
   },
 } as const;
 
@@ -211,13 +230,16 @@ export interface TimeoutConfig {
 
 export const TIMEOUT_CONFIG: Record<string, TimeoutConfig> = {
   webp: {
-    // WASM WebP encoding is slower than expected
-    // 5.75s video took ~60s, so we need generous timeout for frame encoding
-    baseTimeout: 90_000,
-    perSecondMultiplier: 10_000,
-    maxTimeout: 180_000,
+    // WASM WebP encoding is much slower than expected (VP9 stalls at 90%)
+    // 5.75s video took ~120s+ with frame encoding stalls (queue saturation)
+    // VP9/complex codec workaround: Longer timeout + reduced quality settings
+    baseTimeout: 120_000, // 2 minutes base (increased from 90s)
+    perSecondMultiplier: 15_000, // 15s per second (increased from 10s)
+    maxTimeout: 360_000, // 6 minutes max (increased from 3 minutes)
   },
   gif: {
+    // GIF encoding via palette generation + Gifsicle is generally faster than WebP
+    // Keep baseline but monitor for VP9 codec performance
     baseTimeout: 90_000,
     perSecondMultiplier: 2_000,
     maxTimeout: 360_000,

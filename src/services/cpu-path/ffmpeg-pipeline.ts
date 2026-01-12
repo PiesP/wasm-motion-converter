@@ -265,6 +265,7 @@ export class FFmpegPipeline {
       this.monitoring.startWatchdog({
         metadata,
         quality: options.quality,
+        format: 'gif',
         enableLogSilenceCheck: true,
       });
 
@@ -324,6 +325,7 @@ export class FFmpegPipeline {
       this.monitoring.startWatchdog({
         metadata,
         quality: options.quality,
+        format: 'webp',
         enableLogSilenceCheck: true,
       });
 
@@ -374,6 +376,7 @@ export class FFmpegPipeline {
       // Start monitoring
       this.monitoring.startWatchdog({
         quality: params.options.quality,
+        format: params.format,
         enableLogSilenceCheck: true,
       });
 
@@ -511,17 +514,20 @@ export class FFmpegPipeline {
    *
    * @param metadata Video metadata for adaptive timeout
    * @param quality Conversion quality for adaptive timeout
+   * @param format Output format (affects watchdog timeout - WebP needs longer)
    * @param options Watchdog options
    */
   beginExternalConversion(
     metadata?: VideoMetadata,
     quality?: ConversionQuality,
+    format?: 'gif' | 'webp' | 'mp4',
     options?: { enableLogSilenceCheck?: boolean }
   ): void {
     logger.debug('general', 'Beginning external conversion monitoring');
     this.monitoring.startWatchdog({
       metadata,
       quality,
+      format,
       enableLogSilenceCheck: options?.enableLogSilenceCheck ?? false,
     });
   }

@@ -37,6 +37,8 @@ export interface WatchdogOptions {
   metadata?: VideoMetadata;
   /** Conversion quality for adaptive timeout calculation */
   quality?: ConversionQuality;
+  /** Output format (affects base timeout - WebP needs longer timeout) */
+  format?: 'gif' | 'webp' | 'mp4';
   /** Enable log silence detection (default: true) */
   enableLogSilenceCheck?: boolean;
 }
@@ -100,12 +102,13 @@ export class FFmpegMonitoring {
    * Start watchdog monitoring
    *
    * Monitors conversion progress and detects stalls. Uses adaptive timeout
-   * based on video characteristics (resolution, duration, quality).
+   * based on video characteristics (resolution, duration, quality) and format.
+   * WebP format uses 360s base timeout to handle VP9/complex codec encoding.
    *
    * @param options - Watchdog configuration options
    */
   startWatchdog(options: WatchdogOptions = {}): void {
-    const { metadata, quality, enableLogSilenceCheck = true } = options;
+    const { metadata, quality, format, enableLogSilenceCheck = true } = options;
 
     this.lastProgressTime = Date.now();
     this.lastLogTime = Date.now();
@@ -113,18 +116,26 @@ export class FFmpegMonitoring {
     this.isConverting = true;
     this.lastProgressValue = -1;
 
+    // Use format-specific base timeout
+    // WebP needs longer timeout due to slow libwebp encoder with VP9/complex codecs
+    const baseTimeout =
+      format === 'webp'
+        ? FFMPEG_INTERNALS.WATCHDOG_WEBP_BASE_TIMEOUT_MS
+        : FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS;
+
     // Calculate adaptive timeout based on video characteristics
-    this.currentWatchdogTimeout = calculateAdaptiveWatchdogTimeout(
-      FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS,
-      {
-        resolution: metadata ? { width: metadata.width, height: metadata.height } : undefined,
-        duration: metadata?.duration,
-        quality,
-      }
-    );
+    this.currentWatchdogTimeout = calculateAdaptiveWatchdogTimeout(baseTimeout, {
+      resolution: metadata ? { width: metadata.width, height: metadata.height } : undefined,
+      duration: metadata?.duration,
+      quality,
+    });
 
     logger.debug('watchdog', 'Watchdog started', {
-      baseTimeout: `${FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS / 1000}s`,
+      format: format || 'unknown',
+      baseTimeout:
+        format === 'webp'
+          ? `${FFMPEG_INTERNALS.WATCHDOG_WEBP_BASE_TIMEOUT_MS / 1000}s`
+          : `${FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS / 1000}s`,
       adaptiveTimeout: `${this.currentWatchdogTimeout / 1000}s`,
       resolution: metadata ? `${metadata.width}x${metadata.height}` : 'unknown',
       duration: metadata?.duration ? `${metadata.duration.toFixed(1)}s` : 'unknown',

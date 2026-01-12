@@ -22,12 +22,13 @@ import type {
   VideoMetadata,
 } from '@t/conversion-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
-import { QUALITY_PRESETS, TIMEOUT_CONVERSION } from '@utils/constants';
+import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
 import { performanceTracker } from '@utils/performance-tracker';
+import { calculateTimeout } from '@utils/timeout-calculator';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import { getTimeoutForFormat } from '@utils/timeout-calculator';
 import { withTimeout } from '@utils/with-timeout';
@@ -503,11 +504,14 @@ export class FFmpegEncoder {
       Math.max(15, Math.min(durationSeconds, 45))
     );
 
+    // Calculate adaptive timeout for GIF palette generation
+    const gifTimeout = calculateTimeout('gif', durationSeconds * 1000);
+
     try {
       await withTimeout(
         ffmpeg.exec(paletteCmd),
-        TIMEOUT_CONVERSION,
-        `WebCodecs GIF palette generation timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+        gifTimeout,
+        `WebCodecs GIF palette generation timed out after ${gifTimeout / 1000} seconds.`,
         () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
       );
     } finally {
@@ -549,8 +553,8 @@ export class FFmpegEncoder {
     try {
       await withTimeout(
         ffmpeg.exec(conversionCmd),
-        TIMEOUT_CONVERSION,
-        `WebCodecs GIF conversion timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+        gifTimeout, // Reuse GIF timeout (already calculated above)
+        `WebCodecs GIF conversion timed out after ${gifTimeout / 1000} seconds.`,
         () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
       );
     } finally {
@@ -583,7 +587,8 @@ export class FFmpegEncoder {
 
     // WebP encoding in WASM: use minimal threading to avoid stalls
     // Single thread prevents libwebp encoder blocking issues in WASM environment
-    const webpThreadArgs = ['-threads', '1', '-filter_threads', '1'];
+    // VP9/complex codec: Disable filter threads entirely (frame queue saturation workaround)
+    const webpThreadArgs = ['-threads', '1', '-filter_threads', '0'];
 
     // Use concat instead of spread to prevent stack overflow
     const webpCmd = ([] as string[])
@@ -616,6 +621,10 @@ export class FFmpegEncoder {
       quality: qualitySettings.quality,
       output: outputFileName,
       frameFormat: frameExtension,
+      durationSeconds,
+      preset: qualitySettings.preset,
+      compressionLevel: qualitySettings.compressionLevel,
+      method: qualitySettings.method,
     });
 
     const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
@@ -627,11 +636,15 @@ export class FFmpegEncoder {
       Math.max(15, Math.min(durationSeconds, 45))
     );
 
+    // Calculate adaptive timeout for WebP encoding (VP9/complex codec support)
+    // Base: 120s, per-second: 15s, max: 360s (6 minutes)
+    const webpTimeout = calculateTimeout('webp', durationSeconds * 1000);
+
     try {
       await withTimeout(
         ffmpeg.exec(webpCmd),
-        TIMEOUT_CONVERSION,
-        `Direct WebP encoding timed out after ${TIMEOUT_CONVERSION / 1000} seconds.`,
+        webpTimeout,
+        `Direct WebP encoding timed out after ${webpTimeout / 1000} seconds.`,
         () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
       );
     } finally {

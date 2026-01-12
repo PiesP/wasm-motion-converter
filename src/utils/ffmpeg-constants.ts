@@ -42,6 +42,8 @@ export const FFMPEG_INTERNALS = {
   WATCHDOG_CHECK_INTERVAL_MS: 10_000, // How often to check for stalls
   /** Base timeout for detecting stalled conversions. Adaptive multipliers may increase this. Set to 90 seconds. */
   WATCHDOG_STALL_TIMEOUT_MS: 90_000, // Timeout for detecting stalled conversions
+  /** Extended base timeout for WebP format conversions (VP9/complex codec support). Set to 360 seconds (6 minutes). */
+  WATCHDOG_WEBP_BASE_TIMEOUT_MS: 360_000, // WebP needs longer timeout due to slow libwebp encoder
 
   // Termination configuration (cleanup and shutdown)
   /** Grace period after termination signal before force-kill. Set to 200ms. */

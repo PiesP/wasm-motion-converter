@@ -192,7 +192,10 @@ class WebCodecsConversionService {
       const quality = Math.min(1, Math.max(0, qualityRatio));
       const blob =
         'convertToBlob' in canvas
-          ? await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/webp', quality })
+          ? await (canvas as OffscreenCanvas).convertToBlob({
+              type: 'image/webp',
+              quality,
+            })
           : await new Promise<Blob>((resolve, reject) => {
               (canvas as HTMLCanvasElement).toBlob(
                 (result) => {
@@ -759,7 +762,10 @@ class WebCodecsConversionService {
                   }
                 );
               }
-              framesByIndex[frame.index] = { name: frame.name, data: frame.data };
+              framesByIndex[frame.index] = {
+                name: frame.name,
+                data: frame.data,
+              };
             } else {
               logger.error('conversion', `Rejected 0-byte frame from WebCodecs: ${frame.name}`, {
                 hasData: !!frame.data,
@@ -935,7 +941,11 @@ class WebCodecsConversionService {
 
         logger.warn(
           'conversion',
-          `WebCodecs initial capture under-extracted frames; retrying with fallback capture modes (captured=${decodeResult.frameCount}, expected≈${expectedFramesFromDuration}, required>=${requiredFrames}, initial=${initialCaptureMode}, used=${decodeResult.captureModeUsed ?? 'unknown'})`,
+          `WebCodecs initial capture under-extracted frames; retrying with fallback capture modes (captured=${
+            decodeResult.frameCount
+          }, expected≈${expectedFramesFromDuration}, required>=${requiredFrames}, initial=${initialCaptureMode}, used=${
+            decodeResult.captureModeUsed ?? 'unknown'
+          })`,
           {
             codec: metadata?.codec ?? 'unknown',
             capturedFrames: decodeResult.frameCount,
@@ -1232,7 +1242,13 @@ class WebCodecsConversionService {
 
       logger.info(
         'conversion',
-        `Frame extraction complete: frameCount=${decodeResult.frameCount}, durationSeconds=${decodeResult.duration.toFixed(3)}, requestedFps=${requestedTargetFps}, effectiveTargetFps=${effectiveTargetFps}, maxFramesRequested=${maxFrames}, queuedFrames=${orderedFrames.length}, writtenFrames=${frameFiles.length}`,
+        `Frame extraction complete: frameCount=${
+          decodeResult.frameCount
+        }, durationSeconds=${decodeResult.duration.toFixed(
+          3
+        )}, requestedFps=${requestedTargetFps}, effectiveTargetFps=${effectiveTargetFps}, maxFramesRequested=${maxFrames}, queuedFrames=${
+          orderedFrames.length
+        }, writtenFrames=${frameFiles.length}`,
         {
           frameCount: decodeResult.frameCount,
           duration: decodeResult.duration,
@@ -1432,7 +1448,9 @@ class WebCodecsConversionService {
       ffmpegService.reportProgress(Math.round(progress));
     };
 
-    ffmpegService.beginExternalConversion(metadata, quality, { enableLogSilenceCheck: false });
+    ffmpegService.beginExternalConversion(metadata, quality, format, {
+      enableLogSilenceCheck: false,
+    });
 
     let externalEnded = false;
     const endConversion = () => {
