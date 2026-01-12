@@ -421,12 +421,3 @@ export class FFmpegVFS {
     }
   }
 }
-
-/**
- * Create FFmpeg VFS manager instance
- *
- * @returns New FFmpegVFS instance
- */
-export function createFFmpegVFS(): FFmpegVFS {
-  return new FFmpegVFS();
-}

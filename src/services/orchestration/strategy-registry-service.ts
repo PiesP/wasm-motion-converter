@@ -12,26 +12,23 @@
  * 5. Build fallback chain (primary → fallback → FFmpeg CPU as last resort)
  */
 
-import type { ConversionFormat } from "@t/conversion-types";
-import type {
-  ContainerFormat,
-  ExtendedCapabilities,
-} from "@t/video-pipeline-types";
+import type { ConversionFormat } from '@t/conversion-types';
+import type { ContainerFormat, ExtendedCapabilities } from '@t/video-pipeline-types';
 import type {
   CodecPathPreference,
   ConversionPath,
   StrategyReasoning,
-} from "@services/orchestration/types";
-import type { ConversionHistory } from "@services/orchestration/strategy-history-service";
-import { strategyHistoryService } from "@services/orchestration/strategy-history-service";
-import { isAv1Codec, isH264Codec, isHevcCodec } from "@utils/codec-utils";
-import { logger } from "@utils/logger";
+} from '@services/orchestration/types';
+import type { ConversionHistory } from '@services/orchestration/strategy-history-service';
+import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
+import { isAv1Codec, isH264Codec, isHevcCodec } from '@utils/codec-utils';
+import { logger } from '@utils/logger';
 
 /**
  * Strategy with confidence scoring
  */
 interface StrategyWithConfidence extends CodecPathPreference {
-  confidence: "high" | "medium" | "low";
+  confidence: 'high' | 'medium' | 'low';
 }
 
 /**
@@ -45,14 +42,13 @@ interface StrategyWithConfidence extends CodecPathPreference {
 const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
   // H.264 strategies
   [
-    "h264:gif",
+    'h264:gif',
     {
-      codec: "h264",
-      format: "gif",
-      preferredPath: "cpu",
-      fallbackPath: "gpu",
-      reason:
-        "FFmpeg palettegen is 3x faster than WebCodecs frame extraction for GIF",
+      codec: 'h264',
+      format: 'gif',
+      preferredPath: 'cpu',
+      fallbackPath: 'gpu',
+      reason: 'FFmpeg palettegen is 3x faster than WebCodecs frame extraction for GIF',
       benchmarks: {
         avgTimeSeconds: 4.5,
         successRate: 0.98,
@@ -60,14 +56,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "h264:webp",
+    'h264:webp',
     {
-      codec: "h264",
-      format: "webp",
-      preferredPath: "gpu",
-      fallbackPath: "cpu",
-      reason:
-        "Hardware decode + libwebp encoding is faster than CPU direct path",
+      codec: 'h264',
+      format: 'webp',
+      preferredPath: 'gpu',
+      fallbackPath: 'cpu',
+      reason: 'Hardware decode + libwebp encoding is faster than CPU direct path',
       benchmarks: {
         avgTimeSeconds: 3.2,
         successRate: 0.95,
@@ -75,13 +70,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "h264:mp4",
+    'h264:mp4',
     {
-      codec: "h264",
-      format: "mp4",
-      preferredPath: "webav",
-      fallbackPath: "cpu",
-      reason: "Native WebCodecs re-encoding via WebAV is optimal for MP4",
+      codec: 'h264',
+      format: 'mp4',
+      preferredPath: 'webav',
+      fallbackPath: 'cpu',
+      reason: 'Native WebCodecs re-encoding via WebAV is optimal for MP4',
       benchmarks: {
         avgTimeSeconds: 2.8,
         successRate: 0.97,
@@ -91,14 +86,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
 
   // HEVC strategies
   [
-    "hevc:gif",
+    'hevc:gif',
     {
-      codec: "hevc",
-      format: "gif",
-      preferredPath: "gpu",
-      fallbackPath: "cpu",
-      reason:
-        "Hardware decode reduces load time for HEVC, even with FFmpeg palettegen",
+      codec: 'hevc',
+      format: 'gif',
+      preferredPath: 'gpu',
+      fallbackPath: 'cpu',
+      reason: 'Hardware decode reduces load time for HEVC, even with FFmpeg palettegen',
       benchmarks: {
         avgTimeSeconds: 5.5,
         successRate: 0.92,
@@ -106,13 +100,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "hevc:webp",
+    'hevc:webp',
     {
-      codec: "hevc",
-      format: "webp",
-      preferredPath: "gpu",
-      fallbackPath: "cpu",
-      reason: "Hardware HEVC decode significantly faster than software decode",
+      codec: 'hevc',
+      format: 'webp',
+      preferredPath: 'gpu',
+      fallbackPath: 'cpu',
+      reason: 'Hardware HEVC decode significantly faster than software decode',
       benchmarks: {
         avgTimeSeconds: 4.1,
         successRate: 0.93,
@@ -120,13 +114,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "hevc:mp4",
+    'hevc:mp4',
     {
-      codec: "hevc",
-      format: "mp4",
-      preferredPath: "webav",
-      fallbackPath: "cpu",
-      reason: "WebAV handles HEVC efficiently with hardware acceleration",
+      codec: 'hevc',
+      format: 'mp4',
+      preferredPath: 'webav',
+      fallbackPath: 'cpu',
+      reason: 'WebAV handles HEVC efficiently with hardware acceleration',
       benchmarks: {
         avgTimeSeconds: 3.5,
         successRate: 0.94,
@@ -136,13 +130,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
 
   // AV1 strategies (no fallback - fail-fast)
   [
-    "av1:gif",
+    'av1:gif',
     {
-      codec: "av1",
-      format: "gif",
-      preferredPath: "gpu",
-      fallbackPath: "gpu", // No actual fallback - will error if unsupported
-      reason: "AV1 requires WebCodecs decode (FFmpeg AV1 decode is too slow)",
+      codec: 'av1',
+      format: 'gif',
+      preferredPath: 'gpu',
+      fallbackPath: 'gpu', // No actual fallback - will error if unsupported
+      reason: 'AV1 requires WebCodecs decode (FFmpeg AV1 decode is too slow)',
       benchmarks: {
         avgTimeSeconds: 6.2,
         successRate: 0.89,
@@ -150,13 +144,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "av1:webp",
+    'av1:webp',
     {
-      codec: "av1",
-      format: "webp",
-      preferredPath: "gpu",
-      fallbackPath: "gpu", // No actual fallback - will error if unsupported
-      reason: "AV1 requires WebCodecs decode (FFmpeg AV1 decode is too slow)",
+      codec: 'av1',
+      format: 'webp',
+      preferredPath: 'gpu',
+      fallbackPath: 'gpu', // No actual fallback - will error if unsupported
+      reason: 'AV1 requires WebCodecs decode (FFmpeg AV1 decode is too slow)',
       benchmarks: {
         avgTimeSeconds: 5.8,
         successRate: 0.88,
@@ -164,13 +158,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "av1:mp4",
+    'av1:mp4',
     {
-      codec: "av1",
-      format: "mp4",
-      preferredPath: "webav",
-      fallbackPath: "webav", // No actual fallback - will error if unsupported
-      reason: "AV1 requires WebCodecs support for efficient processing",
+      codec: 'av1',
+      format: 'mp4',
+      preferredPath: 'webav',
+      fallbackPath: 'webav', // No actual fallback - will error if unsupported
+      reason: 'AV1 requires WebCodecs support for efficient processing',
       benchmarks: {
         avgTimeSeconds: 4.9,
         successRate: 0.91,
@@ -180,13 +174,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
 
   // VP8 strategies
   [
-    "vp8:gif",
+    'vp8:gif',
     {
-      codec: "vp8",
-      format: "gif",
-      preferredPath: "gpu",
-      fallbackPath: "cpu",
-      reason: "WebCodecs decode faster than FFmpeg full pipeline for VP8",
+      codec: 'vp8',
+      format: 'gif',
+      preferredPath: 'gpu',
+      fallbackPath: 'cpu',
+      reason: 'WebCodecs decode faster than FFmpeg full pipeline for VP8',
       benchmarks: {
         avgTimeSeconds: 5.0,
         successRate: 0.94,
@@ -194,13 +188,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "vp8:webp",
+    'vp8:webp',
     {
-      codec: "vp8",
-      format: "webp",
-      preferredPath: "gpu",
-      fallbackPath: "cpu",
-      reason: "WebCodecs decode with libwebp encoding is optimal",
+      codec: 'vp8',
+      format: 'webp',
+      preferredPath: 'gpu',
+      fallbackPath: 'cpu',
+      reason: 'WebCodecs decode with libwebp encoding is optimal',
       benchmarks: {
         avgTimeSeconds: 4.3,
         successRate: 0.93,
@@ -208,13 +202,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "vp8:mp4",
+    'vp8:mp4',
     {
-      codec: "vp8",
-      format: "mp4",
-      preferredPath: "webav",
-      fallbackPath: "cpu",
-      reason: "WebAV transcoding from VP8 to MP4",
+      codec: 'vp8',
+      format: 'mp4',
+      preferredPath: 'webav',
+      fallbackPath: 'cpu',
+      reason: 'WebAV transcoding from VP8 to MP4',
       benchmarks: {
         avgTimeSeconds: 3.8,
         successRate: 0.92,
@@ -224,13 +218,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
 
   // VP9 strategies
   [
-    "vp9:gif",
+    'vp9:gif',
     {
-      codec: "vp9",
-      format: "gif",
-      preferredPath: "gpu",
-      fallbackPath: "cpu",
-      reason: "WebCodecs decode if available, otherwise FFmpeg fallback",
+      codec: 'vp9',
+      format: 'gif',
+      preferredPath: 'gpu',
+      fallbackPath: 'cpu',
+      reason: 'WebCodecs decode if available, otherwise FFmpeg fallback',
       benchmarks: {
         avgTimeSeconds: 5.4,
         successRate: 0.91,
@@ -238,13 +232,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "vp9:webp",
+    'vp9:webp',
     {
-      codec: "vp9",
-      format: "webp",
-      preferredPath: "gpu",
-      fallbackPath: "cpu",
-      reason: "WebCodecs decode with libwebp encoding is optimal",
+      codec: 'vp9',
+      format: 'webp',
+      preferredPath: 'gpu',
+      fallbackPath: 'cpu',
+      reason: 'WebCodecs decode with libwebp encoding is optimal',
       benchmarks: {
         avgTimeSeconds: 4.5,
         successRate: 0.92,
@@ -252,13 +246,13 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
   [
-    "vp9:mp4",
+    'vp9:mp4',
     {
-      codec: "vp9",
-      format: "mp4",
-      preferredPath: "webav",
-      fallbackPath: "cpu",
-      reason: "WebAV transcoding from VP9 to MP4",
+      codec: 'vp9',
+      format: 'mp4',
+      preferredPath: 'webav',
+      fallbackPath: 'cpu',
+      reason: 'WebAV transcoding from VP9 to MP4',
       benchmarks: {
         avgTimeSeconds: 4.0,
         successRate: 0.9,
@@ -300,12 +294,7 @@ class StrategyRegistryService {
     const key = `${normalizedCodec}:${format}`;
 
     // Check mandatory blockers first
-    const blockerResult = this.checkMandatoryBlockers(
-      codec,
-      format,
-      container,
-      capabilities
-    );
+    const blockerResult = this.checkMandatoryBlockers(codec, format, container, capabilities);
     if (blockerResult) {
       return blockerResult;
     }
@@ -313,14 +302,10 @@ class StrategyRegistryService {
     // Session-scoped learning from StrategyHistoryService.
     // If we have enough successful signal, prefer the historically successful path.
     const history = strategyHistoryService.getHistory(codec, format);
-    const recommended = strategyHistoryService.getRecommendedPath(
-      codec,
-      format
-    );
+    const recommended = strategyHistoryService.getRecommendedPath(codec, format);
     if (recommended && recommended.confidence >= 0.6) {
       const preferredPath = recommended.path;
-      const fallbackPath: ConversionPath =
-        preferredPath === "gpu" ? "cpu" : "gpu";
+      const fallbackPath: ConversionPath = preferredPath === 'gpu' ? 'cpu' : 'gpu';
 
       return this.applyRecentFailureAvoidance(
         {
@@ -331,7 +316,7 @@ class StrategyRegistryService {
           reason: `Historical success (records=${
             recommended.basedOnRecords
           }, avg=${Math.round(recommended.avgDurationMs)}ms)`,
-          confidence: "high",
+          confidence: 'high',
         },
         history
       );
@@ -340,7 +325,7 @@ class StrategyRegistryService {
     // Check runtime overrides (learned from history)
     if (this.runtimeOverrides.has(key)) {
       const override = this.runtimeOverrides.get(key)!;
-      logger.debug("conversion", "Using runtime override strategy", {
+      logger.debug('conversion', 'Using runtime override strategy', {
         codec: normalizedCodec,
         format,
         path: override.preferredPath,
@@ -348,7 +333,7 @@ class StrategyRegistryService {
       return this.applyRecentFailureAvoidance(
         {
           ...override,
-          confidence: "high", // High confidence from historical success
+          confidence: 'high', // High confidence from historical success
         },
         history
       );
@@ -363,36 +348,32 @@ class StrategyRegistryService {
         return this.applyRecentFailureAvoidance(
           {
             ...strategy,
-            confidence: "high", // High confidence from benchmarks
+            confidence: 'high', // High confidence from benchmarks
           },
           history
         );
       }
 
       // Capabilities missing - try fallback
-      logger.debug(
-        "conversion",
-        "Primary strategy requires missing capabilities, using fallback",
-        {
-          codec: normalizedCodec,
-          format,
-          preferredPath: strategy.preferredPath,
-          fallbackPath: strategy.fallbackPath,
-        }
-      );
+      logger.debug('conversion', 'Primary strategy requires missing capabilities, using fallback', {
+        codec: normalizedCodec,
+        format,
+        preferredPath: strategy.preferredPath,
+        fallbackPath: strategy.fallbackPath,
+      });
 
       return this.applyRecentFailureAvoidance(
         {
           ...strategy,
           preferredPath: strategy.fallbackPath,
-          confidence: "medium", // Medium confidence when forced to fallback
+          confidence: 'medium', // Medium confidence when forced to fallback
         },
         history
       );
     }
 
     // No predefined strategy - use heuristic
-    logger.debug("conversion", "No predefined strategy, using heuristic", {
+    logger.debug('conversion', 'No predefined strategy, using heuristic', {
       codec: normalizedCodec,
       format,
     });
@@ -418,9 +399,7 @@ class StrategyRegistryService {
       .sort((a, b) => a.timestamp - b.timestamp)
       .slice(-recentWindow);
 
-    const recentForPath = recent.filter(
-      (r) => r.path === strategy.preferredPath
-    );
+    const recentForPath = recent.filter((r) => r.path === strategy.preferredPath);
     const recentFailures = recentForPath.filter((r) => !r.success).length;
     const recentSuccesses = recentForPath.filter((r) => r.success).length;
 
@@ -429,7 +408,7 @@ class StrategyRegistryService {
       recentSuccesses === 0 &&
       strategy.fallbackPath !== strategy.preferredPath
     ) {
-      logger.debug("conversion", "Avoiding path due to recent failures", {
+      logger.debug('conversion', 'Avoiding path due to recent failures', {
         codec: strategy.codec,
         format: strategy.format,
         preferredPath: strategy.preferredPath,
@@ -441,8 +420,7 @@ class StrategyRegistryService {
       return {
         ...strategy,
         preferredPath: strategy.fallbackPath,
-        confidence:
-          strategy.confidence === "high" ? "medium" : strategy.confidence,
+        confidence: strategy.confidence === 'high' ? 'medium' : strategy.confidence,
         reason: `${strategy.reason} (avoiding recent failures on ${strategy.preferredPath})`,
       };
     }
@@ -462,7 +440,7 @@ class StrategyRegistryService {
     durationMs: number;
   }): void {
     // For now, just log. Full learning will be implemented via StrategyHistoryService
-    logger.debug("conversion", "Strategy success recorded", params);
+    logger.debug('conversion', 'Strategy success recorded', params);
   }
 
   /**
@@ -481,23 +459,14 @@ class StrategyRegistryService {
     const codecSupport = this.hasCodecSupport(normalizedCodec, capabilities);
     const containerSupport = !this.isBlockedContainer(container);
     const hardwareAcceleration = capabilities.hardwareAccelerated;
-    const historicalSuccess = this.runtimeOverrides.has(
-      `${normalizedCodec}:${format}`
-    );
+    const historicalSuccess = this.runtimeOverrides.has(`${normalizedCodec}:${format}`);
     const performanceBenchmark = strategy.benchmarks?.avgTimeSeconds
       ? strategy.benchmarks.avgTimeSeconds * 1000
       : undefined;
 
-    const alternativesConsidered = this.getAlternativePaths(
-      strategy.preferredPath
-    ).map((path) => ({
+    const alternativesConsidered = this.getAlternativePaths(strategy.preferredPath).map((path) => ({
       path,
-      rejectionReason: this.getRejectionReason(
-        path,
-        normalizedCodec,
-        format,
-        capabilities
-      ),
+      rejectionReason: this.getRejectionReason(path, normalizedCodec, format, capabilities),
     }));
 
     return {
@@ -530,14 +499,14 @@ class StrategyRegistryService {
     capabilities: ExtendedCapabilities
   ): StrategyWithConfidence | null {
     // AVI/WMV → Always CPU (FFmpeg full pipeline)
-    if (container === "avi" || container === "wmv") {
+    if (container === 'avi' || container === 'wmv') {
       return {
         codec,
         format,
-        preferredPath: "cpu",
-        fallbackPath: "cpu", // No fallback
+        preferredPath: 'cpu',
+        fallbackPath: 'cpu', // No fallback
         reason: `${container.toUpperCase()} container requires FFmpeg full pipeline`,
-        confidence: "high",
+        confidence: 'high',
       };
     }
 
@@ -548,10 +517,10 @@ class StrategyRegistryService {
       return {
         codec,
         format,
-        preferredPath: "gpu",
-        fallbackPath: "gpu", // No fallback
-        reason: "AV1 requires WebCodecs support (will fail if unsupported)",
-        confidence: "low",
+        preferredPath: 'gpu',
+        fallbackPath: 'gpu', // No fallback
+        reason: 'AV1 requires WebCodecs support (will fail if unsupported)',
+        confidence: 'low',
       };
     }
 
@@ -568,12 +537,12 @@ class StrategyRegistryService {
     const { codec, preferredPath } = strategy;
 
     // GPU path requires WebCodecs support for the codec
-    if (preferredPath === "gpu") {
+    if (preferredPath === 'gpu') {
       return this.hasCodecSupport(codec, capabilities);
     }
 
     // WebAV path requires mp4Encode capability
-    if (preferredPath === "webav") {
+    if (preferredPath === 'webav') {
       return capabilities.mp4Encode;
     }
 
@@ -584,17 +553,14 @@ class StrategyRegistryService {
   /**
    * Check if codec is supported by WebCodecs
    */
-  private hasCodecSupport(
-    codec: string,
-    capabilities: ExtendedCapabilities
-  ): boolean {
+  private hasCodecSupport(codec: string, capabilities: ExtendedCapabilities): boolean {
     const normalized = this.normalizeCodec(codec);
 
     if (isH264Codec(normalized)) return capabilities.h264;
     if (isHevcCodec(normalized)) return capabilities.hevc;
     if (isAv1Codec(normalized)) return capabilities.av1;
-    if (normalized === "vp8") return capabilities.vp8;
-    if (normalized === "vp9") return capabilities.vp9;
+    if (normalized === 'vp8') return capabilities.vp8;
+    if (normalized === 'vp9') return capabilities.vp9;
 
     // Unknown codec - assume WebCodecs support if any codec is supported
     return (
@@ -619,46 +585,46 @@ class StrategyRegistryService {
       return {
         codec,
         format,
-        preferredPath: "cpu",
-        fallbackPath: "cpu",
-        reason: "Unknown codec - using safe FFmpeg fallback",
-        confidence: "low",
+        preferredPath: 'cpu',
+        fallbackPath: 'cpu',
+        reason: 'Unknown codec - using safe FFmpeg fallback',
+        confidence: 'low',
       };
     }
 
     // MP4 format → WebAV if available
-    if (format === "mp4" && capabilities.mp4Encode) {
+    if (format === 'mp4' && capabilities.mp4Encode) {
       return {
         codec,
         format,
-        preferredPath: "webav",
-        fallbackPath: "cpu",
-        reason: "MP4 format uses WebAV when available",
-        confidence: "medium",
+        preferredPath: 'webav',
+        fallbackPath: 'cpu',
+        reason: 'MP4 format uses WebAV when available',
+        confidence: 'medium',
       };
     }
 
     // GIF format → Prefer CPU (FFmpeg palettegen faster)
-    if (format === "gif") {
+    if (format === 'gif') {
       return {
         codec,
         format,
-        preferredPath: "cpu",
-        fallbackPath: "gpu",
-        reason: "GIF format generally faster with FFmpeg palettegen",
-        confidence: "medium",
+        preferredPath: 'cpu',
+        fallbackPath: 'gpu',
+        reason: 'GIF format generally faster with FFmpeg palettegen',
+        confidence: 'medium',
       };
     }
 
     // WebP format → Prefer GPU (HW decode + libwebp)
-    if (format === "webp") {
+    if (format === 'webp') {
       return {
         codec,
         format,
-        preferredPath: "gpu",
-        fallbackPath: "cpu",
-        reason: "WebP format benefits from hardware decode",
-        confidence: "medium",
+        preferredPath: 'gpu',
+        fallbackPath: 'cpu',
+        reason: 'WebP format benefits from hardware decode',
+        confidence: 'medium',
       };
     }
 
@@ -666,10 +632,10 @@ class StrategyRegistryService {
     return {
       codec,
       format,
-      preferredPath: "gpu",
-      fallbackPath: "cpu",
-      reason: "Default heuristic: GPU with CPU fallback",
-      confidence: "low",
+      preferredPath: 'gpu',
+      fallbackPath: 'cpu',
+      reason: 'Default heuristic: GPU with CPU fallback',
+      confidence: 'low',
     };
   }
 
@@ -679,11 +645,11 @@ class StrategyRegistryService {
   private normalizeCodec(codec: string): string {
     const lower = codec.toLowerCase();
 
-    if (isH264Codec(lower)) return "h264";
-    if (isHevcCodec(lower)) return "hevc";
-    if (isAv1Codec(lower)) return "av1";
-    if (lower.includes("vp09") || lower.includes("vp9")) return "vp9";
-    if (lower.includes("vp08") || lower.includes("vp8")) return "vp8";
+    if (isH264Codec(lower)) return 'h264';
+    if (isHevcCodec(lower)) return 'hevc';
+    if (isAv1Codec(lower)) return 'av1';
+    if (lower.includes('vp09') || lower.includes('vp9')) return 'vp9';
+    if (lower.includes('vp08') || lower.includes('vp8')) return 'vp8';
 
     return lower;
   }
@@ -692,14 +658,14 @@ class StrategyRegistryService {
    * Check if container is blocked (forced to CPU path)
    */
   private isBlockedContainer(container: ContainerFormat): boolean {
-    return container === "avi" || container === "wmv";
+    return container === 'avi' || container === 'wmv';
   }
 
   /**
    * Get alternative paths (for reasoning)
    */
   private getAlternativePaths(selectedPath: ConversionPath): ConversionPath[] {
-    const allPaths: ConversionPath[] = ["gpu", "cpu", "webav", "hybrid"];
+    const allPaths: ConversionPath[] = ['gpu', 'cpu', 'webav', 'hybrid'];
     return allPaths.filter((path) => path !== selectedPath);
   }
 
@@ -712,35 +678,35 @@ class StrategyRegistryService {
     format: ConversionFormat,
     capabilities: ExtendedCapabilities
   ): string {
-    if (path === "gpu") {
+    if (path === 'gpu') {
       if (!this.hasCodecSupport(codec, capabilities)) {
         return `Codec ${codec} not supported by WebCodecs`;
       }
-      return "Not optimal for this codec+format combination";
+      return 'Not optimal for this codec+format combination';
     }
 
-    if (path === "cpu") {
-      if (format === "webp" && this.hasCodecSupport(codec, capabilities)) {
-        return "GPU path faster for WebP with hardware decode";
+    if (path === 'cpu') {
+      if (format === 'webp' && this.hasCodecSupport(codec, capabilities)) {
+        return 'GPU path faster for WebP with hardware decode';
       }
-      return "Not optimal for this codec+format combination";
+      return 'Not optimal for this codec+format combination';
     }
 
-    if (path === "webav") {
-      if (format !== "mp4") {
+    if (path === 'webav') {
+      if (format !== 'mp4') {
         return `WebAV only supports MP4 format, not ${format}`;
       }
       if (!capabilities.mp4Encode) {
-        return "WebAV not available in this browser";
+        return 'WebAV not available in this browser';
       }
-      return "Not optimal for this codec+format combination";
+      return 'Not optimal for this codec+format combination';
     }
 
-    if (path === "hybrid") {
-      return "Hybrid path not yet implemented";
+    if (path === 'hybrid') {
+      return 'Hybrid path not yet implemented';
     }
 
-    return "Unknown rejection reason";
+    return 'Unknown rejection reason';
   }
 }
 

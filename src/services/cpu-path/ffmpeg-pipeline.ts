@@ -649,15 +649,5 @@ export class FFmpegPipeline {
     }
   }
 }
-
-/**
- * Create FFmpeg pipeline instance
- *
- * @returns New FFmpegPipeline instance
- */
-export function createFFmpegPipeline(): FFmpegPipeline {
-  return new FFmpegPipeline();
-}
-
 // Re-export types from encoder module
 export type { FFmpegInputOverride } from './ffmpeg-encoder';

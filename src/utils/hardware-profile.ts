@@ -5,7 +5,7 @@ import { readSessionString, writeSessionString } from './session-cache';
  *
  * Returns a stable hash that changes when hardware capabilities change
  */
-export function getHardwareFingerprint(): string {
+function getHardwareFingerprint(): string {
   const cores = navigator.hardwareConcurrency || 4;
 
   // Memory tier (512MB buckets to avoid invalidation on minor changes)
@@ -53,7 +53,7 @@ function clearSessionCache(): void {
     'dropconvert:capture:success:vp9',
     'dropconvert:vfs:batchSize',
     'dropconvert:webp:chunkSize',
-    'dropconvert:captureReliability:av1:frame-callback:failures', // 기존 키
+    'dropconvert:captureReliability:av1:frame-callback:failures', // legacy key
   ];
 
   for (const key of keysToRemove) {

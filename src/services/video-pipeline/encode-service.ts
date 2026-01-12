@@ -9,7 +9,7 @@
 
 export type EncodePath = 'gifski' | 'ffmpeg' | 'webcodecs-webp';
 
-export class EncodeService {
+class EncodeService {
   private static instance: EncodeService | null = null;
 
   static getInstance(): EncodeService {

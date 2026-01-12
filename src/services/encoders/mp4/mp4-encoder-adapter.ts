@@ -345,12 +345,3 @@ export class MP4EncoderAdapter implements EncoderAdapter {
     logger.debug('mp4-encoder', 'MP4 encoder disposed');
   }
 }
-
-/**
- * Create MP4 encoder adapter instance
- *
- * @returns New MP4EncoderAdapter instance
- */
-export function createMP4Encoder(): EncoderAdapter {
-  return new MP4EncoderAdapter();
-}

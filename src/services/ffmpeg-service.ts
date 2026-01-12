@@ -11,12 +11,16 @@
  * @module services/ffmpeg-service
  */
 
-import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
+import type {
+  ConversionOptions,
+  ConversionOutputBlob,
+  VideoMetadata,
+} from "@t/conversion-types";
 import {
   type FFmpegInputOverride,
   type FrameSequenceParams,
   FFmpegPipeline,
-} from './cpu-path/ffmpeg-pipeline';
+} from "@services/cpu-path/ffmpeg-pipeline";
 
 /**
  * FFmpeg Service
@@ -172,12 +176,12 @@ class FFmpegService {
   beginExternalConversion(
     metadata?: VideoMetadata,
     quality?: string,
-    format?: 'gif' | 'webp' | 'mp4',
+    format?: "gif" | "webp" | "mp4",
     options?: { enableLogSilenceCheck?: boolean }
   ): void {
     this.pipeline.beginExternalConversion(
       metadata,
-      quality as 'low' | 'medium' | 'high' | undefined,
+      quality as "low" | "medium" | "high" | undefined,
       format,
       options
     );
@@ -245,7 +249,10 @@ class FFmpegService {
    * @param fileName File name in VFS
    * @param data File data
    */
-  async writeVirtualFile(fileName: string, data: Uint8Array | string): Promise<void> {
+  async writeVirtualFile(
+    fileName: string,
+    data: Uint8Array | string
+  ): Promise<void> {
     return this.pipeline.writeVirtualFile(fileName, data);
   }
 
@@ -306,7 +313,9 @@ class FFmpegService {
    *
    * @param intervalId Interval ID from startProgressHeartbeat
    */
-  stopProgressHeartbeat(intervalId: ReturnType<typeof setInterval> | null): void {
+  stopProgressHeartbeat(
+    intervalId: ReturnType<typeof setInterval> | null
+  ): void {
     this.pipeline.stopProgressHeartbeat(intervalId);
   }
 
@@ -349,4 +358,3 @@ class FFmpegService {
 const ffmpegService = new FFmpegService();
 
 export { ffmpegService };
-export type { FFmpegInputOverride, FrameSequenceParams };

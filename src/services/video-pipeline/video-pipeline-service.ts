@@ -23,7 +23,7 @@ import { demuxerService } from '@services/video-pipeline/demuxer-service';
 import { encodeService, type EncodePath } from '@services/video-pipeline/encode-service';
 import { selectPipeline } from '@services/video-pipeline/pipeline-selector';
 
-export interface PipelinePlan {
+interface PipelinePlan {
   caps: VideoCapabilities;
   container: ContainerFormat;
   demuxer: { name: VideoDemuxer['name'] } | null;
@@ -32,7 +32,7 @@ export interface PipelinePlan {
   encodePath: EncodePath;
 }
 
-export class VideoPipelineService {
+class VideoPipelineService {
   private static instance: VideoPipelineService | null = null;
 
   static getInstance(): VideoPipelineService {

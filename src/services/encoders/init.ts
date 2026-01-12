@@ -20,7 +20,7 @@ import { WebPEncoderAdapter } from './webp/webp-encoder-adapter';
 /**
  * Register all encoder adapters
  */
-export function initializeEncoders(): void {
+function initializeEncoders(): void {
   logger.info('encoders', 'Registering encoder adapters');
 
   // Register GIF encoder (fully implemented)

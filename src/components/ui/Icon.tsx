@@ -3,7 +3,7 @@ import { type Component, type JSX, Match, Switch, splitProps } from 'solid-js';
 /**
  * Available icon names
  */
-export type IconName =
+type IconName =
   | 'info'
   | 'warning'
   | 'error'
@@ -20,12 +20,12 @@ export type IconName =
 /**
  * Icon size variants
  */
-export type IconSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+type IconSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 /**
  * Icon component props
  */
-export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'name'> {
+interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'name'> {
   /** Name of the icon to display */
   name: IconName;
   /** Size variant of the icon (default: 'md') */

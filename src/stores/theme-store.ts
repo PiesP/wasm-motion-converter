@@ -7,17 +7,17 @@
  */
 
 // External dependencies
-import { createSignal } from "solid-js";
+import { createSignal } from 'solid-js';
 
 // Internal dependencies
-import { logger } from "@utils/logger";
+import { logger } from '@utils/logger';
 
-type Theme = "light" | "dark";
+type Theme = 'light' | 'dark';
 
 /**
  * localStorage key for theme persistence
  */
-const THEME_STORAGE_KEY = "theme";
+const THEME_STORAGE_KEY = 'theme';
 
 /**
  * Get initial theme from localStorage or system preference
@@ -33,25 +33,25 @@ const getInitialTheme = (): Theme => {
   try {
     // Check localStorage first
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "light" || stored === "dark") {
+    if (stored === 'light' || stored === 'dark') {
       return stored;
     }
   } catch (error) {
-    logger.warn("general", "Failed to read theme from localStorage", { error });
+    logger.warn('general', 'Failed to read theme from localStorage', { error });
   }
 
   // Fall back to system preference
   try {
-    if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      return "dark";
+    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
     }
   } catch (error) {
-    logger.warn("general", "Failed to detect system theme preference", {
+    logger.warn('general', 'Failed to detect system theme preference', {
       error,
     });
   }
 
-  return "light";
+  return 'light';
 };
 
 /**
@@ -66,7 +66,7 @@ const saveTheme = (themeValue: Theme): void => {
   try {
     localStorage.setItem(THEME_STORAGE_KEY, themeValue);
   } catch (error) {
-    logger.warn("general", "Failed to persist theme to localStorage", {
+    logger.warn('general', 'Failed to persist theme to localStorage', {
       error,
     });
   }
@@ -94,9 +94,9 @@ export const [theme, setTheme] = createSignal<Theme>(getInitialTheme());
  */
 export const toggleTheme = (): void => {
   const currentTheme = theme();
-  const newTheme = currentTheme === "light" ? "dark" : "light";
+  const newTheme = currentTheme === 'light' ? 'dark' : 'light';
   setTheme(newTheme);
   saveTheme(newTheme);
 
-  logger.info("general", "Theme toggled", { from: currentTheme, to: newTheme });
+  logger.info('general', 'Theme toggled', { from: currentTheme, to: newTheme });
 };

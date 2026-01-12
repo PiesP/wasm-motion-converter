@@ -1,11 +1,11 @@
-import { QUALITY_PRESETS } from "./constants";
+import { QUALITY_PRESETS } from './constants';
 
-import type { ConversionQuality } from "@t/conversion-types";
+import type { ConversionQuality } from '@t/conversion-types';
 
 /**
  * Supported output formats for conversion
  */
-type ConversionFormat = "gif" | "webp";
+type ConversionFormat = 'gif' | 'webp';
 
 /**
  * Calculate optimal FPS based on source video FPS and quality preset
@@ -37,14 +37,12 @@ export function getOptimalFPS(
 ): number {
   // Validate input
   if (!Number.isFinite(sourceFps) || sourceFps <= 0) {
-    throw new Error(
-      `Invalid sourceFPS: ${sourceFps}. Must be a positive number.`
-    );
+    throw new Error(`Invalid sourceFPS: ${sourceFps}. Must be a positive number.`);
   }
 
   // Get preset FPS for this quality/format combination
   const preset = QUALITY_PRESETS[format][quality];
-  const presetFps = "fps" in preset ? preset.fps : 15;
+  const presetFps = 'fps' in preset ? preset.fps : 15;
 
   // Don't exceed source FPS (no point in upsampling frames)
   // Don't go below preset FPS (maintains quality baseline)

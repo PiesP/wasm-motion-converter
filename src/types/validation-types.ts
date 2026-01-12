@@ -16,7 +16,7 @@
  * @example
  * const severity: ValidationSeverity = 'warning';
  */
-export type ValidationSeverity = 'info' | 'warning' | 'error';
+export type ValidationSeverity = "info" | "warning" | "error";
 
 /**
  * Validation warning with user-facing message
@@ -76,44 +76,5 @@ export interface DurationValidationResult {
   /** Estimated number of frames (duration * framerate) */
   estimatedFrames?: number;
   /** Warnings related to duration */
-  warnings: ValidationWarning[];
-}
-
-/**
- * Complete validation result for video file
- *
- * Comprehensive validation result including overall validity, detected format
- * and codec, duration information, estimated frame count, and all collected
- * warnings. Used to decide whether to allow conversion and what warnings to
- * display to the user.
- *
- * @example
- * const result: ValidationResult = {
- *   isValid: true,
- *   format: 'mp4',
- *   codec: 'h264',
- *   duration: 8.5,
- *   estimatedFrames: 255,
- *   warnings: [
- *     {
- *       severity: 'info',
- *       message: 'Video format is supported',
- *       requiresConfirmation: false
- *     }
- *   ]
- * };
- */
-export interface ValidationResult {
-  /** Whether video passed validation and can be converted */
-  isValid: boolean;
-  /** Detected video format (e.g., 'mp4', 'webm', 'mov') */
-  format?: string;
-  /** Detected video codec (e.g., 'h264', 'vp9', 'hevc') */
-  codec?: string;
-  /** Video duration in seconds */
-  duration?: number;
-  /** Estimated frame count for conversion planning */
-  estimatedFrames?: number;
-  /** All validation warnings (info, warning, error) */
   warnings: ValidationWarning[];
 }

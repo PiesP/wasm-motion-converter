@@ -10,12 +10,12 @@ import type {
   ConversionOptions,
   ConversionOutputBlob,
   VideoMetadata,
-} from '@t/conversion-types';
+} from "@t/conversion-types";
 
 /**
  * Conversion path types
  */
-export type ConversionPath = 'gpu' | 'cpu' | 'hybrid' | 'webav';
+export type ConversionPath = "gpu" | "cpu" | "hybrid" | "webav";
 
 /**
  * Conversion request
@@ -89,93 +89,6 @@ export interface PathSelection {
 }
 
 /**
- * Path selector interface
- *
- * Decides which conversion path to use based on codec, format, and capabilities.
- */
-export interface PathSelector {
-  /**
-   * Select optimal conversion path
-   */
-  selectPath(
-    file: File,
-    format: ConversionFormat,
-    metadata?: VideoMetadata
-  ): Promise<PathSelection>;
-
-  /**
-   * Check if GPU path is available
-   */
-  isGPUPathAvailable(): boolean;
-
-  /**
-   * Check if codec requires specific path
-   */
-  requiresGPUPath(codec: string): boolean;
-}
-
-/**
- * Conversion strategy
- *
- * Resolved conversion parameters with overrides applied.
- */
-export interface ConversionStrategy {
-  /** Target FPS (may be adjusted from quality preset) */
-  targetFps: number;
-  /** Scale factor (may be adjusted for performance) */
-  scale: number;
-  /** Maximum frames to extract */
-  maxFrames?: number;
-  /** Whether to prefer workers */
-  preferWorkers: boolean;
-  /** Whether to use demuxer */
-  useDemuxer: boolean;
-}
-
-/**
- * Strategy resolver interface
- *
- * Resolves conversion strategy with quality presets and overrides.
- */
-export interface StrategyResolver {
-  /**
-   * Resolve conversion strategy
-   */
-  resolve(
-    format: ConversionFormat,
-    options: ConversionOptions,
-    metadata?: VideoMetadata
-  ): ConversionStrategy;
-
-  /**
-   * Get optimal FPS for quality level
-   */
-  getOptimalFPS(sourceFps: number, quality: string, format: ConversionFormat): number;
-}
-
-/**
- * Conversion orchestrator interface
- *
- * Main orchestrator that coordinates path selection, strategy, and execution.
- */
-export interface ConversionOrchestrator {
-  /**
-   * Convert video using optimal path
-   */
-  convertVideo(request: ConversionRequest): Promise<ConversionResponse>;
-
-  /**
-   * Get current conversion status
-   */
-  getStatus(): ConversionStatus;
-
-  /**
-   * Cancel current conversion
-   */
-  cancel(): void;
-}
-
-/**
  * Conversion status
  */
 export interface ConversionStatus {
@@ -232,37 +145,6 @@ export interface CodecPathPreference {
     /** Success rate (0-1) */
     successRate: number;
   };
-}
-
-/**
- * Hybrid strategy configuration
- *
- * Advanced configuration for codec-aware path selection.
- * Allows per-codec, per-format routing rules.
- *
- * @example
- * ```ts
- * const strategy: HybridStrategyConfig = {
- *   enableCodecOptimization: true,
- *   codecPreferences: [
- *     { codec: 'h264', format: 'gif', preferredPath: 'cpu', fallbackPath: 'gpu' },
- *     { codec: 'h264', format: 'webp', preferredPath: 'gpu', fallbackPath: 'cpu' },
- *     { codec: 'av1', format: 'gif', preferredPath: 'gpu', fallbackPath: 'cpu' }
- *   ],
- *   defaultPath: 'gpu',
- *   fallbackChain: ['gpu', 'cpu']
- * };
- * ```
- */
-export interface HybridStrategyConfig {
-  /** Whether to enable codec-specific optimizations */
-  enableCodecOptimization: boolean;
-  /** Codec-specific path preferences */
-  codecPreferences: CodecPathPreference[];
-  /** Default path when no specific preference matches */
-  defaultPath: ConversionPath;
-  /** Fallback chain if all preferred paths fail */
-  fallbackChain: ConversionPath[];
 }
 
 /**

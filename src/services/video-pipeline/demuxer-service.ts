@@ -115,7 +115,7 @@ class DemuxerWrapper implements VideoDemuxer {
   }
 }
 
-export class DemuxerService {
+class DemuxerService {
   private static instance: DemuxerService | null = null;
 
   static getInstance(): DemuxerService {

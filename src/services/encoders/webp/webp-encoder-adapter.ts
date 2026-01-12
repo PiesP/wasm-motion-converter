@@ -315,12 +315,3 @@ export class WebPEncoderAdapter implements EncoderAdapter {
     logger.debug('webp-encoder', 'WebP encoder disposed');
   }
 }
-
-/**
- * Create WebP encoder adapter instance
- *
- * @returns New WebPEncoderAdapter instance
- */
-export function createWebPEncoder(): EncoderAdapter {
-  return new WebPEncoderAdapter();
-}

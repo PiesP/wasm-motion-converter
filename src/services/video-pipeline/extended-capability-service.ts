@@ -67,7 +67,7 @@ const DEFAULT_EXTENDED_CAPS: ExtendedCapabilities = {
   detectionVersion: DETECTION_VERSION,
 };
 
-export class ExtendedCapabilityService {
+class ExtendedCapabilityService {
   private static instance: ExtendedCapabilityService | null = null;
 
   static getInstance(): ExtendedCapabilityService {
@@ -306,11 +306,20 @@ export class ExtendedCapabilityService {
     const baseCaps = await capabilityService.detectCapabilities();
 
     // Test VP8/VP9 decode support
-    const vp8 = await this.testDecode({ codec: 'vp8', prefer: 'prefer-software' });
-    const vp9Hw = await this.testDecode({ codec: 'vp09.00.10.08', prefer: 'prefer-hardware' });
+    const vp8 = await this.testDecode({
+      codec: 'vp8',
+      prefer: 'prefer-software',
+    });
+    const vp9Hw = await this.testDecode({
+      codec: 'vp09.00.10.08',
+      prefer: 'prefer-hardware',
+    });
     const vp9Sw = vp9Hw
       ? true
-      : await this.testDecode({ codec: 'vp09.00.10.08', prefer: 'prefer-software' });
+      : await this.testDecode({
+          codec: 'vp09.00.10.08',
+          prefer: 'prefer-software',
+        });
 
     // Test encoder availability
     const gifEncode = true; // Always true (modern-gif WASM)

@@ -12,22 +12,7 @@
  * in the encoder factory and used by the conversion pipeline.
  */
 
-import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
-
-/**
- * Serializable ImageData for transfer to workers
- *
- * ImageData cannot be directly transferred to workers (non-transferable),
- * so we use this serializable format with transferable ArrayBuffer.
- */
-export interface SerializableImageData {
-  /** Image pixel data (RGBA format, 4 bytes per pixel) */
-  data: Uint8ClampedArray;
-  /** Image width in pixels */
-  width: number;
-  /** Image height in pixels */
-  height: number;
-}
+import type { ConversionFormat, ConversionQuality } from "@t/conversion-types";
 
 /**
  * Encoder input request
@@ -254,5 +239,5 @@ export interface EncoderPreferences {
   /** Quality level (may influence encoder selection) */
   quality?: ConversionQuality;
   /** Execution environment (affects encoder availability) */
-  environment?: 'main' | 'worker';
+  environment?: "main" | "worker";
 }

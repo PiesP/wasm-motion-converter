@@ -153,7 +153,7 @@ export function validateVideoFile(file: File): FileValidationResult {
  *   console.error('Unreadable video format:', error);
  * }
  */
-export async function extractVideoDuration(file: File): Promise<number> {
+async function extractVideoDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
     // STEP 1: Create hidden video element and blob URL
     const video = document.createElement('video');
@@ -269,7 +269,9 @@ export async function validateVideoDuration(
       if (duration > WEBP_MAX_DURATION_MS) {
         warnings.push({
           severity: 'error', // Hard error - blocks conversion
-          message: `Video duration (${(duration / 1000).toFixed(1)}s) exceeds WebP maximum (${WEBP_MAX_DURATION_MS / 1000}s)`,
+          message: `Video duration (${(duration / 1000).toFixed(
+            1
+          )}s) exceeds WebP maximum (${WEBP_MAX_DURATION_MS / 1000}s)`,
           details: 'WebP animated format supports maximum 10 seconds of video',
           suggestedAction: 'Consider trimming the video, using GIF format, or converting to MP4',
           requiresConfirmation: true, // User must explicitly confirm/override

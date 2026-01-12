@@ -30,7 +30,7 @@ type VideoEncoderConfigWithAcceleration = VideoEncoderConfig & {
   hardwareAcceleration?: 'prefer-hardware' | 'prefer-software';
 };
 
-export class CapabilityService {
+class CapabilityService {
   private static instance: CapabilityService | null = null;
 
   static getInstance(): CapabilityService {

@@ -11,7 +11,7 @@ import type { VideoMetadata } from '@t/conversion-types';
  * Represents the availability of various WebCodecs APIs and related browser features
  * for GPU-accelerated video/image processing.
  */
-export type WebCodecsSupportStatus = {
+type WebCodecsSupportStatus = {
   /** Any WebCodecs API is available */
   available: boolean;
   /** VideoDecoder API (decode video frames) */
@@ -29,21 +29,6 @@ export type WebCodecsSupportStatus = {
   /** HTMLMediaElement.captureStream() support */
   captureStream: boolean;
 };
-
-/**
- * Codec candidates for H.264 encoder
- *
- * Listed in order of preference:
- * - Baseline Profile: Most compatible, lower compression
- * - Main Profile: Better compression
- * - High Profile: Best quality, less compatible
- */
-const H264_ENCODER_CODECS = [
-  'avc1.42E01E', // Baseline Level 3.0
-  'avc1.4D401E', // Main Level 3.0
-  'avc1.42001E', // Baseline Level 3.0 (alt)
-  'avc1.640028', // High Level 4.0
-];
 
 /** Cached WebCodecs support status to avoid repeated checks */
 let cachedStatus: WebCodecsSupportStatus | null = null;
@@ -70,7 +55,7 @@ const getGlobal = (): typeof globalThis =>
  *   // Use GPU-accelerated video decoding
  * }
  */
-export const getWebCodecsSupportStatus = (): WebCodecsSupportStatus => {
+export const getWebCodecsSupportStatus = () => {
   if (cachedStatus) {
     return cachedStatus;
   }
@@ -292,94 +277,4 @@ export async function isWebCodecsCodecSupported(
   }
 
   return false;
-}
-
-/**
- * Get H.264 encoder configuration supported by the browser
- *
- * Tests multiple H.264 profiles (Baseline, Main, High) with hardware and software acceleration.
- * Returns the first supported configuration.
- *
- * @param params - Encoder parameters (width, height, bitrate, framerate)
- * @returns Supported VideoEncoderConfig or null if no config is supported
- *
- * @example
- * const config = await getH264EncoderConfig({
- *   width: 1280,
- *   height: 720,
- *   bitrate: 2_000_000,
- *   framerate: 30
- * });
- * if (config) {
- *   const encoder = new VideoEncoder(...);
- *   encoder.configure(config);
- * }
- */
-export async function getH264EncoderConfig(params: {
-  width: number;
-  height: number;
-  bitrate: number;
-  framerate: number;
-}): Promise<VideoEncoderConfig | null> {
-  const status = getWebCodecsSupportStatus();
-  if (!status.videoEncoder || typeof VideoEncoder === 'undefined') {
-    return null;
-  }
-
-  const width = Math.max(1, Math.round(params.width));
-  const height = Math.max(1, Math.round(params.height));
-  const bitrate = Math.max(100_000, Math.round(params.bitrate));
-  const framerate = Math.max(1, Math.round(params.framerate));
-
-  // Try hardware acceleration first, then software fallback
-  const accelerationModes: ('prefer-hardware' | 'prefer-software')[] = [
-    'prefer-hardware',
-    'prefer-software',
-  ];
-
-  for (const hardwareAcceleration of accelerationModes) {
-    for (const codec of H264_ENCODER_CODECS) {
-      const config: VideoEncoderConfig = {
-        codec,
-        width,
-        height,
-        bitrate,
-        framerate,
-        hardwareAcceleration,
-        avc: { format: 'annexb' },
-      };
-
-      try {
-        const support = await VideoEncoder.isConfigSupported(config);
-        if (support.supported) {
-          logger.info('conversion', 'H.264 encoder config found', {
-            codec,
-            hardwareAcceleration,
-            width,
-            height,
-            bitrate,
-            framerate,
-          });
-          return support.config ?? config;
-        }
-      } catch (error) {
-        logger.warn('conversion', 'VideoEncoder.isConfigSupported failed', {
-          codec,
-          hardwareAcceleration,
-          error: getErrorMessage(error),
-        });
-      }
-    }
-  }
-
-  logger.error('conversion', 'No H.264 encoder configuration supported', {
-    width,
-    height,
-    bitrate,
-    framerate,
-    triedCodecs: H264_ENCODER_CODECS,
-    triedAccelerations: accelerationModes,
-  });
-
-  return null;
 }

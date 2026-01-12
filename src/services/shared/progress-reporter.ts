@@ -100,9 +100,7 @@ export class ProgressReporter {
     }
 
     if (start >= end) {
-      throw new Error(
-        `Invalid phase range: start (${start}) must be less than end (${end})`
-      );
+      throw new Error(`Invalid phase range: start (${start}) must be less than end (${end})`);
     }
 
     this.phases.set(name, { name, start, end });
@@ -125,12 +123,12 @@ export class ProgressReporter {
    */
   definePhases(phases: Array<{ name: string; weight: number }>): void {
     if (phases.length === 0) {
-      throw new Error("Must provide at least one phase");
+      throw new Error('Must provide at least one phase');
     }
 
     const totalWeight = phases.reduce((sum, phase) => sum + phase.weight, 0);
     if (totalWeight <= 0) {
-      throw new Error("Total weight must be positive");
+      throw new Error('Total weight must be positive');
     }
 
     let currentStart = 0;
@@ -190,7 +188,7 @@ export class ProgressReporter {
    */
   report(phaseProgress: number): void {
     if (!this.currentPhase) {
-      throw new Error("No active phase. Call startPhase() first.");
+      throw new Error('No active phase. Call startPhase() first.');
     }
 
     const phase = this.phases.get(this.currentPhase);

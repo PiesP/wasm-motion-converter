@@ -607,12 +607,3 @@ export class FFmpegCore {
     );
   }
 }
-
-/**
- * Create FFmpeg core manager instance
- *
- * @returns New FFmpegCore instance
- */
-export function createFFmpegCore(): FFmpegCore {
-  return new FFmpegCore();
-}

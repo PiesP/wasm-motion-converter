@@ -21,9 +21,9 @@
 export const FFMPEG_INTERNALS = {
   // File names used in FFmpeg virtual filesystem
   /** File name for input video in the virtual filesystem. */
-  INPUT_FILE_NAME: 'input.mp4',
+  INPUT_FILE_NAME: "input.mp4",
   /** File name for GIF palette image in the virtual filesystem. */
-  PALETTE_FILE_NAME: 'palette.png',
+  PALETTE_FILE_NAME: "palette.png",
 
   // Cache configuration (in milliseconds)
   /** Time-to-live for input file in cache (prevents re-reading same file). Set to 2 minutes. */
@@ -66,7 +66,7 @@ export const FFMPEG_INTERNALS = {
   // AV1 transcode settings (FFmpeg lacks AV1 decoder, so we transcode AV1→H.264→GIF/WebP)
   AV1_TRANSCODE: {
     /** Temporary file name for AV1→H.264 transcode intermediate. */
-    TEMP_H264_FILE: 'temp_h264.mp4',
+    TEMP_H264_FILE: "temp_h264.mp4",
     /** FFmpeg analyzeduration for probing complex AV1 streams. Set to 10 seconds (10,000,000 microseconds). */
     PROBE_DURATION_MS: 10_000_000, // 10s analyzeduration for complex streams
     /** FFmpeg probesize for difficult AV1 decodes. Set to 100MB. */
@@ -74,7 +74,7 @@ export const FFMPEG_INTERNALS = {
     /** H.264 CRF quality for intermediate transcode (23=visually lossless, lower=better). */
     INTERMEDIATE_CRF: 23, // Balanced quality intermediate (visually lossless per FFmpeg docs)
     /** H.264 encoding preset for intermediate transcode (medium balances speed/quality). */
-    INTERMEDIATE_PRESET: 'medium', // Balance speed/quality
+    INTERMEDIATE_PRESET: "medium", // Balance speed/quality
   },
 
   // Progress range constants for consistent UX (percentage breakpoints for different conversion pipelines)
@@ -140,11 +140,11 @@ export const FFMPEG_INTERNALS = {
   // WebCodecs frame extraction configuration (GPU video decoding and frame capture)
   WEBCODECS: {
     /** Image format for extracted video frames. Set to PNG for lossless quality. */
-    FRAME_FORMAT: 'png',
+    FRAME_FORMAT: "png",
     /** PNG compression quality for extracted frames. Set to 0.92 (92% quality). */
     FRAME_QUALITY: 0.92,
     /** Prefix for frame file names in virtual filesystem. */
-    FRAME_FILE_PREFIX: 'frame_',
+    FRAME_FILE_PREFIX: "frame_",
     /** Number of digits for frame file numbering (0-padded). Set to 6 digits (0000000-999999). */
     FRAME_FILE_DIGITS: 6,
     /** Starting frame number for sequential file naming. Set to 0. */
@@ -182,22 +182,6 @@ export const FFMPEG_INTERNALS = {
     MAX_QUEUE_SIZE: 2,
   },
 } as const;
-
-/**
- * Type-safe access to progress range constants
- *
- * Union of progress range objects for different conversion pipelines (GIF, WebP, WebCodecs).
- * Each pipeline has its own progress breakpoints representing percentage completion at different stages.
- * Use this type to ensure progress objects are one of the predefined valid ranges.
- *
- * @example
- * const range: FFmpegProgressRange = FFMPEG_INTERNALS.PROGRESS.GIF;
- * const paletteStart = range.PALETTE_START; // 10% for GIF pipeline
- */
-export type FFmpegProgressRange =
-  | typeof FFMPEG_INTERNALS.PROGRESS.GIF
-  | typeof FFMPEG_INTERNALS.PROGRESS.WEBP
-  | typeof FFMPEG_INTERNALS.PROGRESS.WEBCODECS;
 
 /**
  * Calculate adaptive watchdog timeout based on video characteristics
@@ -251,7 +235,7 @@ export function calculateAdaptiveWatchdogTimeout(
   options: {
     resolution?: { width: number; height: number };
     duration?: number; // in seconds
-    quality?: 'low' | 'medium' | 'high';
+    quality?: "low" | "medium" | "high";
   } = {}
 ): number {
   let multiplier = 1.0;
@@ -277,7 +261,7 @@ export function calculateAdaptiveWatchdogTimeout(
   }
 
   // Quality-based scaling: higher quality settings use slower encoding presets
-  if (options.quality === 'high') {
+  if (options.quality === "high") {
     // High quality: 1.5× timeout (slower preset = longer encoding time)
     multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.HIGH_QUALITY;
   }

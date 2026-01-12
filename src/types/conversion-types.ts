@@ -16,7 +16,7 @@
  * @example
  * const format: ConversionFormat = 'gif';
  */
-export type ConversionFormat = 'gif' | 'webp' | 'mp4';
+export type ConversionFormat = "gif" | "webp" | "mp4";
 
 /**
  * Conversion quality levels
@@ -28,7 +28,7 @@ export type ConversionFormat = 'gif' | 'webp' | 'mp4';
  * @example
  * const quality: ConversionQuality = 'high';
  */
-export type ConversionQuality = 'low' | 'medium' | 'high';
+export type ConversionQuality = "low" | "medium" | "high";
 
 /**
  * Video scaling factor
@@ -93,7 +93,7 @@ export interface ConversionOptions {
 /**
  * Optional metadata attached to output blobs for UI display
  */
-export interface ConversionBlobMetadata {
+interface ConversionBlobMetadata {
   /** Whether video was transcoded (re-encoded) */
   wasTranscoded?: boolean;
   /** Original video codec */
@@ -161,7 +161,12 @@ export interface ConversionResult {
  * @example
  * const errorType: ConversionErrorType = 'timeout';
  */
-export type ConversionErrorType = 'timeout' | 'memory' | 'format' | 'codec' | 'general';
+export type ConversionErrorType =
+  | "timeout"
+  | "memory"
+  | "format"
+  | "codec"
+  | "general";
 
 /**
  * Detailed error context for conversion failures
@@ -244,7 +249,11 @@ export interface VideoMetadata {
  * @example
  * const type: PerformanceWarningType = 'resolution';
  */
-export type PerformanceWarningType = 'fileSize' | 'resolution' | 'duration' | 'codec';
+export type PerformanceWarningType =
+  | "fileSize"
+  | "resolution"
+  | "duration"
+  | "codec";
 
 /**
  * Performance warning severity levels
@@ -256,7 +265,7 @@ export type PerformanceWarningType = 'fileSize' | 'resolution' | 'duration' | 'c
  * @example
  * const severity: PerformanceWarningSeverity = 'high';
  */
-export type PerformanceWarningSeverity = 'critical' | 'high' | 'warning';
+export type PerformanceWarningSeverity = "critical" | "high" | "warning";
 
 /**
  * Performance warning with recommendation

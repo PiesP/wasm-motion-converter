@@ -57,7 +57,9 @@ class EncoderFactoryClass {
   unregister(name: string): void {
     if (this.encoders.delete(name)) {
       this.availabilityCache.delete(name);
-      logger.debug('encoder-factory', `Unregistered encoder: ${name}`, { name });
+      logger.debug('encoder-factory', `Unregistered encoder: ${name}`, {
+        name,
+      });
     }
   }
 
@@ -272,39 +274,3 @@ class EncoderFactoryClass {
  * Singleton encoder factory instance
  */
 export const EncoderFactory = new EncoderFactoryClass();
-
-/**
- * Convenience function to get encoder with type safety
- *
- * @param format - Target format
- * @param preferences - Optional preferences
- * @returns Promise resolving to encoder
- * @throws Error if no encoder available
- */
-export async function getEncoderForFormat(
-  format: ConversionFormat,
-  preferences?: EncoderPreferences
-): Promise<EncoderAdapter> {
-  const encoder = await EncoderFactory.getEncoder(format, preferences);
-
-  if (!encoder) {
-    throw new Error(
-      `No encoder available for format: ${format}. ` +
-        `Registered encoders: ${EncoderFactory.getAll()
-          .map((e) => e.name)
-          .join(', ')}`
-    );
-  }
-
-  return encoder;
-}
-
-/**
- * Convenience function to check format support
- *
- * @param format - Target format
- * @returns Promise resolving to true if supported
- */
-export async function isFormatSupported(format: ConversionFormat): Promise<boolean> {
-  return await EncoderFactory.hasEncoder(format);
-}

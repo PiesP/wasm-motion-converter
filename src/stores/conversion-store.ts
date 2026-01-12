@@ -7,7 +7,7 @@
  */
 
 // External dependencies
-import { createSignal } from "solid-js";
+import { createSignal } from 'solid-js';
 // Type imports
 import type {
   ConversionResult,
@@ -15,9 +15,9 @@ import type {
   ErrorContext,
   PerformanceWarning,
   VideoMetadata,
-} from "@t/conversion-types";
+} from '@t/conversion-types';
 // Internal imports
-import { logger } from "@utils/logger";
+import { logger } from '@utils/logger';
 
 /**
  * Input video file selected by user
@@ -32,8 +32,7 @@ export const [inputFile, setInputFile] = createSignal<File | null>(null);
  * Includes duration, dimensions, codec, framerate, and bitrate.
  * Populated after video analysis.
  */
-export const [videoMetadata, setVideoMetadata] =
-  createSignal<VideoMetadata | null>(null);
+export const [videoMetadata, setVideoMetadata] = createSignal<VideoMetadata | null>(null);
 
 /**
  * Object URL for video preview
@@ -41,9 +40,7 @@ export const [videoMetadata, setVideoMetadata] =
  * Blob URL created from input file for preview playback.
  * Must be revoked when no longer needed to prevent memory leaks.
  */
-export const [videoPreviewUrl, setVideoPreviewUrl] = createSignal<
-  string | null
->(null);
+export const [videoPreviewUrl, setVideoPreviewUrl] = createSignal<string | null>(null);
 
 /**
  * Default conversion settings
@@ -51,15 +48,15 @@ export const [videoPreviewUrl, setVideoPreviewUrl] = createSignal<
  * Used as fallback when no saved settings exist or localStorage fails.
  */
 export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
-  format: "gif",
-  quality: "medium",
+  format: 'gif',
+  quality: 'medium',
   scale: 1.0,
 };
 
 /**
  * LocalStorage key for persisting conversion settings
  */
-const SETTINGS_STORAGE_KEY = "conversion-settings";
+const SETTINGS_STORAGE_KEY = 'conversion-settings';
 
 /**
  * Load conversion settings from localStorage
@@ -77,10 +74,10 @@ const getInitialConversionSettings = (): ConversionSettings => {
       // Validate that the loaded settings have all required fields
       if (
         parsed.format &&
-        ["gif", "webp"].includes(parsed.format) &&
+        ['gif', 'webp'].includes(parsed.format) &&
         parsed.quality &&
-        ["low", "medium", "high"].includes(parsed.quality) &&
-        typeof parsed.scale === "number" &&
+        ['low', 'medium', 'high'].includes(parsed.quality) &&
+        typeof parsed.scale === 'number' &&
         [0.5, 0.75, 1.0].includes(parsed.scale)
       ) {
         return parsed as ConversionSettings;
@@ -88,11 +85,7 @@ const getInitialConversionSettings = (): ConversionSettings => {
     }
   } catch (error) {
     // If localStorage is unavailable or data is corrupted, fall back to defaults
-    logger.warn(
-      "general",
-      "Failed to load conversion settings from localStorage",
-      { error }
-    );
+    logger.warn('general', 'Failed to load conversion settings from localStorage', { error });
   }
   return DEFAULT_CONVERSION_SETTINGS;
 };
@@ -110,11 +103,7 @@ export const saveConversionSettings = (settings: ConversionSettings): void => {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   } catch (error) {
     // Silently fail if localStorage is unavailable
-    logger.warn(
-      "general",
-      "Failed to save conversion settings to localStorage",
-      { error }
-    );
+    logger.warn('general', 'Failed to save conversion settings to localStorage', { error });
   }
 };
 
@@ -124,8 +113,9 @@ export const saveConversionSettings = (settings: ConversionSettings): void => {
  * User-selected format (gif/webp), quality (low/medium/high), and scale (0.5/0.75/1.0).
  * Initialized from localStorage or defaults. Automatically persisted on change.
  */
-export const [conversionSettings, setConversionSettings] =
-  createSignal<ConversionSettings>(getInitialConversionSettings());
+export const [conversionSettings, setConversionSettings] = createSignal<ConversionSettings>(
+  getInitialConversionSettings()
+);
 
 /**
  * Performance warnings from performance checker
@@ -143,8 +133,7 @@ export { setPerformanceWarnings };
  * Updated during conversion to show user progress.
  * Reset to 0 when starting new conversion.
  */
-export const [conversionProgress, setConversionProgress] =
-  createSignal<number>(0);
+export const [conversionProgress, setConversionProgress] = createSignal<number>(0);
 
 /**
  * Conversion status message
@@ -152,8 +141,7 @@ export const [conversionProgress, setConversionProgress] =
  * Human-readable message describing current conversion step.
  * Examples: "Extracting frames...", "Encoding GIF...", "Finalizing..."
  */
-export const [conversionStatusMessage, setConversionStatusMessage] =
-  createSignal<string>("");
+export const [conversionStatusMessage, setConversionStatusMessage] = createSignal<string>('');
 
 /**
  * Maximum number of conversion results to keep
@@ -169,9 +157,7 @@ export const MAX_RESULTS = 10;
  * Contains converted video blobs with metadata (format, size, duration).
  * Limited to MAX_RESULTS entries. Newest results appear first.
  */
-export const [conversionResults, setConversionResults] = createSignal<
-  ConversionResult[]
->([]);
+export const [conversionResults, setConversionResults] = createSignal<ConversionResult[]>([]);
 
 /**
  * Error message from failed conversion
@@ -179,9 +165,7 @@ export const [conversionResults, setConversionResults] = createSignal<
  * User-friendly error message displayed when conversion fails.
  * Null when no error has occurred.
  */
-export const [errorMessage, setErrorMessage] = createSignal<string | null>(
-  null
-);
+export const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
 
 /**
  * Detailed error context for debugging
@@ -189,8 +173,7 @@ export const [errorMessage, setErrorMessage] = createSignal<string | null>(
  * Contains error type, suggestions, and additional details for error display.
  * Populated by error classification utility.
  */
-export const [errorContext, setErrorContext] =
-  createSignal<ErrorContext | null>(null);
+export const [errorContext, setErrorContext] = createSignal<ErrorContext | null>(null);
 
 /**
  * Flag indicating auto-applied performance recommendation

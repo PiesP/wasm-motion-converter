@@ -28,10 +28,10 @@
  */
 function isErrorWithMessage(error: unknown): error is { message: string } {
   return (
-    typeof error === "object" &&
+    typeof error === 'object' &&
     error !== null &&
-    "message" in error &&
-    typeof (error as { message: unknown }).message === "string"
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
   );
 }
 
@@ -72,7 +72,7 @@ export function getErrorMessage(error: unknown): string {
   }
 
   // String errors (thrown as strings)
-  if (typeof error === "string") {
+  if (typeof error === 'string') {
     return error;
   }
 

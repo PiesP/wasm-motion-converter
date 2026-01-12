@@ -8,11 +8,11 @@
  */
 
 // External dependencies
-import { createSignal } from "solid-js";
+import { createSignal } from 'solid-js';
 
 // Internal dependencies
-import { createId } from "@utils/create-id";
-import { logger } from "@utils/logger";
+import { createId } from '@utils/create-id';
+import { logger } from '@utils/logger';
 
 /**
  * Toast notification type
@@ -22,7 +22,7 @@ import { logger } from "@utils/logger";
  * - info: Blue toast for informational messages
  * - warning: Yellow toast for warning conditions
  */
-export type ToastType = "success" | "error" | "info" | "warning";
+export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
 /**
  * Toast notification
@@ -82,7 +82,7 @@ export { toasts };
  */
 export function showToast(
   message: string,
-  type: ToastType = "info",
+  type: ToastType = 'info',
   duration: number = DEFAULT_TOAST_DURATION
 ): void {
   const id = createId();
@@ -90,7 +90,7 @@ export function showToast(
 
   setToasts((prev) => [...prev, toast]);
 
-  logger.info("general", "Toast shown", { type, message, duration });
+  logger.info('general', 'Toast shown', { type, message, duration });
 
   // Schedule auto-dismissal if duration > 0
   if (duration > 0) {
@@ -113,5 +113,5 @@ export function showToast(
  */
 export function removeToast(id: string): void {
   setToasts((prev) => prev.filter((t) => t.id !== id));
-  logger.debug("general", "Toast removed", { id });
+  logger.debug('general', 'Toast removed', { id });
 }

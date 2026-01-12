@@ -377,12 +377,3 @@ export class FFmpegMonitoring {
     return this.currentWatchdogTimeout;
   }
 }
-
-/**
- * Create FFmpeg monitoring instance
- *
- * @returns New FFmpegMonitoring instance
- */
-export function createFFmpegMonitoring(): FFmpegMonitoring {
-  return new FFmpegMonitoring();
-}

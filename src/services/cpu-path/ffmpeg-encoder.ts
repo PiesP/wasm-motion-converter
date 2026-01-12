@@ -1232,12 +1232,3 @@ export class FFmpegEncoder {
     return this.cancellationRequested;
   }
 }
-
-/**
- * Create FFmpeg encoder instance
- *
- * @returns New FFmpegEncoder instance
- */
-export function createFFmpegEncoder(): FFmpegEncoder {
-  return new FFmpegEncoder();
-}

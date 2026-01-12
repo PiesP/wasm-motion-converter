@@ -7,10 +7,10 @@
  */
 
 // External dependencies
-import { createSignal } from "solid-js";
+import { createSignal } from 'solid-js';
 
 // Type imports
-import type { ValidationWarning } from "@t/validation-types";
+import type { ValidationWarning } from '@t/validation-types';
 
 /**
  * Confirmation dialog state
@@ -34,11 +34,10 @@ interface ConfirmationState {
  *
  * Tracks visibility, warnings, and callback functions for the confirmation modal.
  */
-const [confirmationState, setConfirmationState] =
-  createSignal<ConfirmationState>({
-    isVisible: false,
-    warnings: [],
-  });
+const [confirmationState, setConfirmationState] = createSignal<ConfirmationState>({
+  isVisible: false,
+  warnings: [],
+});
 
 /**
  * Get current confirmation state
