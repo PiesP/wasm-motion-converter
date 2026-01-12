@@ -308,13 +308,27 @@ export class FFmpegMonitoring {
       const currentProgress = startProgress + progressRange * progressFraction;
       const roundedProgress = Math.round(currentProgress);
 
-      logger.debug(
-        'progress',
-        `Heartbeat update: ${roundedProgress}% (elapsed: ${elapsedSeconds.toFixed(
-          1
-        )}s, source: heartbeat)`
-      );
-      this.updateProgress(roundedProgress, true);
+      // Progress is monotonic during a conversion run. When a heartbeat fires after real progress has
+      // already advanced further (e.g., FFmpeg progress updates), logging the raw heartbeat percent can
+      // appear as a regression. Clamp to the current conversion progress for logging and reporting.
+      const previousProgress = this.lastProgressValue;
+      const monotonicProgress =
+        this.isConverting && previousProgress >= 0
+          ? Math.max(roundedProgress, previousProgress)
+          : roundedProgress;
+
+      // Only log when the heartbeat actually advances the visible progress. If it does not, it still
+      // acts as a keepalive by resetting the watchdog timers via updateProgress().
+      if (monotonicProgress !== previousProgress) {
+        logger.debug(
+          'progress',
+          `Heartbeat update: ${monotonicProgress}% (elapsed: ${elapsedSeconds.toFixed(
+            1
+          )}s, source: heartbeat)`
+        );
+      }
+
+      this.updateProgress(monotonicProgress, true);
     }, FFMPEG_INTERNALS.HEARTBEAT_INTERVAL_MS);
 
     // Track the interval for cleanup
