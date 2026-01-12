@@ -1,15 +1,10 @@
-import type { DemuxerAdapter } from "./demuxer-adapter";
-import { MP4BoxDemuxer } from "./mp4box-demuxer";
-import { WebMDemuxer } from "./webm-demuxer";
-import type { VideoMetadata } from "@t/conversion-types";
-import {
-  isAv1Codec,
-  isH264Codec,
-  isHevcCodec,
-  normalizeCodecString,
-} from "@utils/codec-utils";
-import { getErrorMessage } from "@utils/error-utils";
-import { logger } from "@utils/logger";
+import type { DemuxerAdapter } from './demuxer-adapter';
+import { MP4BoxDemuxer } from './mp4box-demuxer';
+import { WebMDemuxer } from './webm-demuxer';
+import type { VideoMetadata } from '@t/conversion-types';
+import { isAv1Codec, isH264Codec, isHevcCodec, normalizeCodecString } from '@utils/codec-utils';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 
 const buildVideoDecoderCodecCandidates = (codec: string): string[] => {
   const raw = codec.trim();
@@ -24,23 +19,23 @@ const buildVideoDecoderCodecCandidates = (codec: string): string[] => {
   }
 
   if (isAv1Codec(normalized)) {
-    candidates.push("av01.0.05M.08", "av01.0.08M.08", "av01.0.08M.10");
+    candidates.push('av01.0.05M.08', 'av01.0.08M.08', 'av01.0.08M.10');
   }
 
   if (isHevcCodec(normalized)) {
-    candidates.push("hvc1.1.6.L93.B0", "hev1.1.6.L93.B0");
+    candidates.push('hvc1.1.6.L93.B0', 'hev1.1.6.L93.B0');
   }
 
   if (isH264Codec(normalized)) {
-    candidates.push("avc1.42E01E", "avc1.4D401E", "avc1.640028");
+    candidates.push('avc1.42E01E', 'avc1.4D401E', 'avc1.640028');
   }
 
-  if (normalized.includes("vp09") || normalized.includes("vp9")) {
-    candidates.push("vp09.00.10.08", "vp9");
+  if (normalized.includes('vp09') || normalized.includes('vp9')) {
+    candidates.push('vp09.00.10.08', 'vp9');
   }
 
-  if (normalized.includes("vp08") || normalized.includes("vp8")) {
-    candidates.push("vp8", "vp08.00.10.08");
+  if (normalized.includes('vp08') || normalized.includes('vp8')) {
+    candidates.push('vp8', 'vp08.00.10.08');
   }
 
   // Deduplicate while preserving order.
@@ -54,7 +49,7 @@ const isAnyVideoDecoderConfigSupported = async (params: {
 }): Promise<boolean> => {
   const { codecCandidates, codedWidth, codedHeight } = params;
 
-  if (typeof VideoDecoder === "undefined") {
+  if (typeof VideoDecoder === 'undefined') {
     return false;
   }
 
@@ -64,7 +59,7 @@ const isAnyVideoDecoderConfigSupported = async (params: {
         codec,
         codedWidth,
         codedHeight,
-        hardwareAcceleration: "prefer-hardware",
+        hardwareAcceleration: 'prefer-hardware',
       });
 
       if (result.supported) {
@@ -72,14 +67,10 @@ const isAnyVideoDecoderConfigSupported = async (params: {
       }
     } catch (error) {
       // Non-fatal: some browsers throw for unknown/invalid codec strings.
-      logger.debug(
-        "demuxer",
-        "VideoDecoder.isConfigSupported failed (non-critical)",
-        {
-          codec,
-          error: getErrorMessage(error),
-        }
-      );
+      logger.debug('demuxer', 'VideoDecoder.isConfigSupported failed (non-critical)', {
+        codec,
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -89,7 +80,7 @@ const isAnyVideoDecoderConfigSupported = async (params: {
 /**
  * Container format types
  */
-export type ContainerFormat = "mp4" | "mov" | "webm" | "mkv" | "unknown";
+export type ContainerFormat = 'mp4' | 'mov' | 'webm' | 'mkv' | 'unknown';
 
 /**
  * Detect container format from file extension
@@ -98,20 +89,20 @@ export type ContainerFormat = "mp4" | "mov" | "webm" | "mkv" | "unknown";
  * @returns Detected container format
  */
 export function detectContainer(file: File): ContainerFormat {
-  const extension = file.name.split(".").pop()?.toLowerCase();
+  const extension = file.name.split('.').pop()?.toLowerCase();
 
   switch (extension) {
-    case "mp4":
-    case "m4v":
-      return "mp4";
-    case "mov":
-      return "mov";
-    case "webm":
-      return "webm";
-    case "mkv":
-      return "mkv";
+    case 'mp4':
+    case 'm4v':
+      return 'mp4';
+    case 'mov':
+      return 'mov';
+    case 'webm':
+      return 'webm';
+    case 'mkv':
+      return 'mkv';
     default:
-      return "unknown";
+      return 'unknown';
   }
 }
 
@@ -130,8 +121,8 @@ export function detectContainer(file: File): ContainerFormat {
 export function canUseDemuxer(file: File, metadata?: VideoMetadata): boolean {
   // 1. Container must be supported
   const container = detectContainer(file);
-  if (container === "unknown") {
-    logger.info("demuxer", "Container format not supported for demuxer", {
+  if (container === 'unknown') {
+    logger.info('demuxer', 'Container format not supported for demuxer', {
       fileName: file.name,
       container,
     });
@@ -139,39 +130,39 @@ export function canUseDemuxer(file: File, metadata?: VideoMetadata): boolean {
   }
 
   // 2. VideoDecoder must be available
-  if (typeof VideoDecoder === "undefined") {
-    logger.info("demuxer", "VideoDecoder API not available", {
-      message: "Browser does not support WebCodecs",
+  if (typeof VideoDecoder === 'undefined') {
+    logger.info('demuxer', 'VideoDecoder API not available', {
+      message: 'Browser does not support WebCodecs',
     });
     return false;
   }
 
   // 3. Codec must be WebCodecs-compatible
-  if (metadata?.codec && metadata.codec !== "unknown") {
+  if (metadata?.codec && metadata.codec !== 'unknown') {
     const normalizedCodec = normalizeCodecString(metadata.codec);
 
     const isWebCodecsCodec =
       isAv1Codec(normalizedCodec) ||
       isHevcCodec(normalizedCodec) ||
       isH264Codec(normalizedCodec) ||
-      normalizedCodec.includes("vp09") ||
-      normalizedCodec.includes("vp9") ||
-      normalizedCodec.includes("vp08") ||
-      normalizedCodec.includes("vp8");
+      normalizedCodec.includes('vp09') ||
+      normalizedCodec.includes('vp9') ||
+      normalizedCodec.includes('vp08') ||
+      normalizedCodec.includes('vp8');
 
     if (!isWebCodecsCodec) {
-      logger.info("demuxer", "Codec not eligible for demuxer prefilter", {
+      logger.info('demuxer', 'Codec not eligible for demuxer prefilter', {
         codec: metadata.codec,
         normalizedCodec,
-        note: "This is a heuristic filter (not a VideoDecoder.isConfigSupported result).",
+        note: 'This is a heuristic filter (not a VideoDecoder.isConfigSupported result).',
       });
       return false;
     }
   }
 
-  logger.info("demuxer", "Demuxer path is eligible", {
+  logger.info('demuxer', 'Demuxer path is eligible', {
     container,
-    codec: metadata?.codec ?? "unknown",
+    codec: metadata?.codec ?? 'unknown',
   });
 
   return true;
@@ -201,11 +192,7 @@ export async function createDemuxer(
   // Optional: additional (more accurate) gating based on VideoDecoder.isConfigSupported.
   // This reduces unnecessary demuxer attempts and avoids confusing logs when the codec
   // family is recognized but the concrete decoder config is unsupported on this device.
-  if (
-    metadata?.codec &&
-    metadata.codec !== "unknown" &&
-    typeof VideoDecoder !== "undefined"
-  ) {
+  if (metadata?.codec && metadata.codec !== 'unknown' && typeof VideoDecoder !== 'undefined') {
     const codedWidth = metadata.width || 640;
     const codedHeight = metadata.height || 360;
     const codecCandidates = buildVideoDecoderCodecCandidates(metadata.codec);
@@ -218,17 +205,13 @@ export async function createDemuxer(
       });
 
       if (!supported) {
-        logger.info(
-          "demuxer",
-          "VideoDecoder.isConfigSupported indicates unsupported codec",
-          {
-            codec: metadata.codec,
-            normalizedCodec: normalizeCodecString(metadata.codec),
-            codecCandidates,
-            codedWidth,
-            codedHeight,
-          }
-        );
+        logger.info('demuxer', 'VideoDecoder.isConfigSupported indicates unsupported codec', {
+          codec: metadata.codec,
+          normalizedCodec: normalizeCodecString(metadata.codec),
+          codecCandidates,
+          codedWidth,
+          codedHeight,
+        });
         return null;
       }
     }
@@ -236,18 +219,18 @@ export async function createDemuxer(
 
   try {
     switch (container) {
-      case "mp4":
-      case "mov":
-        logger.info("demuxer", "Creating MP4Box demuxer", {
+      case 'mp4':
+      case 'mov':
+        logger.info('demuxer', 'Creating MP4Box demuxer', {
           container,
           codec: metadata?.codec,
           fileName: file.name,
         });
         return new MP4BoxDemuxer();
 
-      case "webm":
-      case "mkv":
-        logger.info("demuxer", "Creating WebM demuxer", {
+      case 'webm':
+      case 'mkv':
+        logger.info('demuxer', 'Creating WebM demuxer', {
           container,
           codec: metadata?.codec,
           fileName: file.name,
@@ -255,13 +238,13 @@ export async function createDemuxer(
         return new WebMDemuxer();
 
       default:
-        logger.warn("demuxer", "No demuxer available for container", {
+        logger.warn('demuxer', 'No demuxer available for container', {
           container,
         });
         return null;
     }
   } catch (error) {
-    logger.warn("demuxer", "Failed to create demuxer, falling back", {
+    logger.warn('demuxer', 'Failed to create demuxer, falling back', {
       error: getErrorMessage(error),
       container,
       codec: metadata?.codec,
