@@ -19,6 +19,81 @@
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
 /**
+ * Maximum number of characters allowed for inline context in a single log line.
+ *
+ * Keeping context inline (instead of as a separate console argument) avoids noisy
+ * `Object` suffixes and makes logs easier to copy/paste from DevTools.
+ */
+const MAX_INLINE_CONTEXT_CHARS = 2000;
+
+function trimStackForInlineLog(stack: string | undefined): string | undefined {
+  if (!stack) {
+    return undefined;
+  }
+
+  const lines = stack.split('\n').map((line) => line.trim());
+  if (lines.length <= 3) {
+    return lines.join(' | ');
+  }
+  return `${lines.slice(0, 3).join(' | ')} | …`;
+}
+
+function safeJsonStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+
+  const replacer = (_key: string, v: unknown): unknown => {
+    if (typeof v === 'bigint') {
+      return v.toString();
+    }
+
+    if (v instanceof Error) {
+      return {
+        name: v.name,
+        message: v.message,
+        stack: trimStackForInlineLog(v.stack),
+      };
+    }
+
+    if (v instanceof Map) {
+      return { type: 'Map', entries: Array.from(v.entries()) };
+    }
+
+    if (v instanceof Set) {
+      return { type: 'Set', values: Array.from(v.values()) };
+    }
+
+    if (v instanceof ArrayBuffer) {
+      return { type: 'ArrayBuffer', byteLength: v.byteLength };
+    }
+
+    if (v instanceof Uint8Array) {
+      return { type: 'Uint8Array', length: v.length };
+    }
+
+    if (v instanceof Date) {
+      return v.toISOString();
+    }
+
+    if (typeof v === 'object' && v !== null) {
+      const obj = v as object;
+      if (seen.has(obj)) {
+        return '[Circular]';
+      }
+      seen.add(obj);
+    }
+
+    return v;
+  };
+
+  try {
+    const json = JSON.stringify(value, replacer);
+    return json ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
  * Log category type union
  *
  * Categorizes logs by subsystem for filtering and organization:
@@ -194,13 +269,20 @@ class Logger {
     const consoleMethod =
       level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : level === 'INFO' ? 'info' : 'log';
 
-    // OUTPUT: Log message with optional context
-    // If context provided, include as separate argument (logged as JSON object)
+    // OUTPUT: Log message with optional inline context
+    // Keeping context inline avoids noisy `Object` suffixes and makes log capture readable.
     if (context !== undefined) {
-      console[consoleMethod](`${prefix} ${message}`, context);
-    } else {
-      console[consoleMethod](`${prefix} ${message}`);
+      const rawContext = safeJsonStringify(context);
+      const inlineContext =
+        rawContext.length > MAX_INLINE_CONTEXT_CHARS
+          ? `${rawContext.slice(0, MAX_INLINE_CONTEXT_CHARS)}…(truncated)`
+          : rawContext;
+
+      console[consoleMethod](`${prefix} ${message} ${inlineContext}`);
+      return;
     }
+
+    console[consoleMethod](`${prefix} ${message}`);
   }
 
   /**
