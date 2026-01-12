@@ -77,17 +77,27 @@ export class FFmpegMonitoring {
    * @param isHeartbeat - Whether this is a heartbeat update
    */
   updateProgress(progress: number, isHeartbeat = false): void {
+    const clamped = Math.min(100, Math.max(0, progress));
+
+    // Progress should not move backwards within a single conversion run.
+    // Multiple progress sources (e.g., heartbeat vs real progress, monitoring restarts)
+    // can otherwise cause the percent prefix to regress (confusing in logs and UI).
+    const monotonic =
+      this.isConverting && this.lastProgressValue >= 0
+        ? Math.max(clamped, this.lastProgressValue)
+        : clamped;
+
     if (this.isConverting) {
       const now = Date.now();
       this.lastProgressTime = now;
-      this.lastProgressValue = progress;
+      this.lastProgressValue = monotonic;
 
       // Keep the logger's conversion progress context in sync so all log lines
       // can be annotated with the current percent while converting.
-      logger.setConversionProgress(progress);
+      logger.setConversionProgress(monotonic);
     }
 
-    this.callbacks.onProgress?.(progress, isHeartbeat);
+    this.callbacks.onProgress?.(monotonic, isHeartbeat);
   }
 
   /**
@@ -110,6 +120,12 @@ export class FFmpegMonitoring {
   startWatchdog(options: WatchdogOptions = {}): void {
     // Idempotent start: ensure any previous timers/heartbeats are cleared first.
     // This prevents duplicate watchdog intervals from leaking across runs.
+    //
+    // Note: startWatchdog() can be called mid-conversion (e.g., between capture and encode).
+    // Preserve the last progress value in that case so log prefixes and watchdog state do not
+    // jump backwards.
+    const restartingWithinConversion = this.isConverting;
+    const previousProgressValue = this.lastProgressValue;
     this.stopWatchdog();
 
     const { metadata, quality, format, enableLogSilenceCheck = true } = options;
@@ -118,7 +134,7 @@ export class FFmpegMonitoring {
     this.lastLogTime = Date.now();
     this.logSilenceStrikes = 0;
     this.isConverting = true;
-    this.lastProgressValue = -1;
+    this.lastProgressValue = restartingWithinConversion ? previousProgressValue : -1;
 
     // Note: do NOT reset the logger's conversion progress context here.
     // The orchestrator owns conversion lifecycle decoration and may have already
