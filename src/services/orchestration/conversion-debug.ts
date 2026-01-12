@@ -8,11 +8,11 @@
  * - Consumers should only expose these getters in dev mode.
  */
 
-import type { ConversionFormat } from "@t/conversion-types";
+import type { ConversionFormat } from '@t/conversion-types';
 
-import type { ConversionPath } from "./types";
+import type { ConversionPath } from './types';
 
-export type ConversionDebugOutcome = "success" | "error" | "cancelled";
+export type ConversionDebugOutcome = 'success' | 'error' | 'cancelled';
 
 export interface ConversionAutoSelectionDebug {
   timestamp: number;
@@ -22,7 +22,7 @@ export interface ConversionAutoSelectionDebug {
 
   plannedPath: ConversionPath;
   plannedReason: string;
-  strategyConfidence?: "high" | "medium" | "low";
+  strategyConfidence?: 'high' | 'medium' | 'low';
 
   // Demuxer is planned/available information (not a guarantee of actual runtime usage yet).
   demuxerAvailable?: boolean;
@@ -55,9 +55,7 @@ export interface ConversionPhaseTimingsDebug {
 let lastDecision: ConversionAutoSelectionDebug | null = null;
 let lastPhaseTimings: ConversionPhaseTimingsDebug | null = null;
 
-export function setConversionAutoSelectionDebug(
-  next: ConversionAutoSelectionDebug
-): void {
+export function setConversionAutoSelectionDebug(next: ConversionAutoSelectionDebug): void {
   lastDecision = next;
 }
 
@@ -71,9 +69,7 @@ export function getConversionAutoSelectionDebug(): ConversionAutoSelectionDebug 
   return lastDecision;
 }
 
-export function setConversionPhaseTimingsDebug(
-  next: ConversionPhaseTimingsDebug
-): void {
+export function setConversionPhaseTimingsDebug(next: ConversionPhaseTimingsDebug): void {
   lastPhaseTimings = next;
 }
 
