@@ -24,6 +24,10 @@ import ToastContainer from '@components/ToastContainer';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
 import { ffmpegService } from '@services/ffmpeg-service';
+import {
+  getConversionAutoSelectionDebug,
+  getConversionPhaseTimingsDebug,
+} from '@services/orchestration/conversion-debug';
 import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
 import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
 import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
@@ -181,6 +185,8 @@ const App: Component = () => {
               capabilities: caps,
               strategies: strategyRegistryService.getAllStrategies(),
               history: () => strategyHistoryService.getAllHistory(),
+              lastDecision: () => getConversionAutoSelectionDebug(),
+              phaseTimings: () => getConversionPhaseTimingsDebug(),
               testStrategy: (codec: string, format: 'gif' | 'webp' | 'mp4') => {
                 return strategyRegistryService.getStrategy({
                   codec,

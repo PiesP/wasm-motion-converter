@@ -12,9 +12,12 @@
 
 /// <reference types="vite/client" />
 
-import type { ExtendedCapabilities, VideoCapabilities } from '@t/video-pipeline-types';
-import type { CodecPathPreference } from '@services/orchestration/types';
-import type { ConversionHistory } from '@services/orchestration/strategy-history-service';
+import type {
+  ExtendedCapabilities,
+  VideoCapabilities,
+} from "@t/video-pipeline-types";
+import type { CodecPathPreference } from "@services/orchestration/types";
+import type { ConversionHistory } from "@services/orchestration/strategy-history-service";
 
 /* ============================================================================
    Vite Environment Variables
@@ -202,10 +205,38 @@ declare global {
       capabilities: ExtendedCapabilities;
       strategies: CodecPathPreference[];
       history: () => ConversionHistory[];
+      lastDecision: () => {
+        timestamp: number;
+        format: "gif" | "webp" | "mp4";
+        codec?: string;
+        container?: string;
+        plannedPath: "gpu" | "cpu" | "hybrid" | "webav";
+        plannedReason: string;
+        strategyConfidence?: "high" | "medium" | "low";
+        demuxerAvailable?: boolean;
+        useDemuxerPlanned?: boolean;
+        hardwareAccelerated?: boolean;
+        sharedArrayBuffer?: boolean;
+        crossOriginIsolated?: boolean;
+        workerSupport?: boolean;
+        executedPath?: "gpu" | "cpu" | "hybrid" | "webav";
+        encoderBackend?: string;
+        captureModeUsed?: string | null;
+        outcome?: "success" | "error" | "cancelled";
+        errorMessage?: string;
+      } | null;
+      phaseTimings: () => {
+        timestamp: number;
+        initializationMs: number;
+        analysisMs: number;
+        conversionMs: number;
+        totalMs: number;
+        outcome?: "success" | "error" | "cancelled";
+      } | null;
       testStrategy: (
         codec: string,
-        format: 'gif' | 'webp' | 'mp4'
-      ) => CodecPathPreference & { confidence: 'high' | 'medium' | 'low' };
+        format: "gif" | "webp" | "mp4"
+      ) => CodecPathPreference & { confidence: "high" | "medium" | "low" };
     };
   }
 }
