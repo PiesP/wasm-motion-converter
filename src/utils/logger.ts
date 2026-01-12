@@ -9,11 +9,11 @@
  * - **Environment-aware filtering**: DEBUG/INFO filtered in production (except performance logs)
  * - **Timestamp prefixes**: All logs prefixed with HH:MM:SS [category] format
  * - **Context support**: Optional context objects logged as additional JSON data
- * - **Category filtering**: 8 categories for organizing logs by subsystem
+ * - **Category filtering**: Multiple categories for organizing logs by subsystem
  * - **Performance tracking**: Always logged in all environments for monitoring
  *
  * **Log levels**:\n * - DEBUG: Development-only detailed information (filtered in production)\n * - INFO: Important state changes and events (filtered in production except performance)\n * - WARN: Warning conditions and fallback paths (always shown)\n * - ERROR: Error conditions requiring attention (always shown)\n *
- * **Categories**: ffmpeg, conversion, progress, watchdog, general, performance, prefetch, worker-pool\n *
+ * **Categories**: See the `LogCategory` union type below.\n *
  * **Usage pattern**:\n * ```\n * import { logger } from '@utils/logger';\n * logger.info('conversion', 'Starting conversion', { format, quality, fileSize });\n * logger.error('ffmpeg', 'Failed to initialize', { error });\n * logger.performance('Frame decoded', { durationMs: 25, frameNumber: 42 });\n * ```\n */
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
@@ -52,11 +52,7 @@ type LogCategory =
   | 'gif-encoder'
   | 'mp4-encoder'
   | 'webp-encoder'
-  | 'webav-mp4'
-  | 'capture-mode-selector'
-  | 'decoder-manager'
-  | 'demuxer-manager'
-  | 'frame-extractor';
+  | 'webav-mp4';
 
 /**
  * Structured logger for application-wide logging with filtering and categorization

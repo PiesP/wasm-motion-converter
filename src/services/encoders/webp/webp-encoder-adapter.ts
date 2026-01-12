@@ -21,20 +21,14 @@
 import {
   WEBP_ANIMATION_MAX_FRAMES,
   WEBP_BACKGROUND_COLOR,
-} from "@services/webcodecs/webp-constants";
-import {
-  buildWebPFrameDurations,
-  resolveWebPFps,
-} from "@services/webcodecs/webp-timing";
-import { logger } from "@utils/logger";
-import type { AnimatedWebPOptions, WebPFrame } from "@utils/webp-muxer";
-import { muxAnimatedWebP } from "@utils/webp-muxer";
-import type * as Comlink from "comlink";
+} from '@services/webcodecs/webp-constants';
+import { buildWebPFrameDurations, resolveWebPFps } from '@services/webcodecs/webp-timing';
+import { logger } from '@utils/logger';
+import type { AnimatedWebPOptions, WebPFrame } from '@utils/webp-muxer';
+import { muxAnimatedWebP } from '@utils/webp-muxer';
+import type * as Comlink from 'comlink';
 
-import type {
-  EncoderAdapter,
-  EncoderRequest,
-} from "@services/encoders/encoder-interface";
+import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface';
 
 /**
  * WebP encoder worker API
@@ -60,10 +54,10 @@ interface WebPEncoderWorkerApi {
  * Encodes video frames to animated WebP format using worker-based parallel encoding.
  */
 export class WebPEncoderAdapter implements EncoderAdapter {
-  name = "webp-native";
+  name = 'webp-native';
 
   capabilities = {
-    formats: ["webp" as const],
+    formats: ['webp' as const],
     supportsWorkers: true,
     requiresSharedArrayBuffer: false,
     maxFrames: WEBP_ANIMATION_MAX_FRAMES,
@@ -71,7 +65,7 @@ export class WebPEncoderAdapter implements EncoderAdapter {
   };
 
   private workers: Array<Comlink.Remote<WebPEncoderWorkerApi>> = [];
-  private Comlink: typeof import("comlink") | null = null;
+  private Comlink: typeof import('comlink') | null = null;
 
   /**
    * Check if WebP encoding is available
@@ -84,14 +78,14 @@ export class WebPEncoderAdapter implements EncoderAdapter {
   async isAvailable(): Promise<boolean> {
     try {
       // Check OffscreenCanvas support
-      if (typeof OffscreenCanvas === "undefined") {
-        logger.debug("webp-encoder", "OffscreenCanvas not available");
+      if (typeof OffscreenCanvas === 'undefined') {
+        logger.debug('webp-encoder', 'OffscreenCanvas not available');
         return false;
       }
 
       // Check Worker support
-      if (typeof Worker === "undefined") {
-        logger.debug("webp-encoder", "Worker not available");
+      if (typeof Worker === 'undefined') {
+        logger.debug('webp-encoder', 'Worker not available');
         return false;
       }
 
@@ -100,23 +94,23 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       let supportsWebP = false;
       try {
         const canvas = new OffscreenCanvas(1, 1);
-        const blob = await canvas.convertToBlob({ type: "image/webp" });
+        const blob = await canvas.convertToBlob({ type: 'image/webp' });
         // Some browsers may not honor the type request, check size as fallback
-        supportsWebP = blob && (blob.type === "image/webp" || blob.size > 0);
+        supportsWebP = blob && (blob.type === 'image/webp' || blob.size > 0);
       } catch {
         // convertToBlob failed, WebP not supported
         supportsWebP = false;
       }
 
       if (!supportsWebP) {
-        logger.debug("webp-encoder", "WebP encoding not supported");
+        logger.debug('webp-encoder', 'WebP encoding not supported');
         return false;
       }
 
-      logger.debug("webp-encoder", "WebP encoder available");
+      logger.debug('webp-encoder', 'WebP encoder available');
       return true;
     } catch (error) {
-      logger.debug("webp-encoder", "WebP encoder availability check failed", {
+      logger.debug('webp-encoder', 'WebP encoder availability check failed', {
         error: error instanceof Error ? error.message : String(error),
       });
       return false;
@@ -130,14 +124,13 @@ export class WebPEncoderAdapter implements EncoderAdapter {
    * @returns Animated WebP blob
    */
   async encode(request: EncoderRequest): Promise<Blob> {
-    const { frames, width, height, fps, quality, onProgress, shouldCancel } =
-      request;
+    const { frames, width, height, fps, quality, onProgress, shouldCancel } = request;
 
     if (frames.length === 0) {
-      throw new Error("No frames to encode");
+      throw new Error('No frames to encode');
     }
 
-    logger.info("webp-encoder", "Starting WebP encoding", {
+    logger.info('webp-encoder', 'Starting WebP encoding', {
       frameCount: frames.length,
       width,
       height,
@@ -153,8 +146,7 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       await this.initializeWorkers(workerCount);
 
       // Calculate quality parameter (0.0 to 1.0)
-      const encodeQuality =
-        quality === "low" ? 0.75 : quality === "medium" ? 0.85 : 0.95;
+      const encodeQuality = quality === 'low' ? 0.75 : quality === 'medium' ? 0.85 : 0.95;
 
       // Encode frames in parallel
       const encodedFrames = await this.encodeFramesParallel(
@@ -165,15 +157,12 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       );
 
       if (encodedFrames.length === 0) {
-        throw new Error("No frames were encoded");
+        throw new Error('No frames were encoded');
       }
 
       // Calculate frame durations
       const effectiveFps = resolveWebPFps(encodedFrames.length, fps);
-      const timestamps = Array.from(
-        { length: encodedFrames.length },
-        (_, i) => i / effectiveFps
-      );
+      const timestamps = Array.from({ length: encodedFrames.length }, (_, i) => i / effectiveFps);
       const durations = buildWebPFrameDurations({
         timestamps,
         fps: effectiveFps,
@@ -195,17 +184,17 @@ export class WebPEncoderAdapter implements EncoderAdapter {
         backgroundColor: WEBP_BACKGROUND_COLOR,
       };
 
-      logger.info("webp-encoder", "Muxing WebP frames", {
+      logger.info('webp-encoder', 'Muxing WebP frames', {
         frameCount: webpFrames.length,
         width,
         height,
       });
 
       const muxedData = await muxAnimatedWebP(webpFrames, muxOptions);
-      const blob = new Blob([muxedData], { type: "image/webp" });
+      const blob = new Blob([muxedData], { type: 'image/webp' });
 
       const duration = performance.now() - startTime;
-      logger.performance("WebP encoding completed", {
+      logger.performance('WebP encoding completed', {
         frameCount: frames.length,
         durationMs: Math.round(duration),
         outputSize: blob.size,
@@ -215,7 +204,7 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       return blob;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error("webp-encoder", "WebP encoding failed", { error: message });
+      logger.error('webp-encoder', 'WebP encoding failed', { error: message });
       throw error;
     } finally {
       // Clean up workers
@@ -231,26 +220,26 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       return; // Already initialized
     }
 
-    logger.debug("webp-encoder", "Initializing worker pool", { count });
+    logger.debug('webp-encoder', 'Initializing worker pool', { count });
 
     // Import Comlink if not already imported
     if (!this.Comlink) {
-      this.Comlink = await import("comlink");
+      this.Comlink = await import('comlink');
     }
 
     for (let i = 0; i < count; i++) {
       // Create worker using standard Vite pattern
       const worker = new Worker(
-        new URL("../../../workers/webp-encoder.worker.ts", import.meta.url),
+        new URL('../../../workers/webp-encoder.worker.ts', import.meta.url),
         {
-          type: "module",
+          type: 'module',
         }
       );
       const wrappedWorker = this.Comlink.wrap<WebPEncoderWorkerApi>(worker);
       this.workers.push(wrappedWorker);
     }
 
-    logger.debug("webp-encoder", "Worker pool initialized", {
+    logger.debug('webp-encoder', 'Worker pool initialized', {
       workerCount: this.workers.length,
     });
   }
@@ -271,7 +260,7 @@ export class WebPEncoderAdapter implements EncoderAdapter {
     // Distribute frames across workers
     const tasks = frames.map(async (frame, index) => {
       if (shouldCancel?.()) {
-        throw new Error("Encoding cancelled");
+        throw new Error('Encoding cancelled');
       }
 
       const workerIndex = index % workerCount;
@@ -307,7 +296,7 @@ export class WebPEncoderAdapter implements EncoderAdapter {
    * Clean up resources
    */
   async dispose(): Promise<void> {
-    logger.debug("webp-encoder", "Disposing WebP encoder", {
+    logger.debug('webp-encoder', 'Disposing WebP encoder', {
       workerCount: this.workers.length,
     });
 
@@ -316,14 +305,14 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       try {
         await worker.terminate();
       } catch (error) {
-        logger.debug("webp-encoder", "Error terminating worker", { error });
+        logger.debug('webp-encoder', 'Error terminating worker', { error });
       }
     }
 
     this.workers = [];
     this.Comlink = null;
 
-    logger.debug("webp-encoder", "WebP encoder disposed");
+    logger.debug('webp-encoder', 'WebP encoder disposed');
   }
 }
 

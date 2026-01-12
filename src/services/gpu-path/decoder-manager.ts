@@ -52,7 +52,7 @@ export class DecoderManager {
       const support = await VideoDecoder.isConfigSupported(config);
       return support.supported ?? false;
     } catch (error) {
-      logger.warn('decoder-manager', 'Error checking decoder config support', {
+      logger.warn('conversion', 'Error checking decoder config support', {
         error: getErrorMessage(error),
         codec: config.codec,
       });
@@ -93,7 +93,7 @@ export class DecoderManager {
       try {
         const support = await VideoDecoder.isConfigSupported(candidate as VideoDecoderConfig);
         if (support.supported) {
-          logger.debug('decoder-manager', 'Selected decoder config', {
+          logger.debug('conversion', 'Selected decoder config', {
             codec: candidate.codec,
             hardwareAcceleration: candidate.hardwareAcceleration ?? 'no-preference',
             usedSupportConfig: Boolean(support.config),
@@ -101,7 +101,7 @@ export class DecoderManager {
           return (support.config ?? candidate) as VideoDecoderConfig;
         }
       } catch (error) {
-        logger.debug('decoder-manager', 'Decoder config check failed', {
+        logger.debug('conversion', 'Decoder config check failed', {
           codec: candidate.codec,
           hardwareAcceleration: candidate.hardwareAcceleration ?? 'no-preference',
           error: getErrorMessage(error),
@@ -140,7 +140,7 @@ export class DecoderManager {
       output: onOutput,
       error: (error: Error) => {
         const wrapped = error instanceof Error ? error : new Error(getErrorMessage(error));
-        logger.error('decoder-manager', 'VideoDecoder error', {
+        logger.error('conversion', 'VideoDecoder error', {
           error: getErrorMessage(wrapped),
           codec: selectedConfig.codec,
         });
@@ -153,7 +153,7 @@ export class DecoderManager {
 
     // Track decoder
     this.activeDecoders.add(decoder);
-    logger.debug('decoder-manager', 'Created decoder', {
+    logger.debug('conversion', 'Created decoder', {
       codec: selectedConfig.codec,
       activeCount: this.activeDecoders.size,
     });
@@ -183,7 +183,7 @@ export class DecoderManager {
     try {
       await Promise.race([flushPromise, timeoutPromise]);
     } catch (error) {
-      logger.warn('decoder-manager', 'Decoder flush failed or timed out', {
+      logger.warn('conversion', 'Decoder flush failed or timed out', {
         error: getErrorMessage(error),
         state: decoder.state,
         decodeQueueSize: decoder.decodeQueueSize,
@@ -208,11 +208,11 @@ export class DecoderManager {
         decoder.close();
       }
       this.activeDecoders.delete(decoder);
-      logger.debug('decoder-manager', 'Closed decoder', {
+      logger.debug('conversion', 'Closed decoder', {
         remainingCount: this.activeDecoders.size,
       });
     } catch (error) {
-      logger.warn('decoder-manager', 'Error closing decoder', {
+      logger.warn('conversion', 'Error closing decoder', {
         error: getErrorMessage(error),
       });
       // Still remove from tracking
@@ -231,7 +231,7 @@ export class DecoderManager {
       return;
     }
 
-    logger.debug('decoder-manager', 'Closing all decoders', {
+    logger.debug('conversion', 'Closing all decoders', {
       count,
     });
 

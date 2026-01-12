@@ -11,11 +11,11 @@
  * - Automatic fallback handling
  */
 
-import type { VideoMetadata } from "@t/conversion-types";
-import { logger } from "@utils/logger";
-import { canUseDemuxer } from "@services/webcodecs/demuxer/demuxer-factory";
-import { getWebCodecsSupportStatus } from "@services/webcodecs-support-service";
-import type { CaptureMode } from "./types";
+import type { VideoMetadata } from '@t/conversion-types';
+import { logger } from '@utils/logger';
+import { canUseDemuxer } from '@services/webcodecs/demuxer/demuxer-factory';
+import { getWebCodecsSupportStatus } from '@services/webcodecs-support-service';
+import type { CaptureMode } from './types';
 
 /**
  * Browser capabilities for capture modes
@@ -55,8 +55,8 @@ class CaptureModePerformanceCache {
    * Get cache key for file and codec
    */
   private getCacheKey(file: File, codec?: string): string {
-    const container = file.name.split(".").pop()?.toLowerCase() ?? "unknown";
-    const codecKey = codec?.toLowerCase() ?? "unknown";
+    const container = file.name.split('.').pop()?.toLowerCase() ?? 'unknown';
+    const codecKey = codec?.toLowerCase() ?? 'unknown';
     return `${container}:${codecKey}`;
   }
 
@@ -66,7 +66,7 @@ class CaptureModePerformanceCache {
   recordSuccess(file: File, mode: CaptureMode, codec?: string): void {
     const key = this.getCacheKey(file, codec);
     this.successfulModes.set(key, mode);
-    logger.debug("capture-mode-selector", "Cached successful mode", {
+    logger.debug('conversion', 'Cached successful mode', {
       key,
       mode,
     });
@@ -111,23 +111,18 @@ export class CaptureModeSelector {
     const support = getWebCodecsSupportStatus();
 
     const supportsFrameCallback =
-      typeof HTMLVideoElement !== "undefined" &&
-      typeof (
-        HTMLVideoElement.prototype as { requestVideoFrameCallback?: unknown }
-      ).requestVideoFrameCallback === "function";
+      typeof HTMLVideoElement !== 'undefined' &&
+      typeof (HTMLVideoElement.prototype as { requestVideoFrameCallback?: unknown })
+        .requestVideoFrameCallback === 'function';
 
     const capabilities: CaptureModeCapabilities = {
-      demuxer: typeof VideoDecoder !== "undefined", // Basic requirement
+      demuxer: typeof VideoDecoder !== 'undefined', // Basic requirement
       trackProcessor: support.trackProcessor && support.captureStream,
       frameCallback: supportsFrameCallback,
       seek: true, // Always available
     };
 
-    logger.info(
-      "capture-mode-selector",
-      "Detected capture mode capabilities",
-      capabilities
-    );
+    logger.info('conversion', 'Detected capture mode capabilities', capabilities);
 
     return capabilities;
   }
@@ -149,55 +144,48 @@ export class CaptureModeSelector {
    */
   selectMode(
     file: File,
-    requestedMode: CaptureMode = "auto",
+    requestedMode: CaptureMode = 'auto',
     metadata?: VideoMetadata
   ): CaptureModeSelection {
     // If specific mode requested (not 'auto'), validate and return
-    if (requestedMode !== "auto") {
+    if (requestedMode !== 'auto') {
       return this.validateRequestedMode(requestedMode);
     }
 
     // Check cache for previously successful mode
-    const cachedMode = performanceCache.getSuccessfulMode(
-      file,
-      metadata?.codec
-    );
+    const cachedMode = performanceCache.getSuccessfulMode(file, metadata?.codec);
     if (cachedMode && this.isModeAvailable(cachedMode, file, metadata)) {
-      logger.info("capture-mode-selector", "Using cached successful mode", {
+      logger.info('conversion', 'Using cached successful mode', {
         mode: cachedMode,
         codec: metadata?.codec,
       });
       return {
         mode: cachedMode,
-        reason: "Previously successful (cached)",
+        reason: 'Previously successful (cached)',
         fallbacks: this.getFallbackChain(cachedMode),
       };
     }
 
     // Priority 1: Demuxer (eliminates seeking overhead for complex codecs)
     if (this.capabilities.demuxer && canUseDemuxer(file, metadata)) {
-      const codec = metadata?.codec?.toLowerCase() ?? "unknown";
+      const codec = metadata?.codec?.toLowerCase() ?? 'unknown';
       const isComplexCodec =
-        codec.includes("av1") ||
-        codec.includes("av01") ||
-        codec.includes("hevc") ||
-        codec.includes("hvc1") ||
-        codec.includes("vp9") ||
-        codec.includes("vp09");
+        codec.includes('av1') ||
+        codec.includes('av01') ||
+        codec.includes('hevc') ||
+        codec.includes('hvc1') ||
+        codec.includes('vp9') ||
+        codec.includes('vp09');
 
       if (isComplexCodec) {
-        logger.info(
-          "capture-mode-selector",
-          "Selected demuxer mode for complex codec",
-          {
-            codec,
-            container: file.name.split(".").pop(),
-          }
-        );
+        logger.info('conversion', 'Selected demuxer mode for complex codec', {
+          codec,
+          container: file.name.split('.').pop(),
+        });
         return {
-          mode: "demuxer",
+          mode: 'demuxer',
           reason: `Complex codec (${codec}) benefits from demuxer path`,
-          fallbacks: ["track", "frame-callback", "seek"],
+          fallbacks: ['track', 'frame-callback', 'seek'],
         };
       }
     }
@@ -205,25 +193,25 @@ export class CaptureModeSelector {
     // Priority 2: Track processor (experimental, hardware-accelerated)
     if (this.capabilities.trackProcessor) {
       return {
-        mode: "track",
-        reason: "Track processor available (hardware-accelerated)",
-        fallbacks: ["frame-callback", "seek"],
+        mode: 'track',
+        reason: 'Track processor available (hardware-accelerated)',
+        fallbacks: ['frame-callback', 'seek'],
       };
     }
 
     // Priority 3: Frame callback (Chrome/Edge, precise timing)
     if (this.capabilities.frameCallback) {
       return {
-        mode: "frame-callback",
-        reason: "requestVideoFrameCallback available",
-        fallbacks: ["seek"],
+        mode: 'frame-callback',
+        reason: 'requestVideoFrameCallback available',
+        fallbacks: ['seek'],
       };
     }
 
     // Priority 4: Seek (universal fallback)
     return {
-      mode: "seek",
-      reason: "Universal fallback (all browsers)",
+      mode: 'seek',
+      reason: 'Universal fallback (all browsers)',
       fallbacks: [],
     };
   }
@@ -232,45 +220,43 @@ export class CaptureModeSelector {
    * Validate requested (non-auto) mode
    */
   private validateRequestedMode(mode: CaptureMode): CaptureModeSelection {
-    if (mode === "demuxer") {
+    if (mode === 'demuxer') {
       if (!this.capabilities.demuxer) {
-        throw new Error(
-          "Demuxer mode requested but VideoDecoder API not available"
-        );
+        throw new Error('Demuxer mode requested but VideoDecoder API not available');
       }
       return {
-        mode: "demuxer",
-        reason: "Explicitly requested",
+        mode: 'demuxer',
+        reason: 'Explicitly requested',
         fallbacks: [],
       };
     }
 
-    if (mode === "track") {
+    if (mode === 'track') {
       if (!this.capabilities.trackProcessor) {
-        throw new Error("Track processor mode requested but not available");
+        throw new Error('Track processor mode requested but not available');
       }
       return {
-        mode: "track",
-        reason: "Explicitly requested",
-        fallbacks: ["frame-callback", "seek"],
+        mode: 'track',
+        reason: 'Explicitly requested',
+        fallbacks: ['frame-callback', 'seek'],
       };
     }
 
-    if (mode === "frame-callback") {
+    if (mode === 'frame-callback') {
       if (!this.capabilities.frameCallback) {
-        throw new Error("Frame callback mode requested but not available");
+        throw new Error('Frame callback mode requested but not available');
       }
       return {
-        mode: "frame-callback",
-        reason: "Explicitly requested",
-        fallbacks: ["seek"],
+        mode: 'frame-callback',
+        reason: 'Explicitly requested',
+        fallbacks: ['seek'],
       };
     }
 
-    if (mode === "seek") {
+    if (mode === 'seek') {
       return {
-        mode: "seek",
-        reason: "Explicitly requested",
+        mode: 'seek',
+        reason: 'Explicitly requested',
         fallbacks: [],
       };
     }
@@ -281,19 +267,15 @@ export class CaptureModeSelector {
   /**
    * Check if specific mode is available for file
    */
-  private isModeAvailable(
-    mode: CaptureMode,
-    file: File,
-    metadata?: VideoMetadata
-  ): boolean {
+  private isModeAvailable(mode: CaptureMode, file: File, metadata?: VideoMetadata): boolean {
     switch (mode) {
-      case "demuxer":
+      case 'demuxer':
         return this.capabilities.demuxer && canUseDemuxer(file, metadata);
-      case "track":
+      case 'track':
         return this.capabilities.trackProcessor;
-      case "frame-callback":
+      case 'frame-callback':
         return this.capabilities.frameCallback;
-      case "seek":
+      case 'seek':
         return true;
       default:
         return false;
@@ -305,16 +287,16 @@ export class CaptureModeSelector {
    */
   private getFallbackChain(mode: CaptureMode): CaptureMode[] {
     switch (mode) {
-      case "demuxer":
-        return ["track", "frame-callback", "seek"];
-      case "track":
-        return ["frame-callback", "seek"];
-      case "frame-callback":
-        return ["seek"];
-      case "seek":
+      case 'demuxer':
+        return ['track', 'frame-callback', 'seek'];
+      case 'track':
+        return ['frame-callback', 'seek'];
+      case 'frame-callback':
+        return ['seek'];
+      case 'seek':
         return [];
       default:
-        return ["seek"];
+        return ['seek'];
     }
   }
 
@@ -335,7 +317,7 @@ export class CaptureModeSelector {
       return null;
     }
 
-    logger.info("capture-mode-selector", "Falling back to next mode", {
+    logger.info('conversion', 'Falling back to next mode', {
       from: currentMode,
       to: nextMode,
     });

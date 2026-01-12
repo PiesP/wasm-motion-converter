@@ -5,16 +5,10 @@
  * Supports both main-thread and worker-based encoding.
  */
 
-import { getErrorMessage } from "@utils/error-utils";
-import { logger } from "@utils/logger";
-import {
-  encodeModernGif,
-  isModernGifSupported,
-} from "@services/modern-gif-service";
-import type {
-  EncoderAdapter,
-  EncoderRequest,
-} from "@services/encoders/encoder-interface";
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
+import { encodeModernGif, isModernGifSupported } from '@services/modern-gif-service';
+import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface';
 
 /**
  * GIF encoder adapter using modern-gif (gifski-wasm)
@@ -22,10 +16,10 @@ import type {
  * Provides high-quality GIF encoding with dithering and palette optimization.
  */
 export class GIFEncoderAdapter implements EncoderAdapter {
-  name = "modern-gif";
+  name = 'modern-gif';
 
   capabilities = {
-    formats: ["gif" as const],
+    formats: ['gif' as const],
     supportsWorkers: true,
     requiresSharedArrayBuffer: false,
     maxFrames: undefined,
@@ -39,7 +33,7 @@ export class GIFEncoderAdapter implements EncoderAdapter {
     try {
       return isModernGifSupported();
     } catch (error) {
-      logger.warn("gif-encoder", "Error checking modern-gif availability", {
+      logger.warn('gif-encoder', 'Error checking modern-gif availability', {
         error: getErrorMessage(error),
       });
       return false;
@@ -50,10 +44,9 @@ export class GIFEncoderAdapter implements EncoderAdapter {
    * Encode frames to GIF
    */
   async encode(request: EncoderRequest): Promise<Blob> {
-    const { frames, width, height, fps, quality, onProgress, shouldCancel } =
-      request;
+    const { frames, width, height, fps, quality, onProgress, shouldCancel } = request;
 
-    logger.info("gif-encoder", "Starting GIF encoding", {
+    logger.info('gif-encoder', 'Starting GIF encoding', {
       frameCount: frames.length,
       dimensions: `${width}x${height}`,
       fps,
@@ -61,7 +54,7 @@ export class GIFEncoderAdapter implements EncoderAdapter {
     });
 
     if (frames.length === 0) {
-      throw new Error("No frames to encode");
+      throw new Error('No frames to encode');
     }
 
     try {
@@ -77,14 +70,14 @@ export class GIFEncoderAdapter implements EncoderAdapter {
         shouldCancel,
       });
 
-      logger.info("gif-encoder", "GIF encoding complete", {
+      logger.info('gif-encoder', 'GIF encoding complete', {
         frameCount: frames.length,
         outputSize: `${(blob.size / 1024).toFixed(1)}KB`,
       });
 
       return blob;
     } catch (error) {
-      logger.error("gif-encoder", "GIF encoding failed", {
+      logger.error('gif-encoder', 'GIF encoding failed', {
         error: getErrorMessage(error),
         frameCount: frames.length,
       });
@@ -97,6 +90,6 @@ export class GIFEncoderAdapter implements EncoderAdapter {
    */
   async dispose(): Promise<void> {
     // modern-gif service doesn't require cleanup
-    logger.debug("gif-encoder", "Disposed GIF encoder");
+    logger.debug('gif-encoder', 'Disposed GIF encoder');
   }
 }

@@ -39,7 +39,7 @@ import type {
  *
  * Stateful orchestrator that manages a single conversion operation.
  */
-export class ConversionOrchestrator {
+class ConversionOrchestrator {
   private status: ConversionStatus = {
     isConverting: false,
     progress: 0,
@@ -577,7 +577,7 @@ export class ConversionOrchestrator {
       codec: metadata?.codec,
     });
 
-    // TODO: Implement hybrid path using frame-extractor + ffmpeg-pipeline
+    // TODO: Implement hybrid path using WebCodecs frame extraction + FFmpeg encoding pipeline
     // For now, fall back to CPU path
     logger.warn('conversion', 'Hybrid path not yet implemented, falling back to CPU');
     return this.convertViaCPUPath(request, metadata, conversionMetadata);
@@ -638,16 +638,4 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
   return orchestrator.convertVideo(request);
 }
 
-/**
- * Get conversion status
- */
-export function getConversionStatus(): ConversionStatus {
-  return orchestrator.getStatus();
-}
-
-/**
- * Cancel current conversion
- */
-export function cancelConversion(): void {
-  orchestrator.cancel();
-}
+// Note: status/cancel are currently internal APIs.

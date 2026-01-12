@@ -11,14 +11,11 @@
  * - Automatic base timestamp anchoring
  */
 
-import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
-import { getErrorMessage } from "@utils/error-utils";
-import { logger } from "@utils/logger";
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 
-import type {
-  CaptureAdapter,
-  FrameCaptureCallback,
-} from "@services/gpu-path/types";
+import type { CaptureAdapter, FrameCaptureCallback } from '@services/gpu-path/types';
 
 /**
  * Track processor capture adapter
@@ -39,7 +36,7 @@ export class TrackCaptureAdapter implements CaptureAdapter {
         reader.read(),
         new Promise<ReadableStreamReadResult<VideoFrame>>((_, reject) => {
           timeoutId = setTimeout(() => {
-            reject(new Error("WebCodecs track capture stalled."));
+            reject(new Error('WebCodecs track capture stalled.'));
           }, FFMPEG_INTERNALS.WEBCODECS.FRAME_STALL_TIMEOUT_MS);
         }),
       ]);
@@ -70,30 +67,25 @@ export class TrackCaptureAdapter implements CaptureAdapter {
     maxFrames?: number
   ): Promise<void> {
     if (
-      typeof MediaStreamTrackProcessor === "undefined" ||
-      typeof (video as unknown as Record<string, unknown>).captureStream !==
-        "function"
+      typeof MediaStreamTrackProcessor === 'undefined' ||
+      typeof (video as unknown as Record<string, unknown>).captureStream !== 'function'
     ) {
-      throw new Error(
-        "WebCodecs track processor is not available in this browser."
-      );
+      throw new Error('WebCodecs track processor is not available in this browser.');
     }
 
     try {
       await video.play();
     } catch (error) {
-      logger.warn("conversion", "Autoplay blocked for track capture", {
+      logger.warn('conversion', 'Autoplay blocked for track capture', {
         error: getErrorMessage(error),
       });
       throw error;
     }
 
-    const stream = (
-      video as unknown as { captureStream(): MediaStream }
-    ).captureStream();
+    const stream = (video as unknown as { captureStream(): MediaStream }).captureStream();
     const [track] = stream.getVideoTracks();
     if (!track) {
-      throw new Error("No video track available for WebCodecs capture.");
+      throw new Error('No video track available for WebCodecs capture.');
     }
 
     const processor = new MediaStreamTrackProcessor({ track });
@@ -116,14 +108,14 @@ export class TrackCaptureAdapter implements CaptureAdapter {
     try {
       while (frameIndex < totalFrames) {
         if (shouldCancel?.()) {
-          throw new Error("Conversion cancelled by user");
+          throw new Error('Conversion cancelled by user');
         }
 
         const elapsed = Date.now() - startDecodeTime;
         if (elapsed > FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS) {
           throw new Error(
             `WebCodecs decode exceeded ${FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS}ms timeout at frame ${frameIndex}. ` +
-              "Codec incompatibility detected. Falling back to FFmpeg."
+              'Codec incompatibility detected. Falling back to FFmpeg.'
           );
         }
 
@@ -134,7 +126,7 @@ export class TrackCaptureAdapter implements CaptureAdapter {
 
         try {
           const timestampUs =
-            typeof frame.timestamp === "number"
+            typeof frame.timestamp === 'number'
               ? frame.timestamp
               : Math.round(video.currentTime * 1_000_000);
 
@@ -143,18 +135,13 @@ export class TrackCaptureAdapter implements CaptureAdapter {
             nextFrameTimeUs = baseTimestampUs;
           }
 
-          const shouldCapture =
-            frameIndex === 0 || timestampUs + epsilonUs >= nextFrameTimeUs;
+          const shouldCapture = frameIndex === 0 || timestampUs + epsilonUs >= nextFrameTimeUs;
 
           if (shouldCapture) {
-            const captureTimestampSeconds = Math.max(
-              0,
-              timestampUs / 1_000_000
-            );
+            const captureTimestampSeconds = Math.max(0, timestampUs / 1_000_000);
             await captureFrame(frameIndex, captureTimestampSeconds);
             frameIndex += 1;
-            nextFrameTimeUs =
-              (baseTimestampUs ?? 0) + frameIndex * frameIntervalUs;
+            nextFrameTimeUs = (baseTimestampUs ?? 0) + frameIndex * frameIntervalUs;
           }
 
           if (timestampUs / 1_000_000 >= duration) {
@@ -169,7 +156,7 @@ export class TrackCaptureAdapter implements CaptureAdapter {
       track.stop();
       video.pause();
       logger.info(
-        "conversion",
+        'conversion',
         `WebCodecs track capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}, elapsedMs=${
           Date.now() - startDecodeTime
         }`,
