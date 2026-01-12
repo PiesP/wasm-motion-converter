@@ -118,38 +118,104 @@ const concatChunks = (chunks: Uint8Array[], totalLength: number): Uint8Array => 
 };
 
 /**
- * Strip RIFF container from WebP frame data
+ * Strip container and extract ANMF-safe WebP chunks
  *
- * WebP frames produced by canvas/OffscreenCanvas include a full RIFF container.
- * ANMF payloads must contain only the inner WebP chunks (VP8/VP8L/VP8X), not the outer RIFF header.
+ * WebP frames produced by canvas/OffscreenCanvas typically include a full RIFF container
+ * and may include extra chunks (VP8X/ICCP/EXIF/XMP) that are not valid inside an ANMF
+ * payload. To build valid animated WebP files, ANMF payloads must contain only a
+ * chunk stream composed of:
+ * - ALPH (optional)
+ * - VP8  or VP8L (required)
  *
- * @param data - WebP frame data (may be full RIFF or just payload)
- * @returns Inner WebP payload without RIFF header
+ * This function parses the RIFF WebP container (or a raw chunk stream) and returns
+ * only the frame-legal chunks, preserving RIFF chunk padding.
+ *
+ * @param data - WebP frame data (RIFF container or raw chunk stream)
+ * @returns Frame-legal WebP chunk stream suitable for embedding in ANMF
  */
 const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
   const bytes = new Uint8Array(data);
-  if (bytes.length < 12) {
+  if (bytes.length < 8) {
     return bytes;
   }
 
-  const isRiff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46; // 'RIFF'
-  const isWebp = bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50; // 'WEBP'
-
-  if (!isRiff || !isWebp) {
-    return bytes;
-  }
+  const readFourCc = (offset: number): string =>
+    String.fromCharCode(
+      bytes[offset] ?? 0,
+      bytes[offset + 1] ?? 0,
+      bytes[offset + 2] ?? 0,
+      bytes[offset + 3] ?? 0
+    );
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const riffSize = view.getUint32(4, true); // Little-endian size (excludes first 8 bytes)
-  const payloadStart = 12; // Skip RIFF header + 'WEBP'
-  // RIFF size = file size - 8 (RIFF fourCC + size field), so payload ends at 8 + riffSize
-  const payloadEnd = Math.min(bytes.length, 8 + riffSize);
 
-  if (payloadEnd <= payloadStart) {
-    return bytes;
+  const isRiff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46; // 'RIFF'
+  const isWebp =
+    bytes.length >= 12 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50; // 'WEBP'
+
+  const extractAllowedChunks = (startOffset: number, endOffset: number): Uint8Array => {
+    let offset = startOffset;
+    let alphChunk: Uint8Array | null = null;
+    let imageChunk: Uint8Array | null = null;
+
+    while (offset + 8 <= endOffset) {
+      const fourcc = readFourCc(offset);
+      const chunkSize = view.getUint32(offset + 4, true);
+      const chunkDataStart = offset + 8;
+      const chunkDataEnd = chunkDataStart + chunkSize;
+
+      if (chunkDataEnd > endOffset) {
+        throw new Error(
+          `Invalid WebP chunk size while muxing (fourcc=${fourcc}, size=${chunkSize}, remaining=${
+            endOffset - offset
+          }).`
+        );
+      }
+
+      const paddedEnd = chunkDataEnd + (chunkSize % 2);
+      const chunkWithPadding = bytes.slice(offset, Math.min(paddedEnd, endOffset));
+
+      if (fourcc === 'ALPH') {
+        // Keep the first alpha chunk only.
+        alphChunk ??= chunkWithPadding;
+      } else if (fourcc === 'VP8 ' || fourcc === 'VP8L') {
+        if (imageChunk) {
+          throw new Error('WebP frame contains multiple image payload chunks (VP8/VP8L).');
+        }
+        imageChunk = chunkWithPadding;
+      }
+
+      offset = paddedEnd;
+    }
+
+    if (!imageChunk) {
+      throw new Error(
+        'WebP frame does not contain VP8/VP8L payload suitable for animation muxing.'
+      );
+    }
+
+    if (alphChunk) {
+      return concatChunks([alphChunk, imageChunk], alphChunk.length + imageChunk.length);
+    }
+    return imageChunk;
+  };
+
+  if (isRiff && isWebp) {
+    const riffSize = view.getUint32(4, true); // RIFF size excludes the first 8 bytes
+    const payloadStart = 12; // Skip RIFF header + 'WEBP'
+    const payloadEnd = Math.min(bytes.length, 8 + riffSize);
+    if (payloadEnd <= payloadStart) {
+      throw new Error('Invalid RIFF WebP container (empty payload).');
+    }
+    return extractAllowedChunks(payloadStart, payloadEnd);
   }
 
-  return bytes.slice(payloadStart, payloadEnd);
+  // Fallback: treat input as a raw chunk stream (already stripped).
+  return extractAllowedChunks(0, bytes.length);
 };
 
 /**
@@ -386,7 +452,10 @@ export async function muxAnimatedWebP(
     return result.buffer as ArrayBuffer;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.error('general', 'WebP muxing failed', { error: message, frameCount: frames.length });
+    logger.error('general', 'WebP muxing failed', {
+      error: message,
+      frameCount: frames.length,
+    });
     throw error;
   }
 }

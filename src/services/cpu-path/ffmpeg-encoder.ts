@@ -512,7 +512,11 @@ export class FFmpegEncoder {
         ffmpeg.exec(paletteCmd),
         gifTimeout,
         `WebCodecs GIF palette generation timed out after ${gifTimeout / 1000} seconds.`,
-        () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
+        () => {
+          const { core, onStatusUpdate } = this.getDeps();
+          onStatusUpdate?.('Terminating FFmpeg...');
+          core.terminate();
+        }
       );
     } finally {
       ffmpeg.off('log', paletteLogHandler);
@@ -555,7 +559,11 @@ export class FFmpegEncoder {
         ffmpeg.exec(conversionCmd),
         gifTimeout, // Reuse GIF timeout (already calculated above)
         `WebCodecs GIF conversion timed out after ${gifTimeout / 1000} seconds.`,
-        () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
+        () => {
+          const { core, onStatusUpdate } = this.getDeps();
+          onStatusUpdate?.('Terminating FFmpeg...');
+          core.terminate();
+        }
       );
     } finally {
       ffmpeg.off('log', conversionLogHandler);
@@ -645,7 +653,11 @@ export class FFmpegEncoder {
         ffmpeg.exec(webpCmd),
         webpTimeout,
         `Direct WebP encoding timed out after ${webpTimeout / 1000} seconds.`,
-        () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
+        () => {
+          const { core, onStatusUpdate } = this.getDeps();
+          onStatusUpdate?.('Terminating FFmpeg...');
+          core.terminate();
+        }
       );
     } catch (error) {
       // CRITICAL: Stop heartbeat immediately on error to prevent interval leaks
@@ -761,7 +773,11 @@ export class FFmpegEncoder {
             ffmpeg.exec(paletteCmd),
             conversionTimeout,
             `GIF palette generation timed out after ${conversionTimeout / 1000} seconds.`,
-            () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
+            () => {
+              const { core, onStatusUpdate } = this.getDeps();
+              onStatusUpdate?.('Terminating FFmpeg...');
+              core.terminate();
+            }
           );
 
           logger.debug('ffmpeg', 'Palette generation completed successfully');
@@ -855,7 +871,11 @@ export class FFmpegEncoder {
             ffmpeg.exec(gifCmd),
             conversionTimeout,
             `GIF conversion timed out after ${conversionTimeout / 1000} seconds.`,
-            () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
+            () => {
+              const { core, onStatusUpdate } = this.getDeps();
+              onStatusUpdate?.('Terminating FFmpeg...');
+              core.terminate();
+            }
           );
         } catch (execError) {
           // Wrap FFmpeg exec errors to prevent stack overflow during error handling
@@ -1060,7 +1080,11 @@ export class FFmpegEncoder {
               ffmpeg.exec(webpCmd),
               conversionTimeout,
               `WebP conversion timed out after ${conversionTimeout / 1000} seconds.`,
-              () => this.getDeps().onStatusUpdate?.('Terminating FFmpeg...')
+              () => {
+                const { core, onStatusUpdate } = this.getDeps();
+                onStatusUpdate?.('Terminating FFmpeg...');
+                core.terminate();
+              }
             );
 
             logger.debug('ffmpeg', 'WebP conversion completed successfully');

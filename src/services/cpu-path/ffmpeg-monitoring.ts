@@ -81,10 +81,6 @@ export class FFmpegMonitoring {
       const now = Date.now();
       this.lastProgressTime = now;
       this.lastProgressValue = progress;
-
-      // Treat any progress update as activity to avoid false stall detection
-      this.lastLogTime = now;
-      this.logSilenceStrikes = 0;
     }
 
     this.callbacks.onProgress?.(progress, isHeartbeat);
@@ -108,6 +104,10 @@ export class FFmpegMonitoring {
    * @param options - Watchdog configuration options
    */
   startWatchdog(options: WatchdogOptions = {}): void {
+    // Idempotent start: ensure any previous timers/heartbeats are cleared first.
+    // This prevents duplicate watchdog intervals from leaking across runs.
+    this.stopWatchdog();
+
     const { metadata, quality, format, enableLogSilenceCheck = true } = options;
 
     this.lastProgressTime = Date.now();
@@ -142,7 +142,11 @@ export class FFmpegMonitoring {
       quality: quality || 'unknown',
     });
 
-    // Clear existing timers
+    // Clear existing timers (defensive; stopWatchdog() already cleared these)
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     if (this.logSilenceInterval) {
       clearInterval(this.logSilenceInterval);
       this.logSilenceInterval = null;

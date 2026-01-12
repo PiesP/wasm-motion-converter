@@ -87,7 +87,7 @@ export function getOptimalPoolSize(
  *
  * @example
  * const pool = new WorkerPool<GifEncoderWorkerAPI>(
- *   new URL('@workers/gif-encoder.worker.ts', import.meta.url),
+ *   new URL('../workers/gif-encoder.worker.ts', import.meta.url),
  *   { maxWorkers: 4 }
  * );
  *

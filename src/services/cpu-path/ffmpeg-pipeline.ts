@@ -377,7 +377,10 @@ export class FFmpegPipeline {
       this.monitoring.startWatchdog({
         quality: params.options.quality,
         format: params.format,
-        enableLogSilenceCheck: true,
+        // Frame-sequence encoding can legitimately go quiet on logs for >20s
+        // (especially libwebp in WASM). Avoid false-positive stall termination.
+        // Real stalls are handled by the explicit withTimeout() guards in the encoder.
+        enableLogSilenceCheck: false,
       });
 
       // Execute encoding

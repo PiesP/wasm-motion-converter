@@ -1,4 +1,3 @@
-import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
 
 /**
@@ -57,9 +56,12 @@ export async function withTimeout<T>(
   }
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let didTimeout = false;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
+      didTimeout = true;
+
       // Execute cleanup callback before rejection
       try {
         if (onTimeout) {
@@ -73,24 +75,10 @@ export async function withTimeout<T>(
         });
       }
 
-      logger.warn('general', 'Promise timeout reached - terminating stuck operation', {
+      logger.warn('general', 'Promise timeout reached', {
         timeoutMs,
         message: errorMessage,
       });
-
-      // Force terminate FFmpeg to break hung encoder (prevents resource leaks)
-      try {
-        import('@services/ffmpeg-service').then(({ ffmpegService }) => {
-          if (ffmpegService.isLoaded()) {
-            logger.info('general', 'Terminating FFmpeg due to timeout');
-            ffmpegService.terminate();
-          }
-        });
-      } catch (terminateError) {
-        logger.warn('general', 'Failed to terminate FFmpeg on timeout (non-critical)', {
-          error: getErrorMessage(terminateError),
-        });
-      }
 
       reject(new Error(errorMessage));
     }, timeoutMs);
@@ -99,6 +87,12 @@ export async function withTimeout<T>(
   try {
     return await Promise.race([promise, timeoutPromise]);
   } finally {
+    // Prevent potential unhandled rejections from the original promise if it
+    // settles after a timeout.
+    if (didTimeout) {
+      void promise.catch(() => undefined);
+    }
+
     // Ensure timeout is always cleaned up
     if (timeoutId !== undefined) {
       clearTimeout(timeoutId);

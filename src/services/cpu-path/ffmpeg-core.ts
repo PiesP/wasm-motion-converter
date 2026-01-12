@@ -489,7 +489,10 @@ export class FFmpegCore {
       await withTimeout(
         ffmpeg.exec(['-i', inputFileName]),
         TIMEOUT_VIDEO_ANALYSIS,
-        `Video analysis timed out after ${TIMEOUT_VIDEO_ANALYSIS / 1000} seconds. The file may be corrupted or in an unsupported format.`
+        `Video analysis timed out after ${
+          TIMEOUT_VIDEO_ANALYSIS / 1000
+        } seconds. The file may be corrupted or in an unsupported format.`,
+        () => this.terminate()
       );
     } catch {
       // Expected to fail since we're just reading info, not converting

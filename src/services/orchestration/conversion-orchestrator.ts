@@ -14,6 +14,7 @@
 
 import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
 import type { VideoTrackInfo } from '@t/video-pipeline-types';
+import type { WebAVMP4Service } from '@services/webav/webav-mp4-service';
 import { capabilityService } from '@services/video-pipeline/capability-service';
 import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
 import { videoPipelineService } from '@services/video-pipeline/video-pipeline-service';
@@ -24,7 +25,6 @@ import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { ffmpegService } from '@services/ffmpeg-service'; // Legacy service (will be replaced in Phase 4)
 import { ProgressReporter } from '@services/shared/progress-reporter';
-import { createWebAVMP4Service } from '@services/webav/webav-mp4-service';
 import type {
   ConversionMetadata,
   ConversionRequest,
@@ -46,7 +46,7 @@ export class ConversionOrchestrator {
   };
 
   private progressReporter: ProgressReporter | null = null;
-  private webavService = createWebAVMP4Service();
+  private webavService: WebAVMP4Service | null = null;
 
   /**
    * Convert video using optimal path
@@ -299,6 +299,14 @@ export class ConversionOrchestrator {
     }
   }
 
+  private async getWebAVService(): Promise<WebAVMP4Service> {
+    if (this.webavService) return this.webavService;
+
+    const { createWebAVMP4Service } = await import('@services/webav/webav-mp4-service');
+    this.webavService = createWebAVMP4Service();
+    return this.webavService;
+  }
+
   /**
    * Resolve video metadata
    *
@@ -365,7 +373,8 @@ export class ConversionOrchestrator {
 
     // WebAV path for MP4 (native WebCodecs pipeline).
     if (format === 'mp4') {
-      const webavAvailable = await this.webavService.isAvailable();
+      const webavService = await this.getWebAVService();
+      const webavAvailable = await webavService.isAvailable();
       if (!webavAvailable) {
         throw new Error('MP4 conversion is not available in this browser (WebAV required).');
       }
@@ -444,7 +453,8 @@ export class ConversionOrchestrator {
     conversionMetadata.path = 'webav';
 
     try {
-      const blob = await this.webavService.convertToMP4(
+      const webavService = await this.getWebAVService();
+      const blob = await webavService.convertToMP4(
         request.file,
         request.options,
         (progress: number) => {
@@ -497,7 +507,7 @@ export class ConversionOrchestrator {
     conversionMetadata.path = 'gpu';
 
     // Use WebCodecs conversion service for GPU-accelerated decoding
-    const { webcodecsConversionService } = await import('../webcodecs-conversion-service');
+    const { webcodecsConversionService } = await import('@services/webcodecs-conversion-service');
     const result = await webcodecsConversionService.convert(
       request.file,
       request.format,

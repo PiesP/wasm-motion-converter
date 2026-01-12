@@ -81,7 +81,7 @@ class WebCodecsConversionService {
       });
 
       this.gifWorkerPool = new WorkerPool(
-        new URL('@workers/gif-encoder.worker.ts', import.meta.url),
+        new URL('../workers/gif-encoder.worker.ts', import.meta.url),
         { lazyInit: true, maxWorkers: optimalGifWorkers }
       );
     }
@@ -1856,8 +1856,6 @@ class WebCodecsConversionService {
               height: decodeResult.height,
               fps: targetFps,
               quality,
-              onProgress: reportEncodeProgress,
-              shouldCancel: () => ffmpegService.isCancellationRequested(),
             });
           });
         } catch (error) {
@@ -2075,8 +2073,7 @@ class WebCodecsConversionService {
 
       // Force cleanup of any lingering intervals (defensive)
       try {
-        const ffmpegSvc = await import('./ffmpeg-service');
-        ffmpegSvc.ffmpegService.getMonitoring()?.forceCleanupAll();
+        ffmpegService.getMonitoring()?.forceCleanupAll();
       } catch (monitoringError) {
         logger.warn('conversion', 'Force cleanup failed (non-critical)', {
           error: getErrorMessage(monitoringError),
