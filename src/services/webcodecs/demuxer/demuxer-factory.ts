@@ -6,6 +6,37 @@ import { isAv1Codec, isH264Codec, isHevcCodec, normalizeCodecString } from '@uti
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
+type DemuxerEligibilityLogState = {
+  key: string;
+  lastLoggedAtMs: number;
+};
+
+const DEMUXER_ELIGIBILITY_LOG_THROTTLE_MS = 5_000;
+const demuxerEligibilityLogStateByFile = new WeakMap<File, DemuxerEligibilityLogState>();
+
+const shouldLogDemuxerEligibility = (params: {
+  file: File;
+  container: ContainerFormat;
+  codec: string;
+}): boolean => {
+  const { file, container, codec } = params;
+  const now = Date.now();
+  const key = `${container}|${codec}`;
+  const existing = demuxerEligibilityLogStateByFile.get(file);
+
+  // Log at least once per (file, container, codec) and re-log periodically.
+  if (
+    !existing ||
+    existing.key !== key ||
+    now - existing.lastLoggedAtMs > DEMUXER_ELIGIBILITY_LOG_THROTTLE_MS
+  ) {
+    demuxerEligibilityLogStateByFile.set(file, { key, lastLoggedAtMs: now });
+    return true;
+  }
+
+  return false;
+};
+
 const buildVideoDecoderCodecCandidates = (codec: string): string[] => {
   const raw = codec.trim();
   const normalized = raw.toLowerCase();
@@ -162,10 +193,13 @@ export function canUseDemuxer(file: File, metadata?: VideoMetadata): boolean {
 
   // canUseDemuxer() is called from multiple layers (eligibility check, decoder, factory).
   // Keep eligibility visibility in dev logs without spamming info-level output.
-  logger.debug('demuxer', 'Demuxer path is eligible', {
-    container,
-    codec: metadata?.codec ?? 'unknown',
-  });
+  const codec = metadata?.codec ?? 'unknown';
+  if (shouldLogDemuxerEligibility({ file, container, codec })) {
+    logger.debug('demuxer', 'Demuxer path is eligible', {
+      container,
+      codec,
+    });
+  }
 
   return true;
 }

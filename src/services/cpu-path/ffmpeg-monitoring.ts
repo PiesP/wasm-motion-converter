@@ -120,9 +120,10 @@ export class FFmpegMonitoring {
     this.isConverting = true;
     this.lastProgressValue = -1;
 
-    // Initialize log progress decoration early so start-of-conversion logs
-    // carry a progress indicator even before the first real tick arrives.
-    logger.setConversionProgress(0);
+    // Note: do NOT reset the logger's conversion progress context here.
+    // The orchestrator owns conversion lifecycle decoration and may have already
+    // set a meaningful percent (e.g., 10% after planning, 50% after capture).
+    // Resetting to 0% makes the prefix jump backwards when monitoring restarts.
 
     // Use format-specific base timeout
     // WebP needs longer timeout due to slow libwebp encoder with VP9/complex codecs
@@ -249,8 +250,10 @@ export class FFmpegMonitoring {
     // Mark conversion as complete
     this.isConverting = false;
 
-    // Stop annotating log prefixes once conversion monitoring ends.
-    logger.clearConversionProgress();
+    // Important: do not clear the logger's conversion progress context here.
+    // stopWatchdog() is called defensively and can be invoked multiple times
+    // during a single conversion (e.g., when restarting monitoring). The
+    // orchestrator is responsible for clearing prefix decoration in `finally`.
 
     // Avoid noisy duplicate reset logs when stopWatchdog() is called repeatedly.
     // Only emit when we actually transitioned from an active state.
