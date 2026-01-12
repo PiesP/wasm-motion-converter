@@ -12,20 +12,28 @@
  * 4. Return result with metadata
  */
 
-import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
-import { getEncoderForFormat } from '../encoders/encoder-factory';
-import { ffmpegService } from '../ffmpeg-service'; // Legacy service (will be replaced in Phase 4)
-import { ProgressReporter } from '../shared/progress-reporter';
-import { createWebAVMP4Service } from '../webav/webav-mp4-service';
+import type { ConversionFormat, VideoMetadata } from "@t/conversion-types";
+import type { VideoTrackInfo } from "@t/video-pipeline-types";
+import { capabilityService } from "@services/video-pipeline/capability-service";
+import { videoPipelineService } from "@services/video-pipeline/video-pipeline-service";
+import {
+  isAv1Codec,
+  isH264Codec,
+  isHevcCodec,
+  normalizeCodecString,
+} from "@utils/codec-utils";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
+import { ffmpegService } from "@services/ffmpeg-service"; // Legacy service (will be replaced in Phase 4)
+import { ProgressReporter } from "@services/shared/progress-reporter";
+import { createWebAVMP4Service } from "@services/webav/webav-mp4-service";
 import type {
   ConversionMetadata,
   ConversionRequest,
   ConversionResponse,
   ConversionStatus,
   PathSelection,
-} from './types';
+} from "./types";
 
 /**
  * Conversion orchestrator class
@@ -36,7 +44,7 @@ export class ConversionOrchestrator {
   private status: ConversionStatus = {
     isConverting: false,
     progress: 0,
-    statusMessage: '',
+    statusMessage: "",
   };
 
   private progressReporter: ProgressReporter | null = null;
@@ -59,8 +67,8 @@ export class ConversionOrchestrator {
       this.status = {
         isConverting: true,
         progress: 0,
-        statusMessage: 'Initializing conversion...',
-        phase: 'initializing',
+        statusMessage: "Initializing conversion...",
+        phase: "initializing",
       };
 
       // Create progress reporter
@@ -77,23 +85,36 @@ export class ConversionOrchestrator {
 
       // Define phases
       this.progressReporter.definePhases([
-        { name: 'initialization', weight: 1 },
-        { name: 'analysis', weight: 1 },
-        { name: 'conversion', weight: 18 }, // Main work
+        { name: "initialization", weight: 1 },
+        { name: "analysis", weight: 1 },
+        { name: "conversion", weight: 18 }, // Main work
       ]);
 
       // Phase 1: Initialization
-      this.progressReporter.startPhase('initialization', 'Initializing...');
-      await this.ensureFFmpegInitialized();
+      this.progressReporter.startPhase("initialization", "Initializing...");
+      // Warm up capability probing early to reduce latency for the planning step.
+      // Intentionally non-blocking to keep UI responsive.
+      void capabilityService.detectCapabilities().catch(() => undefined);
       this.progressReporter.report(1.0);
 
       // Phase 2: Analysis
-      this.progressReporter.startPhase('analysis', 'Analyzing video...');
-      const metadata = await this.resolveMetadata(request.file, request.metadata);
-      const pathSelection = await this.selectPath(request.file, request.format, metadata);
+      this.progressReporter.startPhase("analysis", "Analyzing video...");
+      const { selection: pathSelection, metadata: plannedMetadata } =
+        await this.selectPath({
+          file: request.file,
+          format: request.format,
+          metadata: request.metadata,
+        });
+
+      // If we are taking the CPU path, ensure FFmpeg is ready and probe full metadata when needed.
+      // This keeps GPU conversions from paying the FFmpeg init cost up front.
+      const metadata =
+        pathSelection.path === "cpu"
+          ? await this.resolveMetadata(request.file, plannedMetadata)
+          : plannedMetadata;
       this.progressReporter.report(1.0);
 
-      logger.info('conversion', 'Starting conversion', {
+      logger.info("conversion", "Starting conversion", {
         file: request.file.name,
         format: request.format,
         path: pathSelection.path,
@@ -102,11 +123,11 @@ export class ConversionOrchestrator {
       });
 
       // Phase 3: Conversion
-      this.progressReporter.startPhase('conversion', 'Converting...');
+      this.progressReporter.startPhase("conversion", "Converting...");
 
       const conversionMetadata: ConversionMetadata = {
         path: pathSelection.path,
-        encoder: 'unknown',
+        encoder: "unknown",
         conversionTimeMs: 0,
         wasTranscoded: false,
         originalCodec: metadata?.codec,
@@ -116,35 +137,51 @@ export class ConversionOrchestrator {
 
       // Execute based on selected path
       switch (pathSelection.path) {
-        case 'webav':
-          blob = await this.convertViaWebAVPath(request, metadata, conversionMetadata);
+        case "webav":
+          blob = await this.convertViaWebAVPath(
+            request,
+            metadata,
+            conversionMetadata
+          );
           break;
 
-        case 'gpu':
-          blob = await this.convertViaGPUPath(request, metadata, conversionMetadata);
+        case "gpu":
+          blob = await this.convertViaGPUPath(
+            request,
+            metadata,
+            conversionMetadata
+          );
           break;
 
-        case 'hybrid':
-          blob = await this.convertViaHybridPath(request, metadata, conversionMetadata);
+        case "hybrid":
+          blob = await this.convertViaHybridPath(
+            request,
+            metadata,
+            conversionMetadata
+          );
           break;
 
         default:
-          blob = await this.convertViaCPUPath(request, metadata, conversionMetadata);
+          blob = await this.convertViaCPUPath(
+            request,
+            metadata,
+            conversionMetadata
+          );
           break;
       }
 
       // Update final metadata
       conversionMetadata.conversionTimeMs = Date.now() - startTime;
 
-      this.progressReporter.complete('Conversion complete');
+      this.progressReporter.complete("Conversion complete");
 
       this.status = {
         isConverting: false,
         progress: 100,
-        statusMessage: 'Complete',
+        statusMessage: "Complete",
       };
 
-      logger.info('conversion', 'Conversion completed successfully', {
+      logger.info("conversion", "Conversion completed successfully", {
         file: request.file.name,
         format: request.format,
         path: conversionMetadata.path,
@@ -160,14 +197,14 @@ export class ConversionOrchestrator {
       this.status = {
         isConverting: false,
         progress: 0,
-        statusMessage: 'Error',
+        statusMessage: "Error",
       };
 
       const errorMessage = getErrorMessage(error);
 
       // Log the error without full classification (will be done in consumer)
       // to avoid redundant error processing and potential stack overflow
-      logger.error('conversion', 'Conversion failed', {
+      logger.error("conversion", "Conversion failed", {
         file: request.file.name,
         format: request.format,
         error: errorMessage,
@@ -191,7 +228,7 @@ export class ConversionOrchestrator {
    */
   cancel(): void {
     // TODO: Implement cancellation mechanism
-    logger.info('conversion', 'Conversion cancelled by user');
+    logger.info("conversion", "Conversion cancelled by user");
   }
 
   /**
@@ -213,28 +250,33 @@ export class ConversionOrchestrator {
     file: File,
     metadata?: VideoMetadata
   ): Promise<VideoMetadata | undefined> {
-    if (metadata?.codec && metadata.codec !== 'unknown') {
+    if (metadata?.codec && metadata.codec !== "unknown") {
       return metadata;
     }
 
     try {
+      await this.ensureFFmpegInitialized();
       const probed = await ffmpegService.getVideoMetadata(file);
 
       // For complex codecs, metadata is mandatory
       const codec = probed?.codec?.toLowerCase();
-      if (codec === 'av1' || codec === 'vp9' || codec === 'hevc') {
+      if (codec === "av1" || codec === "vp9" || codec === "hevc") {
         if (!probed || !probed.duration || probed.duration === 0) {
           throw new Error(
             `Failed to extract metadata for ${codec.toUpperCase()} codec. ` +
-              'This codec requires complete metadata for processing. ' +
-              'The file may be corrupted or in an unsupported format.'
+              "This codec requires complete metadata for processing. " +
+              "The file may be corrupted or in an unsupported format."
           );
         }
-        logger.info('conversion', 'Mandatory metadata extracted for complex codec', {
-          codec: probed.codec,
-          duration: probed.duration,
-          resolution: `${probed.width}x${probed.height}`,
-        });
+        logger.info(
+          "conversion",
+          "Mandatory metadata extracted for complex codec",
+          {
+            codec: probed.codec,
+            duration: probed.duration,
+            resolution: `${probed.width}x${probed.height}`,
+          }
+        );
       }
 
       return probed;
@@ -242,114 +284,102 @@ export class ConversionOrchestrator {
       const errorMsg = getErrorMessage(error);
 
       // Re-throw if it's our mandatory metadata error
-      if (errorMsg.includes('Failed to extract metadata')) {
+      if (errorMsg.includes("Failed to extract metadata")) {
         throw error;
       }
 
-      logger.warn('conversion', 'Metadata probe failed, continuing without codec', {
-        error: errorMsg,
-      });
+      logger.warn(
+        "conversion",
+        "Metadata probe failed, continuing without codec",
+        {
+          error: errorMsg,
+        }
+      );
       return metadata;
     }
   }
 
   /**
-   * Select conversion path
+   * Select conversion path (video-pipeline powered)
    */
-  private async selectPath(
-    _file: File,
-    format: ConversionFormat,
-    metadata?: VideoMetadata
-  ): Promise<PathSelection> {
-    // For now, use simple heuristic (will be replaced with path-selector.ts in Phase 5)
-    // TODO: Implement proper PathSelector
+  private async selectPath(params: {
+    file: File;
+    format: ConversionFormat;
+    metadata?: VideoMetadata;
+  }): Promise<{
+    selection: PathSelection;
+    metadata: VideoMetadata | undefined;
+  }> {
+    const { file, format } = params;
 
-    const codec = metadata?.codec?.toLowerCase();
-
-    // WebAV path for MP4 (20x faster than FFmpeg)
-    if (format === 'mp4') {
+    // WebAV path for MP4 (native WebCodecs pipeline).
+    if (format === "mp4") {
       const webavAvailable = await this.webavService.isAvailable();
-      if (webavAvailable) {
-        logger.info('conversion', 'Using WebAV for MP4 conversion', {
-          codec,
-          reason: 'WebAV available for fast MP4 encoding',
-        });
-        return {
-          path: 'webav',
-          reason: 'WebAV MP4 encoding (20x faster)',
-        };
+      if (!webavAvailable) {
+        throw new Error(
+          "MP4 conversion is not available in this browser (WebAV required)."
+        );
       }
-      logger.warn('conversion', 'WebAV not available, falling back to FFmpeg for MP4', {
-        codec,
-      });
+
       return {
-        path: 'cpu',
-        reason: 'WebAV not available, using FFmpeg fallback',
+        selection: {
+          path: "webav",
+          reason: "WebAV MP4 encoding",
+        },
+        metadata: params.metadata,
       };
     }
 
-    // ============================================================================
-    // GPU-FIRST PATH SELECTION FOR GIF/WEBP
-    // ============================================================================
-    // Strategy: Always attempt GPU path (WebCodecs frame extraction + FFmpeg encoding)
-    // for GIF/WebP formats, regardless of codec. This avoids FFmpeg direct conversion
-    // timeout issues and leverages hardware-accelerated decoding.
-    //
-    // Benefits:
-    // - WebP: 2-5s encoding (vs 90s+ timeout with FFmpeg direct)
-    // - GIF: 10-15s with modern-gif (vs potential FFmpeg issues)
-    // - All codecs: Hardware-accelerated frame extraction
-    //
-    // Fallback chain:
-    // 1. GPU path (WebCodecs decode + FFmpeg/worker encode)
-    // 2. CPU path (FFmpeg direct - only if GPU fails)
-    //
-    // Future: Hybrid strategy will add codec-specific optimizations
-    // ============================================================================
-    const isGifOrWebP = format === 'gif' || format === 'webp';
-
-    if (isGifOrWebP) {
-      // Force GPU path for all GIF/WebP conversions
-      // GPU path handles frame extraction, then uses FFmpeg for encoding
-      logger.info('conversion', 'Using GPU path for GIF/WebP (forced routing)', {
-        format,
-        codec: codec || 'unknown',
-        reason: 'GPU path mandatory to avoid FFmpeg direct conversion issues',
-        strategy: 'gpu-first with FFmpeg fallback',
-      });
-      return {
-        path: 'gpu',
-        reason: `${format.toUpperCase()}: GPU path (frame extraction) avoids timeout issues`,
-        useDemuxer: true,
-      };
+    if (format !== "gif" && format !== "webp") {
+      throw new Error(`Unsupported format: ${format}`);
     }
 
-    // For other formats (not GIF/WebP), check encoder availability
-    try {
-      const encoder = await getEncoderForFormat(format);
-      if (encoder) {
-        logger.debug('conversion', 'Found encoder for format', {
-          format,
-          encoder: encoder.name,
-        });
-      }
-    } catch (error) {
-      logger.warn('conversion', 'No encoder found for format, using FFmpeg fallback', {
-        format,
-        error: getErrorMessage(error),
-      });
+    const plan = await videoPipelineService.planPipeline({
+      file,
+      format,
+    });
 
-      return {
-        path: 'cpu',
-        reason: 'No encoder available for format',
-      };
-    }
+    const plannedMetadata =
+      params.metadata ??
+      (plan.track
+        ? this.buildLightweightMetadataFromTrack(plan.track)
+        : undefined);
 
-    // Default to CPU path for unsupported codecs or other formats
-    return {
-      path: 'cpu',
-      reason: 'Default path selection',
+    const selection: PathSelection = {
+      path: plan.decodePath === "ffmpeg-wasm-full" ? "cpu" : "gpu",
+      reason: `video-pipeline selected ${plan.decodePath}`,
+      useDemuxer: plan.demuxer !== null,
     };
+
+    return {
+      selection,
+      metadata: plannedMetadata,
+    };
+  }
+
+  private buildLightweightMetadataFromTrack(
+    track: VideoTrackInfo
+  ): VideoMetadata {
+    const codec = this.normalizeCodecForMetadata(track.codec);
+
+    return {
+      width: track.width,
+      height: track.height,
+      duration: Number.isFinite(track.duration) ? track.duration : 0,
+      codec,
+      framerate: Number.isFinite(track.frameRate) ? track.frameRate : 0,
+      bitrate: 0,
+    };
+  }
+
+  private normalizeCodecForMetadata(codec: string): string {
+    const c = normalizeCodecString(codec);
+    if (isAv1Codec(c)) return "av1";
+    if (isH264Codec(c)) return "h264";
+    if (isHevcCodec(c)) return "hevc";
+    if (c.includes("vp09") || c.includes("vp9")) return "vp9";
+    if (c.includes("vp08") || c.includes("vp8")) return "vp8";
+    return c.length > 0 ? c : "unknown";
   }
 
   /**
@@ -360,13 +390,13 @@ export class ConversionOrchestrator {
     metadata: VideoMetadata | undefined,
     conversionMetadata: ConversionMetadata
   ) {
-    logger.info('conversion', 'Executing WebAV path conversion', {
+    logger.info("conversion", "Executing WebAV path conversion", {
       format: request.format,
       codec: metadata?.codec,
     });
 
-    conversionMetadata.encoder = 'webav';
-    conversionMetadata.path = 'webav';
+    conversionMetadata.encoder = "webav";
+    conversionMetadata.path = "webav";
 
     try {
       const blob = await this.webavService.convertToMP4(
@@ -380,16 +410,20 @@ export class ConversionOrchestrator {
         }
       );
 
-      logger.info('conversion', 'WebAV MP4 conversion completed', {
+      logger.info("conversion", "WebAV MP4 conversion completed", {
         outputSize: `${(blob.size / 1024 / 1024).toFixed(1)}MB`,
       });
 
       return blob;
     } catch (error) {
       const errorMessage = getErrorMessage(error);
-      logger.error('conversion', 'WebAV MP4 conversion failed, falling back to FFmpeg', {
-        error: errorMessage,
-      });
+      logger.error(
+        "conversion",
+        "WebAV MP4 conversion failed, falling back to FFmpeg",
+        {
+          error: errorMessage,
+        }
+      );
 
       // Fall back to FFmpeg if WebAV fails
       return this.convertViaCPUPath(request, metadata, conversionMetadata);
@@ -404,25 +438,31 @@ export class ConversionOrchestrator {
     metadata: VideoMetadata | undefined,
     conversionMetadata: ConversionMetadata
   ) {
-    logger.info('conversion', 'Executing GPU path conversion', {
+    logger.info("conversion", "Executing GPU path conversion", {
       format: request.format,
       codec: metadata?.codec,
     });
 
     // GPU path only supports GIF/WebP formats
-    if (request.format !== 'gif' && request.format !== 'webp') {
-      logger.warn('conversion', 'GPU path does not support this format, falling back to FFmpeg', {
-        format: request.format,
-      });
+    if (request.format !== "gif" && request.format !== "webp") {
+      logger.warn(
+        "conversion",
+        "GPU path does not support this format, falling back to FFmpeg",
+        {
+          format: request.format,
+        }
+      );
       return this.convertViaCPUPath(request, metadata, conversionMetadata);
     }
 
     // For AV1 and other WebCodecs-required codecs, use WebCodecs service
-    conversionMetadata.encoder = 'webcodecs';
-    conversionMetadata.path = 'gpu';
+    conversionMetadata.encoder = "webcodecs";
+    conversionMetadata.path = "gpu";
 
     // Use WebCodecs conversion service for GPU-accelerated decoding
-    const { webcodecsConversionService } = await import('../webcodecs-conversion-service');
+    const { webcodecsConversionService } = await import(
+      "../webcodecs-conversion-service"
+    );
     const result = await webcodecsConversionService.convert(
       request.file,
       request.format,
@@ -435,7 +475,10 @@ export class ConversionOrchestrator {
     }
 
     // Fallback to CPU if WebCodecs fails
-    logger.warn('conversion', 'GPU path (WebCodecs) failed, falling back to FFmpeg');
+    logger.warn(
+      "conversion",
+      "GPU path (WebCodecs) failed, falling back to FFmpeg"
+    );
     return this.convertViaCPUPath(request, metadata, conversionMetadata);
   }
 
@@ -447,14 +490,17 @@ export class ConversionOrchestrator {
     metadata: VideoMetadata | undefined,
     conversionMetadata: ConversionMetadata
   ) {
-    logger.info('conversion', 'Executing hybrid path conversion', {
+    logger.info("conversion", "Executing hybrid path conversion", {
       format: request.format,
       codec: metadata?.codec,
     });
 
     // TODO: Implement hybrid path using frame-extractor + ffmpeg-pipeline
     // For now, fall back to CPU path
-    logger.warn('conversion', 'Hybrid path not yet implemented, falling back to CPU');
+    logger.warn(
+      "conversion",
+      "Hybrid path not yet implemented, falling back to CPU"
+    );
     return this.convertViaCPUPath(request, metadata, conversionMetadata);
   }
 
@@ -466,19 +512,29 @@ export class ConversionOrchestrator {
     metadata: VideoMetadata | undefined,
     conversionMetadata: ConversionMetadata
   ): Promise<Blob> {
-    logger.info('conversion', 'Executing CPU path conversion (FFmpeg direct)', {
+    logger.info("conversion", "Executing CPU path conversion (FFmpeg direct)", {
       format: request.format,
     });
 
-    conversionMetadata.encoder = 'ffmpeg';
-    conversionMetadata.path = 'cpu';
+    await this.ensureFFmpegInitialized();
+
+    conversionMetadata.encoder = "ffmpeg";
+    conversionMetadata.path = "cpu";
 
     // Use legacy FFmpeg service (will be replaced with ffmpeg-pipeline in Phase 4)
     // Call the appropriate method based on format
-    if (request.format === 'gif') {
-      return await ffmpegService.convertToGIF(request.file, request.options, metadata);
-    } else if (request.format === 'webp') {
-      return await ffmpegService.convertToWebP(request.file, request.options, metadata);
+    if (request.format === "gif") {
+      return await ffmpegService.convertToGIF(
+        request.file,
+        request.options,
+        metadata
+      );
+    } else if (request.format === "webp") {
+      return await ffmpegService.convertToWebP(
+        request.file,
+        request.options,
+        metadata
+      );
     } else {
       throw new Error(`Unsupported format for CPU path: ${request.format}`);
     }
@@ -507,7 +563,9 @@ const orchestrator = new ConversionOrchestrator();
  *   onProgress: (p) => console.log(`${p}%`)
  * });
  */
-export async function convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
+export async function convertVideo(
+  request: ConversionRequest
+): Promise<ConversionResponse> {
   return orchestrator.convertVideo(request);
 }
 
