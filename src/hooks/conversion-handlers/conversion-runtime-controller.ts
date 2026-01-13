@@ -27,6 +27,9 @@ export class ConversionRuntimeController {
   private lastEtaUpdate = 0;
   private readonly etaCalculator = new ETACalculator();
 
+  // Coalesce progress updates to avoid redundant reactive writes.
+  private lastProgressValue = 0;
+
   // UI-scoped operation sequencing.
   // Prevents stale async completions (e.g., a cancelled conversion) from clobbering newer state.
   private activeConversionSeq = 0;
@@ -73,6 +76,9 @@ export class ConversionRuntimeController {
     this.deps.setEstimatedSecondsRemaining(null);
     this.lastEtaUpdate = 0;
     this.deps.setMemoryWarning(false);
+
+    // Reset progress coalescing state for this run.
+    this.lastProgressValue = 0;
   }
 
   startMemoryMonitoring(): void {
@@ -92,10 +98,26 @@ export class ConversionRuntimeController {
   }
 
   updateProgress(progress: number): void {
+    if (!Number.isFinite(progress)) {
+      return;
+    }
+
+    const rounded = Math.round(Math.min(100, Math.max(0, progress)));
+
+    // Progress should not move backwards within a single run.
+    const monotonic = Math.max(rounded, this.lastProgressValue);
+
+    // Avoid redundant writes when progress does not actually change.
+    if (monotonic === this.lastProgressValue) {
+      return;
+    }
+
+    this.lastProgressValue = monotonic;
+
     const now = Date.now();
     batch(() => {
-      setConversionProgress(progress);
-      this.etaCalculator.addSample(progress);
+      setConversionProgress(monotonic);
+      this.etaCalculator.addSample(monotonic);
 
       // Throttle ETA UI updates to max 1/sec to reduce reactive computation overhead.
       if (now - this.lastEtaUpdate >= ETA_UPDATE_INTERVAL) {

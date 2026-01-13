@@ -79,6 +79,8 @@ export class FFmpegMonitoring {
   updateProgress(progress: number, isHeartbeat = false): void {
     const clamped = Math.min(100, Math.max(0, progress));
 
+    const previousProgressValue = this.lastProgressValue;
+
     // Progress should not move backwards within a single conversion run.
     // Multiple progress sources (e.g., heartbeat vs real progress, monitoring restarts)
     // can otherwise cause the percent prefix to regress (confusing in logs and UI).
@@ -87,17 +89,24 @@ export class FFmpegMonitoring {
         ? Math.max(clamped, this.lastProgressValue)
         : clamped;
 
-    if (this.isConverting) {
-      const now = Date.now();
-      this.lastProgressTime = now;
-      this.lastProgressValue = monotonic;
+    // Always keep internal progress state updated so manual progress reporting
+    // (e.g., WebCodecs pipelines) can be deduped even when watchdog monitoring
+    // is not currently active.
+    const now = Date.now();
+    this.lastProgressTime = now;
+    this.lastProgressValue = monotonic;
 
+    if (this.isConverting) {
       // Keep the logger's conversion progress context in sync so all log lines
       // can be annotated with the current percent while converting.
       logger.setConversionProgress(monotonic);
     }
 
-    this.callbacks.onProgress?.(monotonic, isHeartbeat);
+    // Only emit to consumers when the visible progress changes.
+    // Heartbeats are primarily for watchdog keepalive and should not spam the UI.
+    if (monotonic !== previousProgressValue) {
+      this.callbacks.onProgress?.(monotonic, isHeartbeat);
+    }
   }
 
   /**

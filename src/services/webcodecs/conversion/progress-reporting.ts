@@ -38,8 +38,12 @@ export function createThrottledProgressReporter(params: {
     const progress = startPercent + ((endPercent - startPercent) * current) / safeTotal;
     const rounded = Math.round(progress);
 
-    lastProgressPercent = rounded;
-    reportProgress(rounded);
+    // Avoid redundant UI updates when the rounded percent does not change.
+    // (Encoders may report progress very frequently; rounding can collapse many updates.)
+    if (rounded !== lastProgressPercent) {
+      lastProgressPercent = rounded;
+      reportProgress(rounded);
+    }
 
     const now = Date.now();
     const isTerminal = current >= total;
