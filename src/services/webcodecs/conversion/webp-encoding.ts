@@ -4,6 +4,7 @@ import { getErrorMessage } from '@utils/error-utils';
 import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { logger } from '@utils/logger';
 import { cacheWebPChunkSize, getCachedWebPChunkSize } from '@utils/session-cache';
+import { withTimeout } from '@utils/with-timeout';
 
 import { EncoderFactory } from '@services/encoders/encoder-factory';
 import type { EncoderFrame } from '@services/encoders/encoder-interface';
@@ -81,18 +82,60 @@ export async function tryEncodeWebPWithEncoderFactory(params: {
 
     const safeTimestamps = timestamps ? timestamps.slice(0, frames.length) : undefined;
 
-    const blob = await encoder.encode({
-      frames,
-      width,
-      height,
-      fps,
-      quality,
-      timestamps: safeTimestamps,
-      durationSeconds,
-      codec,
-      sourceFPS,
-      onProgress,
-      shouldCancel,
+    // Guard against encoder hangs (e.g., worker init/WASM fetch never resolving).
+    // Use an adaptive timeout based on total work size.
+    const megapixelFrames = (width * height * frames.length) / 1_000_000;
+    const encodeTimeoutMs = Math.min(
+      180_000,
+      Math.max(45_000, Math.round(30_000 + megapixelFrames * 1_500))
+    );
+
+    // Keep watchdog alive while the encoder is working but hasn't emitted progress yet.
+    // The monitoring layer tracks time-since-last-progress, not strictly percent changes.
+    const totalFrames = Math.max(1, frames.length);
+    let lastProgressAt = Date.now();
+    const wrappedOnProgress = onProgress
+      ? (current: number, total: number) => {
+          lastProgressAt = Date.now();
+          onProgress(current, total);
+        }
+      : undefined;
+
+    const keepalive = setInterval(() => {
+      const silenceMs = Date.now() - lastProgressAt;
+      if (silenceMs > 5_000) {
+        wrappedOnProgress?.(0, totalFrames);
+      }
+    }, 5_000);
+
+    const blob = await withTimeout(
+      encoder.encode({
+        frames,
+        width,
+        height,
+        fps,
+        quality,
+        timestamps: safeTimestamps,
+        durationSeconds,
+        codec,
+        sourceFPS,
+        onProgress: wrappedOnProgress,
+        shouldCancel,
+      }),
+      encodeTimeoutMs,
+      `WebP encoder (${encoder.name}) timed out after ${Math.round(encodeTimeoutMs / 1000)}s`,
+      () => {
+        logger.warn('conversion', 'EncoderFactory WebP encode timed out', {
+          encoder: encoder.name,
+          encodeTimeoutMs,
+          frameCount: frames.length,
+          width,
+          height,
+          codec: codec ?? 'unknown',
+        });
+      }
+    ).finally(() => {
+      clearInterval(keepalive);
     });
 
     if (!blob) {

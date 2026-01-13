@@ -60,6 +60,140 @@ const CDN_DOMAINS = [
 ] as const;
 
 /**
+ * SRI manifest structure matching public/cdn-integrity.json
+ */
+interface CDNEntry {
+  url: string;
+  integrity: string;
+  size: number;
+}
+
+interface ManifestEntry {
+  "esm.sh": CDNEntry;
+  jsdelivr: CDNEntry;
+  unpkg: CDNEntry;
+  skypack?: CDNEntry;
+}
+
+interface SRIManifest {
+  version: string;
+  generated: string;
+  entries: Record<string, ManifestEntry>;
+}
+
+/**
+ * Global SRI manifest cache
+ * Loaded lazily on first CDN request
+ */
+let sriManifest: SRIManifest | null = null;
+
+/**
+ * Loads the SRI manifest from cdn-integrity.json
+ * Caches the manifest in memory for subsequent verifications
+ *
+ * @returns SRI manifest or null if loading fails
+ */
+async function loadSRIManifest(): Promise<SRIManifest | null> {
+  if (sriManifest) {
+    return sriManifest;
+  }
+
+  try {
+    const response = await fetch("/cdn-integrity.json");
+    if (!response.ok) {
+      console.warn(`[SW ${SW_VERSION}] Failed to load SRI manifest: HTTP ${response.status}`);
+      return null;
+    }
+
+    sriManifest = (await response.json()) as SRIManifest;
+    console.log(
+      `[SW ${SW_VERSION}] SRI manifest loaded: ${Object.keys(sriManifest.entries).length} entries`
+    );
+    return sriManifest;
+  } catch (error) {
+    console.error(`[SW ${SW_VERSION}] Error loading SRI manifest:`, error);
+    return null;
+  }
+}
+
+/**
+ * Verifies the integrity of a Response using SHA-384 hash
+ *
+ * @param response - Response to verify
+ * @param expectedIntegrity - Expected SRI hash (e.g., "sha384-...")
+ * @returns True if integrity matches, false otherwise
+ */
+async function verifyIntegrity(
+  response: Response,
+  expectedIntegrity: string
+): Promise<boolean> {
+  try {
+    // Clone response to avoid consuming the body
+    const buffer = await response.clone().arrayBuffer();
+
+    // Compute SHA-384 hash
+    const hashBuffer = await crypto.subtle.digest("SHA-384", buffer);
+
+    // Convert to base64
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashBase64 = btoa(String.fromCharCode(...hashArray));
+    const computedIntegrity = `sha384-${hashBase64}`;
+
+    const isValid = computedIntegrity === expectedIntegrity;
+
+    if (!isValid) {
+      console.error(
+        `[SW ${SW_VERSION}] ✗ Integrity verification failed!`,
+        `\n  Expected: ${expectedIntegrity}`,
+        `\n  Computed: ${computedIntegrity}`,
+        `\n  URL: ${response.url}`
+      );
+    }
+
+    return isValid;
+  } catch (error) {
+    console.error(`[SW ${SW_VERSION}] Error verifying integrity:`, error);
+    return false;
+  }
+}
+
+/**
+ * Gets expected integrity hash for a CDN URL from the SRI manifest
+ *
+ * @param url - CDN URL to look up
+ * @param manifest - SRI manifest
+ * @returns Expected integrity hash or null if not found
+ */
+function getExpectedIntegrity(
+  url: string,
+  manifest: SRIManifest
+): string | null {
+  // Parse URL to extract package name
+  const urlObj = new URL(url);
+
+  // Determine CDN provider
+  let cdnProvider: keyof ManifestEntry | null = null;
+  if (urlObj.hostname === "esm.sh") cdnProvider = "esm.sh";
+  else if (urlObj.hostname === "cdn.jsdelivr.net") cdnProvider = "jsdelivr";
+  else if (urlObj.hostname === "unpkg.com") cdnProvider = "unpkg";
+  else if (urlObj.hostname === "cdn.skypack.dev") cdnProvider = "skypack";
+
+  if (!cdnProvider) {
+    return null;
+  }
+
+  // Search manifest entries for matching URL
+  for (const [_pkg, entry] of Object.entries(manifest.entries)) {
+    const cdnEntry = entry[cdnProvider];
+    if (cdnEntry && cdnEntry.url === url) {
+      return cdnEntry.integrity;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Request type classification for routing strategy
  */
 type RequestType = "cdn" | "ffmpeg" | "app" | "ignore";
@@ -318,19 +452,23 @@ function logCDNMetrics(metrics: CDNMetrics): void {
 }
 
 /**
- * Fetches from CDN with multi-provider cascade fallback
+ * Fetches from CDN with multi-provider cascade fallback and SRI verification
  * Tries esm.sh → jsdelivr → unpkg → skypack in order
+ * Verifies integrity of each response before returning
  * Logs performance metrics for each attempt
  *
  * @param originalUrl - Original CDN URL
  * @param timeout - Timeout per CDN attempt (default: 15s)
- * @returns Response from successful CDN or throws if all fail
+ * @returns Response from successful CDN with valid integrity or throws if all fail
  */
 async function fetchWithCascade(
   originalUrl: string,
   timeout = 15000
 ): Promise<Response> {
   const errors: Array<{ cdn: string; error: string }> = [];
+
+  // Load SRI manifest for integrity verification
+  const manifest = await loadSRIManifest();
 
   // Try original URL (esm.sh)
   const startTime = performance.now();
@@ -340,15 +478,68 @@ async function fetchWithCascade(
     const latency = performance.now() - startTime;
 
     if (response.ok) {
-      logCDNMetrics({
-        url: originalUrl,
-        cdnName: "esm.sh",
-        latency,
-        success: true,
-        status: response.status,
-        timestamp: Date.now(),
-      });
-      return response;
+      // Verify integrity if manifest is available
+      if (manifest) {
+        const expectedIntegrity = getExpectedIntegrity(originalUrl, manifest);
+        if (expectedIntegrity) {
+          const isValid = await verifyIntegrity(response, expectedIntegrity);
+          if (!isValid) {
+            console.error(
+              `[SW ${SW_VERSION}] ✗ Integrity verification failed for esm.sh, trying next CDN`
+            );
+            logCDNMetrics({
+              url: originalUrl,
+              cdnName: "esm.sh",
+              latency,
+              success: false,
+              status: response.status,
+              error: "Integrity verification failed",
+              timestamp: Date.now(),
+            });
+            errors.push({ cdn: "esm.sh", error: "Integrity verification failed" });
+            // Continue to next CDN instead of returning
+          } else {
+            console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for esm.sh`);
+            logCDNMetrics({
+              url: originalUrl,
+              cdnName: "esm.sh",
+              latency,
+              success: true,
+              status: response.status,
+              timestamp: Date.now(),
+            });
+            return response;
+          }
+        } else {
+          // No SRI hash found, proceed without verification (warn but don't fail)
+          console.warn(
+            `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${originalUrl}, proceeding without verification`
+          );
+          logCDNMetrics({
+            url: originalUrl,
+            cdnName: "esm.sh",
+            latency,
+            success: true,
+            status: response.status,
+            timestamp: Date.now(),
+          });
+          return response;
+        }
+      } else {
+        // Manifest not available, proceed without verification
+        console.warn(
+          `[SW ${SW_VERSION}] ⚠ SRI manifest not loaded, proceeding without verification`
+        );
+        logCDNMetrics({
+          url: originalUrl,
+          cdnName: "esm.sh",
+          latency,
+          success: true,
+          status: response.status,
+          timestamp: Date.now(),
+        });
+        return response;
+      }
     }
 
     logCDNMetrics({
@@ -387,15 +578,63 @@ async function fetchWithCascade(
       const latency = performance.now() - jsdelivrStart;
 
       if (response.ok) {
-        logCDNMetrics({
-          url: jsdelivrUrl,
-          cdnName: "jsdelivr",
-          latency,
-          success: true,
-          status: response.status,
-          timestamp: Date.now(),
-        });
-        return response;
+        // Verify integrity if manifest is available
+        if (manifest) {
+          const expectedIntegrity = getExpectedIntegrity(jsdelivrUrl, manifest);
+          if (expectedIntegrity) {
+            const isValid = await verifyIntegrity(response, expectedIntegrity);
+            if (!isValid) {
+              console.error(
+                `[SW ${SW_VERSION}] ✗ Integrity verification failed for jsdelivr, trying next CDN`
+              );
+              logCDNMetrics({
+                url: jsdelivrUrl,
+                cdnName: "jsdelivr",
+                latency,
+                success: false,
+                status: response.status,
+                error: "Integrity verification failed",
+                timestamp: Date.now(),
+              });
+              errors.push({ cdn: "jsdelivr", error: "Integrity verification failed" });
+              // Continue to next CDN
+            } else {
+              console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for jsdelivr`);
+              logCDNMetrics({
+                url: jsdelivrUrl,
+                cdnName: "jsdelivr",
+                latency,
+                success: true,
+                status: response.status,
+                timestamp: Date.now(),
+              });
+              return response;
+            }
+          } else {
+            console.warn(
+              `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${jsdelivrUrl}, proceeding without verification`
+            );
+            logCDNMetrics({
+              url: jsdelivrUrl,
+              cdnName: "jsdelivr",
+              latency,
+              success: true,
+              status: response.status,
+              timestamp: Date.now(),
+            });
+            return response;
+          }
+        } else {
+          logCDNMetrics({
+            url: jsdelivrUrl,
+            cdnName: "jsdelivr",
+            latency,
+            success: true,
+            status: response.status,
+            timestamp: Date.now(),
+          });
+          return response;
+        }
       }
 
       logCDNMetrics({
@@ -432,15 +671,63 @@ async function fetchWithCascade(
       const latency = performance.now() - unpkgStart;
 
       if (response.ok) {
-        logCDNMetrics({
-          url: unpkgUrl,
-          cdnName: "unpkg",
-          latency,
-          success: true,
-          status: response.status,
-          timestamp: Date.now(),
-        });
-        return response;
+        // Verify integrity if manifest is available
+        if (manifest) {
+          const expectedIntegrity = getExpectedIntegrity(unpkgUrl, manifest);
+          if (expectedIntegrity) {
+            const isValid = await verifyIntegrity(response, expectedIntegrity);
+            if (!isValid) {
+              console.error(
+                `[SW ${SW_VERSION}] ✗ Integrity verification failed for unpkg, trying next CDN`
+              );
+              logCDNMetrics({
+                url: unpkgUrl,
+                cdnName: "unpkg",
+                latency,
+                success: false,
+                status: response.status,
+                error: "Integrity verification failed",
+                timestamp: Date.now(),
+              });
+              errors.push({ cdn: "unpkg", error: "Integrity verification failed" });
+              // Continue to next CDN
+            } else {
+              console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for unpkg`);
+              logCDNMetrics({
+                url: unpkgUrl,
+                cdnName: "unpkg",
+                latency,
+                success: true,
+                status: response.status,
+                timestamp: Date.now(),
+              });
+              return response;
+            }
+          } else {
+            console.warn(
+              `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${unpkgUrl}, proceeding without verification`
+            );
+            logCDNMetrics({
+              url: unpkgUrl,
+              cdnName: "unpkg",
+              latency,
+              success: true,
+              status: response.status,
+              timestamp: Date.now(),
+            });
+            return response;
+          }
+        } else {
+          logCDNMetrics({
+            url: unpkgUrl,
+            cdnName: "unpkg",
+            latency,
+            success: true,
+            status: response.status,
+            timestamp: Date.now(),
+          });
+          return response;
+        }
       }
 
       logCDNMetrics({
@@ -477,15 +764,63 @@ async function fetchWithCascade(
       const latency = performance.now() - skypackStart;
 
       if (response.ok) {
-        logCDNMetrics({
-          url: skypackUrl,
-          cdnName: "skypack",
-          latency,
-          success: true,
-          status: response.status,
-          timestamp: Date.now(),
-        });
-        return response;
+        // Verify integrity if manifest is available
+        if (manifest) {
+          const expectedIntegrity = getExpectedIntegrity(skypackUrl, manifest);
+          if (expectedIntegrity) {
+            const isValid = await verifyIntegrity(response, expectedIntegrity);
+            if (!isValid) {
+              console.error(
+                `[SW ${SW_VERSION}] ✗ Integrity verification failed for skypack, trying next CDN`
+              );
+              logCDNMetrics({
+                url: skypackUrl,
+                cdnName: "skypack",
+                latency,
+                success: false,
+                status: response.status,
+                error: "Integrity verification failed",
+                timestamp: Date.now(),
+              });
+              errors.push({ cdn: "skypack", error: "Integrity verification failed" });
+              // Continue to next CDN
+            } else {
+              console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for skypack`);
+              logCDNMetrics({
+                url: skypackUrl,
+                cdnName: "skypack",
+                latency,
+                success: true,
+                status: response.status,
+                timestamp: Date.now(),
+              });
+              return response;
+            }
+          } else {
+            console.warn(
+              `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${skypackUrl}, proceeding without verification`
+            );
+            logCDNMetrics({
+              url: skypackUrl,
+              cdnName: "skypack",
+              latency,
+              success: true,
+              status: response.status,
+              timestamp: Date.now(),
+            });
+            return response;
+          }
+        } else {
+          logCDNMetrics({
+            url: skypackUrl,
+            cdnName: "skypack",
+            latency,
+            success: true,
+            status: response.status,
+            timestamp: Date.now(),
+          });
+          return response;
+        }
       }
 
       logCDNMetrics({

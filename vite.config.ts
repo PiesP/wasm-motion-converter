@@ -255,6 +255,19 @@ function importMapPlugin(): Plugin {
       // Must be placed before any module scripts to be effective
       const scriptTag = `<script type="importmap">${JSON.stringify(importMap, null, 2)}</script>`;
 
+      // Load SRI manifest for integrity hashes
+      let sriManifest: { entries: Record<string, { 'esm.sh': { integrity: string } }> } | null =
+        null;
+      try {
+        const manifestPath = path.join(process.cwd(), 'public', 'cdn-integrity.json');
+        const manifestContent = readFileSync(manifestPath, 'utf-8');
+        sriManifest = JSON.parse(manifestContent);
+      } catch (_error) {
+        console.warn(
+          '⚠ SRI manifest not found, modulepreload hints will be generated without integrity hashes'
+        );
+      }
+
       // Create modulepreload hints for critical dependencies (Phase 5)
       // Preloads modules during idle time to reduce runtime fetch latency
       const criticalDeps = [
@@ -264,7 +277,20 @@ function importMapPlugin(): Plugin {
       ] as const;
 
       const modulePreloadHints = criticalDeps
-        .map((dep) => `    <link rel="modulepreload" href="${importMap.imports[dep]}" crossorigin>`)
+        .map((dep) => {
+          const href = importMap.imports[dep];
+          let integrityAttr = '';
+
+          // Add integrity attribute if SRI manifest is available
+          if (sriManifest) {
+            const entry = sriManifest.entries[dep];
+            if (entry?.['esm.sh']?.integrity) {
+              integrityAttr = ` integrity="${entry['esm.sh'].integrity}"`;
+            }
+          }
+
+          return `    <link rel="modulepreload" href="${href}" crossorigin${integrityAttr}>`;
+        })
         .join('\n');
 
       // Inject import map and modulepreload hints before closing </head> tag

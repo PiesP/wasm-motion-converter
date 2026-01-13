@@ -26,6 +26,16 @@ class EncoderFactoryClass {
   private availabilityCache = new Map<string, boolean>();
 
   /**
+   * Invalidate cached availability for a single encoder.
+   *
+   * Some encoders can become temporarily unavailable at runtime (e.g. CDN/WASM failures).
+   * This allows adapters to force re-evaluation on the next selection.
+   */
+  invalidateAvailability(name: string): void {
+    this.availabilityCache.delete(name);
+  }
+
+  /**
    * Register an encoder
    *
    * @param encoder - Encoder implementation to register

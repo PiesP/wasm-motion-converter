@@ -13,11 +13,27 @@ import {
 } from '@services/webcodecs/webp-constants';
 import { buildWebPFrameDurations, resolveWebPFps } from '@services/webcodecs/webp-timing';
 import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface';
+import { EncoderFactory } from '@services/encoders/encoder-factory';
 import { convertFramesToImageData } from '@services/encoders/frame-converter';
 import { logger } from '@utils/logger';
+import { withTimeout } from '@utils/with-timeout';
 import type { AnimatedWebPOptions, WebPFrame } from '@utils/webp-muxer';
 import { muxAnimatedWebP } from '@utils/webp-muxer';
 import type * as Comlink from 'comlink';
+
+import webpJsquashEncoderWorkerUrl from '@/workers/webp-jsquash-encoder.worker?worker&url';
+
+const JSQUASH_DISABLE_COOLDOWN_MS = 10 * 60_000;
+const JSQUASH_WARMUP_TIMEOUT_MS = 12_000;
+const JSQUASH_WARMUP_RETRY_TIMEOUT_MS = 6_000;
+const JSQUASH_WARMUP_KEEPALIVE_MS = 2_000;
+
+let jsquashDisabledUntil = 0;
+let jsquashConsecutiveFailures = 0;
+
+function isJsquashTemporarilyDisabled(): boolean {
+  return Date.now() < jsquashDisabledUntil;
+}
 
 type JsquashWebPEncodeOptions = {
   quality: number;
@@ -26,11 +42,18 @@ type JsquashWebPEncodeOptions = {
 };
 
 interface WebPJsquashWorkerApi {
+  warmup(): Promise<void>;
+  getDebugInfo(): Promise<{
+    comlinkUrl: string;
+    jsquashUrl: string;
+    webpEncWasmUrl: string;
+    webpEncSimdWasmUrl: string;
+  }>;
   encodeFrame(
     imageData: { data: Uint8ClampedArray; width: number; height: number },
     options: JsquashWebPEncodeOptions
   ): Promise<ArrayBuffer>;
-  terminate(): void;
+  terminate(): Promise<void>;
 }
 
 export class WebPJsquashEncoderAdapter implements EncoderAdapter {
@@ -45,9 +68,36 @@ export class WebPJsquashEncoderAdapter implements EncoderAdapter {
   };
 
   private workers: Array<Comlink.Remote<WebPJsquashWorkerApi>> = [];
+  private workerHandles: Worker[] = [];
   private Comlink: typeof import('comlink') | null = null;
 
+  private hardTerminateWorkers(reason: string): void {
+    if (this.workerHandles.length === 0) {
+      return;
+    }
+
+    logger.warn('webp-encoder', 'Hard-terminating jsquash worker pool', {
+      reason,
+      workerCount: this.workerHandles.length,
+    });
+
+    for (const handle of this.workerHandles) {
+      try {
+        handle.terminate();
+      } catch {
+        // Ignore.
+      }
+    }
+
+    this.workerHandles = [];
+    this.workers = [];
+  }
+
   async isAvailable(): Promise<boolean> {
+    if (isJsquashTemporarilyDisabled()) {
+      return false;
+    }
+
     if (typeof Worker === 'undefined') {
       return false;
     }
@@ -101,6 +151,26 @@ export class WebPJsquashEncoderAdapter implements EncoderAdapter {
     try {
       const workerCount = Math.min(navigator.hardwareConcurrency || 4, 3);
       await this.initializeWorkers(workerCount);
+
+      const totalFramesForProgress = Math.max(1, frames.length);
+      const warmupHeartbeat = setInterval(() => {
+        onProgress?.(0, totalFramesForProgress);
+      }, JSQUASH_WARMUP_KEEPALIVE_MS);
+
+      // Warm up WASM early so we can fail fast and fall back to the canvas muxer.
+      // Without this, a stalled CDN/WASM fetch can hang the entire encode with no progress.
+      onProgress?.(0, totalFramesForProgress);
+
+      const warmupTimeoutMs =
+        jsquashConsecutiveFailures > 0
+          ? JSQUASH_WARMUP_RETRY_TIMEOUT_MS
+          : JSQUASH_WARMUP_TIMEOUT_MS;
+
+      try {
+        await this.warmupWorkers({ timeoutMs: warmupTimeoutMs });
+      } finally {
+        clearInterval(warmupHeartbeat);
+      }
 
       const imageDataFrames = await convertFramesToImageData(
         frames,
@@ -175,6 +245,61 @@ export class WebPJsquashEncoderAdapter implements EncoderAdapter {
     }
   }
 
+  private async warmupWorkers(params: { timeoutMs: number }): Promise<void> {
+    const { timeoutMs } = params;
+
+    if (this.workers.length === 0) {
+      throw new Error('jsquash worker pool is not initialized');
+    }
+
+    try {
+      await Promise.all(
+        this.workers.map((worker) =>
+          withTimeout(
+            worker.warmup(),
+            timeoutMs,
+            `jsquash WebP worker warmup timed out after ${Math.round(timeoutMs / 1000)}s`
+          )
+        )
+      );
+    } catch (error) {
+      let debugInfo: unknown = null;
+
+      try {
+        const firstWorker = this.workers[0];
+        if (firstWorker) {
+          debugInfo = await withTimeout(
+            firstWorker.getDebugInfo(),
+            1_000,
+            'jsquash worker debug info request timed out'
+          );
+        }
+      } catch {
+        // Ignore.
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+
+      jsquashConsecutiveFailures += 1;
+      jsquashDisabledUntil = Date.now() + JSQUASH_DISABLE_COOLDOWN_MS;
+      EncoderFactory.invalidateAvailability(this.name);
+
+      this.hardTerminateWorkers(`warmup_failed: ${message}`);
+
+      logger.warn('webp-encoder', 'jsquash worker warmup failed (temporarily disabling)', {
+        error: message,
+        debugInfo,
+        consecutiveFailures: jsquashConsecutiveFailures,
+        disabledForMs: JSQUASH_DISABLE_COOLDOWN_MS,
+      });
+
+      throw error;
+    }
+
+    jsquashConsecutiveFailures = 0;
+    jsquashDisabledUntil = 0;
+  }
+
   private getEncodeOptions(quality: EncoderRequest['quality']): {
     options: JsquashWebPEncodeOptions;
     muxQualityHint: string;
@@ -201,12 +326,10 @@ export class WebPJsquashEncoderAdapter implements EncoderAdapter {
     }
 
     for (let i = 0; i < count; i++) {
-      const worker = new Worker(
-        new URL('../../../workers/webp-jsquash-encoder.worker.ts', import.meta.url),
-        {
-          type: 'module',
-        }
-      );
+      const worker = new Worker(webpJsquashEncoderWorkerUrl, {
+        type: 'module',
+      });
+      this.workerHandles.push(worker);
 
       const wrapped = this.Comlink.wrap<WebPJsquashWorkerApi>(worker);
       this.workers.push(wrapped);
@@ -227,46 +350,65 @@ export class WebPJsquashEncoderAdapter implements EncoderAdapter {
     const workerCount = this.workers.length;
     let completedCount = 0;
 
-    const tasks = frames.map(async (frame, index) => {
-      if (shouldCancel?.()) {
-        throw new Error('Encoding cancelled');
+    // Keep the watchdog alive during long per-frame encodes.
+    // The monitoring layer uses time-since-last-progress, not strictly monotonic percent.
+    const heartbeat = setInterval(() => {
+      onProgress?.(completedCount, Math.max(1, frames.length));
+    }, 5_000);
+
+    let didHardTerminate = false;
+    const hardTerminateOnce = (reason: string): void => {
+      if (didHardTerminate) {
+        return;
       }
+      didHardTerminate = true;
+      this.hardTerminateWorkers(reason);
+    };
 
-      const workerIndex = index % workerCount;
-      const worker = this.workers[workerIndex];
-      if (!worker) {
-        throw new Error(`Worker ${workerIndex} not available`);
-      }
+    try {
+      const tasks = frames.map(async (frame, index) => {
+        if (shouldCancel?.()) {
+          hardTerminateOnce('cancelled');
+          throw new Error('Encoding cancelled');
+        }
 
-      const imageData = {
-        data: frame.data,
-        width: frame.width,
-        height: frame.height,
-      };
+        const workerIndex = index % workerCount;
+        const worker = this.workers[workerIndex];
+        if (!worker) {
+          throw new Error(`Worker ${workerIndex} not available`);
+        }
 
-      const encoded = await worker.encodeFrame(imageData, options);
-      encodedFrames[index] = encoded;
+        const imageData = {
+          data: frame.data,
+          width: frame.width,
+          height: frame.height,
+        };
 
-      completedCount += 1;
-      onProgress?.(completedCount, frames.length);
+        const encoded = await withTimeout(
+          worker.encodeFrame(imageData, options),
+          30_000,
+          'jsquash WebP frame encoding timed out',
+          () => hardTerminateOnce('frame_encode_timeout')
+        );
 
-      return encoded;
-    });
+        encodedFrames[index] = encoded;
 
-    await Promise.all(tasks);
-    return encodedFrames;
+        completedCount += 1;
+        onProgress?.(completedCount, frames.length);
+
+        return encoded;
+      });
+
+      await Promise.all(tasks);
+      return encodedFrames;
+    } finally {
+      clearInterval(heartbeat);
+    }
   }
 
   async dispose(): Promise<void> {
-    for (const worker of this.workers) {
-      try {
-        await worker.terminate();
-      } catch {
-        // Ignore.
-      }
-    }
-
-    this.workers = [];
+    // Prefer hard termination to avoid hanging on Comlink when the worker is wedged.
+    this.hardTerminateWorkers('dispose');
     this.Comlink = null;
   }
 }

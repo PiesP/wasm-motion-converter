@@ -10,7 +10,7 @@
  */
 
 import { logger } from '@utils/logger';
-import { esmShAssetUrl, esmShModuleUrl } from 'virtual:cdn-deps';
+import { RUNTIME_DEP_VERSIONS, esmShModuleUrl } from 'virtual:cdn-deps';
 
 type ComlinkModule = typeof import('comlink');
 type JsquashWebPModule = typeof import('@jsquash/webp/encode.js');
@@ -24,6 +24,7 @@ async function loadComlink(): Promise<ComlinkModule> {
   }
 
   const url = esmShModuleUrl('comlink');
+  logger.debug('webp-encoder', 'Loading Comlink from CDN (worker)', { url });
   cachedComlink = (await import(/* @vite-ignore */ url)) as unknown as ComlinkModule;
   return cachedComlink;
 }
@@ -34,13 +35,25 @@ async function loadJsquash(): Promise<JsquashWebPModule> {
   }
 
   const url = esmShModuleUrl('@jsquash/webp', '/encode.js');
+  logger.debug('webp-encoder', 'Loading jsquash WebP module from CDN (worker)', { url });
   cachedJsquash = (await import(/* @vite-ignore */ url)) as unknown as JsquashWebPModule;
   return cachedJsquash;
 }
 
+function jsDelivrAssetUrl(pkg: string, assetPath: string): string {
+  const version = RUNTIME_DEP_VERSIONS[pkg];
+  if (!version) {
+    throw new Error(`[cdn-deps] Unknown runtime dependency: ${pkg}`);
+  }
+
+  const cleanPath = assetPath.startsWith('/') ? assetPath : `/${assetPath}`;
+  return `https://cdn.jsdelivr.net/npm/${pkg}@${version}${cleanPath}`;
+}
+
 // Resolve WASM assets directly from CDN (no Vite-emitted assets).
-const webpEncWasmUrl = esmShAssetUrl('@jsquash/webp', '/codec/enc/webp_enc.wasm');
-const webpEncSimdWasmUrl = esmShAssetUrl('@jsquash/webp', '/codec/enc/webp_enc_simd.wasm');
+// jsDelivr typically includes CORP headers on WASM, which is friendlier under COEP.
+const webpEncWasmUrl = jsDelivrAssetUrl('@jsquash/webp', '/codec/enc/webp_enc.wasm');
+const webpEncSimdWasmUrl = jsDelivrAssetUrl('@jsquash/webp', '/codec/enc/webp_enc_simd.wasm');
 
 type JsquashWebPEncodeOptions = {
   quality: number;
@@ -88,6 +101,24 @@ async function ensureJsquashInitialized(): Promise<void> {
 }
 
 const api = {
+  async warmup(): Promise<void> {
+    await ensureJsquashInitialized();
+  },
+
+  async getDebugInfo(): Promise<{
+    comlinkUrl: string;
+    jsquashUrl: string;
+    webpEncWasmUrl: string;
+    webpEncSimdWasmUrl: string;
+  }> {
+    return {
+      comlinkUrl: esmShModuleUrl('comlink'),
+      jsquashUrl: esmShModuleUrl('@jsquash/webp', '/encode.js'),
+      webpEncWasmUrl,
+      webpEncSimdWasmUrl,
+    };
+  },
+
   async encodeFrame(
     imageData: { data: Uint8ClampedArray; width: number; height: number },
     options: JsquashWebPEncodeOptions
