@@ -50,13 +50,14 @@ export class MP4EncoderAdapter implements EncoderAdapter {
   private encoder: VideoEncoder | null = null;
   private chunks: EncodedVideoChunk[] = [];
   private chunkMetas: Array<EncodedVideoChunkMetadata | undefined> = [];
+  private encoderFatalError: Error | null = null;
 
   /**
    * Check if MP4 encoding is available
    *
    * Requirements:
    * - VideoEncoder API support
-   * - H.264 codec support (avc1.42001E - baseline profile)
+   * - H.264 codec support (avc1 baseline profile; level is selected by config)
    */
   async isAvailable(): Promise<boolean> {
     try {
@@ -66,17 +67,17 @@ export class MP4EncoderAdapter implements EncoderAdapter {
         return false;
       }
 
-      // Check H.264 codec support (baseline profile, level 3.0)
-      const config: VideoEncoderConfig = {
-        codec: 'avc1.42001E', // H.264 Baseline Profile Level 3.0
+      // Check H.264 codec support (baseline profile; choose a safe level).
+      // NOTE: We intentionally do not lock this to a single level because
+      // moderate resolutions (e.g., 700x700 -> coded 704x704) can exceed Level 3.0.
+      const codec = await this.pickSupportedAvc1Codec({
         width: 640,
         height: 480,
         bitrate: 1_000_000,
         framerate: 30,
-      };
+      });
 
-      const support = await VideoEncoder.isConfigSupported(config);
-      if (!support.supported) {
+      if (!codec) {
         logger.debug('mp4-encoder', 'H.264 codec not supported');
         return false;
       }
@@ -115,12 +116,25 @@ export class MP4EncoderAdapter implements EncoderAdapter {
     const startTime = performance.now();
 
     try {
+      this.encoderFatalError = null;
+
       // Calculate bitrate based on quality and resolution
       const bitrate = this.calculateBitrate(width, height, fps, quality);
 
+      const codec = await this.pickSupportedAvc1Codec({
+        width,
+        height,
+        bitrate,
+        framerate: fps,
+      });
+
+      if (!codec) {
+        throw new Error('No supported H.264 (avc1) encoder config found for this input.');
+      }
+
       // Configure and create encoder
       const config: VideoEncoderConfig = {
-        codec: 'avc1.42001E', // H.264 Baseline Profile Level 3.0
+        codec,
         width,
         height,
         bitrate,
@@ -148,9 +162,19 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       // Encode frames
       let encodedCount = 0;
 
+      const keyframeIntervalFrames = Math.max(1, Math.round(fps * 2));
+
       for (let i = 0; i < imageDataFrames.length; i++) {
         if (shouldCancel?.()) {
           throw new Error('Encoding cancelled');
+        }
+
+        if (this.encoderFatalError) {
+          throw this.encoderFatalError;
+        }
+
+        if (!this.encoder || this.encoder.state === 'closed') {
+          throw new Error('VideoEncoder is closed; cannot continue encoding.');
         }
 
         const frame = imageDataFrames[i];
@@ -171,12 +195,22 @@ export class MP4EncoderAdapter implements EncoderAdapter {
           duration: durationUs,
         });
 
-        // Insert keyframe every 2 seconds
-        const isKeyframe = i % (fps * 2) === 0;
+        try {
+          // Insert keyframe every ~2 seconds
+          const isKeyframe = i % keyframeIntervalFrames === 0;
 
-        // Encode frame
-        this.encoder.encode(videoFrame, { keyFrame: isKeyframe });
-        videoFrame.close();
+          // Encode frame
+          this.encoder.encode(videoFrame, { keyFrame: isKeyframe });
+        } catch (error) {
+          if (this.encoderFatalError) {
+            throw this.encoderFatalError;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`VideoEncoder.encode failed: ${message}`);
+        } finally {
+          // Always close VideoFrame (avoids GC warnings and leaks on errors)
+          videoFrame.close();
+        }
 
         encodedCount += 1;
         onProgress?.(encodedCount, frames.length);
@@ -188,7 +222,14 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       }
 
       // Flush encoder and wait for all chunks
-      await this.encoder.flush();
+      try {
+        await this.encoder.flush();
+      } catch (error) {
+        if (this.encoderFatalError) {
+          throw this.encoderFatalError;
+        }
+        throw error;
+      }
 
       // Create a proper MP4 file from the encoded chunks
       const blob = await this.muxToMp4Blob({
@@ -267,9 +308,20 @@ export class MP4EncoderAdapter implements EncoderAdapter {
           const message = error instanceof Error ? error.message : String(error);
           logger.error('mp4-encoder', 'VideoEncoder error', { error: message });
 
+          const fatal = new Error(`VideoEncoder error: ${message}`);
+          this.encoderFatalError = fatal;
+
+          try {
+            if (encoder.state !== 'closed') {
+              encoder.close();
+            }
+          } catch {
+            // ignore
+          }
+
           if (!resolved) {
             resolved = true;
-            reject(new Error(`VideoEncoder error: ${message}`));
+            reject(fatal);
           }
         },
       });
@@ -291,6 +343,101 @@ export class MP4EncoderAdapter implements EncoderAdapter {
         }
       }
     });
+  }
+
+  /**
+   * Pick a supported avc1 codec string for the provided encode parameters.
+   *
+   * We use baseline-profile codec strings and skip levels that cannot possibly
+   * represent the coded frame size (H.264 level limits are based on 16x16 macroblocks).
+   */
+  private async pickSupportedAvc1Codec(args: {
+    width: number;
+    height: number;
+    bitrate: number;
+    framerate: number;
+  }): Promise<string | null> {
+    if (typeof VideoEncoder === 'undefined') {
+      return null;
+    }
+
+    const { width, height, bitrate, framerate } = args;
+
+    const alignedWidth = Math.ceil(width / 16) * 16;
+    const alignedHeight = Math.ceil(height / 16) * 16;
+    const codedAreaPixels = alignedWidth * alignedHeight;
+
+    // Minimal per-level coded frame size limits (macroblocks * 256).
+    // This is intentionally conservative: we only use it to skip levels that
+    // are guaranteed to be too small, then we rely on isConfigSupported().
+    const levelCandidates: Array<{
+      levelHex: string;
+      maxCodedAreaPixels: number;
+    }> = [
+      { levelHex: '1E', maxCodedAreaPixels: 414_720 }, // 3.0 (1620 MB)
+      { levelHex: '1F', maxCodedAreaPixels: 921_600 }, // 3.1 (3600 MB)
+      { levelHex: '20', maxCodedAreaPixels: 1_310_720 }, // 3.2 (5120 MB)
+      { levelHex: '28', maxCodedAreaPixels: 2_097_152 }, // 4.0 (8192 MB)
+      { levelHex: '29', maxCodedAreaPixels: 2_097_152 }, // 4.1 (8192 MB)
+      { levelHex: '2A', maxCodedAreaPixels: 2_097_152 }, // 4.2 (8192 MB)
+      { levelHex: '32', maxCodedAreaPixels: 5_652_480 }, // 5.0 (22080 MB)
+      { levelHex: '33', maxCodedAreaPixels: 9_437_184 }, // 5.1 (36864 MB)
+      { levelHex: '34', maxCodedAreaPixels: 14_155_776 }, // 5.2 (55296 MB)
+    ];
+
+    const prefixes = ['4200', '42E0'];
+    const codecsToTry: string[] = [];
+
+    for (const level of levelCandidates) {
+      if (codedAreaPixels > level.maxCodedAreaPixels) {
+        continue;
+      }
+      for (const prefix of prefixes) {
+        codecsToTry.push(`avc1.${prefix}${level.levelHex}`);
+      }
+    }
+
+    // As a final fallback, try a couple of common avc1 strings even if our
+    // conservative limits table did not cover an edge case.
+    codecsToTry.push('avc1.42001F');
+    codecsToTry.push('avc1.42E01F');
+
+    const base: Omit<VideoEncoderConfig, 'codec'> = {
+      width,
+      height,
+      bitrate,
+      framerate,
+      hardwareAcceleration: 'prefer-hardware',
+      avc: { format: 'avc' },
+    };
+
+    for (const codec of codecsToTry) {
+      try {
+        const support = await VideoEncoder.isConfigSupported({
+          ...base,
+          codec,
+        });
+        if (support.supported) {
+          const selectedCodec = support.config?.codec ?? codec;
+          logger.debug('mp4-encoder', 'Selected H.264 codec for MP4', {
+            requested: { width, height, framerate, bitrate },
+            coded: { alignedWidth, alignedHeight, codedAreaPixels },
+            codec: selectedCodec,
+          });
+          return selectedCodec;
+        }
+      } catch {
+        // ignore and continue trying candidates
+      }
+    }
+
+    logger.debug('mp4-encoder', 'No supported H.264 codec found for MP4', {
+      requested: { width, height, framerate, bitrate },
+      coded: { alignedWidth, alignedHeight, codedAreaPixels },
+      codecsTried: codecsToTry,
+    });
+
+    return null;
   }
 
   /**
