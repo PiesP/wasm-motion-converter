@@ -1,42 +1,39 @@
 // Internal dependencies
 
 // Type imports
-import type { VideoMetadata } from "@t/conversion-types";
-import { getErrorMessage } from "@utils/error-utils";
-import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
-import { logger } from "@utils/logger";
+import type { VideoMetadata } from '@t/conversion-types';
+import { getErrorMessage } from '@utils/error-utils';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { logger } from '@utils/logger';
 
-import { captureWithDemuxer as captureWithDemuxerMode } from "@services/webcodecs/decoder/demuxer-capture";
-import { captureWithFrameCallback as captureWithFrameCallbackMode } from "@services/webcodecs/decoder/capture-modes/frame-callback-capture";
-import { captureWithSeeking as captureWithSeekingMode } from "@services/webcodecs/decoder/capture-modes/seek-capture";
-import { captureWithTrackProcessor as captureWithTrackProcessorMode } from "@services/webcodecs/decoder/capture-modes/track-processor-capture";
+import { captureWithDemuxer as captureWithDemuxerMode } from '@services/webcodecs/decoder/demuxer-capture';
+import { captureWithFrameCallback as captureWithFrameCallbackMode } from '@services/webcodecs/decoder/capture-modes/frame-callback-capture';
+import { captureWithSeeking as captureWithSeekingMode } from '@services/webcodecs/decoder/capture-modes/seek-capture';
+import { captureWithTrackProcessor as captureWithTrackProcessorMode } from '@services/webcodecs/decoder/capture-modes/track-processor-capture';
 import {
   captureFrameAndEmit,
   type CaptureFrameState,
-} from "@services/webcodecs/decoder/capture-frame";
-import { createCanvas } from "@services/webcodecs/decoder/canvas";
-import { waitForEvent } from "@services/webcodecs/decoder/wait-for-event";
+} from '@services/webcodecs/decoder/capture-frame';
+import { createCanvas } from '@services/webcodecs/decoder/canvas';
+import { waitForEvent } from '@services/webcodecs/decoder/wait-for-event';
 import {
   attachVideoForDecode,
   cleanupVideo,
   getSeekTimeoutForCodec,
   normalizeDuration,
   seekTo,
-} from "@services/webcodecs/decoder/video-element";
-import {
-  canUseDemuxer,
-  detectContainer,
-} from "@services/webcodecs/demuxer/demuxer-factory";
+} from '@services/webcodecs/decoder/video-element';
+import { canUseDemuxer, detectContainer } from '@services/webcodecs/demuxer/demuxer-factory';
 import type {
   WebCodecsCaptureMode,
   WebCodecsDecodeOptions,
   WebCodecsDecodeResult,
-} from "@services/webcodecs/decoder/types";
+} from '@services/webcodecs/decoder/types';
 import {
   getWebCodecsSupportStatus,
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
-} from "./webcodecs-support-service";
+} from './webcodecs-support-service';
 
 export type {
   WebCodecsCaptureMode,
@@ -45,7 +42,7 @@ export type {
   WebCodecsFrameFormat,
   WebCodecsFramePayload,
   WebCodecsProgressCallback,
-} from "@services/webcodecs/decoder/types";
+} from '@services/webcodecs/decoder/types';
 
 /**
  * Maximum time (ms) allowed for canvas.convertToBlob() operation
@@ -92,9 +89,9 @@ export class WebCodecsDecoderService {
    */
   static isSupported(): boolean {
     return (
-      typeof document !== "undefined" &&
-      typeof HTMLVideoElement !== "undefined" &&
-      typeof HTMLCanvasElement !== "undefined" &&
+      typeof document !== 'undefined' &&
+      typeof HTMLVideoElement !== 'undefined' &&
+      typeof HTMLCanvasElement !== 'undefined' &&
       isWebCodecsDecodeSupported()
     );
   }
@@ -145,13 +142,9 @@ export class WebCodecsDecoderService {
    * });
    * ```
    */
-  async decodeToFrames(
-    options: WebCodecsDecodeOptions
-  ): Promise<WebCodecsDecodeResult> {
+  async decodeToFrames(options: WebCodecsDecodeOptions): Promise<WebCodecsDecodeResult> {
     if (!WebCodecsDecoderService.isSupported()) {
-      throw new Error(
-        "WebCodecs decode path is not supported in this browser."
-      );
+      throw new Error('WebCodecs decode path is not supported in this browser.');
     }
 
     const {
@@ -164,7 +157,7 @@ export class WebCodecsDecoderService {
       frameDigits,
       frameStartNumber,
       maxFrames,
-      captureMode = "auto",
+      captureMode = 'auto',
       codec,
       quality,
       onFrame,
@@ -187,21 +180,19 @@ export class WebCodecsDecoderService {
 
     // Priority 1: Try demuxer path first (eliminates seeking overhead for AV1/HEVC/VP9)
     // Only attempt if captureMode is 'auto' or explicitly 'demuxer'
-    if (captureMode === "demuxer" && !canUseDemuxer(file, demuxerMetadata)) {
-      throw new Error(
-        "Demuxer capture mode requested but is not available for this file."
-      );
+    if (captureMode === 'demuxer' && !canUseDemuxer(file, demuxerMetadata)) {
+      throw new Error('Demuxer capture mode requested but is not available for this file.');
     }
 
     if (
-      (captureMode === "auto" || captureMode === "demuxer") &&
+      (captureMode === 'auto' || captureMode === 'demuxer') &&
       canUseDemuxer(file, demuxerMetadata)
     ) {
       try {
-        logger.info("conversion", "Attempting demuxer-based frame capture", {
+        logger.info('conversion', 'Attempting demuxer-based frame capture', {
           fileName: file.name,
           container: detectContainer(file),
-          codec: codec ?? "unknown",
+          codec: codec ?? 'unknown',
         });
 
         const demuxerResult = await captureWithDemuxerMode(
@@ -222,25 +213,21 @@ export class WebCodecsDecoderService {
         );
 
         if (demuxerResult) {
-          logger.info("conversion", "Demuxer capture completed successfully", {
+          logger.info('conversion', 'Demuxer capture completed successfully', {
             frameCount: demuxerResult.frameCount,
             duration: demuxerResult.duration,
           });
           return demuxerResult;
         }
       } catch (error) {
-        logger.warn(
-          "conversion",
-          "Demuxer path failed, falling back to playback modes",
-          {
-            error: getErrorMessage(error),
-            codec: codec ?? "unknown",
-          }
-        );
+        logger.warn('conversion', 'Demuxer path failed, falling back to playback modes', {
+          error: getErrorMessage(error),
+          codec: codec ?? 'unknown',
+        });
 
         // If the caller explicitly requested demuxer mode, do not silently fall back.
         // This lets higher-level routing choose the next best strategy deterministically.
-        if (captureMode === "demuxer") {
+        if (captureMode === 'demuxer') {
           throw error;
         }
         // Fall through to HTMLVideoElement-based capture modes
@@ -250,8 +237,8 @@ export class WebCodecsDecoderService {
     // Priority 2-4: HTMLVideoElement-based capture modes (existing logic)
     const url = URL.createObjectURL(file);
     this.activeUrls.add(url);
-    const video = document.createElement("video");
-    video.preload = "auto";
+    const video = document.createElement('video');
+    video.preload = 'auto';
     video.muted = true;
     video.playsInline = true;
     video.src = url;
@@ -263,48 +250,31 @@ export class WebCodecsDecoderService {
     attachVideoForDecode(video);
 
     try {
-      await waitForEvent(
-        video,
-        "loadedmetadata",
-        FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS
-      );
+      await waitForEvent(video, 'loadedmetadata', FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS);
       const duration = normalizeDuration(video.duration);
       const sourceWidth = video.videoWidth || 0;
       const sourceHeight = video.videoHeight || 0;
 
       if (!sourceWidth || !sourceHeight || !duration) {
-        throw new Error("Video metadata not available for hardware decode.");
+        throw new Error('Video metadata not available for hardware decode.');
       }
 
       if (video.readyState < 2) {
-        await waitForEvent(
-          video,
-          "loadeddata",
-          FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS
-        );
+        await waitForEvent(video, 'loadeddata', FFMPEG_INTERNALS.WEBCODECS.METADATA_TIMEOUT_MS);
       }
 
       // VP9/HEVC codec workaround: Automatic scale reduction
       // VP9/complex codecs can cause GPU memory pressure & stalls during canvas encoding.
       // Reduce canvas size by 25% (0.75 scale) to alleviate GPU memory bottlenecks.
-      const isComplexCodec =
-        codec && /vp9|hevc|h\.265|h265|hvc1|hev1/i.test(codec);
-      const effectiveScale =
-        isComplexCodec && scale >= 0.9 ? scale * 0.75 : scale;
+      const isComplexCodec = codec && /vp9|hevc|h\.265|h265|hvc1|hev1/i.test(codec);
+      const effectiveScale = isComplexCodec && scale >= 0.9 ? scale * 0.75 : scale;
 
       const targetWidth = Math.max(1, Math.round(sourceWidth * effectiveScale));
-      const targetHeight = Math.max(
-        1,
-        Math.round(sourceHeight * effectiveScale)
-      );
-      const captureContext = createCanvas(
-        targetWidth,
-        targetHeight,
-        frameFormat === "rgba"
-      );
+      const targetHeight = Math.max(1, Math.round(sourceHeight * effectiveScale));
+      const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba');
 
       if (isComplexCodec && effectiveScale !== scale) {
-        logger.info("conversion", "Applied VP9/HEVC codec scale reduction", {
+        logger.info('conversion', 'Applied VP9/HEVC codec scale reduction', {
           originalScale: scale,
           effectiveScale,
           targetWidth,
@@ -322,7 +292,7 @@ export class WebCodecsDecoderService {
       // Total decode timeout: seeking can legitimately take longer because it performs
       // many discrete seeks (one per frame). Keep fail-fast behavior for realtime modes.
       const computeMaxTotalDecodeMs = (mode: WebCodecsCaptureMode): number => {
-        if (mode !== "seek") {
+        if (mode !== 'seek') {
           return FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS;
         }
 
@@ -341,11 +311,11 @@ export class WebCodecsDecoderService {
       let maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
 
       logger.info(
-        "conversion",
+        'conversion',
         `WebCodecs decode budget: durationSeconds=${duration.toFixed(
           3
         )}, targetFps=${targetFps}, estimatedTotalFrames=${estimatedTotalFrames}, maxFrames=${
-          maxFrames ?? "null"
+          maxFrames ?? 'null'
         }, totalFrames=${totalFrames}, scale=${scale}, frameFormat=${frameFormat}, captureMode=${captureMode}`,
         {
           durationSeconds: duration,
@@ -368,7 +338,7 @@ export class WebCodecsDecoderService {
 
       const captureFrame = async (index: number, timestamp: number) => {
         if (shouldCancel?.()) {
-          throw new Error("Conversion cancelled by user");
+          throw new Error('Conversion cancelled by user');
         }
 
         // Fail-fast if decode is taking too long (indicates stall)
@@ -376,7 +346,7 @@ export class WebCodecsDecoderService {
         if (elapsed > maxTotalDecodeMs) {
           throw new Error(
             `WebCodecs decode exceeded ${maxTotalDecodeMs}ms timeout (mode=${effectiveCaptureMode}) at frame ${index}. ` +
-              "Codec incompatibility detected. Falling back to FFmpeg."
+              'Codec incompatibility detected. Falling back to FFmpeg.'
           );
         }
 
@@ -418,18 +388,14 @@ export class WebCodecsDecoderService {
       };
 
       const supportStatus = getWebCodecsSupportStatus();
-      const supportsFrameCallback =
-        typeof video.requestVideoFrameCallback === "function";
-      const supportsTrackProcessor =
-        supportStatus.trackProcessor && supportStatus.captureStream;
+      const supportsFrameCallback = typeof video.requestVideoFrameCallback === 'function';
+      const supportsTrackProcessor = supportStatus.trackProcessor && supportStatus.captureStream;
 
-      if (captureMode === "track") {
+      if (captureMode === 'track') {
         if (!supportsTrackProcessor) {
-          throw new Error(
-            "WebCodecs track processor is not supported in this browser."
-          );
+          throw new Error('WebCodecs track processor is not supported in this browser.');
         }
-        effectiveCaptureMode = "track";
+        effectiveCaptureMode = 'track';
         maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
         await this.captureWithTrackProcessor(
           video,
@@ -439,13 +405,11 @@ export class WebCodecsDecoderService {
           shouldCancel,
           totalFrames
         );
-      } else if (captureMode === "frame-callback") {
+      } else if (captureMode === 'frame-callback') {
         if (!supportsFrameCallback) {
-          throw new Error(
-            "requestVideoFrameCallback is not supported in this browser."
-          );
+          throw new Error('requestVideoFrameCallback is not supported in this browser.');
         }
-        effectiveCaptureMode = "frame-callback";
+        effectiveCaptureMode = 'frame-callback';
         maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
         await this.captureWithFrameCallback(
           video,
@@ -456,8 +420,8 @@ export class WebCodecsDecoderService {
           totalFrames,
           codec
         );
-      } else if (captureMode === "seek") {
-        effectiveCaptureMode = "seek";
+      } else if (captureMode === 'seek') {
+        effectiveCaptureMode = 'seek';
         maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
         await this.captureWithSeeking(
           video,
@@ -470,7 +434,7 @@ export class WebCodecsDecoderService {
         );
       } else if (supportsTrackProcessor) {
         try {
-          effectiveCaptureMode = "track";
+          effectiveCaptureMode = 'track';
           maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
           await this.captureWithTrackProcessor(
             video,
@@ -482,23 +446,19 @@ export class WebCodecsDecoderService {
           );
         } catch (error) {
           const errorMsg = getErrorMessage(error);
-          const errorStack = error instanceof Error ? error.stack : "";
-          logger.warn(
-            "conversion",
-            "WebCodecs track capture failed, falling back",
-            {
-              error: errorMsg,
-              supportsFrameCallback,
-              stack: errorStack,
-            }
-          );
+          const errorStack = error instanceof Error ? error.stack : '';
+          logger.warn('conversion', 'WebCodecs track capture failed, falling back', {
+            error: errorMsg,
+            supportsFrameCallback,
+            stack: errorStack,
+          });
           if (supportsFrameCallback) {
             logger.info(
-              "conversion",
-              "WebCodecs decoder: Attempting frame-callback fallback mode",
+              'conversion',
+              'WebCodecs decoder: Attempting frame-callback fallback mode',
               {}
             );
-            effectiveCaptureMode = "frame-callback";
+            effectiveCaptureMode = 'frame-callback';
             maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
             await this.captureWithFrameCallback(
               video,
@@ -510,11 +470,11 @@ export class WebCodecsDecoderService {
             );
           } else {
             logger.info(
-              "conversion",
-              "WebCodecs decoder: frame-callback not supported, using seek fallback",
+              'conversion',
+              'WebCodecs decoder: frame-callback not supported, using seek fallback',
               {}
             );
-            effectiveCaptureMode = "seek";
+            effectiveCaptureMode = 'seek';
             maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
             await this.captureWithSeeking(
               video,
@@ -527,7 +487,7 @@ export class WebCodecsDecoderService {
           }
         }
       } else if (supportsFrameCallback) {
-        effectiveCaptureMode = "frame-callback";
+        effectiveCaptureMode = 'frame-callback';
         maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
         await this.captureWithFrameCallback(
           video,
@@ -539,7 +499,7 @@ export class WebCodecsDecoderService {
           codec
         );
       } else {
-        effectiveCaptureMode = "seek";
+        effectiveCaptureMode = 'seek';
         maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
         await this.captureWithSeeking(
           video,
@@ -680,10 +640,8 @@ export class WebCodecsDecoderService {
       shouldCancel,
       maxFrames,
       codec,
-      getSeekTimeoutForCodec: (targetCodec) =>
-        getSeekTimeoutForCodec(targetCodec),
-      seekTo: (targetVideo, time, timeoutMs) =>
-        seekTo(targetVideo, time, timeoutMs),
+      getSeekTimeoutForCodec: (targetCodec) => getSeekTimeoutForCodec(targetCodec),
+      seekTo: (targetVideo, time, timeoutMs) => seekTo(targetVideo, time, timeoutMs),
     });
   }
 }

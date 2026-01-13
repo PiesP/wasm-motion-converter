@@ -1,23 +1,20 @@
-import type { ConversionOptions } from "@t/conversion-types";
-import { QUALITY_PRESETS } from "@utils/constants";
-import { getErrorMessage } from "@utils/error-utils";
-import { isHardwareCacheValid } from "@utils/hardware-profile";
-import { logger } from "@utils/logger";
-import {
-  cacheWebPChunkSize,
-  getCachedWebPChunkSize,
-} from "@utils/session-cache";
+import type { ConversionOptions } from '@t/conversion-types';
+import { QUALITY_PRESETS } from '@utils/constants';
+import { getErrorMessage } from '@utils/error-utils';
+import { isHardwareCacheValid } from '@utils/hardware-profile';
+import { logger } from '@utils/logger';
+import { cacheWebPChunkSize, getCachedWebPChunkSize } from '@utils/session-cache';
 
-import { EncoderFactory } from "@services/encoders/encoder-factory";
-import { createWebPFrameEncoder } from "@services/webcodecs/webp/webp-frame-encoder";
-import { validateWebPBlob } from "@services/webcodecs/webp/validate-webp-blob";
+import { EncoderFactory } from '@services/encoders/encoder-factory';
+import { createWebPFrameEncoder } from '@services/webcodecs/webp/webp-frame-encoder';
+import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob';
 
 export async function tryEncodeWebPWithEncoderFactory(params: {
   frames: ImageData[];
   width: number;
   height: number;
   fps: number;
-  quality: ConversionOptions["quality"];
+  quality: ConversionOptions['quality'];
   timestamps?: number[];
   durationSeconds?: number;
   codec?: string;
@@ -44,7 +41,7 @@ export async function tryEncodeWebPWithEncoderFactory(params: {
   }
 
   try {
-    const encoder = await EncoderFactory.getEncoder("webp", {
+    const encoder = await EncoderFactory.getEncoder('webp', {
       preferWorkers: true,
       quality,
     });
@@ -56,15 +53,11 @@ export async function tryEncodeWebPWithEncoderFactory(params: {
     // Respect encoder constraints (defensive).
     const maxFramesAllowed = encoder.capabilities.maxFrames;
     if (maxFramesAllowed && frames.length > maxFramesAllowed) {
-      logger.warn(
-        "conversion",
-        "Skipping worker WebP encoder due to maxFrames constraint",
-        {
-          encoder: encoder.name,
-          frameCount: frames.length,
-          maxFramesAllowed,
-        }
-      );
+      logger.warn('conversion', 'Skipping worker WebP encoder due to maxFrames constraint', {
+        encoder: encoder.name,
+        frameCount: frames.length,
+        maxFramesAllowed,
+      });
       return null;
     }
 
@@ -72,26 +65,20 @@ export async function tryEncodeWebPWithEncoderFactory(params: {
       encoder.capabilities.maxDimension &&
       Math.max(width, height) > encoder.capabilities.maxDimension
     ) {
-      logger.warn(
-        "conversion",
-        "Skipping worker WebP encoder due to maxDimension constraint",
-        {
-          encoder: encoder.name,
-          width,
-          height,
-          maxDimension: encoder.capabilities.maxDimension,
-        }
-      );
+      logger.warn('conversion', 'Skipping worker WebP encoder due to maxDimension constraint', {
+        encoder: encoder.name,
+        width,
+        height,
+        maxDimension: encoder.capabilities.maxDimension,
+      });
       return null;
     }
 
     if (shouldCancel?.()) {
-      throw new Error("Conversion cancelled by user");
+      throw new Error('Conversion cancelled by user');
     }
 
-    const safeTimestamps = timestamps
-      ? timestamps.slice(0, frames.length)
-      : undefined;
+    const safeTimestamps = timestamps ? timestamps.slice(0, frames.length) : undefined;
 
     const blob = await encoder.encode({
       frames,
@@ -113,15 +100,11 @@ export async function tryEncodeWebPWithEncoderFactory(params: {
 
     const validation = await validateWebPBlob(blob);
     if (!validation.valid) {
-      logger.warn(
-        "conversion",
-        "EncoderFactory WebP output failed validation",
-        {
-          encoder: encoder.name,
-          reason: validation.reason ?? "validation_failed",
-          frameCount: frames.length,
-        }
-      );
+      logger.warn('conversion', 'EncoderFactory WebP output failed validation', {
+        encoder: encoder.name,
+        reason: validation.reason ?? 'validation_failed',
+        frameCount: frames.length,
+      });
       return null;
     }
 
@@ -131,20 +114,16 @@ export async function tryEncodeWebPWithEncoderFactory(params: {
       throw error;
     }
 
-    logger.warn(
-      "conversion",
-      "EncoderFactory WebP encoding failed; falling back to muxer",
-      {
-        error: getErrorMessage(error),
-      }
-    );
+    logger.warn('conversion', 'EncoderFactory WebP encoding failed; falling back to muxer', {
+      error: getErrorMessage(error),
+    });
     return null;
   }
 }
 
 export async function encodeWebPFramesInChunks(params: {
   frames: ImageData[];
-  quality: ConversionOptions["quality"];
+  quality: ConversionOptions['quality'];
   codec?: string;
   onProgress?: (current: number, total: number) => void;
   shouldCancel?: () => boolean;
@@ -158,19 +137,18 @@ export async function encodeWebPFramesInChunks(params: {
   const webpQualityRatio = QUALITY_PRESETS.webp[quality].quality / 100;
   const encodeFrame = createWebPFrameEncoder(webpQualityRatio);
 
-  const hwConcurrency =
-    typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
+  const hwConcurrency = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
   const cachedChunkSize = getCachedWebPChunkSize();
   const chunkSize =
     cachedChunkSize && isHardwareCacheValid()
       ? cachedChunkSize
       : Math.min(20, Math.max(10, hwConcurrency * 2));
 
-  logger.info("conversion", "Encoding WebP frames with canvas encoder", {
+  logger.info('conversion', 'Encoding WebP frames with canvas encoder', {
     frameCount: frames.length,
     chunkSize,
     cached: Boolean(cachedChunkSize && isHardwareCacheValid()),
-    codec: codec ?? "unknown",
+    codec: codec ?? 'unknown',
   });
 
   const encodedFrames: Uint8Array[] = [];
@@ -178,13 +156,11 @@ export async function encodeWebPFramesInChunks(params: {
 
   for (let i = 0; i < totalFrames; i += chunkSize) {
     if (shouldCancel?.()) {
-      throw new Error("Conversion cancelled by user");
+      throw new Error('Conversion cancelled by user');
     }
 
     const chunk = frames.slice(i, Math.min(i + chunkSize, totalFrames));
-    const encodedChunk = await Promise.all(
-      chunk.map((frame) => encodeFrame(frame))
-    );
+    const encodedChunk = await Promise.all(chunk.map((frame) => encodeFrame(frame)));
     encodedFrames.push(...encodedChunk);
 
     onProgress?.(encodedFrames.length, totalFrames);
@@ -192,7 +168,7 @@ export async function encodeWebPFramesInChunks(params: {
 
   if (!cachedChunkSize && encodedFrames.length > 0) {
     cacheWebPChunkSize(chunkSize);
-    logger.info("conversion", "Cached WebP chunk size for future conversions", {
+    logger.info('conversion', 'Cached WebP chunk size for future conversions', {
       chunkSize,
     });
   }

@@ -26,7 +26,16 @@ import {
 import { ffmpegService } from "./ffmpeg-service";
 import { encodeModernGif, isModernGifSupported } from "./modern-gif-service";
 import { isComplexCodec } from "@services/webcodecs/codec-utils";
+import {
+  AV1_FRAME_CALLBACK_FAILURE_KEY,
+  getAv1CaptureFpsCap,
+  getAv1SeekFpsCap,
+  readSessionStorageNumber,
+  supportsRequestVideoFrameCallback,
+  writeSessionStorageNumber,
+} from "@services/webcodecs/conversion/av1-capture-policy";
 import { probeCanvasWebPEncodeSupport } from "@services/webcodecs/conversion/canvas-webp-support";
+import { encodeWithFFmpegFallback as encodeWithFFmpegFallbackUtil } from "@services/webcodecs/conversion/ffmpeg-fallback-encode";
 import {
   encodeWebPFramesInChunks,
   tryEncodeWebPWithEncoderFactory,
@@ -391,54 +400,13 @@ class WebCodecsConversionService {
     const normalizedCodec = metadata?.codec?.toLowerCase() ?? "";
     const isAv1 =
       normalizedCodec.includes("av1") || normalizedCodec.includes("av01");
-    const supportsFrameCallback =
-      typeof document !== "undefined" &&
-      typeof HTMLVideoElement !== "undefined" &&
-      typeof (
-        document.createElement("video") as unknown as {
-          requestVideoFrameCallback?: unknown;
-        }
-      ).requestVideoFrameCallback === "function";
-
-    const getAv1CaptureFpsCap = (durationSeconds?: number): number => {
-      // AV1 frame extraction is often dominated by canvas encoding (PNG) rather than FFmpeg.
-      // Capping extraction FPS significantly reduces total time while preserving overall
-      // animation duration via duration-aligned timestamps.
-      const isShort = !durationSeconds || durationSeconds < 4;
-      const isMedium =
-        typeof durationSeconds === "number" &&
-        Number.isFinite(durationSeconds) &&
-        durationSeconds >= 4 &&
-        durationSeconds < 30;
-
-      if (isShort) {
-        // Short clips: keep motion smooth.
-        return 15;
-      }
-
-      if (isMedium) {
-        // Medium clips: balance speed and smoothness.
-        if (options.quality === "high") {
-          return 12;
-        }
-        if (options.quality === "medium") {
-          return 10;
-        }
-        return 8;
-      }
-
-      // Long clips: prioritize speed.
-      if (options.quality === "high") {
-        return 10;
-      }
-      if (options.quality === "medium") {
-        return 8;
-      }
-      return 6;
-    };
+    const supportsFrameCallback = supportsRequestVideoFrameCallback();
 
     const av1CaptureFpsCap = isAv1
-      ? getAv1CaptureFpsCap(metadata?.duration)
+      ? getAv1CaptureFpsCap({
+          durationSeconds: metadata?.duration,
+          quality: options.quality,
+        })
       : requestedTargetFps;
     let effectiveTargetFps = isAv1
       ? Math.max(1, Math.min(requestedTargetFps, av1CaptureFpsCap))
@@ -478,61 +446,8 @@ class WebCodecsConversionService {
       );
     }
 
-    // Cache capture mode reliability per-session to avoid repeatedly spending time
-    // probing a mode that consistently under-captures on this device/browser.
-    // This is intentionally session-scoped (sessionStorage) to avoid sticky behavior
-    // across browser updates.
-    const readSessionNumber = (key: string): number => {
-      try {
-        if (typeof sessionStorage === "undefined") {
-          return 0;
-        }
-        const raw = sessionStorage.getItem(key);
-        if (!raw) {
-          return 0;
-        }
-        const parsed = Number(raw);
-        return Number.isFinite(parsed) ? parsed : 0;
-      } catch {
-        return 0;
-      }
-    };
-
-    const writeSessionNumber = (key: string, value: number) => {
-      try {
-        if (typeof sessionStorage === "undefined") {
-          return;
-        }
-        sessionStorage.setItem(key, String(value));
-      } catch {
-        // Ignore storage failures (privacy modes / disabled storage).
-      }
-    };
-
-    const getAv1SeekFpsCap = (durationSeconds?: number): number => {
-      // Adaptive FPS capping for mixed workload
-      // Short clips: prioritize quality, medium/long: prioritize speed
-      const isShort = !durationSeconds || durationSeconds < 4;
-      const isMedium =
-        typeof durationSeconds === "number" &&
-        Number.isFinite(durationSeconds) &&
-        durationSeconds >= 4 &&
-        durationSeconds < 30;
-
-      if (isShort) {
-        return 12; // Short clips: maintain quality
-      }
-      if (isMedium) {
-        return options.quality === "high" ? 10 : 8; // Medium: balance speed/quality
-      }
-      // Long videos (>=30s): aggressive FPS capping for speed
-      return options.quality === "high" ? 8 : 6;
-    };
-
-    const av1FrameCallbackFailureKey =
-      "dropconvert:captureReliability:av1:frame-callback:failures";
     const av1FrameCallbackFailures = isAv1
-      ? readSessionNumber(av1FrameCallbackFailureKey)
+      ? readSessionStorageNumber(AV1_FRAME_CALLBACK_FAILURE_KEY)
       : 0;
     const shouldSkipAv1FrameCallbackProbe =
       isAv1 && supportsFrameCallback && av1FrameCallbackFailures >= 1;
@@ -694,7 +609,7 @@ class WebCodecsConversionService {
           "Skipping AV1 frame-callback probe due to repeated under-capture in this session; starting with seek",
           {
             failures: av1FrameCallbackFailures,
-            key: av1FrameCallbackFailureKey,
+            key: AV1_FRAME_CALLBACK_FAILURE_KEY,
             codec: metadata?.codec ?? "unknown",
           }
         );
@@ -702,7 +617,13 @@ class WebCodecsConversionService {
 
       const initialSeekTargetFps =
         initialCaptureMode === "seek" && isAv1
-          ? Math.min(effectiveTargetFps, getAv1SeekFpsCap(metadata?.duration))
+          ? Math.min(
+              effectiveTargetFps,
+              getAv1SeekFpsCap({
+                durationSeconds: metadata?.duration,
+                quality: options.quality,
+              })
+            )
           : effectiveTargetFps;
 
       // Track decode timing for performance caching (use the final successful attempt)
@@ -742,7 +663,13 @@ class WebCodecsConversionService {
 
         const fallbackSeekTargetFps =
           fallbackInitial === "seek" && isAv1
-            ? Math.min(effectiveTargetFps, getAv1SeekFpsCap(metadata?.duration))
+            ? Math.min(
+                effectiveTargetFps,
+                getAv1SeekFpsCap({
+                  durationSeconds: metadata?.duration,
+                  quality: options.quality,
+                })
+              )
             : effectiveTargetFps;
 
         const attempt = await runDecodeWithTiming(
@@ -776,8 +703,8 @@ class WebCodecsConversionService {
           (decodeResult.captureModeUsed ?? initialCaptureMode) ===
             "frame-callback"
         ) {
-          writeSessionNumber(
-            av1FrameCallbackFailureKey,
+          writeSessionStorageNumber(
+            AV1_FRAME_CALLBACK_FAILURE_KEY,
             av1FrameCallbackFailures + 1
           );
         }
@@ -914,7 +841,10 @@ class WebCodecsConversionService {
             // To reduce total conversion time while preserving correct playback duration
             // (via duration-aligned timestamps), cap seek sampling FPS more aggressively
             // for longer clips. For medium/low quality we prefer speed over maximum smoothness.
-            const av1SeekFpsCap = getAv1SeekFpsCap(decodeResult.duration);
+            const av1SeekFpsCap = getAv1SeekFpsCap({
+              durationSeconds: decodeResult.duration,
+              quality: options.quality,
+            });
             const seekTargetFps = isAv1
               ? Math.min(effectiveTargetFps, av1SeekFpsCap)
               : effectiveTargetFps;
@@ -972,7 +902,7 @@ class WebCodecsConversionService {
           modeUsed === "frame-callback" &&
           decodeResult.frameCount >= requiredFrames
         ) {
-          writeSessionNumber(av1FrameCallbackFailureKey, 0);
+          writeSessionStorageNumber(AV1_FRAME_CALLBACK_FAILURE_KEY, 0);
         }
       }
 
@@ -1624,192 +1554,33 @@ class WebCodecsConversionService {
       ): Promise<Blob> => {
         throwIfCancelled();
         encoderBackendUsed = "ffmpeg";
-        // H.264 intermediate path already attempted at the start of convert()
-        // Skip redundant retry and go directly to FFmpeg frame re-extraction
-        logger.warn(
-          "conversion",
-          "WebCodecs encoder failed, retrying with FFmpeg frames",
-          {
-            error: errorMessage,
-          }
-        );
 
-        if (!ffmpegService.isLoaded()) {
-          await ffmpegService.initialize();
-        }
-
-        capturedFrames.length = 0;
-        webpCapturedFrames.length = 0;
-        webpFrameTimestamps.length = 0;
-
-        ffmpegService.reportStatus(
-          `Retrying ${format.toUpperCase()} encode with FFmpeg...`
-        );
-        ffmpegService.reportProgress(decodeStart);
-
-        const fallbackFrameFiles: string[] = [];
-        let fallbackResult: Awaited<
-          ReturnType<WebCodecsDecoderService["decodeToFrames"]>
-        >;
-        let lastValidFallbackFrame: Uint8Array | null = null;
-
-        try {
-          fallbackResult = await decoder.decodeToFrames({
-            file,
-            targetFps,
-            scale,
-            frameFormat: FFMPEG_INTERNALS.WEBCODECS.FRAME_FORMAT,
-            frameQuality: FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY,
-            framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
-            frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
-            frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-            captureMode: "auto",
-            codec: metadata?.codec,
-            quality: options.quality,
-            shouldCancel,
-            onProgress: reportDecodeProgress,
-            onFrame: async (frame) => {
-              throwIfCancelled();
-              if (!frame.data || frame.data.byteLength === 0) {
-                if (!lastValidFallbackFrame) {
-                  throw new Error(
-                    "WebCodecs did not provide encoded frame data."
-                  );
-                }
-
-                const reusedFrame = new Uint8Array(lastValidFallbackFrame);
-                logger.warn(
-                  "conversion",
-                  "WebCodecs produced empty fallback frame data, reusing last frame",
-                  {
-                    frameName: frame.name,
-                    frameIndex: frame.index,
-                  }
-                );
-                await ffmpegService.writeVirtualFile(frame.name, reusedFrame);
-                fallbackFrameFiles.push(frame.name);
-                return;
-              }
-
-              const encodedFrame = new Uint8Array(frame.data);
-              lastValidFallbackFrame = encodedFrame;
-              await ffmpegService.writeVirtualFile(frame.name, encodedFrame);
-              fallbackFrameFiles.push(frame.name);
-            },
-          });
-        } catch (fallbackError) {
-          if (fallbackFrameFiles.length > 0) {
-            await ffmpegService.deleteVirtualFiles(fallbackFrameFiles);
-          }
-          throw fallbackError;
-        }
-
-        // CRITICAL: Validate fallback frame capture completeness
-        // Incomplete sequences here will definitely hang the FFmpeg encoder
-        const validationExpectedFrames = Math.max(
-          1,
-          Math.ceil(
-            Math.max(0, fallbackResult.duration) * Math.max(1, targetFps)
-          )
-        );
-        const captureRatio =
-          fallbackResult.frameCount / validationExpectedFrames;
-        const minRequiredRatio = 0.5;
-        const minAbsoluteFrames = 10;
-
-        if (
-          fallbackResult.frameCount < minAbsoluteFrames ||
-          captureRatio < minRequiredRatio
-        ) {
-          // Cleanup files before throwing
-          if (fallbackFrameFiles.length > 0) {
-            await ffmpegService.deleteVirtualFiles(fallbackFrameFiles);
-          }
-
-          const errorMsg =
-            `Fallback frame extraction incomplete: captured ${fallbackResult.frameCount} of ${validationExpectedFrames} frames ` +
-            `(${(captureRatio * 100).toFixed(1)}%). Minimum required: ${
-              minRequiredRatio * 100
-            }%.`;
-
-          logger.error("conversion", errorMsg, {
-            captured: fallbackResult.frameCount,
-            expected: validationExpectedFrames,
-            duration: fallbackResult.duration,
-          });
-
-          // Last-resort fallback: avoid hard-failing when WebCodecs frame capture is incomplete.
-          // This can happen on some devices/browsers even when FFmpeg can still transcode directly.
-          logger.warn(
-            "conversion",
-            "Falling back to FFmpeg direct conversion after incomplete frame capture",
-            {
-              format,
-              captured: fallbackResult.frameCount,
-              expected: validationExpectedFrames,
-              captureRatio,
-              minRequiredRatio,
-              minAbsoluteFrames,
-            }
-          );
-
-          return format === "webp"
-            ? await ffmpegService.convertToWebP(file, options, metadata)
-            : await ffmpegService.convertToGIF(file, options, metadata);
-        }
-
-        const fallbackDurationSeconds = this.resolveAnimationDurationSeconds(
-          fallbackResult.frameCount,
-          targetFps,
-          metadata,
-          fallbackResult.duration
-        );
-
-        const fallbackFps = this.resolveWebPFps(
-          fallbackResult.frameCount,
-          targetFps,
-          fallbackDurationSeconds
-        );
-
-        if (fallbackFps !== targetFps) {
-          logger.info(
-            "conversion",
-            "Adjusted fallback WebP FPS to preserve pacing",
-            {
-              targetFps,
-              adjustedFps: fallbackFps,
-              frameCount: fallbackResult.frameCount,
-              durationSeconds:
-                fallbackDurationSeconds ?? fallbackResult.duration,
-            }
-          );
-        }
-
-        const fallbackBlob = await ffmpegService.encodeFrameSequence({
-          format: format as "gif" | "webp",
+        return await encodeWithFFmpegFallbackUtil({
+          format,
+          file,
           options,
-          frameCount: fallbackResult.frameCount,
-          fps: fallbackFps,
-          durationSeconds:
-            fallbackDurationSeconds ??
-            metadata?.duration ??
-            fallbackResult.duration,
-          frameFiles: fallbackFrameFiles,
+          metadata,
+          errorMessage,
+          decoder,
+          targetFps,
+          scale,
+          reportDecodeProgress,
+          shouldCancel,
+          throwIfCancelled,
+          resetCaptureCollections: () => {
+            capturedFrames.length = 0;
+            webpCapturedFrames.length = 0;
+            webpFrameTimestamps.length = 0;
+          },
         });
-
-        // Attach encoder metadata for observability
-        const fallbackBlobWithMetadata = fallbackBlob as ConversionOutputBlob;
-        fallbackBlobWithMetadata.encoderBackendUsed = "ffmpeg";
-        return fallbackBlobWithMetadata;
       };
 
       let outputBlob: Blob;
 
       if (useModernGif && this.gifWorkerPool) {
-        // Use worker pool for GIF encoding
         try {
-          // Convert ImageData to serializable format for worker transfer
-          // ImageData objects cannot be cloned by postMessage - must transfer underlying buffer
+          // Convert ImageData to serializable format for worker transfer.
+          // ImageData objects cannot be cloned by postMessage - must transfer underlying buffer.
           const serializableFrames = capturedFrames.map((frame) => ({
             data: frame.data,
             width: frame.width,
