@@ -22,6 +22,7 @@ import { strategyRegistryService } from '@services/orchestration/strategy-regist
 import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
 import { isAv1Codec, isH264Codec, isHevcCodec, normalizeCodecString } from '@utils/codec-utils';
 import { detectContainerFormat } from '@utils/container-utils';
+import { createId } from '@utils/create-id';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { ffmpegService } from '@services/ffmpeg-service'; // Legacy service (will be replaced in Phase 4)
@@ -52,7 +53,7 @@ class ConversionOrchestrator {
     statusMessage: '',
   };
 
-  private progressReporter: ProgressReporter | null = null;
+  private activeOperationId: string | null = null;
   private webavService: WebAVMP4Service | null = null;
   private abortController: AbortController | null = null;
 
@@ -72,8 +73,17 @@ class ConversionOrchestrator {
     let conversionStart = perfStart;
     let debugOutcome: ConversionDebugOutcome | undefined;
 
+    const operationId = createId();
+    this.activeOperationId = operationId;
+    const isActive = () => this.activeOperationId === operationId;
+
     // Initialize AbortController for cancellation support
-    this.abortController = new AbortController();
+    const abortController = new AbortController();
+    this.abortController = abortController;
+
+    const throwIfAborted = () => {
+      this.throwIfAborted(abortController.signal);
+    };
 
     // Capture the planned path/codec so failures can be attributed correctly.
     // This improves session-scoped learning and reduces repeated failing attempts.
@@ -82,56 +92,62 @@ class ConversionOrchestrator {
 
     try {
       // Update status
-      this.status = {
-        isConverting: true,
-        progress: 0,
-        statusMessage: 'Initializing conversion...',
-        phase: 'initializing',
-      };
+      if (isActive()) {
+        this.status = {
+          isConverting: true,
+          progress: 0,
+          statusMessage: 'Initializing conversion...',
+          phase: 'initializing',
+        };
+      }
 
       // Ensure log output is annotated with a progress indicator from the very beginning
       // of the conversion lifecycle, even before the first progress tick is emitted.
       logger.setConversionProgress(0);
 
       // Create progress reporter
-      this.progressReporter = new ProgressReporter({
+      const progressReporter = new ProgressReporter({
+        isActive,
         onProgress: (progress) => {
+          if (!isActive()) return;
           this.status.progress = progress;
           request.onProgress?.(progress);
         },
         onStatus: (message) => {
+          if (!isActive()) return;
           this.status.statusMessage = message;
           request.onStatus?.(message);
         },
       });
 
       // Define phases
-      this.progressReporter.definePhases([
+      progressReporter.definePhases([
         { name: 'initialization', weight: 1 },
         { name: 'analysis', weight: 1 },
         { name: 'conversion', weight: 18 }, // Main work
       ]);
 
       // Phase 1: Initialization
-      this.progressReporter.startPhase('initialization', 'Initializing...');
+      progressReporter.startPhase('initialization', 'Initializing...');
       // Warm up capability probing early to reduce latency for the planning step.
       // Intentionally non-blocking to keep UI responsive.
       void capabilityService.detectCapabilities().catch(() => undefined);
       void extendedCapabilityService.detectCapabilities().catch(() => undefined);
-      this.progressReporter.report(1.0);
+      progressReporter.report(1.0);
 
       // Phase 2: Analysis
-      this.progressReporter.startPhase('analysis', 'Analyzing video...');
+      progressReporter.startPhase('analysis', 'Analyzing video...');
       analysisStart = performance.now();
 
-      this.throwIfAborted();
+      throwIfAborted();
       const { selection: pathSelection, metadata: plannedMetadata } = await this.selectPath({
         file: request.file,
         format: request.format,
         metadata: request.metadata,
+        abortSignal: abortController.signal,
       });
 
-      this.throwIfAborted();
+      throwIfAborted();
 
       plannedSelection = pathSelection;
       plannedCodecForHistory = plannedMetadata?.codec ?? plannedCodecForHistory;
@@ -143,8 +159,8 @@ class ConversionOrchestrator {
           ? await this.resolveMetadata(request.file, plannedMetadata)
           : plannedMetadata;
 
-      this.throwIfAborted();
-      this.progressReporter.report(1.0);
+      throwIfAborted();
+      progressReporter.report(1.0);
 
       logger.info('conversion', 'Starting conversion', {
         file: request.file.name,
@@ -181,7 +197,7 @@ class ConversionOrchestrator {
       }
 
       // Phase 3: Conversion
-      this.progressReporter.startPhase('conversion', 'Converting...');
+      progressReporter.startPhase('conversion', 'Converting...');
       conversionStart = performance.now();
 
       const conversionMetadata: ConversionMetadata = {
@@ -197,11 +213,21 @@ class ConversionOrchestrator {
       // Execute based on selected path
       switch (pathSelection.path) {
         case 'webav':
-          blob = await this.convertViaWebAVPath(request, metadata, conversionMetadata);
+          blob = await this.convertViaWebAVPath(
+            request,
+            metadata,
+            conversionMetadata,
+            progressReporter
+          );
           break;
 
         case 'gpu':
-          blob = await this.convertViaGPUPath(request, metadata, conversionMetadata);
+          blob = await this.convertViaGPUPath(
+            request,
+            metadata,
+            conversionMetadata,
+            abortController.signal
+          );
           break;
 
         case 'hybrid':
@@ -211,6 +237,13 @@ class ConversionOrchestrator {
         default:
           blob = await this.convertViaCPUPath(request, metadata, conversionMetadata);
           break;
+      }
+
+      // If the user cancelled (or this operation was superseded), do not treat the result
+      // as a successful conversion. This avoids late-arriving completions mutating shared
+      // UI/log state after rapid cancel/retry.
+      if (!isActive() || abortController.signal.aborted) {
+        throw new Error('Conversion cancelled by user');
       }
 
       // Update final metadata
@@ -241,13 +274,15 @@ class ConversionOrchestrator {
         });
       }
 
-      this.progressReporter.complete('Conversion complete');
+      progressReporter.complete('Conversion complete');
 
-      this.status = {
-        isConverting: false,
-        progress: 100,
-        statusMessage: 'Complete',
-      };
+      if (isActive()) {
+        this.status = {
+          isConverting: false,
+          progress: 100,
+          statusMessage: 'Complete',
+        };
+      }
 
       logger.info('conversion', 'Conversion completed successfully', {
         file: request.file.name,
@@ -299,22 +334,27 @@ class ConversionOrchestrator {
         metadata: conversionMetadata,
       };
     } catch (error) {
-      // Check if the conversion was cancelled
-      const wasCancelled = this.abortController?.signal.aborted ?? false;
+      // Check if the conversion was cancelled or superseded by a newer conversion.
+      const wasCancelled = abortController.signal.aborted;
+      const wasSuperseded = !isActive();
 
-      if (wasCancelled) {
+      if (wasCancelled || wasSuperseded) {
         debugOutcome = 'cancelled';
         if (import.meta.env.DEV) {
           updateConversionAutoSelectionDebug({
             outcome: debugOutcome,
           });
         }
-        logger.info('conversion', 'Conversion was cancelled by user');
-        this.status = {
-          isConverting: false,
-          progress: this.status.progress,
-          statusMessage: 'Cancelled by user',
-        };
+        if (!wasSuperseded) {
+          logger.info('conversion', 'Conversion was cancelled by user');
+        }
+        if (isActive()) {
+          this.status = {
+            isConverting: false,
+            progress: this.status.progress,
+            statusMessage: 'Cancelled by user',
+          };
+        }
         throw new Error('Conversion cancelled by user');
       }
 
@@ -326,11 +366,13 @@ class ConversionOrchestrator {
         });
       }
 
-      this.status = {
-        isConverting: false,
-        progress: 0,
-        statusMessage: 'Error',
-      };
+      if (isActive()) {
+        this.status = {
+          isConverting: false,
+          progress: 0,
+          statusMessage: 'Error',
+        };
+      }
 
       const errorMessage = getErrorMessage(error);
 
@@ -380,11 +422,16 @@ class ConversionOrchestrator {
         });
       }
 
-      this.progressReporter = null;
-      this.abortController = null;
+      // Only the currently-active operation may clear shared orchestrator state.
+      // This prevents late-arriving completions from a stale conversion from
+      // nulling out the progress reporter/abort controller of a newer conversion.
+      if (isActive()) {
+        this.abortController = null;
+        this.activeOperationId = null;
 
-      // Defensive: ensure the progress decoration never leaks into subsequent logs.
-      logger.clearConversionProgress();
+        // Defensive: ensure the progress decoration never leaks into subsequent logs.
+        logger.clearConversionProgress();
+      }
     }
   }
 
@@ -434,8 +481,9 @@ class ConversionOrchestrator {
    * continue doing expensive work (demuxer init, capability probing) after
    * the user has already cancelled.
    */
-  private throwIfAborted(): void {
-    if (this.abortController?.signal.aborted) {
+  private throwIfAborted(signal?: AbortSignal): void {
+    const abortSignal = signal ?? this.abortController?.signal;
+    if (abortSignal?.aborted) {
       throw new Error('Conversion aborted');
     }
   }
@@ -522,19 +570,20 @@ class ConversionOrchestrator {
     file: File;
     format: ConversionFormat;
     metadata?: VideoMetadata;
+    abortSignal: AbortSignal;
   }): Promise<{
     selection: PathSelection;
     metadata: VideoMetadata | undefined;
   }> {
     const { file, format } = params;
 
-    this.throwIfAborted();
+    this.throwIfAborted(params.abortSignal);
 
     // WebAV path for MP4 (native WebCodecs pipeline).
     if (format === 'mp4') {
-      this.throwIfAborted();
+      this.throwIfAborted(params.abortSignal);
       const webavService = await this.getWebAVService();
-      this.throwIfAborted();
+      this.throwIfAborted(params.abortSignal);
       const webavAvailable = await webavService.isAvailable();
       if (!webavAvailable) {
         throw new Error('MP4 conversion is not available in this browser (WebAV required).');
@@ -569,15 +618,15 @@ class ConversionOrchestrator {
       throw new Error(`Unsupported format: ${format}`);
     }
 
-    this.throwIfAborted();
+    this.throwIfAborted(params.abortSignal);
     const plan = await videoPipelineService.planPipeline({
       file,
       format,
-      abortSignal: this.abortController?.signal ?? undefined,
+      abortSignal: params.abortSignal,
       metadata: params.metadata,
     });
 
-    this.throwIfAborted();
+    this.throwIfAborted(params.abortSignal);
 
     const plannedMetadata =
       params.metadata ??
@@ -600,7 +649,7 @@ class ConversionOrchestrator {
     // cached capabilities are still defaults on first run.
     const extendedCaps = await extendedCapabilityService.detectCapabilities();
 
-    this.throwIfAborted();
+    this.throwIfAborted(params.abortSignal);
     const codecForStrategy = plannedMetadata?.codec ?? plan.track?.codec ?? 'unknown';
 
     const strategy = strategyRegistryService.getStrategy({
@@ -688,7 +737,8 @@ class ConversionOrchestrator {
   private async convertViaWebAVPath(
     request: ConversionRequest,
     metadata: VideoMetadata | undefined,
-    conversionMetadata: ConversionMetadata
+    conversionMetadata: ConversionMetadata,
+    progressReporter: ProgressReporter
   ) {
     logger.info('conversion', 'Executing WebAV path conversion', {
       format: request.format,
@@ -713,7 +763,7 @@ class ConversionOrchestrator {
         (progress: number) => {
           // Map 0-100 to conversion phase progress
           const phaseProgress = Math.round(progress);
-          this.progressReporter?.report(phaseProgress / 100);
+          progressReporter.report(phaseProgress / 100);
           request.onProgress?.(phaseProgress);
         }
       );
@@ -743,7 +793,8 @@ class ConversionOrchestrator {
   private async convertViaGPUPath(
     request: ConversionRequest,
     metadata: VideoMetadata | undefined,
-    conversionMetadata: ConversionMetadata
+    conversionMetadata: ConversionMetadata,
+    abortSignal?: AbortSignal
   ) {
     logger.info('conversion', 'Executing GPU path conversion', {
       format: request.format,
@@ -776,7 +827,7 @@ class ConversionOrchestrator {
       request.format,
       request.options,
       metadata,
-      this.getAbortSignal() ?? undefined
+      abortSignal
     );
 
     if (result) {

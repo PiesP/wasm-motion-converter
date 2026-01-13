@@ -43,6 +43,13 @@ export interface ProgressReporterConfig {
   onStatus?: (message: string) => void;
   /** Whether to round progress to integers (default: true) */
   roundProgress?: boolean;
+  /**
+   * Whether the reporter is still allowed to emit progress/status updates.
+   *
+   * Useful when multiple conversions overlap in-flight (e.g., rapid cancel/retry)
+   * and a stale conversion should not mutate global UI state or log prefixes.
+   */
+  isActive?: () => boolean;
 }
 
 /**
@@ -81,6 +88,7 @@ export class ProgressReporter {
       onProgress: config.onProgress || (() => {}),
       onStatus: config.onStatus || (() => {}),
       roundProgress: config.roundProgress !== false, // Default true
+      isActive: config.isActive || (() => true),
     };
   }
 
@@ -165,7 +173,7 @@ export class ProgressReporter {
 
     this.currentPhase = name;
 
-    if (statusMessage) {
+    if (statusMessage && this.config.isActive()) {
       this.config.onStatus(statusMessage);
     }
 
@@ -219,6 +227,10 @@ export class ProgressReporter {
    * reporter.reportAbsolute(75); // Reports exactly 75%
    */
   reportAbsolute(progress: number): void {
+    if (!this.config.isActive()) {
+      return;
+    }
+
     const clamped = Math.min(100, Math.max(0, progress));
     const final = this.config.roundProgress ? Math.round(clamped) : clamped;
 
@@ -240,6 +252,9 @@ export class ProgressReporter {
    * reporter.updateStatus('Processing frame 50/100...');
    */
   updateStatus(message: string): void {
+    if (!this.config.isActive()) {
+      return;
+    }
     this.config.onStatus(message);
   }
 
@@ -254,7 +269,7 @@ export class ProgressReporter {
   complete(statusMessage?: string): void {
     this.reportAbsolute(100);
 
-    if (statusMessage) {
+    if (statusMessage && this.config.isActive()) {
       this.config.onStatus(statusMessage);
     }
 
