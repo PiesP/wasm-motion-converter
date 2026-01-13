@@ -153,8 +153,6 @@ export function selectStrategy(connectionType?: ConnectionType): StrategyRecomme
         enablePrefetch: false,
         enableParallelRacing: false,
       };
-
-    case 'unknown':
     default:
       // Unknown: Conservative sequential cascade
       return {

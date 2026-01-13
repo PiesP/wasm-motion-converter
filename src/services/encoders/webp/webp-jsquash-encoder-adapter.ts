@@ -65,6 +65,14 @@ export class WebPJsquashEncoderAdapter implements EncoderAdapter {
     requiresSharedArrayBuffer: false,
     maxFrames: WEBP_ANIMATION_MAX_FRAMES,
     maxDimension: undefined,
+    /**
+     * Performance score: 6/10 (Medium)
+     *
+     * WASM-based libwebp encoder with worker parallelization.
+     * Provides good fallback when native WebP encoding is unavailable,
+     * but slower than native canvas.toBlob(). Used as compatibility layer.
+     */
+    performanceScore: 6,
   };
 
   private workers: Array<Comlink.Remote<WebPJsquashWorkerApi>> = [];

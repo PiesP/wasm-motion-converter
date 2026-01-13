@@ -24,6 +24,13 @@ export class GIFEncoderAdapter implements EncoderAdapter {
     requiresSharedArrayBuffer: false,
     maxFrames: undefined,
     maxDimension: undefined,
+    /**
+     * Performance score: 8/10 (Fast)
+     *
+     * gifski-wasm with worker support provides excellent GIF encoding speed.
+     * Log data: H.264→GIF in ~3.25s. Highly optimized palette generation and dithering.
+     */
+    performanceScore: 8,
   };
 
   /**

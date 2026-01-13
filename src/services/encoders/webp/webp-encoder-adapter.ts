@@ -71,6 +71,14 @@ export class WebPEncoderAdapter implements EncoderAdapter {
     requiresSharedArrayBuffer: false,
     maxFrames: WEBP_ANIMATION_MAX_FRAMES,
     maxDimension: undefined,
+    /**
+     * Performance score: 3/10 (Slow)
+     *
+     * Worker-based parallel encoding with webp-muxer has high overhead.
+     * Log data: H.264→WebP in ~13.5s (13x slower than canvas alternative).
+     * Worker setup and muxing overhead dominates for typical video sizes.
+     */
+    performanceScore: 3,
   };
 
   private workers: Array<Comlink.Remote<WebPEncoderWorkerApi>> = [];

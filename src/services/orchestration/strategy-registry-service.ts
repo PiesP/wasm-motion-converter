@@ -263,6 +263,19 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
 ]);
 
 class StrategyRegistryService {
+  /**
+   * History confidence threshold for adaptive path selection
+   *
+   * Minimum confidence required to use historical data for strategy selection.
+   * Reduced from 0.6 to 0.4 to enable faster adaptation:
+   * - 0.4 confidence ≈ 3 successful conversions
+   * - 0.6 confidence ≈ 5 successful conversions
+   *
+   * Lower threshold allows system to learn optimal paths more quickly
+   * while still requiring meaningful statistical signal.
+   */
+  private static readonly HISTORY_CONFIDENCE_THRESHOLD = 0.4;
+
   // Runtime overrides from historical data (populated by StrategyHistoryService)
   private runtimeOverrides = new Map<string, CodecPathPreference>();
 
@@ -303,31 +316,40 @@ class StrategyRegistryService {
 
   private shouldPreferGpuForGif(codec: string, capabilities: ExtendedCapabilities): boolean {
     const normalized = this.normalizeCodec(codec);
+
+    // WebCodecs decode required for GPU path
     if (!capabilities.webcodecsDecode) {
       return false;
     }
 
+    // Codec must be supported
     if (!this.hasCodecSupport(normalized, capabilities)) {
       return false;
     }
 
+    // AV1 always prefers GPU (no efficient CPU decode)
     if (isAv1Codec(normalized)) {
       return true;
     }
 
-    if (!isHevcCodec(normalized)) {
-      return false;
+    // Check hardware decode support for HEVC and H.264
+    if (isHevcCodec(normalized) || isH264Codec(normalized)) {
+      const hint = this.getCodecHardwareDecodeHint(normalized, capabilities);
+
+      // Explicit hardware decode hint takes precedence
+      if (hint === false) {
+        return false; // No hardware support, stay on CPU
+      }
+
+      if (hint === true) {
+        return true; // Hardware decode confirmed
+      }
+
+      // No explicit hint - fall back to general hardware acceleration flag
+      return capabilities.hardwareAccelerated;
     }
 
-    const hint = this.getCodecHardwareDecodeHint(normalized, capabilities);
-    if (hint === false) {
-      return false;
-    }
-
-    if (hint === true) {
-      return true;
-    }
-
+    // VP8/VP9 or other codecs: use GPU only if generally hardware accelerated
     return capabilities.hardwareAccelerated;
   }
 
@@ -441,7 +463,10 @@ class StrategyRegistryService {
     // If we have enough successful signal, prefer the historically successful path.
     const history = strategyHistoryService.getHistory(codec, format);
     const recommended = strategyHistoryService.getRecommendedPath(codec, format);
-    if (recommended && recommended.confidence >= 0.6) {
+    if (
+      recommended &&
+      recommended.confidence >= StrategyRegistryService.HISTORY_CONFIDENCE_THRESHOLD
+    ) {
       const preferredPath = recommended.path;
       const fallbackPath: ConversionPath = preferredPath === 'gpu' ? 'cpu' : 'gpu';
 

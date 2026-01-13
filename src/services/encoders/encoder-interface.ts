@@ -80,6 +80,7 @@ export interface EncoderRequest {
  * - Output format needed
  * - Browser capabilities (workers, SharedArrayBuffer)
  * - Input constraints (max frames, max dimensions)
+ * - Performance characteristics (relative speed)
  *
  * @example
  * const capabilities: EncoderCapabilities = {
@@ -87,7 +88,8 @@ export interface EncoderRequest {
  *   supportsWorkers: true,
  *   requiresSharedArrayBuffer: false,
  *   maxFrames: 240,
- *   maxDimension: 2048
+ *   maxDimension: 2048,
+ *   performanceScore: 8
  * };
  */
 export interface EncoderCapabilities {
@@ -101,6 +103,22 @@ export interface EncoderCapabilities {
   maxFrames?: number;
   /** Maximum frame dimension (width or height, undefined = no limit) */
   maxDimension?: number;
+  /**
+   * Performance score (1-10 scale, higher = faster)
+   *
+   * Relative performance rating for encoder selection. The factory uses this
+   * to prioritize faster encoders when multiple options are available.
+   *
+   * Guidelines:
+   * - 9-10: Very fast (GPU-accelerated, native browser APIs)
+   * - 7-8: Fast (optimized WASM, efficient algorithms)
+   * - 5-6: Medium (balanced implementation)
+   * - 3-4: Slow (complex processing, unoptimized)
+   * - 1-2: Very slow (last resort, compatibility fallback)
+   *
+   * @default 5
+   */
+  performanceScore?: number;
 }
 
 /**

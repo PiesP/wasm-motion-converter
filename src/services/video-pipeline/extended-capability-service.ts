@@ -8,8 +8,8 @@
  * - localStorage["extended_video_caps_v4"]
  * - window.__EXTENDED_VIDEO_CAPS__ (dev mode)
  *
- * TTL: 7 days
- * Invalidation: hardware profile change, version bump, TTL expiry
+ * TTL: 24 hours
+ * Invalidation: hardware profile change, version bump, TTL expiry, browser updates
  */
 
 import type { ExtendedCapabilities } from '@t/video-pipeline-types';
@@ -24,7 +24,16 @@ import { logger } from '@utils/logger';
 // could throw and incorrectly report codecs as unsupported.
 const STORAGE_KEY = 'extended_video_caps_v4' as const;
 const DETECTION_VERSION = 6 as const;
-const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+/**
+ * Capability cache TTL (24 hours)
+ *
+ * Reduced from 7 days to be more responsive to:
+ * - GPU driver updates
+ * - Browser updates
+ * - Hardware availability changes
+ * - WebCodecs API changes
+ */
+const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * Cached extended capabilities with TTL and version

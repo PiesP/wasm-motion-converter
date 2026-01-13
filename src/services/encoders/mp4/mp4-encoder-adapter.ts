@@ -45,6 +45,14 @@ export class MP4EncoderAdapter implements EncoderAdapter {
     requiresSharedArrayBuffer: false,
     maxFrames: undefined, // No practical limit for MP4
     maxDimension: 4096, // WebCodecs typical limit (4K)
+    /**
+     * Performance score: 9/10 (Very fast)
+     *
+     * Hardware-accelerated VideoEncoder with H.264 encoding.
+     * Native browser API with GPU acceleration for encoding,
+     * typically the fastest option for MP4 output.
+     */
+    performanceScore: 9,
   };
 
   private encoder: VideoEncoder | null = null;

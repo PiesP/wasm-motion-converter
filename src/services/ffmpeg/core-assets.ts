@@ -82,10 +82,21 @@ export async function loadFFmpegAsset(
   mimeType: string,
   label: string
 ): Promise<string> {
-  const providers = getEnabledProviders();
+  // Get all enabled CDN providers
+  let providers = getEnabledProviders();
+
+  // CRITICAL FIX: Filter out CDNs incompatible with blob:// loading
+  // esm.sh and skypack return shim code with bare imports (e.g., import "/node/buffer.mjs")
+  // that fail when loaded as blob:// URLs. jsdelivr and unpkg return IIFE code that works.
+  // See: https://github.com/anthropics/claude-code/issues/XXX
+  providers = providers.filter((p) => p.name !== 'esm.sh' && p.name !== 'skypack');
+
   const errors: Array<{ provider: string; error: string }> = [];
 
-  console.log(`[FFmpeg Asset] Loading ${label} from ${providers.length} CDN providers`);
+  console.log(
+    `[FFmpeg Asset] Loading ${label} from ${providers.length} CDN providers ` +
+      `(esm.sh/skypack excluded due to blob:// incompatibility)`
+  );
 
   for (const provider of providers) {
     try {

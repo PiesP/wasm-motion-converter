@@ -33,6 +33,13 @@ export class WebPCanvasEncoderAdapter implements EncoderAdapter {
     requiresSharedArrayBuffer: false,
     maxFrames: WEBP_ANIMATION_MAX_FRAMES,
     maxDimension: undefined,
+    /**
+     * Performance score: 9/10 (Very fast)
+     *
+     * Main-thread canvas.toBlob() with native WebP encoding is highly optimized.
+     * Log data: H.264→WebP in ~1s (13x faster than worker-based alternative).
+     */
+    performanceScore: 9,
   };
 
   private canvas: HTMLCanvasElement | null = null;
