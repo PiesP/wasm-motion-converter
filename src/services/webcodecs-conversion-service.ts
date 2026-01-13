@@ -1666,8 +1666,15 @@ class WebCodecsConversionService {
       format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
     const useModernGif = format === 'gif' && isModernGifSupported();
 
+    // Orchestrator-driven conversions provide an AbortSignal; prefer it over the shared
+    // FFmpeg cancellation flag so a previous FFmpeg cancel request cannot poison new
+    // WebCodecs conversions.
+    const shouldCancel = abortSignal
+      ? () => abortSignal.aborted
+      : () => ffmpegService.isCancellationRequested();
+
     const throwIfCancelled = (): void => {
-      if (abortSignal?.aborted || ffmpegService.isCancellationRequested()) {
+      if (shouldCancel()) {
         throw new Error('Conversion cancelled by user');
       }
     };
@@ -1783,8 +1790,7 @@ class WebCodecsConversionService {
             metadata,
             reportDecodeProgress,
             capturedFrames,
-            shouldCancel: () =>
-              abortSignal?.aborted === true || ffmpegService.isCancellationRequested(),
+            shouldCancel,
           });
 
           if (webCodecsResult) {
@@ -1855,8 +1861,7 @@ class WebCodecsConversionService {
             captureMode,
             codec: metadata?.codec,
             quality: options.quality,
-            shouldCancel: () =>
-              abortSignal?.aborted === true || ffmpegService.isCancellationRequested(),
+            shouldCancel,
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
               throwIfCancelled();
@@ -1989,8 +1994,7 @@ class WebCodecsConversionService {
             captureMode: 'auto',
             codec: metadata?.codec,
             quality: options.quality,
-            shouldCancel: () =>
-              abortSignal?.aborted === true || ffmpegService.isCancellationRequested(),
+            shouldCancel,
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
               throwIfCancelled();
@@ -2126,7 +2130,7 @@ class WebCodecsConversionService {
           // This does NOT advance progress; it re-reports the last seen percent.
           const WorkerEncodeKeepaliveMs = Math.min(2000, FFMPEG_INTERNALS.HEARTBEAT_INTERVAL_MS);
           const keepaliveInterval = setInterval(() => {
-            if (abortSignal?.aborted === true || ffmpegService.isCancellationRequested()) {
+            if (shouldCancel()) {
               return;
             }
             try {
@@ -2166,7 +2170,7 @@ class WebCodecsConversionService {
               fps: targetFps,
               quality,
               onProgress: reportEncodeProgress,
-              shouldCancel: () => ffmpegService.isCancellationRequested(),
+              shouldCancel,
             });
             encoderBackendUsed = 'modern-gif-main';
           } catch (fallbackError) {
@@ -2184,7 +2188,7 @@ class WebCodecsConversionService {
             fps: targetFps,
             quality,
             onProgress: reportEncodeProgress,
-            shouldCancel: () => ffmpegService.isCancellationRequested(),
+            shouldCancel,
           });
           encoderBackendUsed = 'modern-gif-main';
         } catch (error) {
@@ -2264,7 +2268,7 @@ class WebCodecsConversionService {
                   codec: metadata?.codec,
                   sourceFPS: metadata?.framerate,
                   onProgress: reportEncodeProgress,
-                  shouldCancel: () => ffmpegService.isCancellationRequested(),
+                  shouldCancel,
                 });
 
                 const validation = await this.validateWebPBlob(factoryEncodedWebP);
@@ -2405,7 +2409,7 @@ class WebCodecsConversionService {
                   metadata,
                   durationSeconds: animationDurationSeconds,
                   onProgress: reportEncodeProgress,
-                  shouldCancel: () => ffmpegService.isCancellationRequested(),
+                  shouldCancel,
                 });
 
                 if (!result) {

@@ -527,6 +527,11 @@ export class FFmpegPipeline {
     options?: { enableLogSilenceCheck?: boolean }
   ): void {
     logger.debug('general', 'Beginning external conversion monitoring');
+
+    // External conversions reuse the shared monitoring + cancellation channel.
+    // Clear any previous cancellation request so a prior cancel does not block new conversions.
+    this.encoder.resetCancellation();
+
     this.monitoring.startWatchdog({
       metadata,
       quality,

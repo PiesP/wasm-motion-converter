@@ -164,6 +164,9 @@ export class FFmpegEncoder {
       return false;
     }
     this.conversionLock = true;
+    // Cancellation is per-operation. Ensure a previous cancel request does not poison
+    // subsequent conversions.
+    this.cancellationRequested = false;
     return true;
   }
 
@@ -1315,5 +1318,16 @@ export class FFmpegEncoder {
    */
   isCancellationRequested(): boolean {
     return this.cancellationRequested;
+  }
+
+  /**
+   * Reset cancellation state.
+   *
+   * External conversions (e.g., WebCodecs decode/encode) can request cancellation via the
+   * shared FFmpeg monitoring pipeline. When a new conversion starts, we must clear the
+   * previous cancellation flag so subsequent operations can proceed.
+   */
+  resetCancellation(): void {
+    this.cancellationRequested = false;
   }
 }
