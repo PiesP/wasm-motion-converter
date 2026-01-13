@@ -15,7 +15,7 @@ import type {
 /**
  * Conversion path types
  */
-export type ConversionPath = 'gpu' | 'cpu' | 'hybrid' | 'webav';
+export type ConversionPath = 'gpu' | 'cpu' | 'webav';
 
 /**
  * Conversion request
@@ -58,7 +58,7 @@ export interface ConversionResponse {
  * Information about how the conversion was performed.
  */
 export interface ConversionMetadata {
-  /** Conversion path used (gpu, cpu, hybrid) */
+  /** Conversion path used (gpu, cpu, webav) */
   path: ConversionPath;
   /** Encoder name (e.g., 'modern-gif', 'libwebp-wasm', 'ffmpeg') */
   encoder: string;
@@ -103,14 +103,6 @@ export interface ConversionStatus {
   /** Current phase (e.g., 'initializing', 'decoding', 'encoding') */
   phase?: string;
 }
-
-// ============================================================================
-// HYBRID STRATEGY TYPES (Future Implementation)
-// ============================================================================
-// These types define the structure for codec-specific optimization strategies
-// that will be implemented in future iterations to fine-tune conversion paths
-// based on codec capabilities and performance characteristics.
-// ============================================================================
 
 /**
  * Codec-specific path preference

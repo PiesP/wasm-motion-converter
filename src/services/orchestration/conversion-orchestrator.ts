@@ -6,7 +6,7 @@
  * GPU (WebCodecs) and CPU (FFmpeg) paths.
  *
  * Architecture:
- * 1. Select conversion path (GPU vs CPU vs hybrid)
+ * 1. Select conversion path (GPU vs CPU vs WebAV)
  * 2. Resolve conversion strategy (FPS, scale, workers)
  * 3. Execute via appropriate path
  * 4. Return result with metadata
@@ -230,15 +230,6 @@ class ConversionOrchestrator {
 
         case 'gpu':
           blob = await this.convertViaGPUPath(
-            request,
-            metadata,
-            conversionMetadata,
-            abortController.signal
-          );
-          break;
-
-        case 'hybrid':
-          blob = await this.convertViaHybridPath(
             request,
             metadata,
             conversionMetadata,
@@ -901,30 +892,11 @@ class ConversionOrchestrator {
   }
 
   /**
-   * Convert via hybrid path (WebCodecs decode + FFmpeg encode)
-   *
-   * Hybrid path would combine WebCodecs hardware-accelerated decoding with FFmpeg encoding
-   * for optimal performance on formats where WebCodecs encoding is unavailable or slow.
-   *
-   * Currently not implemented - falls back to CPU path.
-   * Future optimization for VP9, AV1, and other complex codecs.
+   * Note: Hybrid path (WebCodecs decode + FFmpeg encode) was benchmarked
+   * in January 2026 and rejected due to catastrophic performance (47x slower
+   * than CPU path). See docs/TODO.md and tmp/benchmark-analysis-2026-01-13.md
+   * for details.
    */
-  private async convertViaHybridPath(
-    request: ConversionRequest,
-    metadata: VideoMetadata | undefined,
-    conversionMetadata: ConversionMetadata,
-    abortSignal: AbortSignal
-  ) {
-    logger.info('conversion', 'Executing hybrid path conversion (currently unavailable)', {
-      format: request.format,
-      codec: metadata?.codec,
-    });
-
-    // TODO: Implement hybrid path using WebCodecs frame extraction + FFmpeg encoding pipeline
-    // Phase 2.2 optimization: Extract frames via WebCodecs, encode via FFmpeg
-    logger.warn('conversion', 'Hybrid path not yet implemented, falling back to CPU');
-    return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
-  }
 
   /**
    * Convert via CPU path (FFmpeg direct)

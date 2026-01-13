@@ -817,7 +817,7 @@ class StrategyRegistryService {
    * Get alternative paths (for reasoning)
    */
   private getAlternativePaths(selectedPath: ConversionPath): ConversionPath[] {
-    const allPaths: ConversionPath[] = ['gpu', 'cpu', 'webav', 'hybrid'];
+    const allPaths: ConversionPath[] = ['gpu', 'cpu', 'webav'];
     return allPaths.filter((path) => path !== selectedPath);
   }
 
@@ -859,10 +859,6 @@ class StrategyRegistryService {
         return 'WebAV not available in this browser';
       }
       return 'Not optimal for this codec+format combination';
-    }
-
-    if (path === 'hybrid') {
-      return 'Hybrid path not yet implemented';
     }
 
     return 'Unknown rejection reason';
