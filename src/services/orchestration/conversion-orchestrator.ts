@@ -232,11 +232,21 @@ class ConversionOrchestrator {
           break;
 
         case 'hybrid':
-          blob = await this.convertViaHybridPath(request, metadata, conversionMetadata);
+          blob = await this.convertViaHybridPath(
+            request,
+            metadata,
+            conversionMetadata,
+            abortController.signal
+          );
           break;
 
         default:
-          blob = await this.convertViaCPUPath(request, metadata, conversionMetadata);
+          blob = await this.convertViaCPUPath(
+            request,
+            metadata,
+            conversionMetadata,
+            abortController.signal
+          );
           break;
       }
 
@@ -796,7 +806,7 @@ class ConversionOrchestrator {
     request: ConversionRequest,
     metadata: VideoMetadata | undefined,
     conversionMetadata: ConversionMetadata,
-    abortSignal?: AbortSignal
+    abortSignal: AbortSignal
   ) {
     logger.info('conversion', 'Executing GPU path conversion', {
       format: request.format,
@@ -808,7 +818,7 @@ class ConversionOrchestrator {
       logger.warn('conversion', 'GPU path does not support this format, falling back to FFmpeg', {
         format: request.format,
       });
-      return this.convertViaCPUPath(request, metadata, conversionMetadata);
+      return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
     }
 
     // For AV1 and other WebCodecs-required codecs, use WebCodecs service
@@ -847,7 +857,7 @@ class ConversionOrchestrator {
 
     // Fallback to CPU if WebCodecs fails
     logger.warn('conversion', 'GPU path (WebCodecs) failed, falling back to FFmpeg');
-    return this.convertViaCPUPath(request, metadata, conversionMetadata);
+    return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
   }
 
   /**
@@ -862,7 +872,8 @@ class ConversionOrchestrator {
   private async convertViaHybridPath(
     request: ConversionRequest,
     metadata: VideoMetadata | undefined,
-    conversionMetadata: ConversionMetadata
+    conversionMetadata: ConversionMetadata,
+    abortSignal: AbortSignal
   ) {
     logger.info('conversion', 'Executing hybrid path conversion (currently unavailable)', {
       format: request.format,
@@ -872,7 +883,7 @@ class ConversionOrchestrator {
     // TODO: Implement hybrid path using WebCodecs frame extraction + FFmpeg encoding pipeline
     // Phase 2.2 optimization: Extract frames via WebCodecs, encode via FFmpeg
     logger.warn('conversion', 'Hybrid path not yet implemented, falling back to CPU');
-    return this.convertViaCPUPath(request, metadata, conversionMetadata);
+    return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
   }
 
   /**
@@ -881,13 +892,18 @@ class ConversionOrchestrator {
   private async convertViaCPUPath(
     request: ConversionRequest,
     metadata: VideoMetadata | undefined,
-    conversionMetadata: ConversionMetadata
+    conversionMetadata: ConversionMetadata,
+    abortSignal: AbortSignal
   ): Promise<Blob> {
+    this.throwIfAborted(abortSignal);
+
     logger.info('conversion', 'Executing CPU path conversion (FFmpeg direct)', {
       format: request.format,
     });
 
     await this.ensureFFmpegInitialized();
+
+    this.throwIfAborted(abortSignal);
 
     conversionMetadata.encoder = 'ffmpeg';
     conversionMetadata.path = 'cpu';
@@ -902,9 +918,13 @@ class ConversionOrchestrator {
     // Use legacy FFmpeg service (will be replaced with ffmpeg-pipeline in Phase 4)
     // Call the appropriate method based on format
     if (request.format === 'gif') {
-      return await ffmpegService.convertToGIF(request.file, request.options, metadata);
+      const blob = await ffmpegService.convertToGIF(request.file, request.options, metadata);
+      this.throwIfAborted(abortSignal);
+      return blob;
     } else if (request.format === 'webp') {
-      return await ffmpegService.convertToWebP(request.file, request.options, metadata);
+      const blob = await ffmpegService.convertToWebP(request.file, request.options, metadata);
+      this.throwIfAborted(abortSignal);
+      return blob;
     } else {
       throw new Error(`Unsupported format for CPU path: ${request.format}`);
     }

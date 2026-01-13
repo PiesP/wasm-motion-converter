@@ -410,7 +410,23 @@ export class FFmpegPipeline {
    */
   cancelConversion(): void {
     logger.info('general', 'Cancellation requested');
+
+    // Always notify the encoder so it can stop at cooperative checkpoints.
     this.encoder.cancelConversion();
+
+    // FFmpeg exec() calls are not reliably interruptible.
+    // If an FFmpeg conversion is currently holding the pipeline lock, we must
+    // forcefully terminate the FFmpeg instance to ensure cancellation is timely
+    // and the lock is released so the user can start a new conversion.
+    if (this.conversionLock) {
+      try {
+        this.callbacks.onStatusUpdate?.('Terminating FFmpeg...');
+      } catch {
+        // Non-critical
+      }
+
+      this.terminate();
+    }
   }
 
   /**
