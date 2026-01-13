@@ -43,8 +43,9 @@ export async function tryEncodeWebPWithEncoderFactory(params: {
   }
 
   try {
+    // Get best encoder based on performance ranking (Phase 1 optimization)
+    // Don't specify preferWorkers - let performance score determine best encoder
     const encoder = await EncoderFactory.getEncoder('webp', {
-      preferWorkers: true,
       quality,
     });
 
