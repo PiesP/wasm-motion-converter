@@ -20,7 +20,7 @@ import { detectContainerFormat, isDemuxableContainer } from '@utils/container-ut
 
 import { capabilityService } from '@services/video-pipeline/capability-service';
 import { demuxerService } from '@services/video-pipeline/demuxer-service';
-import { encodeService, type EncodePath } from '@services/video-pipeline/encode-service';
+import { encodeService, type EncodePlan } from '@services/video-pipeline/encode-service';
 import { selectPipeline } from '@services/video-pipeline/pipeline-selector';
 import { createSingleton } from '@services/shared/singleton-service';
 
@@ -30,7 +30,7 @@ interface PipelinePlan {
   demuxer: { name: VideoDemuxer['name'] } | null;
   track: VideoTrackInfo | null;
   decodePath: PipelineType;
-  encodePath: EncodePath;
+  encodePlan: EncodePlan;
 }
 
 class VideoPipelineService {
@@ -48,7 +48,7 @@ class VideoPipelineService {
 
     logger.info('conversion', '[VideoCaps]', caps);
 
-    const encodePath = encodeService.selectEncodePath({
+    const defaultEncodePlan = encodeService.selectEncodePlan({
       format: params.format,
     });
 
@@ -56,7 +56,8 @@ class VideoPipelineService {
     if (container === 'avi' || container === 'wmv') {
       logger.info('conversion', '[Demuxer] ffmpeg', { container });
       logger.info('conversion', '[DecodePath] ffmpeg-wasm-full', { container });
-      logger.info('conversion', '[EncodePath]', { encodePath });
+      const encodePlan: EncodePlan = 'ffmpeg';
+      logger.info('conversion', '[EncodePlan]', { encodePlan });
 
       return {
         caps,
@@ -64,7 +65,7 @@ class VideoPipelineService {
         demuxer: null,
         track: null,
         decodePath: 'ffmpeg-wasm-full',
-        encodePath,
+        encodePlan,
       };
     }
 
@@ -72,7 +73,8 @@ class VideoPipelineService {
     if (!isDemuxableContainer(container)) {
       logger.info('conversion', '[Demuxer] ffmpeg', { container });
       logger.info('conversion', '[DecodePath] ffmpeg-wasm-full', { container });
-      logger.info('conversion', '[EncodePath]', { encodePath });
+      const encodePlan: EncodePlan = 'ffmpeg';
+      logger.info('conversion', '[EncodePlan]', { encodePlan });
 
       return {
         caps,
@@ -80,7 +82,7 @@ class VideoPipelineService {
         demuxer: null,
         track: null,
         decodePath: 'ffmpeg-wasm-full',
-        encodePath,
+        encodePlan,
       };
     }
 
@@ -97,7 +99,8 @@ class VideoPipelineService {
       const decodePath = selectPipeline(caps, track, container);
 
       logger.info('conversion', '[DecodePath]', { decodePath });
-      logger.info('conversion', '[EncodePath]', { encodePath });
+      const encodePlan = defaultEncodePlan;
+      logger.info('conversion', '[EncodePlan]', { encodePlan });
 
       return {
         caps,
@@ -105,7 +108,7 @@ class VideoPipelineService {
         demuxer: { name: demuxer.name },
         track,
         decodePath,
-        encodePath,
+        encodePlan,
       };
     } catch (error) {
       logger.error('conversion', 'video.pipeline planning failed', {

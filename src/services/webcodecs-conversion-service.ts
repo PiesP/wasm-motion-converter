@@ -1923,6 +1923,10 @@ class WebCodecsConversionService {
       encodeStatusPrefix = `Encoding ${format.toUpperCase()}...`;
       ffmpegService.reportStatus(encodeStatusPrefix);
 
+      // Track the last encode progress percent so we can emit a silent keepalive
+      // during worker encoding (Comlink progress messages can be delayed under load).
+      let lastEncodeProgressPercent: number = decodeEnd;
+
       const reportEncodeProgress = (current: number, total: number) => {
         throwIfCancelled();
         const progress =
@@ -1931,7 +1935,9 @@ class WebCodecsConversionService {
             FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START) *
             current) /
             Math.max(1, total);
-        ffmpegService.reportProgress(Math.round(progress));
+        const roundedProgress = Math.round(progress);
+        lastEncodeProgressPercent = roundedProgress;
+        ffmpegService.reportProgress(roundedProgress);
 
         const now = Date.now();
         const isTerminal = current >= total;
@@ -2116,18 +2122,35 @@ class WebCodecsConversionService {
             reportEncodeProgress(current, total);
           });
 
-          outputBlob = await this.gifWorkerPool.execute(async (worker) => {
-            return await worker.encode(
-              serializableFrames,
-              {
-                width: decodeResult.width,
-                height: decodeResult.height,
-                fps: targetFps,
-                quality,
-              },
-              progressProxy
-            );
-          });
+          // Keep watchdog timers alive even if worker progress callbacks are delayed.
+          // This does NOT advance progress; it re-reports the last seen percent.
+          const keepaliveInterval = setInterval(() => {
+            if (abortSignal?.aborted === true || ffmpegService.isCancellationRequested()) {
+              return;
+            }
+            try {
+              ffmpegService.reportProgress(lastEncodeProgressPercent);
+            } catch {
+              // Non-fatal: keepalive should never crash encoding.
+            }
+          }, FFMPEG_INTERNALS.HEARTBEAT_INTERVAL_MS);
+
+          try {
+            outputBlob = await this.gifWorkerPool.execute(async (worker) => {
+              return await worker.encode(
+                serializableFrames,
+                {
+                  width: decodeResult.width,
+                  height: decodeResult.height,
+                  fps: targetFps,
+                  quality,
+                },
+                progressProxy
+              );
+            });
+          } finally {
+            clearInterval(keepaliveInterval);
+          }
 
           encoderBackendUsed = 'modern-gif-worker';
         } catch (error) {

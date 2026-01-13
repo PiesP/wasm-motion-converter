@@ -9,15 +9,18 @@
 
 import { createSingleton } from '@services/shared/singleton-service';
 
-export type EncodePath = 'gifski' | 'ffmpeg' | 'webcodecs-webp';
+// NOTE: This is a *planning* label used by video-pipeline diagnostics.
+// The actual encoder backend can differ at runtime due to strategy selection,
+// capability checks, and fallbacks.
+export type EncodePlan = 'ffmpeg' | 'modern-gif' | 'encoder-factory-webp';
 
 class EncodeService {
-  selectEncodePath(params: { format: 'gif' | 'webp' }): EncodePath {
+  selectEncodePlan(params: { format: 'gif' | 'webp' }): EncodePlan {
     if (params.format === 'gif') {
-      return 'gifski';
+      return 'modern-gif';
     }
 
-    return 'webcodecs-webp';
+    return 'encoder-factory-webp';
   }
 }
 

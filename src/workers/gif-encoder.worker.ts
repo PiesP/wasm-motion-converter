@@ -60,11 +60,27 @@ const api = {
         quality: options.quality,
       });
 
+      const ProgressThrottleMs = 250;
+      let lastForwardedAt = 0;
+      let lastForwardedCurrent = -1;
+
       // Comlink callbacks are typically async (Promise-returning), while modern-gif
       // expects a sync callback. Provide a safe adapter that never throws and
       // never produces unhandled promise rejections.
       const safeOnProgress: ModernGifOptions['onProgress'] | undefined = onProgress
         ? (current, total) => {
+            const now = Date.now();
+            const isTerminal = current >= total;
+            if (
+              current === lastForwardedCurrent ||
+              (!isTerminal && now - lastForwardedAt < ProgressThrottleMs)
+            ) {
+              return;
+            }
+
+            lastForwardedAt = now;
+            lastForwardedCurrent = current;
+
             try {
               const maybePromise = onProgress(current, total);
               if (
