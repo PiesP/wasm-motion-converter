@@ -184,6 +184,7 @@ class ConversionOrchestrator {
             format: request.format,
             container: container as import('@t/video-pipeline-types').ContainerFormat,
             capabilities: extendedCaps,
+            durationSeconds: metadata.duration,
           });
 
           logger.debug('conversion', 'Strategy Decision Factors', reasoning.factors);
@@ -657,6 +658,7 @@ class ConversionOrchestrator {
       format,
       container: plan.container,
       capabilities: extendedCaps,
+      durationSeconds: plannedMetadata?.duration,
     });
 
     if (import.meta.env.DEV) {

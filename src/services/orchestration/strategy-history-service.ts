@@ -22,6 +22,12 @@ const MAX_RECORDS = 50 as const;
 const HIGH_CONFIDENCE_THRESHOLD = 5 as const; // 5+ conversions for high confidence
 
 /**
+ * Failure phase attribution
+ * Helps distinguish between decoder failures and encoder failures
+ */
+export type FailurePhase = 'decode' | 'encode' | 'other' | null;
+
+/**
  * Record of a single conversion
  */
 export interface ConversionRecord {
@@ -32,6 +38,8 @@ export interface ConversionRecord {
   captureModeUsed?: string | null;
   durationMs: number;
   success: boolean;
+  /** Phase where failure occurred (only set when success=false) */
+  failurePhase?: FailurePhase;
   timestamp: number;
 }
 

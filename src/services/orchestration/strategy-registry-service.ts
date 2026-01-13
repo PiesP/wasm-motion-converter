@@ -345,7 +345,7 @@ class StrategyRegistryService {
   /**
    * Get optimal strategy for codec+format combination
    *
-   * @param params - Codec, format, container, and capabilities
+   * @param params - Codec, format, container, capabilities, and optional duration
    * @returns Strategy with confidence scoring
    */
   getStrategy(params: {
@@ -353,8 +353,9 @@ class StrategyRegistryService {
     format: ConversionFormat;
     container: ContainerFormat;
     capabilities: ExtendedCapabilities;
+    durationSeconds?: number;
   }): StrategyWithConfidence {
-    const { codec, format, container, capabilities } = params;
+    const { codec, format, container, capabilities, durationSeconds } = params;
 
     // Normalize codec string for matching
     const normalizedCodec = this.normalizeCodec(codec);
@@ -412,16 +413,20 @@ class StrategyRegistryService {
 
       // Validate capabilities
       if (this.validateCapabilities(strategy, capabilities)) {
-        return this.applyRecentFailureAvoidance(
-          this.applyHardwareDecodePreference({
-            strategy: {
-              ...strategy,
-              confidence: 'high', // High confidence from benchmarks
-            },
-            capabilities,
-          }),
-          history
-        );
+        const baseStrategy = this.applyHardwareDecodePreference({
+          strategy: {
+            ...strategy,
+            confidence: 'high', // High confidence from benchmarks
+          },
+          capabilities,
+        });
+
+        // Apply duration-based adjustments if duration is known
+        const durationAdjusted = durationSeconds
+          ? this.applyDurationHeuristics(baseStrategy, durationSeconds, normalizedCodec, format)
+          : baseStrategy;
+
+        return this.applyRecentFailureAvoidance(durationAdjusted, history);
       }
 
       // Capabilities missing - try fallback
@@ -455,6 +460,68 @@ class StrategyRegistryService {
       }),
       history
     );
+  }
+
+  /**
+   * Apply duration-based heuristics to strategy selection
+   *
+   * Adjusts path preference based on clip duration:
+   * - Short clips (<5s): Prefer CPU for GIF (lower decoder overhead)
+   * - Medium clips (5-15s): Use default strategy
+   * - Long clips (>15s): Prefer GPU for GIF (amortize setup cost)
+   *
+   * @param strategy - Base strategy from matrix
+   * @param durationSeconds - Video duration in seconds
+   * @param codec - Normalized codec string
+   * @param format - Target format
+   * @returns Adjusted strategy with duration reasoning
+   */
+  private applyDurationHeuristics(
+    strategy: StrategyWithConfidence,
+    durationSeconds: number,
+    codec: string,
+    format: ConversionFormat
+  ): StrategyWithConfidence {
+    // Only apply duration heuristics for GIF conversions
+    // (WebP and MP4 strategies are already optimal regardless of duration)
+    if (format !== 'gif') {
+      return strategy;
+    }
+
+    // Duration thresholds (conservative to avoid over-optimization)
+    const SHORT_CLIP_THRESHOLD = 5; // seconds
+    const LONG_CLIP_THRESHOLD = 15; // seconds
+
+    // For H.264 GIF: short clips benefit from CPU (less WebCodecs setup overhead)
+    if (isH264Codec(codec) && durationSeconds < SHORT_CLIP_THRESHOLD) {
+      if (strategy.preferredPath !== 'cpu') {
+        return {
+          ...strategy,
+          preferredPath: 'cpu',
+          fallbackPath: 'gpu',
+          reason: `${strategy.reason} + Short clip (${durationSeconds.toFixed(1)}s) benefits from CPU path (lower setup overhead)`,
+          confidence: 'high',
+        };
+      }
+    }
+
+    // For complex codecs (HEVC, AV1, VP9) with long clips: prefer GPU
+    if (
+      (isHevcCodec(codec) || isAv1Codec(codec) || codec === 'vp9' || codec === 'vp8') &&
+      durationSeconds > LONG_CLIP_THRESHOLD
+    ) {
+      if (strategy.preferredPath !== 'gpu') {
+        return {
+          ...strategy,
+          preferredPath: 'gpu',
+          fallbackPath: 'cpu',
+          reason: `${strategy.reason} + Long clip (${durationSeconds.toFixed(1)}s) amortizes GPU setup cost`,
+          confidence: 'medium',
+        };
+      }
+    }
+
+    return strategy;
   }
 
   private applyRecentFailureAvoidance(
@@ -524,6 +591,7 @@ class StrategyRegistryService {
     format: ConversionFormat;
     container: ContainerFormat;
     capabilities: ExtendedCapabilities;
+    durationSeconds?: number;
   }): StrategyReasoning {
     const { codec, format, container, capabilities } = params;
     const normalizedCodec = this.normalizeCodec(codec);
