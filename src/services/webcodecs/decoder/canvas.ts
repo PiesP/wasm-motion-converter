@@ -1,7 +1,7 @@
 /**
  * Canvas helpers for WebCodecs frame capture.
  */
-type CaptureContext = {
+export type CaptureContext = {
   canvas: OffscreenCanvas | HTMLCanvasElement;
   context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
   targetWidth: number;

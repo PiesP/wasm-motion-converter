@@ -10,35 +10,35 @@ import {
   onMount,
   Show,
   Suspense,
-} from "solid-js";
+} from 'solid-js';
 // Eagerly loaded components (used immediately)
-import ConfirmationModal from "@components/ConfirmationModal";
-import EnvironmentWarning from "@components/EnvironmentWarning";
-import FileDropzone from "@components/FileDropzone";
-import FormatSelector from "@components/FormatSelector";
-import ExportLogsButton from "@components/ExportLogsButton";
-import LicenseAttribution from "@components/LicenseAttribution";
-import QualitySelector from "@components/QualitySelector";
-import ScaleSelector from "@components/ScaleSelector";
-import ThemeToggle from "@components/ThemeToggle";
-import VideoMetadataDisplay from "@components/VideoMetadataDisplay";
-import { useConversionHandlers } from "@/hooks/use-conversion-handlers";
-import { ffmpegService } from "@services/ffmpeg-service";
+import ConfirmationModal from '@components/ConfirmationModal';
+import EnvironmentWarning from '@components/EnvironmentWarning';
+import FileDropzone from '@components/FileDropzone';
+import FormatSelector from '@components/FormatSelector';
+import ExportLogsButton from '@components/ExportLogsButton';
+import LicenseAttribution from '@components/LicenseAttribution';
+import QualitySelector from '@components/QualitySelector';
+import ScaleSelector from '@components/ScaleSelector';
+import ThemeToggle from '@components/ThemeToggle';
+import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
+import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
+import { ffmpegService } from '@services/ffmpeg-service';
 import {
   getConversionAutoSelectionDebug,
   getConversionPhaseTimingsDebug,
-} from "@services/orchestration/conversion-debug";
-import { extendedCapabilityService } from "@services/video-pipeline/extended-capability-service";
-import { strategyRegistryService } from "@services/orchestration/strategy-registry-service";
-import { strategyHistoryService } from "@services/orchestration/strategy-history-service";
-import { conversionMetricsService } from "@services/orchestration/conversion-metrics-service";
+} from '@services/orchestration/conversion-debug';
+import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
+import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
+import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
+import { conversionMetricsService } from '@services/orchestration/conversion-metrics-service';
 import {
   appState,
   environmentSupported,
   loadingProgress,
   loadingStatusMessage,
   setEnvironmentSupported,
-} from "@stores/app-store";
+} from '@stores/app-store';
 import {
   conversionProgress,
   conversionResults,
@@ -51,18 +51,18 @@ import {
   setConversionSettings,
   videoMetadata,
   videoPreviewUrl,
-} from "@stores/conversion-store";
-import { debounce } from "@utils/debounce";
-import { getErrorMessage } from "@utils/error-utils";
-import { isHardwareCacheValid } from "@utils/hardware-profile";
-import { logger } from "@utils/logger";
-import { isMemoryCritical } from "@utils/memory-monitor";
+} from '@stores/conversion-store';
+import { debounce } from '@utils/debounce';
+import { getErrorMessage } from '@utils/error-utils';
+import { isHardwareCacheValid } from '@utils/hardware-profile';
+import { logger } from '@utils/logger';
+import { isMemoryCritical } from '@utils/memory-monitor';
 
 // Lazy loaded components (conditionally shown - reduces initial bundle by ~15KB)
-const ConversionProgress = lazy(() => import("@components/ConversionProgress"));
-const ErrorDisplay = lazy(() => import("@components/ErrorDisplay"));
-const MemoryWarning = lazy(() => import("@components/MemoryWarning"));
-const ResultPreview = lazy(() => import("@components/ResultPreview"));
+const ConversionProgress = lazy(() => import('@components/ConversionProgress'));
+const ErrorDisplay = lazy(() => import('@components/ErrorDisplay'));
+const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
+const ResultPreview = lazy(() => import('@components/ResultPreview'));
 
 /**
  * Main application component orchestrating the video conversion workflow
@@ -85,8 +85,9 @@ const ResultPreview = lazy(() => import("@components/ResultPreview"));
  */
 const App: Component = () => {
   const [conversionStartTime, setConversionStartTime] = createSignal<number>(0);
-  const [estimatedSecondsRemaining, setEstimatedSecondsRemaining] =
-    createSignal<number | null>(null);
+  const [estimatedSecondsRemaining, setEstimatedSecondsRemaining] = createSignal<number | null>(
+    null
+  );
   const [memoryWarning, setMemoryWarning] = createSignal(false);
 
   const {
@@ -113,7 +114,7 @@ const App: Component = () => {
    * thread during critical rendering operations.
    */
   const runIdle = (callback: () => void): void => {
-    if (typeof requestIdleCallback !== "undefined") {
+    if (typeof requestIdleCallback !== 'undefined') {
       requestIdleCallback(callback, { timeout: 3000 });
     } else {
       setTimeout(callback, 1200);
@@ -129,26 +130,21 @@ const App: Component = () => {
    * - Uses idle scheduling to avoid blocking initial render
    */
   onMount(() => {
-    const isSupported =
-      typeof SharedArrayBuffer !== "undefined" && crossOriginIsolated === true;
+    const isSupported = typeof SharedArrayBuffer !== 'undefined' && crossOriginIsolated === true;
     setEnvironmentSupported(isSupported);
 
     // Validate hardware profile and invalidate caches if hardware changed
     if (!isHardwareCacheValid()) {
-      logger.info(
-        "general",
-        "Hardware profile changed or first run, cache invalidated"
-      );
+      logger.info('general', 'Hardware profile changed or first run, cache invalidated');
     }
 
-    const connection = (
-      navigator as Navigator & { connection?: { effectiveType?: string } }
-    ).connection;
-    const isFastNetwork = !connection || connection.effectiveType === "4g";
+    const connection = (navigator as Navigator & { connection?: { effectiveType?: string } })
+      .connection;
+    const isFastNetwork = !connection || connection.effectiveType === '4g';
     if (isFastNetwork) {
       runIdle(() => {
         void ffmpegService.prefetchCoreAssets().catch((error) => {
-          logger.debug("prefetch", "FFmpeg prefetch skipped", {
+          logger.debug('prefetch', 'FFmpeg prefetch skipped', {
             error: error instanceof Error ? error.message : String(error),
           });
         });
@@ -162,29 +158,29 @@ const App: Component = () => {
 
         // Log comprehensive capability matrix in dev mode
         if (import.meta.env.DEV) {
-          logger.info("general", "=== Extended Video Capabilities ===");
-          logger.info("general", "Codec Decode Support", {
+          logger.info('general', '=== Extended Video Capabilities ===');
+          logger.info('general', 'Codec Decode Support', {
             h264: caps.h264,
             hevc: caps.hevc,
             av1: caps.av1,
             vp8: caps.vp8,
             vp9: caps.vp9,
           });
-          logger.info("general", "Encoder Support", {
+          logger.info('general', 'Encoder Support', {
             gif: caps.gifEncode,
             webp: caps.webpEncode,
             mp4: caps.mp4Encode,
           });
-          logger.info("general", "Hardware Features", {
+          logger.info('general', 'Hardware Features', {
             hardwareAcceleration: caps.hardwareAccelerated,
             sharedArrayBuffer: caps.sharedArrayBuffer,
             crossOriginIsolated: caps.crossOriginIsolated,
             estimatedCores: caps.hardwareDecodeCores,
           });
-          logger.info("general", "=====================================");
+          logger.info('general', '=====================================');
 
           // Expose debug interface (dev mode only)
-          if (typeof window !== "undefined") {
+          if (typeof window !== 'undefined') {
             window.__EXTENDED_VIDEO_CAPS__ = caps;
             window.__CONVERSION_DEBUG__ = {
               capabilities: caps,
@@ -195,16 +191,16 @@ const App: Component = () => {
               clearMetrics: () => conversionMetricsService.clear(),
               lastDecision: () => getConversionAutoSelectionDebug(),
               phaseTimings: () => getConversionPhaseTimingsDebug(),
-              testStrategy: (codec: string, format: "gif" | "webp" | "mp4") => {
+              testStrategy: (codec: string, format: 'gif' | 'webp' | 'mp4') => {
                 return strategyRegistryService.getStrategy({
                   codec,
                   format,
-                  container: "mp4",
+                  container: 'mp4',
                   capabilities: caps,
                 });
               },
               pickVideoFile: async (accept?: string) => {
-                const mod = await import("@services/dev/mp4-smoke-test");
+                const mod = await import('@services/dev/mp4-smoke-test');
                 return mod.pickVideoFile(accept);
               },
               smokeMp4: async (
@@ -213,13 +209,8 @@ const App: Component = () => {
                   targetFps?: number;
                   scale?: number;
                   maxFrames?: number;
-                  captureMode?:
-                    | "auto"
-                    | "demuxer"
-                    | "frame-callback"
-                    | "seek"
-                    | "track";
-                  quality?: "low" | "medium" | "high";
+                  captureMode?: 'auto' | 'demuxer' | 'frame-callback' | 'seek' | 'track';
+                  quality?: 'low' | 'medium' | 'high';
                   validatePlayback?: boolean;
                   mountPreview?: boolean;
                   autoDownload?: boolean;
@@ -227,13 +218,13 @@ const App: Component = () => {
                   playbackTimeoutMs?: number;
                 }
               ) => {
-                const mod = await import("@services/dev/mp4-smoke-test");
+                const mod = await import('@services/dev/mp4-smoke-test');
                 const promise = mod.runMp4SmokeTest({ file, options });
 
                 // Dev-only ergonomics: users often call this from the console without await.
                 // Attach a handler to prevent unhandled promise rejection noise.
                 promise.catch((error) => {
-                  logger.error("mp4-encoder", "MP4 smoke test failed", {
+                  logger.error('mp4-encoder', 'MP4 smoke test failed', {
                     error: getErrorMessage(error),
                   });
                 });
@@ -250,20 +241,13 @@ const App: Component = () => {
                 }
               },
             };
-            logger.info(
-              "general",
-              "Debug interface available: window.__CONVERSION_DEBUG__"
-            );
+            logger.info('general', 'Debug interface available: window.__CONVERSION_DEBUG__');
           }
         }
       } catch (error) {
-        logger.warn(
-          "general",
-          "Extended capability detection failed (non-critical)",
-          {
-            error: getErrorMessage(error),
-          }
-        );
+        logger.warn('general', 'Extended capability detection failed (non-critical)', {
+          error: getErrorMessage(error),
+        });
       }
     });
   });
@@ -303,9 +287,9 @@ const App: Component = () => {
    * elapsed time tracking, and ETA calculation.
    */
   const dropzoneStatus = createMemo(() => {
-    if (appState() === "converting") {
+    if (appState() === 'converting') {
       return {
-        label: "Converting video...",
+        label: 'Converting video...',
         progress: conversionProgress(),
         message: conversionStatusMessage(),
         showElapsedTime: true,
@@ -325,9 +309,7 @@ const App: Component = () => {
    */
   const isBusy = createMemo(
     () =>
-      appState() === "loading-ffmpeg" ||
-      appState() === "analyzing" ||
-      appState() === "converting"
+      appState() === 'loading-ffmpeg' || appState() === 'analyzing' || appState() === 'converting'
   );
 
   /**
@@ -341,11 +323,11 @@ const App: Component = () => {
   const handleReduceSettings = (): void => {
     setConversionSettings({
       ...conversionSettings(),
-      quality: "low",
+      quality: 'low',
       scale: 0.5,
     });
     // If showing pre-conversion warning, dismiss it and start conversion
-    if (memoryWarning() && appState() !== "converting") {
+    if (memoryWarning() && appState() !== 'converting') {
       setMemoryWarning(false);
       handleConvert();
     }
@@ -388,13 +370,10 @@ const App: Component = () => {
               Application Error
             </h2>
             <p class="text-sm text-red-700 dark:text-red-400 mb-4">
-              An unexpected error occurred. Please refresh the page to try
-              again.
+              An unexpected error occurred. Please refresh the page to try again.
             </p>
             <details class="text-xs text-red-600 dark:text-red-500">
-              <summary class="cursor-pointer hover:underline">
-                Error details
-              </summary>
+              <summary class="cursor-pointer hover:underline">Error details</summary>
               <pre class="mt-2 p-3 bg-red-100 dark:bg-red-900 rounded overflow-auto">
                 {error.toString()}
               </pre>
@@ -427,16 +406,13 @@ const App: Component = () => {
           </div>
         </header>
 
-        <main
-          id="main-content"
-          class="flex-1 max-w-6xl mx-auto w-full px-4 py-8"
-        >
+        <main id="main-content" class="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
           <div class="space-y-6">
             <Show when={!environmentSupported()}>
               <EnvironmentWarning />
             </Show>
 
-            <Show when={appState() === "error" && errorMessage()}>
+            <Show when={appState() === 'error' && errorMessage()}>
               <Suspense
                 fallback={
                   <div class="animate-pulse h-32 bg-gray-100 dark:bg-gray-800 rounded-lg" />
@@ -463,7 +439,7 @@ const App: Component = () => {
                   }
                 >
                   <MemoryWarning
-                    isDuringConversion={appState() === "converting"}
+                    isDuringConversion={appState() === 'converting'}
                     onReduceSettings={handleReduceSettings}
                     onCancel={handleCancelConversion}
                     onDismiss={handleDismissMemoryWarning}
@@ -479,13 +455,11 @@ const App: Component = () => {
                 statusMessage={dropzoneStatus()?.message}
                 showElapsedTime={dropzoneStatus()?.showElapsedTime}
                 startTime={dropzoneStatus()?.startTime}
-                estimatedSecondsRemaining={
-                  dropzoneStatus()?.estimatedSecondsRemaining
-                }
+                estimatedSecondsRemaining={dropzoneStatus()?.estimatedSecondsRemaining}
                 previewUrl={videoPreviewUrl()}
               />
 
-              <Show when={appState() === "loading-ffmpeg"}>
+              <Show when={appState() === 'loading-ffmpeg'}>
                 <Suspense
                   fallback={
                     <div class="animate-pulse h-20 bg-blue-50 dark:bg-blue-900/20 rounded-lg" />
@@ -499,16 +473,13 @@ const App: Component = () => {
                 </Suspense>
               </Show>
 
-              <Show when={appState() === "analyzing"}>
+              <Show when={appState() === 'analyzing'}>
                 <Suspense
                   fallback={
                     <div class="animate-pulse h-20 bg-blue-50 dark:bg-blue-900/20 rounded-lg" />
                   }
                 >
-                  <ConversionProgress
-                    progress={50}
-                    status="Analyzing video..."
-                  />
+                  <ConversionProgress progress={50} status="Analyzing video..." />
                 </Suspense>
               </Show>
 
@@ -526,7 +497,7 @@ const App: Component = () => {
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6">
               <div class="flex gap-3 mb-6">
                 <Show
-                  when={appState() === "converting"}
+                  when={appState() === 'converting'}
                   fallback={
                     <button
                       type="button"
@@ -552,18 +523,14 @@ const App: Component = () => {
 
               <FormatSelector
                 value={conversionSettings().format}
-                onChange={(format) =>
-                  setConversionSettings({ ...conversionSettings(), format })
-                }
+                onChange={(format) => setConversionSettings({ ...conversionSettings(), format })}
                 disabled={!videoMetadata() || isBusy()}
                 tooltip="GIF works everywhere, WebP is smaller but requires modern browsers"
               />
 
               <QualitySelector
                 value={conversionSettings().quality}
-                onChange={(quality) =>
-                  setConversionSettings({ ...conversionSettings(), quality })
-                }
+                onChange={(quality) => setConversionSettings({ ...conversionSettings(), quality })}
                 disabled={!videoMetadata() || isBusy()}
                 tooltip="Higher quality = larger file size and slower conversion"
               />
@@ -571,9 +538,7 @@ const App: Component = () => {
               <ScaleSelector
                 value={conversionSettings().scale}
                 inputMetadata={videoMetadata()}
-                onChange={(scale) =>
-                  setConversionSettings({ ...conversionSettings(), scale })
-                }
+                onChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
                 disabled={!videoMetadata() || isBusy()}
                 tooltip="Reduce dimensions to decrease file size and speed up conversion"
               />
@@ -595,9 +560,7 @@ const App: Component = () => {
                       originalName={result.originalName}
                       originalSize={result.originalSize}
                       settings={result.settings}
-                      conversionDurationSeconds={
-                        result.conversionDurationSeconds
-                      }
+                      conversionDurationSeconds={result.conversionDurationSeconds}
                       wasTranscoded={result.wasTranscoded}
                       originalCodec={result.originalCodec}
                     />
