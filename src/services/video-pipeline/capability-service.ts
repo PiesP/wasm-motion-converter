@@ -31,10 +31,6 @@ type VideoDecoderConfigWithAcceleration = VideoDecoderConfig & {
   hardwareAcceleration?: 'prefer-hardware' | 'prefer-software';
 };
 
-type VideoEncoderConfigWithAcceleration = VideoEncoderConfig & {
-  hardwareAcceleration?: 'prefer-hardware' | 'prefer-software';
-};
-
 class CapabilityService {
   private static instance: CapabilityService | null = null;
 
@@ -165,7 +161,6 @@ class CapabilityService {
     }
 
     const hasVideoDecoder = 'VideoDecoder' in window && typeof VideoDecoder !== 'undefined';
-    const hasVideoEncoder = 'VideoEncoder' in window && typeof VideoEncoder !== 'undefined';
 
     const testDecode = async (params: {
       codec: string;
@@ -196,26 +191,50 @@ class CapabilityService {
     };
 
     const testEncodeWebP = async (): Promise<boolean> => {
-      if (!hasVideoEncoder || typeof VideoEncoder.isConfigSupported !== 'function') {
-        return false;
-      }
-
-      const config: VideoEncoderConfigWithAcceleration = {
-        // Per prompt requirement (even though many browsers do not support this codec string).
-        codec: 'webp',
-        width: 16,
-        height: 16,
-        bitrate: 100_000,
-        framerate: 1,
-        hardwareAcceleration: 'prefer-hardware',
-      };
-
       try {
-        const support = await VideoEncoder.isConfigSupported(config as VideoEncoderConfig);
-        return support.supported ?? false;
+        // OffscreenCanvas WebP encode probe (best-effort; mirrors worker-based encoder checks)
+        if (typeof OffscreenCanvas !== 'undefined') {
+          try {
+            const canvas = new OffscreenCanvas(1, 1);
+            const blob = await canvas.convertToBlob({ type: 'image/webp' });
+            if (blob && blob.size > 0 && blob.type === 'image/webp') {
+              return true;
+            }
+          } catch {
+            // Ignore - fall back to HTMLCanvas probe below.
+          }
+        }
+
+        // HTMLCanvas WebP encode probe (mirrors `webp-canvas` encoder adapter)
+        if (typeof document === 'undefined') {
+          return false;
+        }
+
+        const createdCanvas = document.createElement('canvas');
+        createdCanvas.width = 1;
+        createdCanvas.height = 1;
+
+        const ctx = createdCanvas.getContext('2d');
+        if (!ctx) {
+          return false;
+        }
+
+        ctx.fillStyle = 'rgb(0,0,0)';
+        ctx.fillRect(0, 0, 1, 1);
+
+        const blob = await new Promise<Blob | null>((resolve) => {
+          createdCanvas.toBlob(
+            (result) => {
+              resolve(result);
+            },
+            'image/webp',
+            0.9
+          );
+        });
+
+        return Boolean(blob && blob.size > 0 && blob.type === 'image/webp');
       } catch (error) {
-        logger.debug('general', 'VideoEncoder.isConfigSupported failed during probing', {
-          codec: config.codec,
+        logger.debug('general', 'WebP encoding probe failed during capability detection', {
           error: getErrorMessage(error),
         });
         return false;

@@ -14,59 +14,59 @@
  * @module cpu-path/ffmpeg-encoder
  */
 
-import type { FFmpeg } from "@ffmpeg/ffmpeg";
+import type { FFmpeg } from '@ffmpeg/ffmpeg';
 import type {
   ConversionOptions,
   ConversionOutputBlob,
   ConversionQuality,
   VideoMetadata,
-} from "@t/conversion-types";
-import { classifyConversionError } from "@utils/classify-conversion-error";
-import { QUALITY_PRESETS } from "@utils/constants";
-import { getErrorMessage } from "@utils/error-utils";
-import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
-import { logger } from "@utils/logger";
-import { isMemoryCritical } from "@utils/memory-monitor";
-import { performanceTracker } from "@utils/performance-tracker";
-import { calculateTimeout } from "@utils/timeout-calculator";
-import { getOptimalFPS } from "@utils/quality-optimizer";
-import { getTimeoutForFormat } from "@utils/timeout-calculator";
-import { withTimeout } from "@utils/with-timeout";
-import { getProgressLoggingArgs } from "@services/ffmpeg/args";
-import { getScaleFilter } from "@services/ffmpeg/filters";
-import { getThreadingArgs } from "@services/ffmpeg/threading";
-import type { FFmpegCore } from "./ffmpeg-core";
-import type { FFmpegMonitoring } from "./ffmpeg-monitoring";
-import type { FFmpegVFS } from "./ffmpeg-vfs";
+} from '@t/conversion-types';
+import { classifyConversionError } from '@utils/classify-conversion-error';
+import { QUALITY_PRESETS } from '@utils/constants';
+import { getErrorMessage } from '@utils/error-utils';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { logger } from '@utils/logger';
+import { isMemoryCritical } from '@utils/memory-monitor';
+import { performanceTracker } from '@utils/performance-tracker';
+import { calculateTimeout } from '@utils/timeout-calculator';
+import { getOptimalFPS } from '@utils/quality-optimizer';
+import { getTimeoutForFormat } from '@utils/timeout-calculator';
+import { withTimeout } from '@utils/with-timeout';
+import { getProgressLoggingArgs } from '@services/ffmpeg/args';
+import { getScaleFilter } from '@services/ffmpeg/filters';
+import { getThreadingArgs } from '@services/ffmpeg/threading';
+import type { FFmpegCore } from './ffmpeg-core';
+import type { FFmpegMonitoring } from './ffmpeg-monitoring';
+import type { FFmpegVFS } from './ffmpeg-vfs';
 
 /**
  * Detect frame file extension from frame file list
  * Returns 'png' or 'jpeg' based on first frame file extension
  */
-function detectFrameExtension(frameFiles?: string[]): "png" | "jpeg" {
+function detectFrameExtension(frameFiles?: string[]): 'png' | 'jpeg' {
   if (!frameFiles || frameFiles.length === 0) {
-    return "png"; // Default to PNG for backward compatibility
+    return 'png'; // Default to PNG for backward compatibility
   }
 
   const firstFrame = frameFiles[0];
   if (!firstFrame) {
-    return "png";
+    return 'png';
   }
 
-  const extension = firstFrame.split(".").pop()?.toLowerCase();
+  const extension = firstFrame.split('.').pop()?.toLowerCase();
 
-  if (extension === "jpg" || extension === "jpeg") {
-    return "jpeg";
+  if (extension === 'jpg' || extension === 'jpeg') {
+    return 'jpeg';
   }
 
-  return "png";
+  return 'png';
 }
 
 /**
  * FFmpeg input format override for transcoding operations
  */
 export interface FFmpegInputOverride {
-  format: "h264";
+  format: 'h264';
   framerate: number;
 }
 
@@ -92,19 +92,12 @@ export class FFmpegEncoder {
   private cancellationRequested = false;
   private dependencies: EncoderDependencies | null = null;
 
-  private getDurationMs(
-    metadata?: VideoMetadata,
-    options?: ConversionOptions
-  ): number | undefined {
+  private getDurationMs(metadata?: VideoMetadata, options?: ConversionOptions): number | undefined {
     // Prefer analyzed metadata when available. Fall back to options.duration when
     // callers already provided it (both are expressed in seconds).
     const durationSeconds = metadata?.duration ?? options?.duration;
 
-    if (
-      !Number.isFinite(durationSeconds) ||
-      !durationSeconds ||
-      durationSeconds <= 0
-    ) {
+    if (!Number.isFinite(durationSeconds) || !durationSeconds || durationSeconds <= 0) {
       return undefined;
     }
 
@@ -115,24 +108,24 @@ export class FFmpegEncoder {
     // FFmpeg `-progress pipe:1` emits key/value pairs on stdout.
     // Logging each line is extremely noisy and makes captured dev logs hard to read.
     // We keep parsing these lines for progress, but suppress their console output.
-    const key = line.split("=")[0]?.trim();
+    const key = line.split('=')[0]?.trim();
     if (!key) {
       return false;
     }
 
     return (
-      key === "frame" ||
-      key === "fps" ||
-      key === "stream_0_0_q" ||
-      key === "bitrate" ||
-      key === "total_size" ||
-      key === "out_time_us" ||
-      key === "out_time_ms" ||
-      key === "out_time" ||
-      key === "dup_frames" ||
-      key === "drop_frames" ||
-      key === "speed" ||
-      key === "progress"
+      key === 'frame' ||
+      key === 'fps' ||
+      key === 'stream_0_0_q' ||
+      key === 'bitrate' ||
+      key === 'total_size' ||
+      key === 'out_time_us' ||
+      key === 'out_time_ms' ||
+      key === 'out_time' ||
+      key === 'dup_frames' ||
+      key === 'drop_frames' ||
+      key === 'speed' ||
+      key === 'progress'
     );
   }
 
@@ -148,7 +141,7 @@ export class FFmpegEncoder {
    */
   private getDeps(): EncoderDependencies {
     if (!this.dependencies) {
-      throw new Error("Encoder dependencies not set");
+      throw new Error('Encoder dependencies not set');
     }
     return this.dependencies;
   }
@@ -165,13 +158,9 @@ export class FFmpegEncoder {
    */
   private acquireConversionLock(): boolean {
     if (this.conversionLock) {
-      logger.warn(
-        "conversion",
-        "Conversion already in progress, rejecting concurrent request",
-        {
-          locked: this.conversionLock,
-        }
-      );
+      logger.warn('conversion', 'Conversion already in progress, rejecting concurrent request', {
+        locked: this.conversionLock,
+      });
       return false;
     }
     this.conversionLock = true;
@@ -196,19 +185,19 @@ export class FFmpegEncoder {
     const { core } = this.getDeps();
 
     if (!core.isLoaded()) {
-      logger.error("conversion", "FFmpeg validation failed: not loaded", {
+      logger.error('conversion', 'FFmpeg validation failed: not loaded', {
         isLoaded: core.isLoaded(),
         isInitializing: core.isInitializing(),
       });
-      throw new Error("FFmpeg is not loaded. Please initialize FFmpeg first.");
+      throw new Error('FFmpeg is not loaded. Please initialize FFmpeg first.');
     }
 
     try {
       // This will throw if FFmpeg instance is null or invalid
       core.getFFmpeg();
-      logger.debug("conversion", "FFmpeg state validation passed");
+      logger.debug('conversion', 'FFmpeg state validation passed');
     } catch (error) {
-      logger.error("conversion", "FFmpeg validation failed: instance check", {
+      logger.error('conversion', 'FFmpeg validation failed: instance check', {
         error: getErrorMessage(error),
       });
       throw new Error(`FFmpeg instance invalid: ${getErrorMessage(error)}`);
@@ -233,38 +222,25 @@ export class FFmpegEncoder {
       // ffmpeg.wasm may emit a standalone "Aborted()" line on stderr even when the
       // exec call has already completed successfully. This is noisy and misleading
       // in dev logs, so we suppress it from console logging.
-      if (type === "stderr" && trimmed === "Aborted()") {
+      if (type === 'stderr' && trimmed === 'Aborted()') {
         return;
       }
 
       // Suppress ultra-noisy stdout key/value lines from FFmpeg progress output.
       // These are still stored in the rolling log buffer for diagnostics.
-      if (type === "stdout" && this.isFFmpegProgressKeyValueLine(trimmed)) {
+      if (type === 'stdout' && this.isFFmpegProgressKeyValueLine(trimmed)) {
         // Still allow progress parsing below.
       } else {
-        logger.debug("ffmpeg", `[${type}] ${message}`);
+        logger.debug('ffmpeg', `[${type}] ${message}`);
       }
 
-      if (
-        type === "fferr" ||
-        message.includes("Error") ||
-        message.includes("failed")
-      ) {
-        logger.warn("ffmpeg", `FFmpeg warning/error: ${message}`);
+      if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
+        logger.warn('ffmpeg', `FFmpeg warning/error: ${message}`);
       }
 
       // Parse progress from FFmpeg logs when native progress events don't fire
-      if (
-        totalDuration &&
-        progressStart !== undefined &&
-        progressEnd !== undefined
-      ) {
-        this.parseProgressFromLog(
-          message,
-          totalDuration,
-          progressStart,
-          progressEnd
-        );
+      if (totalDuration && progressStart !== undefined && progressEnd !== undefined) {
+        this.parseProgressFromLog(message, totalDuration, progressStart, progressEnd);
       }
     };
   }
@@ -283,9 +259,9 @@ export class FFmpegEncoder {
     // Parse time information: "time=00:01:23.45"
     const timeMatch = message.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
     if (timeMatch) {
-      const hours = Number.parseInt(timeMatch[1] ?? "0", 10);
-      const minutes = Number.parseInt(timeMatch[2] ?? "0", 10);
-      const seconds = Number.parseFloat(timeMatch[3] ?? "0");
+      const hours = Number.parseInt(timeMatch[1] ?? '0', 10);
+      const minutes = Number.parseInt(timeMatch[2] ?? '0', 10);
+      const seconds = Number.parseFloat(timeMatch[3] ?? '0');
       const currentTime = hours * 3600 + minutes * 60 + seconds;
 
       const progressRatio = Math.min(currentTime / totalDuration, 1.0);
@@ -293,7 +269,7 @@ export class FFmpegEncoder {
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
-      logger.debug("ffmpeg", "Parsed progress from time", {
+      logger.debug('ffmpeg', 'Parsed progress from time', {
         hours,
         minutes,
         seconds,
@@ -310,14 +286,13 @@ export class FFmpegEncoder {
     // microseconds (observed in ffmpeg.wasm logs: out_time_ms=1910000 for time=1.91s).
     const outTimeUsMatch = message.match(/out_time_us=(\d+)/);
     if (outTimeUsMatch) {
-      const currentTime =
-        Number.parseInt(outTimeUsMatch[1] ?? "0", 10) / 1_000_000;
+      const currentTime = Number.parseInt(outTimeUsMatch[1] ?? '0', 10) / 1_000_000;
       const progressRatio = Math.min(currentTime / totalDuration, 1.0);
       const progressRange = progressEnd - progressStart;
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
-      logger.debug("ffmpeg", "Parsed progress from out_time_us", {
+      logger.debug('ffmpeg', 'Parsed progress from out_time_us', {
         outTimeUs: outTimeUsMatch[1],
         currentTime,
         totalDuration,
@@ -327,13 +302,11 @@ export class FFmpegEncoder {
       return;
     }
 
-    const outTimeMatch = message.match(
-      /out_time=(\d{2}):(\d{2}):(\d{2}\.\d{2,6})/
-    );
+    const outTimeMatch = message.match(/out_time=(\d{2}):(\d{2}):(\d{2}\.\d{2,6})/);
     if (outTimeMatch) {
-      const hours = Number.parseInt(outTimeMatch[1] ?? "0", 10);
-      const minutes = Number.parseInt(outTimeMatch[2] ?? "0", 10);
-      const seconds = Number.parseFloat(outTimeMatch[3] ?? "0");
+      const hours = Number.parseInt(outTimeMatch[1] ?? '0', 10);
+      const minutes = Number.parseInt(outTimeMatch[2] ?? '0', 10);
+      const seconds = Number.parseFloat(outTimeMatch[3] ?? '0');
       const currentTime = hours * 3600 + minutes * 60 + seconds;
 
       const progressRatio = Math.min(currentTime / totalDuration, 1.0);
@@ -341,7 +314,7 @@ export class FFmpegEncoder {
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
-      logger.debug("ffmpeg", "Parsed progress from out_time", {
+      logger.debug('ffmpeg', 'Parsed progress from out_time', {
         hours,
         minutes,
         seconds,
@@ -355,50 +328,42 @@ export class FFmpegEncoder {
 
     const outTimeMsMatch = message.match(/out_time_ms=(\d+)/);
     if (outTimeMsMatch) {
-      const currentTime =
-        Number.parseInt(outTimeMsMatch[1] ?? "0", 10) / 1_000_000;
+      const currentTime = Number.parseInt(outTimeMsMatch[1] ?? '0', 10) / 1_000_000;
       const progressRatio = Math.min(currentTime / totalDuration, 1.0);
       const progressRange = progressEnd - progressStart;
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
-      logger.debug(
-        "ffmpeg",
-        "Parsed progress from out_time_ms (microseconds)",
-        {
-          outTimeMs: outTimeMsMatch[1],
-          currentTime,
-          totalDuration,
-          progressRatio,
-          calculatedProgress: Math.round(calculatedProgress),
-        }
-      );
+      logger.debug('ffmpeg', 'Parsed progress from out_time_ms (microseconds)', {
+        outTimeMs: outTimeMsMatch[1],
+        currentTime,
+        totalDuration,
+        progressRatio,
+        calculatedProgress: Math.round(calculatedProgress),
+      });
     }
   }
 
   /**
    * Build FFmpeg input arguments
    */
-  private buildInputArgs(
-    inputFileName: string,
-    inputOverride?: FFmpegInputOverride
-  ): string[] {
+  private buildInputArgs(inputFileName: string, inputOverride?: FFmpegInputOverride): string[] {
     if (inputOverride) {
-      logger.debug("conversion", "Using input format override", {
+      logger.debug('conversion', 'Using input format override', {
         format: inputOverride.format,
         framerate: inputOverride.framerate,
       });
       return [
-        "-f",
+        '-f',
         inputOverride.format,
-        "-r",
+        '-r',
         inputOverride.framerate.toString(),
-        "-i",
+        '-i',
         inputFileName,
       ];
     }
 
-    return ["-i", inputFileName];
+    return ['-i', inputFileName];
   }
 
   /**
@@ -409,7 +374,7 @@ export class FFmpegEncoder {
    */
   private enrichConversionError(params: {
     error: unknown;
-    format: "gif" | "webp";
+    format: 'gif' | 'webp';
     options: ConversionOptions;
     metadata?: VideoMetadata;
   }): Error {
@@ -436,18 +401,16 @@ export class FFmpegEncoder {
       );
 
       if (error instanceof Error) {
-        (error as unknown as { errorContext?: unknown }).errorContext ??=
-          context;
+        (error as unknown as { errorContext?: unknown }).errorContext ??= context;
         return error;
       }
 
       const enriched = new Error(message);
-      (enriched as unknown as { errorContext?: unknown }).errorContext =
-        context;
+      (enriched as unknown as { errorContext?: unknown }).errorContext = context;
       return enriched;
     } catch (enrichError) {
       // If error enrichment fails, return original error
-      logger.warn("conversion", "Failed to enrich error context", {
+      logger.warn('conversion', 'Failed to enrich error context', {
         originalError: message,
         enrichError: getErrorMessage(enrichError),
       });
@@ -461,7 +424,7 @@ export class FFmpegEncoder {
   }
 
   async encodeFrameSequence(params: {
-    format: "gif" | "webp";
+    format: 'gif' | 'webp';
     options: ConversionOptions;
     frameCount: number;
     fps: number;
@@ -480,12 +443,12 @@ export class FFmpegEncoder {
     const { core, vfs } = this.getDeps();
 
     if (!this.acquireConversionLock()) {
-      throw new Error("Another conversion is already in progress");
+      throw new Error('Another conversion is already in progress');
     }
 
     try {
       // Validate FFmpeg state before attempting encoding
-      logger.debug("conversion", "Starting frame sequence encoding", {
+      logger.debug('conversion', 'Starting frame sequence encoding', {
         format,
         frameCount,
         fps,
@@ -495,12 +458,12 @@ export class FFmpegEncoder {
       this.validateFFmpegState();
 
       const ffmpeg = core.getFFmpeg();
-      const outputFileName = format === "gif" ? "output.gif" : "output.webp";
+      const outputFileName = format === 'gif' ? 'output.gif' : 'output.webp';
 
       // Validate frame sequence exists
       await this.validateFrameSequence(frameCount, format);
 
-      if (format === "gif") {
+      if (format === 'gif') {
         await this.encodeFramesToGIFWithPalette(
           ffmpeg,
           outputFileName,
@@ -523,10 +486,10 @@ export class FFmpegEncoder {
         ffmpeg,
         outputFileName,
         format,
-        "Output validation failed"
+        'Output validation failed'
       );
       const blob = new Blob([new Uint8Array(outputData)], {
-        type: format === "gif" ? "image/gif" : "image/webp",
+        type: format === 'gif' ? 'image/gif' : 'image/webp',
       }) as ConversionOutputBlob;
 
       // Cleanup
@@ -534,7 +497,7 @@ export class FFmpegEncoder {
       if (frameFilesToClean.length === 0) {
         // Fallback: reconstruct frame file names if not provided (old behavior for CPU path)
         for (let i = 0; i < frameCount; i++) {
-          frameFilesToClean.push(`frame${i.toString().padStart(5, "0")}.png`);
+          frameFilesToClean.push(`frame${i.toString().padStart(5, '0')}.png`);
         }
       }
       await vfs.handleConversionCleanup(
@@ -559,22 +522,19 @@ export class FFmpegEncoder {
   /**
    * Validate frame sequence
    */
-  private async validateFrameSequence(
-    frameCount: number,
-    format: "gif" | "webp"
-  ): Promise<void> {
-    logger.debug("conversion", "Validating frame sequence", {
+  private async validateFrameSequence(frameCount: number, format: 'gif' | 'webp'): Promise<void> {
+    logger.debug('conversion', 'Validating frame sequence', {
       frameCount,
       format,
     });
 
     // GIF requires animation (>=2 frames), WebP supports static (1 frame)
-    if (format === "gif" && frameCount < 2) {
-      throw new Error("GIF requires at least 2 frames for animation");
+    if (format === 'gif' && frameCount < 2) {
+      throw new Error('GIF requires at least 2 frames for animation');
     }
 
     if (frameCount < 1) {
-      throw new Error("Frame sequence must contain at least 1 frame");
+      throw new Error('Frame sequence must contain at least 1 frame');
     }
   }
 
@@ -602,7 +562,7 @@ export class FFmpegEncoder {
     const frameExtension = detectFrameExtension(frameFiles);
     const inputPattern = `frame_%06d.${frameExtension}`;
 
-    logger.info("conversion", "Generating GIF palette from frame sequence", {
+    logger.info('conversion', 'Generating GIF palette from frame sequence', {
       frameCount,
       fps,
       colors: qualitySettings.colors,
@@ -610,28 +570,24 @@ export class FFmpegEncoder {
     });
 
     // Generate palette
-    const paletteThreadArgs = getThreadingArgs("filter-complex");
+    const paletteThreadArgs = getThreadingArgs('filter-complex');
     // Use concat instead of spread to prevent stack overflow
     const paletteCmd = ([] as string[])
       .concat(Array.from(paletteThreadArgs))
       .concat([
-        "-framerate",
+        '-framerate',
         fps.toString(),
-        "-i",
+        '-i',
         inputPattern,
-        "-vf",
+        '-vf',
         `palettegen=max_colors=${qualitySettings.colors}`,
-        "-update",
-        "1",
+        '-update',
+        '1',
         paletteFileName,
       ]);
 
-    const paletteLogHandler = this.createFFmpegLogHandler(
-      durationSeconds,
-      encodeStart,
-      paletteEnd
-    );
-    ffmpeg.on("log", paletteLogHandler);
+    const paletteLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, paletteEnd);
+    ffmpeg.on('log', paletteLogHandler);
 
     const paletteHeartbeat = monitoring.startProgressHeartbeat(
       encodeStart,
@@ -640,40 +596,38 @@ export class FFmpegEncoder {
     );
 
     // Calculate adaptive timeout for GIF palette generation
-    const gifTimeout = calculateTimeout("gif", durationSeconds * 1000);
+    const gifTimeout = calculateTimeout('gif', durationSeconds * 1000);
 
     try {
       await withTimeout(
         ffmpeg.exec(paletteCmd),
         gifTimeout,
-        `WebCodecs GIF palette generation timed out after ${
-          gifTimeout / 1000
-        } seconds.`,
+        `WebCodecs GIF palette generation timed out after ${gifTimeout / 1000} seconds.`,
         () => {
           const { core, onStatusUpdate } = this.getDeps();
-          onStatusUpdate?.("Terminating FFmpeg...");
+          onStatusUpdate?.('Terminating FFmpeg...');
           core.terminate();
         }
       );
     } finally {
-      ffmpeg.off("log", paletteLogHandler);
+      ffmpeg.off('log', paletteLogHandler);
       monitoring.stopProgressHeartbeat(paletteHeartbeat);
     }
 
     // Convert frames to GIF using palette
-    const conversionThreadArgs = getThreadingArgs("filter-complex");
-    const ditherMode = quality === "high" ? "sierra2_4a" : "bayer";
+    const conversionThreadArgs = getThreadingArgs('filter-complex');
+    const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
     // Use concat instead of spread to prevent stack overflow
     const conversionCmd = ([] as string[])
       .concat(Array.from(conversionThreadArgs))
       .concat([
-        "-framerate",
+        '-framerate',
         fps.toString(),
-        "-i",
+        '-i',
         inputPattern,
-        "-i",
+        '-i',
         paletteFileName,
-        "-filter_complex",
+        '-filter_complex',
         `paletteuse=dither=${ditherMode}`,
         outputFileName,
       ]);
@@ -683,7 +637,7 @@ export class FFmpegEncoder {
       paletteEnd,
       encodeEnd
     );
-    ffmpeg.on("log", conversionLogHandler);
+    ffmpeg.on('log', conversionLogHandler);
 
     const conversionHeartbeat = monitoring.startProgressHeartbeat(
       paletteEnd,
@@ -695,17 +649,15 @@ export class FFmpegEncoder {
       await withTimeout(
         ffmpeg.exec(conversionCmd),
         gifTimeout, // Reuse GIF timeout (already calculated above)
-        `WebCodecs GIF conversion timed out after ${
-          gifTimeout / 1000
-        } seconds.`,
+        `WebCodecs GIF conversion timed out after ${gifTimeout / 1000} seconds.`,
         () => {
           const { core, onStatusUpdate } = this.getDeps();
-          onStatusUpdate?.("Terminating FFmpeg...");
+          onStatusUpdate?.('Terminating FFmpeg...');
           core.terminate();
         }
       );
     } finally {
-      ffmpeg.off("log", conversionLogHandler);
+      ffmpeg.off('log', conversionLogHandler);
       monitoring.stopProgressHeartbeat(conversionHeartbeat);
     }
   }
@@ -726,19 +678,19 @@ export class FFmpegEncoder {
     const qualitySettings = QUALITY_PRESETS.webp[quality];
 
     const isValidLibwebpPreset = (preset: string): boolean =>
-      preset === "default" ||
-      preset === "picture" ||
-      preset === "photo" ||
-      preset === "drawing" ||
-      preset === "icon" ||
-      preset === "text";
+      preset === 'default' ||
+      preset === 'picture' ||
+      preset === 'photo' ||
+      preset === 'drawing' ||
+      preset === 'icon' ||
+      preset === 'text';
 
     const presetArgs = isValidLibwebpPreset(qualitySettings.preset)
-      ? (["-preset", qualitySettings.preset] as const)
+      ? (['-preset', qualitySettings.preset] as const)
       : null;
 
     if (!presetArgs) {
-      logger.warn("conversion", "Skipping unsupported libwebp preset", {
+      logger.warn('conversion', 'Skipping unsupported libwebp preset', {
         preset: qualitySettings.preset,
       });
     }
@@ -754,43 +706,36 @@ export class FFmpegEncoder {
     // Use limited multithreading when cross-origin isolation is available.
     const canUseThreads = globalThis.crossOriginIsolated === true;
     const hwConcurrency = navigator.hardwareConcurrency || 2;
-    const threads = canUseThreads
-      ? Math.min(4, Math.max(2, Math.floor(hwConcurrency * 0.5)))
-      : 1;
-    const webpThreadArgs = [
-      "-threads",
-      threads.toString(),
-      "-filter_threads",
-      "1",
-    ];
+    const threads = canUseThreads ? Math.min(4, Math.max(2, Math.floor(hwConcurrency * 0.5))) : 1;
+    const webpThreadArgs = ['-threads', threads.toString(), '-filter_threads', '1'];
 
     // Use concat instead of spread to prevent stack overflow
     const webpCmd = ([] as string[])
       .concat(webpThreadArgs)
       .concat([
-        "-framerate",
+        '-framerate',
         fps.toString(),
-        "-i",
+        '-i',
         inputPattern,
-        "-c:v",
-        "libwebp",
-        "-lossless",
-        "0",
-        "-quality",
+        '-c:v',
+        'libwebp',
+        '-lossless',
+        '0',
+        '-quality',
         qualitySettings.quality.toString(),
       ])
       .concat(presetArgs ? Array.from(presetArgs) : [])
       .concat([
-        "-compression_level",
+        '-compression_level',
         qualitySettings.compressionLevel.toString(),
-        "-method",
+        '-method',
         qualitySettings.method.toString(),
-        "-loop",
-        "0",
+        '-loop',
+        '0',
         outputFileName,
       ]);
 
-    logger.info("conversion", "Encoding frames directly to WebP", {
+    logger.info('conversion', 'Encoding frames directly to WebP', {
       frameCount,
       fps,
       quality: qualitySettings.quality,
@@ -804,12 +749,8 @@ export class FFmpegEncoder {
       canUseThreads,
     });
 
-    const webpLogHandler = this.createFFmpegLogHandler(
-      durationSeconds,
-      encodeStart,
-      encodeEnd
-    );
-    ffmpeg.on("log", webpLogHandler);
+    const webpLogHandler = this.createFFmpegLogHandler(durationSeconds, encodeStart, encodeEnd);
+    ffmpeg.on('log', webpLogHandler);
 
     const webpHeartbeat = monitoring.startProgressHeartbeat(
       encodeStart,
@@ -819,7 +760,7 @@ export class FFmpegEncoder {
 
     // Calculate adaptive timeout for WebP encoding (VP9/complex codec support)
     // Base: 120s, per-second: 15s, max: 360s (6 minutes)
-    const webpTimeout = calculateTimeout("webp", durationSeconds * 1000);
+    const webpTimeout = calculateTimeout('webp', durationSeconds * 1000);
 
     try {
       await withTimeout(
@@ -828,7 +769,7 @@ export class FFmpegEncoder {
         `Direct WebP encoding timed out after ${webpTimeout / 1000} seconds.`,
         () => {
           const { core, onStatusUpdate } = this.getDeps();
-          onStatusUpdate?.("Terminating FFmpeg...");
+          onStatusUpdate?.('Terminating FFmpeg...');
           core.terminate();
         }
       );
@@ -837,12 +778,12 @@ export class FFmpegEncoder {
       monitoring.stopProgressHeartbeat(webpHeartbeat);
       throw error;
     } finally {
-      ffmpeg.off("log", webpLogHandler);
+      ffmpeg.off('log', webpLogHandler);
       // Defensive: Ensure heartbeat stopped (safe to call twice)
       monitoring.stopProgressHeartbeat(webpHeartbeat);
     }
 
-    logger.info("conversion", "Direct WebP encoding complete");
+    logger.info('conversion', 'Direct WebP encoding complete');
   }
 
   /**
@@ -860,38 +801,35 @@ export class FFmpegEncoder {
     const { core, vfs, monitoring } = this.getDeps();
 
     if (!this.acquireConversionLock()) {
-      throw new Error("Another conversion is already in progress");
+      throw new Error('Another conversion is already in progress');
     }
 
-    performanceTracker.startPhase("conversion");
+    performanceTracker.startPhase('conversion');
 
     try {
       const ffmpeg = core.getFFmpeg();
       const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
       const paletteFileName = FFMPEG_INTERNALS.PALETTE_FILE_NAME;
-      const outputFileName = "output.gif";
+      const outputFileName = 'output.gif';
 
       // Ensure input file
       await vfs.ensureInputFile(ffmpeg, file);
 
-      const quality = options.quality || "medium";
+      const quality = options.quality || 'medium';
       const scale = options.scale || 1.0;
-      const fps = getOptimalFPS(metadata?.framerate || 30, quality, "gif");
+      const fps = getOptimalFPS(metadata?.framerate || 30, quality, 'gif');
 
       const qualitySettings = QUALITY_PRESETS.gif[quality];
       const scaleFilter = getScaleFilter(quality, scale);
 
-      logger.info("conversion", "Starting GIF conversion", {
+      logger.info('conversion', 'Starting GIF conversion', {
         quality,
         scale,
         fps,
         colors: qualitySettings.colors,
       });
 
-      const conversionTimeout = getTimeoutForFormat(
-        "gif",
-        this.getDurationMs(metadata, options)
-      );
+      const conversionTimeout = getTimeoutForFormat('gif', this.getDurationMs(metadata, options));
 
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
 
@@ -899,7 +837,7 @@ export class FFmpegEncoder {
       const inputArgs = this.buildInputArgs(inputFileName, inputOverride);
 
       // Generate palette
-      const paletteThreadArgs = getThreadingArgs("filter-complex");
+      const paletteThreadArgs = getThreadingArgs('filter-complex');
       const paletteFilterChain = scaleFilter
         ? `${scaleFilter},fps=${fps},palettegen=max_colors=${qualitySettings.colors}`
         : `fps=${fps},palettegen=max_colors=${qualitySettings.colors}`;
@@ -908,10 +846,10 @@ export class FFmpegEncoder {
       const paletteCmd = ([] as string[])
         .concat(Array.from(paletteThreadArgs))
         .concat(inputArgs)
-        .concat(["-vf", paletteFilterChain, "-update", "1", paletteFileName]);
+        .concat(['-vf', paletteFilterChain, '-update', '1', paletteFileName]);
 
       // Log command safely without join() to prevent stack overflow
-      logger.info("ffmpeg", "Palette generation command", {
+      logger.info('ffmpeg', 'Palette generation command', {
         cmdLength: paletteCmd.length,
         cmdPreview: paletteCmd.slice(0, 5),
       });
@@ -922,29 +860,25 @@ export class FFmpegEncoder {
         30
       );
 
-      performanceTracker.startPhase("palette-gen");
-      logger.performance("Starting GIF palette generation");
+      performanceTracker.startPhase('palette-gen');
+      logger.performance('Starting GIF palette generation');
 
       try {
         try {
           // Validate command array depth to prevent stack overflow
           const maxCmdLength = 200; // Reasonable limit for command array
           if (paletteCmd.length > maxCmdLength) {
-            logger.error(
-              "ffmpeg",
-              "Command array too large, potential stack overflow",
-              {
-                cmdLength: paletteCmd.length,
-                maxAllowed: maxCmdLength,
-              }
-            );
+            logger.error('ffmpeg', 'Command array too large, potential stack overflow', {
+              cmdLength: paletteCmd.length,
+              maxAllowed: maxCmdLength,
+            });
             throw new Error(
               `FFmpeg command array too large (${paletteCmd.length} elements). ` +
-                "This may indicate a configuration error."
+                'This may indicate a configuration error.'
             );
           }
 
-          logger.info("ffmpeg", "Executing palette generation", {
+          logger.info('ffmpeg', 'Executing palette generation', {
             cmdLength: paletteCmd.length,
             timeout: conversionTimeout,
           });
@@ -952,51 +886,40 @@ export class FFmpegEncoder {
           await withTimeout(
             ffmpeg.exec(paletteCmd),
             conversionTimeout,
-            `GIF palette generation timed out after ${
-              conversionTimeout / 1000
-            } seconds.`,
+            `GIF palette generation timed out after ${conversionTimeout / 1000} seconds.`,
             () => {
               const { core, onStatusUpdate } = this.getDeps();
-              onStatusUpdate?.("Terminating FFmpeg...");
+              onStatusUpdate?.('Terminating FFmpeg...');
               core.terminate();
             }
           );
 
-          logger.debug("ffmpeg", "Palette generation completed successfully");
+          logger.debug('ffmpeg', 'Palette generation completed successfully');
         } catch (execError) {
           // Log detailed error information
-          const errorMsg =
-            execError instanceof Error ? execError.message : String(execError);
-          const errorStack =
-            execError instanceof Error ? execError.stack : undefined;
+          const errorMsg = execError instanceof Error ? execError.message : String(execError);
+          const errorStack = execError instanceof Error ? execError.stack : undefined;
 
-          logger.error("ffmpeg", "Palette generation failed", {
+          logger.error('ffmpeg', 'Palette generation failed', {
             error: errorMsg,
-            errorType:
-              execError instanceof Error
-                ? execError.constructor.name
-                : typeof execError,
-            stackPreview: errorStack?.split("\n").slice(0, 3),
+            errorType: execError instanceof Error ? execError.constructor.name : typeof execError,
+            stackPreview: errorStack?.split('\n').slice(0, 3),
           });
 
           // Wrap FFmpeg exec errors to prevent stack overflow during error handling
           if (
             execError instanceof Error &&
-            (execError.message.includes("Maximum call stack size exceeded") ||
-              execError.message.includes("stack overflow"))
+            (execError.message.includes('Maximum call stack size exceeded') ||
+              execError.message.includes('stack overflow'))
           ) {
-            logger.error(
-              "ffmpeg",
-              "Stack overflow detected in FFmpeg execution",
-              {
-                command: "palette-gen",
-                cmdLength: paletteCmd.length,
-                cmdPreview: paletteCmd.slice(0, 10).join(" "),
-              }
-            );
+            logger.error('ffmpeg', 'Stack overflow detected in FFmpeg execution', {
+              command: 'palette-gen',
+              cmdLength: paletteCmd.length,
+              cmdPreview: paletteCmd.slice(0, 10).join(' '),
+            });
             throw new Error(
-              "FFmpeg palette generation failed: stack overflow in execution. " +
-                "Try restarting the browser or using a simpler video file."
+              'FFmpeg palette generation failed: stack overflow in execution. ' +
+                'Try restarting the browser or using a simpler video file.'
             );
           }
           throw execError;
@@ -1010,17 +933,17 @@ export class FFmpegEncoder {
         monitoring.stopProgressHeartbeat(paletteHeartbeat);
       }
 
-      performanceTracker.endPhase("palette-gen");
-      logger.performance("GIF palette generation complete");
+      performanceTracker.endPhase('palette-gen');
+      logger.performance('GIF palette generation complete');
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START);
 
       if (this.cancellationRequested) {
-        throw new Error("Conversion cancelled by user");
+        throw new Error('Conversion cancelled by user');
       }
 
       // Convert to GIF using palette
-      const conversionThreadArgs = getThreadingArgs("filter-complex");
-      const ditherMode = quality === "high" ? "sierra2_4a" : "bayer";
+      const conversionThreadArgs = getThreadingArgs('filter-complex');
+      const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
       const gifFilterChain = scaleFilter
         ? `${scaleFilter},fps=${fps}[v];[v][1:v]paletteuse=dither=${ditherMode}`
         : `fps=${fps}[v];[v][1:v]paletteuse=dither=${ditherMode}`;
@@ -1029,17 +952,17 @@ export class FFmpegEncoder {
       const gifCmd = ([] as string[])
         .concat(Array.from(conversionThreadArgs))
         .concat(inputArgs)
-        .concat(["-i", paletteFileName, "-lavfi", gifFilterChain])
+        .concat(['-i', paletteFileName, '-lavfi', gifFilterChain])
         .concat(Array.from(getProgressLoggingArgs()))
         .concat([outputFileName]);
 
       // Log command safely without join() to prevent stack overflow
-      logger.debug("ffmpeg", "GIF conversion command", {
+      logger.debug('ffmpeg', 'GIF conversion command', {
         cmdLength: gifCmd.length,
         cmdPreview: gifCmd.slice(0, 5),
       });
 
-      logger.performance("Starting GIF encoding");
+      logger.performance('Starting GIF encoding');
 
       // Register log handler for progress tracking
       const estimatedDuration = metadata?.duration || 30;
@@ -1048,7 +971,7 @@ export class FFmpegEncoder {
         FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START,
         FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END
       );
-      ffmpeg.on("log", gifLogHandler);
+      ffmpeg.on('log', gifLogHandler);
 
       const heartbeat = monitoring.startProgressHeartbeat(
         FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START,
@@ -1061,12 +984,10 @@ export class FFmpegEncoder {
           await withTimeout(
             ffmpeg.exec(gifCmd),
             conversionTimeout,
-            `GIF conversion timed out after ${
-              conversionTimeout / 1000
-            } seconds.`,
+            `GIF conversion timed out after ${conversionTimeout / 1000} seconds.`,
             () => {
               const { core, onStatusUpdate } = this.getDeps();
-              onStatusUpdate?.("Terminating FFmpeg...");
+              onStatusUpdate?.('Terminating FFmpeg...');
               core.terminate();
             }
           );
@@ -1074,55 +995,43 @@ export class FFmpegEncoder {
           // Wrap FFmpeg exec errors to prevent stack overflow during error handling
           if (
             execError instanceof Error &&
-            execError.message === "Maximum call stack size exceeded"
+            execError.message === 'Maximum call stack size exceeded'
           ) {
-            logger.error(
-              "ffmpeg",
-              "Stack overflow detected in FFmpeg execution",
-              {
-                command: "gif-encode",
-                cmdLength: gifCmd.length,
-              }
-            );
-            throw new Error(
-              "FFmpeg GIF encoding failed: stack overflow in execution"
-            );
+            logger.error('ffmpeg', 'Stack overflow detected in FFmpeg execution', {
+              command: 'gif-encode',
+              cmdLength: gifCmd.length,
+            });
+            throw new Error('FFmpeg GIF encoding failed: stack overflow in execution');
           }
-          logger.warn(
-            "conversion",
-            "GIF conversion failed, will attempt cleanup"
-          );
+          logger.warn('conversion', 'GIF conversion failed, will attempt cleanup');
           throw execError;
         }
       } catch (error) {
         // CRITICAL: Stop heartbeat immediately on error to prevent interval leaks
         monitoring.stopProgressHeartbeat(heartbeat);
-        logger.warn(
-          "conversion",
-          "GIF conversion failed, will attempt cleanup"
-        );
+        logger.warn('conversion', 'GIF conversion failed, will attempt cleanup');
         throw error;
       } finally {
-        ffmpeg.off("log", gifLogHandler);
+        ffmpeg.off('log', gifLogHandler);
         // Defensive: Ensure heartbeat stopped (safe to call twice)
         monitoring.stopProgressHeartbeat(heartbeat);
       }
 
-      logger.performance("GIF encoding complete");
+      logger.performance('GIF encoding complete');
 
       // Read + validate output (single pass to avoid double-reading the same file)
       const outputData = await vfs.readValidatedOutputFile(
         ffmpeg,
         outputFileName,
-        "gif",
-        "GIF output validation failed"
+        'gif',
+        'GIF output validation failed'
       );
       const blob = new Blob([new Uint8Array(outputData)], {
-        type: "image/gif",
+        type: 'image/gif',
       }) as ConversionOutputBlob;
 
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE);
-      logger.info("conversion", "GIF conversion completed successfully", {
+      logger.info('conversion', 'GIF conversion completed successfully', {
         outputSize: blob.size,
       });
 
@@ -1138,13 +1047,13 @@ export class FFmpegEncoder {
     } catch (error) {
       throw this.enrichConversionError({
         error,
-        format: "gif",
+        format: 'gif',
         options,
         metadata,
       });
     } finally {
       this.releaseConversionLock();
-      performanceTracker.endPhase("conversion");
+      performanceTracker.endPhase('conversion');
     }
   }
 
@@ -1163,64 +1072,59 @@ export class FFmpegEncoder {
     const { core, vfs, monitoring } = this.getDeps();
 
     if (!this.acquireConversionLock()) {
-      throw new Error("Another conversion is already in progress");
+      throw new Error('Another conversion is already in progress');
     }
 
-    performanceTracker.startPhase("conversion");
+    performanceTracker.startPhase('conversion');
 
     try {
       const ffmpeg = core.getFFmpeg();
       const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
-      const outputFileName = "output.webp";
+      const outputFileName = 'output.webp';
 
       // Ensure input file
       await vfs.ensureInputFile(ffmpeg, file);
 
-      const quality = options.quality || "medium";
+      const quality = options.quality || 'medium';
       const scale = options.scale || 1.0;
-      const fps = getOptimalFPS(metadata?.framerate || 30, quality, "webp");
+      const fps = getOptimalFPS(metadata?.framerate || 30, quality, 'webp');
 
       const qualitySettings = QUALITY_PRESETS.webp[quality];
       const scaleFilter = getScaleFilter(quality, scale);
 
       const isValidLibwebpPreset = (preset: string): boolean =>
-        preset === "default" ||
-        preset === "picture" ||
-        preset === "photo" ||
-        preset === "drawing" ||
-        preset === "icon" ||
-        preset === "text";
+        preset === 'default' ||
+        preset === 'picture' ||
+        preset === 'photo' ||
+        preset === 'drawing' ||
+        preset === 'icon' ||
+        preset === 'text';
 
       const presetArgs = isValidLibwebpPreset(qualitySettings.preset)
-        ? (["-preset", qualitySettings.preset] as const)
+        ? (['-preset', qualitySettings.preset] as const)
         : null;
 
       if (!presetArgs) {
-        logger.warn("conversion", "Skipping unsupported libwebp preset", {
+        logger.warn('conversion', 'Skipping unsupported libwebp preset', {
           preset: qualitySettings.preset,
         });
       }
 
-      logger.info("conversion", "Starting WebP conversion", {
+      logger.info('conversion', 'Starting WebP conversion', {
         quality,
         scale,
         fps,
       });
 
-      const conversionTimeout = getTimeoutForFormat(
-        "webp",
-        this.getDurationMs(metadata, options)
-      );
+      const conversionTimeout = getTimeoutForFormat('webp', this.getDurationMs(metadata, options));
 
-      monitoring.updateProgress(
-        FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START
-      );
+      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START);
 
       // Build input args
       const inputArgs = this.buildInputArgs(inputFileName, inputOverride);
 
       if (this.cancellationRequested) {
-        throw new Error("Conversion cancelled by user");
+        throw new Error('Conversion cancelled by user');
       }
 
       // Try main conversion
@@ -1232,7 +1136,7 @@ export class FFmpegEncoder {
           FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
           FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END
         );
-        ffmpeg.on("log", webpLogHandler);
+        ffmpeg.on('log', webpLogHandler);
 
         const heartbeat = monitoring.startProgressHeartbeat(
           FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
@@ -1240,70 +1144,64 @@ export class FFmpegEncoder {
           estimatedDuration
         );
 
-        const isH264Input = inputOverride?.format === "h264";
+        const isH264Input = inputOverride?.format === 'h264';
         const webpThreadArgs = getThreadingArgs(
-          scaleFilter || isH264Input ? "scale-filter" : "simple"
+          scaleFilter || isH264Input ? 'scale-filter' : 'simple'
         );
 
-        const webpFilterArgs = scaleFilter
-          ? `${scaleFilter},fps=${fps}`
-          : `fps=${fps}`;
+        const webpFilterArgs = scaleFilter ? `${scaleFilter},fps=${fps}` : `fps=${fps}`;
 
         // Use concat instead of spread to prevent stack overflow
         const webpCmd = ([] as string[])
           .concat(Array.from(webpThreadArgs))
           .concat(inputArgs)
           .concat([
-            "-vf",
+            '-vf',
             webpFilterArgs,
-            "-c:v",
-            "libwebp",
-            "-lossless",
-            "0",
-            "-quality",
+            '-c:v',
+            'libwebp',
+            '-lossless',
+            '0',
+            '-quality',
             qualitySettings.quality.toString(),
           ])
           .concat(presetArgs ? Array.from(presetArgs) : [])
           .concat([
-            "-compression_level",
+            '-compression_level',
             qualitySettings.compressionLevel.toString(),
-            "-method",
+            '-method',
             qualitySettings.method.toString(),
-            "-loop",
-            "0",
+            '-loop',
+            '0',
           ])
           .concat(Array.from(getProgressLoggingArgs()))
           .concat([outputFileName]);
 
         // Log command safely without join() to prevent stack overflow
-        logger.info("ffmpeg", "WebP conversion command", {
+        logger.info('ffmpeg', 'WebP conversion command', {
           cmdLength: webpCmd.length,
           cmdPreview: webpCmd.slice(0, 5),
         });
 
-        performanceTracker.startPhase("webp-encode");
-        logger.performance("Starting WebP encoding");
+        performanceTracker.startPhase('webp-encode');
+        logger.performance('Starting WebP encoding');
 
         try {
           try {
             // Validate command array depth to prevent stack overflow
             const maxCmdLength = 200; // Reasonable limit for command array
             if (webpCmd.length > maxCmdLength) {
-              logger.error(
-                "ffmpeg",
-                "Command array too large, potential stack overflow",
-                {
-                  cmdLength: webpCmd.length,
-                  maxAllowed: maxCmdLength,
-                }
-              );
+              logger.error('ffmpeg', 'Command array too large, potential stack overflow', {
+                cmdLength: webpCmd.length,
+                maxAllowed: maxCmdLength,
+              });
               throw new Error(
                 `FFmpeg command array too large (${webpCmd.length} elements). ` +
-                  "This may indicate a configuration error."
+                  'This may indicate a configuration error.'
               );
             }
 
-            logger.info("ffmpeg", "Executing WebP conversion", {
+            logger.info('ffmpeg', 'Executing WebP conversion', {
               cmdLength: webpCmd.length,
               timeout: conversionTimeout,
             });
@@ -1311,53 +1209,40 @@ export class FFmpegEncoder {
             await withTimeout(
               ffmpeg.exec(webpCmd),
               conversionTimeout,
-              `WebP conversion timed out after ${
-                conversionTimeout / 1000
-              } seconds.`,
+              `WebP conversion timed out after ${conversionTimeout / 1000} seconds.`,
               () => {
                 const { core, onStatusUpdate } = this.getDeps();
-                onStatusUpdate?.("Terminating FFmpeg...");
+                onStatusUpdate?.('Terminating FFmpeg...');
                 core.terminate();
               }
             );
 
-            logger.debug("ffmpeg", "WebP conversion completed successfully");
+            logger.debug('ffmpeg', 'WebP conversion completed successfully');
           } catch (execError) {
             // Log detailed error information
-            const errorMsg =
-              execError instanceof Error
-                ? execError.message
-                : String(execError);
-            const errorStack =
-              execError instanceof Error ? execError.stack : undefined;
+            const errorMsg = execError instanceof Error ? execError.message : String(execError);
+            const errorStack = execError instanceof Error ? execError.stack : undefined;
 
-            logger.error("ffmpeg", "WebP conversion failed", {
+            logger.error('ffmpeg', 'WebP conversion failed', {
               error: errorMsg,
-              errorType:
-                execError instanceof Error
-                  ? execError.constructor.name
-                  : typeof execError,
-              stackPreview: errorStack?.split("\n").slice(0, 3),
+              errorType: execError instanceof Error ? execError.constructor.name : typeof execError,
+              stackPreview: errorStack?.split('\n').slice(0, 3),
             });
 
             // Wrap FFmpeg exec errors to prevent stack overflow during error handling
             if (
               execError instanceof Error &&
-              (execError.message.includes("Maximum call stack size exceeded") ||
-                execError.message.includes("stack overflow"))
+              (execError.message.includes('Maximum call stack size exceeded') ||
+                execError.message.includes('stack overflow'))
             ) {
-              logger.error(
-                "ffmpeg",
-                "Stack overflow detected in FFmpeg execution",
-                {
-                  command: "webp-encode",
-                  cmdLength: webpCmd.length,
-                  cmdPreview: webpCmd.slice(0, 10),
-                }
-              );
+              logger.error('ffmpeg', 'Stack overflow detected in FFmpeg execution', {
+                command: 'webp-encode',
+                cmdLength: webpCmd.length,
+                cmdPreview: webpCmd.slice(0, 10),
+              });
               throw new Error(
-                "FFmpeg WebP encoding failed: stack overflow in execution. " +
-                  "Try restarting the browser or using a simpler video file."
+                'FFmpeg WebP encoding failed: stack overflow in execution. ' +
+                  'Try restarting the browser or using a simpler video file.'
               );
             }
             throw execError;
@@ -1367,18 +1252,15 @@ export class FFmpegEncoder {
           monitoring.stopProgressHeartbeat(heartbeat);
           throw error;
         } finally {
-          ffmpeg.off("log", webpLogHandler);
+          ffmpeg.off('log', webpLogHandler);
           // Defensive: Ensure heartbeat stopped (safe to call twice)
           monitoring.stopProgressHeartbeat(heartbeat);
         }
 
-        performanceTracker.endPhase("webp-encode");
-        logger.performance("WebP encoding complete");
+        performanceTracker.endPhase('webp-encode');
+        logger.performance('WebP encoding complete');
       } catch (error) {
-        logger.warn(
-          "conversion",
-          "WebP conversion failed, will attempt cleanup"
-        );
+        logger.warn('conversion', 'WebP conversion failed, will attempt cleanup');
         throw error;
       }
 
@@ -1386,37 +1268,32 @@ export class FFmpegEncoder {
       const outputData = await vfs.readValidatedOutputFile(
         ffmpeg,
         outputFileName,
-        "webp",
-        "WebP output validation failed"
+        'webp',
+        'WebP output validation failed'
       );
       const blob = new Blob([new Uint8Array(outputData)], {
-        type: "image/webp",
+        type: 'image/webp',
       }) as ConversionOutputBlob;
 
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE);
-      logger.info("conversion", "WebP conversion completed successfully", {
+      logger.info('conversion', 'WebP conversion completed successfully', {
         outputSize: blob.size,
       });
 
       // Cleanup
-      await vfs.handleConversionCleanup(
-        ffmpeg,
-        outputFileName,
-        [],
-        isMemoryCritical
-      );
+      await vfs.handleConversionCleanup(ffmpeg, outputFileName, [], isMemoryCritical);
 
       return blob;
     } catch (error) {
       throw this.enrichConversionError({
         error,
-        format: "webp",
+        format: 'webp',
         options,
         metadata,
       });
     } finally {
       this.releaseConversionLock();
-      performanceTracker.endPhase("conversion");
+      performanceTracker.endPhase('conversion');
     }
   }
 
@@ -1429,7 +1306,7 @@ export class FFmpegEncoder {
       return;
     }
     this.cancellationRequested = true;
-    this.updateStatus("Cancelling conversion...");
+    this.updateStatus('Cancelling conversion...');
     // Cancellation is handled via flag; monitoring stops when conversion ends
   }
 
