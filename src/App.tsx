@@ -31,6 +31,7 @@ import {
 import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
 import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
 import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
+import { conversionMetricsService } from '@services/orchestration/conversion-metrics-service';
 import {
   appState,
   environmentSupported,
@@ -185,6 +186,9 @@ const App: Component = () => {
               capabilities: caps,
               strategies: strategyRegistryService.getAllStrategies(),
               history: () => strategyHistoryService.getAllHistory(),
+              metrics: () => conversionMetricsService.getAll(),
+              metricsSummary: () => conversionMetricsService.getSummary(),
+              clearMetrics: () => conversionMetricsService.clear(),
               lastDecision: () => getConversionAutoSelectionDebug(),
               phaseTimings: () => getConversionPhaseTimingsDebug(),
               testStrategy: (codec: string, format: 'gif' | 'webp' | 'mp4') => {

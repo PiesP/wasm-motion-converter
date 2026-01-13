@@ -15,6 +15,10 @@
 import type { ExtendedCapabilities, VideoCapabilities } from '@t/video-pipeline-types';
 import type { CodecPathPreference } from '@services/orchestration/types';
 import type { ConversionHistory } from '@services/orchestration/strategy-history-service';
+import type {
+  ConversionMetricGroup,
+  ConversionMetricRecord,
+} from '@services/orchestration/conversion-metrics-service';
 
 /* ============================================================================
    Vite Environment Variables
@@ -202,6 +206,9 @@ declare global {
       capabilities: ExtendedCapabilities;
       strategies: CodecPathPreference[];
       history: () => ConversionHistory[];
+      metrics: () => ConversionMetricRecord[];
+      metricsSummary: () => ConversionMetricGroup[];
+      clearMetrics: () => void;
       lastDecision: () => {
         timestamp: number;
         format: 'gif' | 'webp' | 'mp4';

@@ -33,10 +33,12 @@ import {
   updateConversionAutoSelectionDebug,
   type ConversionDebugOutcome,
 } from './conversion-debug';
+import { conversionMetricsService } from './conversion-metrics-service';
 import type {
   ConversionMetadata,
   ConversionRequest,
   ConversionResponse,
+  ConversionPath,
   ConversionStatus,
   PathSelection,
 } from './types';
@@ -71,6 +73,10 @@ class ConversionOrchestrator {
     const perfStart = performance.now();
     let analysisStart = perfStart;
     let conversionStart = perfStart;
+    let outputSizeBytes: number | null = null;
+    let encoderBackendUsedForMetrics: string | null = null;
+    let captureModeUsedForMetrics: string | null = null;
+    let executedPathForMetrics: ConversionPath | null = null;
     let debugOutcome: ConversionDebugOutcome | undefined;
 
     const operationId = createId();
@@ -250,6 +256,8 @@ class ConversionOrchestrator {
           break;
       }
 
+      executedPathForMetrics = conversionMetadata.path;
+
       // If the user cancelled (or this operation was superseded), do not treat the result
       // as a successful conversion. This avoids late-arriving completions mutating shared
       // UI/log state after rapid cancel/retry.
@@ -267,6 +275,9 @@ class ConversionOrchestrator {
       if (encoderBackendUsed) {
         conversionMetadata.encoder = encoderBackendUsed;
       }
+      encoderBackendUsedForMetrics = encoderBackendUsed ?? conversionMetadata.encoder;
+
+      outputSizeBytes = blob.size;
 
       // Best-effort: WebCodecs conversion services may attach capture mode metadata
       // directly onto the output blob for debugging/learning purposes.
@@ -275,6 +286,7 @@ class ConversionOrchestrator {
       if (captureModeUsed) {
         conversionMetadata.captureModeUsed = captureModeUsed;
       }
+      captureModeUsedForMetrics = captureModeUsed;
 
       debugOutcome = 'success';
       if (import.meta.env.DEV) {
@@ -416,13 +428,13 @@ class ConversionOrchestrator {
 
       throw error;
     } finally {
-      if (import.meta.env.DEV) {
-        const perfEnd = performance.now();
-        const initMs = Math.max(0, analysisStart - perfStart);
-        const analysisMs = Math.max(0, conversionStart - analysisStart);
-        const conversionMs = Math.max(0, perfEnd - conversionStart);
-        const totalMs = Math.max(0, perfEnd - perfStart);
+      const perfEnd = performance.now();
+      const initMs = Math.max(0, analysisStart - perfStart);
+      const analysisMs = Math.max(0, conversionStart - analysisStart);
+      const conversionMs = Math.max(0, perfEnd - conversionStart);
+      const totalMs = Math.max(0, perfEnd - perfStart);
 
+      if (import.meta.env.DEV) {
         setConversionPhaseTimingsDebug({
           timestamp: Date.now(),
           initializationMs: initMs,
@@ -431,6 +443,34 @@ class ConversionOrchestrator {
           totalMs,
           outcome: debugOutcome,
         });
+      }
+
+      // Record lightweight session metrics for tuning path selection.
+      // Skip superseded operations to avoid polluting metrics during rapid cancel/retry.
+      if (isActive()) {
+        try {
+          const codecForMetrics = plannedCodecForHistory ?? request.metadata?.codec ?? 'unknown';
+          conversionMetricsService.record({
+            timestamp: Date.now(),
+            codec: codecForMetrics,
+            format: request.format,
+            plannedPath: plannedSelection?.path ?? 'cpu',
+            executedPath: executedPathForMetrics ?? plannedSelection?.path ?? 'cpu',
+            encoderBackendUsed: encoderBackendUsedForMetrics,
+            captureModeUsed: captureModeUsedForMetrics,
+            durationMs: Math.max(0, Date.now() - startTime),
+            outputSizeBytes,
+            initializationMs: Math.round(initMs),
+            analysisMs: Math.round(analysisMs),
+            conversionMs: Math.round(conversionMs),
+            totalMs: Math.round(totalMs),
+            outcome: debugOutcome ?? 'error',
+          });
+        } catch (metricsError) {
+          logger.debug('conversion', 'Failed to record conversion metrics (non-critical)', {
+            error: getErrorMessage(metricsError),
+          });
+        }
       }
 
       // Only the currently-active operation may clear shared orchestrator state.
