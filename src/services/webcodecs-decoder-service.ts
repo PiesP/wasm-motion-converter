@@ -15,6 +15,7 @@ import {
   type CaptureFrameState,
 } from '@services/webcodecs/decoder/capture-frame';
 import { createCanvas } from '@services/webcodecs/decoder/canvas';
+import { computeMaxTotalDecodeMs } from '@services/webcodecs/decoder/decode-budget';
 import { waitForEvent } from '@services/webcodecs/decoder/wait-for-event';
 import {
   attachVideoForDecode,
@@ -289,26 +290,12 @@ export class WebCodecsDecoderService {
           ? Math.max(1, Math.min(maxFrames, estimatedTotalFrames))
           : estimatedTotalFrames;
 
-      // Total decode timeout: seeking can legitimately take longer because it performs
-      // many discrete seeks (one per frame). Keep fail-fast behavior for realtime modes.
-      const computeMaxTotalDecodeMs = (mode: WebCodecsCaptureMode): number => {
-        if (mode !== 'seek') {
-          return FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS;
-        }
-
-        // Conservative per-frame budget for seek-based capture.
-        // Example: 115 frames → ~230s budget (2s/frame), capped to 240s.
-        const perFrameBudgetMs = 2000;
-        const estimatedMs = totalFrames * perFrameBudgetMs;
-        const upperBoundMs = 240_000;
-        return Math.min(
-          upperBoundMs,
-          Math.max(FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS, estimatedMs)
-        );
-      };
-
       let effectiveCaptureMode: WebCodecsCaptureMode = captureMode;
-      let maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+      let maxTotalDecodeMs = computeMaxTotalDecodeMs({
+        captureMode: effectiveCaptureMode,
+        totalFrames,
+        baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
+      });
 
       logger.info(
         'conversion',
@@ -396,7 +383,11 @@ export class WebCodecsDecoderService {
           throw new Error('WebCodecs track processor is not supported in this browser.');
         }
         effectiveCaptureMode = 'track';
-        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        maxTotalDecodeMs = computeMaxTotalDecodeMs({
+          captureMode: effectiveCaptureMode,
+          totalFrames,
+          baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
+        });
         await this.captureWithTrackProcessor(
           video,
           duration,
@@ -410,7 +401,11 @@ export class WebCodecsDecoderService {
           throw new Error('requestVideoFrameCallback is not supported in this browser.');
         }
         effectiveCaptureMode = 'frame-callback';
-        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        maxTotalDecodeMs = computeMaxTotalDecodeMs({
+          captureMode: effectiveCaptureMode,
+          totalFrames,
+          baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
+        });
         await this.captureWithFrameCallback(
           video,
           duration,
@@ -422,7 +417,11 @@ export class WebCodecsDecoderService {
         );
       } else if (captureMode === 'seek') {
         effectiveCaptureMode = 'seek';
-        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        maxTotalDecodeMs = computeMaxTotalDecodeMs({
+          captureMode: effectiveCaptureMode,
+          totalFrames,
+          baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
+        });
         await this.captureWithSeeking(
           video,
           duration,
@@ -435,7 +434,11 @@ export class WebCodecsDecoderService {
       } else if (supportsTrackProcessor) {
         try {
           effectiveCaptureMode = 'track';
-          maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+          maxTotalDecodeMs = computeMaxTotalDecodeMs({
+            captureMode: effectiveCaptureMode,
+            totalFrames,
+            baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
+          });
           await this.captureWithTrackProcessor(
             video,
             duration,
@@ -459,7 +462,11 @@ export class WebCodecsDecoderService {
               {}
             );
             effectiveCaptureMode = 'frame-callback';
-            maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+            maxTotalDecodeMs = computeMaxTotalDecodeMs({
+              captureMode: effectiveCaptureMode,
+              totalFrames,
+              baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
+            });
             await this.captureWithFrameCallback(
               video,
               duration,
@@ -475,7 +482,11 @@ export class WebCodecsDecoderService {
               {}
             );
             effectiveCaptureMode = 'seek';
-            maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+            maxTotalDecodeMs = computeMaxTotalDecodeMs({
+              captureMode: effectiveCaptureMode,
+              totalFrames,
+              baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
+            });
             await this.captureWithSeeking(
               video,
               duration,
@@ -488,7 +499,11 @@ export class WebCodecsDecoderService {
         }
       } else if (supportsFrameCallback) {
         effectiveCaptureMode = 'frame-callback';
-        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        maxTotalDecodeMs = computeMaxTotalDecodeMs({
+          captureMode: effectiveCaptureMode,
+          totalFrames,
+          baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
+        });
         await this.captureWithFrameCallback(
           video,
           duration,
@@ -500,7 +515,11 @@ export class WebCodecsDecoderService {
         );
       } else {
         effectiveCaptureMode = 'seek';
-        maxTotalDecodeMs = computeMaxTotalDecodeMs(effectiveCaptureMode);
+        maxTotalDecodeMs = computeMaxTotalDecodeMs({
+          captureMode: effectiveCaptureMode,
+          totalFrames,
+          baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
+        });
         await this.captureWithSeeking(
           video,
           duration,

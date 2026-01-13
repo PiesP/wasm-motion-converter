@@ -16,12 +16,14 @@ import { ffmpegService } from './ffmpeg-service';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { isComplexCodec } from '@services/webcodecs/codec-utils';
 import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture';
+import { createThrottledProgressReporter } from '@services/webcodecs/conversion/progress-reporting';
 import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support';
 import { encodeWithFFmpegFallback as encodeWithFFmpegFallbackUtil } from '@services/webcodecs/conversion/ffmpeg-fallback-encode';
 import {
   encodeWebPFramesInChunks,
   tryEncodeWebPWithEncoderFactory,
 } from '@services/webcodecs/conversion/webp-encoding';
+import { encodeWebPWithMuxFallback } from '@services/webcodecs/conversion/webp-encode-orchestrator';
 import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob';
 import {
@@ -618,28 +620,18 @@ class WebCodecsConversionService {
     const decodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_END;
 
     const StatusTickIntervalMs = 400;
-    let lastDecodeStatusAt = 0;
-    let lastDecodeStatusCurrent = -1;
-    let lastEncodeStatusAt = 0;
-    let lastEncodeStatusCurrent = -1;
-    let encodeStatusPrefix = '';
 
-    const reportDecodeProgress = (current: number, total: number) => {
-      throwIfCancelled();
-      const progress = decodeStart + ((decodeEnd - decodeStart) * current) / Math.max(1, total);
-      ffmpegService.reportProgress(Math.round(progress));
+    const decodeReporter = createThrottledProgressReporter({
+      startPercent: decodeStart,
+      endPercent: decodeEnd,
+      tickIntervalMs: StatusTickIntervalMs,
+      initialStatusPrefix: 'Decoding with WebCodecs...',
+      throwIfCancelled,
+      reportProgress: (percent) => ffmpegService.reportProgress(percent),
+      reportStatus: (status) => ffmpegService.reportStatus(status),
+    });
 
-      const now = Date.now();
-      const isTerminal = current >= total;
-      if (
-        current !== lastDecodeStatusCurrent &&
-        (isTerminal || now - lastDecodeStatusAt >= StatusTickIntervalMs)
-      ) {
-        lastDecodeStatusAt = now;
-        lastDecodeStatusCurrent = current;
-        ffmpegService.reportStatus(`Decoding with WebCodecs... (${current}/${Math.max(1, total)})`);
-      }
-    };
+    const reportDecodeProgress = decodeReporter.report;
 
     ffmpegService.beginExternalConversion(metadata, quality, format, {
       enableLogSilenceCheck: false,
@@ -811,36 +803,20 @@ class WebCodecsConversionService {
       });
 
       ffmpegService.reportProgress(decodeEnd);
-      encodeStatusPrefix = `Encoding ${format.toUpperCase()}...`;
-      ffmpegService.reportStatus(encodeStatusPrefix);
 
-      // Track the last encode progress percent so we can emit a silent keepalive
-      // during worker encoding (Comlink progress messages can be delayed under load).
-      let lastEncodeProgressPercent: number = decodeEnd;
+      const initialEncodeStatusPrefix = `Encoding ${format.toUpperCase()}...`;
+      const encodeReporter = createThrottledProgressReporter({
+        startPercent: FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START,
+        endPercent: FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END,
+        tickIntervalMs: StatusTickIntervalMs,
+        initialStatusPrefix: initialEncodeStatusPrefix,
+        throwIfCancelled,
+        reportProgress: (percent) => ffmpegService.reportProgress(percent),
+        reportStatus: (status) => ffmpegService.reportStatus(status),
+      });
+      encodeReporter.setStatusPrefix(initialEncodeStatusPrefix);
 
-      const reportEncodeProgress = (current: number, total: number) => {
-        throwIfCancelled();
-        const progress =
-          FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START +
-          ((FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END -
-            FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START) *
-            current) /
-            Math.max(1, total);
-        const roundedProgress = Math.round(progress);
-        lastEncodeProgressPercent = roundedProgress;
-        ffmpegService.reportProgress(roundedProgress);
-
-        const now = Date.now();
-        const isTerminal = current >= total;
-        if (
-          current !== lastEncodeStatusCurrent &&
-          (isTerminal || now - lastEncodeStatusAt >= StatusTickIntervalMs)
-        ) {
-          lastEncodeStatusAt = now;
-          lastEncodeStatusCurrent = current;
-          ffmpegService.reportStatus(`${encodeStatusPrefix} (${current}/${Math.max(1, total)})`);
-        }
-      };
+      const reportEncodeProgress = encodeReporter.report;
 
       const encodeWithFFmpegFallback = async (errorMessage: string): Promise<Blob> => {
         throwIfCancelled();
@@ -891,7 +867,7 @@ class WebCodecsConversionService {
               return;
             }
             try {
-              ffmpegService.reportProgress(lastEncodeProgressPercent);
+              ffmpegService.reportProgress(encodeReporter.getLastPercent());
             } catch {
               // Non-fatal: keepalive should never crash encoding.
             }
@@ -980,140 +956,33 @@ class WebCodecsConversionService {
             ? webpFrameTimestamps.slice(0, webpCapturedFrames.length)
             : undefined;
 
-        const factoryEncoded = await tryEncodeWebPWithEncoderFactory({
+        const webpEncode = await encodeWebPWithMuxFallback({
           frames: webpCapturedFrames,
           width: decodeResult.width,
           height: decodeResult.height,
           fps: webpFpsForEncoding,
+          requestedTargetFpsForDuration: targetFps,
+          captureDurationSeconds: decodeResult.duration,
           quality,
-          timestamps: timestampsForEncoding,
-          durationSeconds: webpAnimationDurationSeconds,
+          timestampsForFactory: timestampsForEncoding,
+          frameTimestampsForMuxer: webpFrameTimestamps,
+          durationSecondsForFactory: webpAnimationDurationSeconds,
+          metadata,
           codec: metadata?.codec,
           sourceFPS: metadata?.framerate,
           onProgress: reportEncodeProgress,
           shouldCancel,
+          canEncodeWebPFrames: () => this.getCanvasWebPEncodeSupport(),
+          setStatusPrefix: (prefix) => {
+            encodeReporter.setStatusPrefix(prefix);
+          },
+          encodeWithFFmpegFallback,
         });
 
-        if (factoryEncoded) {
-          outputBlob = factoryEncoded.blob;
-          encoderBackendUsed = factoryEncoded.encoderBackendUsed;
-          webpCapturedFrames.length = 0;
-          webpFrameTimestamps.length = 0;
-        } else {
-          const canEncodeWebPFrames = await this.getCanvasWebPEncodeSupport();
-          if (!canEncodeWebPFrames) {
-            const reason = 'Canvas WebP encoding is not supported in this browser';
-            logger.warn(
-              'conversion',
-              'Skipping WebP muxer path (preflight failed), using FFmpeg fallback',
-              {
-                reason,
-              }
-            );
-            outputBlob = await encodeWithFFmpegFallback(reason);
-          } else {
-            logger.info('conversion', 'Using WebP muxer path with parallel frame encoding');
-            encoderBackendUsed = 'webp-muxer';
-
-            const { encodedFrames } = await encodeWebPFramesInChunks({
-              frames: webpCapturedFrames,
-              quality,
-              codec: metadata?.codec,
-              onProgress: reportEncodeProgress,
-              shouldCancel,
-            });
-
-            let fallbackReason = 'WebP muxer output failed';
-
-            const animationDurationSeconds = this.resolveAnimationDurationSeconds(
-              encodedFrames.length,
-              targetFps,
-              metadata,
-              decodeResult.duration
-            );
-
-            if (
-              animationDurationSeconds &&
-              metadata?.duration &&
-              animationDurationSeconds !== metadata.duration
-            ) {
-              logger.info(
-                'conversion',
-                'Adjusted WebP animation duration to align with frame budget',
-                {
-                  metadataDuration: metadata.duration,
-                  resolvedDuration: animationDurationSeconds,
-                  frameCount: encodedFrames.length,
-                  fps: targetFps,
-                }
-              );
-            }
-
-            const muxedWebP = await (async (): Promise<Blob | null> => {
-              try {
-                encodeStatusPrefix = 'Muxing WebP frames...';
-                ffmpegService.reportStatus(encodeStatusPrefix);
-                const result = await muxWebPFrames({
-                  encodedFrames,
-                  timestamps: webpFrameTimestamps.slice(0, encodedFrames.length),
-                  width: decodeResult.width,
-                  height: decodeResult.height,
-                  fps: webpFpsForEncoding,
-                  metadata,
-                  durationSeconds: animationDurationSeconds,
-                  onProgress: reportEncodeProgress,
-                  shouldCancel,
-                });
-
-                if (!result) {
-                  fallbackReason = 'WebP muxer produced no output';
-                  logger.warn(
-                    'conversion',
-                    'WebP muxer produced no output, using FFmpeg fallback',
-                    {
-                      frameCount: decodeResult.frameCount,
-                    }
-                  );
-                  return null;
-                }
-
-                const validation = await validateWebPBlob(result);
-                if (!validation.valid) {
-                  fallbackReason = validation.reason ?? 'WebP muxer output failed validation';
-                  logger.warn('conversion', 'WebP muxer output failed validation, using fallback', {
-                    reason: validation.reason,
-                    frameCount: encodedFrames.length,
-                  });
-                  return null;
-                }
-
-                return result;
-              } catch (error) {
-                const errorMessage = getErrorMessage(error);
-
-                if (
-                  errorMessage.includes('cancelled by user') ||
-                  (ffmpegService.isCancellationRequested() &&
-                    errorMessage.includes('called FFmpeg.terminate()'))
-                ) {
-                  throw error;
-                }
-
-                fallbackReason = errorMessage;
-                logger.warn('conversion', 'WebP muxer path failed, using FFmpeg fallback', {
-                  error: errorMessage,
-                  frameCount: encodedFrames.length,
-                });
-                return null;
-              }
-            })();
-
-            outputBlob = muxedWebP ?? (await encodeWithFFmpegFallback(fallbackReason));
-
-            webpCapturedFrames.length = 0;
-            webpFrameTimestamps.length = 0;
-          }
-        }
+        outputBlob = webpEncode.blob;
+        encoderBackendUsed = webpEncode.encoderBackendUsed;
+        webpCapturedFrames.length = 0;
+        webpFrameTimestamps.length = 0;
       } else {
         // Defensive fallback (should be unreachable due to early return for non-modern GIF).
         outputBlob = await encodeWithFFmpegFallback('Unexpected encoder path (non-modern GIF)');
