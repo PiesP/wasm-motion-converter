@@ -13,7 +13,7 @@
  * Limitations:
  * - Main thread only (VideoEncoder is not available in workers)
  * - Requires modern browser with WebCodecs support (Chrome 94+, Edge 94+)
- * - Limited MP4 container support (basic fragment MP4)
+ * - Output muxing is done in-memory (MP4 container via Mediabunny)
  *
  * Architecture:
  * ImageData frames → VideoFrame → VideoEncoder → EncodedVideoChunk → MP4 container
@@ -22,6 +22,13 @@
 import { logger } from '@utils/logger';
 import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface';
 import { convertFramesToImageData } from '@services/encoders/frame-converter';
+import {
+  BufferTarget,
+  EncodedPacket,
+  EncodedVideoPacketSource,
+  Mp4OutputFormat,
+  Output,
+} from 'mediabunny';
 
 /**
  * MP4 encoder adapter
@@ -42,6 +49,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
 
   private encoder: VideoEncoder | null = null;
   private chunks: EncodedVideoChunk[] = [];
+  private chunkMetas: Array<EncodedVideoChunkMetadata | undefined> = [];
 
   /**
    * Check if MP4 encoding is available
@@ -125,6 +133,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       logger.debug('mp4-encoder', 'Creating VideoEncoder', { config });
 
       this.chunks = [];
+      this.chunkMetas = [];
       this.encoder = await this.createEncoder(config);
 
       // Convert frames to ImageData if needed (VideoFrame/ImageBitmap → ImageData)
@@ -137,7 +146,6 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       );
 
       // Encode frames
-      const frameDurationUs = 1_000_000 / fps; // microseconds per frame
       let encodedCount = 0;
 
       for (let i = 0; i < imageDataFrames.length; i++) {
@@ -150,14 +158,17 @@ export class MP4EncoderAdapter implements EncoderAdapter {
           throw new Error(`Frame ${i} is undefined`);
         }
 
+        const timestampUs = Math.round((i * 1_000_000) / fps);
+        const durationUs = Math.round(1_000_000 / fps);
+
         // Create VideoFrame from ImageData
         // VideoFrame constructor requires buffer + BufferInit, not ImageData directly
-        const videoFrame = new VideoFrame(frame.data.buffer, {
+        const videoFrame = new VideoFrame(frame.data, {
           format: 'RGBA',
           codedWidth: width,
           codedHeight: height,
-          timestamp: i * frameDurationUs,
-          duration: frameDurationUs,
+          timestamp: timestampUs,
+          duration: durationUs,
         });
 
         // Insert keyframe every 2 seconds
@@ -179,8 +190,13 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       // Flush encoder and wait for all chunks
       await this.encoder.flush();
 
-      // Create MP4 blob from chunks
-      const blob = await this.createMP4Blob(this.chunks, width, height, fps);
+      // Create a proper MP4 file from the encoded chunks
+      const blob = await this.muxToMp4Blob({
+        chunks: this.chunks,
+        chunkMetas: this.chunkMetas,
+        fps,
+        shouldCancel,
+      });
 
       const duration = performance.now() - startTime;
       logger.performance('MP4 encoding completed', {
@@ -235,6 +251,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       const encoder = new VideoEncoder({
         output: (chunk, metadata) => {
           this.chunks.push(chunk);
+          this.chunkMetas.push(metadata);
 
           // Log first chunk metadata for debugging
           if (this.chunks.length === 1 && metadata) {
@@ -277,68 +294,87 @@ export class MP4EncoderAdapter implements EncoderAdapter {
   }
 
   /**
-   * Create MP4 blob from encoded chunks
+   * Mux encoded H.264 chunks into a real MP4 container.
    *
-   * Current Implementation: Simplified H.264 elementary stream
-   * Creates a concatenation of encoded chunks without proper MP4 container structure.
-   * This works in some players but may have compatibility issues.
-   *
-   * TODO: Implement proper MP4 muxing with correct box structure:
-   * - ftyp: File type box
-   * - moov: Movie metadata box
-   * - mdat: Media data box (or moof/mdat for fragmented MP4)
-   *
-   * Recommendation: Use mp4-muxer library for production
-   * (https://github.com/Vanilagy/mp4-muxer)
-   *
-   * Note: This is marked as a TODO for Phase 2 optimization when MP4 becomes a priority format.
+   * WebCodecs gives us encoded chunks, but does not provide container muxing.
+   * We use Mediabunny's MP4 writer to produce a standards-compliant MP4 file.
    */
-  private async createMP4Blob(
-    chunks: EncodedVideoChunk[],
-    width: number,
-    height: number,
-    fps: number
-  ): Promise<Blob> {
+  private async muxToMp4Blob(args: {
+    chunks: EncodedVideoChunk[];
+    chunkMetas: Array<EncodedVideoChunkMetadata | undefined>;
+    fps: number;
+    shouldCancel?: () => boolean;
+  }): Promise<Blob> {
+    const { chunks, chunkMetas, fps, shouldCancel } = args;
+
     if (chunks.length === 0) {
       throw new Error('No encoded chunks available');
     }
 
-    logger.debug('mp4-encoder', 'Creating MP4 blob', {
+    // Mediabunny requires a decoder config on the first packet.
+    const firstMeta = chunkMetas[0];
+    if (!firstMeta?.decoderConfig) {
+      throw new Error('Missing decoderConfig from the first encoded chunk; cannot mux MP4');
+    }
+
+    logger.debug('mp4-encoder', 'Muxing MP4 container (Mediabunny)', {
       chunkCount: chunks.length,
-      width,
-      height,
       fps,
+      codec: firstMeta.decoderConfig.codec,
+      codedWidth: firstMeta.decoderConfig.codedWidth,
+      codedHeight: firstMeta.decoderConfig.codedHeight,
     });
 
-    // Extract chunk data
-    const chunkBuffers: ArrayBuffer[] = [];
-    let totalSize = 0;
-
-    for (const chunk of chunks) {
-      const buffer = new ArrayBuffer(chunk.byteLength);
-      chunk.copyTo(buffer);
-      chunkBuffers.push(buffer);
-      totalSize += chunk.byteLength;
-    }
-
-    // Simplified MP4 format: concatenation of H.264 chunks
-    // This creates a raw H.264 stream, not a proper MP4 container
-    logger.warn('mp4-encoder', 'Using simplified MP4 format (H.264 elementary stream)', {
-      note: 'For full MP4 container support, add mp4-muxer library in Phase 2',
+    const output = new Output({
+      format: new Mp4OutputFormat({
+        // We already keep everything in memory, so in-memory fast-start is fine.
+        fastStart: 'in-memory',
+      }),
+      target: new BufferTarget(),
     });
 
-    // Concatenate all chunks
-    const mp4Data = new Uint8Array(totalSize);
-    let offset = 0;
+    const videoSource = new EncodedVideoPacketSource('avc');
+    output.addVideoTrack(videoSource, { frameRate: fps });
 
-    for (const buffer of chunkBuffers) {
-      mp4Data.set(new Uint8Array(buffer), offset);
-      offset += buffer.byteLength;
+    try {
+      await output.start();
+
+      for (let i = 0; i < chunks.length; i++) {
+        if (shouldCancel?.()) {
+          throw new Error('Encoding cancelled');
+        }
+
+        const chunk = chunks[i];
+        if (!chunk) {
+          throw new Error(`Encoded chunk ${i} is undefined`);
+        }
+
+        const packet = EncodedPacket.fromEncodedChunk(chunk);
+        const meta = chunkMetas[i];
+
+        // Pass the encoder metadata through; required for the first packet.
+        await videoSource.add(packet, meta);
+      }
+
+      videoSource.close();
+      await output.finalize();
+
+      const buffer = output.target.buffer;
+      if (!buffer) {
+        throw new Error('MP4 output buffer not available after finalization');
+      }
+
+      return new Blob([buffer], { type: output.format.mimeType });
+    } catch (error) {
+      try {
+        if (output.state === 'started' || output.state === 'finalizing') {
+          await output.cancel();
+        }
+      } catch {
+        // ignore cancellation errors
+      }
+      throw error;
     }
-
-    // Create blob with MP4 MIME type
-    // Note: This is a simplified format that may not play in all players
-    return new Blob([mp4Data], { type: 'video/mp4' });
   }
 
   /**
@@ -357,6 +393,7 @@ export class MP4EncoderAdapter implements EncoderAdapter {
     }
 
     this.chunks = [];
+    this.chunkMetas = [];
 
     logger.debug('mp4-encoder', 'MP4 encoder disposed');
   }
