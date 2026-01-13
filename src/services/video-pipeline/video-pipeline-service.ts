@@ -13,21 +13,27 @@ import type {
   VideoCapabilities,
   VideoDemuxer,
   VideoTrackInfo,
-} from '@t/video-pipeline-types';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
-import { detectContainerFormat, isDemuxableContainer } from '@utils/container-utils';
+} from "@t/video-pipeline-types";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
+import {
+  detectContainerFormat,
+  isDemuxableContainer,
+} from "@utils/container-utils";
 
-import { capabilityService } from '@services/video-pipeline/capability-service';
-import { demuxerService } from '@services/video-pipeline/demuxer-service';
-import { encodeService, type EncodePlan } from '@services/video-pipeline/encode-service';
-import { selectPipeline } from '@services/video-pipeline/pipeline-selector';
-import { createSingleton } from '@services/shared/singleton-service';
+import { capabilityService } from "@services/video-pipeline/capability-service";
+import { demuxerService } from "@services/video-pipeline/demuxer-service";
+import {
+  encodeService,
+  type EncodePlan,
+} from "@services/video-pipeline/encode-service";
+import { selectPipeline } from "@services/video-pipeline/pipeline-selector";
+import { createSingleton } from "@services/shared/singleton-service";
 
 interface PipelinePlan {
   caps: VideoCapabilities;
   container: ContainerFormat;
-  demuxer: { name: VideoDemuxer['name'] } | null;
+  demuxer: { name: VideoDemuxer["name"] } | null;
   track: VideoTrackInfo | null;
   decodePath: PipelineType;
   encodePlan: EncodePlan;
@@ -40,48 +46,47 @@ class VideoPipelineService {
    * This does not perform conversion yet; it only probes container/track
    * information and selects the intended pipeline.
    */
-  async planPipeline(params: { file: File; format: 'gif' | 'webp' }): Promise<PipelinePlan> {
+  async planPipeline(params: {
+    file: File;
+    format: "gif" | "webp";
+  }): Promise<PipelinePlan> {
     const container = detectContainerFormat(params.file);
 
     // MUST be detected before any processing starts.
     const caps = await capabilityService.detectCapabilities();
 
-    logger.info('conversion', '[VideoCaps]', caps);
-
-    const defaultEncodePlan = encodeService.selectEncodePlan({
-      format: params.format,
-    });
+    logger.info("conversion", "[VideoCaps]", caps);
 
     // Forced full pipeline containers
-    if (container === 'avi' || container === 'wmv') {
-      logger.info('conversion', '[Demuxer] ffmpeg', { container });
-      logger.info('conversion', '[DecodePath] ffmpeg-wasm-full', { container });
-      const encodePlan: EncodePlan = 'ffmpeg';
-      logger.info('conversion', '[EncodePlan]', { encodePlan });
+    if (container === "avi" || container === "wmv") {
+      logger.info("conversion", "[Demuxer] ffmpeg", { container });
+      logger.info("conversion", "[DecodePath] ffmpeg-wasm-full", { container });
+      const encodePlan: EncodePlan = "ffmpeg";
+      logger.info("conversion", "[EncodePlan]", { encodePlan });
 
       return {
         caps,
         container,
         demuxer: null,
         track: null,
-        decodePath: 'ffmpeg-wasm-full',
+        decodePath: "ffmpeg-wasm-full",
         encodePlan,
       };
     }
 
     // Non-demuxable containers (including unknown) fall back to FFmpeg.
     if (!isDemuxableContainer(container)) {
-      logger.info('conversion', '[Demuxer] ffmpeg', { container });
-      logger.info('conversion', '[DecodePath] ffmpeg-wasm-full', { container });
-      const encodePlan: EncodePlan = 'ffmpeg';
-      logger.info('conversion', '[EncodePlan]', { encodePlan });
+      logger.info("conversion", "[Demuxer] ffmpeg", { container });
+      logger.info("conversion", "[DecodePath] ffmpeg-wasm-full", { container });
+      const encodePlan: EncodePlan = "ffmpeg";
+      logger.info("conversion", "[EncodePlan]", { encodePlan });
 
       return {
         caps,
         container,
         demuxer: null,
         track: null,
-        decodePath: 'ffmpeg-wasm-full',
+        decodePath: "ffmpeg-wasm-full",
         encodePlan,
       };
     }
@@ -93,14 +98,17 @@ class VideoPipelineService {
       await demuxer.initialize(params.file);
       const track = demuxer.getTrackInfo();
 
-      logger.info('conversion', '[Demuxer]', { name: demuxer.name });
-      logger.info('conversion', '[Codec]', { codec: track.codec });
+      logger.info("conversion", "[Demuxer]", { name: demuxer.name });
+      logger.info("conversion", "[Codec]", { codec: track.codec });
 
       const decodePath = selectPipeline(caps, track, container);
 
-      logger.info('conversion', '[DecodePath]', { decodePath });
-      const encodePlan = defaultEncodePlan;
-      logger.info('conversion', '[EncodePlan]', { encodePlan });
+      logger.info("conversion", "[DecodePath]", { decodePath });
+      const encodePlan = encodeService.selectEncodePlan({
+        format: params.format,
+        codec: track.codec,
+      });
+      logger.info("conversion", "[EncodePlan]", { encodePlan });
 
       return {
         caps,
@@ -111,7 +119,7 @@ class VideoPipelineService {
         encodePlan,
       };
     } catch (error) {
-      logger.error('conversion', 'video.pipeline planning failed', {
+      logger.error("conversion", "video.pipeline planning failed", {
         container,
         error: getErrorMessage(error),
       });
@@ -120,9 +128,13 @@ class VideoPipelineService {
       try {
         demuxer?.destroy();
       } catch (cleanupError) {
-        logger.warn('demuxer', 'Demuxer cleanup failed after planning error (non-critical)', {
-          error: getErrorMessage(cleanupError),
-        });
+        logger.warn(
+          "demuxer",
+          "Demuxer cleanup failed after planning error (non-critical)",
+          {
+            error: getErrorMessage(cleanupError),
+          }
+        );
       }
 
       throw error;
@@ -131,6 +143,6 @@ class VideoPipelineService {
 }
 
 export const videoPipelineService = createSingleton(
-  'VideoPipelineService',
+  "VideoPipelineService",
   () => new VideoPipelineService()
 );
