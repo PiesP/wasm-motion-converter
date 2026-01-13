@@ -5,14 +5,14 @@
  *
  * Cache locations:
  * - window.__VIDEO_CAPS__
- * - localStorage["video_caps_v1"]
+ * - localStorage["video_caps_v2"]
  */
 
-import type { VideoCapabilities } from '@t/video-pipeline-types';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
+import type { VideoCapabilities } from "@t/video-pipeline-types";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
 
-const STORAGE_KEY = 'video_caps_v1' as const;
+const STORAGE_KEY = "video_caps_v2" as const;
 
 const DEFAULT_CAPS: VideoCapabilities = {
   h264: false,
@@ -28,7 +28,7 @@ const DEFAULT_CAPS: VideoCapabilities = {
 };
 
 type VideoDecoderConfigWithAcceleration = VideoDecoderConfig & {
-  hardwareAcceleration?: 'prefer-hardware' | 'prefer-software';
+  hardwareAcceleration?: "prefer-hardware" | "prefer-software";
 };
 
 class CapabilityService {
@@ -85,27 +85,31 @@ class CapabilityService {
     this.writeToStorage(caps);
     this.exposeToWindow(caps);
 
-    logger.info('general', '[VideoCaps] detected', caps);
+    logger.info("general", "[VideoCaps] detected", caps);
 
     return caps;
   }
 
   private exposeToWindow(caps: VideoCapabilities): void {
-    if (typeof window === 'undefined') {
+    if (typeof window === "undefined") {
       return;
     }
 
     try {
       window.__VIDEO_CAPS__ = caps;
     } catch (error) {
-      logger.warn('general', 'Failed to expose window.__VIDEO_CAPS__ (non-critical)', {
-        error: getErrorMessage(error),
-      });
+      logger.warn(
+        "general",
+        "Failed to expose window.__VIDEO_CAPS__ (non-critical)",
+        {
+          error: getErrorMessage(error),
+        }
+      );
     }
   }
 
   private readFromStorage(): VideoCapabilities | null {
-    if (typeof window === 'undefined') {
+    if (typeof window === "undefined") {
       return null;
     }
 
@@ -133,40 +137,52 @@ class CapabilityService {
 
       return safe;
     } catch (error) {
-      logger.warn('general', 'Failed to read cached video caps (non-critical)', {
-        error: getErrorMessage(error),
-      });
+      logger.warn(
+        "general",
+        "Failed to read cached video caps (non-critical)",
+        {
+          error: getErrorMessage(error),
+        }
+      );
       return null;
     }
   }
 
   private writeToStorage(caps: VideoCapabilities): void {
-    if (typeof window === 'undefined') {
+    if (typeof window === "undefined") {
       return;
     }
 
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(caps));
     } catch (error) {
-      logger.warn('general', 'Failed to write cached video caps (non-critical)', {
-        error: getErrorMessage(error),
-      });
+      logger.warn(
+        "general",
+        "Failed to write cached video caps (non-critical)",
+        {
+          error: getErrorMessage(error),
+        }
+      );
     }
   }
 
   private async probe(): Promise<VideoCapabilities> {
     // Capability probing is browser-only.
-    if (typeof window === 'undefined') {
+    if (typeof window === "undefined") {
       return { ...DEFAULT_CAPS };
     }
 
-    const hasVideoDecoder = 'VideoDecoder' in window && typeof VideoDecoder !== 'undefined';
+    const hasVideoDecoder =
+      "VideoDecoder" in window && typeof VideoDecoder !== "undefined";
 
     const testDecode = async (params: {
       codec: string;
-      prefer: 'prefer-hardware' | 'prefer-software';
+      prefer: "prefer-hardware" | "prefer-software";
     }): Promise<boolean> => {
-      if (!hasVideoDecoder || typeof VideoDecoder.isConfigSupported !== 'function') {
+      if (
+        !hasVideoDecoder ||
+        typeof VideoDecoder.isConfigSupported !== "function"
+      ) {
         return false;
       }
 
@@ -178,14 +194,20 @@ class CapabilityService {
       };
 
       try {
-        const support = await VideoDecoder.isConfigSupported(config as VideoDecoderConfig);
+        const support = await VideoDecoder.isConfigSupported(
+          config as VideoDecoderConfig
+        );
         return support.supported ?? false;
       } catch (error) {
-        logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
-          codec: params.codec,
-          prefer: params.prefer,
-          error: getErrorMessage(error),
-        });
+        logger.debug(
+          "general",
+          "VideoDecoder.isConfigSupported failed during probing",
+          {
+            codec: params.codec,
+            prefer: params.prefer,
+            error: getErrorMessage(error),
+          }
+        );
         return false;
       }
     };
@@ -193,11 +215,11 @@ class CapabilityService {
     const testEncodeWebP = async (): Promise<boolean> => {
       try {
         // OffscreenCanvas WebP encode probe (best-effort; mirrors worker-based encoder checks)
-        if (typeof OffscreenCanvas !== 'undefined') {
+        if (typeof OffscreenCanvas !== "undefined") {
           try {
             const canvas = new OffscreenCanvas(1, 1);
-            const blob = await canvas.convertToBlob({ type: 'image/webp' });
-            if (blob && blob.size > 0 && blob.type === 'image/webp') {
+            const blob = await canvas.convertToBlob({ type: "image/webp" });
+            if (blob && blob.size > 0 && blob.type === "image/webp") {
               return true;
             }
           } catch {
@@ -206,20 +228,20 @@ class CapabilityService {
         }
 
         // HTMLCanvas WebP encode probe (mirrors `webp-canvas` encoder adapter)
-        if (typeof document === 'undefined') {
+        if (typeof document === "undefined") {
           return false;
         }
 
-        const createdCanvas = document.createElement('canvas');
+        const createdCanvas = document.createElement("canvas");
         createdCanvas.width = 1;
         createdCanvas.height = 1;
 
-        const ctx = createdCanvas.getContext('2d');
+        const ctx = createdCanvas.getContext("2d");
         if (!ctx) {
           return false;
         }
 
-        ctx.fillStyle = 'rgb(0,0,0)';
+        ctx.fillStyle = "rgb(0,0,0)";
         ctx.fillRect(0, 0, 1, 1);
 
         const blob = await new Promise<Blob | null>((resolve) => {
@@ -227,47 +249,51 @@ class CapabilityService {
             (result) => {
               resolve(result);
             },
-            'image/webp',
+            "image/webp",
             0.9
           );
         });
 
-        return Boolean(blob && blob.size > 0 && blob.type === 'image/webp');
+        return Boolean(blob && blob.size > 0 && blob.type === "image/webp");
       } catch (error) {
-        logger.debug('general', 'WebP encoding probe failed during capability detection', {
-          error: getErrorMessage(error),
-        });
+        logger.debug(
+          "general",
+          "WebP encoding probe failed during capability detection",
+          {
+            error: getErrorMessage(error),
+          }
+        );
         return false;
       }
     };
 
     // Decode support probing (required codec strings)
     const h264Hw = await testDecode({
-      codec: 'avc1.42E01E',
-      prefer: 'prefer-hardware',
+      codec: "avc1.42E01E",
+      prefer: "prefer-hardware",
     });
     const h264Sw = h264Hw
       ? true
-      : await testDecode({ codec: 'avc1.42E01E', prefer: 'prefer-software' });
+      : await testDecode({ codec: "avc1.42E01E", prefer: "prefer-software" });
 
     const hevcHw = await testDecode({
-      codec: 'hvc1.1.6.L93.B0',
-      prefer: 'prefer-hardware',
+      codec: "hvc1.1.6.L93.B0",
+      prefer: "prefer-hardware",
     });
     const hevcSw = hevcHw
       ? true
       : await testDecode({
-          codec: 'hvc1.1.6.L93.B0',
-          prefer: 'prefer-software',
+          codec: "hvc1.1.6.L93.B0",
+          prefer: "prefer-software",
         });
 
     const av1Hw = await testDecode({
-      codec: 'av01.0.05M.08',
-      prefer: 'prefer-hardware',
+      codec: "av01.0.05M.08",
+      prefer: "prefer-hardware",
     });
     const av1Sw = av1Hw
       ? true
-      : await testDecode({ codec: 'av01.0.05M.08', prefer: 'prefer-software' });
+      : await testDecode({ codec: "av01.0.05M.08", prefer: "prefer-software" });
 
     const webpEncode = await testEncodeWebP();
 

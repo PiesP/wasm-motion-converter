@@ -11,7 +11,7 @@
 /**
  * Cached video capabilities detected at runtime.
  *
- * Stored in localStorage under `video_caps_v1` and exposed on `window.__VIDEO_CAPS__`.
+ * Stored in localStorage under `video_caps_v2` and exposed on `window.__VIDEO_CAPS__`.
  */
 export interface VideoCapabilities {
   h264: boolean;
@@ -65,7 +65,15 @@ export interface ExtendedCapabilities extends VideoCapabilities {
 /**
  * Container formats supported by the pipeline selector.
  */
-export type ContainerFormat = 'mp4' | 'mov' | 'm4v' | 'webm' | 'mkv' | 'avi' | 'wmv' | 'unknown';
+export type ContainerFormat =
+  | "mp4"
+  | "mov"
+  | "m4v"
+  | "webm"
+  | "mkv"
+  | "avi"
+  | "wmv"
+  | "unknown";
 
 /**
  * Minimal track information needed for pipeline decisions.
@@ -81,12 +89,12 @@ export interface VideoTrackInfo {
 /**
  * Pipeline type returned by the selector.
  */
-export type PipelineType = 'webcodecs-hw' | 'webcodecs-sw' | 'ffmpeg-wasm-full';
+export type PipelineType = "webcodecs-hw" | "webcodecs-sw" | "ffmpeg-wasm-full";
 
 export type VideoPipelineSelectionErrorCode =
-  | 'DecodingNotSupported'
-  | 'ContainerNotSupported'
-  | 'MissingCapabilities';
+  | "DecodingNotSupported"
+  | "ContainerNotSupported"
+  | "MissingCapabilities";
 
 /**
  * Error thrown by the pure pipeline selector.
@@ -95,7 +103,10 @@ export type VideoPipelineSelectionErrorCode =
  */
 export class VideoPipelineSelectionError extends Error {
   readonly code: VideoPipelineSelectionErrorCode;
-  readonly context: Record<string, string | number | boolean | null | undefined>;
+  readonly context: Record<
+    string,
+    string | number | boolean | null | undefined
+  >;
 
   constructor(params: {
     code: VideoPipelineSelectionErrorCode;
@@ -103,7 +114,7 @@ export class VideoPipelineSelectionError extends Error {
     context?: Record<string, string | number | boolean | null | undefined>;
   }) {
     super(params.message);
-    this.name = 'VideoPipelineSelectionError';
+    this.name = "VideoPipelineSelectionError";
     this.code = params.code;
     this.context = params.context ?? {};
   }
@@ -116,7 +127,7 @@ export class VideoPipelineSelectionError extends Error {
  */
 export interface VideoDemuxer {
   /** Human-readable demuxer name for logging. */
-  readonly name: 'mp4box' | 'web-demuxer';
+  readonly name: "mp4box" | "web-demuxer";
 
   /**
    * Initialize container parsing and track probing.
@@ -146,20 +157,20 @@ export interface VideoDemuxer {
 
 export type WorkerRequest =
   | {
-      type: 'probe';
+      type: "probe";
       payload: {
         requestId: string;
       };
     }
   | {
-      type: 'decode';
+      type: "decode";
       payload: {
         requestId: string;
         // Reserved for future decode parameters
       };
     }
   | {
-      type: 'encode';
+      type: "encode";
       payload: {
         requestId: string;
         // Reserved for future encode parameters
@@ -168,14 +179,14 @@ export type WorkerRequest =
 
 export type WorkerResponse =
   | {
-      type: 'result';
+      type: "result";
       payload: {
         requestId: string;
         result: unknown;
       };
     }
   | {
-      type: 'error';
+      type: "error";
       payload: {
         requestId: string;
         error: {
