@@ -231,6 +231,56 @@ const App: Component = () => {
 
                 return promise;
               },
+              benchmarkHybrid: async (params?: {
+                file?: File;
+                outputs?: Array<'gif' | 'webp'>;
+                paths?: Array<'cpu' | 'gpu' | 'hybrid'>;
+                warmupRuns?: number;
+                runs?: number;
+                targetFps?: number;
+                options?: {
+                  quality: 'low' | 'medium' | 'high';
+                  scale: 0.5 | 0.75 | 1.0;
+                };
+                hybrid?: {
+                  captureMode?: 'auto' | 'demuxer' | 'frame-callback' | 'seek' | 'track';
+                  maxFrames?: number;
+                };
+              }) => {
+                const mod = await import('@services/dev/hybrid-benchmark');
+                const promise = mod.runHybridBenchmark(params);
+
+                promise.catch((error) => {
+                  logger.error('performance', 'Hybrid benchmark failed', {
+                    error: getErrorMessage(error),
+                  });
+                });
+
+                return promise;
+              },
+              benchmarkHybridSuite: async (params?: {
+                h264Mp4?: File;
+                vp9Webm?: File;
+                av1File?: File;
+                options?: {
+                  quality: 'low' | 'medium' | 'high';
+                  scale: 0.5 | 0.75 | 1.0;
+                };
+                targetFps?: number;
+                warmupRuns?: number;
+                runs?: number;
+              }) => {
+                const mod = await import('@services/dev/hybrid-benchmark');
+                const promise = mod.runHybridAcceptanceGateSuite(params);
+
+                promise.catch((error) => {
+                  logger.error('performance', 'Hybrid benchmark suite failed', {
+                    error: getErrorMessage(error),
+                  });
+                });
+
+                return promise;
+              },
               revokeObjectUrl: (url: string) => {
                 const safeUrl = String(url);
                 // Keep this synchronous for convenient console usage.

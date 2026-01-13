@@ -287,6 +287,42 @@ declare global {
         };
       }>;
 
+      /**
+       * Dev-only helper: benchmark optional hybrid path (WebCodecs decode + FFmpeg encode).
+       *
+       * Returns structured timings + best-effort JS heap usage samples.
+       */
+      benchmarkHybrid?: (params?: {
+        file?: File;
+        outputs?: Array<'gif' | 'webp'>;
+        paths?: Array<'cpu' | 'gpu' | 'hybrid'>;
+        warmupRuns?: number;
+        runs?: number;
+        targetFps?: number;
+        options?: {
+          quality: 'low' | 'medium' | 'high';
+          scale: 0.5 | 0.75 | 1.0;
+        };
+        hybrid?: {
+          captureMode?: 'auto' | 'demuxer' | 'frame-callback' | 'seek' | 'track';
+          maxFrames?: number;
+        };
+      }) => Promise<unknown>;
+
+      /** Dev-only helper: run the acceptance-gate benchmark suite (H.264/VP9/AV1 prompts). */
+      benchmarkHybridSuite?: (params?: {
+        h264Mp4?: File;
+        vp9Webm?: File;
+        av1File?: File;
+        options?: {
+          quality: 'low' | 'medium' | 'high';
+          scale: 0.5 | 0.75 | 1.0;
+        };
+        targetFps?: number;
+        warmupRuns?: number;
+        runs?: number;
+      }) => Promise<unknown>;
+
       /** Dev-only helper: revoke an object URL previously returned by smokeMp4(). */
       revokeObjectUrl?: (url: string) => void;
     };
