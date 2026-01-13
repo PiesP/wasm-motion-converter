@@ -5,14 +5,16 @@
  *
  * Cache locations:
  * - window.__VIDEO_CAPS__
- * - localStorage["video_caps_v2"]
+ * - localStorage["video_caps_v3"]
  */
 
 import type { VideoCapabilities } from '@t/video-pipeline-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
-const STORAGE_KEY = 'video_caps_v2' as const;
+// NOTE: bumped to invalidate older cached results where `hardwareAcceleration` probing
+// could throw and incorrectly report codecs as unsupported.
+const STORAGE_KEY = 'video_caps_v3' as const;
 
 const DEFAULT_CAPS: VideoCapabilities = {
   h264: false,
@@ -20,11 +22,6 @@ const DEFAULT_CAPS: VideoCapabilities = {
   av1: false,
   webpEncode: false,
   hardwareAccelerated: false,
-
-  // Best-effort per-codec hardware decode hints
-  h264HardwareDecode: false,
-  hevcHardwareDecode: false,
-  av1HardwareDecode: false,
 };
 
 type VideoDecoderConfigWithAcceleration = VideoDecoderConfig & {
@@ -124,12 +121,17 @@ class CapabilityService {
         av1: parsed.av1 === true,
         webpEncode: parsed.webpEncode === true,
         hardwareAccelerated: parsed.hardwareAccelerated === true,
-
-        // Optional fields (default to false when missing)
-        h264HardwareDecode: parsed.h264HardwareDecode === true,
-        hevcHardwareDecode: parsed.hevcHardwareDecode === true,
-        av1HardwareDecode: parsed.av1HardwareDecode === true,
       };
+
+      if (typeof parsed.h264HardwareDecode === 'boolean') {
+        safe.h264HardwareDecode = parsed.h264HardwareDecode;
+      }
+      if (typeof parsed.hevcHardwareDecode === 'boolean') {
+        safe.hevcHardwareDecode = parsed.hevcHardwareDecode;
+      }
+      if (typeof parsed.av1HardwareDecode === 'boolean') {
+        safe.av1HardwareDecode = parsed.av1HardwareDecode;
+      }
 
       return safe;
     } catch (error) {
@@ -162,32 +164,110 @@ class CapabilityService {
 
     const hasVideoDecoder = 'VideoDecoder' in window && typeof VideoDecoder !== 'undefined';
 
-    const testDecode = async (params: {
+    const baseDecodeConfig = (codec: string): VideoDecoderConfig => ({
+      codec,
+      codedWidth: 640,
+      codedHeight: 360,
+    });
+
+    const probeDecodeSupport = async (params: {
       codec: string;
-      prefer: 'prefer-hardware' | 'prefer-software';
-    }): Promise<boolean> => {
+      prefer?: 'prefer-hardware' | 'prefer-software';
+    }): Promise<{
+      supported: boolean;
+      hardwareAccelerationParamSupported: boolean;
+    }> => {
       if (!hasVideoDecoder || typeof VideoDecoder.isConfigSupported !== 'function') {
-        return false;
+        return { supported: false, hardwareAccelerationParamSupported: false };
       }
 
-      const config: VideoDecoderConfigWithAcceleration = {
-        codec: params.codec,
-        codedWidth: 640,
-        codedHeight: 360,
-        hardwareAcceleration: params.prefer,
-      };
+      const base = baseDecodeConfig(params.codec);
 
+      // Try with `hardwareAcceleration` first (when requested) to infer HW/SW signals.
+      if (params.prefer) {
+        const withAcceleration: VideoDecoderConfigWithAcceleration = {
+          ...base,
+          hardwareAcceleration: params.prefer,
+        };
+
+        try {
+          const support = await VideoDecoder.isConfigSupported(
+            withAcceleration as VideoDecoderConfig
+          );
+          return {
+            supported: support.supported ?? false,
+            hardwareAccelerationParamSupported: true,
+          };
+        } catch (error) {
+          // Some browsers reject the `hardwareAcceleration` field entirely.
+          // Fall back to a baseline probe so we don't incorrectly mark codecs unsupported.
+          try {
+            const support = await VideoDecoder.isConfigSupported(base);
+            logger.debug(
+              'general',
+              'VideoDecoder.isConfigSupported rejected hardwareAcceleration; using baseline probe',
+              {
+                codec: params.codec,
+                prefer: params.prefer,
+                error: getErrorMessage(error),
+              }
+            );
+            return {
+              supported: support.supported ?? false,
+              hardwareAccelerationParamSupported: false,
+            };
+          } catch (fallbackError) {
+            logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
+              codec: params.codec,
+              prefer: params.prefer,
+              error: getErrorMessage(fallbackError),
+            });
+            return {
+              supported: false,
+              hardwareAccelerationParamSupported: false,
+            };
+          }
+        }
+      }
+
+      // Baseline probe (no hardwareAcceleration)
       try {
-        const support = await VideoDecoder.isConfigSupported(config as VideoDecoderConfig);
-        return support.supported ?? false;
+        const support = await VideoDecoder.isConfigSupported(base);
+        return {
+          supported: support.supported ?? false,
+          hardwareAccelerationParamSupported: false,
+        };
       } catch (error) {
         logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
           codec: params.codec,
-          prefer: params.prefer,
           error: getErrorMessage(error),
         });
-        return false;
+        return { supported: false, hardwareAccelerationParamSupported: false };
       }
+    };
+
+    const probeCodec = async (codec: string): Promise<{ supported: boolean; hwHint?: boolean }> => {
+      const base = await probeDecodeSupport({ codec });
+      const hw = await probeDecodeSupport({ codec, prefer: 'prefer-hardware' });
+      const sw = await probeDecodeSupport({ codec, prefer: 'prefer-software' });
+
+      const supported = base.supported || hw.supported || sw.supported;
+      const accelParamSupported =
+        hw.hardwareAccelerationParamSupported || sw.hardwareAccelerationParamSupported;
+
+      if (!accelParamSupported) {
+        return { supported };
+      }
+
+      if (hw.hardwareAccelerationParamSupported && hw.supported) {
+        return { supported, hwHint: true };
+      }
+
+      if (sw.hardwareAccelerationParamSupported && sw.supported) {
+        return { supported, hwHint: false };
+      }
+
+      return { supported };
     };
 
     const testEncodeWebP = async (): Promise<boolean> => {
@@ -242,49 +322,32 @@ class CapabilityService {
     };
 
     // Decode support probing (required codec strings)
-    const h264Hw = await testDecode({
-      codec: 'avc1.42E01E',
-      prefer: 'prefer-hardware',
-    });
-    const h264Sw = h264Hw
-      ? true
-      : await testDecode({ codec: 'avc1.42E01E', prefer: 'prefer-software' });
-
-    const hevcHw = await testDecode({
-      codec: 'hvc1.1.6.L93.B0',
-      prefer: 'prefer-hardware',
-    });
-    const hevcSw = hevcHw
-      ? true
-      : await testDecode({
-          codec: 'hvc1.1.6.L93.B0',
-          prefer: 'prefer-software',
-        });
-
-    const av1Hw = await testDecode({
-      codec: 'av01.0.05M.08',
-      prefer: 'prefer-hardware',
-    });
-    const av1Sw = av1Hw
-      ? true
-      : await testDecode({ codec: 'av01.0.05M.08', prefer: 'prefer-software' });
+    const h264 = await probeCodec('avc1.42E01E');
+    const hevc = await probeCodec('hvc1.1.6.L93.B0');
+    const av1 = await probeCodec('av01.0.05M.08');
 
     const webpEncode = await testEncodeWebP();
 
-    const anyHw = h264Hw || hevcHw || av1Hw;
+    const anyHw = h264.hwHint === true || hevc.hwHint === true || av1.hwHint === true;
 
     const caps: VideoCapabilities = {
-      h264: h264Sw,
-      hevc: hevcSw,
-      av1: av1Sw,
+      h264: h264.supported,
+      hevc: hevc.supported,
+      av1: av1.supported,
       webpEncode,
       hardwareAccelerated: anyHw,
-
-      // Preserve the per-codec hardware decode signal so strategies can make more nuanced choices.
-      h264HardwareDecode: h264Hw,
-      hevcHardwareDecode: hevcHw,
-      av1HardwareDecode: av1Hw,
     };
+
+    // Preserve per-codec hardware decode signals when we can infer them.
+    if (typeof h264.hwHint === 'boolean') {
+      caps.h264HardwareDecode = h264.hwHint;
+    }
+    if (typeof hevc.hwHint === 'boolean') {
+      caps.hevcHardwareDecode = hevc.hwHint;
+    }
+    if (typeof av1.hwHint === 'boolean') {
+      caps.av1HardwareDecode = av1.hwHint;
+    }
 
     return caps;
   }

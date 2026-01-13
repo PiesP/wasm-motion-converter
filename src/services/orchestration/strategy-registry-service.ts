@@ -329,6 +329,16 @@ class StrategyRegistryService {
       };
     }
 
+    // If we cannot infer a per-codec hardware decode hint, avoid overstating certainty
+    // in logs/reasoning. Keep the existing path choice but downgrade confidence.
+    if (hint === null && strategy.confidence === 'high') {
+      return {
+        ...strategy,
+        confidence: 'medium',
+        reason: `${strategy.reason} (hardware decode hint unknown)`,
+      };
+    }
+
     return strategy;
   }
 
@@ -759,7 +769,7 @@ class StrategyRegistryService {
         if (hint === false) {
           return 'GPU path benefit reduced without hardware decode';
         }
-        return 'GPU path often faster for WebP when hardware decode is available';
+        return 'Hardware decode hint unknown; GPU path often faster for WebP when hardware decode is available';
       }
       return 'Not optimal for this codec+format combination';
     }

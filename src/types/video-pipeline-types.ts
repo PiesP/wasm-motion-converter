@@ -11,7 +11,7 @@
 /**
  * Cached video capabilities detected at runtime.
  *
- * Stored in localStorage under `video_caps_v2` and exposed on `window.__VIDEO_CAPS__`.
+ * Stored in localStorage under `video_caps_v3` and exposed on `window.__VIDEO_CAPS__`.
  */
 export interface VideoCapabilities {
   h264: boolean;
@@ -32,7 +32,7 @@ export interface VideoCapabilities {
 /**
  * Extended video capabilities with additional codec and environment detection.
  *
- * Stored in localStorage under `extended_video_caps_v2` with 7-day TTL.
+ * Stored in localStorage under `extended_video_caps_v3` with 7-day TTL.
  * Exposed on `window.__EXTENDED_VIDEO_CAPS__` in dev mode.
  */
 export interface ExtendedCapabilities extends VideoCapabilities {

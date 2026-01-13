@@ -206,12 +206,17 @@ export class FFmpegMonitoring {
     // Start watchdog timer
     this.watchdogTimer = setInterval(() => {
       const timeSinceProgress = Date.now() - this.lastProgressTime;
-      logger.debug(
-        'watchdog',
-        `Watchdog check: ${(timeSinceProgress / 1000).toFixed(1)}s since last progress (timeout: ${
-          this.currentWatchdogTimeout / 1000
-        }s)`
-      );
+      // Avoid noisy "Watchdog check" lines when progress is flowing normally.
+      // Only emit a debug line once we have gone longer than a full check interval
+      // without any progress updates.
+      if (timeSinceProgress > FFMPEG_INTERNALS.WATCHDOG_CHECK_INTERVAL_MS) {
+        logger.debug(
+          'watchdog',
+          `Watchdog check: ${(timeSinceProgress / 1000).toFixed(
+            1
+          )}s since last progress (timeout: ${this.currentWatchdogTimeout / 1000}s)`
+        );
+      }
 
       if (timeSinceProgress > this.currentWatchdogTimeout) {
         logger.error(

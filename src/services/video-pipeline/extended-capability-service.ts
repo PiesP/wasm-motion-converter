@@ -5,7 +5,7 @@
  * and environment features. Builds upon the base CapabilityService.
  *
  * Cache locations:
- * - localStorage["extended_video_caps_v2"]
+ * - localStorage["extended_video_caps_v3"]
  * - window.__EXTENDED_VIDEO_CAPS__ (dev mode)
  *
  * TTL: 7 days
@@ -19,8 +19,10 @@ import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
-const STORAGE_KEY = 'extended_video_caps_v2' as const;
-const DETECTION_VERSION = 3 as const;
+// NOTE: bumped to invalidate older cached results where `hardwareAcceleration` probing
+// could throw and incorrectly report codecs as unsupported.
+const STORAGE_KEY = 'extended_video_caps_v3' as const;
+const DETECTION_VERSION = 4 as const;
 const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
@@ -46,18 +48,9 @@ const DEFAULT_EXTENDED_CAPS: ExtendedCapabilities = {
   webpEncode: false,
   hardwareAccelerated: false,
 
-  // Best-effort per-codec hardware decode hints (populated by capability service when available)
-  h264HardwareDecode: false,
-  hevcHardwareDecode: false,
-  av1HardwareDecode: false,
-
   // Extended codec support
   vp8: false,
   vp9: false,
-
-  // Optional per-codec hardware decode hints for extended codecs
-  vp8HardwareDecode: false,
-  vp9HardwareDecode: false,
 
   // Encoder capabilities
   gifEncode: true, // Always true (modern-gif WASM)
@@ -305,28 +298,9 @@ class ExtendedCapabilityService {
     // Get base capabilities from existing service
     const baseCaps = await capabilityService.detectCapabilities();
 
-    // Test VP8/VP9 decode support
-    const vp8Hw = await this.testDecode({
-      codec: 'vp8',
-      prefer: 'prefer-hardware',
-    });
-    const vp8Sw = vp8Hw
-      ? true
-      : await this.testDecode({
-          codec: 'vp8',
-          prefer: 'prefer-software',
-        });
-
-    const vp9Hw = await this.testDecode({
-      codec: 'vp09.00.10.08',
-      prefer: 'prefer-hardware',
-    });
-    const vp9Sw = vp9Hw
-      ? true
-      : await this.testDecode({
-          codec: 'vp09.00.10.08',
-          prefer: 'prefer-software',
-        });
+    // Test VP8/VP9 decode support (avoid false negatives if `hardwareAcceleration` is unsupported)
+    const vp8 = await this.probeCodecDecode('vp8');
+    const vp9 = await this.probeCodecDecode('vp09.00.10.08');
 
     // Test encoder availability
     const gifEncode = true; // Always true (modern-gif WASM)
@@ -347,12 +321,8 @@ class ExtendedCapabilityService {
       ...baseCaps,
 
       // Extended codec support
-      vp8: vp8Sw,
-      vp9: vp9Sw,
-
-      // Hardware decode hint signals for extended codecs
-      vp8HardwareDecode: vp8Hw,
-      vp9HardwareDecode: vp9Hw,
+      vp8: vp8.supported,
+      vp9: vp9.supported,
 
       // Encoder capabilities
       gifEncode,
@@ -372,41 +342,127 @@ class ExtendedCapabilityService {
       detectionVersion: DETECTION_VERSION,
     };
 
+    if (typeof vp8.hwHint === 'boolean') {
+      caps.vp8HardwareDecode = vp8.hwHint;
+    }
+    if (typeof vp9.hwHint === 'boolean') {
+      caps.vp9HardwareDecode = vp9.hwHint;
+    }
+
     return caps;
   }
 
-  /**
-   * Test video decode support for a given codec
-   */
-  private async testDecode(params: {
+  private baseDecodeConfig(codec: string): VideoDecoderConfig {
+    return {
+      codec,
+      codedWidth: 640,
+      codedHeight: 360,
+    };
+  }
+
+  private async probeDecodeSupport(params: {
     codec: string;
-    prefer: 'prefer-hardware' | 'prefer-software';
-  }): Promise<boolean> {
+    prefer?: 'prefer-hardware' | 'prefer-software';
+  }): Promise<{
+    supported: boolean;
+    hardwareAccelerationParamSupported: boolean;
+  }> {
     if (
       typeof VideoDecoder === 'undefined' ||
       typeof VideoDecoder.isConfigSupported !== 'function'
     ) {
-      return false;
+      return { supported: false, hardwareAccelerationParamSupported: false };
     }
 
-    const config: VideoDecoderConfigWithAcceleration = {
-      codec: params.codec,
-      codedWidth: 640,
-      codedHeight: 360,
-      hardwareAcceleration: params.prefer,
-    };
+    const base = this.baseDecodeConfig(params.codec);
+
+    if (params.prefer) {
+      const withAcceleration: VideoDecoderConfigWithAcceleration = {
+        ...base,
+        hardwareAcceleration: params.prefer,
+      };
+
+      try {
+        const support = await VideoDecoder.isConfigSupported(
+          withAcceleration as VideoDecoderConfig
+        );
+        return {
+          supported: support.supported ?? false,
+          hardwareAccelerationParamSupported: true,
+        };
+      } catch (error) {
+        try {
+          const support = await VideoDecoder.isConfigSupported(base);
+          logger.debug(
+            'general',
+            'VideoDecoder.isConfigSupported rejected hardwareAcceleration; using baseline probe',
+            {
+              codec: params.codec,
+              prefer: params.prefer,
+              error: getErrorMessage(error),
+            }
+          );
+          return {
+            supported: support.supported ?? false,
+            hardwareAccelerationParamSupported: false,
+          };
+        } catch (fallbackError) {
+          logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
+            codec: params.codec,
+            prefer: params.prefer,
+            error: getErrorMessage(fallbackError),
+          });
+          return {
+            supported: false,
+            hardwareAccelerationParamSupported: false,
+          };
+        }
+      }
+    }
 
     try {
-      const support = await VideoDecoder.isConfigSupported(config as VideoDecoderConfig);
-      return support.supported ?? false;
+      const support = await VideoDecoder.isConfigSupported(base);
+      return {
+        supported: support.supported ?? false,
+        hardwareAccelerationParamSupported: false,
+      };
     } catch (error) {
       logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
         codec: params.codec,
-        prefer: params.prefer,
         error: getErrorMessage(error),
       });
-      return false;
+      return { supported: false, hardwareAccelerationParamSupported: false };
     }
+  }
+
+  private async probeCodecDecode(codec: string): Promise<{ supported: boolean; hwHint?: boolean }> {
+    const base = await this.probeDecodeSupport({ codec });
+    const hw = await this.probeDecodeSupport({
+      codec,
+      prefer: 'prefer-hardware',
+    });
+    const sw = await this.probeDecodeSupport({
+      codec,
+      prefer: 'prefer-software',
+    });
+
+    const supported = base.supported || hw.supported || sw.supported;
+    const accelParamSupported =
+      hw.hardwareAccelerationParamSupported || sw.hardwareAccelerationParamSupported;
+
+    if (!accelParamSupported) {
+      return { supported };
+    }
+
+    if (hw.hardwareAccelerationParamSupported && hw.supported) {
+      return { supported, hwHint: true };
+    }
+
+    if (sw.hardwareAccelerationParamSupported && sw.supported) {
+      return { supported, hwHint: false };
+    }
+
+    return { supported };
   }
 
   /**
