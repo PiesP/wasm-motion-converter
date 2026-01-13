@@ -1,19 +1,15 @@
 // Internal dependencies
 
 // Type imports
-import type {
-  ConversionOptions,
-  ConversionOutputBlob,
-  VideoMetadata,
-} from "@t/conversion-types";
-import type { EncoderWorkerAPI } from "@t/worker-types";
-import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from "@utils/constants";
-import { getErrorMessage } from "@utils/error-utils";
-import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
-import { isHardwareCacheValid } from "@utils/hardware-profile";
-import { logger } from "@utils/logger";
-import { getAvailableMemory, isMemoryCritical } from "@utils/memory-monitor";
-import { getOptimalFPS } from "@utils/quality-optimizer";
+import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
+import type { EncoderWorkerAPI } from '@t/worker-types';
+import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '@utils/constants';
+import { getErrorMessage } from '@utils/error-utils';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { isHardwareCacheValid } from '@utils/hardware-profile';
+import { logger } from '@utils/logger';
+import { getAvailableMemory, isMemoryCritical } from '@utils/memory-monitor';
+import { getOptimalFPS } from '@utils/quality-optimizer';
 import {
   cacheCaptureMode,
   cacheCapturePerformance,
@@ -21,38 +17,32 @@ import {
   getCachedCaptureMode,
   getCachedCapturePerformance,
   getCachedWebPChunkSize,
-} from "@utils/session-cache";
-import { muxAnimatedWebP } from "@utils/webp-muxer";
-import { withTimeout } from "@utils/with-timeout";
-import { ffmpegService } from "./ffmpeg-service";
-import { encodeModernGif, isModernGifSupported } from "./modern-gif-service";
-import { EncoderFactory } from "@services/encoders/encoder-factory";
-import { isComplexCodec } from "@services/webcodecs/codec-utils";
-import {
-  canUseDemuxer,
-  detectContainer,
-} from "@services/webcodecs/demuxer/demuxer-factory";
+} from '@utils/session-cache';
+import { muxAnimatedWebP } from '@utils/webp-muxer';
+import { withTimeout } from '@utils/with-timeout';
+import { ffmpegService } from './ffmpeg-service';
+import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
+import { EncoderFactory } from '@services/encoders/encoder-factory';
+import { isComplexCodec } from '@services/webcodecs/codec-utils';
+import { canUseDemuxer, detectContainer } from '@services/webcodecs/demuxer/demuxer-factory';
 import {
   MIN_WEBP_FRAME_DURATION_MS,
   WEBP_BACKGROUND_COLOR,
-} from "@services/webcodecs/webp-constants";
+} from '@services/webcodecs/webp-constants';
 import {
   buildDurationAlignedTimestamps as buildDurationAlignedTimestampsUtil,
   buildWebPFrameDurations as buildWebPFrameDurationsUtil,
   getMaxWebPFrames as getMaxWebPFramesUtil,
   resolveAnimationDurationSeconds as resolveAnimationDurationSecondsUtil,
   resolveWebPFps as resolveWebPFpsUtil,
-} from "@services/webcodecs/webp-timing";
+} from '@services/webcodecs/webp-timing';
 import {
   type WebCodecsCaptureMode,
   WebCodecsDecoderService,
   type WebCodecsFrameFormat,
-} from "./webcodecs-decoder-service";
-import {
-  isWebCodecsCodecSupported,
-  isWebCodecsDecodeSupported,
-} from "./webcodecs-support-service";
-import { getOptimalPoolSize, WorkerPool } from "./worker-pool-service";
+} from './webcodecs-decoder-service';
+import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support-service';
+import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
 
 /**
  * WebCodecs Conversion Service
@@ -76,25 +66,21 @@ class WebCodecsConversionService {
 
   constructor() {
     // Lazy initialize worker pools with dynamic sizing
-    if (typeof window !== "undefined") {
+    if (typeof window !== 'undefined') {
       const hwConcurrency = navigator.hardwareConcurrency || 4;
       const availableMem = getAvailableMemory();
 
       // Calculate optimal pool sizes based on hardware and memory
-      const optimalGifWorkers = getOptimalPoolSize(
-        "gif",
-        hwConcurrency,
-        availableMem
-      );
+      const optimalGifWorkers = getOptimalPoolSize('gif', hwConcurrency, availableMem);
 
-      logger.info("worker-pool", "Dynamic worker pool sizing", {
+      logger.info('worker-pool', 'Dynamic worker pool sizing', {
         hardwareConcurrency: hwConcurrency,
         availableMemory: `${Math.round(availableMem / 1024 / 1024)}MB`,
         gifWorkers: optimalGifWorkers,
       });
 
       this.gifWorkerPool = new WorkerPool(
-        new URL("../workers/gif-encoder.worker.ts", import.meta.url),
+        new URL('../workers/gif-encoder.worker.ts', import.meta.url),
         { lazyInit: true, maxWorkers: optimalGifWorkers }
       );
     }
@@ -110,10 +96,7 @@ class WebCodecsConversionService {
    * @param durationSeconds - Optional video duration in seconds
    * @returns Maximum number of frames to extract
    */
-  private getMaxWebPFrames(
-    targetFps: number,
-    durationSeconds?: number
-  ): number {
+  private getMaxWebPFrames(targetFps: number, durationSeconds?: number): number {
     return getMaxWebPFramesUtil(targetFps, durationSeconds);
   }
 
@@ -129,7 +112,7 @@ class WebCodecsConversionService {
     }
 
     // Browser-only.
-    if (typeof document === "undefined") {
+    if (typeof document === 'undefined') {
       this.canvasWebPEncodeSupport = false;
       return false;
     }
@@ -138,24 +121,24 @@ class WebCodecsConversionService {
       const supported = await withTimeout(
         new Promise<boolean>((resolve) => {
           try {
-            const canvas = document.createElement("canvas");
+            const canvas = document.createElement('canvas');
             canvas.width = 2;
             canvas.height = 2;
 
-            const ctx = canvas.getContext("2d");
+            const ctx = canvas.getContext('2d');
             if (!ctx) {
               resolve(false);
               return;
             }
 
-            ctx.fillStyle = "#000";
+            ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, 2, 2);
 
             canvas.toBlob(
               (blob) => {
                 resolve(Boolean(blob && blob.size > 0));
               },
-              "image/webp",
+              'image/webp',
               0.8
             );
           } catch {
@@ -163,19 +146,15 @@ class WebCodecsConversionService {
           }
         }),
         2_000,
-        "Canvas WebP encode probe timed out"
+        'Canvas WebP encode probe timed out'
       );
 
       this.canvasWebPEncodeSupport = supported;
       return supported;
     } catch (error) {
-      logger.debug(
-        "conversion",
-        "Canvas WebP encode probe failed (non-critical)",
-        {
-          error: getErrorMessage(error),
-        }
-      );
+      logger.debug('conversion', 'Canvas WebP encode probe failed (non-critical)', {
+        error: getErrorMessage(error),
+      });
       this.canvasWebPEncodeSupport = false;
       return false;
     }
@@ -207,11 +186,7 @@ class WebCodecsConversionService {
    * Clamps to the requested target FPS to avoid overspeed playback while
    * preserving the original pacing for low-FPS or sparse frame captures.
    */
-  private resolveWebPFps(
-    frameCount: number,
-    targetFps: number,
-    durationSeconds?: number
-  ): number {
+  private resolveWebPFps(frameCount: number, targetFps: number, durationSeconds?: number): number {
     return resolveWebPFpsUtil(frameCount, targetFps, durationSeconds);
   }
 
@@ -244,31 +219,26 @@ class WebCodecsConversionService {
    * @param qualityRatio - Quality ratio (0.0 to 1.0)
    * @returns Async function that encodes ImageData to WebP Uint8Array
    */
-  private createWebPFrameEncoder(
-    qualityRatio: number
-  ): (frame: ImageData) => Promise<Uint8Array> {
+  private createWebPFrameEncoder(qualityRatio: number): (frame: ImageData) => Promise<Uint8Array> {
     let canvas: OffscreenCanvas | HTMLCanvasElement | null = null;
-    let context:
-      | OffscreenCanvasRenderingContext2D
-      | CanvasRenderingContext2D
-      | null = null;
+    let context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D | null = null;
 
     return async (frame: ImageData): Promise<Uint8Array> => {
       if (!canvas) {
-        if (typeof OffscreenCanvas !== "undefined") {
+        if (typeof OffscreenCanvas !== 'undefined') {
           canvas = new OffscreenCanvas(frame.width, frame.height);
-          context = canvas.getContext("2d");
+          context = canvas.getContext('2d');
         } else {
-          const createdCanvas = document.createElement("canvas");
+          const createdCanvas = document.createElement('canvas');
           createdCanvas.width = frame.width;
           createdCanvas.height = frame.height;
           canvas = createdCanvas;
-          context = createdCanvas.getContext("2d");
+          context = createdCanvas.getContext('2d');
         }
       }
 
       if (!canvas || !context) {
-        throw new Error("Canvas context unavailable for WebP frame encoding.");
+        throw new Error('Canvas context unavailable for WebP frame encoding.');
       }
 
       if (canvas.width !== frame.width || canvas.height !== frame.height) {
@@ -280,9 +250,9 @@ class WebCodecsConversionService {
 
       const quality = Math.min(1, Math.max(0, qualityRatio));
       const blob =
-        "convertToBlob" in canvas
+        'convertToBlob' in canvas
           ? await (canvas as OffscreenCanvas).convertToBlob({
-              type: "image/webp",
+              type: 'image/webp',
               quality,
             })
           : await new Promise<Blob>((resolve, reject) => {
@@ -292,15 +262,15 @@ class WebCodecsConversionService {
                     resolve(result);
                     return;
                   }
-                  reject(new Error("Failed to encode WebP frame via toBlob."));
+                  reject(new Error('Failed to encode WebP frame via toBlob.'));
                 },
-                "image/webp",
+                'image/webp',
                 quality
               );
             });
 
       if (!blob || blob.size === 0) {
-        throw new Error("WebP frame encoding produced an empty blob.");
+        throw new Error('WebP frame encoding produced an empty blob.');
       }
 
       const buffer = await blob.arrayBuffer();
@@ -316,9 +286,7 @@ class WebCodecsConversionService {
    * @param blob - WebP blob to validate
    * @returns Validation result with optional failure reason
    */
-  private async validateWebPBlob(
-    blob: Blob
-  ): Promise<{ valid: boolean; reason?: string }> {
+  private async validateWebPBlob(blob: Blob): Promise<{ valid: boolean; reason?: string }> {
     if (blob.size < FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_WEBP_SIZE_BYTES) {
       return {
         valid: false,
@@ -329,10 +297,10 @@ class WebCodecsConversionService {
     const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
     const riffSignature = String.fromCharCode(...header.slice(0, 4));
     const webpSignature = String.fromCharCode(...header.slice(8, 12));
-    if (riffSignature !== "RIFF" || webpSignature !== "WEBP") {
+    if (riffSignature !== 'RIFF' || webpSignature !== 'WEBP') {
       return {
         valid: false,
-        reason: "Invalid WebP file signature",
+        reason: 'Invalid WebP file signature',
       };
     }
 
@@ -340,9 +308,7 @@ class WebCodecsConversionService {
     // `createImageBitmap()` may fail even for valid animated WebP files.
     // Detect animation chunks and treat decode failures as non-fatal in that case.
     const scanLimitBytes = Math.min(blob.size, 256 * 1024);
-    const scanBytes = new Uint8Array(
-      await blob.slice(0, scanLimitBytes).arrayBuffer()
-    );
+    const scanBytes = new Uint8Array(await blob.slice(0, scanLimitBytes).arrayBuffer());
 
     const containsFourCc = (bytes: Uint8Array, fourcc: string): boolean => {
       if (fourcc.length !== 4 || bytes.length < 4) {
@@ -355,20 +321,14 @@ class WebCodecsConversionService {
       const d = fourcc.charCodeAt(3);
 
       for (let i = 0; i <= bytes.length - 4; i++) {
-        if (
-          bytes[i] === a &&
-          bytes[i + 1] === b &&
-          bytes[i + 2] === c &&
-          bytes[i + 3] === d
-        ) {
+        if (bytes[i] === a && bytes[i + 1] === b && bytes[i + 2] === c && bytes[i + 3] === d) {
           return true;
         }
       }
       return false;
     };
 
-    const isAnimatedWebP =
-      containsFourCc(scanBytes, "ANIM") || containsFourCc(scanBytes, "ANMF");
+    const isAnimatedWebP = containsFourCc(scanBytes, 'ANIM') || containsFourCc(scanBytes, 'ANMF');
 
     // Quick structural sanity check: animated WebP requires VP8X with the animation flag set.
     // If we accidentally produce ANIM/ANMF without VP8X.animation, many decoders will reject
@@ -378,11 +338,7 @@ class WebCodecsConversionService {
         return null;
       }
 
-      const view = new DataView(
-        bytes.buffer,
-        bytes.byteOffset,
-        bytes.byteLength
-      );
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       const readFourCcAt = (offset: number): string =>
         String.fromCharCode(
           bytes[offset] ?? 0,
@@ -402,7 +358,7 @@ class WebCodecsConversionService {
           return null;
         }
 
-        if (fourcc === "VP8X") {
+        if (fourcc === 'VP8X') {
           if (chunkSize < 1) {
             return null;
           }
@@ -420,7 +376,7 @@ class WebCodecsConversionService {
       if (vp8xFlags === null) {
         return {
           valid: false,
-          reason: "Animated WebP missing VP8X header chunk",
+          reason: 'Animated WebP missing VP8X header chunk',
         };
       }
 
@@ -428,38 +384,37 @@ class WebCodecsConversionService {
       if ((vp8xFlags & VP8X_ANIMATION_FLAG) === 0) {
         return {
           valid: false,
-          reason: "Animated WebP missing VP8X animation flag",
+          reason: 'Animated WebP missing VP8X animation flag',
         };
       }
     }
 
     const tryDecodeWithImageElement = async (): Promise<void> => {
-      if (typeof document === "undefined") {
-        throw new Error("Document unavailable for WebP decode check");
+      if (typeof document === 'undefined') {
+        throw new Error('Document unavailable for WebP decode check');
       }
 
       const url = URL.createObjectURL(blob);
       try {
         const img = new Image();
-        img.decoding = "async";
+        img.decoding = 'async';
         img.src = url;
 
-        if (typeof img.decode === "function") {
+        if (typeof img.decode === 'function') {
           await img.decode();
           return;
         }
 
         await new Promise<void>((resolve, reject) => {
           img.onload = () => resolve();
-          img.onerror = () =>
-            reject(new Error("Image element failed to decode WebP"));
+          img.onerror = () => reject(new Error('Image element failed to decode WebP'));
         });
       } finally {
         URL.revokeObjectURL(url);
       }
     };
 
-    if (typeof createImageBitmap === "function") {
+    if (typeof createImageBitmap === 'function') {
       try {
         const bitmap = await createImageBitmap(blob);
         bitmap.close();
@@ -471,8 +426,8 @@ class WebCodecsConversionService {
             return { valid: true };
           } catch (imgError) {
             logger.warn(
-              "conversion",
-              "Animated WebP decode check failed; accepting based on container validation",
+              'conversion',
+              'Animated WebP decode check failed; accepting based on container validation',
               {
                 size: blob.size,
                 createImageBitmapError: getErrorMessage(error),
@@ -595,13 +550,12 @@ class WebCodecsConversionService {
 
     // Log duration statistics for debugging
     if (durations.length > 0) {
-      const avgDuration =
-        durations.reduce((sum, d) => sum + d, 0) / durations.length;
+      const avgDuration = durations.reduce((sum, d) => sum + d, 0) / durations.length;
       const minDuration = Math.min(...durations);
       const maxDuration = Math.max(...durations);
       const variance = maxDuration - minDuration;
 
-      logger.info("conversion", "WebP frame duration statistics", {
+      logger.info('conversion', 'WebP frame duration statistics', {
         frameCount: durations.length,
         avgDuration: `${avgDuration.toFixed(2)}ms`,
         minDuration: `${minDuration}ms`,
@@ -619,25 +573,23 @@ class WebCodecsConversionService {
       }
 
       const buffer = frame.slice().buffer;
-      return new Blob([buffer], { type: "image/webp" });
+      return new Blob([buffer], { type: 'image/webp' });
     }
 
     const framesForMux = encodedFrames.map((frame, index) => {
       if (!frame) {
-        throw new Error("Missing encoded frame for WebP muxing.");
+        throw new Error('Missing encoded frame for WebP muxing.');
       }
 
       if (shouldCancel?.()) {
-        throw new Error("Conversion cancelled by user");
+        throw new Error('Conversion cancelled by user');
       }
 
       onProgress?.(index + 1, encodedFrames.length);
 
       const buffer = frame.slice().buffer as ArrayBuffer;
       const duration =
-        durations[index] ??
-        durations[durations.length - 1] ??
-        MIN_WEBP_FRAME_DURATION_MS;
+        durations[index] ?? durations[durations.length - 1] ?? MIN_WEBP_FRAME_DURATION_MS;
 
       return { data: buffer, duration };
     });
@@ -651,7 +603,7 @@ class WebCodecsConversionService {
 
     onProgress?.(encodedFrames.length, encodedFrames.length);
 
-    return new Blob([muxed], { type: "image/webp" });
+    return new Blob([muxed], { type: 'image/webp' });
   }
 
   /**
@@ -664,7 +616,7 @@ class WebCodecsConversionService {
    * @returns True if WebCodecs conversion can be used
    */
   async canConvert(file: File, metadata?: VideoMetadata): Promise<boolean> {
-    if (!metadata?.codec || metadata.codec === "unknown") {
+    if (!metadata?.codec || metadata.codec === 'unknown') {
       return false;
     }
 
@@ -673,17 +625,12 @@ class WebCodecsConversionService {
     }
 
     if (isMemoryCritical()) {
-      logger.warn(
-        "conversion",
-        "Skipping WebCodecs decode due to critical memory usage"
-      );
+      logger.warn('conversion', 'Skipping WebCodecs decode due to critical memory usage');
       return false;
     }
 
     const normalizedCodec = metadata.codec.toLowerCase();
-    const isCandidate = WEBCODECS_ACCELERATED.some((codec) =>
-      normalizedCodec.includes(codec)
-    );
+    const isCandidate = WEBCODECS_ACCELERATED.some((codec) => normalizedCodec.includes(codec));
     if (!isCandidate) {
       return false;
     }
@@ -706,7 +653,7 @@ class WebCodecsConversionService {
    */
   async maybeConvert(
     file: File,
-    format: "gif" | "webp",
+    format: 'gif' | 'webp',
     options: ConversionOptions,
     metadata?: VideoMetadata
   ): Promise<ConversionOutputBlob | null> {
@@ -720,25 +667,21 @@ class WebCodecsConversionService {
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       if (
-        errorMessage.includes("cancelled by user") ||
+        errorMessage.includes('cancelled by user') ||
         (ffmpegService.isCancellationRequested() &&
-          errorMessage.includes("called FFmpeg.terminate()"))
+          errorMessage.includes('called FFmpeg.terminate()'))
       ) {
         throw error;
       }
 
-      logger.warn(
-        "conversion",
-        "WebCodecs path failed, falling back to FFmpeg",
-        {
-          error: errorMessage,
-          codec: metadata?.codec,
-          fallbackReason: "webcodecs_failed",
-        }
-      );
+      logger.warn('conversion', 'WebCodecs path failed, falling back to FFmpeg', {
+        error: errorMessage,
+        codec: metadata?.codec,
+        fallbackReason: 'webcodecs_failed',
+      });
 
-      logger.debug("conversion", "Returning null for FFmpeg fallback", {
-        reason: "webcodecs_failed",
+      logger.debug('conversion', 'Returning null for FFmpeg fallback', {
+        reason: 'webcodecs_failed',
         originalError: errorMessage,
       });
       return null;
@@ -758,7 +701,7 @@ class WebCodecsConversionService {
     if (!isComplexCodec(metadata?.codec)) {
       return false;
     }
-    if (typeof VideoFrame === "undefined") {
+    if (typeof VideoFrame === 'undefined') {
       return false;
     }
     return true;
@@ -786,7 +729,7 @@ class WebCodecsConversionService {
   private async convertViaWebCodecsFrames(params: {
     decoder: WebCodecsDecoderService;
     file: File;
-    format: "gif" | "webp";
+    format: 'gif' | 'webp';
     options: ConversionOptions;
     targetFps: number;
     scale: number;
@@ -808,10 +751,9 @@ class WebCodecsConversionService {
       shouldCancel,
     } = params;
 
-    const shouldCancelOrDefault =
-      shouldCancel ?? (() => ffmpegService.isCancellationRequested());
+    const shouldCancelOrDefault = shouldCancel ?? (() => ffmpegService.isCancellationRequested());
     if (shouldCancelOrDefault()) {
-      throw new Error("Conversion cancelled by user");
+      throw new Error('Conversion cancelled by user');
     }
     if (!this.shouldUseWebCodecsPath(metadata)) {
       return null;
@@ -819,53 +761,42 @@ class WebCodecsConversionService {
 
     // GIF: Skip WebCodecs path, use FFmpeg direct instead
     // WebCodecs frame extraction for GIF has VFS write stability issues
-    if (format === "gif") {
-      logger.info(
-        "conversion",
-        "GIF format with complex codec: skipping WebCodecs path",
-        {
-          codec: metadata?.codec,
-          reason: "Use FFmpeg direct path instead",
-        }
-      );
+    if (format === 'gif') {
+      logger.info('conversion', 'GIF format with complex codec: skipping WebCodecs path', {
+        codec: metadata?.codec,
+        reason: 'Use FFmpeg direct path instead',
+      });
       return null;
     }
 
-    logger.info("conversion", "Using WebCodecs direct frame extraction path", {
+    logger.info('conversion', 'Using WebCodecs direct frame extraction path', {
       codec: metadata?.codec,
       format,
     });
 
     const canEncodeWebPFrames = await this.getCanvasWebPEncodeSupport();
     if (!canEncodeWebPFrames) {
-      logger.info(
-        "conversion",
-        "Skipping WebCodecs direct WebP path (canvas WebP unsupported)",
-        {
-          codec: metadata?.codec,
-          reason: "Canvas WebP encoding is not supported in this browser",
-        }
-      );
+      logger.info('conversion', 'Skipping WebCodecs direct WebP path (canvas WebP unsupported)', {
+        codec: metadata?.codec,
+        reason: 'Canvas WebP encoding is not supported in this browser',
+      });
       return null;
     }
 
     // Collect frames by index to avoid duplicates and ensure stable ordering.
-    const framesByIndex: Array<
-      { imageData: ImageData; timestamp: number } | undefined
-    > = [];
+    const framesByIndex: Array<{ imageData: ImageData; timestamp: number } | undefined> = [];
 
     const requestedTargetFps = targetFps;
-    const normalizedCodec = metadata?.codec?.toLowerCase() ?? "";
-    const isAv1 =
-      normalizedCodec.includes("av1") || normalizedCodec.includes("av01");
+    const normalizedCodec = metadata?.codec?.toLowerCase() ?? '';
+    const isAv1 = normalizedCodec.includes('av1') || normalizedCodec.includes('av01');
     const supportsFrameCallback =
-      typeof document !== "undefined" &&
-      typeof HTMLVideoElement !== "undefined" &&
+      typeof document !== 'undefined' &&
+      typeof HTMLVideoElement !== 'undefined' &&
       typeof (
-        document.createElement("video") as unknown as {
+        document.createElement('video') as unknown as {
           requestVideoFrameCallback?: unknown;
         }
-      ).requestVideoFrameCallback === "function";
+      ).requestVideoFrameCallback === 'function';
 
     const getAv1CaptureFpsCap = (durationSeconds?: number): number => {
       // AV1 frame extraction is often dominated by canvas encoding (PNG) rather than FFmpeg.
@@ -873,7 +804,7 @@ class WebCodecsConversionService {
       // animation duration via duration-aligned timestamps.
       const isShort = !durationSeconds || durationSeconds < 4;
       const isMedium =
-        typeof durationSeconds === "number" &&
+        typeof durationSeconds === 'number' &&
         Number.isFinite(durationSeconds) &&
         durationSeconds >= 4 &&
         durationSeconds < 30;
@@ -885,64 +816,51 @@ class WebCodecsConversionService {
 
       if (isMedium) {
         // Medium clips: balance speed and smoothness.
-        if (options.quality === "high") {
+        if (options.quality === 'high') {
           return 12;
         }
-        if (options.quality === "medium") {
+        if (options.quality === 'medium') {
           return 10;
         }
         return 8;
       }
 
       // Long clips: prioritize speed.
-      if (options.quality === "high") {
+      if (options.quality === 'high') {
         return 10;
       }
-      if (options.quality === "medium") {
+      if (options.quality === 'medium') {
         return 8;
       }
       return 6;
     };
 
-    const av1CaptureFpsCap = isAv1
-      ? getAv1CaptureFpsCap(metadata?.duration)
-      : requestedTargetFps;
+    const av1CaptureFpsCap = isAv1 ? getAv1CaptureFpsCap(metadata?.duration) : requestedTargetFps;
     let effectiveTargetFps = isAv1
       ? Math.max(1, Math.min(requestedTargetFps, av1CaptureFpsCap))
       : requestedTargetFps;
 
     if (isAv1 && effectiveTargetFps !== requestedTargetFps) {
-      logger.info(
-        "conversion",
-        "Capping AV1 WebCodecs extraction FPS to reduce conversion time",
-        {
-          codec: metadata?.codec ?? "unknown",
-          requestedFps: requestedTargetFps,
-          cappedFps: effectiveTargetFps,
-          durationSeconds: metadata?.duration ?? null,
-          quality: options.quality,
-          reason: "AV1 frame extraction is CPU-heavy (decode + canvas encode)",
-        }
-      );
+      logger.info('conversion', 'Capping AV1 WebCodecs extraction FPS to reduce conversion time', {
+        codec: metadata?.codec ?? 'unknown',
+        requestedFps: requestedTargetFps,
+        cappedFps: effectiveTargetFps,
+        durationSeconds: metadata?.duration ?? null,
+        quality: options.quality,
+        reason: 'AV1 frame extraction is CPU-heavy (decode + canvas encode)',
+      });
     }
 
-    let maxFrames = this.getMaxWebPFrames(
-      effectiveTargetFps,
-      metadata?.duration
-    );
+    let maxFrames = this.getMaxWebPFrames(effectiveTargetFps, metadata?.duration);
 
     // Prefer demuxer-based extraction for complex codecs when eligible.
     // This avoids extremely slow per-frame seeking for AV1/HEVC/VP9 in many browsers.
     const demuxerEligible = canUseDemuxer(file, metadata);
     if (demuxerEligible) {
-      logger.info(
-        "conversion",
-        "Demuxer path eligible for complex codec extraction",
-        {
-          codec: metadata?.codec ?? "unknown",
-          container: detectContainer(file),
-        }
-      );
+      logger.info('conversion', 'Demuxer path eligible for complex codec extraction', {
+        codec: metadata?.codec ?? 'unknown',
+        container: detectContainer(file),
+      });
     }
 
     // Cache capture mode reliability per-session to avoid repeatedly spending time
@@ -951,7 +869,7 @@ class WebCodecsConversionService {
     // across browser updates.
     const readSessionNumber = (key: string): number => {
       try {
-        if (typeof sessionStorage === "undefined") {
+        if (typeof sessionStorage === 'undefined') {
           return 0;
         }
         const raw = sessionStorage.getItem(key);
@@ -967,7 +885,7 @@ class WebCodecsConversionService {
 
     const writeSessionNumber = (key: string, value: number) => {
       try {
-        if (typeof sessionStorage === "undefined") {
+        if (typeof sessionStorage === 'undefined') {
           return;
         }
         sessionStorage.setItem(key, String(value));
@@ -981,7 +899,7 @@ class WebCodecsConversionService {
       // Short clips: prioritize quality, medium/long: prioritize speed
       const isShort = !durationSeconds || durationSeconds < 4;
       const isMedium =
-        typeof durationSeconds === "number" &&
+        typeof durationSeconds === 'number' &&
         Number.isFinite(durationSeconds) &&
         durationSeconds >= 4 &&
         durationSeconds < 30;
@@ -990,28 +908,25 @@ class WebCodecsConversionService {
         return 12; // Short clips: maintain quality
       }
       if (isMedium) {
-        return options.quality === "high" ? 10 : 8; // Medium: balance speed/quality
+        return options.quality === 'high' ? 10 : 8; // Medium: balance speed/quality
       }
       // Long videos (>=30s): aggressive FPS capping for speed
-      return options.quality === "high" ? 8 : 6;
+      return options.quality === 'high' ? 8 : 6;
     };
 
-    const av1FrameCallbackFailureKey =
-      "dropconvert:captureReliability:av1:frame-callback:failures";
-    const av1FrameCallbackFailures = isAv1
-      ? readSessionNumber(av1FrameCallbackFailureKey)
-      : 0;
+    const av1FrameCallbackFailureKey = 'dropconvert:captureReliability:av1:frame-callback:failures';
+    const av1FrameCallbackFailures = isAv1 ? readSessionNumber(av1FrameCallbackFailureKey) : 0;
     const shouldSkipAv1FrameCallbackProbe =
       isAv1 && supportsFrameCallback && av1FrameCallbackFailures >= 1;
 
     try {
-      ffmpegService.reportStatus("Extracting frames via WebCodecs...");
+      ffmpegService.reportStatus('Extracting frames via WebCodecs...');
 
       // Direct WebCodecs → RGBA pipeline for complex codecs
       // Prefer native WebP encoding to avoid FFmpeg init + VFS overhead.
       const startTime = Date.now();
 
-      const frameFormat: WebCodecsFrameFormat = "rgba";
+      const frameFormat: WebCodecsFrameFormat = 'rgba';
 
       const runDecode = async (
         captureMode: WebCodecsCaptureMode,
@@ -1023,7 +938,7 @@ class WebCodecsConversionService {
           scale,
           frameFormat,
           frameQuality: 0.95,
-          framePrefix: "frame_",
+          framePrefix: 'frame_',
           frameDigits: 6,
           frameStartNumber: 0,
           maxFrames,
@@ -1032,12 +947,10 @@ class WebCodecsConversionService {
           quality: options.quality,
           onFrame: async (frame) => {
             if (shouldCancelOrDefault()) {
-              throw new Error("Conversion cancelled by user");
+              throw new Error('Conversion cancelled by user');
             }
             if (!frame.imageData) {
-              throw new Error(
-                "WebCodecs did not provide raw frame data (ImageData)."
-              );
+              throw new Error('WebCodecs did not provide raw frame data (ImageData).');
             }
 
             framesByIndex[frame.index] = {
@@ -1062,11 +975,9 @@ class WebCodecsConversionService {
       };
 
       // Check cache for performance metrics first (preferred over simple success cache)
-      const cachedPerf = getCachedCapturePerformance(
-        metadata?.codec ?? "unknown"
-      );
+      const cachedPerf = getCachedCapturePerformance(metadata?.codec ?? 'unknown');
       // Check cache for successful capture mode (fallback)
-      const cachedMode = getCachedCaptureMode(metadata?.codec ?? "unknown");
+      const cachedMode = getCachedCaptureMode(metadata?.codec ?? 'unknown');
 
       // If this device/browser is consistently slow at AV1 extraction, reduce the
       // extraction FPS further for subsequent conversions in this session.
@@ -1078,16 +989,13 @@ class WebCodecsConversionService {
         const downshiftTargetFps = 8;
 
         if (Number.isFinite(avgMsPerFrame) && avgMsPerFrame > slowThresholdMs) {
-          const nextFps = Math.max(
-            1,
-            Math.min(effectiveTargetFps, downshiftTargetFps)
-          );
+          const nextFps = Math.max(1, Math.min(effectiveTargetFps, downshiftTargetFps));
           if (nextFps !== effectiveTargetFps) {
             logger.info(
-              "conversion",
-              "Downshifting AV1 extraction FPS due to slow cached performance",
+              'conversion',
+              'Downshifting AV1 extraction FPS due to slow cached performance',
               {
-                codec: metadata?.codec ?? "unknown",
+                codec: metadata?.codec ?? 'unknown',
                 requestedFps: requestedTargetFps,
                 previousEffectiveFps: effectiveTargetFps,
                 downshiftedFps: nextFps,
@@ -1099,10 +1007,7 @@ class WebCodecsConversionService {
             );
           }
           effectiveTargetFps = nextFps;
-          maxFrames = this.getMaxWebPFrames(
-            effectiveTargetFps,
-            metadata?.duration
-          );
+          maxFrames = this.getMaxWebPFrames(effectiveTargetFps, metadata?.duration);
         }
       }
 
@@ -1114,108 +1019,87 @@ class WebCodecsConversionService {
       if (demuxerEligible) {
         // Try strict demuxer mode first. If it fails, we fall back explicitly to the
         // existing AV1-optimized probe order.
-        initialCaptureMode = "demuxer";
-        logger.info(
-          "conversion",
-          "Starting complex codec capture with demuxer mode",
-          {
-            codec: metadata?.codec ?? "unknown",
-            container: detectContainer(file),
-          }
-        );
+        initialCaptureMode = 'demuxer';
+        logger.info('conversion', 'Starting complex codec capture with demuxer mode', {
+          codec: metadata?.codec ?? 'unknown',
+          container: detectContainer(file),
+        });
       } else if (cachedPerf && isHardwareCacheValid()) {
         // Use cached fastest mode (performance-based selection)
         initialCaptureMode = cachedPerf.mode;
-        logger.info(
-          "conversion",
-          "Using cached fastest capture mode for codec",
-          {
-            codec: metadata?.codec ?? "unknown",
-            mode: cachedPerf.mode,
-            avgMsPerFrame: cachedPerf.avgMsPerFrame.toFixed(2),
-          }
-        );
+        logger.info('conversion', 'Using cached fastest capture mode for codec', {
+          codec: metadata?.codec ?? 'unknown',
+          mode: cachedPerf.mode,
+          avgMsPerFrame: cachedPerf.avgMsPerFrame.toFixed(2),
+        });
       } else if (cachedMode && isHardwareCacheValid()) {
         // Use cached successful mode (fallback to simpler cache)
         initialCaptureMode = cachedMode;
-        logger.info(
-          "conversion",
-          "Using cached successful capture mode for codec",
-          {
-            codec: metadata?.codec ?? "unknown",
-            cachedMode,
-          }
-        );
+        logger.info('conversion', 'Using cached successful capture mode for codec', {
+          codec: metadata?.codec ?? 'unknown',
+          cachedMode,
+        });
       } else {
         // Fall back to existing logic
         initialCaptureMode = shouldSkipAv1FrameCallbackProbe
-          ? "seek"
+          ? 'seek'
           : isAv1 && supportsFrameCallback
-          ? "frame-callback"
-          : "auto";
+            ? 'frame-callback'
+            : 'auto';
       }
 
       if (shouldSkipAv1FrameCallbackProbe) {
         logger.info(
-          "conversion",
-          "Skipping AV1 frame-callback probe due to repeated under-capture in this session; starting with seek",
+          'conversion',
+          'Skipping AV1 frame-callback probe due to repeated under-capture in this session; starting with seek',
           {
             failures: av1FrameCallbackFailures,
             key: av1FrameCallbackFailureKey,
-            codec: metadata?.codec ?? "unknown",
+            codec: metadata?.codec ?? 'unknown',
           }
         );
       }
 
       const initialSeekTargetFps =
-        initialCaptureMode === "seek" && isAv1
+        initialCaptureMode === 'seek' && isAv1
           ? Math.min(effectiveTargetFps, getAv1SeekFpsCap(metadata?.duration))
           : effectiveTargetFps;
 
       // Track decode timing for performance caching (use the final successful attempt)
       let perfElapsed = 0;
-      let decodeResult: Awaited<
-        ReturnType<WebCodecsDecoderService["decodeToFrames"]>
-      >;
+      let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>>;
 
       try {
-        const attempt = await runDecodeWithTiming(
-          initialCaptureMode,
-          initialSeekTargetFps
-        );
+        const attempt = await runDecodeWithTiming(initialCaptureMode, initialSeekTargetFps);
         decodeResult = attempt.result;
         perfElapsed = attempt.elapsedMs;
       } catch (error) {
-        if (initialCaptureMode !== "demuxer") {
+        if (initialCaptureMode !== 'demuxer') {
           throw error;
         }
 
         logger.warn(
-          "conversion",
-          "Demuxer capture failed; falling back to playback capture modes",
+          'conversion',
+          'Demuxer capture failed; falling back to playback capture modes',
           {
-            codec: metadata?.codec ?? "unknown",
+            codec: metadata?.codec ?? 'unknown',
             container: detectContainer(file),
             error: getErrorMessage(error),
           }
         );
 
-        const fallbackInitial: WebCodecsCaptureMode =
-          shouldSkipAv1FrameCallbackProbe
-            ? "seek"
-            : isAv1 && supportsFrameCallback
-            ? "frame-callback"
-            : "auto";
+        const fallbackInitial: WebCodecsCaptureMode = shouldSkipAv1FrameCallbackProbe
+          ? 'seek'
+          : isAv1 && supportsFrameCallback
+            ? 'frame-callback'
+            : 'auto';
 
         const fallbackSeekTargetFps =
-          fallbackInitial === "seek" && isAv1
+          fallbackInitial === 'seek' && isAv1
             ? Math.min(effectiveTargetFps, getAv1SeekFpsCap(metadata?.duration))
             : effectiveTargetFps;
 
-        const attempt = await runDecodeWithTiming(
-          fallbackInitial,
-          fallbackSeekTargetFps
-        );
+        const attempt = await runDecodeWithTiming(fallbackInitial, fallbackSeekTargetFps);
         decodeResult = attempt.result;
         perfElapsed = attempt.elapsedMs;
       }
@@ -1225,12 +1109,7 @@ class WebCodecsConversionService {
       // Use actual FPS from decode result (not original targetFps) to avoid false validation failures
       const expectedFramesFromDuration = Math.min(
         maxFrames,
-        Math.max(
-          1,
-          Math.ceil(
-            Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)
-          )
-        )
+        Math.max(1, Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)))
       );
       const requiredFrames = Math.max(1, expectedFramesFromDuration - 1);
 
@@ -1240,24 +1119,20 @@ class WebCodecsConversionService {
         if (
           isAv1 &&
           supportsFrameCallback &&
-          (decodeResult.captureModeUsed ?? initialCaptureMode) ===
-            "frame-callback"
+          (decodeResult.captureModeUsed ?? initialCaptureMode) === 'frame-callback'
         ) {
-          writeSessionNumber(
-            av1FrameCallbackFailureKey,
-            av1FrameCallbackFailures + 1
-          );
+          writeSessionNumber(av1FrameCallbackFailureKey, av1FrameCallbackFailures + 1);
         }
 
         logger.warn(
-          "conversion",
+          'conversion',
           `WebCodecs initial capture under-extracted frames; retrying with fallback capture modes (captured=${
             decodeResult.frameCount
           }, expected≈${expectedFramesFromDuration}, required>=${requiredFrames}, initial=${initialCaptureMode}, used=${
-            decodeResult.captureModeUsed ?? "unknown"
+            decodeResult.captureModeUsed ?? 'unknown'
           })`,
           {
-            codec: metadata?.codec ?? "unknown",
+            codec: metadata?.codec ?? 'unknown',
             capturedFrames: decodeResult.frameCount,
             expectedFramesFromDuration,
             requiredFrames,
@@ -1278,10 +1153,10 @@ class WebCodecsConversionService {
 
         // If auto selected track mode and it under-captured, try frame-callback first.
         // This can be significantly faster than per-frame seeking when supported.
-        if (supportsFrameCallback && decodeResult.captureModeUsed === "track") {
+        if (supportsFrameCallback && decodeResult.captureModeUsed === 'track') {
           try {
             logger.info(
-              "conversion",
+              'conversion',
               `WebCodecs under-captured in track mode; retrying with frame-callback (captured=${decodeResult.frameCount}, required>=${requiredFrames})`,
               {
                 capturedFrames: decodeResult.frameCount,
@@ -1297,14 +1172,14 @@ class WebCodecsConversionService {
             );
 
             {
-              const attempt = await runDecodeWithTiming("frame-callback");
+              const attempt = await runDecodeWithTiming('frame-callback');
               decodeResult = attempt.result;
               perfElapsed = attempt.elapsedMs;
             }
           } catch (frameCallbackError) {
             logger.warn(
-              "conversion",
-              "WebCodecs frame-callback retry failed; falling back to seek",
+              'conversion',
+              'WebCodecs frame-callback retry failed; falling back to seek',
               {
                 error: getErrorMessage(frameCallbackError),
               }
@@ -1316,28 +1191,20 @@ class WebCodecsConversionService {
         // Use actual FPS from decode result to avoid false validation failures
         const retryExpectedFramesFromDuration = Math.min(
           maxFrames,
-          Math.max(
-            1,
-            Math.ceil(
-              Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)
-            )
-          )
+          Math.max(1, Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)))
         );
-        const retryRequiredFrames = Math.max(
-          1,
-          retryExpectedFramesFromDuration - 1
-        );
+        const retryRequiredFrames = Math.max(1, retryExpectedFramesFromDuration - 1);
 
         if (decodeResult.frameCount < retryRequiredFrames) {
           // If initial mode was frame-callback (rVFC) and under-captured, probe track before slow seek
           const modeUsed = decodeResult.captureModeUsed ?? initialCaptureMode;
           const supportsTrackProcessor = supportsFrameCallback; // Track is typically available if rVFC is
 
-          if (supportsTrackProcessor && modeUsed === "frame-callback") {
+          if (supportsTrackProcessor && modeUsed === 'frame-callback') {
             try {
               logger.info(
-                "conversion",
-                "Probing track processor before seek fallback (frame-callback under-captured)",
+                'conversion',
+                'Probing track processor before seek fallback (frame-callback under-captured)',
                 {
                   capturedFrames: decodeResult.frameCount,
                   requiredFrames: retryRequiredFrames,
@@ -1347,28 +1214,24 @@ class WebCodecsConversionService {
 
               framesByIndex.length = 0;
               {
-                const attempt = await runDecodeWithTiming("track");
+                const attempt = await runDecodeWithTiming('track');
                 decodeResult = attempt.result;
                 perfElapsed = attempt.elapsedMs;
               }
 
               if (decodeResult.frameCount >= retryRequiredFrames) {
                 logger.info(
-                  "conversion",
-                  "Track processor probe succeeded, skipping seek fallback",
+                  'conversion',
+                  'Track processor probe succeeded, skipping seek fallback',
                   {
                     frameCount: decodeResult.frameCount,
                   }
                 );
               }
             } catch (trackError) {
-              logger.warn(
-                "conversion",
-                "Track probe failed, falling back to seek",
-                {
-                  error: getErrorMessage(trackError),
-                }
-              );
+              logger.warn('conversion', 'Track probe failed, falling back to seek', {
+                error: getErrorMessage(trackError),
+              });
               framesByIndex.length = 0;
             }
           }
@@ -1387,23 +1250,19 @@ class WebCodecsConversionService {
               : effectiveTargetFps;
 
             if (seekTargetFps !== effectiveTargetFps) {
-              logger.info(
-                "conversion",
-                "Capping FPS for seek fallback to reduce conversion time",
-                {
-                  codec: metadata?.codec ?? "unknown",
-                  requestedFps: requestedTargetFps,
-                  effectiveTargetFps,
-                  seekFps: seekTargetFps,
-                  seekFpsCap: isAv1 ? av1SeekFpsCap : null,
-                  durationSeconds: decodeResult.duration,
-                  reason: "seek fallback for WebCodecs-only codec",
-                }
-              );
+              logger.info('conversion', 'Capping FPS for seek fallback to reduce conversion time', {
+                codec: metadata?.codec ?? 'unknown',
+                requestedFps: requestedTargetFps,
+                effectiveTargetFps,
+                seekFps: seekTargetFps,
+                seekFpsCap: isAv1 ? av1SeekFpsCap : null,
+                durationSeconds: decodeResult.duration,
+                reason: 'seek fallback for WebCodecs-only codec',
+              });
             }
 
             {
-              const attempt = await runDecodeWithTiming("seek", seekTargetFps);
+              const attempt = await runDecodeWithTiming('seek', seekTargetFps);
               decodeResult = attempt.result;
               perfElapsed = attempt.elapsedMs;
             }
@@ -1412,17 +1271,9 @@ class WebCodecsConversionService {
 
         const finalExpectedFramesFromDuration = Math.min(
           maxFrames,
-          Math.max(
-            1,
-            Math.ceil(
-              Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)
-            )
-          )
+          Math.max(1, Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)))
         );
-        const finalRequiredFrames = Math.max(
-          1,
-          finalExpectedFramesFromDuration - 1
-        );
+        const finalRequiredFrames = Math.max(1, finalExpectedFramesFromDuration - 1);
 
         if (decodeResult.frameCount < finalRequiredFrames) {
           throw new Error(
@@ -1435,10 +1286,7 @@ class WebCodecsConversionService {
       // so future sessions can try it again (useful for browser updates or different sources).
       if (isAv1 && supportsFrameCallback) {
         const modeUsed = decodeResult.captureModeUsed ?? initialCaptureMode;
-        if (
-          modeUsed === "frame-callback" &&
-          decodeResult.frameCount >= requiredFrames
-        ) {
+        if (modeUsed === 'frame-callback' && decodeResult.frameCount >= requiredFrames) {
           writeSessionNumber(av1FrameCallbackFailureKey, 0);
         }
       }
@@ -1447,29 +1295,26 @@ class WebCodecsConversionService {
       // Recalculate required frames based on actual FPS used (not original targetFps)
       const actualRequiredFrames = Math.max(
         1,
-        Math.min(
-          maxFrames,
-          Math.ceil(decodeResult.duration * decodeResult.fps)
-        ) - 1
+        Math.min(maxFrames, Math.ceil(decodeResult.duration * decodeResult.fps)) - 1
       );
 
       if (decodeResult.frameCount >= actualRequiredFrames) {
         const modeUsed = decodeResult.captureModeUsed ?? initialCaptureMode;
         // Only cache concrete modes (not 'auto')
-        if (modeUsed !== "auto") {
-          cacheCaptureMode(metadata?.codec ?? "unknown", modeUsed);
+        if (modeUsed !== 'auto') {
+          cacheCaptureMode(metadata?.codec ?? 'unknown', modeUsed);
           // Also cache performance metrics for faster mode selection on repeat conversions
           cacheCapturePerformance(
-            metadata?.codec ?? "unknown",
+            metadata?.codec ?? 'unknown',
             modeUsed,
             perfElapsed,
             decodeResult.frameCount
           );
           logger.info(
-            "conversion",
-            "Cached successful capture mode and performance for future conversions",
+            'conversion',
+            'Cached successful capture mode and performance for future conversions',
             {
-              codec: metadata?.codec ?? "unknown",
+              codec: metadata?.codec ?? 'unknown',
               mode: modeUsed,
               actualRequiredFrames,
               capturedFrames: decodeResult.frameCount,
@@ -1488,33 +1333,21 @@ class WebCodecsConversionService {
       // Calculate expected frames for validation
       const validationExpectedFrames = Math.min(
         maxFrames,
-        Math.max(
-          1,
-          Math.ceil(
-            Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)
-          )
-        )
+        Math.max(1, Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)))
       );
       const captureRatio = decodeResult.frameCount / validationExpectedFrames;
 
-      if (
-        decodeResult.frameCount < minAbsoluteFrames ||
-        captureRatio < minRequiredRatio
-      ) {
-        logger.error(
-          "conversion",
-          "WebCodecs frame capture critically incomplete - failing fast",
-          {
-            capturedFrames: decodeResult.frameCount,
-            expectedFrames: validationExpectedFrames,
-            captureRatio: `${(captureRatio * 100).toFixed(1)}%`,
-            minRequiredRatio: `${minRequiredRatio * 100}%`,
-            minAbsoluteFrames,
-            codec: metadata?.codec,
-            captureModeUsed: decodeResult.captureModeUsed,
-            duration: decodeResult.duration,
-          }
-        );
+      if (decodeResult.frameCount < minAbsoluteFrames || captureRatio < minRequiredRatio) {
+        logger.error('conversion', 'WebCodecs frame capture critically incomplete - failing fast', {
+          capturedFrames: decodeResult.frameCount,
+          expectedFrames: validationExpectedFrames,
+          captureRatio: `${(captureRatio * 100).toFixed(1)}%`,
+          minRequiredRatio: `${minRequiredRatio * 100}%`,
+          minAbsoluteFrames,
+          codec: metadata?.codec,
+          captureModeUsed: decodeResult.captureModeUsed,
+          duration: decodeResult.duration,
+        });
 
         throw new Error(
           `Frame extraction incomplete: captured only ${decodeResult.frameCount} of ${validationExpectedFrames} ` +
@@ -1528,8 +1361,7 @@ class WebCodecsConversionService {
       }
 
       const orderedFrames = framesByIndex.filter(
-        (frame): frame is { imageData: ImageData; timestamp: number } =>
-          Boolean(frame)
+        (frame): frame is { imageData: ImageData; timestamp: number } => Boolean(frame)
       );
 
       const orderedImageData = orderedFrames.map((frame) => frame.imageData);
@@ -1537,13 +1369,11 @@ class WebCodecsConversionService {
       const elapsed = Date.now() - startTime;
       const estimatedFramesFromCapturedDuration = Math.max(
         1,
-        Math.ceil(
-          Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps)
-        )
+        Math.ceil(Math.max(0, decodeResult.duration) * Math.max(1, decodeResult.fps))
       );
 
       logger.info(
-        "conversion",
+        'conversion',
         `Frame extraction complete: frameCount=${
           decodeResult.frameCount
         }, durationSeconds=${decodeResult.duration.toFixed(
@@ -1569,18 +1399,16 @@ class WebCodecsConversionService {
       const StatusTickIntervalMs = 400;
       let lastEncodeStatusAt = 0;
       let lastEncodeStatusCurrent = -1;
-      let encodeStatusPrefix = "Encoding WebP frames...";
+      let encodeStatusPrefix = 'Encoding WebP frames...';
       ffmpegService.reportStatus(encodeStatusPrefix);
 
       const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
       const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
       const reportEncodeProgress = (current: number, total: number) => {
         if (shouldCancelOrDefault()) {
-          throw new Error("Conversion cancelled by user");
+          throw new Error('Conversion cancelled by user');
         }
-        const progress =
-          encodeStart +
-          ((encodeEnd - encodeStart) * current) / Math.max(1, total);
+        const progress = encodeStart + ((encodeEnd - encodeStart) * current) / Math.max(1, total);
         ffmpegService.reportProgress(Math.round(progress));
 
         const now = Date.now();
@@ -1591,9 +1419,7 @@ class WebCodecsConversionService {
         ) {
           lastEncodeStatusAt = now;
           lastEncodeStatusCurrent = current;
-          ffmpegService.reportStatus(
-            `${encodeStatusPrefix} (${current}/${Math.max(1, total)})`
-          );
+          ffmpegService.reportStatus(`${encodeStatusPrefix} (${current}/${Math.max(1, total)})`);
         }
       };
 
@@ -1611,16 +1437,12 @@ class WebCodecsConversionService {
       );
 
       if (fpsForEncoding !== effectiveTargetFps) {
-        logger.info(
-          "conversion",
-          "Adjusted WebP FPS to match captured pacing",
-          {
-            targetFps: effectiveTargetFps,
-            adjustedFps: fpsForEncoding,
-            frameCount: orderedImageData.length,
-            durationSeconds: animationDurationSeconds ?? decodeResult.duration,
-          }
-        );
+        logger.info('conversion', 'Adjusted WebP FPS to match captured pacing', {
+          targetFps: effectiveTargetFps,
+          adjustedFps: fpsForEncoding,
+          frameCount: orderedImageData.length,
+          durationSeconds: animationDurationSeconds ?? decodeResult.duration,
+        });
       }
 
       const timestampsForEncoding = this.buildDurationAlignedTimestamps({
@@ -1634,7 +1456,7 @@ class WebCodecsConversionService {
 
       // Prefer worker-based WebP encoding when available.
       try {
-        const encoder = await EncoderFactory.getEncoder("webp", {
+        const encoder = await EncoderFactory.getEncoder('webp', {
           preferWorkers: true,
           quality: options.quality,
         });
@@ -1643,23 +1465,18 @@ class WebCodecsConversionService {
           // Respect encoder constraints (defensive).
           const maxFramesAllowed = encoder.capabilities.maxFrames;
           if (maxFramesAllowed && orderedImageData.length > maxFramesAllowed) {
-            logger.warn(
-              "conversion",
-              "Skipping worker WebP encoder due to maxFrames constraint",
-              {
-                encoder: encoder.name,
-                frameCount: orderedImageData.length,
-                maxFramesAllowed,
-              }
-            );
+            logger.warn('conversion', 'Skipping worker WebP encoder due to maxFrames constraint', {
+              encoder: encoder.name,
+              frameCount: orderedImageData.length,
+              maxFramesAllowed,
+            });
           } else if (
             encoder.capabilities.maxDimension &&
-            Math.max(decodeResult.width, decodeResult.height) >
-              encoder.capabilities.maxDimension
+            Math.max(decodeResult.width, decodeResult.height) > encoder.capabilities.maxDimension
           ) {
             logger.warn(
-              "conversion",
-              "Skipping worker WebP encoder due to maxDimension constraint",
+              'conversion',
+              'Skipping worker WebP encoder due to maxDimension constraint',
               {
                 encoder: encoder.name,
                 width: decodeResult.width,
@@ -1692,21 +1509,16 @@ class WebCodecsConversionService {
         if (shouldCancelOrDefault()) {
           throw error;
         }
-        logger.warn(
-          "conversion",
-          "Worker WebP encoder failed; falling back to main thread muxer",
-          {
-            error: errorMessage,
-            codec: metadata?.codec ?? "unknown",
-          }
-        );
+        logger.warn('conversion', 'Worker WebP encoder failed; falling back to main thread muxer', {
+          error: errorMessage,
+          codec: metadata?.codec ?? 'unknown',
+        });
       }
 
       if (!outputBlob) {
         // Fallback: main-thread WebP muxer path.
-        encoderBackendUsed = "webp-muxer";
-        const webpQualityRatio =
-          QUALITY_PRESETS.webp[options.quality].quality / 100;
+        encoderBackendUsed = 'webp-muxer';
+        const webpQualityRatio = QUALITY_PRESETS.webp[options.quality].quality / 100;
         const encodeFrame = this.createWebPFrameEncoder(webpQualityRatio);
 
         const hwConcurrency = navigator.hardwareConcurrency || 4;
@@ -1719,44 +1531,31 @@ class WebCodecsConversionService {
         const encodedFrames: Uint8Array[] = [];
         const totalFrames = orderedImageData.length;
 
-        logger.info(
-          "conversion",
-          "Encoding WebP frames on main thread (fallback)",
-          {
-            frameCount: totalFrames,
-            chunkSize: ChunkSize,
-            codec: metadata?.codec ?? "unknown",
-          }
-        );
+        logger.info('conversion', 'Encoding WebP frames on main thread (fallback)', {
+          frameCount: totalFrames,
+          chunkSize: ChunkSize,
+          codec: metadata?.codec ?? 'unknown',
+        });
 
         for (let i = 0; i < totalFrames; i += ChunkSize) {
           if (shouldCancelOrDefault()) {
-            throw new Error("Conversion cancelled by user");
+            throw new Error('Conversion cancelled by user');
           }
 
-          const chunk = orderedImageData.slice(
-            i,
-            Math.min(i + ChunkSize, totalFrames)
-          );
-          const encodedChunk = await Promise.all(
-            chunk.map((frame) => encodeFrame(frame))
-          );
+          const chunk = orderedImageData.slice(i, Math.min(i + ChunkSize, totalFrames));
+          const encodedChunk = await Promise.all(chunk.map((frame) => encodeFrame(frame)));
           encodedFrames.push(...encodedChunk);
           reportEncodeProgress(encodedFrames.length, totalFrames);
         }
 
         if (!cachedChunkSize && encodedFrames.length > 0) {
           cacheWebPChunkSize(ChunkSize);
-          logger.info(
-            "conversion",
-            "Cached WebP chunk size for future conversions",
-            {
-              chunkSize: ChunkSize,
-            }
-          );
+          logger.info('conversion', 'Cached WebP chunk size for future conversions', {
+            chunkSize: ChunkSize,
+          });
         }
 
-        encodeStatusPrefix = "Muxing WebP frames...";
+        encodeStatusPrefix = 'Muxing WebP frames...';
         ffmpegService.reportStatus(encodeStatusPrefix);
 
         outputBlob = await this.muxWebPFrames({
@@ -1773,25 +1572,21 @@ class WebCodecsConversionService {
       }
 
       if (!outputBlob) {
-        logger.warn(
-          "conversion",
-          "WebCodecs direct path produced no output; using standard path",
-          {
-            codec: metadata?.codec ?? "unknown",
-            reason: "no_output",
-          }
-        );
+        logger.warn('conversion', 'WebCodecs direct path produced no output; using standard path', {
+          codec: metadata?.codec ?? 'unknown',
+          reason: 'no_output',
+        });
         return null;
       }
 
       const validation = await this.validateWebPBlob(outputBlob);
       if (!validation.valid) {
         logger.warn(
-          "conversion",
-          "WebCodecs direct WebP output failed validation; using standard path",
+          'conversion',
+          'WebCodecs direct WebP output failed validation; using standard path',
           {
-            codec: metadata?.codec ?? "unknown",
-            reason: validation.reason ?? "validation_failed",
+            codec: metadata?.codec ?? 'unknown',
+            reason: validation.reason ?? 'validation_failed',
           }
         );
         return null;
@@ -1812,23 +1607,22 @@ class WebCodecsConversionService {
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       if (
-        errorMessage.includes("cancelled by user") ||
+        errorMessage.includes('cancelled by user') ||
         (ffmpegService.isCancellationRequested() &&
-          errorMessage.includes("called FFmpeg.terminate()"))
+          errorMessage.includes('called FFmpeg.terminate()'))
       ) {
         throw error;
       }
 
       // Log detailed error information for debugging
-      const errorStack =
-        error instanceof Error ? error.stack : "No stack trace";
+      const errorStack = error instanceof Error ? error.stack : 'No stack trace';
       const detailedError = {
         error: errorMessage,
         codec: metadata?.codec,
         format,
         stack: errorStack?.substring(0, 500), // Truncate stack for readability
       };
-      logger.error("conversion", "WebCodecs direct path failed", detailedError);
+      logger.error('conversion', 'WebCodecs direct path failed', detailedError);
       return null;
     }
   }
@@ -1859,31 +1653,29 @@ class WebCodecsConversionService {
    */
   async convert(
     file: File,
-    format: "gif" | "webp",
+    format: 'gif' | 'webp',
     options: ConversionOptions,
     metadata?: VideoMetadata,
     abortSignal?: AbortSignal
   ): Promise<ConversionOutputBlob> {
     const { quality, scale } = options;
     const settings =
-      format === "gif"
-        ? QUALITY_PRESETS.gif[quality]
-        : QUALITY_PRESETS.webp[quality];
-    const useModernGif = format === "gif" && isModernGifSupported();
+      format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
+    const useModernGif = format === 'gif' && isModernGifSupported();
 
     const throwIfCancelled = (): void => {
       if (abortSignal?.aborted || ffmpegService.isCancellationRequested()) {
-        throw new Error("Conversion cancelled by user");
+        throw new Error('Conversion cancelled by user');
       }
     };
 
     // GIF format: Always prefer FFmpeg direct path for better performance
     // WebCodecs frame extraction + FFmpeg GIF encoding is 3x slower than direct FFmpeg encoding
     // and has reliability issues with FFmpeg GIF options (e.g., fps_mode parsing errors)
-    if (format === "gif" && !useModernGif) {
+    if (format === 'gif' && !useModernGif) {
       logger.info(
-        "conversion",
-        "GIF format detected: using direct FFmpeg path for optimal performance",
+        'conversion',
+        'GIF format detected: using direct FFmpeg path for optimal performance',
         {
           fileSize: file.size,
           format,
@@ -1892,7 +1684,7 @@ class WebCodecsConversionService {
       await ffmpegService.initialize();
       const blob = await ffmpegService.convertToGIF(file, options, metadata);
       const blobWithMetadata = blob as ConversionOutputBlob;
-      blobWithMetadata.encoderBackendUsed = "ffmpeg";
+      blobWithMetadata.encoderBackendUsed = 'ffmpeg';
       return blobWithMetadata;
     }
 
@@ -1905,19 +1697,18 @@ class WebCodecsConversionService {
     const webpCapturedFrames: ImageData[] = []; // Collect WebP frames for batch encoding
     const webpEncodedFrames: Uint8Array[] = [];
     const webpFrameTimestamps: number[] = [];
-    const webpQualityRatio =
-      format === "webp" ? QUALITY_PRESETS.webp[quality].quality / 100 : null;
-    const frameFormat: WebCodecsFrameFormat = "rgba";
+    const webpQualityRatio = format === 'webp' ? QUALITY_PRESETS.webp[quality].quality / 100 : null;
+    const frameFormat: WebCodecsFrameFormat = 'rgba';
 
     // Calculate optimal FPS based on source video FPS and quality preset
-    const presetFps = "fps" in settings ? settings.fps : 15;
+    const presetFps = 'fps' in settings ? settings.fps : 15;
     const targetFps =
       metadata?.framerate && metadata.framerate > 0
         ? getOptimalFPS(metadata.framerate, quality, format)
         : presetFps;
 
     if (metadata?.framerate && targetFps !== presetFps) {
-      logger.info("conversion", "Using adaptive FPS", {
+      logger.info('conversion', 'Using adaptive FPS', {
         sourceFPS: metadata.framerate,
         presetFPS: presetFps,
         optimalFPS: targetFps,
@@ -1934,13 +1725,11 @@ class WebCodecsConversionService {
     let lastDecodeStatusCurrent = -1;
     let lastEncodeStatusAt = 0;
     let lastEncodeStatusCurrent = -1;
-    let encodeStatusPrefix = "";
+    let encodeStatusPrefix = '';
 
     const reportDecodeProgress = (current: number, total: number) => {
       throwIfCancelled();
-      const progress =
-        decodeStart +
-        ((decodeEnd - decodeStart) * current) / Math.max(1, total);
+      const progress = decodeStart + ((decodeEnd - decodeStart) * current) / Math.max(1, total);
       ffmpegService.reportProgress(Math.round(progress));
 
       const now = Date.now();
@@ -1951,9 +1740,7 @@ class WebCodecsConversionService {
       ) {
         lastDecodeStatusAt = now;
         lastDecodeStatusCurrent = current;
-        ffmpegService.reportStatus(
-          `Decoding with WebCodecs... (${current}/${Math.max(1, total)})`
-        );
+        ffmpegService.reportStatus(`Decoding with WebCodecs... (${current}/${Math.max(1, total)})`);
       }
     };
 
@@ -1975,16 +1762,12 @@ class WebCodecsConversionService {
     // NOTE: This direct path is only relevant for WebP output. GIF uses modern-gif
     // or FFmpeg direct conversion and should not be routed through the PNG/VFS path.
     try {
-      if (format === "webp" && this.shouldUseWebCodecsPath(metadata)) {
-        logger.info(
-          "conversion",
-          "Using WebCodecs direct path for complex codec",
-          {
-            codec: metadata?.codec,
-            format,
-            reason: "direct frame extraction",
-          }
-        );
+      if (format === 'webp' && this.shouldUseWebCodecsPath(metadata)) {
+        logger.info('conversion', 'Using WebCodecs direct path for complex codec', {
+          codec: metadata?.codec,
+          format,
+          reason: 'direct frame extraction',
+        });
 
         try {
           const webCodecsResult = await this.convertViaWebCodecsFrames({
@@ -1998,8 +1781,7 @@ class WebCodecsConversionService {
             reportDecodeProgress,
             capturedFrames,
             shouldCancel: () =>
-              abortSignal?.aborted === true ||
-              ffmpegService.isCancellationRequested(),
+              abortSignal?.aborted === true || ffmpegService.isCancellationRequested(),
           });
 
           if (webCodecsResult) {
@@ -2009,59 +1791,50 @@ class WebCodecsConversionService {
 
           // If the direct path returns null, fall through to the standard WebCodecs path
           // (media-element capture + muxer/encoder) which may still succeed.
-          logger.warn(
-            "conversion",
-            "WebCodecs direct path failed; continuing with standard path",
-            {
-              codec: metadata?.codec,
-              fallbackReason: "webcodecs_direct_failed",
-            }
-          );
+          logger.warn('conversion', 'WebCodecs direct path failed; continuing with standard path', {
+            codec: metadata?.codec,
+            fallbackReason: 'webcodecs_direct_failed',
+          });
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           if (
-            errorMessage.includes("cancelled by user") ||
+            errorMessage.includes('cancelled by user') ||
             (ffmpegService.isCancellationRequested() &&
-              errorMessage.includes("called FFmpeg.terminate()"))
+              errorMessage.includes('called FFmpeg.terminate()'))
           ) {
             throw error;
           }
 
           logger.warn(
-            "conversion",
-            "WebCodecs direct path errored; continuing with standard path",
+            'conversion',
+            'WebCodecs direct path errored; continuing with standard path',
             {
               error: errorMessage,
               codec: metadata?.codec,
-              fallbackReason: "webcodecs_direct_error",
+              fallbackReason: 'webcodecs_direct_error',
             }
           );
 
-          logger.debug(
-            "conversion",
-            "Continuing after WebCodecs direct path error",
-            {
-              reason: "webcodecs_direct_error",
-              originalError: errorMessage,
-            }
-          );
+          logger.debug('conversion', 'Continuing after WebCodecs direct path error', {
+            reason: 'webcodecs_direct_error',
+            originalError: errorMessage,
+          });
         }
       }
 
-      ffmpegService.reportStatus("Decoding with WebCodecs...");
+      ffmpegService.reportStatus('Decoding with WebCodecs...');
       ffmpegService.reportProgress(decodeStart);
 
-      const captureModes: WebCodecsCaptureMode[] = ["auto", "seek"];
+      const captureModes: WebCodecsCaptureMode[] = ['auto', 'seek'];
       let captureModeUsed: WebCodecsCaptureMode | null = null;
-      let decodeResult: Awaited<
-        ReturnType<WebCodecsDecoderService["decodeToFrames"]>
-      > | null = null;
+      let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>> | null =
+        null;
 
       for (const captureMode of captureModes) {
         try {
           throwIfCancelled();
-          if (captureMode === "seek") {
-            ffmpegService.reportStatus("Retrying WebCodecs decode...");
+          if (captureMode === 'seek') {
+            ffmpegService.reportStatus('Retrying WebCodecs decode...');
             ffmpegService.reportProgress(decodeStart);
           }
 
@@ -2075,23 +1848,20 @@ class WebCodecsConversionService {
             frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
             frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
             maxFrames:
-              format === "webp"
-                ? this.getMaxWebPFrames(targetFps, metadata?.duration)
-                : undefined,
+              format === 'webp' ? this.getMaxWebPFrames(targetFps, metadata?.duration) : undefined,
             captureMode,
             codec: metadata?.codec,
             quality: options.quality,
             shouldCancel: () =>
-              abortSignal?.aborted === true ||
-              ffmpegService.isCancellationRequested(),
+              abortSignal?.aborted === true || ffmpegService.isCancellationRequested(),
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
               throwIfCancelled();
               if (!frame.imageData) {
-                throw new Error("WebCodecs did not provide raw frame data.");
+                throw new Error('WebCodecs did not provide raw frame data.');
               }
 
-              if (format === "webp") {
+              if (format === 'webp') {
                 // Collect frames for batch encoding (parallelized later)
                 webpCapturedFrames.push(frame.imageData);
                 webpFrameTimestamps.push(frame.timestamp);
@@ -2108,14 +1878,14 @@ class WebCodecsConversionService {
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           if (
-            errorMessage.includes("cancelled by user") ||
+            errorMessage.includes('cancelled by user') ||
             (ffmpegService.isCancellationRequested() &&
-              errorMessage.includes("called FFmpeg.terminate()"))
+              errorMessage.includes('called FFmpeg.terminate()'))
           ) {
             throw error;
           }
 
-          logger.warn("conversion", "WebCodecs frame capture failed", {
+          logger.warn('conversion', 'WebCodecs frame capture failed', {
             error: errorMessage,
             mode: captureMode,
           });
@@ -2124,17 +1894,17 @@ class WebCodecsConversionService {
           webpEncodedFrames.length = 0;
           webpFrameTimestamps.length = 0;
 
-          if (captureMode === "seek") {
+          if (captureMode === 'seek') {
             throw error;
           }
         }
       }
 
       if (!decodeResult || !decodeResult.frameCount) {
-        throw new Error("WebCodecs decode produced no frames.");
+        throw new Error('WebCodecs decode produced no frames.');
       }
 
-      logger.info("conversion", "WebCodecs frame capture complete", {
+      logger.info('conversion', 'WebCodecs frame capture complete', {
         captureMode: captureModeUsed,
         frameCount: decodeResult.frameCount,
         width: decodeResult.width,
@@ -2168,26 +1938,18 @@ class WebCodecsConversionService {
         ) {
           lastEncodeStatusAt = now;
           lastEncodeStatusCurrent = current;
-          ffmpegService.reportStatus(
-            `${encodeStatusPrefix} (${current}/${Math.max(1, total)})`
-          );
+          ffmpegService.reportStatus(`${encodeStatusPrefix} (${current}/${Math.max(1, total)})`);
         }
       };
 
-      const encodeWithFFmpegFallback = async (
-        errorMessage: string
-      ): Promise<Blob> => {
+      const encodeWithFFmpegFallback = async (errorMessage: string): Promise<Blob> => {
         throwIfCancelled();
-        encoderBackendUsed = "ffmpeg";
+        encoderBackendUsed = 'ffmpeg';
         // H.264 intermediate path already attempted at the start of convert()
         // Skip redundant retry and go directly to FFmpeg frame re-extraction
-        logger.warn(
-          "conversion",
-          "WebCodecs encoder failed, retrying with FFmpeg frames",
-          {
-            error: errorMessage,
-          }
-        );
+        logger.warn('conversion', 'WebCodecs encoder failed, retrying with FFmpeg frames', {
+          error: errorMessage,
+        });
 
         if (!ffmpegService.isLoaded()) {
           await ffmpegService.initialize();
@@ -2198,15 +1960,11 @@ class WebCodecsConversionService {
         webpEncodedFrames.length = 0;
         webpFrameTimestamps.length = 0;
 
-        ffmpegService.reportStatus(
-          `Retrying ${format.toUpperCase()} encode with FFmpeg...`
-        );
+        ffmpegService.reportStatus(`Retrying ${format.toUpperCase()} encode with FFmpeg...`);
         ffmpegService.reportProgress(decodeStart);
 
         const fallbackFrameFiles: string[] = [];
-        let fallbackResult: Awaited<
-          ReturnType<WebCodecsDecoderService["decodeToFrames"]>
-        >;
+        let fallbackResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>>;
         let lastValidFallbackFrame: Uint8Array | null = null;
 
         try {
@@ -2219,26 +1977,23 @@ class WebCodecsConversionService {
             framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
             frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
             frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-            captureMode: "auto",
+            captureMode: 'auto',
             codec: metadata?.codec,
             quality: options.quality,
             shouldCancel: () =>
-              abortSignal?.aborted === true ||
-              ffmpegService.isCancellationRequested(),
+              abortSignal?.aborted === true || ffmpegService.isCancellationRequested(),
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
               throwIfCancelled();
               if (!frame.data || frame.data.byteLength === 0) {
                 if (!lastValidFallbackFrame) {
-                  throw new Error(
-                    "WebCodecs did not provide encoded frame data."
-                  );
+                  throw new Error('WebCodecs did not provide encoded frame data.');
                 }
 
                 const reusedFrame = new Uint8Array(lastValidFallbackFrame);
                 logger.warn(
-                  "conversion",
-                  "WebCodecs produced empty fallback frame data, reusing last frame",
+                  'conversion',
+                  'WebCodecs produced empty fallback frame data, reusing last frame',
                   {
                     frameName: frame.name,
                     frameIndex: frame.index,
@@ -2266,19 +2021,13 @@ class WebCodecsConversionService {
         // Incomplete sequences here will definitely hang the FFmpeg encoder
         const validationExpectedFrames = Math.max(
           1,
-          Math.ceil(
-            Math.max(0, fallbackResult.duration) * Math.max(1, targetFps)
-          )
+          Math.ceil(Math.max(0, fallbackResult.duration) * Math.max(1, targetFps))
         );
-        const captureRatio =
-          fallbackResult.frameCount / validationExpectedFrames;
+        const captureRatio = fallbackResult.frameCount / validationExpectedFrames;
         const minRequiredRatio = 0.5;
         const minAbsoluteFrames = 10;
 
-        if (
-          fallbackResult.frameCount < minAbsoluteFrames ||
-          captureRatio < minRequiredRatio
-        ) {
+        if (fallbackResult.frameCount < minAbsoluteFrames || captureRatio < minRequiredRatio) {
           // Cleanup files before throwing
           if (fallbackFrameFiles.length > 0) {
             await ffmpegService.deleteVirtualFiles(fallbackFrameFiles);
@@ -2286,11 +2035,9 @@ class WebCodecsConversionService {
 
           const errorMsg =
             `Fallback frame extraction incomplete: captured ${fallbackResult.frameCount} of ${validationExpectedFrames} frames ` +
-            `(${(captureRatio * 100).toFixed(1)}%). Minimum required: ${
-              minRequiredRatio * 100
-            }%.`;
+            `(${(captureRatio * 100).toFixed(1)}%). Minimum required: ${minRequiredRatio * 100}%.`;
 
-          logger.error("conversion", errorMsg, {
+          logger.error('conversion', errorMsg, {
             captured: fallbackResult.frameCount,
             expected: validationExpectedFrames,
             duration: fallbackResult.duration,
@@ -2299,8 +2046,8 @@ class WebCodecsConversionService {
           // Last-resort fallback: avoid hard-failing when WebCodecs frame capture is incomplete.
           // This can happen on some devices/browsers even when FFmpeg can still transcode directly.
           logger.warn(
-            "conversion",
-            "Falling back to FFmpeg direct conversion after incomplete frame capture",
+            'conversion',
+            'Falling back to FFmpeg direct conversion after incomplete frame capture',
             {
               format,
               captured: fallbackResult.frameCount,
@@ -2311,7 +2058,7 @@ class WebCodecsConversionService {
             }
           );
 
-          return format === "webp"
+          return format === 'webp'
             ? await ffmpegService.convertToWebP(file, options, metadata)
             : await ffmpegService.convertToGIF(file, options, metadata);
         }
@@ -2330,28 +2077,20 @@ class WebCodecsConversionService {
         );
 
         if (fallbackFps !== targetFps) {
-          logger.info(
-            "conversion",
-            "Adjusted fallback WebP FPS to preserve pacing",
-            {
-              targetFps,
-              adjustedFps: fallbackFps,
-              frameCount: fallbackResult.frameCount,
-              durationSeconds:
-                fallbackDurationSeconds ?? fallbackResult.duration,
-            }
-          );
+          logger.info('conversion', 'Adjusted fallback WebP FPS to preserve pacing', {
+            targetFps,
+            adjustedFps: fallbackFps,
+            frameCount: fallbackResult.frameCount,
+            durationSeconds: fallbackDurationSeconds ?? fallbackResult.duration,
+          });
         }
 
         return await ffmpegService.encodeFrameSequence({
-          format: format as "gif" | "webp",
+          format: format as 'gif' | 'webp',
           options,
           frameCount: fallbackResult.frameCount,
           fps: fallbackFps,
-          durationSeconds:
-            fallbackDurationSeconds ??
-            metadata?.duration ??
-            fallbackResult.duration,
+          durationSeconds: fallbackDurationSeconds ?? metadata?.duration ?? fallbackResult.duration,
           frameFiles: fallbackFrameFiles,
         });
       };
@@ -2373,10 +2112,7 @@ class WebCodecsConversionService {
           const encodeHeartbeat = ffmpegService.startProgressHeartbeat(
             FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START,
             FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END,
-            Math.min(
-              180,
-              Math.max(20, Math.round(serializableFrames.length / 4))
-            )
+            Math.min(180, Math.max(20, Math.round(serializableFrames.length / 4)))
           );
 
           try {
@@ -2388,19 +2124,15 @@ class WebCodecsConversionService {
                 quality,
               });
             });
-            encoderBackendUsed = "modern-gif-worker";
+            encoderBackendUsed = 'modern-gif-worker';
           } finally {
             ffmpegService.stopProgressHeartbeat(encodeHeartbeat);
           }
         } catch (error) {
           const errorMessage = getErrorMessage(error);
-          logger.warn(
-            "conversion",
-            "GIF worker encoding failed, retrying on main thread",
-            {
-              error: errorMessage,
-            }
-          );
+          logger.warn('conversion', 'GIF worker encoding failed, retrying on main thread', {
+            error: errorMessage,
+          });
           try {
             outputBlob = await encodeModernGif(capturedFrames, {
               width: decodeResult.width,
@@ -2410,12 +2142,10 @@ class WebCodecsConversionService {
               onProgress: reportEncodeProgress,
               shouldCancel: () => ffmpegService.isCancellationRequested(),
             });
-            encoderBackendUsed = "modern-gif-main";
+            encoderBackendUsed = 'modern-gif-main';
           } catch (fallbackError) {
             const fallbackMessage =
-              fallbackError instanceof Error
-                ? fallbackError.message
-                : String(fallbackError);
+              fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
             outputBlob = await encodeWithFFmpegFallback(fallbackMessage);
           }
         }
@@ -2430,19 +2160,18 @@ class WebCodecsConversionService {
             onProgress: reportEncodeProgress,
             shouldCancel: () => ffmpegService.isCancellationRequested(),
           });
-          encoderBackendUsed = "modern-gif-main";
+          encoderBackendUsed = 'modern-gif-main';
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           outputBlob = await encodeWithFFmpegFallback(errorMessage);
         }
-      } else if (format === "webp") {
-        const webpAnimationDurationSeconds =
-          this.resolveAnimationDurationSeconds(
-            webpCapturedFrames.length,
-            targetFps,
-            metadata,
-            decodeResult.duration
-          );
+      } else if (format === 'webp') {
+        const webpAnimationDurationSeconds = this.resolveAnimationDurationSeconds(
+          webpCapturedFrames.length,
+          targetFps,
+          metadata,
+          decodeResult.duration
+        );
 
         const webpFpsForEncoding = this.resolveWebPFps(
           webpCapturedFrames.length,
@@ -2451,17 +2180,12 @@ class WebCodecsConversionService {
         );
 
         if (webpFpsForEncoding !== targetFps) {
-          logger.info(
-            "conversion",
-            "Adjusted WebP FPS to match captured pacing",
-            {
-              targetFps,
-              adjustedFps: webpFpsForEncoding,
-              frameCount: webpCapturedFrames.length,
-              durationSeconds:
-                webpAnimationDurationSeconds ?? decodeResult.duration,
-            }
-          );
+          logger.info('conversion', 'Adjusted WebP FPS to match captured pacing', {
+            targetFps,
+            adjustedFps: webpFpsForEncoding,
+            frameCount: webpCapturedFrames.length,
+            durationSeconds: webpAnimationDurationSeconds ?? decodeResult.duration,
+          });
         }
 
         // Prefer EncoderFactory-selected WebP encoder so availability checks and
@@ -2471,7 +2195,7 @@ class WebCodecsConversionService {
 
         if (webpCapturedFrames.length > 0) {
           try {
-            const encoder = await EncoderFactory.getEncoder("webp", {
+            const encoder = await EncoderFactory.getEncoder('webp', {
               preferWorkers: true,
               quality,
             });
@@ -2480,34 +2204,23 @@ class WebCodecsConversionService {
               selectedEncoderName = encoder.name;
 
               const maxFramesAllowed = encoder.capabilities.maxFrames;
-              if (
-                maxFramesAllowed &&
-                webpCapturedFrames.length > maxFramesAllowed
-              ) {
-                logger.warn(
-                  "conversion",
-                  "Skipping WebP encoder due to maxFrames constraint",
-                  {
-                    encoder: encoder.name,
-                    frameCount: webpCapturedFrames.length,
-                    maxFramesAllowed,
-                  }
-                );
+              if (maxFramesAllowed && webpCapturedFrames.length > maxFramesAllowed) {
+                logger.warn('conversion', 'Skipping WebP encoder due to maxFrames constraint', {
+                  encoder: encoder.name,
+                  frameCount: webpCapturedFrames.length,
+                  maxFramesAllowed,
+                });
               } else if (
                 encoder.capabilities.maxDimension &&
                 Math.max(decodeResult.width, decodeResult.height) >
                   encoder.capabilities.maxDimension
               ) {
-                logger.warn(
-                  "conversion",
-                  "Skipping WebP encoder due to maxDimension constraint",
-                  {
-                    encoder: encoder.name,
-                    width: decodeResult.width,
-                    height: decodeResult.height,
-                    maxDimension: encoder.capabilities.maxDimension,
-                  }
-                );
+                logger.warn('conversion', 'Skipping WebP encoder due to maxDimension constraint', {
+                  encoder: encoder.name,
+                  width: decodeResult.width,
+                  height: decodeResult.height,
+                  maxDimension: encoder.capabilities.maxDimension,
+                });
               } else {
                 const timestampsForEncoding =
                   webpFrameTimestamps.length >= webpCapturedFrames.length
@@ -2528,19 +2241,13 @@ class WebCodecsConversionService {
                   shouldCancel: () => ffmpegService.isCancellationRequested(),
                 });
 
-                const validation = await this.validateWebPBlob(
-                  factoryEncodedWebP
-                );
+                const validation = await this.validateWebPBlob(factoryEncodedWebP);
                 if (!validation.valid) {
-                  logger.warn(
-                    "conversion",
-                    "EncoderFactory WebP output failed validation",
-                    {
-                      encoder: encoder.name,
-                      reason: validation.reason ?? "validation_failed",
-                      frameCount: webpCapturedFrames.length,
-                    }
-                  );
+                  logger.warn('conversion', 'EncoderFactory WebP output failed validation', {
+                    encoder: encoder.name,
+                    reason: validation.reason ?? 'validation_failed',
+                    frameCount: webpCapturedFrames.length,
+                  });
                   factoryEncodedWebP = null;
                 } else {
                   encoderBackendUsed = encoder.name;
@@ -2553,8 +2260,8 @@ class WebCodecsConversionService {
               throw error;
             }
             logger.warn(
-              "conversion",
-              "EncoderFactory WebP encoding failed; falling back to muxer",
+              'conversion',
+              'EncoderFactory WebP encoding failed; falling back to muxer',
               {
                 encoder: selectedEncoderName,
                 error: errorMessage,
@@ -2571,22 +2278,18 @@ class WebCodecsConversionService {
         } else {
           const canEncodeWebPFrames = await this.getCanvasWebPEncodeSupport();
           if (!canEncodeWebPFrames) {
-            const reason =
-              "Canvas WebP encoding is not supported in this browser";
+            const reason = 'Canvas WebP encoding is not supported in this browser';
             logger.warn(
-              "conversion",
-              "Skipping WebP muxer path (preflight failed), using FFmpeg fallback",
+              'conversion',
+              'Skipping WebP muxer path (preflight failed), using FFmpeg fallback',
               {
                 reason,
               }
             );
             outputBlob = await encodeWithFFmpegFallback(reason);
           } else {
-            logger.info(
-              "conversion",
-              "Using WebP muxer path with parallel frame encoding"
-            );
-            encoderBackendUsed = "webp-muxer";
+            logger.info('conversion', 'Using WebP muxer path with parallel frame encoding');
+            encoderBackendUsed = 'webp-muxer';
 
             // Batch encode WebP frames in parallel for 3-4x speedup
             if (webpCapturedFrames.length > 0 && webpQualityRatio !== null) {
@@ -2599,7 +2302,7 @@ class WebCodecsConversionService {
                   : Math.min(20, Math.max(10, hwConcurrency * 2));
               const totalFrames = webpCapturedFrames.length;
 
-              logger.info("conversion", "Parallel WebP frame encoding", {
+              logger.info('conversion', 'Parallel WebP frame encoding', {
                 totalFrames,
                 chunkSize: ChunkSize,
                 estimatedBatches: Math.ceil(totalFrames / ChunkSize),
@@ -2611,10 +2314,7 @@ class WebCodecsConversionService {
 
               // Process frames in batches
               for (let i = 0; i < totalFrames; i += ChunkSize) {
-                const chunk = webpCapturedFrames.slice(
-                  i,
-                  Math.min(i + ChunkSize, totalFrames)
-                );
+                const chunk = webpCapturedFrames.slice(i, Math.min(i + ChunkSize, totalFrames));
 
                 // Encode chunk in parallel using Promise.all
                 const encodedChunk = await Promise.all(
@@ -2627,32 +2327,27 @@ class WebCodecsConversionService {
                 reportEncodeProgress(webpEncodedFrames.length, totalFrames);
               }
 
-              logger.info("conversion", "Parallel encoding complete", {
+              logger.info('conversion', 'Parallel encoding complete', {
                 encodedFrames: webpEncodedFrames.length,
               });
 
               // Cache successful chunk size for future conversions
               if (!cachedChunkSize && webpEncodedFrames.length > 0) {
                 cacheWebPChunkSize(ChunkSize);
-                logger.info(
-                  "conversion",
-                  "Cached WebP chunk size for future conversions",
-                  {
-                    chunkSize: ChunkSize,
-                  }
-                );
+                logger.info('conversion', 'Cached WebP chunk size for future conversions', {
+                  chunkSize: ChunkSize,
+                });
               }
             }
 
-            let fallbackReason = "WebP muxer output failed";
+            let fallbackReason = 'WebP muxer output failed';
 
-            const animationDurationSeconds =
-              this.resolveAnimationDurationSeconds(
-                webpEncodedFrames.length,
-                targetFps,
-                metadata,
-                decodeResult.duration
-              );
+            const animationDurationSeconds = this.resolveAnimationDurationSeconds(
+              webpEncodedFrames.length,
+              targetFps,
+              metadata,
+              decodeResult.duration
+            );
 
             if (
               animationDurationSeconds &&
@@ -2660,8 +2355,8 @@ class WebCodecsConversionService {
               animationDurationSeconds !== metadata.duration
             ) {
               logger.info(
-                "conversion",
-                "Adjusted WebP animation duration to align with frame budget",
+                'conversion',
+                'Adjusted WebP animation duration to align with frame budget',
                 {
                   metadataDuration: metadata.duration,
                   resolvedDuration: animationDurationSeconds,
@@ -2673,7 +2368,7 @@ class WebCodecsConversionService {
 
             const muxedWebP = await (async (): Promise<Blob | null> => {
               try {
-                encodeStatusPrefix = "Muxing WebP frames...";
+                encodeStatusPrefix = 'Muxing WebP frames...';
                 ffmpegService.reportStatus(encodeStatusPrefix);
                 const result = await this.muxWebPFrames({
                   encodedFrames: webpEncodedFrames,
@@ -2688,10 +2383,10 @@ class WebCodecsConversionService {
                 });
 
                 if (!result) {
-                  fallbackReason = "WebP muxer produced no output";
+                  fallbackReason = 'WebP muxer produced no output';
                   logger.warn(
-                    "conversion",
-                    "WebP muxer produced no output, using FFmpeg fallback",
+                    'conversion',
+                    'WebP muxer produced no output, using FFmpeg fallback',
                     {
                       frameCount: decodeResult.frameCount,
                     }
@@ -2701,16 +2396,11 @@ class WebCodecsConversionService {
 
                 const validation = await this.validateWebPBlob(result);
                 if (!validation.valid) {
-                  fallbackReason =
-                    validation.reason ?? "WebP muxer output failed validation";
-                  logger.warn(
-                    "conversion",
-                    "WebP muxer output failed validation, using fallback",
-                    {
-                      reason: validation.reason,
-                      frameCount: webpEncodedFrames.length,
-                    }
-                  );
+                  fallbackReason = validation.reason ?? 'WebP muxer output failed validation';
+                  logger.warn('conversion', 'WebP muxer output failed validation, using fallback', {
+                    reason: validation.reason,
+                    frameCount: webpEncodedFrames.length,
+                  });
                   return null;
                 }
 
@@ -2719,28 +2409,23 @@ class WebCodecsConversionService {
                 const errorMessage = getErrorMessage(error);
 
                 if (
-                  errorMessage.includes("cancelled by user") ||
+                  errorMessage.includes('cancelled by user') ||
                   (ffmpegService.isCancellationRequested() &&
-                    errorMessage.includes("called FFmpeg.terminate()"))
+                    errorMessage.includes('called FFmpeg.terminate()'))
                 ) {
                   throw error;
                 }
 
                 fallbackReason = errorMessage;
-                logger.warn(
-                  "conversion",
-                  "WebP muxer path failed, using FFmpeg fallback",
-                  {
-                    error: errorMessage,
-                    frameCount: webpEncodedFrames.length,
-                  }
-                );
+                logger.warn('conversion', 'WebP muxer path failed, using FFmpeg fallback', {
+                  error: errorMessage,
+                  frameCount: webpEncodedFrames.length,
+                });
                 return null;
               }
             })();
 
-            outputBlob =
-              muxedWebP ?? (await encodeWithFFmpegFallback(fallbackReason));
+            outputBlob = muxedWebP ?? (await encodeWithFFmpegFallback(fallbackReason));
 
             webpEncodedFrames.length = 0;
             webpFrameTimestamps.length = 0;
@@ -2748,19 +2433,17 @@ class WebCodecsConversionService {
         }
       } else {
         // Defensive fallback (should be unreachable due to early return for non-modern GIF).
-        outputBlob = await encodeWithFFmpegFallback(
-          "Unexpected encoder path (non-modern GIF)"
-        );
+        outputBlob = await encodeWithFFmpegFallback('Unexpected encoder path (non-modern GIF)');
       }
 
       const completionProgress =
-        format === "gif"
+        format === 'gif'
           ? FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE
           : FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE;
       ffmpegService.reportProgress(completionProgress);
 
       // Cleanup captured frames for non-FFmpeg encoders
-      if (capturedFrames.length > 0 && (useModernGif || format === "webp")) {
+      if (capturedFrames.length > 0 && (useModernGif || format === 'webp')) {
         capturedFrames.length = 0;
       }
 
@@ -2780,7 +2463,7 @@ class WebCodecsConversionService {
       try {
         endConversion();
       } catch (endError) {
-        logger.warn("conversion", "Error during endConversion cleanup", {
+        logger.warn('conversion', 'Error during endConversion cleanup', {
           error: getErrorMessage(endError),
         });
       }
@@ -2791,7 +2474,7 @@ class WebCodecsConversionService {
         try {
           ffmpegService.getMonitoring()?.forceCleanupAll();
         } catch (monitoringError) {
-          logger.warn("conversion", "Force cleanup failed (non-critical)", {
+          logger.warn('conversion', 'Force cleanup failed (non-critical)', {
             error: getErrorMessage(monitoringError),
           });
         }
