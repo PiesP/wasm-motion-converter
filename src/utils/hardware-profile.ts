@@ -46,21 +46,44 @@ export function isHardwareCacheValid(): boolean {
  * Clear all performance-related session caches
  */
 function clearSessionCache(): void {
-  const keysToRemove = [
-    'dropconvert:capture:success:av1',
-    'dropconvert:capture:success:h264',
-    'dropconvert:capture:success:hevc',
-    'dropconvert:capture:success:vp9',
-    'dropconvert:vfs:batchSize',
-    'dropconvert:webp:chunkSize',
-    'dropconvert:captureReliability:av1:frame-callback:failures', // legacy key
+  const protectedKeys = new Set(['dropconvert:hardware:fingerprint']);
+  const prefixesToRemove = [
+    // Capture caches (mode + perf + reliability)
+    'dropconvert:capture:',
+    'dropconvert:captureReliability:',
+    // Encoder tuning caches
+    'dropconvert:webp:',
+    // VFS tuning caches
+    'dropconvert:vfs:',
   ];
 
-  for (const key of keysToRemove) {
-    try {
-      sessionStorage?.removeItem(key);
-    } catch {
-      // Ignore
+  try {
+    if (typeof sessionStorage === 'undefined') {
+      return;
     }
+
+    // Iterate backwards to safely remove while scanning.
+    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+      const key = sessionStorage.key(i);
+      if (!key) {
+        continue;
+      }
+      if (protectedKeys.has(key)) {
+        continue;
+      }
+
+      const shouldRemove = prefixesToRemove.some((prefix) => key.startsWith(prefix));
+      if (!shouldRemove) {
+        continue;
+      }
+
+      try {
+        sessionStorage.removeItem(key);
+      } catch {
+        // Ignore
+      }
+    }
+  } catch {
+    // Ignore storage failures
   }
 }

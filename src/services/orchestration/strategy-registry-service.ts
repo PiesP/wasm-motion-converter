@@ -529,11 +529,20 @@ class StrategyRegistryService {
     const normalizedCodec = this.normalizeCodec(codec);
     const strategy = this.getStrategy(params);
 
-    const codecSupport = this.hasCodecSupport(normalizedCodec, capabilities);
-    const containerSupport = !this.isBlockedContainer(container);
+    const decision = strategy.preferredPath;
+    const codecSupport =
+      decision === 'cpu'
+        ? true
+        : decision === 'webav'
+          ? Boolean(capabilities.mp4Encode)
+          : this.hasCodecSupport(normalizedCodec, capabilities);
+    const containerSupport = decision === 'gpu' ? !this.isBlockedContainer(container) : true;
     const hardwareAcceleration = capabilities.hardwareAccelerated;
     const codecHardwareDecodeHint = this.getCodecHardwareDecodeHint(normalizedCodec, capabilities);
-    const historicalSuccess = this.runtimeOverrides.has(`${normalizedCodec}:${format}`);
+    const history = strategyHistoryService.getHistory(codec, format);
+    const historicalSuccess = Boolean(
+      history?.records.some((r) => r.success && r.path === decision)
+    );
     const performanceBenchmark = strategy.benchmarks?.avgTimeSeconds
       ? strategy.benchmarks.avgTimeSeconds * 1000
       : undefined;
