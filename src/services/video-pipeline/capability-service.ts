@@ -5,7 +5,7 @@
  *
  * Cache locations:
  * - window.__VIDEO_CAPS__
- * - localStorage["video_caps_v3"]
+ * - localStorage["video_caps_v4"]
  */
 
 import type { VideoCapabilities } from '@t/video-pipeline-types';
@@ -14,12 +14,14 @@ import { logger } from '@utils/logger';
 
 // NOTE: bumped to invalidate older cached results where `hardwareAcceleration` probing
 // could throw and incorrectly report codecs as unsupported.
-const STORAGE_KEY = 'video_caps_v3' as const;
+const STORAGE_KEY = 'video_caps_v4' as const;
 
 const DEFAULT_CAPS: VideoCapabilities = {
   h264: false,
   hevc: false,
   av1: false,
+  canvasWebpEncode: false,
+  offscreenWebpEncode: false,
   webpEncode: false,
   hardwareAccelerated: false,
 };
@@ -114,12 +116,18 @@ class CapabilityService {
 
       const parsed = JSON.parse(raw) as Partial<VideoCapabilities>;
 
+      const canvasWebpEncode = parsed.canvasWebpEncode === true;
+      const offscreenWebpEncode = parsed.offscreenWebpEncode === true;
+      const webpEncode = parsed.webpEncode === true || canvasWebpEncode || offscreenWebpEncode;
+
       // Defensive validation: ensure booleans
       const safe: VideoCapabilities = {
         h264: parsed.h264 === true,
         hevc: parsed.hevc === true,
         av1: parsed.av1 === true,
-        webpEncode: parsed.webpEncode === true,
+        canvasWebpEncode,
+        offscreenWebpEncode,
+        webpEncode,
         hardwareAccelerated: parsed.hardwareAccelerated === true,
       };
 
@@ -270,7 +278,7 @@ class CapabilityService {
       return { supported };
     };
 
-    const testEncodeWebP = async (): Promise<boolean> => {
+    const testOffscreenWebPEncode = async (): Promise<boolean> => {
       try {
         // OffscreenCanvas WebP encode probe (best-effort; mirrors worker-based encoder checks)
         if (typeof OffscreenCanvas !== 'undefined') {
@@ -281,10 +289,21 @@ class CapabilityService {
               return true;
             }
           } catch {
-            // Ignore - fall back to HTMLCanvas probe below.
+            return false;
           }
         }
 
+        return false;
+      } catch (error) {
+        logger.debug('general', 'OffscreenCanvas WebP encoding probe failed', {
+          error: getErrorMessage(error),
+        });
+        return false;
+      }
+    };
+
+    const testCanvasWebPEncode = async (): Promise<boolean> => {
+      try {
         // HTMLCanvas WebP encode probe (mirrors `webp-canvas` encoder adapter)
         if (typeof document === 'undefined') {
           return false;
@@ -314,7 +333,7 @@ class CapabilityService {
 
         return Boolean(blob && blob.size > 0 && blob.type === 'image/webp');
       } catch (error) {
-        logger.debug('general', 'WebP encoding probe failed during capability detection', {
+        logger.debug('general', 'Canvas WebP encoding probe failed during capability detection', {
           error: getErrorMessage(error),
         });
         return false;
@@ -326,7 +345,9 @@ class CapabilityService {
     const hevc = await probeCodec('hvc1.1.6.L93.B0');
     const av1 = await probeCodec('av01.0.05M.08');
 
-    const webpEncode = await testEncodeWebP();
+    const offscreenWebpEncode = await testOffscreenWebPEncode();
+    const canvasWebpEncode = await testCanvasWebPEncode();
+    const webpEncode = offscreenWebpEncode || canvasWebpEncode;
 
     const anyHw = h264.hwHint === true || hevc.hwHint === true || av1.hwHint === true;
 
@@ -334,6 +355,8 @@ class CapabilityService {
       h264: h264.supported,
       hevc: hevc.supported,
       av1: av1.supported,
+      canvasWebpEncode,
+      offscreenWebpEncode,
       webpEncode,
       hardwareAccelerated: anyHw,
     };

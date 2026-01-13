@@ -5,7 +5,7 @@
  * and environment features. Builds upon the base CapabilityService.
  *
  * Cache locations:
- * - localStorage["extended_video_caps_v3"]
+ * - localStorage["extended_video_caps_v4"]
  * - window.__EXTENDED_VIDEO_CAPS__ (dev mode)
  *
  * TTL: 7 days
@@ -22,8 +22,8 @@ import { logger } from '@utils/logger';
 
 // NOTE: bumped to invalidate older cached results where `hardwareAcceleration` probing
 // could throw and incorrectly report codecs as unsupported.
-const STORAGE_KEY = 'extended_video_caps_v3' as const;
-const DETECTION_VERSION = 5 as const;
+const STORAGE_KEY = 'extended_video_caps_v4' as const;
+const DETECTION_VERSION = 6 as const;
 const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
@@ -46,6 +46,8 @@ const DEFAULT_EXTENDED_CAPS: ExtendedCapabilities = {
   h264: false,
   hevc: false,
   av1: false,
+  canvasWebpEncode: false,
+  offscreenWebpEncode: false,
   webpEncode: false,
   hardwareAccelerated: false,
 

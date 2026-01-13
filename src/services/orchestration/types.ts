@@ -168,6 +168,17 @@ export interface StrategyReasoning {
     historicalSuccess: boolean;
     /** Performance benchmark in milliseconds (if available) */
     performanceBenchmark?: number;
+
+    // Environment signals (extended capabilities)
+    sharedArrayBuffer?: boolean;
+    crossOriginIsolated?: boolean;
+    workerSupport?: boolean;
+    offscreenCanvas?: boolean;
+    estimatedMemoryMB?: number;
+
+    // WebP encode signals (useful when debugging WebP fallbacks)
+    canvasWebpEncode?: boolean;
+    offscreenWebpEncode?: boolean;
   };
   /** Alternative paths that were considered but rejected */
   alternativesConsidered: Array<{

@@ -36,3 +36,13 @@ export function isHevcCodec(codec: string | undefined): boolean {
     c.startsWith('hev1')
   );
 }
+
+export function isVp8Codec(codec: string | undefined): boolean {
+  const c = normalizeCodecString(codec);
+  return c === 'vp8' || c.includes('vp08') || c.includes('vp8');
+}
+
+export function isVp9Codec(codec: string | undefined): boolean {
+  const c = normalizeCodecString(codec);
+  return c === 'vp9' || c.includes('vp09') || c.includes('vp9');
+}

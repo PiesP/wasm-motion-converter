@@ -581,7 +581,9 @@ class StrategyRegistryService {
           ...strategy,
           preferredPath: 'cpu',
           fallbackPath: 'gpu',
-          reason: `${strategy.reason} + Short clip (${durationSeconds.toFixed(1)}s) benefits from CPU path (lower setup overhead)`,
+          reason: `${strategy.reason} + Short clip (${durationSeconds.toFixed(
+            1
+          )}s) benefits from CPU path (lower setup overhead)`,
           confidence: 'high',
         };
       }
@@ -597,7 +599,9 @@ class StrategyRegistryService {
           ...strategy,
           preferredPath: 'gpu',
           fallbackPath: 'cpu',
-          reason: `${strategy.reason} + Long clip (${durationSeconds.toFixed(1)}s) amortizes GPU setup cost`,
+          reason: `${strategy.reason} + Long clip (${durationSeconds.toFixed(
+            1
+          )}s) amortizes GPU setup cost`,
           confidence: 'medium',
         };
       }
@@ -716,6 +720,15 @@ class StrategyRegistryService {
         gifGpuEligible,
         historicalSuccess,
         performanceBenchmark,
+
+        sharedArrayBuffer: capabilities.sharedArrayBuffer,
+        crossOriginIsolated: capabilities.crossOriginIsolated,
+        workerSupport: capabilities.workerSupport,
+        offscreenCanvas: capabilities.offscreenCanvas,
+        estimatedMemoryMB: capabilities.estimatedMemoryMB,
+
+        canvasWebpEncode: capabilities.canvasWebpEncode,
+        offscreenWebpEncode: capabilities.offscreenWebpEncode,
       },
       alternativesConsidered,
     };
@@ -805,14 +818,8 @@ class StrategyRegistryService {
     if (normalized === 'vp8') return capabilities.vp8;
     if (normalized === 'vp9') return capabilities.vp9;
 
-    // Unknown codec - assume WebCodecs support if any codec is supported
-    return (
-      capabilities.h264 ||
-      capabilities.hevc ||
-      capabilities.av1 ||
-      capabilities.vp8 ||
-      capabilities.vp9
-    );
+    // Unknown codec - for success/predictability, do not assume WebCodecs support.
+    return false;
   }
 
   /**

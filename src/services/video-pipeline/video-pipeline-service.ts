@@ -10,7 +10,7 @@
 import type {
   ContainerFormat,
   PipelineType,
-  VideoCapabilities,
+  ExtendedCapabilities,
   VideoDemuxer,
   VideoTrackInfo,
 } from '@t/video-pipeline-types';
@@ -19,14 +19,14 @@ import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { detectContainerFormat, isDemuxableContainer } from '@utils/container-utils';
 
-import { capabilityService } from '@services/video-pipeline/capability-service';
+import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
 import { demuxerService } from '@services/video-pipeline/demuxer-service';
 import { encodeService, type EncodePlan } from '@services/video-pipeline/encode-service';
 import { selectPipeline } from '@services/video-pipeline/pipeline-selector';
 import { createSingleton } from '@services/shared/singleton-service';
 
 interface PipelinePlan {
-  caps: VideoCapabilities;
+  caps: ExtendedCapabilities;
   container: ContainerFormat;
   demuxer: { name: VideoDemuxer['name'] } | null;
   track: VideoTrackInfo | null;
@@ -71,7 +71,7 @@ class VideoPipelineService {
     const container = detectContainerFormat(params.file);
 
     // MUST be detected before any processing starts.
-    const caps = await capabilityService.detectCapabilities();
+    const caps = await extendedCapabilityService.detectCapabilities();
 
     throwIfAborted();
 

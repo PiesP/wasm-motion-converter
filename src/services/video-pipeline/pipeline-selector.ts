@@ -13,16 +13,16 @@
 
 import type {
   ContainerFormat,
+  ExtendedCapabilities,
   PipelineType,
-  VideoCapabilities,
   VideoTrackInfo,
 } from '@t/video-pipeline-types';
 import { VideoPipelineSelectionError } from '@t/video-pipeline-types';
-import { isAv1Codec, isH264Codec, isHevcCodec } from '@utils/codec-utils';
+import { isAv1Codec, isH264Codec, isHevcCodec, isVp8Codec, isVp9Codec } from '@utils/codec-utils';
 import { isDemuxableContainer } from '@utils/container-utils';
 
 export function selectPipeline(
-  caps: VideoCapabilities,
+  caps: ExtendedCapabilities,
   track: VideoTrackInfo,
   container: ContainerFormat
 ): PipelineType {
@@ -37,6 +37,23 @@ export function selectPipeline(
   }
 
   const codec = track.codec;
+
+  // If WebCodecs is not available at all, prefer the FFmpeg full pipeline.
+  // AV1 must fail-fast to avoid extremely slow FFmpeg decode attempts.
+  if (!caps.webcodecsDecode) {
+    if (isAv1Codec(codec)) {
+      throw new VideoPipelineSelectionError({
+        code: 'DecodingNotSupported',
+        message: 'WebCodecs decode is not available in this browser.',
+        context: {
+          codec,
+          container,
+        },
+      });
+    }
+
+    return 'ffmpeg-wasm-full';
+  }
 
   // AV1: fail-fast if WebCodecs AV1 decode is unavailable.
   if (isAv1Codec(codec)) {
@@ -63,13 +80,26 @@ export function selectPipeline(
     return 'ffmpeg-wasm-full';
   }
 
-  // For other codecs (VP8/VP9/unknown), use a conservative heuristic:
-  // - If the browser supports ANY of the probed codecs via WebCodecs, assume WebCodecs is usable.
-  const anyWebCodecsDecode = caps.h264 || caps.hevc || caps.av1;
-
-  if (anyWebCodecsDecode) {
-    return caps.hardwareAccelerated ? 'webcodecs-hw' : 'webcodecs-sw';
+  if (isVp8Codec(codec) && !caps.vp8) {
+    return 'ffmpeg-wasm-full';
   }
 
-  return 'ffmpeg-wasm-full';
+  if (isVp9Codec(codec) && !caps.vp9) {
+    return 'ffmpeg-wasm-full';
+  }
+
+  // For success/predictability: only take a WebCodecs pipeline when the codec is explicitly known.
+  // Unknown codecs should prefer the FFmpeg full pipeline.
+  const isKnownCodec =
+    isH264Codec(codec) ||
+    isHevcCodec(codec) ||
+    isAv1Codec(codec) ||
+    isVp8Codec(codec) ||
+    isVp9Codec(codec);
+
+  if (!isKnownCodec) {
+    return 'ffmpeg-wasm-full';
+  }
+
+  return caps.hardwareAccelerated ? 'webcodecs-hw' : 'webcodecs-sw';
 }
