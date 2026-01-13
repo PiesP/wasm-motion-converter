@@ -2100,152 +2100,265 @@ class WebCodecsConversionService {
           outputBlob = await encodeWithFFmpegFallback(errorMessage);
         }
       } else if (format === 'webp') {
-        const canEncodeWebPFrames = await this.getCanvasWebPEncodeSupport();
-        if (!canEncodeWebPFrames) {
-          const reason = 'Canvas WebP encoding is not supported in this browser';
-          logger.warn(
-            'conversion',
-            'Skipping WebP muxer path (preflight failed), using FFmpeg fallback',
-            {
-              reason,
-            }
-          );
-          outputBlob = await encodeWithFFmpegFallback(reason);
-        } else {
-          logger.info('conversion', 'Using WebP muxer path with parallel frame encoding');
+        const webpAnimationDurationSeconds = this.resolveAnimationDurationSeconds(
+          webpCapturedFrames.length,
+          targetFps,
+          metadata,
+          decodeResult.duration
+        );
 
-          // Batch encode WebP frames in parallel for 3-4x speedup
-          if (webpCapturedFrames.length > 0 && webpQualityRatio !== null) {
-            // Dynamic chunk size based on CPU cores for better parallelization
-            const hwConcurrency = navigator.hardwareConcurrency || 4;
-            const cachedChunkSize = getCachedWebPChunkSize();
-            const ChunkSize =
-              cachedChunkSize && isHardwareCacheValid()
-                ? cachedChunkSize
-                : Math.min(20, Math.max(10, hwConcurrency * 2));
-            const totalFrames = webpCapturedFrames.length;
+        const webpFpsForEncoding = this.resolveWebPFps(
+          webpCapturedFrames.length,
+          targetFps,
+          webpAnimationDurationSeconds
+        );
 
-            logger.info('conversion', 'Parallel WebP frame encoding', {
-              totalFrames,
-              chunkSize: ChunkSize,
-              estimatedBatches: Math.ceil(totalFrames / ChunkSize),
-              cached: !!cachedChunkSize,
-            });
-
-            // Create encoder function for parallel execution
-            const encodeFrame = this.createWebPFrameEncoder(webpQualityRatio);
-
-            // Process frames in batches
-            for (let i = 0; i < totalFrames; i += ChunkSize) {
-              const chunk = webpCapturedFrames.slice(i, Math.min(i + ChunkSize, totalFrames));
-
-              // Encode chunk in parallel using Promise.all
-              const encodedChunk = await Promise.all(
-                chunk.map((frameData) => encodeFrame(frameData))
-              );
-
-              webpEncodedFrames.push(...encodedChunk);
-
-              // Report encoding progress
-              reportEncodeProgress(webpEncodedFrames.length, totalFrames);
-            }
-
-            logger.info('conversion', 'Parallel encoding complete', {
-              encodedFrames: webpEncodedFrames.length,
-            });
-
-            // Cache successful chunk size for future conversions
-            if (!cachedChunkSize && webpEncodedFrames.length > 0) {
-              cacheWebPChunkSize(ChunkSize);
-              logger.info('conversion', 'Cached WebP chunk size for future conversions', {
-                chunkSize: ChunkSize,
-              });
-            }
-          }
-
-          let fallbackReason = 'WebP muxer output failed';
-
-          const animationDurationSeconds = this.resolveAnimationDurationSeconds(
-            webpEncodedFrames.length,
+        if (webpFpsForEncoding !== targetFps) {
+          logger.info('conversion', 'Adjusted WebP FPS to match captured pacing', {
             targetFps,
-            metadata,
-            decodeResult.duration
-          );
+            adjustedFps: webpFpsForEncoding,
+            frameCount: webpCapturedFrames.length,
+            durationSeconds: webpAnimationDurationSeconds ?? decodeResult.duration,
+          });
+        }
 
-          if (
-            animationDurationSeconds &&
-            metadata?.duration &&
-            animationDurationSeconds !== metadata.duration
-          ) {
-            logger.info(
+        // Prefer EncoderFactory-selected WebP encoder so availability checks and
+        // fallback selection are consistent across standard and complex codec flows.
+        let factoryEncodedWebP: Blob | null = null;
+        let selectedEncoderName: string | null = null;
+
+        if (webpCapturedFrames.length > 0) {
+          try {
+            const encoder = await EncoderFactory.getEncoder('webp', {
+              preferWorkers: true,
+              quality,
+            });
+
+            if (encoder) {
+              selectedEncoderName = encoder.name;
+
+              const maxFramesAllowed = encoder.capabilities.maxFrames;
+              if (maxFramesAllowed && webpCapturedFrames.length > maxFramesAllowed) {
+                logger.warn('conversion', 'Skipping WebP encoder due to maxFrames constraint', {
+                  encoder: encoder.name,
+                  frameCount: webpCapturedFrames.length,
+                  maxFramesAllowed,
+                });
+              } else if (
+                encoder.capabilities.maxDimension &&
+                Math.max(decodeResult.width, decodeResult.height) >
+                  encoder.capabilities.maxDimension
+              ) {
+                logger.warn('conversion', 'Skipping WebP encoder due to maxDimension constraint', {
+                  encoder: encoder.name,
+                  width: decodeResult.width,
+                  height: decodeResult.height,
+                  maxDimension: encoder.capabilities.maxDimension,
+                });
+              } else {
+                const timestampsForEncoding =
+                  webpFrameTimestamps.length >= webpCapturedFrames.length
+                    ? webpFrameTimestamps.slice(0, webpCapturedFrames.length)
+                    : undefined;
+
+                factoryEncodedWebP = await encoder.encode({
+                  frames: webpCapturedFrames,
+                  width: decodeResult.width,
+                  height: decodeResult.height,
+                  fps: webpFpsForEncoding,
+                  quality,
+                  timestamps: timestampsForEncoding,
+                  durationSeconds: webpAnimationDurationSeconds,
+                  codec: metadata?.codec,
+                  sourceFPS: metadata?.framerate,
+                  onProgress: reportEncodeProgress,
+                  shouldCancel: () => ffmpegService.isCancellationRequested(),
+                });
+
+                const validation = await this.validateWebPBlob(factoryEncodedWebP);
+                if (!validation.valid) {
+                  logger.warn('conversion', 'EncoderFactory WebP output failed validation', {
+                    encoder: encoder.name,
+                    reason: validation.reason ?? 'validation_failed',
+                    frameCount: webpCapturedFrames.length,
+                  });
+                  factoryEncodedWebP = null;
+                }
+              }
+            }
+          } catch (error) {
+            const errorMessage = getErrorMessage(error);
+            if (ffmpegService.isCancellationRequested()) {
+              throw error;
+            }
+            logger.warn(
               'conversion',
-              'Adjusted WebP animation duration to align with frame budget',
+              'EncoderFactory WebP encoding failed; falling back to muxer',
               {
-                metadataDuration: metadata.duration,
-                resolvedDuration: animationDurationSeconds,
-                frameCount: webpEncodedFrames.length,
-                fps: targetFps,
+                encoder: selectedEncoderName,
+                error: errorMessage,
               }
             );
           }
+        }
 
-          const muxedWebP = await (async (): Promise<Blob | null> => {
-            try {
-              const result = await this.muxWebPFrames({
-                encodedFrames: webpEncodedFrames,
-                timestamps: webpFrameTimestamps,
-                width: decodeResult.width,
-                height: decodeResult.height,
-                fps: targetFps,
-                metadata,
-                durationSeconds: animationDurationSeconds,
-                onProgress: reportEncodeProgress,
-                shouldCancel: () => ffmpegService.isCancellationRequested(),
+        if (factoryEncodedWebP) {
+          outputBlob = factoryEncodedWebP;
+          webpCapturedFrames.length = 0;
+          webpEncodedFrames.length = 0;
+          webpFrameTimestamps.length = 0;
+        } else {
+          const canEncodeWebPFrames = await this.getCanvasWebPEncodeSupport();
+          if (!canEncodeWebPFrames) {
+            const reason = 'Canvas WebP encoding is not supported in this browser';
+            logger.warn(
+              'conversion',
+              'Skipping WebP muxer path (preflight failed), using FFmpeg fallback',
+              {
+                reason,
+              }
+            );
+            outputBlob = await encodeWithFFmpegFallback(reason);
+          } else {
+            logger.info('conversion', 'Using WebP muxer path with parallel frame encoding');
+
+            // Batch encode WebP frames in parallel for 3-4x speedup
+            if (webpCapturedFrames.length > 0 && webpQualityRatio !== null) {
+              // Dynamic chunk size based on CPU cores for better parallelization
+              const hwConcurrency = navigator.hardwareConcurrency || 4;
+              const cachedChunkSize = getCachedWebPChunkSize();
+              const ChunkSize =
+                cachedChunkSize && isHardwareCacheValid()
+                  ? cachedChunkSize
+                  : Math.min(20, Math.max(10, hwConcurrency * 2));
+              const totalFrames = webpCapturedFrames.length;
+
+              logger.info('conversion', 'Parallel WebP frame encoding', {
+                totalFrames,
+                chunkSize: ChunkSize,
+                estimatedBatches: Math.ceil(totalFrames / ChunkSize),
+                cached: !!cachedChunkSize,
               });
 
-              if (!result) {
-                fallbackReason = 'WebP muxer produced no output';
-                logger.warn('conversion', 'WebP muxer produced no output, using FFmpeg fallback', {
-                  frameCount: decodeResult.frameCount,
-                });
-                return null;
+              // Create encoder function for parallel execution
+              const encodeFrame = this.createWebPFrameEncoder(webpQualityRatio);
+
+              // Process frames in batches
+              for (let i = 0; i < totalFrames; i += ChunkSize) {
+                const chunk = webpCapturedFrames.slice(i, Math.min(i + ChunkSize, totalFrames));
+
+                // Encode chunk in parallel using Promise.all
+                const encodedChunk = await Promise.all(
+                  chunk.map((frameData) => encodeFrame(frameData))
+                );
+
+                webpEncodedFrames.push(...encodedChunk);
+
+                // Report encoding progress
+                reportEncodeProgress(webpEncodedFrames.length, totalFrames);
               }
 
-              const validation = await this.validateWebPBlob(result);
-              if (!validation.valid) {
-                fallbackReason = validation.reason ?? 'WebP muxer output failed validation';
-                logger.warn('conversion', 'WebP muxer output failed validation, using fallback', {
-                  reason: validation.reason,
+              logger.info('conversion', 'Parallel encoding complete', {
+                encodedFrames: webpEncodedFrames.length,
+              });
+
+              // Cache successful chunk size for future conversions
+              if (!cachedChunkSize && webpEncodedFrames.length > 0) {
+                cacheWebPChunkSize(ChunkSize);
+                logger.info('conversion', 'Cached WebP chunk size for future conversions', {
+                  chunkSize: ChunkSize,
+                });
+              }
+            }
+
+            let fallbackReason = 'WebP muxer output failed';
+
+            const animationDurationSeconds = this.resolveAnimationDurationSeconds(
+              webpEncodedFrames.length,
+              targetFps,
+              metadata,
+              decodeResult.duration
+            );
+
+            if (
+              animationDurationSeconds &&
+              metadata?.duration &&
+              animationDurationSeconds !== metadata.duration
+            ) {
+              logger.info(
+                'conversion',
+                'Adjusted WebP animation duration to align with frame budget',
+                {
+                  metadataDuration: metadata.duration,
+                  resolvedDuration: animationDurationSeconds,
+                  frameCount: webpEncodedFrames.length,
+                  fps: targetFps,
+                }
+              );
+            }
+
+            const muxedWebP = await (async (): Promise<Blob | null> => {
+              try {
+                const result = await this.muxWebPFrames({
+                  encodedFrames: webpEncodedFrames,
+                  timestamps: webpFrameTimestamps,
+                  width: decodeResult.width,
+                  height: decodeResult.height,
+                  fps: webpFpsForEncoding,
+                  metadata,
+                  durationSeconds: animationDurationSeconds,
+                  onProgress: reportEncodeProgress,
+                  shouldCancel: () => ffmpegService.isCancellationRequested(),
+                });
+
+                if (!result) {
+                  fallbackReason = 'WebP muxer produced no output';
+                  logger.warn(
+                    'conversion',
+                    'WebP muxer produced no output, using FFmpeg fallback',
+                    {
+                      frameCount: decodeResult.frameCount,
+                    }
+                  );
+                  return null;
+                }
+
+                const validation = await this.validateWebPBlob(result);
+                if (!validation.valid) {
+                  fallbackReason = validation.reason ?? 'WebP muxer output failed validation';
+                  logger.warn('conversion', 'WebP muxer output failed validation, using fallback', {
+                    reason: validation.reason,
+                    frameCount: webpEncodedFrames.length,
+                  });
+                  return null;
+                }
+
+                return result;
+              } catch (error) {
+                const errorMessage = getErrorMessage(error);
+
+                if (
+                  errorMessage.includes('cancelled by user') ||
+                  (ffmpegService.isCancellationRequested() &&
+                    errorMessage.includes('called FFmpeg.terminate()'))
+                ) {
+                  throw error;
+                }
+
+                fallbackReason = errorMessage;
+                logger.warn('conversion', 'WebP muxer path failed, using FFmpeg fallback', {
+                  error: errorMessage,
                   frameCount: webpEncodedFrames.length,
                 });
                 return null;
               }
+            })();
 
-              return result;
-            } catch (error) {
-              const errorMessage = getErrorMessage(error);
+            outputBlob = muxedWebP ?? (await encodeWithFFmpegFallback(fallbackReason));
 
-              if (
-                errorMessage.includes('cancelled by user') ||
-                (ffmpegService.isCancellationRequested() &&
-                  errorMessage.includes('called FFmpeg.terminate()'))
-              ) {
-                throw error;
-              }
-
-              fallbackReason = errorMessage;
-              logger.warn('conversion', 'WebP muxer path failed, using FFmpeg fallback', {
-                error: errorMessage,
-                frameCount: webpEncodedFrames.length,
-              });
-              return null;
-            }
-          })();
-
-          outputBlob = muxedWebP ?? (await encodeWithFFmpegFallback(fallbackReason));
-
-          webpEncodedFrames.length = 0;
-          webpFrameTimestamps.length = 0;
+            webpEncodedFrames.length = 0;
+            webpFrameTimestamps.length = 0;
+          }
         }
       } else {
         // Defensive fallback (should be unreachable due to early return for non-modern GIF).
