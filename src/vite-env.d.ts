@@ -241,6 +241,54 @@ declare global {
         codec: string,
         format: 'gif' | 'webp' | 'mp4'
       ) => CodecPathPreference & { confidence: 'high' | 'medium' | 'low' };
+
+      /** Dev-only helper: open a file picker for selecting a video file. */
+      pickVideoFile?: (accept?: string) => Promise<File>;
+
+      /**
+       * Dev-only helper: decode → encode → mux MP4 end-to-end and optionally validate playback.
+       *
+       * Returns a Blob + object URL. The caller is responsible for revoking the URL when done.
+       */
+      smokeMp4?: (
+        file?: File,
+        options?: {
+          targetFps?: number;
+          scale?: number;
+          maxFrames?: number;
+          captureMode?: 'auto' | 'demuxer' | 'frame-callback' | 'seek' | 'track';
+          quality?: 'low' | 'medium' | 'high';
+          validatePlayback?: boolean;
+          mountPreview?: boolean;
+          autoDownload?: boolean;
+          filename?: string;
+          playbackTimeoutMs?: number;
+        }
+      ) => Promise<{
+        blob: Blob;
+        url: string;
+        decoded: {
+          frameCount: number;
+          width: number;
+          height: number;
+          fps: number;
+          durationSeconds: number;
+          captureModeUsed?: 'auto' | 'demuxer' | 'frame-callback' | 'seek' | 'track';
+        };
+        encoder: {
+          name: string;
+        };
+        playback?: {
+          ok: boolean;
+          durationSeconds: number;
+          videoWidth: number;
+          videoHeight: number;
+          error?: string;
+        };
+      }>;
+
+      /** Dev-only helper: revoke an object URL previously returned by smokeMp4(). */
+      revokeObjectUrl?: (url: string) => void;
     };
   }
 }

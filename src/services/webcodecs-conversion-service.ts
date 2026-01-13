@@ -21,20 +21,17 @@ import {
   getCachedCapturePerformance,
   getCachedWebPChunkSize,
 } from '@utils/session-cache';
-import { muxAnimatedWebP } from '@utils/webp-muxer';
 import { withTimeout } from '@utils/with-timeout';
 import { ffmpegService } from './ffmpeg-service';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { EncoderFactory } from '@services/encoders/encoder-factory';
 import { isComplexCodec } from '@services/webcodecs/codec-utils';
 import { canUseDemuxer, detectContainer } from '@services/webcodecs/demuxer/demuxer-factory';
-import {
-  MIN_WEBP_FRAME_DURATION_MS,
-  WEBP_BACKGROUND_COLOR,
-} from '@services/webcodecs/webp-constants';
+import { createWebPFrameEncoder } from '@services/webcodecs/webp/webp-frame-encoder';
+import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames';
+import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob';
 import {
   buildDurationAlignedTimestamps as buildDurationAlignedTimestampsUtil,
-  buildWebPFrameDurations as buildWebPFrameDurationsUtil,
   getMaxWebPFrames as getMaxWebPFramesUtil,
   resolveAnimationDurationSeconds as resolveAnimationDurationSecondsUtil,
   resolveWebPFps as resolveWebPFpsUtil,
@@ -211,402 +208,6 @@ class WebCodecsConversionService {
     fallbackFps: number;
   }): number[] {
     return buildDurationAlignedTimestampsUtil(params);
-  }
-
-  /**
-   * Create WebP frame encoder function
-   *
-   * Returns a reusable encoder function that converts ImageData to WebP format.
-   * Uses OffscreenCanvas when available for better performance.
-   *
-   * @param qualityRatio - Quality ratio (0.0 to 1.0)
-   * @returns Async function that encodes ImageData to WebP Uint8Array
-   */
-  private createWebPFrameEncoder(qualityRatio: number): (frame: ImageData) => Promise<Uint8Array> {
-    let canvas: OffscreenCanvas | HTMLCanvasElement | null = null;
-    let context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D | null = null;
-
-    return async (frame: ImageData): Promise<Uint8Array> => {
-      if (!canvas) {
-        if (typeof OffscreenCanvas !== 'undefined') {
-          canvas = new OffscreenCanvas(frame.width, frame.height);
-          context = canvas.getContext('2d');
-        } else {
-          const createdCanvas = document.createElement('canvas');
-          createdCanvas.width = frame.width;
-          createdCanvas.height = frame.height;
-          canvas = createdCanvas;
-          context = createdCanvas.getContext('2d');
-        }
-      }
-
-      if (!canvas || !context) {
-        throw new Error('Canvas context unavailable for WebP frame encoding.');
-      }
-
-      if (canvas.width !== frame.width || canvas.height !== frame.height) {
-        canvas.width = frame.width;
-        canvas.height = frame.height;
-      }
-
-      context.putImageData(frame, 0, 0);
-
-      const quality = Math.min(1, Math.max(0, qualityRatio));
-      const blob =
-        'convertToBlob' in canvas
-          ? await (canvas as OffscreenCanvas).convertToBlob({
-              type: 'image/webp',
-              quality,
-            })
-          : await new Promise<Blob>((resolve, reject) => {
-              (canvas as HTMLCanvasElement).toBlob(
-                (result) => {
-                  if (result && result.size > 0) {
-                    resolve(result);
-                    return;
-                  }
-                  reject(new Error('Failed to encode WebP frame via toBlob.'));
-                },
-                'image/webp',
-                quality
-              );
-            });
-
-      if (!blob || blob.size === 0) {
-        throw new Error('WebP frame encoding produced an empty blob.');
-      }
-
-      const buffer = await blob.arrayBuffer();
-      return new Uint8Array(buffer);
-    };
-  }
-
-  /**
-   * Validate WebP blob output
-   *
-   * Checks WebP file signature, minimum size, and decodability.
-   *
-   * @param blob - WebP blob to validate
-   * @returns Validation result with optional failure reason
-   */
-  private async validateWebPBlob(blob: Blob): Promise<{ valid: boolean; reason?: string }> {
-    if (blob.size < FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_WEBP_SIZE_BYTES) {
-      return {
-        valid: false,
-        reason: `WebP output too small (${blob.size} bytes)`,
-      };
-    }
-
-    const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
-    const riffSignature = String.fromCharCode(...header.slice(0, 4));
-    const webpSignature = String.fromCharCode(...header.slice(8, 12));
-    if (riffSignature !== 'RIFF' || webpSignature !== 'WEBP') {
-      return {
-        valid: false,
-        reason: 'Invalid WebP file signature',
-      };
-    }
-
-    // Animated WebP decode support differs across browsers/APIs.
-    // `createImageBitmap()` may fail even for valid animated WebP files.
-    // Detect animation chunks and treat decode failures as non-fatal in that case.
-    const scanLimitBytes = Math.min(blob.size, 256 * 1024);
-    const scanBytes = new Uint8Array(await blob.slice(0, scanLimitBytes).arrayBuffer());
-
-    const containsFourCc = (bytes: Uint8Array, fourcc: string): boolean => {
-      if (fourcc.length !== 4 || bytes.length < 4) {
-        return false;
-      }
-
-      const a = fourcc.charCodeAt(0);
-      const b = fourcc.charCodeAt(1);
-      const c = fourcc.charCodeAt(2);
-      const d = fourcc.charCodeAt(3);
-
-      for (let i = 0; i <= bytes.length - 4; i++) {
-        if (bytes[i] === a && bytes[i + 1] === b && bytes[i + 2] === c && bytes[i + 3] === d) {
-          return true;
-        }
-      }
-      return false;
-    };
-
-    const isAnimatedWebP = containsFourCc(scanBytes, 'ANIM') || containsFourCc(scanBytes, 'ANMF');
-
-    // Quick structural sanity check: animated WebP requires VP8X with the animation flag set.
-    // If we accidentally produce ANIM/ANMF without VP8X.animation, many decoders will reject
-    // the file (and users will see an "empty"/unopenable output).
-    const tryReadVp8xFlags = (bytes: Uint8Array): number | null => {
-      if (bytes.length < 12) {
-        return null;
-      }
-
-      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      const readFourCcAt = (offset: number): string =>
-        String.fromCharCode(
-          bytes[offset] ?? 0,
-          bytes[offset + 1] ?? 0,
-          bytes[offset + 2] ?? 0,
-          bytes[offset + 3] ?? 0
-        );
-
-      let offset = 12;
-      while (offset + 8 <= bytes.length) {
-        const fourcc = readFourCcAt(offset);
-        const chunkSize = view.getUint32(offset + 4, true);
-        const payloadStart = offset + 8;
-        const payloadEnd = payloadStart + chunkSize;
-
-        if (payloadEnd > bytes.length) {
-          return null;
-        }
-
-        if (fourcc === 'VP8X') {
-          if (chunkSize < 1) {
-            return null;
-          }
-          return bytes[payloadStart] ?? null;
-        }
-
-        offset = payloadEnd + (chunkSize % 2);
-      }
-
-      return null;
-    };
-
-    if (isAnimatedWebP) {
-      const vp8xFlags = tryReadVp8xFlags(scanBytes);
-      if (vp8xFlags === null) {
-        return {
-          valid: false,
-          reason: 'Animated WebP missing VP8X header chunk',
-        };
-      }
-
-      const VP8X_ANIMATION_FLAG = 0x02;
-      if ((vp8xFlags & VP8X_ANIMATION_FLAG) === 0) {
-        return {
-          valid: false,
-          reason: 'Animated WebP missing VP8X animation flag',
-        };
-      }
-    }
-
-    const tryDecodeWithImageElement = async (): Promise<void> => {
-      if (typeof document === 'undefined') {
-        throw new Error('Document unavailable for WebP decode check');
-      }
-
-      const url = URL.createObjectURL(blob);
-      try {
-        const img = new Image();
-        img.decoding = 'async';
-        img.src = url;
-
-        if (typeof img.decode === 'function') {
-          await img.decode();
-          return;
-        }
-
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error('Image element failed to decode WebP'));
-        });
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    };
-
-    if (typeof createImageBitmap === 'function') {
-      try {
-        const bitmap = await createImageBitmap(blob);
-        bitmap.close();
-      } catch (error) {
-        if (isAnimatedWebP) {
-          // Best-effort fallback decode check.
-          try {
-            await tryDecodeWithImageElement();
-            return { valid: true };
-          } catch (imgError) {
-            logger.warn(
-              'conversion',
-              'Animated WebP decode check failed; accepting based on container validation',
-              {
-                size: blob.size,
-                createImageBitmapError: getErrorMessage(error),
-                imageDecodeError: getErrorMessage(imgError),
-              }
-            );
-            return { valid: true };
-          }
-        }
-
-        return {
-          valid: false,
-          reason: `WebP decode failed: ${getErrorMessage(error)}`,
-        };
-      }
-    }
-
-    return { valid: true };
-  }
-
-  /**
-   * Build frame duration array for WebP animation
-   *
-   * Calculates frame durations using one of two modes:
-   * 1. UNIFORM MODE (when source FPS >> target FPS or complex codec):
-   *    - Uses fixed duration: 1000/targetFPS ms per frame
-   *    - Prevents stuttering caused by uneven timestamp capture during FPS downsampling
-   *    - Always used for complex codecs (AV1, VP9, HEVC) to ensure smooth playback
-   *    - Example: 30 FPS source → 24 FPS target uses 41.67ms per frame
-   *
-   * 2. VARIABLE MODE (when source FPS ≈ target FPS and simple codec):
-   *    - Uses timestamp deltas for accurate timing
-   *    - Preserves variable frame rate (VFR) content
-   *    - Example: 24 FPS source → 24 FPS target uses actual capture times
-   *
-   * @param timestamps - Array of frame timestamps in seconds
-   * @param fps - Target frames per second
-   * @param frameCount - Total number of frames
-   * @param sourceFPS - Optional source video FPS for downsampling detection
-   * @param codec - Optional codec string for complex codec detection
-   * @param durationSeconds - Optional effective animation duration in seconds for total-duration alignment
-   * @returns Array of frame durations in milliseconds
-   */
-  private buildWebPFrameDurations(
-    timestamps: number[],
-    fps: number,
-    frameCount: number,
-    sourceFps?: number,
-    codec?: string,
-    durationSeconds?: number
-  ): number[] {
-    return buildWebPFrameDurationsUtil({
-      timestamps,
-      fps,
-      frameCount,
-      sourceFPS: sourceFps,
-      codec,
-      durationSeconds,
-    });
-  }
-
-  /**
-   * Mux WebP frames into animated WebP
-   *
-   * Combines encoded WebP frames with timing information into single animated WebP file.
-   *
-   * @param params - Muxing parameters
-   * @param params.encodedFrames - Array of encoded WebP frame data
-   * @param params.timestamps - Frame timestamps in seconds
-   * @param params.width - Frame width in pixels
-   * @param params.height - Frame height in pixels
-   * @param params.fps - Target frames per second
-   * @param params.metadata - Optional video metadata for FPS downsampling detection
-   * @param params.onProgress - Optional progress callback
-   * @param params.shouldCancel - Optional cancellation check
-   * @returns Animated WebP blob or null if no frames
-   */
-  private async muxWebPFrames(params: {
-    encodedFrames: Uint8Array[];
-    timestamps: number[];
-    width: number;
-    height: number;
-    fps: number;
-    metadata?: VideoMetadata;
-    durationSeconds?: number;
-    onProgress?: (current: number, total: number) => void;
-    shouldCancel?: () => boolean;
-  }): Promise<Blob | null> {
-    const {
-      encodedFrames,
-      timestamps,
-      width,
-      height,
-      fps,
-      metadata,
-      durationSeconds,
-      onProgress,
-      shouldCancel,
-    } = params;
-
-    if (!encodedFrames.length) {
-      return null;
-    }
-
-    const animationDurationSeconds = this.resolveAnimationDurationSeconds(
-      encodedFrames.length,
-      fps,
-      metadata,
-      durationSeconds
-    );
-
-    const durations = this.buildWebPFrameDurations(
-      timestamps,
-      fps,
-      encodedFrames.length,
-      metadata?.framerate,
-      metadata?.codec,
-      animationDurationSeconds
-    );
-
-    // Log duration statistics for debugging
-    if (durations.length > 0) {
-      const avgDuration = durations.reduce((sum, d) => sum + d, 0) / durations.length;
-      const minDuration = Math.min(...durations);
-      const maxDuration = Math.max(...durations);
-      const variance = maxDuration - minDuration;
-
-      logger.info('conversion', 'WebP frame duration statistics', {
-        frameCount: durations.length,
-        avgDuration: `${avgDuration.toFixed(2)}ms`,
-        minDuration: `${minDuration}ms`,
-        maxDuration: `${maxDuration}ms`,
-        variance: `${variance}ms`,
-        isUniform: variance === 0,
-      });
-    }
-
-    if (encodedFrames.length === 1) {
-      onProgress?.(1, 1);
-      const frame = encodedFrames[0];
-      if (!frame) {
-        return null;
-      }
-
-      const buffer = frame.slice().buffer;
-      return new Blob([buffer], { type: 'image/webp' });
-    }
-
-    const framesForMux = encodedFrames.map((frame, index) => {
-      if (!frame) {
-        throw new Error('Missing encoded frame for WebP muxing.');
-      }
-
-      if (shouldCancel?.()) {
-        throw new Error('Conversion cancelled by user');
-      }
-
-      onProgress?.(index + 1, encodedFrames.length);
-
-      const buffer = frame.slice().buffer as ArrayBuffer;
-      const duration =
-        durations[index] ?? durations[durations.length - 1] ?? MIN_WEBP_FRAME_DURATION_MS;
-
-      return { data: buffer, duration };
-    });
-
-    const muxed = await muxAnimatedWebP(framesForMux, {
-      width,
-      height,
-      loopCount: 0,
-      backgroundColor: WEBP_BACKGROUND_COLOR,
-    });
-
-    onProgress?.(encodedFrames.length, encodedFrames.length);
-
-    return new Blob([muxed], { type: 'image/webp' });
   }
 
   /**
@@ -1522,7 +1123,7 @@ class WebCodecsConversionService {
         // Fallback: main-thread WebP muxer path.
         encoderBackendUsed = 'webp-muxer';
         const webpQualityRatio = QUALITY_PRESETS.webp[options.quality].quality / 100;
-        const encodeFrame = this.createWebPFrameEncoder(webpQualityRatio);
+        const encodeFrame = createWebPFrameEncoder(webpQualityRatio);
 
         const hwConcurrency = navigator.hardwareConcurrency || 4;
         const cachedChunkSize = getCachedWebPChunkSize();
@@ -1561,7 +1162,7 @@ class WebCodecsConversionService {
         encodeStatusPrefix = 'Muxing WebP frames...';
         ffmpegService.reportStatus(encodeStatusPrefix);
 
-        outputBlob = await this.muxWebPFrames({
+        outputBlob = await muxWebPFrames({
           encodedFrames,
           timestamps: timestampsForEncoding,
           width: decodeResult.width,
@@ -1582,7 +1183,7 @@ class WebCodecsConversionService {
         return null;
       }
 
-      const validation = await this.validateWebPBlob(outputBlob);
+      const validation = await validateWebPBlob(outputBlob);
       if (!validation.valid) {
         logger.warn(
           'conversion',
@@ -2276,7 +1877,7 @@ class WebCodecsConversionService {
                   shouldCancel,
                 });
 
-                const validation = await this.validateWebPBlob(factoryEncodedWebP);
+                const validation = await validateWebPBlob(factoryEncodedWebP);
                 if (!validation.valid) {
                   logger.warn('conversion', 'EncoderFactory WebP output failed validation', {
                     encoder: encoder.name,
@@ -2345,7 +1946,7 @@ class WebCodecsConversionService {
               });
 
               // Create encoder function for parallel execution
-              const encodeFrame = this.createWebPFrameEncoder(webpQualityRatio);
+              const encodeFrame = createWebPFrameEncoder(webpQualityRatio);
 
               // Process frames in batches
               for (let i = 0; i < totalFrames; i += ChunkSize) {
@@ -2405,7 +2006,7 @@ class WebCodecsConversionService {
               try {
                 encodeStatusPrefix = 'Muxing WebP frames...';
                 ffmpegService.reportStatus(encodeStatusPrefix);
-                const result = await this.muxWebPFrames({
+                const result = await muxWebPFrames({
                   encodedFrames: webpEncodedFrames,
                   timestamps: webpFrameTimestamps,
                   width: decodeResult.width,
@@ -2429,7 +2030,7 @@ class WebCodecsConversionService {
                   return null;
                 }
 
-                const validation = await this.validateWebPBlob(result);
+                const validation = await validateWebPBlob(result);
                 if (!validation.valid) {
                   fallbackReason = validation.reason ?? 'WebP muxer output failed validation';
                   logger.warn('conversion', 'WebP muxer output failed validation, using fallback', {

@@ -33,7 +33,7 @@ function initializeEncoders(): void {
   EncoderFactory.register(new WebPEncoderAdapter());
   EncoderFactory.register(new WebPCanvasEncoderAdapter());
 
-  // Register MP4 encoder (stub - will be implemented in Phase 3)
+  // Register MP4 encoder (WebCodecs H.264 + MP4 container muxing)
   EncoderFactory.register(new MP4EncoderAdapter());
 
   const stats = EncoderFactory.getStats();

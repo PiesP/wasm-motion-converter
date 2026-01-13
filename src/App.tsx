@@ -199,6 +199,37 @@ const App: Component = () => {
                   capabilities: caps,
                 });
               },
+              pickVideoFile: async (accept?: string) => {
+                const mod = await import('@services/dev/mp4-smoke-test');
+                return mod.pickVideoFile(accept);
+              },
+              smokeMp4: async (
+                file?: File,
+                options?: {
+                  targetFps?: number;
+                  scale?: number;
+                  maxFrames?: number;
+                  captureMode?: 'auto' | 'demuxer' | 'frame-callback' | 'seek' | 'track';
+                  quality?: 'low' | 'medium' | 'high';
+                  validatePlayback?: boolean;
+                  mountPreview?: boolean;
+                  autoDownload?: boolean;
+                  filename?: string;
+                  playbackTimeoutMs?: number;
+                }
+              ) => {
+                const mod = await import('@services/dev/mp4-smoke-test');
+                return mod.runMp4SmokeTest({ file, options });
+              },
+              revokeObjectUrl: (url: string) => {
+                const safeUrl = String(url);
+                // Keep this synchronous for convenient console usage.
+                try {
+                  URL.revokeObjectURL(safeUrl);
+                } catch {
+                  // ignore
+                }
+              },
             };
             logger.info('general', 'Debug interface available: window.__CONVERSION_DEBUG__');
           }
