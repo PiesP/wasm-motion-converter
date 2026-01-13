@@ -166,6 +166,10 @@ export class FFmpegPipeline {
    * Release conversion lock
    */
   private releaseConversionLock(): void {
+    // Idempotent: termination/cancellation may release the lock early.
+    if (!this.conversionLock) {
+      return;
+    }
     this.conversionLock = false;
     logger.debug("general", "Conversion lock released");
   }
