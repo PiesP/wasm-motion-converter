@@ -1,22 +1,22 @@
-import type { ConversionOptions } from "@t/conversion-types";
+import type { ConversionOptions } from '@t/conversion-types';
 
 export const AV1_FRAME_CALLBACK_FAILURE_KEY =
-  "dropconvert:captureReliability:av1:frame-callback:failures";
+  'dropconvert:captureReliability:av1:frame-callback:failures';
 
-type Quality = ConversionOptions["quality"];
+type Quality = ConversionOptions['quality'];
 
 export function supportsRequestVideoFrameCallback(): boolean {
   // Feature detect without requiring the element to be attached.
   return (
-    typeof document !== "undefined" &&
-    typeof HTMLVideoElement !== "undefined" &&
-    "requestVideoFrameCallback" in document.createElement("video")
+    typeof document !== 'undefined' &&
+    typeof HTMLVideoElement !== 'undefined' &&
+    'requestVideoFrameCallback' in document.createElement('video')
   );
 }
 
 export function readSessionStorageNumber(key: string): number {
   try {
-    if (typeof sessionStorage === "undefined") return 0;
+    if (typeof sessionStorage === 'undefined') return 0;
 
     const raw = sessionStorage.getItem(key);
     if (!raw) return 0;
@@ -30,7 +30,7 @@ export function readSessionStorageNumber(key: string): number {
 
 export function writeSessionStorageNumber(key: string, value: number): void {
   try {
-    if (typeof sessionStorage === "undefined") return;
+    if (typeof sessionStorage === 'undefined') return;
 
     sessionStorage.setItem(key, String(value));
   } catch {
@@ -49,7 +49,7 @@ export function getAv1CaptureFpsCap(params: {
   // animation duration via duration-aligned timestamps.
   const isShort = !durationSeconds || durationSeconds < 4;
   const isMedium =
-    typeof durationSeconds === "number" &&
+    typeof durationSeconds === 'number' &&
     Number.isFinite(durationSeconds) &&
     durationSeconds >= 4 &&
     durationSeconds < 30;
@@ -61,20 +61,20 @@ export function getAv1CaptureFpsCap(params: {
 
   if (isMedium) {
     // Medium clips: balance speed and smoothness.
-    if (quality === "high") {
+    if (quality === 'high') {
       return 12;
     }
-    if (quality === "medium") {
+    if (quality === 'medium') {
       return 10;
     }
     return 8;
   }
 
   // Long clips: prioritize speed.
-  if (quality === "high") {
+  if (quality === 'high') {
     return 10;
   }
-  if (quality === "medium") {
+  if (quality === 'medium') {
     return 8;
   }
   return 6;
@@ -90,7 +90,7 @@ export function getAv1SeekFpsCap(params: {
   // Short clips: prioritize quality, medium/long: prioritize speed
   const isShort = !durationSeconds || durationSeconds < 4;
   const isMedium =
-    typeof durationSeconds === "number" &&
+    typeof durationSeconds === 'number' &&
     Number.isFinite(durationSeconds) &&
     durationSeconds >= 4 &&
     durationSeconds < 30;
@@ -99,8 +99,8 @@ export function getAv1SeekFpsCap(params: {
     return 12; // Short clips: maintain quality
   }
   if (isMedium) {
-    return quality === "high" ? 10 : 8; // Medium: balance speed/quality
+    return quality === 'high' ? 10 : 8; // Medium: balance speed/quality
   }
   // Long videos (>=30s): aggressive FPS capping for speed
-  return quality === "high" ? 8 : 6;
+  return quality === 'high' ? 8 : 6;
 }
