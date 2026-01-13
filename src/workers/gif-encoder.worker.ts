@@ -1,7 +1,7 @@
 import * as Comlink from 'comlink';
 import type { ModernGifOptions } from '@services/modern-gif-service';
 import { encodeModernGif } from '@services/modern-gif-service';
-import type { SerializableImageData } from '@t/worker-types';
+import type { SerializableImageData, WorkerProgressCallback } from '@t/worker-types';
 import { logger } from '@utils/logger';
 
 /**
@@ -34,7 +34,8 @@ const api = {
    */
   async encode(
     frames: SerializableImageData | SerializableImageData[],
-    options: ModernGifOptions
+    options: ModernGifOptions,
+    onProgress?: WorkerProgressCallback
   ): Promise<Blob> {
     try {
       // Validate input
@@ -59,6 +60,27 @@ const api = {
         quality: options.quality,
       });
 
+      // Comlink callbacks are typically async (Promise-returning), while modern-gif
+      // expects a sync callback. Provide a safe adapter that never throws and
+      // never produces unhandled promise rejections.
+      const safeOnProgress: ModernGifOptions['onProgress'] | undefined = onProgress
+        ? (current, total) => {
+            try {
+              const maybePromise = onProgress(current, total);
+              if (
+                maybePromise &&
+                typeof (maybePromise as unknown as { catch?: unknown }).catch === 'function'
+              ) {
+                void (maybePromise as Promise<void>).catch(() => {
+                  // Non-fatal: progress reporting should never crash encoding.
+                });
+              }
+            } catch {
+              // Non-fatal: progress reporting should never crash encoding.
+            }
+          }
+        : undefined;
+
       // Convert serializable frames to ImageData
       const imageDataFrames = frameArray.map((frame, index) => {
         if (!frame || frame.width <= 0 || frame.height <= 0) {
@@ -72,7 +94,11 @@ const api = {
         });
       });
 
-      const result = await encodeModernGif(imageDataFrames, options);
+      const result = await encodeModernGif(imageDataFrames, {
+        ...options,
+        // Prefer the explicit worker progress callback (if provided).
+        onProgress: safeOnProgress,
+      });
 
       logger.info('general', 'GIF encoding completed', {
         frameCount: frameArray.length,

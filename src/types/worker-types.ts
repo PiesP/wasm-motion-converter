@@ -1,6 +1,14 @@
 import type { ModernGifOptions } from '@services/modern-gif-service';
 
 /**
+ * Progress callback type for worker-to-main-thread progress updates.
+ *
+ * @remarks
+ * When passed via Comlink, callbacks are typically async (return Promise).
+ */
+export type WorkerProgressCallback = (current: number, total: number) => void | Promise<void>;
+
+/**
  * Serializable representation of ImageData for Web Worker message passing
  *
  * Represents a single frame's pixel data in a format that can be transferred
@@ -59,7 +67,8 @@ export interface EncoderWorkerAPI {
    */
   encode(
     frames: SerializableImageData | SerializableImageData[],
-    options: EncoderOptions
+    options: EncoderOptions,
+    onProgress?: WorkerProgressCallback
   ): Promise<Blob>;
 
   /**
