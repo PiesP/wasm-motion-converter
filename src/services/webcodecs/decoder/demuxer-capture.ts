@@ -183,7 +183,10 @@ export async function captureWithDemuxer(
 
     // 2. Create canvas for frame capture
     const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba');
-    const shouldUseJpeg = frameFormat !== 'rgba' && (quality === 'low' || quality === 'medium');
+    const shouldUseJpeg =
+      frameFormat !== 'rgba' &&
+      frameFormat !== 'bitmap' &&
+      (quality === 'low' || quality === 'medium');
 
     // 3. Create VideoDecoder
     // Collect decoded frames and process them after batched flushes.
@@ -326,9 +329,10 @@ export async function captureWithDemuxer(
             captureContext.targetHeight
           );
 
-          // Extract frame data (PNG/JPEG/RGBA)
+          // Extract frame data (PNG/JPEG/RGBA/ImageBitmap)
           let data: Uint8Array | undefined;
           let imageData: ImageData | undefined;
+          let bitmap: ImageBitmap | undefined;
 
           if (frameFormat === 'rgba') {
             imageData = captureContext.context.getImageData(
@@ -337,6 +341,11 @@ export async function captureWithDemuxer(
               captureContext.targetWidth,
               captureContext.targetHeight
             );
+          } else if (frameFormat === 'bitmap') {
+            if (typeof createImageBitmap !== 'function') {
+              throw new Error('createImageBitmap is not available for bitmap frame capture');
+            }
+            bitmap = await createImageBitmap(captureContext.canvas);
           } else {
             const encodeMimeType = shouldUseJpeg ? 'image/jpeg' : 'image/png';
             const encodeQuality = shouldUseJpeg ? (quality === 'low' ? 0.75 : 0.85) : undefined;
@@ -346,7 +355,14 @@ export async function captureWithDemuxer(
 
           // Use actual encoded format for filename extension to match blob content
           // Critical: FFmpeg PNG decoder fails on JPEG data (signature 0xFFD8FFE0 vs 0x89504E47)
-          const actualFormat = frameFormat === 'rgba' ? 'rgba' : shouldUseJpeg ? 'jpeg' : 'png';
+          const actualFormat =
+            frameFormat === 'rgba'
+              ? 'rgba'
+              : frameFormat === 'bitmap'
+                ? 'bitmap'
+                : shouldUseJpeg
+                  ? 'jpeg'
+                  : 'png';
           const frameName = formatFrameName(
             framePrefix,
             frameDigits,
@@ -359,6 +375,7 @@ export async function captureWithDemuxer(
             name: frameName,
             data,
             imageData,
+            bitmap,
             index: frameIndex,
             timestamp: timestampSeconds,
           });

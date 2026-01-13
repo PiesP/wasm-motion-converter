@@ -39,6 +39,9 @@ import {
 } from './webcodecs-decoder-service';
 import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support-service';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
+import type { EncoderFrame } from '@services/encoders/encoder-interface';
+import { EncoderFactory } from '@services/encoders/encoder-factory';
+import { convertFramesToImageData } from '@services/encoders/frame-converter';
 
 /**
  * WebCodecs Conversion Service
@@ -329,12 +332,22 @@ class WebCodecsConversionService {
       format,
     });
 
+    // Preflight: allow direct path when an EncoderFactory backend is available
+    // even if canvas WebP encoding is unsupported (e.g., jsquash WASM fallback).
     const canEncodeWebPFrames = await this.getCanvasWebPEncodeSupport();
-    if (!canEncodeWebPFrames) {
-      logger.info('conversion', 'Skipping WebCodecs direct WebP path (canvas WebP unsupported)', {
-        codec: metadata?.codec,
-        reason: 'Canvas WebP encoding is not supported in this browser',
-      });
+    const hasFactoryWebPEncoder = canEncodeWebPFrames
+      ? false
+      : await EncoderFactory.hasEncoder('webp');
+
+    if (!hasFactoryWebPEncoder && !canEncodeWebPFrames) {
+      logger.info(
+        'conversion',
+        'Skipping WebCodecs direct WebP path (no available WebP encoder backend)',
+        {
+          codec: metadata?.codec,
+          reason: 'No EncoderFactory WebP backend and canvas WebP encoding is unsupported',
+        }
+      );
       return null;
     }
 
@@ -346,7 +359,7 @@ class WebCodecsConversionService {
         }
       };
 
-      const { orderedImageData, decodeResult, effectiveTargetFps } =
+      const { orderedFrames, timestamps, decodeResult, effectiveTargetFps } =
         await captureComplexCodecFramesForWebP({
           decoder,
           file,
@@ -387,117 +400,167 @@ class WebCodecsConversionService {
         }
       };
 
-      const animationDurationSeconds = this.resolveAnimationDurationSeconds(
-        orderedImageData.length,
-        effectiveTargetFps,
-        metadata,
-        decodeResult.duration
-      );
+      const releaseCapturedFrames = (): void => {
+        for (const frame of orderedFrames) {
+          if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
+            try {
+              frame.close();
+            } catch {
+              // Ignore.
+            }
+          }
 
-      const fpsForEncoding = this.resolveWebPFps(
-        orderedImageData.length,
-        effectiveTargetFps,
-        animationDurationSeconds
-      );
+          if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
+            try {
+              frame.close();
+            } catch {
+              // Ignore.
+            }
+          }
+        }
+      };
 
-      if (fpsForEncoding !== effectiveTargetFps) {
-        logger.info('conversion', 'Adjusted WebP FPS to match captured pacing', {
-          targetFps: effectiveTargetFps,
-          adjustedFps: fpsForEncoding,
-          frameCount: orderedImageData.length,
-          durationSeconds: animationDurationSeconds ?? decodeResult.duration,
-        });
-      }
+      try {
+        const animationDurationSeconds = this.resolveAnimationDurationSeconds(
+          orderedFrames.length,
+          effectiveTargetFps,
+          metadata,
+          decodeResult.duration
+        );
 
-      const timestampsForEncoding = this.buildDurationAlignedTimestamps({
-        frameCount: orderedImageData.length,
-        durationSeconds: animationDurationSeconds ?? decodeResult.duration,
-        fallbackFps: fpsForEncoding,
-      });
+        const fpsForEncoding = this.resolveWebPFps(
+          orderedFrames.length,
+          effectiveTargetFps,
+          animationDurationSeconds
+        );
 
-      let outputBlob: Blob | null = null;
-      let encoderBackendUsed: string | null = null;
+        if (fpsForEncoding !== effectiveTargetFps) {
+          logger.info('conversion', 'Adjusted WebP FPS to match captured pacing', {
+            targetFps: effectiveTargetFps,
+            adjustedFps: fpsForEncoding,
+            frameCount: orderedFrames.length,
+            durationSeconds: animationDurationSeconds ?? decodeResult.duration,
+          });
+        }
 
-      const factoryEncoded = await tryEncodeWebPWithEncoderFactory({
-        frames: orderedImageData,
-        width: decodeResult.width,
-        height: decodeResult.height,
-        fps: fpsForEncoding,
-        quality: options.quality,
-        timestamps: timestampsForEncoding,
-        durationSeconds: animationDurationSeconds,
-        codec: metadata?.codec,
-        sourceFPS: metadata?.framerate,
-        onProgress: reportEncodeProgress,
-        shouldCancel: shouldCancelOrDefault,
-      });
+        const timestampsForEncoding =
+          timestamps.length >= orderedFrames.length
+            ? timestamps.slice(0, orderedFrames.length)
+            : this.buildDurationAlignedTimestamps({
+                frameCount: orderedFrames.length,
+                durationSeconds: animationDurationSeconds ?? decodeResult.duration,
+                fallbackFps: fpsForEncoding,
+              });
 
-      if (factoryEncoded) {
-        outputBlob = factoryEncoded.blob;
-        encoderBackendUsed = factoryEncoded.encoderBackendUsed;
-      }
+        let outputBlob: Blob | null = null;
+        let encoderBackendUsed: string | null = null;
 
-      if (!outputBlob) {
-        // Fallback: main-thread WebP muxer path.
-        encoderBackendUsed = 'webp-muxer';
-
-        const { encodedFrames } = await encodeWebPFramesInChunks({
-          frames: orderedImageData,
-          quality: options.quality,
-          codec: metadata?.codec,
-          onProgress: reportEncodeProgress,
-          shouldCancel: shouldCancelOrDefault,
-        });
-
-        encodeStatusPrefix = 'Muxing WebP frames...';
-        ffmpegService.reportStatus(encodeStatusPrefix);
-
-        outputBlob = await muxWebPFrames({
-          encodedFrames,
-          timestamps: timestampsForEncoding.slice(0, encodedFrames.length),
+        const factoryEncoded = await tryEncodeWebPWithEncoderFactory({
+          frames: orderedFrames,
           width: decodeResult.width,
           height: decodeResult.height,
           fps: fpsForEncoding,
-          metadata,
+          quality: options.quality,
+          timestamps: timestampsForEncoding,
           durationSeconds: animationDurationSeconds,
+          codec: metadata?.codec,
+          sourceFPS: metadata?.framerate,
           onProgress: reportEncodeProgress,
           shouldCancel: shouldCancelOrDefault,
         });
-      }
 
-      if (!outputBlob) {
-        logger.warn('conversion', 'WebCodecs direct path produced no output; using standard path', {
-          codec: metadata?.codec ?? 'unknown',
-          reason: 'no_output',
-        });
-        return null;
-      }
+        if (factoryEncoded) {
+          outputBlob = factoryEncoded.blob;
+          encoderBackendUsed = factoryEncoded.encoderBackendUsed;
+        }
 
-      const validation = await validateWebPBlob(outputBlob);
-      if (!validation.valid) {
-        logger.warn(
-          'conversion',
-          'WebCodecs direct WebP output failed validation; using standard path',
-          {
-            codec: metadata?.codec ?? 'unknown',
-            reason: validation.reason ?? 'validation_failed',
+        if (!outputBlob) {
+          // Fallback: main-thread WebP muxer path (requires canvas WebP support).
+          if (!canEncodeWebPFrames) {
+            logger.info(
+              'conversion',
+              'Skipping direct-path muxer fallback (canvas WebP unsupported); using standard path',
+              {
+                codec: metadata?.codec ?? 'unknown',
+              }
+            );
+            return null;
           }
-        );
-        return null;
-      }
 
-      ffmpegService.reportProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE);
+          encoderBackendUsed = 'webp-muxer';
 
-      const outputBlobWithMetadata = outputBlob as ConversionOutputBlob;
-      if (decodeResult.captureModeUsed) {
-        outputBlobWithMetadata.captureModeUsed = decodeResult.captureModeUsed;
-      }
+          const imageDataFrames = await convertFramesToImageData(
+            orderedFrames,
+            decodeResult.width,
+            decodeResult.height,
+            undefined,
+            shouldCancelOrDefault
+          );
 
-      if (encoderBackendUsed) {
-        outputBlobWithMetadata.encoderBackendUsed = encoderBackendUsed;
+          const { encodedFrames } = await encodeWebPFramesInChunks({
+            frames: imageDataFrames,
+            quality: options.quality,
+            codec: metadata?.codec,
+            onProgress: reportEncodeProgress,
+            shouldCancel: shouldCancelOrDefault,
+          });
+
+          encodeStatusPrefix = 'Muxing WebP frames...';
+          ffmpegService.reportStatus(encodeStatusPrefix);
+
+          outputBlob = await muxWebPFrames({
+            encodedFrames,
+            timestamps: timestampsForEncoding.slice(0, encodedFrames.length),
+            width: decodeResult.width,
+            height: decodeResult.height,
+            fps: fpsForEncoding,
+            metadata,
+            durationSeconds: animationDurationSeconds,
+            onProgress: reportEncodeProgress,
+            shouldCancel: shouldCancelOrDefault,
+          });
+        }
+
+        if (!outputBlob) {
+          logger.warn(
+            'conversion',
+            'WebCodecs direct path produced no output; using standard path',
+            {
+              codec: metadata?.codec ?? 'unknown',
+              reason: 'no_output',
+            }
+          );
+          return null;
+        }
+
+        const validation = await validateWebPBlob(outputBlob);
+        if (!validation.valid) {
+          logger.warn(
+            'conversion',
+            'WebCodecs direct WebP output failed validation; using standard path',
+            {
+              codec: metadata?.codec ?? 'unknown',
+              reason: validation.reason ?? 'validation_failed',
+            }
+          );
+          return null;
+        }
+
+        ffmpegService.reportProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE);
+
+        const outputBlobWithMetadata = outputBlob as ConversionOutputBlob;
+        if (decodeResult.captureModeUsed) {
+          outputBlobWithMetadata.captureModeUsed = decodeResult.captureModeUsed;
+        }
+
+        if (encoderBackendUsed) {
+          outputBlobWithMetadata.encoderBackendUsed = encoderBackendUsed;
+        }
+        outputBlobWithMetadata.wasTranscoded = true;
+        return outputBlobWithMetadata;
+      } finally {
+        releaseCapturedFrames();
       }
-      outputBlobWithMetadata.wasTranscoded = true;
-      return outputBlobWithMetadata;
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       if (
@@ -593,9 +656,33 @@ class WebCodecsConversionService {
 
     const decoder = new WebCodecsDecoderService();
     const capturedFrames: ImageData[] = [];
-    const webpCapturedFrames: ImageData[] = []; // Collect WebP frames for batch encoding
+    const webpCapturedFrames: EncoderFrame[] = []; // Collect WebP frames for batch encoding
     const webpFrameTimestamps: number[] = [];
-    const frameFormat: WebCodecsFrameFormat = 'rgba';
+
+    // WebP: prefer GPU-friendly ImageBitmap frames to avoid explicit getImageData() readback.
+    // GIF: modern-gif requires ImageData.
+    const frameFormat: WebCodecsFrameFormat =
+      format === 'webp' && typeof createImageBitmap === 'function' ? 'bitmap' : 'rgba';
+
+    const releaseWebPFrames = (): void => {
+      for (const frame of webpCapturedFrames) {
+        if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
+          try {
+            frame.close();
+          } catch {
+            // Ignore: bitmap might already be closed.
+          }
+        }
+
+        if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
+          try {
+            frame.close();
+          } catch {
+            // Ignore.
+          }
+        }
+      }
+    };
 
     // Calculate optimal FPS based on source video FPS and quality preset
     const presetFps = 'fps' in settings ? settings.fps : 15;
@@ -742,15 +829,20 @@ class WebCodecsConversionService {
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
               throwIfCancelled();
-              if (!frame.imageData) {
-                throw new Error('WebCodecs did not provide raw frame data.');
-              }
-
               if (format === 'webp') {
+                const encoderFrame = frame.bitmap ?? frame.imageData;
+                if (!encoderFrame) {
+                  throw new Error('WebCodecs did not provide a usable frame payload for WebP.');
+                }
+
                 // Collect frames for batch encoding (parallelized later)
-                webpCapturedFrames.push(frame.imageData);
+                webpCapturedFrames.push(encoderFrame);
                 webpFrameTimestamps.push(frame.timestamp);
                 return;
+              }
+
+              if (!frame.imageData) {
+                throw new Error('WebCodecs did not provide raw frame data.');
               }
 
               // format === 'gif' here (modern-gif path)
@@ -775,6 +867,7 @@ class WebCodecsConversionService {
             mode: captureMode,
           });
           capturedFrames.length = 0;
+          releaseWebPFrames();
           webpCapturedFrames.length = 0;
           webpFrameTimestamps.length = 0;
 
@@ -834,6 +927,7 @@ class WebCodecsConversionService {
           throwIfCancelled,
           resetCaptureCollections: () => {
             capturedFrames.length = 0;
+            releaseWebPFrames();
             webpCapturedFrames.length = 0;
             webpFrameTimestamps.length = 0;
           },
@@ -979,6 +1073,7 @@ class WebCodecsConversionService {
 
         outputBlob = webpEncode.blob;
         encoderBackendUsed = webpEncode.encoderBackendUsed;
+        releaseWebPFrames();
         webpCapturedFrames.length = 0;
         webpFrameTimestamps.length = 0;
       } else {
@@ -1008,6 +1103,14 @@ class WebCodecsConversionService {
 
       return outputBlobWithMetadata;
     } finally {
+      // Always release any captured WebP frames (ImageBitmap/VideoFrame) to avoid GPU leaks.
+      try {
+        releaseWebPFrames();
+      } catch {
+        // Non-fatal.
+      }
+      webpCapturedFrames.length = 0;
+
       // Ensure external monitoring is stopped
       // endExternalConversion now includes forceCleanupAll (see Step 5)
       try {

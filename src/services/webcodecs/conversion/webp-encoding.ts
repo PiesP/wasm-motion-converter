@@ -6,11 +6,12 @@ import { logger } from '@utils/logger';
 import { cacheWebPChunkSize, getCachedWebPChunkSize } from '@utils/session-cache';
 
 import { EncoderFactory } from '@services/encoders/encoder-factory';
+import type { EncoderFrame } from '@services/encoders/encoder-interface';
 import { createWebPFrameEncoder } from '@services/webcodecs/webp/webp-frame-encoder';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob';
 
 export async function tryEncodeWebPWithEncoderFactory(params: {
-  frames: ImageData[];
+  frames: EncoderFrame[];
   width: number;
   height: number;
   fps: number;

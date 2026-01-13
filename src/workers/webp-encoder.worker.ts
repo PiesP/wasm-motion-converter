@@ -18,6 +18,32 @@
 import { logger } from '@utils/logger';
 import * as Comlink from 'comlink';
 
+let cachedCanvas: OffscreenCanvas | null = null;
+let cachedContext: OffscreenCanvasRenderingContext2D | null = null;
+
+const getCanvas = (width: number, height: number): OffscreenCanvasRenderingContext2D => {
+  if (typeof OffscreenCanvas === 'undefined') {
+    throw new Error('OffscreenCanvas not available in worker');
+  }
+
+  if (
+    !cachedCanvas ||
+    !cachedContext ||
+    cachedCanvas.width !== width ||
+    cachedCanvas.height !== height
+  ) {
+    cachedCanvas = new OffscreenCanvas(width, height);
+    cachedContext = cachedCanvas.getContext('2d', { alpha: false });
+    if (!cachedContext) {
+      throw new Error('Failed to get 2D context from OffscreenCanvas');
+    }
+    cachedContext.imageSmoothingEnabled = true;
+    cachedContext.imageSmoothingQuality = 'high';
+  }
+
+  return cachedContext;
+};
+
 /**
  * WebP encoder worker API implementation
  *
@@ -48,19 +74,10 @@ const api = {
       // Clamp quality to valid range
       const clampedQuality = Math.max(0, Math.min(1, quality));
 
-      // Create OffscreenCanvas
-      if (typeof OffscreenCanvas === 'undefined') {
-        throw new Error('OffscreenCanvas not available in worker');
-      }
-
-      const canvas = new OffscreenCanvas(imageData.width, imageData.height);
-      const ctx = canvas.getContext('2d');
-
-      if (!ctx) {
-        throw new Error('Failed to get 2D context from OffscreenCanvas');
-      }
+      const ctx = getCanvas(imageData.width, imageData.height);
 
       // Create ImageData from raw data
+      // Ensure the backing buffer is an ArrayBuffer (not SharedArrayBuffer) for ImageData typing/runtime.
       const imgData = new ImageData(
         new Uint8ClampedArray(imageData.data),
         imageData.width,
@@ -71,10 +88,14 @@ const api = {
       ctx.putImageData(imgData, 0, 0);
 
       // Encode to WebP
-      const blob = await canvas.convertToBlob({
+      const blob = await cachedCanvas?.convertToBlob({
         type: 'image/webp',
         quality: clampedQuality,
       });
+
+      if (!blob) {
+        throw new Error('Failed to encode WebP frame (no blob returned)');
+      }
 
       // Convert Blob to ArrayBuffer
       const arrayBuffer = await blob.arrayBuffer();
@@ -95,6 +116,63 @@ const api = {
         height: imageData?.height,
       });
       throw new Error(`WebP frame encoding failed: ${message}`);
+    }
+  },
+
+  /**
+   * Encode a single ImageBitmap frame to WebP.
+   *
+   * This avoids explicit GPU→CPU readback in the caller.
+   */
+  async encodeFrameBitmap(bitmap: ImageBitmap, quality: number): Promise<ArrayBuffer> {
+    try {
+      if (!bitmap || bitmap.width <= 0 || bitmap.height <= 0) {
+        throw new Error('Invalid ImageBitmap for WebP encoding');
+      }
+
+      const clampedQuality = Math.max(0, Math.min(1, quality));
+      const width = bitmap.width;
+      const height = bitmap.height;
+      const ctx = getCanvas(width, height);
+
+      try {
+        ctx.drawImage(bitmap, 0, 0, width, height);
+      } finally {
+        // If the bitmap was transferred to this worker, closing it here releases GPU memory.
+        try {
+          bitmap.close();
+        } catch {
+          // Ignore: bitmap might already be closed.
+        }
+      }
+
+      const blob = await cachedCanvas?.convertToBlob({
+        type: 'image/webp',
+        quality: clampedQuality,
+      });
+
+      if (!blob) {
+        throw new Error('Failed to encode WebP frame (no blob returned)');
+      }
+
+      const arrayBuffer = await blob.arrayBuffer();
+
+      logger.debug('webp-encoder', 'Bitmap frame encoded', {
+        width,
+        height,
+        quality: clampedQuality,
+        size: arrayBuffer.byteLength,
+      });
+
+      return arrayBuffer;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('webp-encoder', 'Bitmap frame encoding failed', {
+        error: message,
+        width: bitmap?.width,
+        height: bitmap?.height,
+      });
+      throw new Error(`WebP bitmap frame encoding failed: ${message}`);
     }
   },
 

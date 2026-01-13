@@ -14,6 +14,7 @@ import type {
   WebCodecsDecoderService,
   WebCodecsFrameFormat,
 } from '@services/webcodecs-decoder-service';
+import type { EncoderFrame } from '@services/encoders/encoder-interface';
 import { canUseDemuxer, detectContainer } from '@services/webcodecs/demuxer/demuxer-factory';
 import {
   AV1_FRAME_CALLBACK_FAILURE_KEY,
@@ -40,7 +41,8 @@ export async function captureComplexCodecFramesForWebP(params: {
   shouldCancel: () => boolean;
   throwIfCancelled: () => void;
 }): Promise<{
-  orderedImageData: ImageData[];
+  orderedFrames: EncoderFrame[];
+  timestamps: number[];
   decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>>;
   effectiveTargetFps: number;
 }> {
@@ -60,7 +62,7 @@ export async function captureComplexCodecFramesForWebP(params: {
   throwIfCancelled();
 
   // Collect frames by index to avoid duplicates and ensure stable ordering.
-  const framesByIndex: Array<{ imageData: ImageData; timestamp: number } | undefined> = [];
+  const framesByIndex: Array<{ frame: EncoderFrame; timestamp: number } | undefined> = [];
 
   const requestedTargetFps = targetFps;
   const normalizedCodec = metadata?.codec?.toLowerCase() ?? '';
@@ -111,7 +113,8 @@ export async function captureComplexCodecFramesForWebP(params: {
   // Direct WebCodecs → RGBA pipeline for complex codecs.
   const startTime = Date.now();
 
-  const frameFormat: WebCodecsFrameFormat = 'rgba';
+  const frameFormat: WebCodecsFrameFormat =
+    typeof createImageBitmap === 'function' ? 'bitmap' : 'rgba';
 
   const runDecode = async (
     captureMode: WebCodecsCaptureMode,
@@ -133,12 +136,32 @@ export async function captureComplexCodecFramesForWebP(params: {
       onFrame: async (frame) => {
         throwIfCancelled();
 
-        if (!frame.imageData) {
-          throw new Error('WebCodecs did not provide raw frame data (ImageData).');
+        const payloadFrame = frame.bitmap ?? frame.imageData;
+        if (!payloadFrame) {
+          throw new Error('WebCodecs did not provide a usable frame payload (bitmap/ImageData).');
+        }
+
+        const existing = framesByIndex[frame.index];
+        if (existing) {
+          if (typeof ImageBitmap !== 'undefined' && existing.frame instanceof ImageBitmap) {
+            try {
+              existing.frame.close();
+            } catch {
+              // Ignore.
+            }
+          }
+
+          if (typeof VideoFrame !== 'undefined' && existing.frame instanceof VideoFrame) {
+            try {
+              existing.frame.close();
+            } catch {
+              // Ignore.
+            }
+          }
         }
 
         framesByIndex[frame.index] = {
-          imageData: frame.imageData,
+          frame: payloadFrame,
           timestamp: frame.timestamp,
         };
       },
@@ -529,11 +552,12 @@ export async function captureComplexCodecFramesForWebP(params: {
     );
   }
 
-  const orderedFrames = framesByIndex.filter(
-    (frame): frame is { imageData: ImageData; timestamp: number } => Boolean(frame)
+  const orderedEntries = framesByIndex.filter(
+    (frame): frame is { frame: EncoderFrame; timestamp: number } => Boolean(frame)
   );
 
-  const orderedImageData = orderedFrames.map((frame) => frame.imageData);
+  const orderedFrames = orderedEntries.map((entry) => entry.frame);
+  const timestamps = orderedEntries.map((entry) => entry.timestamp);
 
   const elapsed = Date.now() - startTime;
   const estimatedFramesFromCapturedDuration = computeExpectedFramesFromDuration({
@@ -565,7 +589,8 @@ export async function captureComplexCodecFramesForWebP(params: {
   );
 
   return {
-    orderedImageData,
+    orderedFrames,
+    timestamps,
     decodeResult,
     effectiveTargetFps,
   };

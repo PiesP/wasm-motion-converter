@@ -35,6 +35,13 @@ const formatDecision = (args: {
     };
   }
 
+  if (frameFormat === 'bitmap') {
+    return {
+      actualFormat: 'bitmap',
+      encodeMimeType: 'application/octet-stream',
+    };
+  }
+
   const forceJpegForComplexCodec = isComplexCodec;
   const shouldUseJpeg =
     forceJpegForComplexCodec ||
@@ -108,6 +115,31 @@ export const captureFrameAndEmit = async (args: {
 
   let data: Uint8Array | undefined;
   let imageData: ImageData | undefined;
+  let bitmap: ImageBitmap | undefined;
+
+  if (frameFormat === 'bitmap') {
+    if (typeof createImageBitmap !== 'function') {
+      throw new Error('createImageBitmap is not available for bitmap frame capture');
+    }
+
+    try {
+      bitmap = await createImageBitmap(captureContext.canvas);
+    } catch (error) {
+      throw new Error(`Failed to create ImageBitmap for frame ${index}: ${getErrorMessage(error)}`);
+    }
+
+    state.consecutiveEmptyFrames = 0;
+    const frameName = formatFrameName(framePrefix, frameDigits, index, frameStartNumber, 'bitmap');
+    await onFrame({
+      name: frameName,
+      data,
+      imageData,
+      bitmap,
+      index,
+      timestamp,
+    });
+    return frameName;
+  }
 
   if (frameFormat === 'rgba') {
     imageData = captureContext.context.getImageData(
@@ -247,12 +279,19 @@ export const captureFrameAndEmit = async (args: {
       decision.actualFormat
     );
 
-    await onFrame({ name: frameName, data, imageData, index, timestamp });
+    await onFrame({
+      name: frameName,
+      data,
+      imageData,
+      bitmap,
+      index,
+      timestamp,
+    });
     return frameName;
   }
 
   const frameName = formatFrameName(framePrefix, frameDigits, index, frameStartNumber, 'rgba');
 
-  await onFrame({ name: frameName, data, imageData, index, timestamp });
+  await onFrame({ name: frameName, data, imageData, bitmap, index, timestamp });
   return frameName;
 };

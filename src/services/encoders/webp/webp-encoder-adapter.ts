@@ -28,7 +28,11 @@ import type { AnimatedWebPOptions, WebPFrame } from '@utils/webp-muxer';
 import { muxAnimatedWebP } from '@utils/webp-muxer';
 import type * as Comlink from 'comlink';
 import { convertFramesToImageData } from '@services/encoders/frame-converter';
-import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface';
+import type {
+  EncoderAdapter,
+  EncoderFrame,
+  EncoderRequest,
+} from '@services/encoders/encoder-interface';
 
 /**
  * WebP encoder worker API
@@ -41,6 +45,11 @@ interface WebPEncoderWorkerApi {
     imageData: { data: Uint8ClampedArray; width: number; height: number },
     quality: number
   ): Promise<ArrayBuffer>;
+
+  /**
+   * Encode a single ImageBitmap frame to WebP.
+   */
+  encodeFrameBitmap(bitmap: ImageBitmap, quality: number): Promise<ArrayBuffer>;
 
   /**
    * Terminate worker
@@ -164,18 +173,19 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       // Calculate quality parameter (0.0 to 1.0)
       const encodeQuality = quality === 'low' ? 0.75 : quality === 'medium' ? 0.85 : 0.95;
 
-      // Convert frames to ImageData if needed (VideoFrame/ImageBitmap → ImageData)
-      const imageDataFrames = await convertFramesToImageData(
-        frames,
-        width,
-        height,
-        undefined, // Don't report conversion progress separately
-        shouldCancel
-      );
+      // If createImageBitmap isn't available, fall back to ImageData conversion.
+      // Otherwise, prefer passing GPU-friendly frames (ImageBitmap/VideoFrame) to workers.
+      const needsGpuFrames = frames.some((frame) => !(frame instanceof ImageData));
+      const canCloneToBitmap = typeof createImageBitmap === 'function';
+
+      const framesForEncoding: EncoderFrame[] =
+        needsGpuFrames && !canCloneToBitmap
+          ? await convertFramesToImageData(frames, width, height, undefined, shouldCancel)
+          : frames;
 
       // Encode frames in parallel
       const encodedFrames = await this.encodeFramesParallel(
-        imageDataFrames,
+        framesForEncoding,
         encodeQuality,
         onProgress,
         shouldCancel
@@ -280,7 +290,7 @@ export class WebPEncoderAdapter implements EncoderAdapter {
    * Encode frames in parallel using worker pool
    */
   private async encodeFramesParallel(
-    frames: ImageData[],
+    frames: EncoderFrame[],
     quality: number,
     onProgress?: (current: number, total: number) => void,
     shouldCancel?: () => boolean
@@ -302,15 +312,32 @@ export class WebPEncoderAdapter implements EncoderAdapter {
         throw new Error(`Worker ${workerIndex} not available`);
       }
 
-      // Convert ImageData to transferable format
-      const imageData = {
-        data: frame.data,
-        width: frame.width,
-        height: frame.height,
-      };
+      let encoded: ArrayBuffer;
 
-      // Encode frame
-      const encoded = await worker.encodeFrame(imageData, quality);
+      if (frame instanceof ImageData) {
+        // Convert ImageData to a structured-clone-friendly shape
+        const imageData = {
+          data: frame.data,
+          width: frame.width,
+          height: frame.height,
+        };
+        encoded = await worker.encodeFrame(imageData, quality);
+      } else {
+        if (typeof createImageBitmap !== 'function') {
+          throw new Error('createImageBitmap is not available for bitmap WebP encoding');
+        }
+
+        if (!this.Comlink) {
+          throw new Error('Comlink is not initialized');
+        }
+
+        // Clone to a transferable ImageBitmap so we can keep the original frame
+        // intact for fallback paths.
+        const bitmapClone = await createImageBitmap(frame as unknown as ImageBitmapSource);
+        const transferableBitmap = this.Comlink.transfer(bitmapClone, [bitmapClone]);
+        encoded = await worker.encodeFrameBitmap(transferableBitmap, quality);
+      }
+
       encodedFrames[index] = encoded;
 
       completedCount += 1;

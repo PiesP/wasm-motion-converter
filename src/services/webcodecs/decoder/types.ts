@@ -12,8 +12,9 @@ import type { VideoMetadata } from '@t/conversion-types';
  * - png: PNG format (lossless, larger file size)
  * - jpeg: JPEG format (lossy compression, smaller file size)
  * - rgba: Raw RGBA pixel data (for in-memory processing)
+ * - bitmap: ImageBitmap (GPU-friendly, avoids explicit CPU readback)
  */
-export type WebCodecsFrameFormat = 'png' | 'jpeg' | 'rgba';
+export type WebCodecsFrameFormat = 'png' | 'jpeg' | 'rgba' | 'bitmap';
 
 /**
  * Progress callback type for frame extraction
@@ -39,8 +40,10 @@ export interface WebCodecsFramePayload {
   name: string;
   /** Encoded frame data (PNG/JPEG bytes) - undefined for rgba format */
   data?: Uint8Array;
-  /** Raw RGBA pixel data - undefined for png/jpeg formats */
+  /** Raw RGBA pixel data - undefined for png/jpeg/bitmap formats */
   imageData?: ImageData;
+  /** GPU-friendly bitmap - undefined for png/jpeg/rgba formats */
+  bitmap?: ImageBitmap;
   /** Zero-based frame index */
   index: number;
   /** Frame timestamp in seconds */
@@ -57,7 +60,7 @@ export interface WebCodecsDecodeOptions {
   targetFps: number;
   /** Scale factor (0.0 to 1.0) - 1.0 = original size */
   scale: number;
-  /** Output frame format (png, jpeg, or rgba) */
+  /** Output frame format (png, jpeg, rgba, or bitmap) */
   frameFormat: WebCodecsFrameFormat;
   /** JPEG quality (0.0 to 1.0) - ignored for png/rgba */
   frameQuality: number;

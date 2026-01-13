@@ -6,12 +6,14 @@ import {
   encodeWebPFramesInChunks,
   tryEncodeWebPWithEncoderFactory,
 } from '@services/webcodecs/conversion/webp-encoding';
+import type { EncoderFrame } from '@services/encoders/encoder-interface';
+import { convertFramesToImageData } from '@services/encoders/frame-converter';
 import { resolveAnimationDurationSeconds } from '@services/webcodecs/webp-timing';
 import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob';
 
 export async function encodeWebPWithMuxFallback(params: {
-  frames: ImageData[];
+  frames: EncoderFrame[];
   width: number;
   height: number;
   fps: number;
@@ -89,8 +91,18 @@ export async function encodeWebPWithMuxFallback(params: {
 
   logger.info('conversion', 'Using WebP muxer path with parallel frame encoding');
 
-  const { encodedFrames } = await encodeWebPFramesInChunks({
+  // Muxer path expects ImageData frames. Only pay the GPU→CPU readback cost when
+  // we actually need to fall back to the canvas encoder.
+  const imageDataFrames = await convertFramesToImageData(
     frames,
+    width,
+    height,
+    undefined,
+    shouldCancel
+  );
+
+  const { encodedFrames } = await encodeWebPFramesInChunks({
+    frames: imageDataFrames,
     quality,
     codec,
     onProgress,

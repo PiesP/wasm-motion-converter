@@ -428,6 +428,13 @@ export default defineConfig(({ mode }) => {
       },
     },
 
+    // Ensure workers are emitted as ES modules.
+    // Some worker dependencies (e.g., WASM packages) trigger code-splitting,
+    // which is not supported with IIFE/UMD worker output formats.
+    worker: {
+      format: 'es',
+    },
+
     // Development server configuration
     server: {
       // Required headers for SharedArrayBuffer support (FFmpeg.wasm multithreading)
