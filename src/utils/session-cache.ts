@@ -89,19 +89,6 @@ export function cacheCaptureMode(codec: string, mode: CaptureMode): void {
 }
 
 // ============================================================================
-// VFS Batch Size Caching
-// ============================================================================
-
-export function getCachedVFSBatchSize(): number | null {
-  const value = readSessionNumber('dropconvert:vfs:batchSize');
-  return value > 0 ? value : null;
-}
-
-export function cacheVFSBatchSize(batchSize: number): void {
-  writeSessionNumber('dropconvert:vfs:batchSize', batchSize);
-}
-
-// ============================================================================
 // WebP Chunk Size Caching
 // ============================================================================
 

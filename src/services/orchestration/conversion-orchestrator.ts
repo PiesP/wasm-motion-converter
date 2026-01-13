@@ -849,10 +849,3 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
 export function cancelConversion(): void {
   orchestrator.cancel();
 }
-
-/**
- * Get the current conversion status.
- */
-export function getConversionStatus(): ConversionStatus {
-  return orchestrator.getStatus();
-}

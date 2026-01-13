@@ -52,13 +52,4 @@ function createSingleton<T>(name: string, factory: () => T): T {
   return instances.get(name) as T;
 }
 
-/**
- * Clear a singleton instance (useful for testing)
- *
- * @param name - Unique identifier of the singleton
- */
-function clearSingleton(name: string): void {
-  instances.delete(name);
-}
-
-export { createSingleton, clearSingleton };
+export { createSingleton };
