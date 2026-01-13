@@ -10,6 +10,7 @@ import { captureWithDemuxer as captureWithDemuxerMode } from '@services/webcodec
 import { captureWithFrameCallback as captureWithFrameCallbackMode } from '@services/webcodecs/decoder/capture-modes/frame-callback-capture';
 import { captureWithSeeking as captureWithSeekingMode } from '@services/webcodecs/decoder/capture-modes/seek-capture';
 import { captureWithTrackProcessor as captureWithTrackProcessorMode } from '@services/webcodecs/decoder/capture-modes/track-processor-capture';
+import { runPlaybackCaptureMode } from '@services/webcodecs/decoder/capture-modes/run-playback-capture';
 import {
   captureFrameAndEmit,
   type CaptureFrameState,
@@ -378,158 +379,59 @@ export class WebCodecsDecoderService {
       const supportsFrameCallback = typeof video.requestVideoFrameCallback === 'function';
       const supportsTrackProcessor = supportStatus.trackProcessor && supportStatus.captureStream;
 
-      if (captureMode === 'track') {
-        if (!supportsTrackProcessor) {
-          throw new Error('WebCodecs track processor is not supported in this browser.');
-        }
-        effectiveCaptureMode = 'track';
+      const setEffectivePlaybackCaptureMode = (mode: 'track' | 'frame-callback' | 'seek') => {
+        effectiveCaptureMode = mode;
         maxTotalDecodeMs = computeMaxTotalDecodeMs({
           captureMode: effectiveCaptureMode,
           totalFrames,
           baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
         });
-        await this.captureWithTrackProcessor(
-          video,
-          duration,
-          targetFps,
-          captureFrame,
-          shouldCancel,
-          totalFrames
-        );
-      } else if (captureMode === 'frame-callback') {
-        if (!supportsFrameCallback) {
-          throw new Error('requestVideoFrameCallback is not supported in this browser.');
-        }
-        effectiveCaptureMode = 'frame-callback';
-        maxTotalDecodeMs = computeMaxTotalDecodeMs({
-          captureMode: effectiveCaptureMode,
-          totalFrames,
-          baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
-        });
-        await this.captureWithFrameCallback(
-          video,
-          duration,
-          targetFps,
-          captureFrame,
-          shouldCancel,
-          totalFrames,
-          codec
-        );
-      } else if (captureMode === 'seek') {
-        effectiveCaptureMode = 'seek';
-        maxTotalDecodeMs = computeMaxTotalDecodeMs({
-          captureMode: effectiveCaptureMode,
-          totalFrames,
-          baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
-        });
-        await this.captureWithSeeking(
-          video,
-          duration,
-          targetFps,
-          captureFrame,
-          shouldCancel,
-          totalFrames,
-          codec
-        );
-      } else if (supportsTrackProcessor) {
-        try {
-          effectiveCaptureMode = 'track';
-          maxTotalDecodeMs = computeMaxTotalDecodeMs({
-            captureMode: effectiveCaptureMode,
-            totalFrames,
-            baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
-          });
-          await this.captureWithTrackProcessor(
-            video,
-            duration,
-            targetFps,
-            captureFrame,
-            shouldCancel,
-            totalFrames
-          );
-        } catch (error) {
-          const errorMsg = getErrorMessage(error);
-          const errorStack = error instanceof Error ? error.stack : '';
-          logger.warn('conversion', 'WebCodecs track capture failed, falling back', {
-            error: errorMsg,
-            supportsFrameCallback,
-            stack: errorStack,
-          });
-          if (supportsFrameCallback) {
-            logger.info(
-              'conversion',
-              'WebCodecs decoder: Attempting frame-callback fallback mode',
-              {}
+      };
+
+      const requestedPlaybackCaptureMode = captureMode === 'demuxer' ? 'auto' : captureMode;
+
+      await runPlaybackCaptureMode({
+        requestedCaptureMode: requestedPlaybackCaptureMode,
+        supportsTrackProcessor,
+        supportsFrameCallback,
+        setEffectiveCaptureMode: setEffectivePlaybackCaptureMode,
+        runMode: async (mode, withCodecHint) => {
+          if (mode === 'track') {
+            await this.captureWithTrackProcessor(
+              video,
+              duration,
+              targetFps,
+              captureFrame,
+              shouldCancel,
+              totalFrames
             );
-            effectiveCaptureMode = 'frame-callback';
-            maxTotalDecodeMs = computeMaxTotalDecodeMs({
-              captureMode: effectiveCaptureMode,
-              totalFrames,
-              baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
-            });
+            return;
+          }
+
+          if (mode === 'frame-callback') {
             await this.captureWithFrameCallback(
               video,
               duration,
               targetFps,
               captureFrame,
               shouldCancel,
-              totalFrames
-            );
-          } else {
-            logger.info(
-              'conversion',
-              'WebCodecs decoder: frame-callback not supported, using seek fallback',
-              {}
-            );
-            effectiveCaptureMode = 'seek';
-            maxTotalDecodeMs = computeMaxTotalDecodeMs({
-              captureMode: effectiveCaptureMode,
               totalFrames,
-              baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
-            });
-            await this.captureWithSeeking(
-              video,
-              duration,
-              targetFps,
-              captureFrame,
-              shouldCancel,
-              totalFrames
+              withCodecHint ? codec : undefined
             );
+            return;
           }
-        }
-      } else if (supportsFrameCallback) {
-        effectiveCaptureMode = 'frame-callback';
-        maxTotalDecodeMs = computeMaxTotalDecodeMs({
-          captureMode: effectiveCaptureMode,
-          totalFrames,
-          baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
-        });
-        await this.captureWithFrameCallback(
-          video,
-          duration,
-          targetFps,
-          captureFrame,
-          shouldCancel,
-          totalFrames,
-          codec
-        );
-      } else {
-        effectiveCaptureMode = 'seek';
-        maxTotalDecodeMs = computeMaxTotalDecodeMs({
-          captureMode: effectiveCaptureMode,
-          totalFrames,
-          baseMaxTotalDecodeMs: FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS,
-        });
-        await this.captureWithSeeking(
-          video,
-          duration,
-          targetFps,
-          captureFrame,
-          shouldCancel,
-          totalFrames,
-          codec
-        );
-      }
+
+          await this.captureWithSeeking(
+            video,
+            duration,
+            targetFps,
+            captureFrame,
+            shouldCancel,
+            totalFrames,
+            withCodecHint ? codec : undefined
+          );
+        },
+      });
 
       return {
         frameFiles,
