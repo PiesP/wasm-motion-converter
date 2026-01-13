@@ -6,6 +6,9 @@ import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
 
+import { captureWithFrameCallback as captureWithFrameCallbackMode } from '@services/webcodecs/decoder/capture-modes/frame-callback-capture';
+import { captureWithSeeking as captureWithSeekingMode } from '@services/webcodecs/decoder/capture-modes/seek-capture';
+import { captureWithTrackProcessor as captureWithTrackProcessorMode } from '@services/webcodecs/decoder/capture-modes/track-processor-capture';
 import { canvasToBlob, createCanvas } from '@services/webcodecs/decoder/canvas';
 import { waitForEvent } from '@services/webcodecs/decoder/wait-for-event';
 import {
@@ -126,22 +129,6 @@ export interface WebCodecsDecodeResult {
  * Reduced from 3 to 2 for faster AV1 codec fallback detection
  */
 const MAX_CONSECUTIVE_EMPTY_FRAMES = 2;
-
-/**
- * If requestVideoFrameCallback produces no callbacks within this window,
- * abort the realtime capture attempt so callers can fall back quickly.
- */
-const FRAME_CALLBACK_FIRST_FRAME_TIMEOUT_MS = 1500;
-
-/**
- * If playback advances but requestVideoFrameCallback under-produces frames
- * relative to the requested sampling rate, abort quickly and let callers
- * fall back to seek capture.
- */
-const FRAME_CALLBACK_LAG_CHECK_INTERVAL_MS = 250;
-const FRAME_CALLBACK_LAG_MIN_MEDIA_ADVANCE_SECONDS = 0.75;
-const FRAME_CALLBACK_LAG_MIN_EXPECTED_FRAMES = 8;
-const FRAME_CALLBACK_LAG_MAX_CAPTURED_FRAMES = 1;
 
 /**
  * Format frame filename
@@ -842,250 +829,33 @@ export class WebCodecsDecoderService {
     maxFrames?: number,
     codec?: string
   ): Promise<void> {
-    const start = Date.now();
-    try {
-      await video.play();
-    } catch (error) {
-      logger.warn('conversion', 'Autoplay blocked, falling back to seek capture', {
-        error: getErrorMessage(error),
-      });
-      await this.captureWithSeeking(
-        video,
-        duration,
-        targetFps,
-        captureFrame,
-        shouldCancel,
-        maxFrames,
-        codec
-      );
-      return;
-    }
-
-    const frameInterval = 1 / targetFps;
-    const totalFrames =
-      maxFrames && maxFrames > 0
-        ? Math.max(1, Math.min(maxFrames, Math.ceil(duration * targetFps)))
-        : Math.max(1, Math.ceil(duration * targetFps));
-    const epsilon = 0.001;
-    // IMPORTANT: Keep sampling schedule stable.
-    // Using captureTimestamp + frameInterval accumulates jitter (drift) and can cause
-    // uneven frame selection for complex codecs and downsampled captures.
-    // We instead anchor the schedule to t=0 and compute thresholds from the frame index.
-    let nextFrameTime = 0;
-    let frameIndex = 0;
-
-    await new Promise<void>((resolve, reject) => {
-      let finished = false;
-      let stallTimer: ReturnType<typeof setTimeout> | null = null;
-      let firstFrameTimer: ReturnType<typeof setTimeout> | null = null;
-      let lagMonitorTimer: ReturnType<typeof setInterval> | null = null;
-
-      const clearStallTimer = () => {
-        if (stallTimer) {
-          clearTimeout(stallTimer);
-          stallTimer = null;
-        }
-      };
-
-      const clearFirstFrameTimer = () => {
-        if (firstFrameTimer) {
-          clearTimeout(firstFrameTimer);
-          firstFrameTimer = null;
-        }
-      };
-
-      const clearLagMonitor = () => {
-        if (lagMonitorTimer) {
-          clearInterval(lagMonitorTimer);
-          lagMonitorTimer = null;
-        }
-      };
-
-      const scheduleStallTimer = () => {
-        clearStallTimer();
-        stallTimer = setTimeout(() => {
-          if (finished) {
-            return;
-          }
-          finished = true;
-          clearFirstFrameTimer();
-          clearLagMonitor();
-          reject(new Error('WebCodecs frame capture stalled.'));
-        }, FFMPEG_INTERNALS.WEBCODECS.FRAME_STALL_TIMEOUT_MS);
-      };
-
-      const scheduleFirstFrameTimer = () => {
-        clearFirstFrameTimer();
-        firstFrameTimer = setTimeout(() => {
-          if (finished) {
-            return;
-          }
-          if (frameIndex > 0) {
-            return;
-          }
-
-          logger.warn(
-            'conversion',
-            'WebCodecs frame-callback produced no frames quickly; aborting to allow fallback',
-            {
-              timeoutMs: FRAME_CALLBACK_FIRST_FRAME_TIMEOUT_MS,
-              durationSeconds: duration,
-              targetFps,
-              totalFrames,
-            }
-          );
-
-          try {
-            video.pause();
-          } catch {
-            // Non-fatal.
-          }
-
-          finalize();
-        }, FRAME_CALLBACK_FIRST_FRAME_TIMEOUT_MS);
-      };
-
-      const startLagMonitor = () => {
-        clearLagMonitor();
-        lagMonitorTimer = setInterval(() => {
-          if (finished) {
-            return;
-          }
-
-          // Only bail out when playback is clearly advancing but rVFC isn't producing frames.
-          const mediaTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-          if (mediaTime < FRAME_CALLBACK_LAG_MIN_MEDIA_ADVANCE_SECONDS) {
-            return;
-          }
-
-          const expectedFrames = Math.floor(mediaTime * targetFps);
-          const isLaggingBadly =
-            expectedFrames >= FRAME_CALLBACK_LAG_MIN_EXPECTED_FRAMES &&
-            frameIndex <= FRAME_CALLBACK_LAG_MAX_CAPTURED_FRAMES;
-
-          if (!isLaggingBadly) {
-            return;
-          }
-
-          logger.warn(
-            'conversion',
-            'WebCodecs frame-callback is lagging far behind playback; aborting to allow fallback',
-            {
-              mediaTimeSeconds: mediaTime,
-              targetFps,
-              expectedFrames,
-              capturedFrames: frameIndex,
-              intervalMs: FRAME_CALLBACK_LAG_CHECK_INTERVAL_MS,
-            }
-          );
-
-          try {
-            video.pause();
-          } catch {
-            // Non-fatal.
-          }
-
-          finalize();
-        }, FRAME_CALLBACK_LAG_CHECK_INTERVAL_MS);
-      };
-
-      const finalize = () => {
-        if (finished) {
-          return;
-        }
-        finished = true;
-        clearStallTimer();
-        clearFirstFrameTimer();
-        clearLagMonitor();
-        video.removeEventListener('ended', handleEnded);
-        video.removeEventListener('error', handleError);
-        resolve();
-      };
-
-      const handleEnded = () => {
-        finalize();
-      };
-
-      const handleError = () => {
-        if (finished) {
-          return;
-        }
-        finished = true;
-        clearStallTimer();
-        clearFirstFrameTimer();
-        clearLagMonitor();
-        reject(new Error('WebCodecs video decode error.'));
-      };
-
-      video.addEventListener('ended', handleEnded, { once: true });
-      video.addEventListener('error', handleError, { once: true });
-      scheduleStallTimer();
-      scheduleFirstFrameTimer();
-      startLagMonitor();
-
-      const handleFrame = async (
-        _now: number,
-        metadata: VideoFrameCallbackMetadata
-      ): Promise<void> => {
-        try {
-          if (finished) {
-            return;
-          }
-          if (shouldCancel?.()) {
-            finished = true;
-            clearFirstFrameTimer();
-            clearLagMonitor();
-            reject(new Error('Conversion cancelled by user'));
-            return;
-          }
-
-          // If rVFC is working, we'll see frames very quickly.
-          // Once we observe the first frame, stop the bailout timer.
-          if (frameIndex === 0) {
-            clearFirstFrameTimer();
-          }
-
-          const mediaTime = metadata.mediaTime ?? video.currentTime;
-          const shouldCapture = frameIndex === 0 || mediaTime + epsilon >= nextFrameTime;
-
-          if (shouldCapture) {
-            const captureTimestamp = Math.max(0, mediaTime);
-            await captureFrame(frameIndex, captureTimestamp);
-            frameIndex += 1;
-            nextFrameTime = frameIndex * frameInterval;
-            scheduleStallTimer();
-          }
-
-          if (frameIndex >= totalFrames || mediaTime + epsilon >= duration || video.ended) {
-            finalize();
-            return;
-          }
-
-          video.requestVideoFrameCallback(handleFrame);
-        } catch (error) {
-          if (finished) {
-            return;
-          }
-          finished = true;
-          clearStallTimer();
-          clearFirstFrameTimer();
-          clearLagMonitor();
-          reject(error);
-        }
-      };
-
-      video.requestVideoFrameCallback(handleFrame);
+    await captureWithFrameCallbackMode({
+      video,
+      duration,
+      targetFps,
+      captureFrame,
+      shouldCancel,
+      maxFrames,
+      codec,
+      captureWithSeeking: (
+        targetVideo,
+        targetDuration,
+        fps,
+        onCapture,
+        cancel,
+        frameLimit,
+        targetCodec
+      ) =>
+        this.captureWithSeeking(
+          targetVideo,
+          targetDuration,
+          fps,
+          onCapture,
+          cancel,
+          frameLimit,
+          targetCodec
+        ),
     });
-
-    logger.info(
-      'conversion',
-      `WebCodecs frame-callback capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}`,
-      {
-        capturedFrames: frameIndex,
-        totalFrames,
-        elapsedMs: Date.now() - start,
-      }
-    );
   }
 
   /**
@@ -1110,125 +880,14 @@ export class WebCodecsDecoderService {
     shouldCancel?: () => boolean,
     maxFrames?: number
   ): Promise<void> {
-    if (
-      typeof MediaStreamTrackProcessor === 'undefined' ||
-      typeof (video as unknown as Record<string, unknown>).captureStream !== 'function'
-    ) {
-      throw new Error('WebCodecs track processor is not available in this browser.');
-    }
-
-    try {
-      await video.play();
-    } catch (error) {
-      logger.warn('conversion', 'Autoplay blocked for track capture', {
-        error: getErrorMessage(error),
-      });
-      throw error;
-    }
-
-    const stream = (video as unknown as { captureStream(): MediaStream }).captureStream();
-    const [track] = stream.getVideoTracks();
-    if (!track) {
-      throw new Error('No video track available for WebCodecs capture.');
-    }
-
-    const processor = new MediaStreamTrackProcessor({ track });
-    const reader = processor.readable.getReader();
-    const frameIntervalUs = 1_000_000 / targetFps;
-    const totalFrames =
-      maxFrames && maxFrames > 0
-        ? Math.max(1, Math.min(maxFrames, Math.ceil(duration * targetFps)))
-        : Math.max(1, Math.ceil(duration * targetFps));
-    const epsilonUs = 1_000;
-    // TrackProcessor frame timestamps may start with a non-zero offset.
-    // Anchor the sampling schedule to the first observed timestamp to avoid
-    // accidental oversampling (capturing too many frames too fast) when the
-    // initial timestamp is far from 0.
-    let baseTimestampUs: number | null = null;
-    let nextFrameTimeUs = 0;
-    let frameIndex = 0;
-    const startDecodeTime = Date.now();
-
-    const readFrame = async (): Promise<ReadableStreamReadResult<VideoFrame>> => {
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      try {
-        return await Promise.race([
-          reader.read(),
-          new Promise<ReadableStreamReadResult<VideoFrame>>((_, reject) => {
-            timeoutId = setTimeout(() => {
-              reject(new Error('WebCodecs track capture stalled.'));
-            }, FFMPEG_INTERNALS.WEBCODECS.FRAME_STALL_TIMEOUT_MS);
-          }),
-        ]);
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
-    };
-
-    try {
-      while (frameIndex < totalFrames) {
-        if (shouldCancel?.()) {
-          throw new Error('Conversion cancelled by user');
-        }
-
-        const elapsed = Date.now() - startDecodeTime;
-        if (elapsed > FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS) {
-          throw new Error(
-            `WebCodecs decode exceeded ${FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS}ms timeout at frame ${frameIndex}. ` +
-              'Codec incompatibility detected. Falling back to FFmpeg.'
-          );
-        }
-
-        const { value: frame, done } = await readFrame();
-        if (done || !frame) {
-          break;
-        }
-
-        try {
-          const timestampUs =
-            typeof frame.timestamp === 'number'
-              ? frame.timestamp
-              : Math.round(video.currentTime * 1_000_000);
-
-          if (baseTimestampUs === null) {
-            baseTimestampUs = timestampUs;
-            nextFrameTimeUs = baseTimestampUs;
-          }
-
-          const shouldCapture = frameIndex === 0 || timestampUs + epsilonUs >= nextFrameTimeUs;
-
-          if (shouldCapture) {
-            const captureTimestampSeconds = Math.max(0, timestampUs / 1_000_000);
-            await captureFrame(frameIndex, captureTimestampSeconds);
-            frameIndex += 1;
-            nextFrameTimeUs = (baseTimestampUs ?? 0) + frameIndex * frameIntervalUs;
-          }
-
-          if (timestampUs / 1_000_000 >= duration) {
-            break;
-          }
-        } finally {
-          frame.close();
-        }
-      }
-    } finally {
-      reader.releaseLock();
-      track.stop();
-      video.pause();
-      logger.info(
-        'conversion',
-        `WebCodecs track capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}, elapsedMs=${
-          Date.now() - startDecodeTime
-        }`,
-        {
-          capturedFrames: frameIndex,
-          totalFrames,
-          elapsedMs: Date.now() - startDecodeTime,
-        }
-      );
-    }
+    await captureWithTrackProcessorMode({
+      video,
+      duration,
+      targetFps,
+      captureFrame,
+      shouldCancel,
+      maxFrames,
+    });
   }
 
   /**
@@ -1254,107 +913,17 @@ export class WebCodecsDecoderService {
     maxFrames?: number,
     codec?: string
   ): Promise<void> {
-    const start = Date.now();
-    video.pause();
-
-    // Calculate codec-aware seek timeout
-    const seekTimeout = this.getSeekTimeoutForCodec(codec);
-
-    // Fast extraction for single-frame formats (WebP)
-    // Seek to a representative frame (25% into video or middle) instead of first frame
-    if (maxFrames === 1) {
-      if (shouldCancel?.()) {
-        throw new Error('Conversion cancelled by user');
-      }
-
-      // Choose representative frame: 25% duration mark, clamped to valid range
-      // This provides better representation than first frame (often black/fade-in)
-      const epsilon = 0.001;
-      const representativeTime = Math.min(duration - epsilon, Math.max(epsilon, duration * 0.25));
-
-      logger.info('conversion', 'Fast single-frame extraction', {
-        duration,
-        targetTime: representativeTime,
-        position: '25%',
-      });
-
-      await this.seekTo(video, representativeTime, seekTimeout);
-      await captureFrame(0, representativeTime);
-      return;
-    }
-
-    // Standard multi-frame extraction
-    let frameInterval = 1 / targetFps;
-    let totalFrames =
-      maxFrames && maxFrames > 0
-        ? Math.max(1, Math.min(maxFrames, Math.ceil(duration * targetFps)))
-        : Math.max(1, Math.ceil(duration * targetFps));
-    const epsilon = 0.001;
-
-    // Dynamic FPS downshift: measure seek performance and adjust if too slow
-    const {
-      TIMING_SAMPLE_SIZE,
-      SLOW_SEEK_THRESHOLD_MS,
-      FPS_DOWNSHIFT_FACTOR,
-      MIN_FPS_AFTER_DOWNSHIFT,
-    } = FFMPEG_INTERNALS.WEBCODECS.SEEK_PERFORMANCE;
-
-    const seekTimings: number[] = [];
-    let adjustedFps = targetFps;
-
-    for (let index = 0; index < totalFrames; index += 1) {
-      if (shouldCancel?.()) {
-        throw new Error('Conversion cancelled by user');
-      }
-
-      // Measure seek performance during warmup phase
-      const seekStart = Date.now();
-      const targetTime = Math.min(duration - epsilon, index * frameInterval);
-      await this.seekTo(video, targetTime, seekTimeout);
-      const seekElapsed = Date.now() - seekStart;
-
-      // Collect timing data during warmup phase
-      if (index < TIMING_SAMPLE_SIZE) {
-        seekTimings.push(seekElapsed);
-
-        // After warmup, check if FPS downshift is needed
-        if (index === TIMING_SAMPLE_SIZE - 1) {
-          const avgSeekTime = seekTimings.reduce((a, b) => a + b) / seekTimings.length;
-
-          if (avgSeekTime > SLOW_SEEK_THRESHOLD_MS) {
-            // Slow seeks detected, reduce FPS
-            adjustedFps = Math.max(
-              MIN_FPS_AFTER_DOWNSHIFT,
-              Math.ceil(targetFps * FPS_DOWNSHIFT_FACTOR)
-            );
-            frameInterval = 1 / adjustedFps;
-            const newTotalFrames = Math.ceil(duration * adjustedFps);
-
-            logger.warn('conversion', 'Slow seek detected, reducing FPS', {
-              avgSeekTimeMs: avgSeekTime.toFixed(1),
-              originalFps: targetFps,
-              adjustedFps,
-              originalFrames: totalFrames,
-              newFrames: newTotalFrames,
-            });
-
-            totalFrames = newTotalFrames;
-          }
-        }
-      }
-
-      await captureFrame(index, Math.min(duration - epsilon, index * frameInterval));
-    }
-
-    logger.info(
-      'conversion',
-      `WebCodecs seek-based capture completed: capturedFrames=${totalFrames}, totalFrames=${totalFrames}`,
-      {
-        capturedFrames: totalFrames,
-        totalFrames,
-        elapsedMs: Date.now() - start,
-      }
-    );
+    await captureWithSeekingMode({
+      video,
+      duration,
+      targetFps,
+      captureFrame,
+      shouldCancel,
+      maxFrames,
+      codec,
+      getSeekTimeoutForCodec: (targetCodec) => this.getSeekTimeoutForCodec(targetCodec),
+      seekTo: (targetVideo, time, timeoutMs) => this.seekTo(targetVideo, time, timeoutMs),
+    });
   }
 
   /**
