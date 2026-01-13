@@ -1,6 +1,6 @@
 import type { FFmpeg } from '@ffmpeg/ffmpeg';
 
-import { FFMPEG_CORE_BASE_URLS, TIMEOUT_FFMPEG_INIT } from '@utils/constants';
+import { TIMEOUT_FFMPEG_INIT } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { performanceTracker } from '@utils/performance-tracker';
@@ -41,46 +41,24 @@ export async function initializeFFmpegRuntime(
   };
 
   const resolveFFmpegAssets = async (): Promise<[string, string, string]> => {
-    let lastError: unknown;
+    callbacks.reportStatus('Downloading FFmpeg assets from CDN...');
 
-    for (const baseUrl of FFMPEG_CORE_BASE_URLS) {
-      try {
-        const hostLabel = (() => {
-          try {
-            return new URL(baseUrl).host;
-          } catch {
-            return baseUrl;
-          }
-        })();
+    performanceTracker.startPhase('ffmpeg-download', { cdn: 'unified-system' });
+    logger.performance('Starting FFmpeg asset download (unified CDN system with 4-CDN cascade)');
 
-        callbacks.reportStatus(`Downloading FFmpeg assets from ${hostLabel}...`);
-
-        performanceTracker.startPhase('ffmpeg-download', { cdn: hostLabel });
-        logger.performance(`Starting FFmpeg asset download from ${hostLabel}`);
-
-        return await Promise.all([
-          loadFFmpegAsset(
-            `${baseUrl}/ffmpeg-core.js`,
-            'text/javascript',
-            'FFmpeg core script'
-          ).then(applyDownloadProgress(10, 'FFmpeg core script downloaded.')),
-          loadFFmpegAsset(
-            `${baseUrl}/ffmpeg-core.wasm`,
-            'application/wasm',
-            'FFmpeg core WASM'
-          ).then(applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')),
-          loadFFmpegAsset(
-            `${baseUrl}/ffmpeg-core.worker.js`,
-            'text/javascript',
-            'FFmpeg worker'
-          ).then(applyDownloadProgress(10, 'FFmpeg worker downloaded.')),
-        ]);
-      } catch (error) {
-        lastError = error;
-      }
-    }
-
-    throw lastError ?? new Error('Unable to download FFmpeg assets from available CDNs.');
+    // Load all three assets in parallel
+    // Each asset will try all 4 CDN providers (esm.sh → jsdelivr → unpkg → skypack)
+    return await Promise.all([
+      loadFFmpegAsset('ffmpeg-core.js', 'text/javascript', 'FFmpeg core script').then(
+        applyDownloadProgress(10, 'FFmpeg core script downloaded.')
+      ),
+      loadFFmpegAsset('ffmpeg-core.wasm', 'application/wasm', 'FFmpeg core WASM').then(
+        applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')
+      ),
+      loadFFmpegAsset('ffmpeg-core.worker.js', 'text/javascript', 'FFmpeg worker').then(
+        applyDownloadProgress(10, 'FFmpeg worker downloaded.')
+      ),
+    ]);
   };
 
   const slowNetworkTimer =

@@ -23,7 +23,6 @@ import ScaleSelector from '@components/ScaleSelector';
 import ThemeToggle from '@components/ThemeToggle';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
-import { ffmpegService } from '@services/ffmpeg-service';
 import {
   getConversionAutoSelectionDebug,
   getConversionPhaseTimingsDebug,
@@ -32,6 +31,7 @@ import { extendedCapabilityService } from '@services/video-pipeline/extended-cap
 import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
 import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
 import { conversionMetricsService } from '@services/orchestration/conversion-metrics-service';
+import { startPrefetch } from '@services/cdn/prefetch-service';
 import {
   appState,
   environmentSupported,
@@ -126,8 +126,9 @@ const App: Component = () => {
    *
    * @remarks
    * - Detects SharedArrayBuffer and cross-origin isolation support
-   * - Checks network speed and prefetches FFmpeg assets if on 4G
+   * - Prefetches FFmpeg assets using unified CDN prefetch service
    * - Uses idle scheduling to avoid blocking initial render
+   * - Connection-aware prefetching (WiFi/4G only)
    */
   onMount(() => {
     const isSupported = typeof SharedArrayBuffer !== 'undefined' && crossOriginIsolated === true;
@@ -138,18 +139,15 @@ const App: Component = () => {
       logger.info('general', 'Hardware profile changed or first run, cache invalidated');
     }
 
-    const connection = (navigator as Navigator & { connection?: { effectiveType?: string } })
-      .connection;
-    const isFastNetwork = !connection || connection.effectiveType === '4g';
-    if (isFastNetwork) {
-      runIdle(() => {
-        void ffmpegService.prefetchCoreAssets().catch((error) => {
-          logger.debug('prefetch', 'FFmpeg prefetch skipped', {
-            error: error instanceof Error ? error.message : String(error),
-          });
+    // Start FFmpeg prefetch with unified CDN service
+    // Automatically detects connection type and only prefetches on WiFi/4G
+    runIdle(() => {
+      void startPrefetch({ delay: 5000 }).catch((error) => {
+        logger.debug('prefetch', 'FFmpeg prefetch skipped or failed', {
+          error: error instanceof Error ? error.message : String(error),
         });
       });
-    }
+    });
 
     // Extended capability detection (idle-scheduled, non-blocking)
     runIdle(async () => {

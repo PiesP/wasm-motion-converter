@@ -16,6 +16,30 @@ declare module 'virtual:cdn-deps' {
   export const ESM_SH_TARGET: string;
 
   /**
+   * CDN provider configuration interface
+   */
+  export interface CDNProvider {
+    name: string;
+    hostname: string;
+    baseUrl: string;
+    priority: number;
+    timeout: number;
+    enabled: boolean;
+  }
+
+  /**
+   * Unified CDN provider configuration (matches cdn-config.ts)
+   * Used for runtime CDN operations and debugging
+   */
+  export const CDN_PROVIDERS: CDNProvider[];
+
+  /**
+   * Gets all enabled CDN providers
+   * @returns Array of enabled CDN providers
+   */
+  export function getCDNProviders(): CDNProvider[];
+
+  /**
    * Builds an esm.sh module URL for a runtime dependency.
    *
    * @example

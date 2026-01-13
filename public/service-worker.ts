@@ -50,14 +50,30 @@ const CACHE_NAMES = {
 const ALL_CACHE_NAMES = Object.values(CACHE_NAMES);
 
 /**
+ * CDN provider configuration aligned with unified system
+ */
+interface CDNProvider {
+  name: string;
+  hostname: string;
+  priority: number;
+  healthScore: number;
+}
+
+/**
+ * CDN providers with default configuration
+ * Health scores are loaded dynamically from localStorage
+ */
+const CDN_PROVIDERS: CDNProvider[] = [
+  { name: "esm.sh", hostname: "esm.sh", priority: 1, healthScore: 100 },
+  { name: "jsdelivr", hostname: "cdn.jsdelivr.net", priority: 2, healthScore: 100 },
+  { name: "unpkg", hostname: "unpkg.com", priority: 3, healthScore: 100 },
+  { name: "skypack", hostname: "cdn.skypack.dev", priority: 4, healthScore: 100 },
+];
+
+/**
  * CDN domains to intercept and cache
  */
-const CDN_DOMAINS = [
-  "esm.sh",
-  "cdn.jsdelivr.net",
-  "unpkg.com",
-  "cdn.skypack.dev",
-] as const;
+const CDN_DOMAINS = CDN_PROVIDERS.map((p) => p.hostname);
 
 /**
  * SRI manifest structure matching public/cdn-integrity.json
@@ -191,6 +207,145 @@ function getExpectedIntegrity(
   }
 
   return null;
+}
+
+/**
+ * Health tracking data structure (matches cdn-health-tracker.ts)
+ */
+interface HealthMetric {
+  hostname: string;
+  successCount: number;
+  failureCount: number;
+  totalCount: number;
+  successRate: number;
+  lastUpdated: number;
+}
+
+interface HealthTrackingData {
+  version: number;
+  metrics: Record<string, HealthMetric>;
+  createdAt: number;
+}
+
+/**
+ * Loads health tracking data from localStorage
+ * Returns health scores for all CDN providers
+ *
+ * @returns Map of hostname to health score (0-100)
+ */
+function loadHealthScores(): Map<string, number> {
+  const scores = new Map<string, number>();
+
+  try {
+    const stored = localStorage.getItem("cdn_health_tracking");
+    if (!stored) return scores;
+
+    const data = JSON.parse(stored) as HealthTrackingData;
+
+    // Check TTL (7 days)
+    const age = Date.now() - data.createdAt;
+    const TTL_MS = 7 * 24 * 60 * 60 * 1000;
+    if (age > TTL_MS) {
+      return scores; // Expired data
+    }
+
+    // Extract health scores from metrics
+    for (const [hostname, metric] of Object.entries(data.metrics)) {
+      // Convert success rate to health score (0-100)
+      const healthScore = Math.round(metric.successRate * 100);
+      scores.set(hostname, healthScore);
+    }
+
+    console.log(`[SW ${SW_VERSION}] Loaded health scores:`, Object.fromEntries(scores));
+  } catch (error) {
+    console.warn(`[SW ${SW_VERSION}] Failed to load health scores:`, error);
+  }
+
+  return scores;
+}
+
+/**
+ * Updates health score for a CDN provider in localStorage
+ * This is a simplified version - full tracking is done by cdn-health-tracker.ts
+ *
+ * @param hostname - CDN hostname
+ * @param success - Whether the request succeeded
+ */
+function updateHealthScore(hostname: string, success: boolean): void {
+  try {
+    const stored = localStorage.getItem("cdn_health_tracking");
+    let data: HealthTrackingData;
+
+    if (stored) {
+      data = JSON.parse(stored) as HealthTrackingData;
+    } else {
+      data = {
+        version: 1,
+        metrics: {},
+        createdAt: Date.now(),
+      };
+    }
+
+    // Get or create metric
+    if (!data.metrics[hostname]) {
+      data.metrics[hostname] = {
+        hostname,
+        successCount: 0,
+        failureCount: 0,
+        totalCount: 0,
+        successRate: 1.0,
+        lastUpdated: Date.now(),
+      };
+    }
+
+    const metric = data.metrics[hostname];
+
+    // Update counts
+    if (success) {
+      metric.successCount++;
+    } else {
+      metric.failureCount++;
+    }
+    metric.totalCount = metric.successCount + metric.failureCount;
+    metric.successRate = metric.totalCount > 0 ? metric.successCount / metric.totalCount : 1.0;
+    metric.lastUpdated = Date.now();
+
+    // Save back to localStorage
+    localStorage.setItem("cdn_health_tracking", JSON.stringify(data));
+  } catch (error) {
+    console.warn(`[SW ${SW_VERSION}] Failed to update health score:`, error);
+  }
+}
+
+/**
+ * Gets optimally ordered CDN providers based on health scores
+ * Providers are sorted by health score (descending), then by priority
+ *
+ * @returns Array of CDN providers sorted by health score
+ */
+function getOrderedProviders(): CDNProvider[] {
+  const healthScores = loadHealthScores();
+
+  // Clone providers and update health scores
+  const providers = CDN_PROVIDERS.map((p) => ({
+    ...p,
+    healthScore: healthScores.get(p.hostname) ?? p.healthScore,
+  }));
+
+  // Sort by health score (descending), then by priority (ascending)
+  providers.sort((a, b) => {
+    if (a.healthScore !== b.healthScore) {
+      return b.healthScore - a.healthScore; // Higher score first
+    }
+    return a.priority - b.priority; // Lower priority number first
+  });
+
+  console.log(
+    `[SW ${SW_VERSION}] CDN order:`,
+    providers.map((p) => `${p.name} (${p.healthScore})`)
+  );
+
+  return providers;
 }
 
 /**
@@ -452,399 +607,351 @@ function logCDNMetrics(metrics: CDNMetrics): void {
 }
 
 /**
- * Fetches from CDN with multi-provider cascade fallback and SRI verification
- * Tries esm.sh → jsdelivr → unpkg → skypack in order
- * Verifies integrity of each response before returning
- * Logs performance metrics for each attempt
+ * Converts URL to a specific CDN provider
  *
- * @param originalUrl - Original CDN URL
- * @param timeout - Timeout per CDN attempt (default: 15s)
- * @returns Response from successful CDN with valid integrity or throws if all fail
+ * @param originalUrl - Original URL (usually esm.sh)
+ * @param targetProvider - Target CDN provider name
+ * @returns Converted URL or null if conversion not possible
  */
-async function fetchWithCascade(
-  originalUrl: string,
-  timeout = 15000
-): Promise<Response> {
-  const errors: Array<{ cdn: string; error: string }> = [];
+function convertToCDN(originalUrl: string, targetProvider: string): string | null {
+  switch (targetProvider) {
+    case "esm.sh":
+      return originalUrl; // Already esm.sh format
+    case "jsdelivr":
+      return CDN_CONVERTERS.esmToJsdelivr(originalUrl);
+    case "unpkg":
+      return CDN_CONVERTERS.esmToUnpkg(originalUrl);
+    case "skypack":
+      return CDN_CONVERTERS.esmToSkypack(originalUrl);
+    default:
+      return null;
+  }
+}
 
-  // Load SRI manifest for integrity verification
-  const manifest = await loadSRIManifest();
-
-  // Try original URL (esm.sh)
+/**
+ * Attempts to fetch from a single CDN provider with SRI verification
+ *
+ * @param url - CDN URL to fetch
+ * @param provider - CDN provider info
+ * @param timeout - Timeout in milliseconds
+ * @param manifest - SRI manifest for integrity verification
+ * @returns Response if successful, null if failed
+ */
+async function tryFetchFromCDN(
+  url: string,
+  provider: CDNProvider,
+  timeout: number,
+  manifest: SRIManifest | null
+): Promise<Response | null> {
   const startTime = performance.now();
+
   try {
-    console.log(`[SW ${SW_VERSION}] Trying esm.sh: ${originalUrl}`);
-    const response = await fetchWithTimeout(new Request(originalUrl), timeout);
+    console.log(`[SW ${SW_VERSION}] Trying ${provider.name}: ${url}`);
+    const response = await fetchWithTimeout(new Request(url), timeout);
     const latency = performance.now() - startTime;
 
-    if (response.ok) {
-      // Verify integrity if manifest is available
-      if (manifest) {
-        const expectedIntegrity = getExpectedIntegrity(originalUrl, manifest);
-        if (expectedIntegrity) {
-          const isValid = await verifyIntegrity(response, expectedIntegrity);
-          if (!isValid) {
-            console.error(
-              `[SW ${SW_VERSION}] ✗ Integrity verification failed for esm.sh, trying next CDN`
-            );
-            logCDNMetrics({
-              url: originalUrl,
-              cdnName: "esm.sh",
-              latency,
-              success: false,
-              status: response.status,
-              error: "Integrity verification failed",
-              timestamp: Date.now(),
-            });
-            errors.push({ cdn: "esm.sh", error: "Integrity verification failed" });
-            // Continue to next CDN instead of returning
-          } else {
-            console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for esm.sh`);
-            logCDNMetrics({
-              url: originalUrl,
-              cdnName: "esm.sh",
-              latency,
-              success: true,
-              status: response.status,
-              timestamp: Date.now(),
-            });
-            return response;
-          }
-        } else {
-          // No SRI hash found, proceed without verification (warn but don't fail)
-          console.warn(
-            `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${originalUrl}, proceeding without verification`
-          );
-          logCDNMetrics({
-            url: originalUrl,
-            cdnName: "esm.sh",
-            latency,
-            success: true,
-            status: response.status,
-            timestamp: Date.now(),
-          });
-          return response;
-        }
-      } else {
-        // Manifest not available, proceed without verification
-        console.warn(
-          `[SW ${SW_VERSION}] ⚠ SRI manifest not loaded, proceeding without verification`
-        );
-        logCDNMetrics({
-          url: originalUrl,
-          cdnName: "esm.sh",
-          latency,
-          success: true,
-          status: response.status,
-          timestamp: Date.now(),
-        });
-        return response;
-      }
+    if (!response.ok) {
+      logCDNMetrics({
+        url,
+        cdnName: provider.name,
+        latency,
+        success: false,
+        status: response.status,
+        error: `HTTP ${response.status}`,
+        timestamp: Date.now(),
+      });
+      updateHealthScore(provider.hostname, false);
+      return null;
     }
 
+    // Verify integrity if manifest is available
+    if (manifest) {
+      const expectedIntegrity = getExpectedIntegrity(url, manifest);
+      if (expectedIntegrity) {
+        const isValid = await verifyIntegrity(response, expectedIntegrity);
+        if (!isValid) {
+          console.error(
+            `[SW ${SW_VERSION}] ✗ Integrity verification failed for ${provider.name}`
+          );
+          logCDNMetrics({
+            url,
+            cdnName: provider.name,
+            latency,
+            success: false,
+            status: response.status,
+            error: "Integrity verification failed",
+            timestamp: Date.now(),
+          });
+          updateHealthScore(provider.hostname, false);
+          return null;
+        }
+        console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for ${provider.name}`);
+      } else {
+        console.warn(
+          `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${url}, proceeding without verification`
+        );
+      }
+    } else {
+      console.warn(
+        `[SW ${SW_VERSION}] ⚠ SRI manifest not loaded, proceeding without verification`
+      );
+    }
+
+    // Success
     logCDNMetrics({
-      url: originalUrl,
-      cdnName: "esm.sh",
+      url,
+      cdnName: provider.name,
       latency,
-      success: false,
+      success: true,
       status: response.status,
-      error: `HTTP ${response.status}`,
       timestamp: Date.now(),
     });
-    errors.push({ cdn: "esm.sh", error: `HTTP ${response.status}` });
+    updateHealthScore(provider.hostname, true);
+    return response;
   } catch (error) {
     const latency = performance.now() - startTime;
     logCDNMetrics({
-      url: originalUrl,
-      cdnName: "esm.sh",
+      url,
+      cdnName: provider.name,
       latency,
       success: false,
       error: String(error),
       timestamp: Date.now(),
     });
-    errors.push({ cdn: "esm.sh", error: String(error) });
+    updateHealthScore(provider.hostname, false);
+    return null;
   }
+}
 
-  // Try jsdelivr
-  const jsdelivrUrl = CDN_CONVERTERS.esmToJsdelivr(originalUrl);
-  if (jsdelivrUrl) {
-    const jsdelivrStart = performance.now();
-    try {
-      console.log(`[SW ${SW_VERSION}] Trying jsdelivr: ${jsdelivrUrl}`);
-      const response = await fetchWithTimeout(
-        new Request(jsdelivrUrl),
-        timeout
-      );
-      const latency = performance.now() - jsdelivrStart;
+/**
+ * Connection type detection for adaptive strategy
+ */
+type ConnectionType = "fast" | "medium" | "slow" | "unknown";
 
-      if (response.ok) {
-        // Verify integrity if manifest is available
-        if (manifest) {
-          const expectedIntegrity = getExpectedIntegrity(jsdelivrUrl, manifest);
-          if (expectedIntegrity) {
-            const isValid = await verifyIntegrity(response, expectedIntegrity);
-            if (!isValid) {
-              console.error(
-                `[SW ${SW_VERSION}] ✗ Integrity verification failed for jsdelivr, trying next CDN`
-              );
-              logCDNMetrics({
-                url: jsdelivrUrl,
-                cdnName: "jsdelivr",
-                latency,
-                success: false,
-                status: response.status,
-                error: "Integrity verification failed",
-                timestamp: Date.now(),
-              });
-              errors.push({ cdn: "jsdelivr", error: "Integrity verification failed" });
-              // Continue to next CDN
-            } else {
-              console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for jsdelivr`);
-              logCDNMetrics({
-                url: jsdelivrUrl,
-                cdnName: "jsdelivr",
-                latency,
-                success: true,
-                status: response.status,
-                timestamp: Date.now(),
-              });
-              return response;
-            }
-          } else {
-            console.warn(
-              `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${jsdelivrUrl}, proceeding without verification`
-            );
-            logCDNMetrics({
-              url: jsdelivrUrl,
-              cdnName: "jsdelivr",
-              latency,
-              success: true,
-              status: response.status,
-              timestamp: Date.now(),
-            });
-            return response;
-          }
-        } else {
-          logCDNMetrics({
-            url: jsdelivrUrl,
-            cdnName: "jsdelivr",
-            latency,
-            success: true,
-            status: response.status,
-            timestamp: Date.now(),
-          });
-          return response;
-        }
+/**
+ * NetworkInformation API types (experimental)
+ */
+interface NetworkInformation extends EventTarget {
+  effectiveType?: "4g" | "3g" | "2g" | "slow-2g";
+  downlink?: number;
+  rtt?: number;
+  saveData?: boolean;
+}
+
+interface NavigatorWithConnection extends Navigator {
+  connection?: NetworkInformation;
+}
+
+/**
+ * Detects current network connection type
+ *
+ * @returns Connection type category for strategy selection
+ */
+function detectConnectionType(): ConnectionType {
+  try {
+    const nav = self.navigator as NavigatorWithConnection;
+    const connection = nav.connection;
+
+    if (!connection) {
+      return "unknown";
+    }
+
+    if (connection.saveData) {
+      return "slow";
+    }
+
+    if (connection.effectiveType) {
+      switch (connection.effectiveType) {
+        case "4g":
+          return "fast";
+        case "3g":
+          return "medium";
+        case "2g":
+        case "slow-2g":
+          return "slow";
+      }
+    }
+
+    if (connection.rtt !== undefined) {
+      if (connection.rtt < 100) return "fast";
+      if (connection.rtt < 400) return "medium";
+      return "slow";
+    }
+
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * Calculates adaptive timeout based on connection type
+ *
+ * @param baseTimeout - Base timeout in milliseconds
+ * @param connectionType - Connection type
+ * @returns Adjusted timeout in milliseconds
+ */
+function getAdaptiveTimeout(
+  baseTimeout: number,
+  connectionType: ConnectionType
+): number {
+  switch (connectionType) {
+    case "fast":
+      return baseTimeout; // 15s
+    case "medium":
+      return Math.round(baseTimeout * 1.5); // 22.5s for 3G
+    case "slow":
+      return Math.round(baseTimeout * 2.0); // 30s for 2G
+    default:
+      return baseTimeout;
+  }
+}
+
+/**
+ * Fetches from multiple CDNs in parallel (racing)
+ * Cancels slower requests when first succeeds
+ * Only used on fast connections to avoid bandwidth waste
+ *
+ * @param originalUrl - Original CDN URL
+ * @param providers - CDN providers to race
+ * @param timeout - Timeout per CDN attempt
+ * @param manifest - SRI manifest for verification
+ * @returns Response from fastest successful CDN or null if all fail
+ */
+async function fetchWithRacing(
+  originalUrl: string,
+  providers: CDNProvider[],
+  timeout: number,
+  manifest: SRIManifest | null
+): Promise<Response | null> {
+  // Create abort controllers for each CDN request
+  const controllers = new Map<string, AbortController>();
+
+  try {
+    // Start all CDN fetches in parallel
+    const fetchPromises = providers.map(async (provider) => {
+      const url = convertToCDN(originalUrl, provider.name);
+      if (!url) {
+        return { provider, response: null };
       }
 
-      logCDNMetrics({
-        url: jsdelivrUrl,
-        cdnName: "jsdelivr",
-        latency,
-        success: false,
-        status: response.status,
-        error: `HTTP ${response.status}`,
-        timestamp: Date.now(),
-      });
-      errors.push({ cdn: "jsdelivr", error: `HTTP ${response.status}` });
-    } catch (error) {
-      const latency = performance.now() - jsdelivrStart;
-      logCDNMetrics({
-        url: jsdelivrUrl,
-        cdnName: "jsdelivr",
-        latency,
-        success: false,
-        error: String(error),
-        timestamp: Date.now(),
-      });
-      errors.push({ cdn: "jsdelivr", error: String(error) });
+      const controller = new AbortController();
+      controllers.set(provider.name, controller);
+
+      const response = await tryFetchFromCDN(url, provider, timeout, manifest);
+      return { provider, response };
+    });
+
+    // Race all fetches - first success wins
+    const results = await Promise.allSettled(fetchPromises);
+
+    // Find first successful response
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value.response) {
+        const { provider, response } = result.value;
+
+        // Cancel all other pending requests
+        for (const [name, controller] of controllers.entries()) {
+          if (name !== provider.name) {
+            controller.abort();
+          }
+        }
+
+        console.log(
+          `[SW ${SW_VERSION}] ✓ Parallel racing won by ${provider.name}`
+        );
+        return response;
+      }
     }
+
+    // All failed
+    return null;
+  } catch (error) {
+    console.error(`[SW ${SW_VERSION}] Parallel racing error:`, error);
+    return null;
+  }
+}
+
+/**
+ * Fetches from CDN with multi-provider cascade fallback and SRI verification
+ * Uses dynamic CDN ordering based on health scores
+ * Verifies integrity of each response before returning
+ * Logs performance metrics for each attempt
+ * Supports both sequential cascade and parallel racing strategies
+ *
+ * @param originalUrl - Original CDN URL
+ * @param baseTimeout - Base timeout per CDN attempt (default: 15s)
+ * @param useRacing - Whether to use parallel racing (default: auto-detect)
+ * @returns Response from successful CDN with valid integrity or throws if all fail
+ */
+async function fetchWithCascade(
+  originalUrl: string,
+  baseTimeout = 15000,
+  useRacing?: boolean
+): Promise<Response> {
+  const errors: Array<{ cdn: string; error: string }> = [];
+
+  // Detect connection type for adaptive strategy
+  const connectionType = detectConnectionType();
+  const adaptiveTimeout = getAdaptiveTimeout(baseTimeout, connectionType);
+
+  // Determine strategy: parallel racing on fast connections, sequential otherwise
+  const shouldRace =
+    useRacing !== undefined
+      ? useRacing
+      : connectionType === "fast";
+
+  console.log(
+    `[SW ${SW_VERSION}] CDN strategy: ${shouldRace ? "parallel racing" : "sequential cascade"} ` +
+      `(connection: ${connectionType}, timeout: ${adaptiveTimeout}ms)`
+  );
+
+  // Load SRI manifest for integrity verification
+  const manifest = await loadSRIManifest();
+
+  // Get dynamically ordered providers based on health scores
+  const orderedProviders = getOrderedProviders();
+
+  // Try parallel racing on fast connections
+  if (shouldRace && orderedProviders.length >= 2) {
+    console.log(
+      `[SW ${SW_VERSION}] Racing ${orderedProviders.length} CDNs in parallel...`
+    );
+    const racingResponse = await fetchWithRacing(
+      originalUrl,
+      orderedProviders,
+      adaptiveTimeout,
+      manifest
+    );
+
+    if (racingResponse) {
+      return racingResponse;
+    }
+
+    // Racing failed, fall back to sequential cascade
+    console.warn(
+      `[SW ${SW_VERSION}] Parallel racing failed, falling back to sequential cascade`
+    );
   }
 
-  // Try unpkg
-  const unpkgUrl = CDN_CONVERTERS.esmToUnpkg(originalUrl);
-  if (unpkgUrl) {
-    const unpkgStart = performance.now();
-    try {
-      console.log(`[SW ${SW_VERSION}] Trying unpkg: ${unpkgUrl}`);
-      const response = await fetchWithTimeout(new Request(unpkgUrl), timeout);
-      const latency = performance.now() - unpkgStart;
-
-      if (response.ok) {
-        // Verify integrity if manifest is available
-        if (manifest) {
-          const expectedIntegrity = getExpectedIntegrity(unpkgUrl, manifest);
-          if (expectedIntegrity) {
-            const isValid = await verifyIntegrity(response, expectedIntegrity);
-            if (!isValid) {
-              console.error(
-                `[SW ${SW_VERSION}] ✗ Integrity verification failed for unpkg, trying next CDN`
-              );
-              logCDNMetrics({
-                url: unpkgUrl,
-                cdnName: "unpkg",
-                latency,
-                success: false,
-                status: response.status,
-                error: "Integrity verification failed",
-                timestamp: Date.now(),
-              });
-              errors.push({ cdn: "unpkg", error: "Integrity verification failed" });
-              // Continue to next CDN
-            } else {
-              console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for unpkg`);
-              logCDNMetrics({
-                url: unpkgUrl,
-                cdnName: "unpkg",
-                latency,
-                success: true,
-                status: response.status,
-                timestamp: Date.now(),
-              });
-              return response;
-            }
-          } else {
-            console.warn(
-              `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${unpkgUrl}, proceeding without verification`
-            );
-            logCDNMetrics({
-              url: unpkgUrl,
-              cdnName: "unpkg",
-              latency,
-              success: true,
-              status: response.status,
-              timestamp: Date.now(),
-            });
-            return response;
-          }
-        } else {
-          logCDNMetrics({
-            url: unpkgUrl,
-            cdnName: "unpkg",
-            latency,
-            success: true,
-            status: response.status,
-            timestamp: Date.now(),
-          });
-          return response;
-        }
-      }
-
-      logCDNMetrics({
-        url: unpkgUrl,
-        cdnName: "unpkg",
-        latency,
-        success: false,
-        status: response.status,
-        error: `HTTP ${response.status}`,
-        timestamp: Date.now(),
-      });
-      errors.push({ cdn: "unpkg", error: `HTTP ${response.status}` });
-    } catch (error) {
-      const latency = performance.now() - unpkgStart;
-      logCDNMetrics({
-        url: unpkgUrl,
-        cdnName: "unpkg",
-        latency,
-        success: false,
-        error: String(error),
-        timestamp: Date.now(),
-      });
-      errors.push({ cdn: "unpkg", error: String(error) });
+  // Sequential cascade fallback (or primary strategy on slow connections)
+  for (const provider of orderedProviders) {
+    const url = convertToCDN(originalUrl, provider.name);
+    if (!url) {
+      console.warn(`[SW ${SW_VERSION}] Cannot convert to ${provider.name}, skipping`);
+      continue;
     }
-  }
 
-  // Try skypack
-  const skypackUrl = CDN_CONVERTERS.esmToSkypack(originalUrl);
-  if (skypackUrl) {
-    const skypackStart = performance.now();
-    try {
-      console.log(`[SW ${SW_VERSION}] Trying skypack: ${skypackUrl}`);
-      const response = await fetchWithTimeout(new Request(skypackUrl), timeout);
-      const latency = performance.now() - skypackStart;
-
-      if (response.ok) {
-        // Verify integrity if manifest is available
-        if (manifest) {
-          const expectedIntegrity = getExpectedIntegrity(skypackUrl, manifest);
-          if (expectedIntegrity) {
-            const isValid = await verifyIntegrity(response, expectedIntegrity);
-            if (!isValid) {
-              console.error(
-                `[SW ${SW_VERSION}] ✗ Integrity verification failed for skypack, trying next CDN`
-              );
-              logCDNMetrics({
-                url: skypackUrl,
-                cdnName: "skypack",
-                latency,
-                success: false,
-                status: response.status,
-                error: "Integrity verification failed",
-                timestamp: Date.now(),
-              });
-              errors.push({ cdn: "skypack", error: "Integrity verification failed" });
-              // Continue to next CDN
-            } else {
-              console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for skypack`);
-              logCDNMetrics({
-                url: skypackUrl,
-                cdnName: "skypack",
-                latency,
-                success: true,
-                status: response.status,
-                timestamp: Date.now(),
-              });
-              return response;
-            }
-          } else {
-            console.warn(
-              `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${skypackUrl}, proceeding without verification`
-            );
-            logCDNMetrics({
-              url: skypackUrl,
-              cdnName: "skypack",
-              latency,
-              success: true,
-              status: response.status,
-              timestamp: Date.now(),
-            });
-            return response;
-          }
-        } else {
-          logCDNMetrics({
-            url: skypackUrl,
-            cdnName: "skypack",
-            latency,
-            success: true,
-            status: response.status,
-            timestamp: Date.now(),
-          });
-          return response;
-        }
-      }
-
-      logCDNMetrics({
-        url: skypackUrl,
-        cdnName: "skypack",
-        latency,
-        success: false,
-        status: response.status,
-        error: `HTTP ${response.status}`,
-        timestamp: Date.now(),
-      });
-      errors.push({ cdn: "skypack", error: `HTTP ${response.status}` });
-    } catch (error) {
-      const latency = performance.now() - skypackStart;
-      logCDNMetrics({
-        url: skypackUrl,
-        cdnName: "skypack",
-        latency,
-        success: false,
-        error: String(error),
-        timestamp: Date.now(),
-      });
-      errors.push({ cdn: "skypack", error: String(error) });
+    const response = await tryFetchFromCDN(url, provider, adaptiveTimeout, manifest);
+    if (response) {
+      return response; // Success!
     }
+
+    // Track failure for error summary
+    errors.push({
+      cdn: provider.name,
+      error: "Failed (see metrics above)",
+    });
   }
 
   // All CDNs failed

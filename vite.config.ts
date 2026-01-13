@@ -82,6 +82,25 @@ export const RUNTIME_DEP_VERSIONS = ${JSON.stringify(runtimeDeps, null, 2)};
 export const ESM_SH_BASE_URL = ${JSON.stringify(baseUrl)};
 export const ESM_SH_TARGET = ${JSON.stringify(target)};
 
+/**
+ * Unified CDN provider configuration (matches cdn-config.ts)
+ * Used for runtime CDN operations and debugging
+ */
+export const CDN_PROVIDERS = [
+  { name: 'esm.sh', hostname: 'esm.sh', baseUrl: 'https://esm.sh', priority: 1, timeout: 15000, enabled: true },
+  { name: 'jsdelivr', hostname: 'cdn.jsdelivr.net', baseUrl: 'https://cdn.jsdelivr.net', priority: 2, timeout: 15000, enabled: true },
+  { name: 'unpkg', hostname: 'unpkg.com', baseUrl: 'https://unpkg.com', priority: 3, timeout: 15000, enabled: true },
+  { name: 'skypack', hostname: 'cdn.skypack.dev', baseUrl: 'https://cdn.skypack.dev', priority: 4, timeout: 15000, enabled: true },
+];
+
+/**
+ * Gets all enabled CDN providers
+ * @returns Array of enabled CDN providers
+ */
+export function getCDNProviders() {
+  return CDN_PROVIDERS.filter(p => p.enabled);
+}
+
 function toQuery(params) {
   if (!params) return '';
   const entries = Object.entries(params).filter(([, v]) => v != null && v !== '');
@@ -268,12 +287,20 @@ function importMapPlugin(): Plugin {
         );
       }
 
-      // Create modulepreload hints for critical dependencies (Phase 5)
+      // Create modulepreload hints for critical dependencies (Phase 5 + Sprint 3)
       // Preloads modules during idle time to reduce runtime fetch latency
+      // Expanded from 3 to 10 dependencies for better cold start performance
       const criticalDeps = [
         'solid-js/web', // Most critical - rendering engine
         'solid-js', // Core reactivity
-        'comlink', // Worker communication
+        'solid-js/store', // State management (used in conversion store)
+        'comlink', // Worker communication for FFmpeg
+        '@ffmpeg/ffmpeg', // FFmpeg main library
+        '@ffmpeg/util', // FFmpeg utilities (toBlobURL, etc.)
+        'modern-gif', // GIF encoder
+        '@jsquash/webp', // WebP encoder fallback
+        '@jsquash/png', // PNG encoder
+        'file-type', // File type detection
       ] as const;
 
       const modulePreloadHints = criticalDeps

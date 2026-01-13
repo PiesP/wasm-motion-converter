@@ -2,15 +2,11 @@
 import { toBlobURL } from '@ffmpeg/util';
 
 // Internal imports
-import { FFMPEG_CORE_VERSION, TIMEOUT_FFMPEG_DOWNLOAD } from '@utils/constants';
+import { FFMPEG_CORE_VERSION } from '@utils/constants';
 import { withTimeout } from '@utils/with-timeout';
-
-/**
- * Legacy timeout constant for backward compatibility with external timeout values.
- *
- * Kept here to preserve the exact error message used by the original implementation.
- */
-const DOWNLOAD_TIMEOUT_SECONDS = TIMEOUT_FFMPEG_DOWNLOAD / 1000;
+import { getEnabledProviders } from '@services/cdn/cdn-config';
+import { buildAssetUrl } from '@services/cdn/cdn-url-builder';
+import { recordCdnRequest } from '@services/cdn/cdn-health-tracker';
 
 /**
  * Cache name for FFmpeg core assets with version identifier.
@@ -73,22 +69,71 @@ export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<
 }
 
 /**
- * Load FFmpeg asset with timeout protection.
- * Wraps cacheAwareBlobURL with configurable timeout for reliability.
+ * Load FFmpeg asset with CDN fallback and timeout protection.
+ * Tries all enabled CDN providers in order until one succeeds.
  *
- * @param url - URL to load
+ * @param assetPath - Path to the asset (e.g., "ffmpeg-core.js")
  * @param mimeType - MIME type for blob creation
  * @param label - Human-readable label for error messages
  * @returns Blob URL that can be used to load the asset
  */
 export async function loadFFmpegAsset(
-  url: string,
+  assetPath: string,
   mimeType: string,
   label: string
 ): Promise<string> {
-  return withTimeout(
-    cacheAwareBlobURL(url, mimeType),
-    TIMEOUT_FFMPEG_DOWNLOAD,
-    `Downloading ${label} timed out after ${DOWNLOAD_TIMEOUT_SECONDS} seconds. Please check your network connection and ensure cdn.jsdelivr.net is reachable.`
+  const providers = getEnabledProviders();
+  const errors: Array<{ provider: string; error: string }> = [];
+
+  console.log(`[FFmpeg Asset] Loading ${label} from ${providers.length} CDN providers`);
+
+  for (const provider of providers) {
+    try {
+      // Build URL for this CDN provider
+      const url = buildAssetUrl(
+        provider,
+        '@ffmpeg/core-mt',
+        FFMPEG_CORE_VERSION,
+        `/dist/esm/${assetPath}`
+      );
+
+      console.log(`[FFmpeg Asset] Trying ${provider.name}: ${url}`);
+
+      const startTime = performance.now();
+
+      // Load with timeout
+      const blobUrl = await withTimeout(
+        cacheAwareBlobURL(url, mimeType),
+        provider.timeout,
+        `Timeout after ${provider.timeout / 1000}s`
+      );
+
+      const elapsed = performance.now() - startTime;
+
+      // Record success
+      recordCdnRequest(provider.hostname, true);
+
+      console.log(
+        `[FFmpeg Asset] ✓ ${provider.name}: ${label} loaded successfully (${elapsed.toFixed(0)}ms)`
+      );
+
+      return blobUrl;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      errors.push({ provider: provider.name, error: errorMsg });
+
+      // Record failure
+      recordCdnRequest(provider.hostname, false);
+
+      console.warn(`[FFmpeg Asset] ✗ ${provider.name}: ${label} failed - ${errorMsg}`);
+
+      // Continue to next CDN
+    }
+  }
+
+  // All CDNs failed
+  const errorSummary = errors.map((e) => `${e.provider} (${e.error})`).join(', ');
+  throw new Error(
+    `Failed to download ${label} from all CDN providers. Errors: ${errorSummary}. Please check your network connection.`
   );
 }

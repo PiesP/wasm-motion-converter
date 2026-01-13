@@ -115,6 +115,10 @@ export const FFMPEG_CORE_VERSION = '0.12.6';
 /**
  * CDN URLs for FFmpeg core files (JavaScript, WebAssembly, workers).
  * Uses npm and unpkg mirrors for redundancy and global availability.
+ *
+ * @deprecated Use the unified CDN system from @services/cdn instead.
+ * FFmpeg loading now uses all 4 CDN providers (esm.sh, jsdelivr, unpkg, skypack).
+ * This constant is kept for backward compatibility only.
  */
 export const FFMPEG_CORE_BASE_URLS = [
   `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
