@@ -3,6 +3,10 @@ import { Show } from 'solid-js';
 import { ffmpegService } from '@services/ffmpeg-service';
 import { logger } from '@utils/logger';
 
+type ExportOptions = {
+  includeVerboseFfmpegProgress: boolean;
+};
+
 const formatTimestampForFilename = (date: Date): string => {
   const pad = (value: number) => value.toString().padStart(2, '0');
   const yyyy = date.getFullYear();
@@ -34,7 +38,67 @@ const downloadText = (params: { filename: string; text: string; mimeType?: strin
   }
 };
 
-const buildExportText = (): string => {
+const isNoisyFfmpegProgressStdoutLine = (line: string): boolean => {
+  if (!line.startsWith('[stdout] ')) {
+    return false;
+  }
+
+  // FFmpeg `-progress -` key/value lines are useful for debugging parsers but are extremely noisy.
+  // Example: "[stdout] out_time_ms=2160000".
+  const key = line.slice('[stdout] '.length).split('=')[0]?.trim() ?? '';
+  if (!key) {
+    return false;
+  }
+
+  // Keep this list conservative: only filter the well-known `-progress` fields.
+  const noisyKeys = new Set([
+    'frame',
+    'fps',
+    'stream_0_0_q',
+    'bitrate',
+    'total_size',
+    'out_time_us',
+    'out_time_ms',
+    'out_time',
+    'dup_frames',
+    'drop_frames',
+    'speed',
+    'progress',
+  ]);
+
+  return noisyKeys.has(key);
+};
+
+const filterFfmpegLogsForExport = (
+  logs: string[],
+  options: ExportOptions
+): { logs: string[]; removedCount: number } => {
+  if (options.includeVerboseFfmpegProgress) {
+    return { logs, removedCount: 0 };
+  }
+
+  const filtered: string[] = [];
+  let removedCount = 0;
+
+  for (const line of logs) {
+    // `Aborted()` is often emitted by ffmpeg.wasm after success; we suppress it from export by default.
+    if (line === '[stderr] Aborted()') {
+      removedCount += 1;
+      continue;
+    }
+
+    if (isNoisyFfmpegProgressStdoutLine(line)) {
+      removedCount += 1;
+      continue;
+    }
+
+    filtered.push(line);
+  }
+
+  return { logs: filtered, removedCount };
+};
+
+const buildExportText = (options: ExportOptions): string => {
   const now = new Date();
 
   const envLines: string[] = [];
@@ -66,7 +130,8 @@ const buildExportText = (): string => {
   envLines.push(`SharedArrayBuffer: ${typeof SharedArrayBuffer !== 'undefined'}`);
 
   const appLogs = logger.getRecentLogs();
-  const ffmpegLogs = ffmpegService.getRecentFFmpegLogs();
+  const rawFfmpegLogs = ffmpegService.getRecentFFmpegLogs();
+  const { logs: ffmpegLogs, removedCount } = filterFfmpegLogsForExport(rawFfmpegLogs, options);
 
   const lines: string[] = [];
   lines.push(...envLines);
@@ -75,6 +140,11 @@ const buildExportText = (): string => {
   lines.push(...(appLogs.length > 0 ? appLogs : ['(no app logs captured)']));
   lines.push('');
   lines.push('=== FFmpeg recent logs (ffmpeg core ring buffer) ===');
+  if (!options.includeVerboseFfmpegProgress && removedCount > 0) {
+    lines.push(
+      `note: filtered ${removedCount} noisy FFmpeg progress/stdout lines (Shift-click Export Logs to include verbose output)`
+    );
+  }
   lines.push(...(ffmpegLogs.length > 0 ? ffmpegLogs : ['(no ffmpeg logs captured)']));
   lines.push('');
 
@@ -91,10 +161,11 @@ type ExportLogsButtonProps = {
  * Downloads a clean text file containing recent app logs and the recent FFmpeg ring buffer.
  */
 const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
-  const handleExport = (): void => {
+  const handleExport = (event: MouseEvent): void => {
     try {
-      logger.info('general', 'Exporting logs');
-      const text = buildExportText();
+      const includeVerboseFfmpegProgress = event.shiftKey === true;
+      logger.info('general', 'Exporting logs', { includeVerboseFfmpegProgress });
+      const text = buildExportText({ includeVerboseFfmpegProgress });
       const filename = `motion-converter-logs-${formatTimestampForFilename(new Date())}.log`;
       downloadText({ filename, text });
     } catch (error) {
@@ -112,7 +183,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
           'p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900'
         }
         aria-label="Export logs"
-        title="Export logs"
+        title="Export logs (Shift-click for verbose FFmpeg progress)"
       >
         <svg
           class="w-5 h-5"

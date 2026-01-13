@@ -12,14 +12,14 @@
  * Invalidation: hardware profile change, version bump, TTL expiry
  */
 
-import type { ExtendedCapabilities } from "@t/video-pipeline-types";
-import { capabilityService } from "@services/video-pipeline/capability-service";
-import { createSingleton } from "@services/shared/singleton-service";
-import { isHardwareCacheValid } from "@utils/hardware-profile";
-import { getErrorMessage } from "@utils/error-utils";
-import { logger } from "@utils/logger";
+import type { ExtendedCapabilities } from '@t/video-pipeline-types';
+import { capabilityService } from '@services/video-pipeline/capability-service';
+import { createSingleton } from '@services/shared/singleton-service';
+import { isHardwareCacheValid } from '@utils/hardware-profile';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 
-const STORAGE_KEY = "extended_video_caps_v2" as const;
+const STORAGE_KEY = 'extended_video_caps_v2' as const;
 const DETECTION_VERSION = 3 as const;
 const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -35,7 +35,7 @@ interface CachedExtendedCapabilities {
 }
 
 type VideoDecoderConfigWithAcceleration = VideoDecoderConfig & {
-  hardwareAcceleration?: "prefer-hardware" | "prefer-software";
+  hardwareAcceleration?: 'prefer-hardware' | 'prefer-software';
 };
 
 const DEFAULT_EXTENDED_CAPS: ExtendedCapabilities = {
@@ -64,10 +64,9 @@ const DEFAULT_EXTENDED_CAPS: ExtendedCapabilities = {
   mp4Encode: false,
 
   // Environment features
-  sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
-  crossOriginIsolated:
-    typeof crossOriginIsolated !== "undefined" && crossOriginIsolated === true,
-  workerSupport: typeof Worker !== "undefined",
+  sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+  crossOriginIsolated: typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true,
+  workerSupport: typeof Worker !== 'undefined',
 
   // Performance indicators
   hardwareDecodeCores: undefined,
@@ -130,7 +129,7 @@ class ExtendedCapabilityService {
     this.writeToStorage(caps);
     this.exposeToWindow(caps);
 
-    logger.info("general", "[ExtendedVideoCaps] detected", caps);
+    logger.info('general', '[ExtendedVideoCaps] detected', caps);
 
     return caps;
   }
@@ -140,11 +139,11 @@ class ExtendedCapabilityService {
    */
   clearCache(): void {
     this.cached = null;
-    if (typeof window !== "undefined") {
+    if (typeof window !== 'undefined') {
       try {
         window.localStorage.removeItem(STORAGE_KEY);
       } catch (error) {
-        logger.warn("general", "Failed to clear extended capability cache", {
+        logger.warn('general', 'Failed to clear extended capability cache', {
           error: getErrorMessage(error),
         });
       }
@@ -155,7 +154,7 @@ class ExtendedCapabilityService {
    * Expose capabilities on window for debugging (dev mode only)
    */
   private exposeToWindow(caps: ExtendedCapabilities): void {
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       return;
     }
 
@@ -164,13 +163,9 @@ class ExtendedCapabilityService {
         window.__EXTENDED_VIDEO_CAPS__ = caps;
       }
     } catch (error) {
-      logger.warn(
-        "general",
-        "Failed to expose window.__EXTENDED_VIDEO_CAPS__ (non-critical)",
-        {
-          error: getErrorMessage(error),
-        }
-      );
+      logger.warn('general', 'Failed to expose window.__EXTENDED_VIDEO_CAPS__ (non-critical)', {
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -178,7 +173,7 @@ class ExtendedCapabilityService {
    * Read capabilities from localStorage with validation
    */
   private readFromStorage(): ExtendedCapabilities | null {
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       return null;
     }
 
@@ -192,26 +187,18 @@ class ExtendedCapabilityService {
 
       // Validate cache
       if (!this.isCacheValid(parsed)) {
-        logger.debug(
-          "general",
-          "Extended capability cache invalid, will re-detect",
-          {
-            reason: this.getCacheInvalidReason(parsed),
-          }
-        );
+        logger.debug('general', 'Extended capability cache invalid, will re-detect', {
+          reason: this.getCacheInvalidReason(parsed),
+        });
         window.localStorage.removeItem(STORAGE_KEY);
         return null;
       }
 
       return parsed.capabilities;
     } catch (error) {
-      logger.warn(
-        "general",
-        "Failed to read cached extended caps (non-critical)",
-        {
-          error: getErrorMessage(error),
-        }
-      );
+      logger.warn('general', 'Failed to read cached extended caps (non-critical)', {
+        error: getErrorMessage(error),
+      });
       return null;
     }
   }
@@ -220,7 +207,7 @@ class ExtendedCapabilityService {
    * Write capabilities to localStorage
    */
   private writeToStorage(caps: ExtendedCapabilities): void {
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       return;
     }
 
@@ -236,13 +223,9 @@ class ExtendedCapabilityService {
 
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cached));
     } catch (error) {
-      logger.warn(
-        "general",
-        "Failed to write cached extended caps (non-critical)",
-        {
-          error: getErrorMessage(error),
-        }
-      );
+      logger.warn('general', 'Failed to write cached extended caps (non-critical)', {
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -282,28 +265,26 @@ class ExtendedCapabilityService {
     }
 
     if (Date.now() > cached.expiresAt) {
-      return `TTL expired (cached: ${new Date(
-        cached.expiresAt
-      ).toISOString()})`;
+      return `TTL expired (cached: ${new Date(cached.expiresAt).toISOString()})`;
     }
 
     if (cached.hardwareProfileHash !== this.getHardwareProfileHash()) {
-      return "hardware profile changed";
+      return 'hardware profile changed';
     }
 
     if (!isHardwareCacheValid()) {
-      return "hardware cache invalid";
+      return 'hardware cache invalid';
     }
 
-    return "unknown reason";
+    return 'unknown reason';
   }
 
   /**
    * Get hardware profile hash for cache validation
    */
   private getHardwareProfileHash(): string {
-    if (typeof navigator === "undefined") {
-      return "server";
+    if (typeof navigator === 'undefined') {
+      return 'server';
     }
 
     // Simple hash based on hardware concurrency and user agent
@@ -317,7 +298,7 @@ class ExtendedCapabilityService {
    * Probe all capabilities
    */
   private async probe(): Promise<ExtendedCapabilities> {
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       return { ...DEFAULT_EXTENDED_CAPS };
     }
 
@@ -326,25 +307,25 @@ class ExtendedCapabilityService {
 
     // Test VP8/VP9 decode support
     const vp8Hw = await this.testDecode({
-      codec: "vp8",
-      prefer: "prefer-hardware",
+      codec: 'vp8',
+      prefer: 'prefer-hardware',
     });
     const vp8Sw = vp8Hw
       ? true
       : await this.testDecode({
-          codec: "vp8",
-          prefer: "prefer-software",
+          codec: 'vp8',
+          prefer: 'prefer-software',
         });
 
     const vp9Hw = await this.testDecode({
-      codec: "vp09.00.10.08",
-      prefer: "prefer-hardware",
+      codec: 'vp09.00.10.08',
+      prefer: 'prefer-hardware',
     });
     const vp9Sw = vp9Hw
       ? true
       : await this.testDecode({
-          codec: "vp09.00.10.08",
-          prefer: "prefer-software",
+          codec: 'vp09.00.10.08',
+          prefer: 'prefer-software',
         });
 
     // Test encoder availability
@@ -352,11 +333,10 @@ class ExtendedCapabilityService {
     const mp4Encode = await this.testMP4Encode();
 
     // Environment detection
-    const sharedArrayBuffer = typeof SharedArrayBuffer !== "undefined";
+    const sharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
     const crossOriginIsolated =
-      typeof window.crossOriginIsolated !== "undefined" &&
-      window.crossOriginIsolated === true;
-    const workerSupport = typeof Worker !== "undefined";
+      typeof window.crossOriginIsolated !== 'undefined' && window.crossOriginIsolated === true;
+    const workerSupport = typeof Worker !== 'undefined';
 
     // Performance indicators
     const hardwareDecodeCores = navigator.hardwareConcurrency;
@@ -400,11 +380,11 @@ class ExtendedCapabilityService {
    */
   private async testDecode(params: {
     codec: string;
-    prefer: "prefer-hardware" | "prefer-software";
+    prefer: 'prefer-hardware' | 'prefer-software';
   }): Promise<boolean> {
     if (
-      typeof VideoDecoder === "undefined" ||
-      typeof VideoDecoder.isConfigSupported !== "function"
+      typeof VideoDecoder === 'undefined' ||
+      typeof VideoDecoder.isConfigSupported !== 'function'
     ) {
       return false;
     }
@@ -417,20 +397,14 @@ class ExtendedCapabilityService {
     };
 
     try {
-      const support = await VideoDecoder.isConfigSupported(
-        config as VideoDecoderConfig
-      );
+      const support = await VideoDecoder.isConfigSupported(config as VideoDecoderConfig);
       return support.supported ?? false;
     } catch (error) {
-      logger.debug(
-        "general",
-        "VideoDecoder.isConfigSupported failed during probing",
-        {
-          codec: params.codec,
-          prefer: params.prefer,
-          error: getErrorMessage(error),
-        }
-      );
+      logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
+        codec: params.codec,
+        prefer: params.prefer,
+        error: getErrorMessage(error),
+      });
       return false;
     }
   }
@@ -441,13 +415,11 @@ class ExtendedCapabilityService {
   private async testMP4Encode(): Promise<boolean> {
     try {
       // Dynamic import to avoid circular dependencies
-      const { createWebAVMP4Service } = await import(
-        "@services/webav/webav-mp4-service"
-      );
+      const { createWebAVMP4Service } = await import('@services/webav/webav-mp4-service');
       const service = createWebAVMP4Service();
       return await service.isAvailable();
     } catch (error) {
-      logger.debug("general", "WebAV MP4 encoder test failed", {
+      logger.debug('general', 'WebAV MP4 encoder test failed', {
         error: getErrorMessage(error),
       });
       return false;
@@ -458,7 +430,7 @@ class ExtendedCapabilityService {
    * Estimate available memory in MB
    */
   private estimateMemory(): number | undefined {
-    if (typeof navigator === "undefined") {
+    if (typeof navigator === 'undefined') {
       return undefined;
     }
 
@@ -483,6 +455,6 @@ class ExtendedCapabilityService {
 }
 
 export const extendedCapabilityService = createSingleton(
-  "ExtendedCapabilityService",
+  'ExtendedCapabilityService',
   () => new ExtendedCapabilityService()
 );
