@@ -266,6 +266,72 @@ class StrategyRegistryService {
   // Runtime overrides from historical data (populated by StrategyHistoryService)
   private runtimeOverrides = new Map<string, CodecPathPreference>();
 
+  private getCodecHardwareDecodeHint(
+    codec: string,
+    capabilities: ExtendedCapabilities
+  ): boolean | null {
+    const normalized = this.normalizeCodec(codec);
+
+    if (isH264Codec(normalized)) {
+      return typeof capabilities.h264HardwareDecode === 'boolean'
+        ? capabilities.h264HardwareDecode
+        : null;
+    }
+    if (isHevcCodec(normalized)) {
+      return typeof capabilities.hevcHardwareDecode === 'boolean'
+        ? capabilities.hevcHardwareDecode
+        : null;
+    }
+    if (isAv1Codec(normalized)) {
+      return typeof capabilities.av1HardwareDecode === 'boolean'
+        ? capabilities.av1HardwareDecode
+        : null;
+    }
+    if (normalized === 'vp8') {
+      return typeof capabilities.vp8HardwareDecode === 'boolean'
+        ? capabilities.vp8HardwareDecode
+        : null;
+    }
+    if (normalized === 'vp9') {
+      return typeof capabilities.vp9HardwareDecode === 'boolean'
+        ? capabilities.vp9HardwareDecode
+        : null;
+    }
+
+    return null;
+  }
+
+  private applyHardwareDecodePreference(params: {
+    strategy: StrategyWithConfidence;
+    capabilities: ExtendedCapabilities;
+  }): StrategyWithConfidence {
+    const { strategy, capabilities } = params;
+
+    // Only adjust in cases where the GPU benefit is strongly tied to hardware decode.
+    if (strategy.format !== 'webp') {
+      return strategy;
+    }
+    if (strategy.preferredPath !== 'gpu' || strategy.fallbackPath !== 'cpu') {
+      return strategy;
+    }
+    if (strategy.codec !== 'h264' && strategy.codec !== 'hevc') {
+      return strategy;
+    }
+
+    const hint = this.getCodecHardwareDecodeHint(strategy.codec, capabilities);
+    if (hint === false) {
+      return {
+        ...strategy,
+        preferredPath: 'cpu',
+        fallbackPath: 'gpu',
+        confidence: strategy.confidence === 'high' ? 'medium' : strategy.confidence,
+        reason: `${strategy.reason} (no hardware decode hint; preferring CPU)`,
+      };
+    }
+
+    return strategy;
+  }
+
   /**
    * Get optimal strategy for codec+format combination
    *
@@ -337,10 +403,13 @@ class StrategyRegistryService {
       // Validate capabilities
       if (this.validateCapabilities(strategy, capabilities)) {
         return this.applyRecentFailureAvoidance(
-          {
-            ...strategy,
-            confidence: 'high', // High confidence from benchmarks
-          },
+          this.applyHardwareDecodePreference({
+            strategy: {
+              ...strategy,
+              confidence: 'high', // High confidence from benchmarks
+            },
+            capabilities,
+          }),
           history
         );
       }
@@ -370,7 +439,10 @@ class StrategyRegistryService {
     });
 
     return this.applyRecentFailureAvoidance(
-      this.getHeuristicStrategy(normalizedCodec, format, capabilities),
+      this.applyHardwareDecodePreference({
+        strategy: this.getHeuristicStrategy(normalizedCodec, format, capabilities),
+        capabilities,
+      }),
       history
     );
   }
@@ -450,6 +522,7 @@ class StrategyRegistryService {
     const codecSupport = this.hasCodecSupport(normalizedCodec, capabilities);
     const containerSupport = !this.isBlockedContainer(container);
     const hardwareAcceleration = capabilities.hardwareAccelerated;
+    const codecHardwareDecodeHint = this.getCodecHardwareDecodeHint(normalizedCodec, capabilities);
     const historicalSuccess = this.runtimeOverrides.has(`${normalizedCodec}:${format}`);
     const performanceBenchmark = strategy.benchmarks?.avgTimeSeconds
       ? strategy.benchmarks.avgTimeSeconds * 1000
@@ -466,6 +539,7 @@ class StrategyRegistryService {
         codecSupport,
         containerSupport,
         hardwareAcceleration,
+        codecHardwareDecodeHint,
         historicalSuccess,
         performanceBenchmark,
       },
@@ -678,7 +752,14 @@ class StrategyRegistryService {
 
     if (path === 'cpu') {
       if (format === 'webp' && this.hasCodecSupport(codec, capabilities)) {
-        return 'GPU path faster for WebP with hardware decode';
+        const hint = this.getCodecHardwareDecodeHint(codec, capabilities);
+        if (hint === true || capabilities.hardwareAccelerated) {
+          return 'GPU path faster for WebP with hardware decode';
+        }
+        if (hint === false) {
+          return 'GPU path benefit reduced without hardware decode';
+        }
+        return 'GPU path often faster for WebP when hardware decode is available';
       }
       return 'Not optimal for this codec+format combination';
     }
