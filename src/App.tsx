@@ -16,6 +16,7 @@ import ConfirmationModal from '@components/ConfirmationModal';
 import EnvironmentWarning from '@components/EnvironmentWarning';
 import FileDropzone from '@components/FileDropzone';
 import FormatSelector from '@components/FormatSelector';
+import ExportLogsButton from '@components/ExportLogsButton';
 import LicenseAttribution from '@components/LicenseAttribution';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
@@ -353,7 +354,10 @@ const App: Component = () => {
                 Convert videos to animated GIF or WebP images
               </p>
             </div>
-            <ThemeToggle />
+            <div class="flex items-center gap-2">
+              <ExportLogsButton />
+              <ThemeToggle />
+            </div>
           </div>
         </header>
 

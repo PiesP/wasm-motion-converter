@@ -26,6 +26,13 @@ type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
  */
 const MAX_INLINE_CONTEXT_CHARS = 2000;
 
+/**
+ * Maximum number of recent log lines kept in memory for in-app export.
+ *
+ * This is intentionally bounded to avoid unbounded memory growth during long sessions.
+ */
+const MAX_RECENT_LOG_LINES = 750;
+
 function trimStackForInlineLog(stack: string | undefined): string | undefined {
   if (!stack) {
     return undefined;
@@ -149,6 +156,9 @@ type LogCategory =
 class Logger {
   private isDev = import.meta.env.DEV;
 
+  // Rolling buffer of recently emitted log lines (already formatted as single-line strings).
+  private recentLines: string[] = [];
+
   // Current conversion progress (0-100). When set, it can be appended to log prefixes
   // to make long-running conversions easier to follow in the console.
   private conversionProgress: number | null = null;
@@ -269,20 +279,44 @@ class Logger {
     const consoleMethod =
       level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : level === 'INFO' ? 'info' : 'log';
 
-    // OUTPUT: Log message with optional inline context
+    // OUTPUT: Log message with optional inline context.
     // Keeping context inline avoids noisy `Object` suffixes and makes log capture readable.
-    if (context !== undefined) {
+    const line = (() => {
+      if (context === undefined) {
+        return `${prefix} ${message}`;
+      }
+
       const rawContext = safeJsonStringify(context);
       const inlineContext =
         rawContext.length > MAX_INLINE_CONTEXT_CHARS
           ? `${rawContext.slice(0, MAX_INLINE_CONTEXT_CHARS)}…(truncated)`
           : rawContext;
+      return `${prefix} ${message} ${inlineContext}`;
+    })();
 
-      console[consoleMethod](`${prefix} ${message} ${inlineContext}`);
-      return;
+    console[consoleMethod](line);
+    this.addRecentLine(line);
+  }
+
+  private addRecentLine(line: string): void {
+    this.recentLines.push(line);
+    if (this.recentLines.length > MAX_RECENT_LOG_LINES) {
+      this.recentLines.splice(0, this.recentLines.length - MAX_RECENT_LOG_LINES);
     }
+  }
 
-    console[consoleMethod](`${prefix} ${message}`);
+  /**
+   * Get a snapshot of recently emitted log lines.
+   */
+  getRecentLogs(): string[] {
+    return [...this.recentLines];
+  }
+
+  /**
+   * Clear the in-memory recent log buffer.
+   */
+  clearRecentLogs(): void {
+    this.recentLines = [];
   }
 
   /**
