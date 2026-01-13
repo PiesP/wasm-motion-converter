@@ -52,6 +52,8 @@ export interface ExtendedCapabilities extends VideoCapabilities {
   sharedArrayBuffer: boolean;
   crossOriginIsolated: boolean;
   workerSupport: boolean;
+  webcodecsDecode: boolean;
+  offscreenCanvas: boolean;
 
   // Performance indicators
   hardwareDecodeCores?: number; // navigator.hardwareConcurrency

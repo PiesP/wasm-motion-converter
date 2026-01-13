@@ -526,7 +526,7 @@ class WebCodecsConversionService {
    *
    * Main conversion method using WebCodecs API for frame extraction.
    * Automatically selects optimal conversion path based on codec and format:
-   * - GIF: FFmpeg direct path (better performance)
+   * - GIF: WebCodecs decode + modern-gif when supported (FFmpeg fallback)
    * - WebP: WebCodecs + muxer (GPU-accelerated)
    * - Complex codecs: Direct PNG extraction without H.264 transcoding
    *
@@ -570,9 +570,7 @@ class WebCodecsConversionService {
       }
     };
 
-    // GIF format: Always prefer FFmpeg direct path for better performance
-    // WebCodecs frame extraction + FFmpeg GIF encoding is 3x slower than direct FFmpeg encoding
-    // and has reliability issues with FFmpeg GIF options (e.g., fps_mode parsing errors)
+    // GIF format: fall back to FFmpeg when modern-gif isn't available.
     if (format === 'gif' && !useModernGif) {
       logger.info(
         'conversion',

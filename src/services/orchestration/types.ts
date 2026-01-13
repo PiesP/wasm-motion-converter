@@ -160,6 +160,10 @@ export interface StrategyReasoning {
     hardwareAcceleration: boolean;
     /** Best-effort per-codec hardware decode hint (null when unknown / not probed). */
     codecHardwareDecodeHint?: boolean | null;
+    /** Whether the WebCodecs decode environment is available. */
+    webcodecsDecodeSupport: boolean;
+    /** Whether GIF GPU preflight checks passed (gif only). */
+    gifGpuEligible?: boolean;
     /** Whether this path succeeded before for this codec+format */
     historicalSuccess: boolean;
     /** Performance benchmark in milliseconds (if available) */

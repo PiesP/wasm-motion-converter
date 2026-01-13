@@ -36,7 +36,7 @@ interface StrategyWithConfidence extends CodecPathPreference {
  * Predefined strategy matrix (codec+format → optimal path)
  *
  * Performance-optimized ruleset based on benchmarks:
- * - H.264 → GIF: CPU path is 3x faster (FFmpeg palettegen optimized)
+ * - H.264 → GIF: Prefer GPU when hardware decode is available (CPU fallback remains fastest for some inputs)
  * - H.264 → WebP: GPU path faster (HW decode + libwebp)
  * - AV1 → any: GPU required (fail-fast if unsupported)
  */
@@ -49,7 +49,7 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
       format: 'gif',
       preferredPath: 'cpu',
       fallbackPath: 'gpu',
-      reason: 'FFmpeg palettegen is 3x faster than WebCodecs frame extraction for GIF',
+      reason: 'FFmpeg palettegen is faster than WebCodecs frame extraction for GIF',
       benchmarks: {
         avgTimeSeconds: 4.5,
         successRate: 0.98,
@@ -179,9 +179,9 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     {
       codec: 'vp8',
       format: 'gif',
-      preferredPath: 'gpu',
-      fallbackPath: 'cpu',
-      reason: 'WebCodecs decode faster than FFmpeg full pipeline for VP8',
+      preferredPath: 'cpu',
+      fallbackPath: 'gpu',
+      reason: 'FFmpeg palettegen is typically faster than WebCodecs for VP8 GIF',
       benchmarks: {
         avgTimeSeconds: 5.0,
         successRate: 0.94,
@@ -223,9 +223,9 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     {
       codec: 'vp9',
       format: 'gif',
-      preferredPath: 'gpu',
-      fallbackPath: 'cpu',
-      reason: 'WebCodecs decode if available, otherwise FFmpeg fallback',
+      preferredPath: 'cpu',
+      fallbackPath: 'gpu',
+      reason: 'FFmpeg palettegen is typically faster than WebCodecs for VP9 GIF',
       benchmarks: {
         avgTimeSeconds: 5.4,
         successRate: 0.91,
@@ -299,6 +299,76 @@ class StrategyRegistryService {
     }
 
     return null;
+  }
+
+  private shouldPreferGpuForGif(codec: string, capabilities: ExtendedCapabilities): boolean {
+    const normalized = this.normalizeCodec(codec);
+    if (!capabilities.webcodecsDecode) {
+      return false;
+    }
+
+    if (!this.hasCodecSupport(normalized, capabilities)) {
+      return false;
+    }
+
+    if (isAv1Codec(normalized)) {
+      return true;
+    }
+
+    if (!isHevcCodec(normalized)) {
+      return false;
+    }
+
+    const hint = this.getCodecHardwareDecodeHint(normalized, capabilities);
+    if (hint === false) {
+      return false;
+    }
+
+    if (hint === true) {
+      return true;
+    }
+
+    return capabilities.hardwareAccelerated;
+  }
+
+  private applyGifGpuPreference(
+    strategy: StrategyWithConfidence,
+    capabilities: ExtendedCapabilities
+  ): StrategyWithConfidence {
+    if (strategy.format !== 'gif') {
+      return strategy;
+    }
+
+    const preferGpu = this.shouldPreferGpuForGif(strategy.codec, capabilities);
+
+    if (preferGpu && strategy.preferredPath !== 'gpu') {
+      return {
+        ...strategy,
+        preferredPath: 'gpu',
+        fallbackPath: 'cpu',
+        benchmarks: undefined,
+        confidence: strategy.confidence === 'high' ? 'medium' : strategy.confidence,
+        reason:
+          'Hardware decode available; preferring WebCodecs + modern-gif to maximize GPU usage',
+      };
+    }
+
+    if (!preferGpu && strategy.preferredPath === 'gpu') {
+      if (isAv1Codec(this.normalizeCodec(strategy.codec))) {
+        return strategy;
+      }
+
+      return {
+        ...strategy,
+        preferredPath: 'cpu',
+        fallbackPath: 'gpu',
+        benchmarks: undefined,
+        confidence: strategy.confidence === 'high' ? 'medium' : strategy.confidence,
+        reason: 'GPU decode not available for GIF; preferring FFmpeg CPU path',
+      };
+    }
+
+    return strategy;
   }
 
   private applyHardwareDecodePreference(params: {
@@ -376,16 +446,19 @@ class StrategyRegistryService {
       const fallbackPath: ConversionPath = preferredPath === 'gpu' ? 'cpu' : 'gpu';
 
       return this.applyRecentFailureAvoidance(
-        {
-          codec: normalizedCodec,
-          format,
-          preferredPath,
-          fallbackPath,
-          reason: `Historical success (records=${
-            recommended.basedOnRecords
-          }, avg=${Math.round(recommended.avgDurationMs)}ms)`,
-          confidence: 'high',
-        },
+        this.applyGifGpuPreference(
+          {
+            codec: normalizedCodec,
+            format,
+            preferredPath,
+            fallbackPath,
+            reason: `Historical success (records=${
+              recommended.basedOnRecords
+            }, avg=${Math.round(recommended.avgDurationMs)}ms)`,
+            confidence: 'high',
+          },
+          capabilities
+        ),
         history
       );
     }
@@ -399,10 +472,13 @@ class StrategyRegistryService {
         path: override.preferredPath,
       });
       return this.applyRecentFailureAvoidance(
-        {
-          ...override,
-          confidence: 'high', // High confidence from historical success
-        },
+        this.applyGifGpuPreference(
+          {
+            ...override,
+            confidence: 'high', // High confidence from historical success
+          },
+          capabilities
+        ),
         history
       );
     }
@@ -426,7 +502,10 @@ class StrategyRegistryService {
           ? this.applyDurationHeuristics(baseStrategy, durationSeconds, normalizedCodec, format)
           : baseStrategy;
 
-        return this.applyRecentFailureAvoidance(durationAdjusted, history);
+        return this.applyRecentFailureAvoidance(
+          this.applyGifGpuPreference(durationAdjusted, capabilities),
+          history
+        );
       }
 
       // Capabilities missing - try fallback
@@ -454,10 +533,13 @@ class StrategyRegistryService {
     });
 
     return this.applyRecentFailureAvoidance(
-      this.applyHardwareDecodePreference({
-        strategy: this.getHeuristicStrategy(normalizedCodec, format, capabilities),
-        capabilities,
-      }),
+      this.applyGifGpuPreference(
+        this.applyHardwareDecodePreference({
+          strategy: this.getHeuristicStrategy(normalizedCodec, format, capabilities),
+          capabilities,
+        }),
+        capabilities
+      ),
       history
     );
   }
@@ -607,6 +689,9 @@ class StrategyRegistryService {
     const containerSupport = decision === 'gpu' ? !this.isBlockedContainer(container) : true;
     const hardwareAcceleration = capabilities.hardwareAccelerated;
     const codecHardwareDecodeHint = this.getCodecHardwareDecodeHint(normalizedCodec, capabilities);
+    const webcodecsDecodeSupport = capabilities.webcodecsDecode;
+    const gifGpuEligible =
+      format === 'gif' ? this.shouldPreferGpuForGif(normalizedCodec, capabilities) : undefined;
     const history = strategyHistoryService.getHistory(codec, format);
     const historicalSuccess = Boolean(
       history?.records.some((r) => r.success && r.path === decision)
@@ -627,6 +712,8 @@ class StrategyRegistryService {
         containerSupport,
         hardwareAcceleration,
         codecHardwareDecodeHint,
+        webcodecsDecodeSupport,
+        gifGpuEligible,
         historicalSuccess,
         performanceBenchmark,
       },
@@ -690,6 +777,10 @@ class StrategyRegistryService {
 
     // GPU path requires WebCodecs support for the codec
     if (preferredPath === 'gpu') {
+      if (!capabilities.webcodecsDecode) {
+        return false;
+      }
+
       return this.hasCodecSupport(codec, capabilities);
     }
 
@@ -756,7 +847,7 @@ class StrategyRegistryService {
       };
     }
 
-    // GIF format → Prefer CPU (FFmpeg palettegen faster)
+    // GIF format → Prefer CPU by default (GPU preference applied later when eligible)
     if (format === 'gif') {
       return {
         codec,
@@ -831,8 +922,18 @@ class StrategyRegistryService {
     capabilities: ExtendedCapabilities
   ): string {
     if (path === 'gpu') {
+      if (!capabilities.webcodecsDecode) {
+        return 'WebCodecs decode is not available in this environment';
+      }
       if (!this.hasCodecSupport(codec, capabilities)) {
         return `Codec ${codec} not supported by WebCodecs`;
+      }
+      if (format === 'gif' && !this.shouldPreferGpuForGif(codec, capabilities)) {
+        const normalized = this.normalizeCodec(codec);
+        if (!isAv1Codec(normalized) && !isHevcCodec(normalized)) {
+          return 'GIF CPU path preferred for this codec';
+        }
+        return 'Hardware decode unavailable for GIF; prefer CPU';
       }
       return 'Not optimal for this codec+format combination';
     }

@@ -15,6 +15,7 @@
 import type { ExtendedCapabilities } from '@t/video-pipeline-types';
 import { capabilityService } from '@services/video-pipeline/capability-service';
 import { createSingleton } from '@services/shared/singleton-service';
+import { isWebCodecsDecodeSupported } from '@services/webcodecs-support-service';
 import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -22,7 +23,7 @@ import { logger } from '@utils/logger';
 // NOTE: bumped to invalidate older cached results where `hardwareAcceleration` probing
 // could throw and incorrectly report codecs as unsupported.
 const STORAGE_KEY = 'extended_video_caps_v3' as const;
-const DETECTION_VERSION = 4 as const;
+const DETECTION_VERSION = 5 as const;
 const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
@@ -60,6 +61,8 @@ const DEFAULT_EXTENDED_CAPS: ExtendedCapabilities = {
   sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
   crossOriginIsolated: typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true,
   workerSupport: typeof Worker !== 'undefined',
+  webcodecsDecode: false,
+  offscreenCanvas: typeof OffscreenCanvas !== 'undefined',
 
   // Performance indicators
   hardwareDecodeCores: undefined,
@@ -311,6 +314,8 @@ class ExtendedCapabilityService {
     const crossOriginIsolated =
       typeof window.crossOriginIsolated !== 'undefined' && window.crossOriginIsolated === true;
     const workerSupport = typeof Worker !== 'undefined';
+    const webcodecsDecode = isWebCodecsDecodeSupported();
+    const offscreenCanvas = typeof OffscreenCanvas !== 'undefined';
 
     // Performance indicators
     const hardwareDecodeCores = navigator.hardwareConcurrency;
@@ -332,6 +337,8 @@ class ExtendedCapabilityService {
       sharedArrayBuffer,
       crossOriginIsolated,
       workerSupport,
+      webcodecsDecode,
+      offscreenCanvas,
 
       // Performance indicators
       hardwareDecodeCores,

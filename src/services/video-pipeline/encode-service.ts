@@ -8,7 +8,7 @@
  */
 
 import { createSingleton } from '@services/shared/singleton-service';
-import { isH264Codec } from '@utils/codec-utils';
+import { isAv1Codec, isH264Codec, isHevcCodec, normalizeCodecString } from '@utils/codec-utils';
 
 // NOTE: This is a *planning* label used by video-pipeline diagnostics.
 // The actual encoder backend can differ at runtime due to strategy selection,
@@ -18,11 +18,19 @@ export type EncodePlan = 'ffmpeg' | 'modern-gif' | 'encoder-factory-webp';
 class EncodeService {
   selectEncodePlan(params: { format: 'gif' | 'webp'; codec?: string | null }): EncodePlan {
     if (params.format === 'gif') {
-      // For H.264, CPU palettegen is typically faster and more reliable than
-      // WebCodecs frame extraction + GIF encoding.
-      if (params.codec && isH264Codec(params.codec)) {
+      const normalized = normalizeCodecString(params.codec ?? undefined);
+      if (isAv1Codec(normalized) || isHevcCodec(normalized)) {
+        return 'modern-gif';
+      }
+      if (
+        isH264Codec(normalized) ||
+        normalized.includes('vp8') ||
+        normalized.includes('vp09') ||
+        normalized.includes('vp9')
+      ) {
         return 'ffmpeg';
       }
+
       return 'modern-gif';
     }
 

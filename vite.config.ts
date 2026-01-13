@@ -509,18 +509,15 @@ export default defineConfig(({ mode }) => {
               return 'services-shared';
             }
 
-            // Core services (orchestration, strategy) - changes rarely
-            if (id.includes('src/services/orchestration')) {
-              return 'services-core';
-            }
-
-            // WebCodecs services - separate chunk for GPU path
+            // Core services (orchestration + WebCodecs + video pipeline)
+            // Keep these together to avoid circular chunk dependencies between
+            // webcodecs + orchestration during manual chunking.
             if (
-              id.includes('webcodecs-conversion-service') ||
-              id.includes('webcodecs-support') ||
-              id.includes('webcodecs-decoder')
+              id.includes('src/services/orchestration') ||
+              id.includes('src/services/webcodecs') ||
+              id.includes('src/services/video-pipeline')
             ) {
-              return 'services-webcodecs';
+              return 'services-core';
             }
 
             // FFmpeg service - separate chunk for CPU path

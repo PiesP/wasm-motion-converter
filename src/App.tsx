@@ -175,6 +175,8 @@ const App: Component = () => {
             hardwareAcceleration: caps.hardwareAccelerated,
             sharedArrayBuffer: caps.sharedArrayBuffer,
             crossOriginIsolated: caps.crossOriginIsolated,
+            webcodecsDecode: caps.webcodecsDecode,
+            offscreenCanvas: caps.offscreenCanvas,
             estimatedCores: caps.hardwareDecodeCores,
           });
           logger.info('general', '=====================================');
