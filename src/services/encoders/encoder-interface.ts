@@ -15,14 +15,30 @@
 import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
 
 /**
+ * Frame types supported by encoders
+ *
+ * Encoders can accept frames in multiple formats:
+ * - VideoFrame: GPU-resident frame (fastest, no CPU copy)
+ * - ImageBitmap: GPU-resident bitmap (faster than ImageData)
+ * - ImageData: CPU-resident pixel data (slowest, but universal)
+ *
+ * Encoders must convert to ImageData internally when pixel access is needed.
+ */
+export type EncoderFrame = VideoFrame | ImageBitmap | ImageData;
+
+/**
  * Encoder input request
  *
  * Parameters passed to encoder.encode() method. Contains all information
  * needed to encode a sequence of video frames into the target format.
  *
+ * Frames can be provided as VideoFrame, ImageBitmap, or ImageData. Encoders
+ * should prefer GPU-resident formats (VideoFrame, ImageBitmap) when possible
+ * to avoid expensive GPU→CPU transfers.
+ *
  * @example
  * const request: EncoderRequest = {
- *   frames: [imageData1, imageData2, imageData3],
+ *   frames: [videoFrame1, videoFrame2, videoFrame3], // Can also be ImageBitmap or ImageData
  *   width: 640,
  *   height: 480,
  *   fps: 10,
@@ -32,8 +48,8 @@ import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
  * };
  */
 export interface EncoderRequest {
-  /** Array of video frames to encode (RGBA ImageData) */
-  frames: ImageData[];
+  /** Array of video frames to encode (VideoFrame, ImageBitmap, or ImageData) */
+  frames: EncoderFrame[];
   /** Frame width in pixels */
   width: number;
   /** Frame height in pixels */

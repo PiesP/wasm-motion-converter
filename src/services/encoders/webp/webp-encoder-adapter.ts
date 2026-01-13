@@ -27,7 +27,7 @@ import { logger } from '@utils/logger';
 import type { AnimatedWebPOptions, WebPFrame } from '@utils/webp-muxer';
 import { muxAnimatedWebP } from '@utils/webp-muxer';
 import type * as Comlink from 'comlink';
-
+import { convertFramesToImageData } from '@services/encoders/frame-converter';
 import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface';
 
 /**
@@ -164,9 +164,18 @@ export class WebPEncoderAdapter implements EncoderAdapter {
       // Calculate quality parameter (0.0 to 1.0)
       const encodeQuality = quality === 'low' ? 0.75 : quality === 'medium' ? 0.85 : 0.95;
 
+      // Convert frames to ImageData if needed (VideoFrame/ImageBitmap → ImageData)
+      const imageDataFrames = await convertFramesToImageData(
+        frames,
+        width,
+        height,
+        undefined, // Don't report conversion progress separately
+        shouldCancel
+      );
+
       // Encode frames in parallel
       const encodedFrames = await this.encodeFramesParallel(
-        frames,
+        imageDataFrames,
         encodeQuality,
         onProgress,
         shouldCancel

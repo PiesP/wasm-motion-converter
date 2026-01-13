@@ -1,6 +1,8 @@
 import { encode } from 'modern-gif';
 
 import { logger } from '@utils/logger';
+import type { EncoderFrame } from '@services/encoders/encoder-interface';
+import { convertFramesToImageData } from '@services/encoders/frame-converter';
 
 /**
  * Options for modern-gif encoding
@@ -33,16 +35,19 @@ export function isModernGifSupported(): boolean {
 }
 
 /**
- * Encode ImageData frames into animated GIF using modern-gif.
+ * Encode frames into animated GIF using modern-gif.
  * Uses quality-based color palette optimization for optimal file size.
  *
- * @param frames - Array of ImageData frames to encode
+ * Accepts VideoFrame, ImageBitmap, or ImageData. Automatically converts
+ * GPU-resident frames to ImageData when needed.
+ *
+ * @param frames - Array of frames to encode (VideoFrame, ImageBitmap, or ImageData)
  * @param options - Encoding options (width, height, fps, quality, callbacks)
  * @returns Animated GIF as Blob
  * @throws Error if no frames provided or conversion cancelled
  */
 export async function encodeModernGif(
-  frames: ImageData[],
+  frames: EncoderFrame[],
   options: ModernGifOptions
 ): Promise<Blob> {
   if (!frames.length) {
@@ -68,11 +73,20 @@ export async function encodeModernGif(
     maxColors,
   });
 
-  const totalFrames = frames.length;
+  // Convert frames to ImageData if needed (VideoFrame/ImageBitmap → ImageData)
+  const imageDataFrames = await convertFramesToImageData(
+    frames,
+    width,
+    height,
+    undefined, // Don't report conversion progress separately
+    shouldCancel
+  );
+
+  const totalFrames = imageDataFrames.length;
   const maxBeforeEncode = Math.max(0, totalFrames - 1);
 
   // Convert ImageData frames to UnencodedFrame format
-  const gifFrames = frames.map((imageData, index) => {
+  const gifFrames = imageDataFrames.map((imageData, index) => {
     if (shouldCancel?.()) {
       throw new Error('Conversion cancelled by user');
     }

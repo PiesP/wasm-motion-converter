@@ -2098,7 +2098,7 @@ class WebCodecsConversionService {
           });
         }
 
-        return await ffmpegService.encodeFrameSequence({
+        const fallbackBlob = await ffmpegService.encodeFrameSequence({
           format: format as 'gif' | 'webp',
           options,
           frameCount: fallbackResult.frameCount,
@@ -2106,6 +2106,11 @@ class WebCodecsConversionService {
           durationSeconds: fallbackDurationSeconds ?? metadata?.duration ?? fallbackResult.duration,
           frameFiles: fallbackFrameFiles,
         });
+
+        // Attach encoder metadata for observability
+        const fallbackBlobWithMetadata = fallbackBlob as ConversionOutputBlob;
+        fallbackBlobWithMetadata.encoderBackendUsed = 'ffmpeg';
+        return fallbackBlobWithMetadata;
       };
 
       let outputBlob: Blob;

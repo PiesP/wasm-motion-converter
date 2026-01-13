@@ -21,6 +21,7 @@
 
 import { logger } from '@utils/logger';
 import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface';
+import { convertFramesToImageData } from '@services/encoders/frame-converter';
 
 /**
  * MP4 encoder adapter
@@ -126,16 +127,25 @@ export class MP4EncoderAdapter implements EncoderAdapter {
       this.chunks = [];
       this.encoder = await this.createEncoder(config);
 
+      // Convert frames to ImageData if needed (VideoFrame/ImageBitmap → ImageData)
+      const imageDataFrames = await convertFramesToImageData(
+        frames,
+        width,
+        height,
+        undefined, // Don't report conversion progress separately
+        shouldCancel
+      );
+
       // Encode frames
       const frameDurationUs = 1_000_000 / fps; // microseconds per frame
       let encodedCount = 0;
 
-      for (let i = 0; i < frames.length; i++) {
+      for (let i = 0; i < imageDataFrames.length; i++) {
         if (shouldCancel?.()) {
           throw new Error('Encoding cancelled');
         }
 
-        const frame = frames[i];
+        const frame = imageDataFrames[i];
         if (!frame) {
           throw new Error(`Frame ${i} is undefined`);
         }

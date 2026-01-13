@@ -22,6 +22,7 @@ import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-
 import { logger } from '@utils/logger';
 import type { AnimatedWebPOptions, WebPFrame } from '@utils/webp-muxer';
 import { muxAnimatedWebP } from '@utils/webp-muxer';
+import { convertFramesToImageData } from '@services/encoders/frame-converter';
 
 export class WebPCanvasEncoderAdapter implements EncoderAdapter {
   name = 'webp-canvas';
@@ -142,6 +143,15 @@ export class WebPCanvasEncoderAdapter implements EncoderAdapter {
 
       const encodeQuality = quality === 'low' ? 0.75 : quality === 'medium' ? 0.85 : 0.95;
 
+      // Convert frames to ImageData if needed (VideoFrame/ImageBitmap → ImageData)
+      const imageDataFrames = await convertFramesToImageData(
+        frames,
+        width,
+        height,
+        undefined, // Don't report conversion progress separately
+        shouldCancel
+      );
+
       const hwConcurrency = navigator.hardwareConcurrency || 4;
       const chunkSize = Math.min(20, Math.max(10, hwConcurrency * 2));
 
@@ -181,15 +191,15 @@ export class WebPCanvasEncoderAdapter implements EncoderAdapter {
         return buffer;
       };
 
-      for (let i = 0; i < frames.length; i += chunkSize) {
+      for (let i = 0; i < imageDataFrames.length; i += chunkSize) {
         if (shouldCancel?.()) {
           throw new Error('Encoding cancelled');
         }
 
-        const chunk = frames.slice(i, Math.min(i + chunkSize, frames.length));
+        const chunk = imageDataFrames.slice(i, Math.min(i + chunkSize, imageDataFrames.length));
         const encodedChunk = await Promise.all(chunk.map((frame) => encodeFrame(frame)));
         encodedFrames.push(...encodedChunk);
-        onProgress?.(encodedFrames.length, frames.length);
+        onProgress?.(encodedFrames.length, imageDataFrames.length);
       }
 
       if (encodedFrames.length === 0) {
