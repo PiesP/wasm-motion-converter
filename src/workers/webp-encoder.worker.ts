@@ -16,7 +16,9 @@
  */
 
 import { logger } from '@utils/logger';
-import * as Comlink from 'comlink';
+import { esmShModuleUrl } from 'virtual:cdn-deps';
+
+type ComlinkModule = typeof import('comlink');
 
 let cachedCanvas: OffscreenCanvas | null = null;
 let cachedContext: OffscreenCanvasRenderingContext2D | null = null;
@@ -189,4 +191,8 @@ const api = {
 };
 
 // Expose API via Comlink for main thread communication
-Comlink.expose(api);
+void (async () => {
+  const comlinkUrl = esmShModuleUrl('comlink');
+  const Comlink = (await import(/* @vite-ignore */ comlinkUrl)) as unknown as ComlinkModule;
+  Comlink.expose(api);
+})();

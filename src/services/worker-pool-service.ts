@@ -98,17 +98,17 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
   private workers: Worker[] = [];
   private apis: T[] = [];
   private availableWorkers: number[] = [];
-  private workerUrl: URL;
+  private workerUrl: URL | string;
   private maxWorkers: number;
   private initialized = false;
 
   /**
    * Create worker pool
    *
-   * @param workerUrl - Worker script URL (use `new URL('./worker.ts', import.meta.url)`)
+   * @param workerUrl - Worker script URL (Vite-built URL string or a URL object)
    * @param options - Pool configuration options
    */
-  constructor(workerUrl: URL, options: WorkerPoolOptions = {}) {
+  constructor(workerUrl: URL | string, options: WorkerPoolOptions = {}) {
     this.workerUrl = workerUrl;
     this.maxWorkers = options.maxWorkers ?? Math.max(2, navigator.hardwareConcurrency || 4);
 

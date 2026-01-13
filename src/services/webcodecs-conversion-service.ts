@@ -2,6 +2,7 @@
 import * as Comlink from 'comlink';
 
 // Internal dependencies
+import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
 
 // Type imports
 import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
@@ -78,10 +79,10 @@ class WebCodecsConversionService {
         gifWorkers: optimalGifWorkers,
       });
 
-      this.gifWorkerPool = new WorkerPool(
-        new URL('../workers/gif-encoder.worker.ts', import.meta.url),
-        { lazyInit: true, maxWorkers: optimalGifWorkers }
-      );
+      this.gifWorkerPool = new WorkerPool(gifEncoderWorkerUrl, {
+        lazyInit: true,
+        maxWorkers: optimalGifWorkers,
+      });
     }
   }
 

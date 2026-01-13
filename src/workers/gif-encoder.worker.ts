@@ -1,8 +1,10 @@
-import * as Comlink from 'comlink';
 import type { ModernGifOptions } from '@services/modern-gif-service';
 import { encodeModernGif } from '@services/modern-gif-service';
 import type { SerializableImageData, WorkerProgressCallback } from '@t/worker-types';
 import { logger } from '@utils/logger';
+import { esmShModuleUrl } from 'virtual:cdn-deps';
+
+type ComlinkModule = typeof import('comlink');
 
 /**
  * GIF encoder worker API exposed via Comlink
@@ -144,4 +146,8 @@ const api = {
   },
 };
 
-Comlink.expose(api);
+void (async () => {
+  const comlinkUrl = esmShModuleUrl('comlink');
+  const Comlink = (await import(/* @vite-ignore */ comlinkUrl)) as unknown as ComlinkModule;
+  Comlink.expose(api);
+})();

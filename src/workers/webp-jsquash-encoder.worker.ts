@@ -4,17 +4,43 @@
  * Encodes single frames to WebP using @jsquash/webp (libwebp WASM).
  * This provides a reliable WebP encoding fallback when native canvas WebP
  * encoding is unavailable or inconsistent.
+ *
+ * NOTE: To keep the worker bundle free of vendor code, both Comlink and jsquash
+ * are loaded from CDN (esm.sh) at runtime.
  */
 
-import encodeWebP, { init as initWebP } from '@jsquash/webp/encode.js';
 import { logger } from '@utils/logger';
-import * as Comlink from 'comlink';
+import { esmShAssetUrl, esmShModuleUrl } from 'virtual:cdn-deps';
 
-// Force Vite/Rollup to emit jsquash encoder WASM files as assets.
-// Without this, the Emscripten glue may attempt to fetch a non-existent
-// relative URL (often returning index.html), causing a WebAssembly magic-word error.
-import webpEncWasmUrl from '@jsquash/webp/codec/enc/webp_enc.wasm?url';
-import webpEncSimdWasmUrl from '@jsquash/webp/codec/enc/webp_enc_simd.wasm?url';
+type ComlinkModule = typeof import('comlink');
+type JsquashWebPModule = typeof import('@jsquash/webp/encode.js');
+
+let cachedComlink: ComlinkModule | null = null;
+let cachedJsquash: JsquashWebPModule | null = null;
+
+async function loadComlink(): Promise<ComlinkModule> {
+  if (cachedComlink) {
+    return cachedComlink;
+  }
+
+  const url = esmShModuleUrl('comlink');
+  cachedComlink = (await import(/* @vite-ignore */ url)) as unknown as ComlinkModule;
+  return cachedComlink;
+}
+
+async function loadJsquash(): Promise<JsquashWebPModule> {
+  if (cachedJsquash) {
+    return cachedJsquash;
+  }
+
+  const url = esmShModuleUrl('@jsquash/webp', '/encode.js');
+  cachedJsquash = (await import(/* @vite-ignore */ url)) as unknown as JsquashWebPModule;
+  return cachedJsquash;
+}
+
+// Resolve WASM assets directly from CDN (no Vite-emitted assets).
+const webpEncWasmUrl = esmShAssetUrl('@jsquash/webp', '/codec/enc/webp_enc.wasm');
+const webpEncSimdWasmUrl = esmShAssetUrl('@jsquash/webp', '/codec/enc/webp_enc_simd.wasm');
 
 type JsquashWebPEncodeOptions = {
   quality: number;
@@ -35,9 +61,15 @@ async function ensureJsquashInitialized(): Promise<void> {
       webpEncSimdWasmUrl,
     });
 
+    const jsquash = await loadJsquash();
+
+    if (typeof jsquash.init !== 'function') {
+      throw new Error('jsquash WebP module loaded but init() export is missing');
+    }
+
     // Force Emscripten to fetch the correct URL for whichever variant jsquash selects.
     // (SIMD-capable browsers load webp_enc_simd.wasm; others load webp_enc.wasm)
-    await initWebP({
+    await jsquash.init({
       locateFile: (path: string) => {
         if (path.endsWith('webp_enc_simd.wasm')) {
           return webpEncSimdWasmUrl;
@@ -66,6 +98,12 @@ const api = {
       }
 
       await ensureJsquashInitialized();
+
+      const jsquash = await loadJsquash();
+      const encodeWebP = jsquash.default;
+      if (typeof encodeWebP !== 'function') {
+        throw new Error('jsquash WebP module loaded but default export is not a function');
+      }
 
       const quality = Math.max(0, Math.min(100, Math.round(options.quality)));
       const method = Math.max(0, Math.min(6, Math.round(options.method)));
@@ -113,4 +151,7 @@ const api = {
   },
 };
 
-Comlink.expose(api);
+void (async () => {
+  const Comlink = await loadComlink();
+  Comlink.expose(api);
+})();

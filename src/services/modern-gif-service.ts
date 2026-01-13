@@ -1,8 +1,38 @@
-import { encode } from 'modern-gif';
+import { esmShModuleUrl } from 'virtual:cdn-deps';
 
 import { logger } from '@utils/logger';
 import type { EncoderFrame } from '@services/encoders/encoder-interface';
 import { convertFramesToImageData } from '@services/encoders/frame-converter';
+
+type ModernGifModule = typeof import('modern-gif');
+
+let cachedEncode: ModernGifModule['encode'] | null = null;
+let loadEncodePromise: Promise<ModernGifModule['encode']> | null = null;
+
+async function getModernGifEncode(): Promise<ModernGifModule['encode']> {
+  if (cachedEncode) {
+    return cachedEncode;
+  }
+
+  if (loadEncodePromise) {
+    return loadEncodePromise;
+  }
+
+  loadEncodePromise = (async () => {
+    const url = esmShModuleUrl('modern-gif');
+
+    // Ensure Vite does not try to pre-bundle/rewrite the CDN URL.
+    const mod = (await import(/* @vite-ignore */ url)) as unknown as ModernGifModule;
+    if (typeof mod.encode !== 'function') {
+      throw new Error('modern-gif module loaded but encode() export is missing');
+    }
+
+    cachedEncode = mod.encode;
+    return cachedEncode;
+  })();
+
+  return loadEncodePromise;
+}
 
 /**
  * Options for modern-gif encoding
@@ -31,7 +61,9 @@ const QUALITY_TO_MAX_COLORS = { high: 256, medium: 128, low: 64 } as const;
  * @returns True if modern-gif encode function is available
  */
 export function isModernGifSupported(): boolean {
-  return typeof encode === 'function';
+  // Encode() is loaded lazily from CDN.
+  // Keep this check cheap/sync: it only validates baseline browser primitives.
+  return typeof Blob !== 'undefined' && typeof ImageData !== 'undefined';
 }
 
 /**
@@ -115,6 +147,8 @@ export async function encodeModernGif(
 
       onProgress?.(maxBeforeEncode, totalFrames);
     }, 1_000);
+
+    const encode = await getModernGifEncode();
 
     const blob = await encode({
       width,

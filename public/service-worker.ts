@@ -27,12 +27,12 @@ declare const self: ServiceWorkerGlobalScope;
  * Service Worker version for cache invalidation
  * Increment when breaking changes require cache reset
  */
-const SW_VERSION = 'v1.0.0';
+const SW_VERSION = "v1.0.0";
 
 /**
  * Cache name prefix for versioning
  */
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = "v1";
 
 /**
  * Cache storage names with version identifiers
@@ -53,16 +53,16 @@ const ALL_CACHE_NAMES = Object.values(CACHE_NAMES);
  * CDN domains to intercept and cache
  */
 const CDN_DOMAINS = [
-  'esm.sh',
-  'cdn.jsdelivr.net',
-  'unpkg.com',
-  'cdn.skypack.dev',
+  "esm.sh",
+  "cdn.jsdelivr.net",
+  "unpkg.com",
+  "cdn.skypack.dev",
 ] as const;
 
 /**
  * Request type classification for routing strategy
  */
-type RequestType = 'cdn' | 'ffmpeg' | 'app' | 'ignore';
+type RequestType = "cdn" | "ffmpeg" | "app" | "ignore";
 
 /**
  * Classifies request for appropriate caching strategy
@@ -72,22 +72,26 @@ type RequestType = 'cdn' | 'ffmpeg' | 'app' | 'ignore';
  */
 function classifyRequest(url: URL): RequestType {
   // CDN resources (dependencies loaded from external CDNs)
-  if (CDN_DOMAINS.some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`))) {
-    return 'cdn';
+  if (
+    CDN_DOMAINS.some(
+      (domain) => url.hostname === domain || url.hostname.endsWith(`.${domain}`)
+    )
+  ) {
+    return "cdn";
   }
 
   // FFmpeg core assets (preserve existing caching pattern)
-  if (url.pathname.includes('@ffmpeg/core')) {
-    return 'ffmpeg';
+  if (url.pathname.includes("@ffmpeg/core")) {
+    return "ffmpeg";
   }
 
   // App bundles (Vite-generated assets)
-  if (url.pathname.startsWith('/assets/')) {
-    return 'app';
+  if (url.pathname.startsWith("/assets/")) {
+    return "app";
   }
 
   // Pass through (HTML, other static assets)
-  return 'ignore';
+  return "ignore";
 }
 
 /**
@@ -95,7 +99,7 @@ function classifyRequest(url: URL): RequestType {
  * Activates immediately without waiting for existing clients
  * Phase 4: Initializes fallback cache
  */
-self.addEventListener('install', (event: ExtendableEvent) => {
+self.addEventListener("install", (event: ExtendableEvent) => {
   console.log(`[SW ${SW_VERSION}] Installing...`);
 
   // Skip waiting to activate immediately (aggressive update strategy)
@@ -116,7 +120,7 @@ self.addEventListener('install', (event: ExtendableEvent) => {
  * Service Worker activate event
  * Cleans up old caches and takes control immediately
  */
-self.addEventListener('activate', (event: ExtendableEvent) => {
+self.addEventListener("activate", (event: ExtendableEvent) => {
   console.log(`[SW ${SW_VERSION}] Activating...`);
 
   event.waitUntil(
@@ -125,7 +129,7 @@ self.addEventListener('activate', (event: ExtendableEvent) => {
       const cacheNames = await caches.keys();
       const validCacheNames = ALL_CACHE_NAMES as readonly string[];
       await Promise.all(
-        cacheNames.map(cacheName => {
+        cacheNames.map((cacheName) => {
           if (!validCacheNames.includes(cacheName)) {
             console.log(`[SW ${SW_VERSION}] Deleting old cache: ${cacheName}`);
             return caches.delete(cacheName);
@@ -148,7 +152,10 @@ self.addEventListener('activate', (event: ExtendableEvent) => {
  * @param timeout - Timeout in milliseconds
  * @returns Response or throws on timeout
  */
-async function fetchWithTimeout(request: Request, timeout: number): Promise<Response> {
+async function fetchWithTimeout(
+  request: Request,
+  timeout: number
+): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -168,33 +175,108 @@ async function fetchWithTimeout(request: Request, timeout: number): Promise<Resp
  */
 const CDN_CONVERTERS = {
   /**
+   * Parses an esm.sh URL into { pkg, version, path }.
+   *
+   * Supported examples:
+   * - https://esm.sh/solid-js@1.9.10/web?target=esnext
+   * - https://esm.sh/@ffmpeg/ffmpeg@0.12.15?target=esnext
+   * - https://esm.sh/@jsquash/webp@1.5.0/encode.js?target=esnext
+   * - https://esm.sh/@jsquash/webp@1.5.0/codec/enc/webp_enc.wasm
+   */
+  parseEsmSh(
+    url: string
+  ): { pkg: string; version: string; path: string; isAsset: boolean } | null {
+    try {
+      const u = new URL(url);
+      if (u.hostname !== "esm.sh" && !u.hostname.endsWith(".esm.sh")) {
+        return null;
+      }
+
+      const pathname = u.pathname.startsWith("/")
+        ? u.pathname.slice(1)
+        : u.pathname;
+      // Match either scoped (@scope/name) or unscoped (name) package.
+      const match = pathname.match(
+        /^((?:@[^/]+\/[^@/]+)|(?:[^@/]+))@([^/]+)(\/.*)?$/
+      );
+      if (!match) {
+        return null;
+      }
+
+      const pkg = match[1];
+      const version = match[2];
+      const rawPath = match[3] ?? "";
+
+      if (!pkg || !version) {
+        return null;
+      }
+
+      const path = rawPath || "";
+
+      // Avoid applying module transforms to binary/static assets.
+      const lower = path.toLowerCase();
+      const isAsset =
+        lower.endsWith(".wasm") ||
+        lower.endsWith(".data") ||
+        lower.endsWith(".bin") ||
+        lower.endsWith(".png") ||
+        lower.endsWith(".jpg") ||
+        lower.endsWith(".jpeg") ||
+        lower.endsWith(".gif") ||
+        lower.endsWith(".webp") ||
+        lower.endsWith(".svg") ||
+        lower.endsWith(".css") ||
+        lower.endsWith(".map");
+
+      return { pkg, version, path, isAsset };
+    } catch {
+      return null;
+    }
+  },
+
+  /**
    * Converts esm.sh URL to jsdelivr format
    */
   esmToJsdelivr(url: string): string | null {
-    const match = url.match(/esm\.sh\/([^@]+)@([^/?]+)(\/[^?]*)?(\?.*)?/);
-    if (!match) return null;
-    const [, pkg, version, path = ''] = match;
-    return `https://cdn.jsdelivr.net/npm/${pkg}@${version}${path}/+esm`;
+    const parsed = this.parseEsmSh(url);
+    if (!parsed) return null;
+
+    // jsDelivr supports +esm for module conversion; do NOT apply it to assets.
+    if (parsed.isAsset) {
+      return `https://cdn.jsdelivr.net/npm/${parsed.pkg}@${parsed.version}${parsed.path}`;
+    }
+
+    return `https://cdn.jsdelivr.net/npm/${parsed.pkg}@${parsed.version}${parsed.path}/+esm`;
   },
 
   /**
    * Converts esm.sh URL to unpkg format
    */
   esmToUnpkg(url: string): string | null {
-    const match = url.match(/esm\.sh\/([^@]+)@([^/?]+)(\/[^?]*)?/);
-    if (!match) return null;
-    const [, pkg, version, path = ''] = match;
-    return `https://unpkg.com/${pkg}@${version}${path}?module`;
+    const parsed = this.parseEsmSh(url);
+    if (!parsed) return null;
+
+    // unpkg's ?module is for JS modules; avoid it for binary assets.
+    if (parsed.isAsset) {
+      return `https://unpkg.com/${parsed.pkg}@${parsed.version}${parsed.path}`;
+    }
+
+    return `https://unpkg.com/${parsed.pkg}@${parsed.version}${parsed.path}?module`;
   },
 
   /**
    * Converts esm.sh URL to skypack format
    */
   esmToSkypack(url: string): string | null {
-    const match = url.match(/esm\.sh\/([^@]+)@([^/?]+)(\/[^?]*)?/);
-    if (!match) return null;
-    const [, pkg, version, path = ''] = match;
-    return `https://cdn.skypack.dev/${pkg}@${version}${path}`;
+    const parsed = this.parseEsmSh(url);
+    if (!parsed) return null;
+
+    // Skypack is primarily for modules; skip assets.
+    if (parsed.isAsset) {
+      return null;
+    }
+
+    return `https://cdn.skypack.dev/${parsed.pkg}@${parsed.version}${parsed.path}`;
   },
 };
 
@@ -218,7 +300,7 @@ interface CDNMetrics {
  * @param metrics - Performance metrics to log
  */
 function logCDNMetrics(metrics: CDNMetrics): void {
-  const emoji = metrics.success ? '✓' : '✗';
+  const emoji = metrics.success ? "✓" : "✗";
   const latencyMs = metrics.latency.toFixed(0);
 
   if (metrics.success) {
@@ -244,7 +326,10 @@ function logCDNMetrics(metrics: CDNMetrics): void {
  * @param timeout - Timeout per CDN attempt (default: 15s)
  * @returns Response from successful CDN or throws if all fail
  */
-async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<Response> {
+async function fetchWithCascade(
+  originalUrl: string,
+  timeout = 15000
+): Promise<Response> {
   const errors: Array<{ cdn: string; error: string }> = [];
 
   // Try original URL (esm.sh)
@@ -257,7 +342,7 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
     if (response.ok) {
       logCDNMetrics({
         url: originalUrl,
-        cdnName: 'esm.sh',
+        cdnName: "esm.sh",
         latency,
         success: true,
         status: response.status,
@@ -268,25 +353,25 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
 
     logCDNMetrics({
       url: originalUrl,
-      cdnName: 'esm.sh',
+      cdnName: "esm.sh",
       latency,
       success: false,
       status: response.status,
       error: `HTTP ${response.status}`,
       timestamp: Date.now(),
     });
-    errors.push({ cdn: 'esm.sh', error: `HTTP ${response.status}` });
+    errors.push({ cdn: "esm.sh", error: `HTTP ${response.status}` });
   } catch (error) {
     const latency = performance.now() - startTime;
     logCDNMetrics({
       url: originalUrl,
-      cdnName: 'esm.sh',
+      cdnName: "esm.sh",
       latency,
       success: false,
       error: String(error),
       timestamp: Date.now(),
     });
-    errors.push({ cdn: 'esm.sh', error: String(error) });
+    errors.push({ cdn: "esm.sh", error: String(error) });
   }
 
   // Try jsdelivr
@@ -295,13 +380,16 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
     const jsdelivrStart = performance.now();
     try {
       console.log(`[SW ${SW_VERSION}] Trying jsdelivr: ${jsdelivrUrl}`);
-      const response = await fetchWithTimeout(new Request(jsdelivrUrl), timeout);
+      const response = await fetchWithTimeout(
+        new Request(jsdelivrUrl),
+        timeout
+      );
       const latency = performance.now() - jsdelivrStart;
 
       if (response.ok) {
         logCDNMetrics({
           url: jsdelivrUrl,
-          cdnName: 'jsdelivr',
+          cdnName: "jsdelivr",
           latency,
           success: true,
           status: response.status,
@@ -312,25 +400,25 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
 
       logCDNMetrics({
         url: jsdelivrUrl,
-        cdnName: 'jsdelivr',
+        cdnName: "jsdelivr",
         latency,
         success: false,
         status: response.status,
         error: `HTTP ${response.status}`,
         timestamp: Date.now(),
       });
-      errors.push({ cdn: 'jsdelivr', error: `HTTP ${response.status}` });
+      errors.push({ cdn: "jsdelivr", error: `HTTP ${response.status}` });
     } catch (error) {
       const latency = performance.now() - jsdelivrStart;
       logCDNMetrics({
         url: jsdelivrUrl,
-        cdnName: 'jsdelivr',
+        cdnName: "jsdelivr",
         latency,
         success: false,
         error: String(error),
         timestamp: Date.now(),
       });
-      errors.push({ cdn: 'jsdelivr', error: String(error) });
+      errors.push({ cdn: "jsdelivr", error: String(error) });
     }
   }
 
@@ -346,7 +434,7 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
       if (response.ok) {
         logCDNMetrics({
           url: unpkgUrl,
-          cdnName: 'unpkg',
+          cdnName: "unpkg",
           latency,
           success: true,
           status: response.status,
@@ -357,25 +445,25 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
 
       logCDNMetrics({
         url: unpkgUrl,
-        cdnName: 'unpkg',
+        cdnName: "unpkg",
         latency,
         success: false,
         status: response.status,
         error: `HTTP ${response.status}`,
         timestamp: Date.now(),
       });
-      errors.push({ cdn: 'unpkg', error: `HTTP ${response.status}` });
+      errors.push({ cdn: "unpkg", error: `HTTP ${response.status}` });
     } catch (error) {
       const latency = performance.now() - unpkgStart;
       logCDNMetrics({
         url: unpkgUrl,
-        cdnName: 'unpkg',
+        cdnName: "unpkg",
         latency,
         success: false,
         error: String(error),
         timestamp: Date.now(),
       });
-      errors.push({ cdn: 'unpkg', error: String(error) });
+      errors.push({ cdn: "unpkg", error: String(error) });
     }
   }
 
@@ -391,7 +479,7 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
       if (response.ok) {
         logCDNMetrics({
           url: skypackUrl,
-          cdnName: 'skypack',
+          cdnName: "skypack",
           latency,
           success: true,
           status: response.status,
@@ -402,31 +490,36 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
 
       logCDNMetrics({
         url: skypackUrl,
-        cdnName: 'skypack',
+        cdnName: "skypack",
         latency,
         success: false,
         status: response.status,
         error: `HTTP ${response.status}`,
         timestamp: Date.now(),
       });
-      errors.push({ cdn: 'skypack', error: `HTTP ${response.status}` });
+      errors.push({ cdn: "skypack", error: `HTTP ${response.status}` });
     } catch (error) {
       const latency = performance.now() - skypackStart;
       logCDNMetrics({
         url: skypackUrl,
-        cdnName: 'skypack',
+        cdnName: "skypack",
         latency,
         success: false,
         error: String(error),
         timestamp: Date.now(),
       });
-      errors.push({ cdn: 'skypack', error: String(error) });
+      errors.push({ cdn: "skypack", error: String(error) });
     }
   }
 
   // All CDNs failed
-  console.error(`[SW ${SW_VERSION}] All CDNs failed for ${originalUrl}:`, errors);
-  throw new Error(`All CDNs failed: ${errors.map(e => `${e.cdn} (${e.error})`).join(', ')}`);
+  console.error(
+    `[SW ${SW_VERSION}] All CDNs failed for ${originalUrl}:`,
+    errors
+  );
+  throw new Error(
+    `All CDNs failed: ${errors.map((e) => `${e.cdn} (${e.error})`).join(", ")}`
+  );
 }
 
 /**
@@ -438,7 +531,10 @@ async function fetchWithCascade(originalUrl: string, timeout = 15000): Promise<R
  * @param cacheName - Cache storage name
  * @returns Response from network or cache
  */
-async function networkFirstStrategy(request: Request, cacheName: string): Promise<Response> {
+async function networkFirstStrategy(
+  request: Request,
+  cacheName: string
+): Promise<Response> {
   const cache = await caches.open(cacheName);
   const fallbackCache = await caches.open(CACHE_NAMES.fallback);
 
@@ -449,12 +545,12 @@ async function networkFirstStrategy(request: Request, cacheName: string): Promis
     // Cache successful response in both main and fallback caches
     if (response.ok) {
       // Store in main CDN cache
-      cache.put(request, response.clone()).catch(err => {
+      cache.put(request, response.clone()).catch((err) => {
         console.warn(`[SW ${SW_VERSION}] Main cache put failed:`, err);
       });
 
       // Also store in fallback cache for offline support
-      fallbackCache.put(request, response.clone()).catch(err => {
+      fallbackCache.put(request, response.clone()).catch((err) => {
         console.warn(`[SW ${SW_VERSION}] Fallback cache put failed:`, err);
       });
     }
@@ -473,7 +569,9 @@ async function networkFirstStrategy(request: Request, cacheName: string): Promis
     // Try fallback cache as last resort
     const fallbackResponse = await fallbackCache.match(request);
     if (fallbackResponse) {
-      console.log(`[SW ${SW_VERSION}] Serving from fallback cache: ${request.url}`);
+      console.log(
+        `[SW ${SW_VERSION}] Serving from fallback cache: ${request.url}`
+      );
       return fallbackResponse;
     }
 
@@ -491,7 +589,10 @@ async function networkFirstStrategy(request: Request, cacheName: string): Promis
  * @param cacheName - Cache storage name
  * @returns Response from cache or network
  */
-async function cacheFirstStrategy(request: Request, cacheName: string): Promise<Response> {
+async function cacheFirstStrategy(
+  request: Request,
+  cacheName: string
+): Promise<Response> {
   const cache = await caches.open(cacheName);
   const fallbackCache = await caches.open(CACHE_NAMES.fallback);
 
@@ -502,7 +603,7 @@ async function cacheFirstStrategy(request: Request, cacheName: string): Promise<
 
     // Background revalidation (stale-while-revalidate)
     fetchWithCascade(request.url)
-      .then(response => {
+      .then((response) => {
         if (response.ok) {
           cache.put(request, response.clone());
           fallbackCache.put(request, response.clone());
@@ -523,7 +624,7 @@ async function cacheFirstStrategy(request: Request, cacheName: string): Promise<
 
     // Still do background revalidation
     fetchWithCascade(request.url)
-      .then(response => {
+      .then((response) => {
         if (response.ok) {
           cache.put(request, response.clone());
           fallbackCache.put(request, response.clone());
@@ -565,24 +666,28 @@ async function isReturningUser(): Promise<boolean> {
  * Phase 2: Network-first for CDN resources with multi-CDN fallback
  * Phase 2.3: Cache-first for returning users
  */
-self.addEventListener('fetch', (event: FetchEvent) => {
+self.addEventListener("fetch", (event: FetchEvent) => {
   const url = new URL(event.request.url);
   const requestType = classifyRequest(url);
 
   // Only intercept CDN requests
-  if (requestType === 'cdn') {
+  if (requestType === "cdn") {
     event.respondWith(
       (async () => {
         const returning = await isReturningUser();
 
         if (returning) {
           // Returning user: cache-first with background revalidation
-          console.log(`[SW ${SW_VERSION}] CDN request (cache-first): ${url.href}`);
+          console.log(
+            `[SW ${SW_VERSION}] CDN request (cache-first): ${url.href}`
+          );
           return cacheFirstStrategy(event.request, CACHE_NAMES.cdn);
         }
 
         // First-time user: network-first
-        console.log(`[SW ${SW_VERSION}] CDN request (network-first): ${url.href}`);
+        console.log(
+          `[SW ${SW_VERSION}] CDN request (network-first): ${url.href}`
+        );
         return networkFirstStrategy(event.request, CACHE_NAMES.cdn);
       })()
     );
@@ -597,18 +702,18 @@ self.addEventListener('fetch', (event: FetchEvent) => {
  * Service Worker message event
  * Handles commands from main thread (e.g., skip waiting, clear cache)
  */
-self.addEventListener('message', (event: ExtendableMessageEvent) => {
+self.addEventListener("message", (event: ExtendableMessageEvent) => {
   console.log(`[SW ${SW_VERSION}] Message received:`, event.data);
 
-  if (event.data?.type === 'SKIP_WAITING') {
+  if (event.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
 
-  if (event.data?.type === 'CLEAR_CACHE') {
+  if (event.data?.type === "CLEAR_CACHE") {
     event.waitUntil(
       (async () => {
         const cacheNames = await caches.keys();
-        await Promise.all(cacheNames.map(name => caches.delete(name)));
+        await Promise.all(cacheNames.map((name) => caches.delete(name)));
         console.log(`[SW ${SW_VERSION}] All caches cleared`);
       })()
     );
