@@ -77,6 +77,10 @@ export class FFmpegPipeline {
   private conversionLock = false;
   private callbacks: PipelineCallbacks = {};
 
+  // External conversion monitoring is used by non-FFmpeg conversion paths (e.g., WebCodecs).
+  // Keep it idempotent and safe against duplicate cleanup calls.
+  private externalConversionDepth = 0;
+
   constructor() {
     this.core = new FFmpegCore();
     this.vfs = new FFmpegVFS();
@@ -526,11 +530,16 @@ export class FFmpegPipeline {
     format?: 'gif' | 'webp' | 'mp4',
     options?: { enableLogSilenceCheck?: boolean }
   ): void {
-    logger.debug('general', 'Beginning external conversion monitoring');
+    const wasInactive = this.externalConversionDepth === 0;
+    this.externalConversionDepth += 1;
 
-    // External conversions reuse the shared monitoring + cancellation channel.
-    // Clear any previous cancellation request so a prior cancel does not block new conversions.
-    this.encoder.resetCancellation();
+    if (wasInactive) {
+      logger.debug('general', 'Beginning external conversion monitoring');
+
+      // External conversions reuse the shared monitoring + cancellation channel.
+      // Clear any previous cancellation request so a prior cancel does not block new conversions.
+      this.encoder.resetCancellation();
+    }
 
     this.monitoring.startWatchdog({
       metadata,
@@ -555,6 +564,22 @@ export class FFmpegPipeline {
    * Completely clears all monitoring state to prevent stale timers.
    */
   endExternalConversion(): void {
+    if (this.externalConversionDepth <= 0) {
+      // Defensive cleanup without emitting misleading logs.
+      try {
+        this.monitoring.stopWatchdog();
+        this.monitoring.forceCleanupAll();
+      } catch {
+        // Non-critical
+      }
+      return;
+    }
+
+    this.externalConversionDepth -= 1;
+    if (this.externalConversionDepth > 0) {
+      return;
+    }
+
     try {
       this.monitoring.updateProgress(100, false);
       this.monitoring.stopWatchdog();
@@ -598,6 +623,9 @@ export class FFmpegPipeline {
    */
   terminate(): void {
     logger.info('general', 'Terminating FFmpeg pipeline');
+
+    // Reset external conversion monitoring state (defensive).
+    this.externalConversionDepth = 0;
 
     try {
       // Stop all monitoring

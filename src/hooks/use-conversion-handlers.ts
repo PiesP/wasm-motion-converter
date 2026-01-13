@@ -99,7 +99,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   handleDismissError: () => void;
 } {
   const {
-    conversionStartTime,
+    conversionStartTime: _conversionStartTime,
     setConversionStartTime,
     setEstimatedSecondsRemaining,
     setMemoryWarning,
@@ -108,6 +108,11 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   let memoryCheckTimer: ReturnType<typeof setInterval> | null = null;
   let lastEtaUpdate = 0;
   const etaCalculator = new ETACalculator();
+
+  // UI-scoped operation sequencing.
+  // This prevents stale async completions (e.g., a cancelled conversion) from
+  // clobbering state for a newer conversion started immediately after.
+  let activeConversionSeq = 0;
 
   /**
    * Determine if full video analysis is needed
@@ -328,11 +333,15 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     settings: ReturnType<typeof conversionSettings>,
     videoDuration?: number
   ): Promise<void> => {
+    const conversionSeq = (activeConversionSeq += 1);
+    const isActive = (): boolean => conversionSeq === activeConversionSeq;
+
     try {
       setAppState('converting');
       setConversionProgress(0);
       setConversionStatusMessage('');
-      setConversionStartTime(Date.now());
+      const startTimeMs = Date.now();
+      setConversionStartTime(startTimeMs);
       setErrorContext(null);
       etaCalculator.reset();
       setEstimatedSecondsRemaining(null);
@@ -351,6 +360,9 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
       }, MEMORY_CHECK_INTERVAL);
 
       const progressCallback = (progress: number) => {
+        if (!isActive()) {
+          return;
+        }
         const now = Date.now();
         batch(() => {
           setConversionProgress(progress);
@@ -382,6 +394,10 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         onStatus: setConversionStatusMessage,
       });
 
+      if (!isActive()) {
+        return;
+      }
+
       const blob = result.blob;
 
       clearConversionCallbacks();
@@ -390,7 +406,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         memoryCheckTimer = null;
       }
 
-      const duration = Date.now() - conversionStartTime();
+      const duration = Math.max(0, Date.now() - startTimeMs);
       // The orchestrator already logs a top-level "Conversion completed successfully".
       // Avoid duplicating the same info-level log from the UI layer.
       logger.debug('conversion', 'Conversion result received by UI layer', {
@@ -422,6 +438,9 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
         document.querySelector<HTMLButtonElement>('[data-download-button]')?.focus();
       });
     } catch (error) {
+      if (!isActive()) {
+        return;
+      }
       // CRITICAL: Wrap cleanup in try-catch to ensure one failure doesn't prevent others
       try {
         clearConversionCallbacks();
@@ -495,6 +514,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
    * Clears all state, revokes object URLs, and resets to default settings.
    */
   const handleReset = (): void => {
+    activeConversionSeq += 1;
     resetConversionRuntimeState();
     resetErrorState();
     setInputFile(null);
@@ -516,6 +536,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
    * Cancels ongoing conversion and returns to idle state.
    */
   const handleCancelConversion = (): void => {
+    activeConversionSeq += 1;
     cancelConversion();
     clearConversionCallbacks();
     resetConversionRuntimeState();

@@ -1849,10 +1849,22 @@ export class WebCodecsDecoderService {
       // If we already have enough frames (or we covered the time window with a reasonable
       // number of frames), avoid flush(). Some browsers can hang indefinitely in flush()
       // for certain AV1 streams.
-      const skipFlush =
-        frameIndex >= requiredFramesForSuccess || (hasCoveredTimeWindow() && canAcceptPartial());
+      const hasEnoughFramesForFullResult = frameIndex >= requiredFramesForSuccess;
+      const coveredTimeWindow = hasCoveredTimeWindow();
+      const acceptPartialByTimeWindow = coveredTimeWindow && canAcceptPartial();
+      const skipFlush = hasEnoughFramesForFullResult || acceptPartialByTimeWindow;
 
       if (skipFlush) {
+        if (!hasEnoughFramesForFullResult && acceptPartialByTimeWindow) {
+          logger.warn('conversion', 'Accepting partial demuxer result (time window covered)', {
+            frameCount: frameIndex,
+            totalFrames,
+            requiredFrames: requiredFramesForSuccess,
+            partialAcceptFrames,
+            processedSamples,
+            estimatedSamplesTotal,
+          });
+        }
         tickProgress(true);
       } else {
         const FlushTimeoutMs = 12_000;
@@ -1977,11 +1989,40 @@ export class WebCodecsDecoderService {
         tickProgress(true);
       }
 
-      logger.info('conversion', 'Demuxer capture completed', {
-        frameCount: frameIndex,
-        duration: demuxerMetadata.duration,
-        avgFps: frameIndex / demuxerMetadata.duration,
-      });
+      // Post-condition: only accept partial demuxer results when we covered the requested
+      // time window with a reasonable number of frames.
+      // Otherwise, throw to allow a fallback capture mode (e.g., media-element seek).
+      const coveredTimeWindowFinal = hasCoveredTimeWindow();
+      const acceptPartialFinal = coveredTimeWindowFinal && frameIndex >= partialAcceptFrames;
+      const hasFullResultFinal = frameIndex >= requiredFramesForSuccess;
+
+      if (!hasFullResultFinal && !acceptPartialFinal) {
+        logger.warn('conversion', 'Demuxer capture incomplete; falling back to non-demuxer path', {
+          frameCount: frameIndex,
+          totalFrames,
+          requiredFrames: requiredFramesForSuccess,
+          partialAcceptFrames,
+          processedSamples,
+          estimatedSamplesTotal,
+          coveredTimeWindow: coveredTimeWindowFinal,
+        });
+        throw new Error('Demuxer capture incomplete');
+      }
+
+      const completedAsPartial = frameIndex < requiredFramesForSuccess;
+      logger.info(
+        'conversion',
+        completedAsPartial ? 'Demuxer capture completed (partial)' : 'Demuxer capture completed',
+        {
+          frameCount: frameIndex,
+          duration: demuxerMetadata.duration,
+          avgFps: frameIndex / demuxerMetadata.duration,
+          totalFrames,
+          requiredFrames: requiredFramesForSuccess,
+          partialAcceptFrames,
+          coveredTimeWindow: coveredTimeWindowFinal,
+        }
+      );
 
       const effectiveFps =
         demuxerMetadata.duration > 0 ? frameIndex / demuxerMetadata.duration : targetFps;
