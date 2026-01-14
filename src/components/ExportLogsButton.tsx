@@ -5,6 +5,7 @@ import { logger } from '@utils/logger';
 
 type ExportOptions = {
   includeVerboseFfmpegProgress: boolean;
+  format: 'text' | 'jsonl';
 };
 
 const formatTimestampForFilename = (date: Date): string => {
@@ -23,7 +24,9 @@ const downloadText = (params: { filename: string; text: string; mimeType?: strin
     return;
   }
 
-  const blob = new Blob([params.text], { type: params.mimeType ?? 'text/plain;charset=utf-8' });
+  const blob = new Blob([params.text], {
+    type: params.mimeType ?? 'text/plain;charset=utf-8',
+  });
   const url = URL.createObjectURL(blob);
 
   try {
@@ -98,6 +101,14 @@ const filterFfmpegLogsForExport = (
   return { logs: filtered, removedCount };
 };
 
+const tryParseJson = (value: string): unknown => {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+};
+
 const buildExportText = (options: ExportOptions): string => {
   const now = new Date();
 
@@ -121,7 +132,9 @@ const buildExportText = (options: ExportOptions): string => {
 
   try {
     envLines.push(
-      `crossOriginIsolated: ${typeof crossOriginIsolated !== 'undefined' ? String(crossOriginIsolated) : 'unavailable'}`
+      `crossOriginIsolated: ${
+        typeof crossOriginIsolated !== 'undefined' ? String(crossOriginIsolated) : 'unavailable'
+      }`
     );
   } catch {
     envLines.push('crossOriginIsolated: unavailable');
@@ -151,6 +164,85 @@ const buildExportText = (options: ExportOptions): string => {
   return lines.join('\n');
 };
 
+const buildExportJsonl = (options: ExportOptions): string => {
+  const now = new Date();
+
+  const rawFfmpegLogs = ffmpegService.getRecentFFmpegLogs();
+  const { logs: ffmpegLogs, removedCount } = filterFfmpegLogsForExport(rawFfmpegLogs, options);
+
+  const meta: Record<string, unknown> = {
+    type: 'meta',
+    schemaVersion: 1,
+    app: 'dropconvert-wasm',
+    exportedAt: now.toISOString(),
+    url: (() => {
+      try {
+        return typeof location !== 'undefined' ? location.href : 'unavailable';
+      } catch {
+        return 'unavailable';
+      }
+    })(),
+    userAgent: (() => {
+      try {
+        return typeof navigator !== 'undefined' ? navigator.userAgent : 'unavailable';
+      } catch {
+        return 'unavailable';
+      }
+    })(),
+    crossOriginIsolated: (() => {
+      try {
+        return typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : 'unavailable';
+      } catch {
+        return 'unavailable';
+      }
+    })(),
+    sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+    includeVerboseFfmpegProgress: options.includeVerboseFfmpegProgress,
+    filteredFfmpegProgressLines: options.includeVerboseFfmpegProgress ? 0 : removedCount,
+  };
+
+  const lines: string[] = [];
+  lines.push(JSON.stringify(meta));
+
+  for (const entry of logger.getRecentEntries()) {
+    const context = entry.contextJson ? tryParseJson(entry.contextJson) : undefined;
+    lines.push(
+      JSON.stringify({
+        type: 'log',
+        source: 'app',
+        timestampMs: entry.timestampMs,
+        timestampIso: entry.timestampIso,
+        time: entry.time,
+        level: entry.level,
+        category: entry.category,
+        message: entry.message,
+        conversionProgress: entry.conversionProgress,
+        context,
+        line: entry.line,
+      })
+    );
+  }
+
+  for (const line of ffmpegLogs) {
+    const stream = line.startsWith('[stdout] ')
+      ? 'stdout'
+      : line.startsWith('[stderr] ')
+        ? 'stderr'
+        : null;
+
+    lines.push(
+      JSON.stringify({
+        type: 'log',
+        source: 'ffmpeg',
+        stream,
+        line,
+      })
+    );
+  }
+
+  return lines.join('\n');
+};
+
 type ExportLogsButtonProps = {
   class?: string;
 };
@@ -164,8 +256,25 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
   const handleExport = (event: MouseEvent): void => {
     try {
       const includeVerboseFfmpegProgress = event.shiftKey === true;
-      logger.info('general', 'Exporting logs', { includeVerboseFfmpegProgress });
-      const text = buildExportText({ includeVerboseFfmpegProgress });
+      const format: ExportOptions['format'] = event.altKey === true ? 'jsonl' : 'text';
+
+      logger.info('general', 'Exporting logs', {
+        includeVerboseFfmpegProgress,
+        format,
+      });
+
+      if (format === 'jsonl') {
+        const text = buildExportJsonl({ includeVerboseFfmpegProgress, format });
+        const filename = `motion-converter-logs-${formatTimestampForFilename(new Date())}.jsonl`;
+        downloadText({
+          filename,
+          text,
+          mimeType: 'application/x-ndjson;charset=utf-8',
+        });
+        return;
+      }
+
+      const text = buildExportText({ includeVerboseFfmpegProgress, format });
       const filename = `motion-converter-logs-${formatTimestampForFilename(new Date())}.log`;
       downloadText({ filename, text });
     } catch (error) {
@@ -183,7 +292,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
           'p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900'
         }
         aria-label="Export logs"
-        title="Export logs (Shift-click for verbose FFmpeg progress)"
+        title="Export logs (Shift: verbose FFmpeg progress, Alt: JSONL for AI analysis)"
       >
         <svg
           class="w-5 h-5"

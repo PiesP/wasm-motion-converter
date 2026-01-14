@@ -35,7 +35,8 @@ export function createThrottledProgressReporter(params: {
     throwIfCancelled();
 
     const safeTotal = Math.max(1, total);
-    const progress = startPercent + ((endPercent - startPercent) * current) / safeTotal;
+    const safeCurrent = Math.min(Math.max(0, current), safeTotal);
+    const progress = startPercent + ((endPercent - startPercent) * safeCurrent) / safeTotal;
     const rounded = Math.round(progress);
 
     // Avoid redundant UI updates when the rounded percent does not change.
@@ -46,11 +47,22 @@ export function createThrottledProgressReporter(params: {
     }
 
     const now = Date.now();
-    const isTerminal = current >= total;
-    if (current !== lastStatusCurrent && (isTerminal || now - lastStatusAt >= tickIntervalMs)) {
+    const isTerminal = safeCurrent >= safeTotal;
+
+    // Status strings are user-visible. In addition to time-based throttling,
+    // allow immediate updates when progress jumps significantly (e.g., chunked
+    // encoders) so the UI does not appear stale.
+    const deltaThreshold = Math.max(1, Math.ceil(safeTotal / 20));
+    const shouldUpdateStatus =
+      safeCurrent !== lastStatusCurrent &&
+      (isTerminal ||
+        now - lastStatusAt >= tickIntervalMs ||
+        (lastStatusCurrent >= 0 && safeCurrent - lastStatusCurrent >= deltaThreshold));
+
+    if (shouldUpdateStatus) {
       lastStatusAt = now;
-      lastStatusCurrent = current;
-      reportStatus(`${statusPrefix} (${current}/${safeTotal})`);
+      lastStatusCurrent = safeCurrent;
+      reportStatus(`${statusPrefix} (${safeCurrent}/${safeTotal})`);
     }
   };
 

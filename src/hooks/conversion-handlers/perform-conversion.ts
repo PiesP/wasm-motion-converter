@@ -96,7 +96,7 @@ export async function performConversion(
   runtime: ConversionRuntimeController,
   videoDurationMs?: number
 ): Promise<void> {
-  const { isActive } = runtime.startNewRun();
+  const { isActive, runId } = runtime.startNewRun();
 
   try {
     setAppState('converting');
@@ -104,6 +104,16 @@ export async function performConversion(
     const startTimeMs = Date.now();
     runtime.prepareForNewConversion(startTimeMs);
     setErrorContext(null);
+
+    logger.info('conversion', 'UI conversion started', {
+      runId,
+      fileName: file.name,
+      fileSizeBytes: file.size,
+      format: settings.format,
+      quality: settings.quality,
+      scale: settings.scale,
+      durationMs: videoDurationMs,
+    });
 
     runtime.startMemoryMonitoring();
 
@@ -114,9 +124,16 @@ export async function performConversion(
       runtime.updateProgress(progress);
     };
 
+    const statusCallback = (message: string) => {
+      if (!isActive()) {
+        return;
+      }
+      runtime.updateStatus(message);
+    };
+
     // NOTE: FFmpeg callbacks still needed until CPU path fully migrates to pipeline abstraction.
     ffmpegService.setProgressCallback(progressCallback);
-    ffmpegService.setStatusCallback(setConversionStatusMessage);
+    ffmpegService.setStatusCallback(statusCallback);
 
     const result = await convertVideo({
       file,
@@ -128,7 +145,7 @@ export async function performConversion(
       },
       metadata: videoMetadata() ?? undefined,
       onProgress: progressCallback,
-      onStatus: setConversionStatusMessage,
+      onStatus: statusCallback,
     });
 
     if (!isActive()) {

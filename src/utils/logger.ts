@@ -18,6 +18,20 @@
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
+export type LogEntry = {
+  timestampMs: number;
+  timestampIso: string;
+  time: string; // HH:MM:SS (local)
+  level: LogLevel;
+  category: LogCategory;
+  message: string;
+  conversionProgress: number | null;
+  /** Safe JSON string (may be a JSON primitive); undefined when no context was provided. */
+  contextJson?: string;
+  /** Human-readable, single-line rendering (same as console output). */
+  line: string;
+};
+
 /**
  * Maximum number of characters allowed for inline context in a single log line.
  *
@@ -159,6 +173,9 @@ class Logger {
   // Rolling buffer of recently emitted log lines (already formatted as single-line strings).
   private recentLines: string[] = [];
 
+  // Structured version of recent logs for AI-friendly export.
+  private recentEntries: LogEntry[] = [];
+
   // Current conversion progress (0-100). When set, it can be appended to log prefixes
   // to make long-running conversions easier to follow in the console.
   private conversionProgress: number | null = null;
@@ -228,8 +245,7 @@ class Logger {
    * @example
    * formatTimestamp(); // "14:35:42"
    */
-  private formatTimestamp(): string {
-    const now = new Date();
+  private formatTimestamp(now: Date = new Date()): string {
     // Pad hours, minutes, seconds to 2 digits (e.g., 9 → "09")
     const hours = now.getHours().toString().padStart(2, '0');
     const minutes = now.getMinutes().toString().padStart(2, '0');
@@ -266,8 +282,10 @@ class Logger {
       return; // Silent skip - log discarded without output
     }
 
+    const now = new Date();
+
     // FORMAT: Construct prefix with timestamp and category
-    const timestamp = this.formatTimestamp();
+    const timestamp = this.formatTimestamp(now);
     const conversionProgress = this.getConversionProgressForPrefix(category);
     const prefix =
       conversionProgress === null
@@ -281,9 +299,9 @@ class Logger {
 
     // OUTPUT: Log message with optional inline context.
     // Keeping context inline avoids noisy `Object` suffixes and makes log capture readable.
-    const line = (() => {
+    const { line, contextJson } = (() => {
       if (context === undefined) {
-        return `${prefix} ${message}`;
+        return { line: `${prefix} ${message}`, contextJson: undefined };
       }
 
       const rawContext = safeJsonStringify(context);
@@ -291,17 +309,40 @@ class Logger {
         rawContext.length > MAX_INLINE_CONTEXT_CHARS
           ? `${rawContext.slice(0, MAX_INLINE_CONTEXT_CHARS)}…(truncated)`
           : rawContext;
-      return `${prefix} ${message} ${inlineContext}`;
+      return {
+        line: `${prefix} ${message} ${inlineContext}`,
+        contextJson: rawContext,
+      };
     })();
+
+    const entry: LogEntry = {
+      timestampMs: now.getTime(),
+      timestampIso: now.toISOString(),
+      time: timestamp,
+      level,
+      category,
+      message,
+      conversionProgress,
+      contextJson,
+      line,
+    };
 
     console[consoleMethod](line);
     this.addRecentLine(line);
+    this.addRecentEntry(entry);
   }
 
   private addRecentLine(line: string): void {
     this.recentLines.push(line);
     if (this.recentLines.length > MAX_RECENT_LOG_LINES) {
       this.recentLines.splice(0, this.recentLines.length - MAX_RECENT_LOG_LINES);
+    }
+  }
+
+  private addRecentEntry(entry: LogEntry): void {
+    this.recentEntries.push(entry);
+    if (this.recentEntries.length > MAX_RECENT_LOG_LINES) {
+      this.recentEntries.splice(0, this.recentEntries.length - MAX_RECENT_LOG_LINES);
     }
   }
 
@@ -313,10 +354,18 @@ class Logger {
   }
 
   /**
+   * Get a snapshot of recently emitted structured log entries.
+   */
+  getRecentEntries(): LogEntry[] {
+    return [...this.recentEntries];
+  }
+
+  /**
    * Clear the in-memory recent log buffer.
    */
   clearRecentLogs(): void {
     this.recentLines = [];
+    this.recentEntries = [];
   }
 
   /**

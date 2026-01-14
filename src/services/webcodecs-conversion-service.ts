@@ -896,19 +896,67 @@ class WebCodecsConversionService {
 
       ffmpegService.reportProgress(decodeEnd);
 
+      const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
+      const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
       const initialEncodeStatusPrefix = `Encoding ${format.toUpperCase()}...`;
-      const encodeReporter = createThrottledProgressReporter({
-        startPercent: FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START,
-        endPercent: FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END,
-        tickIntervalMs: StatusTickIntervalMs,
-        initialStatusPrefix: initialEncodeStatusPrefix,
-        throwIfCancelled,
-        reportProgress: (percent) => ffmpegService.reportProgress(percent),
-        reportStatus: (status) => ffmpegService.reportStatus(status),
-      });
-      encodeReporter.setStatusPrefix(initialEncodeStatusPrefix);
 
-      const reportEncodeProgress = encodeReporter.report;
+      // modern-gif (GIF) does not provide granular progress while encoding.
+      // Avoid showing misleading "(current/total)" counters to the user.
+      const shouldUseIndeterminateEncodeHeartbeat = format === 'gif' && useModernGif;
+
+      const estimateModernGifEncodeSeconds = (params: {
+        frameCount: number;
+        width: number;
+        height: number;
+        quality: ConversionOptions['quality'];
+      }): number => {
+        const { frameCount, width, height, quality } = params;
+        const megapixelFrames = (width * height * Math.max(1, frameCount)) / 1_000_000;
+
+        // Heuristic only: drives a progress heartbeat (best-effort UI feedback).
+        // Higher quality tends to be slower.
+        const mpFramesPerSecond = quality === 'high' ? 5 : quality === 'medium' ? 6.5 : 8;
+        const seconds = Math.round(megapixelFrames / mpFramesPerSecond);
+        return Math.min(120, Math.max(5, seconds));
+      };
+
+      const startEncodeHeartbeat = (params: {
+        frameCount: number;
+        width: number;
+        height: number;
+        quality: ConversionOptions['quality'];
+      }): ReturnType<typeof setInterval> => {
+        ffmpegService.reportStatus(initialEncodeStatusPrefix);
+        ffmpegService.reportProgress(encodeStart);
+
+        const estimatedSeconds = estimateModernGifEncodeSeconds(params);
+        return ffmpegService.startProgressHeartbeat(encodeStart, encodeEnd, estimatedSeconds);
+      };
+
+      const stopEncodeHeartbeat = (intervalId: ReturnType<typeof setInterval> | null): void => {
+        if (!intervalId) {
+          return;
+        }
+        ffmpegService.stopProgressHeartbeat(intervalId);
+      };
+
+      const encodeReporter = shouldUseIndeterminateEncodeHeartbeat
+        ? null
+        : createThrottledProgressReporter({
+            startPercent: encodeStart,
+            endPercent: encodeEnd,
+            tickIntervalMs: StatusTickIntervalMs,
+            initialStatusPrefix: initialEncodeStatusPrefix,
+            throwIfCancelled,
+            reportProgress: (percent) => ffmpegService.reportProgress(percent),
+            reportStatus: (status) => ffmpegService.reportStatus(status),
+          });
+
+      if (encodeReporter) {
+        encodeReporter.setStatusPrefix(initialEncodeStatusPrefix);
+      }
+
+      const reportEncodeProgress = encodeReporter?.report;
 
       const encodeWithFFmpegFallback = async (errorMessage: string): Promise<Blob> => {
         throwIfCancelled();
@@ -948,23 +996,20 @@ class WebCodecsConversionService {
             colorSpace: frame.colorSpace,
           }));
 
-          const progressProxy = Comlink.proxy((current: number, total: number) => {
-            reportEncodeProgress(current, total);
-          });
+          const encodeHeartbeat = shouldUseIndeterminateEncodeHeartbeat
+            ? startEncodeHeartbeat({
+                frameCount: serializableFrames.length,
+                width: decodeResult.width,
+                height: decodeResult.height,
+                quality,
+              })
+            : null;
 
-          // Keep watchdog timers alive even if worker progress callbacks are delayed.
-          // This does NOT advance progress; it re-reports the last seen percent.
-          const WorkerEncodeKeepaliveMs = Math.min(2000, FFMPEG_INTERNALS.HEARTBEAT_INTERVAL_MS);
-          const keepaliveInterval = setInterval(() => {
-            if (shouldCancel()) {
-              return;
-            }
-            try {
-              ffmpegService.reportProgress(encodeReporter.getLastPercent());
-            } catch {
-              // Non-fatal: keepalive should never crash encoding.
-            }
-          }, WorkerEncodeKeepaliveMs);
+          const progressProxy = reportEncodeProgress
+            ? Comlink.proxy((current: number, total: number) => {
+                reportEncodeProgress(current, total);
+              })
+            : undefined;
 
           try {
             // Safety timeout: avoid infinite hangs if a worker never responds.
@@ -992,8 +1037,9 @@ class WebCodecsConversionService {
                 timeoutMs: workerEncodeTimeoutMs,
               }
             );
+            ffmpegService.reportProgress(encodeEnd);
           } finally {
-            clearInterval(keepaliveInterval);
+            stopEncodeHeartbeat(encodeHeartbeat);
           }
 
           encoderBackendUsed = 'modern-gif-worker';
@@ -1003,15 +1049,28 @@ class WebCodecsConversionService {
             error: errorMessage,
           });
           try {
-            outputBlob = await encodeModernGif(capturedFrames, {
-              width: decodeResult.width,
-              height: decodeResult.height,
-              fps: targetFps,
-              quality,
-              onProgress: reportEncodeProgress,
-              shouldCancel,
-            });
-            encoderBackendUsed = 'modern-gif-main';
+            const encodeHeartbeat = shouldUseIndeterminateEncodeHeartbeat
+              ? startEncodeHeartbeat({
+                  frameCount: capturedFrames.length,
+                  width: decodeResult.width,
+                  height: decodeResult.height,
+                  quality,
+                })
+              : null;
+
+            try {
+              outputBlob = await encodeModernGif(capturedFrames, {
+                width: decodeResult.width,
+                height: decodeResult.height,
+                fps: targetFps,
+                quality,
+                shouldCancel,
+              });
+              ffmpegService.reportProgress(encodeEnd);
+              encoderBackendUsed = 'modern-gif-main';
+            } finally {
+              stopEncodeHeartbeat(encodeHeartbeat);
+            }
           } catch (fallbackError) {
             const fallbackMessage =
               fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
@@ -1021,20 +1080,37 @@ class WebCodecsConversionService {
       } else if (useModernGif) {
         // Fallback to main thread if workers unavailable
         try {
-          outputBlob = await encodeModernGif(capturedFrames, {
-            width: decodeResult.width,
-            height: decodeResult.height,
-            fps: targetFps,
-            quality,
-            onProgress: reportEncodeProgress,
-            shouldCancel,
-          });
-          encoderBackendUsed = 'modern-gif-main';
+          const encodeHeartbeat = shouldUseIndeterminateEncodeHeartbeat
+            ? startEncodeHeartbeat({
+                frameCount: capturedFrames.length,
+                width: decodeResult.width,
+                height: decodeResult.height,
+                quality,
+              })
+            : null;
+
+          try {
+            outputBlob = await encodeModernGif(capturedFrames, {
+              width: decodeResult.width,
+              height: decodeResult.height,
+              fps: targetFps,
+              quality,
+              shouldCancel,
+            });
+            ffmpegService.reportProgress(encodeEnd);
+            encoderBackendUsed = 'modern-gif-main';
+          } finally {
+            stopEncodeHeartbeat(encodeHeartbeat);
+          }
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           outputBlob = await encodeWithFFmpegFallback(errorMessage);
         }
       } else if (format === 'webp') {
+        if (!encodeReporter) {
+          throw new Error('Encode reporter unavailable for WebP encoding.');
+        }
+
         const webpAnimationDurationSeconds = this.resolveAnimationDurationSeconds(
           webpCapturedFrames.length,
           targetFps,
@@ -1076,7 +1152,7 @@ class WebCodecsConversionService {
           metadata,
           codec: metadata?.codec,
           sourceFPS: metadata?.framerate,
-          onProgress: reportEncodeProgress,
+          onProgress: encodeReporter.report,
           shouldCancel,
           canEncodeWebPFrames: () => this.getCanvasWebPEncodeSupport(),
           setStatusPrefix: (prefix) => {
