@@ -70,6 +70,22 @@ function computeRawvideoMaxBytes(params: {
   return 320 * MB;
 }
 
+function applyIntentBudgetFactor(params: {
+  rawvideoMaxBytes: number;
+  intent: RawvideoEligibilityIntent;
+}): number {
+  const { rawvideoMaxBytes, intent } = params;
+
+  // Auto-selection must be more conservative than an explicit user preference.
+  // Fallback should be the most conservative to reduce OOM risk when the pipeline
+  // is already in a degraded state.
+  const factor = intent === 'preferred' ? 1.0 : intent === 'auto' ? 0.85 : 0.7;
+
+  // Keep a small minimum so short clips can still benefit.
+  const minBytes = 128 * MB;
+  return Math.max(minBytes, Math.floor(rawvideoMaxBytes * factor));
+}
+
 export function computeRawvideoEligibility(params: {
   metadata?: VideoMetadata;
   targetFps: number;
@@ -80,9 +96,12 @@ export function computeRawvideoEligibility(params: {
   const jsHeapSizeLimitMB = getJsHeapSizeLimitMB();
   const deviceMemoryGB = getDeviceMemoryGB();
 
-  const rawvideoMaxBytes = computeRawvideoMaxBytes({
-    jsHeapSizeLimitMB,
-    deviceMemoryGB,
+  const rawvideoMaxBytes = applyIntentBudgetFactor({
+    rawvideoMaxBytes: computeRawvideoMaxBytes({
+      jsHeapSizeLimitMB,
+      deviceMemoryGB,
+    }),
+    intent: params.intent,
   });
 
   const critical = isMemoryCritical();

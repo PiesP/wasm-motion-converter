@@ -37,19 +37,19 @@
     "quality": "pnpm -s knip && pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s typecheck"
   },
   "dependencies": {
-    "@ffmpeg/ffmpeg": "^0.12.15",
-    "@ffmpeg/util": "^0.12.2",
-    "@jsquash/webp": "^1.5.0",
-    "@webav/av-cliper": "^1.2.8",
-    "comlink": "^4.4.2",
-    "mediabunny": "^1.27.4",
-    "modern-gif": "^2.0.4",
-    "solid-js": "^1.9.10"
+    "@ffmpeg/ffmpeg": "0.12.15",
+    "@ffmpeg/util": "0.12.2",
+    "@jsquash/webp": "1.5.0",
+    "@webav/av-cliper": "1.2.8",
+    "comlink": "4.4.2",
+    "mediabunny": "1.27.4",
+    "modern-gif": "2.0.4",
+    "solid-js": "1.9.10"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.11",
     "@tailwindcss/postcss": "^4.1.18",
-    "@types/node": "^25.0.5",
+    "@types/node": "^25.0.6",
     "esbuild": "0.27.2",
     "knip": "^5.80.2",
     "postcss": "^8.5.6",

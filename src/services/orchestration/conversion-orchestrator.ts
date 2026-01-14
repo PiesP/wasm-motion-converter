@@ -224,16 +224,94 @@ class ConversionOrchestrator {
         });
 
         const isLowMemoryDevice =
-          typeof rawEligibility.deviceMemoryGB === 'number' && rawEligibility.deviceMemoryGB < 4;
+          (typeof rawEligibility.deviceMemoryGB === 'number' &&
+            rawEligibility.deviceMemoryGB < 4) ||
+          (typeof rawEligibility.jsHeapSizeLimitMB === 'number' &&
+            rawEligibility.jsHeapSizeLimitMB < 1536);
 
         const ffmpegThreadingAvailable =
           caps.crossOriginIsolated && caps.sharedArrayBuffer && caps.workerSupport;
 
+        const durationSeconds =
+          typeof metadata?.duration === 'number' && metadata.duration > 0
+            ? metadata.duration
+            : null;
+
+        const computeDurationBudgetSeconds = (): number => {
+          const base =
+            effectiveOptions.scale === 1.0 ? 8 : effectiveOptions.scale === 0.75 ? 12 : 20;
+          const qualityAdjust =
+            effectiveOptions.quality === 'high' ? -2 : effectiveOptions.quality === 'low' ? 2 : 0;
+          return Math.max(6, base + qualityAdjust);
+        };
+
+        const computeFrameBudget = (): number => {
+          const base =
+            effectiveOptions.scale === 1.0 ? 280 : effectiveOptions.scale === 0.75 ? 360 : 520;
+          const qualityAdjust = effectiveOptions.quality === 'high' ? -60 : 0;
+          return Math.max(180, base + qualityAdjust);
+        };
+
+        const computeRawByteRatioThreshold = (): number | null => {
+          if (durationSeconds === null) {
+            return null;
+          }
+
+          // Base thresholds by scale. These are intentionally conservative for auto.
+          let t =
+            effectiveOptions.scale === 1.0 ? 0.6 : effectiveOptions.scale === 0.75 ? 0.65 : 0.72;
+
+          // Longer clips increase risk of allocation pressure and GC stalls.
+          if (durationSeconds > 10) {
+            t -= 0.1;
+          } else if (durationSeconds > 6) {
+            t -= 0.05;
+          }
+
+          // Higher quality tends to increase FPS and frame count.
+          if (effectiveOptions.quality === 'high') {
+            t -= 0.05;
+          } else if (effectiveOptions.quality === 'low') {
+            t += 0.03;
+          }
+
+          // Clamp to a sane range.
+          return Math.min(0.78, Math.max(0.45, t));
+        };
+
         const estimatedRawBytes = rawEligibility.estimatedRawBytes ?? 0;
+        const rawByteRatio =
+          rawEligibility.rawvideoMaxBytes > 0 && estimatedRawBytes > 0
+            ? estimatedRawBytes / rawEligibility.rawvideoMaxBytes
+            : null;
+        const rawByteRatioThreshold = computeRawByteRatioThreshold();
+
+        const durationBudgetSeconds = computeDurationBudgetSeconds();
+        const withinDurationBudget =
+          durationSeconds !== null &&
+          Number.isFinite(durationSeconds) &&
+          durationSeconds <= durationBudgetSeconds;
+
+        const frameBudget = computeFrameBudget();
+        const estimatedFramesForRaw = rawEligibility.estimatedFramesForRaw;
+        const withinFrameBudget =
+          typeof estimatedFramesForRaw === 'number' &&
+          Number.isFinite(estimatedFramesForRaw) &&
+          estimatedFramesForRaw > 0 &&
+          estimatedFramesForRaw <= frameBudget;
+
+        const withinRawByteRatioBudget =
+          rawByteRatio !== null &&
+          rawByteRatioThreshold !== null &&
+          Number.isFinite(rawByteRatio) &&
+          rawByteRatio <= rawByteRatioThreshold;
+
         const rawvideoHasHeadroom =
           rawEligibility.enabled &&
           estimatedRawBytes > 0 &&
-          estimatedRawBytes <= Math.floor(rawEligibility.rawvideoMaxBytes * 0.85);
+          withinDurationBudget &&
+          withinFrameBudget &&
+          withinRawByteRatioBudget;
 
         // Auto strategy: for complex codecs (AV1/HEVC/VP9), prefer WebCodecs decode.
         // If we have enough memory headroom to stage rawvideo, prefer the FFmpeg palette pipeline.
@@ -261,9 +339,18 @@ class ConversionOrchestrator {
               workerSupport: caps.workerSupport,
               isProbablyMobile,
               isLowMemoryDevice,
+              durationSeconds,
+              durationBudgetSeconds,
+              withinDurationBudget,
               targetFps,
+              estimatedFramesForRaw,
+              frameBudget,
+              withinFrameBudget,
               estimatedRawBytes: rawEligibility.estimatedRawBytes,
               rawvideoMaxBytes: rawEligibility.rawvideoMaxBytes,
+              rawByteRatio,
+              rawByteRatioThreshold,
+              withinRawByteRatioBudget,
               jsHeapSizeLimitMB: rawEligibility.jsHeapSizeLimitMB,
               deviceMemoryGB: rawEligibility.deviceMemoryGB,
               isMemoryCritical: rawEligibility.isMemoryCritical,
@@ -280,8 +367,17 @@ class ConversionOrchestrator {
             rawvideoHasHeadroom,
             isProbablyMobile,
             isLowMemoryDevice,
+            durationSeconds,
+            durationBudgetSeconds,
+            withinDurationBudget,
             estimatedRawBytes: rawEligibility.estimatedRawBytes,
             rawvideoMaxBytes: rawEligibility.rawvideoMaxBytes,
+            rawByteRatio,
+            rawByteRatioThreshold,
+            withinRawByteRatioBudget,
+            estimatedFramesForRaw,
+            frameBudget,
+            withinFrameBudget,
             isMemoryCritical: rawEligibility.isMemoryCritical,
           });
         }
