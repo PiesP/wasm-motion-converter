@@ -20,13 +20,22 @@ import { extendedCapabilityService } from '@services/video-pipeline/extended-cap
 import { videoPipelineService } from '@services/video-pipeline/video-pipeline-service';
 import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
 import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
-import { isAv1Codec, isH264Codec, isHevcCodec, normalizeCodecString } from '@utils/codec-utils';
+import {
+  isAv1Codec,
+  isH264Codec,
+  isHevcCodec,
+  isVp9Codec,
+  normalizeCodecString,
+} from '@utils/codec-utils';
 import { detectContainerFormat } from '@utils/container-utils';
 import { createId } from '@utils/create-id';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
+import { QUALITY_PRESETS } from '@utils/constants';
+import { getOptimalFPS } from '@utils/quality-optimizer';
 import { ffmpegService } from '@services/ffmpeg-service'; // Legacy service (will be replaced in Phase 4)
 import { ProgressReporter } from '@services/shared/progress-reporter';
+import { computeRawvideoEligibility } from '@services/webcodecs/conversion/rawvideo-eligibility';
 import {
   setConversionAutoSelectionDebug,
   setConversionPhaseTimingsDebug,
@@ -169,6 +178,120 @@ class ConversionOrchestrator {
       throwIfAborted();
       progressReporter.report(1.0);
 
+      // Resolve the *effective* GIF encoder strategy for this run.
+      // Notes:
+      // - The UI no longer exposes encoder choice.
+      // - We still keep an internal hint field (options.gifEncoder) so the orchestrator can
+      //   route complex codecs through a faster FFmpeg palette path when safe.
+      const requestedGifEncoder: GifEncoderPreference | null =
+        request.format === 'gif' ? (request.options.gifEncoder ?? 'auto') : null;
+
+      const effectiveOptions = { ...request.options };
+      let effectiveGifEncoder: GifEncoderPreference | null = requestedGifEncoder;
+
+      if (
+        request.format === 'gif' &&
+        requestedGifEncoder === 'auto' &&
+        pathSelection.path === 'gpu'
+      ) {
+        const caps = extendedCapabilityService.getCached();
+
+        const codec = metadata?.codec;
+        const isComplexGifCodec = isAv1Codec(codec) || isHevcCodec(codec) || isVp9Codec(codec);
+
+        const nav = navigator as Navigator & {
+          userAgentData?: { mobile?: boolean };
+        };
+        const isProbablyMobile =
+          typeof nav.userAgentData?.mobile === 'boolean'
+            ? nav.userAgentData.mobile
+            : /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+        // Prefer the scaled duration estimate from metadata when available.
+        const preset = QUALITY_PRESETS.gif[effectiveOptions.quality];
+        const presetFps = 'fps' in preset ? preset.fps : 15;
+        const targetFps =
+          metadata?.framerate && metadata.framerate > 0
+            ? getOptimalFPS(metadata.framerate, effectiveOptions.quality, 'gif')
+            : presetFps;
+
+        const rawEligibility = computeRawvideoEligibility({
+          metadata,
+          targetFps,
+          scale: effectiveOptions.scale,
+          format: 'gif',
+          intent: 'auto',
+        });
+
+        const isLowMemoryDevice =
+          typeof rawEligibility.deviceMemoryGB === 'number' && rawEligibility.deviceMemoryGB < 4;
+
+        const ffmpegThreadingAvailable =
+          caps.crossOriginIsolated && caps.sharedArrayBuffer && caps.workerSupport;
+
+        const estimatedRawBytes = rawEligibility.estimatedRawBytes ?? 0;
+        const rawvideoHasHeadroom =
+          rawEligibility.enabled &&
+          estimatedRawBytes > 0 &&
+          estimatedRawBytes <= Math.floor(rawEligibility.rawvideoMaxBytes * 0.85);
+
+        // Auto strategy: for complex codecs (AV1/HEVC/VP9), prefer WebCodecs decode.
+        // If we have enough memory headroom to stage rawvideo, prefer the FFmpeg palette pipeline.
+        // Guardrails: avoid this path on mobile / low-memory devices.
+        if (
+          isComplexGifCodec &&
+          ffmpegThreadingAvailable &&
+          rawvideoHasHeadroom &&
+          !isProbablyMobile &&
+          !isLowMemoryDevice
+        ) {
+          effectiveOptions.gifEncoder = 'ffmpeg-palette';
+          effectiveGifEncoder = 'ffmpeg-palette';
+
+          logger.info(
+            'conversion',
+            'Auto GIF encoder resolved to FFmpeg palette (rawvideo eligible)',
+            {
+              requested: requestedGifEncoder,
+              resolved: effectiveGifEncoder,
+              codec,
+              isComplexGifCodec,
+              crossOriginIsolated: caps.crossOriginIsolated,
+              sharedArrayBuffer: caps.sharedArrayBuffer,
+              workerSupport: caps.workerSupport,
+              isProbablyMobile,
+              isLowMemoryDevice,
+              targetFps,
+              estimatedRawBytes: rawEligibility.estimatedRawBytes,
+              rawvideoMaxBytes: rawEligibility.rawvideoMaxBytes,
+              jsHeapSizeLimitMB: rawEligibility.jsHeapSizeLimitMB,
+              deviceMemoryGB: rawEligibility.deviceMemoryGB,
+              isMemoryCritical: rawEligibility.isMemoryCritical,
+            }
+          );
+        } else {
+          logger.debug('conversion', 'Auto GIF encoder kept default', {
+            requested: requestedGifEncoder,
+            resolved: requestedGifEncoder,
+            codec,
+            isComplexGifCodec,
+            ffmpegThreadingAvailable,
+            rawvideoEligible: rawEligibility.enabled,
+            rawvideoHasHeadroom,
+            isProbablyMobile,
+            isLowMemoryDevice,
+            estimatedRawBytes: rawEligibility.estimatedRawBytes,
+            rawvideoMaxBytes: rawEligibility.rawvideoMaxBytes,
+            isMemoryCritical: rawEligibility.isMemoryCritical,
+          });
+        }
+      }
+
+      const effectiveRequest: ConversionRequest = {
+        ...request,
+        options: effectiveOptions,
+      };
+
       logger.info('conversion', 'Starting conversion', {
         file: request.file.name,
         fileSizeBytes: request.file.size,
@@ -178,7 +301,8 @@ class ConversionOrchestrator {
         codec: metadata?.codec,
         quality: request.options.quality,
         scale: request.options.scale,
-        gifEncoder: request.format === 'gif' ? (request.options.gifEncoder ?? 'auto') : null,
+        gifEncoder: requestedGifEncoder,
+        gifEncoderResolved: request.format === 'gif' ? effectiveGifEncoder : null,
         durationSeconds: request.options.duration ?? null,
       });
 
@@ -232,7 +356,7 @@ class ConversionOrchestrator {
 
         case 'gpu':
           blob = await this.convertViaGPUPath(
-            request,
+            effectiveRequest,
             metadata,
             conversionMetadata,
             abortController.signal
@@ -329,12 +453,26 @@ class ConversionOrchestrator {
       }
 
       // Performance metrics logging (always visible, even in production)
+      const ffmpegFrameInputKind =
+        (blob as unknown as { ffmpegFrameInputKind?: string | null }).ffmpegFrameInputKind ?? null;
+      const ffmpegRawvideoBytesUsed =
+        (blob as unknown as { ffmpegRawvideoBytesUsed?: number | null }).ffmpegRawvideoBytesUsed ??
+        null;
+
       logger.performance('Conversion Strategy Executed', {
         codec: metadata?.codec,
         format: request.format,
         path: conversionMetadata.path,
         plannedPath: pathSelection.path,
         hadFallback: conversionMetadata.path !== pathSelection.path,
+        encoderBackendUsed: encoderBackendUsedForMetrics,
+        captureModeUsed: captureModeUsedForMetrics,
+        gifEncoderRequested:
+          request.format === 'gif' ? (request.options.gifEncoder ?? 'auto') : null,
+        gifEncoderResolved:
+          request.format === 'gif' ? (effectiveOptions.gifEncoder ?? 'auto') : null,
+        ffmpegFrameInputKind,
+        ffmpegRawvideoBytesUsed,
         durationMs: conversionMetadata.conversionTimeMs,
         outputSizeMB: (blob.size / (1024 * 1024)).toFixed(2),
         performanceRating:
@@ -947,14 +1085,17 @@ class ConversionOrchestrator {
   }
 
   /**
-   * Note: Hybrid path (WebCodecs decode + FFmpeg encode) was benchmarked
-   * in January 2026 and rejected due to catastrophic performance (47x slower
-   * than CPU path). See docs/TODO.md and tmp/benchmark-analysis-2026-01-13.md
-   * for details.
+   * Note on the hybrid GIF path (WebCodecs decode → FFmpeg palette encode)
    *
-   * Exception (opt-in): when the user forces GIF `ffmpeg-palette` for AV1 input,
-   * we honor that preference via WebCodecs decode + FFmpeg frame-sequence palette
-   * encoding to avoid FFmpeg-direct AV1 decode failures in WASM.
+   * Earlier benchmarks (Jan 2026) showed catastrophic performance when the
+   * hybrid path staged frames as a PNG image sequence (heavy JS encode + VFS writes).
+   *
+   * The pipeline now prefers rawvideo staging (single RGBA buffer + frames.rgba),
+   * which removes the PNG bottleneck and makes the hybrid path viable for AV1.
+   *
+   * - AV1: FFmpeg-direct decode in WASM can be unreliable; prefer WebCodecs decode.
+   * - When rawvideo staging is eligible (memory headroom available), auto strategy may
+   *   resolve to the FFmpeg palette encoder for better performance.
    */
 
   /**

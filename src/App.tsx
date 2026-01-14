@@ -17,7 +17,6 @@ import EnvironmentWarning from '@components/EnvironmentWarning';
 import FileDropzone from '@components/FileDropzone';
 import FormatSelector from '@components/FormatSelector';
 import ExportLogsButton from '@components/ExportLogsButton';
-import GifEncoderSelector from '@components/GifEncoderSelector';
 import LicenseAttribution from '@components/LicenseAttribution';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
@@ -528,20 +527,6 @@ const App: Component = () => {
                 disabled={!videoMetadata() || isBusy()}
                 tooltip="GIF works everywhere, WebP is smaller but requires modern browsers"
               />
-
-              <Show when={conversionSettings().format === 'gif'}>
-                <GifEncoderSelector
-                  value={conversionSettings().gifEncoder ?? 'auto'}
-                  onChange={(gifEncoder) =>
-                    setConversionSettings({
-                      ...conversionSettings(),
-                      gifEncoder,
-                    })
-                  }
-                  disabled={!videoMetadata() || isBusy()}
-                  tooltip="Experiment: force FFmpeg palettegen/paletteuse for GIF output"
-                />
-              </Show>
 
               <QualitySelector
                 value={conversionSettings().quality}

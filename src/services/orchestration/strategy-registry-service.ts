@@ -349,7 +349,14 @@ class StrategyRegistryService {
       return capabilities.hardwareAccelerated;
     }
 
-    // VP8/VP9 or other codecs: use GPU only if generally hardware accelerated
+    // VP8/VP9: prefer the FFmpeg CPU path for GIF.
+    // Rationale: FFmpeg palettegen/paletteuse is typically faster and more reliable than
+    // routing VP8/VP9 through modern-gif.
+    if (normalized === 'vp8' || normalized === 'vp9') {
+      return false;
+    }
+
+    // Other codecs: use GPU only if generally hardware accelerated
     return capabilities.hardwareAccelerated;
   }
 
@@ -371,7 +378,7 @@ class StrategyRegistryService {
         benchmarks: undefined,
         confidence: strategy.confidence === 'high' ? 'medium' : strategy.confidence,
         reason:
-          'Hardware decode available; preferring WebCodecs + modern-gif to maximize GPU usage',
+          'Hardware decode available; preferring GPU decode path for GIF (encoder resolved at runtime)',
       };
     }
 

@@ -51,7 +51,6 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   format: 'gif',
   quality: 'medium',
   scale: 1.0,
-  gifEncoder: 'auto',
 };
 
 /**
@@ -81,15 +80,12 @@ const getInitialConversionSettings = (): ConversionSettings => {
         typeof parsed.scale === 'number' &&
         [0.5, 0.75, 1.0].includes(parsed.scale)
       ) {
-        const gifEncoder =
-          parsed.gifEncoder === 'auto' || parsed.gifEncoder === 'ffmpeg-palette'
-            ? parsed.gifEncoder
-            : DEFAULT_CONVERSION_SETTINGS.gifEncoder;
-
+        // NOTE: gifEncoder is intentionally not persisted anymore.
         return {
           ...DEFAULT_CONVERSION_SETTINGS,
-          ...parsed,
-          gifEncoder,
+          format: parsed.format,
+          quality: parsed.quality,
+          scale: parsed.scale,
         };
       }
     }
@@ -110,7 +106,16 @@ const getInitialConversionSettings = (): ConversionSettings => {
  */
 export const saveConversionSettings = (settings: ConversionSettings): void => {
   try {
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    // Persist only stable user-facing settings.
+    // Encoder selection is now fully automatic and depends on runtime environment.
+    localStorage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        format: settings.format,
+        quality: settings.quality,
+        scale: settings.scale,
+      })
+    );
   } catch (error) {
     // Silently fail if localStorage is unavailable
     logger.warn('general', 'Failed to save conversion settings to localStorage', { error });

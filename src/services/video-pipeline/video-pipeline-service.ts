@@ -82,7 +82,10 @@ class VideoPipelineService {
       logger.info('conversion', '[Demuxer] ffmpeg', { container });
       logger.info('conversion', '[DecodePath] ffmpeg-wasm-full', { container });
       const encodePlan: EncodePlan = 'ffmpeg';
-      logger.info('conversion', '[EncodePlan]', { encodePlan });
+      logger.info('conversion', '[EncodePlan]', {
+        encodePlan,
+        note: 'Planning label only; runtime encoder may differ',
+      });
 
       return {
         caps,
@@ -99,7 +102,10 @@ class VideoPipelineService {
       logger.info('conversion', '[Demuxer] ffmpeg', { container });
       logger.info('conversion', '[DecodePath] ffmpeg-wasm-full', { container });
       const encodePlan: EncodePlan = 'ffmpeg';
-      logger.info('conversion', '[EncodePlan]', { encodePlan });
+      logger.info('conversion', '[EncodePlan]', {
+        encodePlan,
+        note: 'Planning label only; runtime encoder may differ',
+      });
 
       return {
         caps,
@@ -146,7 +152,10 @@ class VideoPipelineService {
         format: params.format,
         codec: trackFromMetadata.codec,
       });
-      logger.info('conversion', '[EncodePlan]', { encodePlan });
+      logger.info('conversion', '[EncodePlan]', {
+        encodePlan,
+        note: 'Planning label only; runtime encoder may differ',
+      });
 
       return {
         caps,
@@ -180,7 +189,10 @@ class VideoPipelineService {
         format: params.format,
         codec: track.codec,
       });
-      logger.info('conversion', '[EncodePlan]', { encodePlan });
+      logger.info('conversion', '[EncodePlan]', {
+        encodePlan,
+        note: 'Planning label only; runtime encoder may differ',
+      });
 
       return {
         caps,

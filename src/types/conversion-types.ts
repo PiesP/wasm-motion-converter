@@ -51,7 +51,7 @@ export type ConversionScale = 0.5 | 0.75 | 1.0;
  * Controls which encoder implementation should be preferred when producing GIF output.
  *
  * - `auto`: Use the default strategy selection (typically GPU/WebCodecs + modern-gif when available)
- * - `ffmpeg-palette`: Force FFmpeg palettegen/paletteuse pipeline (higher quality, slower)
+ * - `ffmpeg-palette`: Prefer FFmpeg palettegen/paletteuse pipeline (often higher quality; performance can vary by codec/input)
  */
 export type GifEncoderPreference = 'auto' | 'ffmpeg-palette';
 
@@ -76,8 +76,6 @@ export interface ConversionSettings {
   quality: ConversionQuality;
   /** Scaling factor (0.5, 0.75, 1.0) */
   scale: ConversionScale;
-  /** Optional GIF encoder preference (only used when format === 'gif') */
-  gifEncoder?: GifEncoderPreference;
 }
 
 /**

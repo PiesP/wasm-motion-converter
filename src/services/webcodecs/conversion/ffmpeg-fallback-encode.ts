@@ -1,7 +1,6 @@
 import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
-import { isMemoryCritical } from '@utils/memory-monitor';
 
 import { ffmpegService } from '@services/ffmpeg-service';
 import { isComplexCodec } from '@services/webcodecs/codec-utils';
@@ -14,6 +13,7 @@ import {
   resolveWebPFps as resolveWebPFpsUtil,
 } from '@services/webcodecs/webp-timing';
 import { computeExpectedFramesFromDuration } from '@services/webcodecs/conversion/frame-requirements';
+import { computeRawvideoEligibility } from '@services/webcodecs/conversion/rawvideo-eligibility';
 
 export async function encodeWithFFmpegFallback(params: {
   format: 'gif' | 'webp';
@@ -94,81 +94,35 @@ export async function encodeWithFFmpegFallback(params: {
   // Rawvideo avoids expensive PNG/JPEG encoding/decoding, but can require large contiguous memory.
   // Only use it when explicitly preferred and the estimated memory footprint looks safe.
   const MB = 1024 * 1024;
+  const rawEligibility = computeRawvideoEligibility({
+    metadata,
+    targetFps,
+    scale,
+    format,
+    intent,
+  });
 
-  // Prefer `performance.memory.jsHeapSizeLimit` when available (Chrome).
-  // This is NOT total system memory, but it's a useful upper bound for JS allocations.
-  const jsHeapSizeLimitBytes = (
-    performance as Performance & { memory?: { jsHeapSizeLimit?: number } }
-  ).memory?.jsHeapSizeLimit;
-  const jsHeapSizeLimitMB = jsHeapSizeLimitBytes ? Math.floor(jsHeapSizeLimitBytes / MB) : null;
-
-  // As a fallback, use `navigator.deviceMemory` (GB, coarse). Not all browsers expose it.
-  const deviceMemoryGB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-  const deviceMemoryMB =
-    typeof deviceMemoryGB === 'number' && Number.isFinite(deviceMemoryGB)
-      ? Math.floor(deviceMemoryGB * 1024)
-      : null;
-
-  // Conservative cap because the raw buffer lives in JS and is then copied into FFmpeg's WASM VFS
-  // (so peak memory can be ~2x the raw frame bytes).
-  const RAWVIDEO_MAX_BYTES = (() => {
-    // If we can see JS heap limit, allow up to 8% of it (clamped).
-    if (jsHeapSizeLimitMB) {
-      // NOTE: 700x700 @ ~138 frames is ~270MB. On some browsers the JS heap limit can be ~2GB;
-      // 8% would be too conservative and prevent rawvideo from ever engaging.
-      const bytes = Math.floor(jsHeapSizeLimitMB * MB * 0.15);
-      return Math.min(512 * MB, Math.max(192 * MB, bytes));
-    }
-
-    if (deviceMemoryMB) {
-      if (deviceMemoryMB >= 8192) return 512 * MB;
-      if (deviceMemoryMB >= 4096) return 384 * MB;
-      if (deviceMemoryMB >= 2048) return 256 * MB;
-      return 192 * MB;
-    }
-
-    // Baseline fallback: keep it conservative but not so low that rawvideo never triggers.
-    return 320 * MB;
-  })();
-  const estimatedScaledWidth = metadata?.width
-    ? Math.max(1, Math.round(metadata.width * scale))
-    : null;
-  const estimatedScaledHeight = metadata?.height
-    ? Math.max(1, Math.round(metadata.height * scale))
-    : null;
-  const estimatedFramesForRaw = metadata?.duration
-    ? computeExpectedFramesFromDuration({
-        durationSeconds: metadata.duration,
-        fps: targetFps,
-      })
-    : null;
-  const estimatedRawBytes =
-    estimatedScaledWidth && estimatedScaledHeight && estimatedFramesForRaw
-      ? estimatedScaledWidth * estimatedScaledHeight * 4 * estimatedFramesForRaw
-      : null;
+  const estimatedRawBytes = rawEligibility.estimatedRawBytes;
+  const RAWVIDEO_MAX_BYTES = rawEligibility.rawvideoMaxBytes;
 
   let shouldTryRawVideo: boolean =
-    intent === 'preferred' &&
-    format === 'gif' &&
-    !isMemoryCritical() &&
-    estimatedRawBytes !== null &&
-    estimatedRawBytes > 0 &&
-    estimatedRawBytes <= RAWVIDEO_MAX_BYTES;
+    intent === 'preferred' && format === 'gif' && rawEligibility.enabled;
 
   const rawVideoFileName = 'frames.rgba';
   let rawVideoWidth: number | null = null;
   let rawVideoHeight: number | null = null;
   let rawVideoBuffer: Uint8Array | null = null;
   let rawVideoFramesWritten = 0;
+  let rawVideoBytesUsed: number | null = null;
 
   if (intent === 'preferred' && format === 'gif') {
     logger.debug('conversion', 'Rawvideo frame staging eligibility', {
       codec: metadata?.codec,
-      isMemoryCritical: isMemoryCritical(),
+      isMemoryCritical: rawEligibility.isMemoryCritical,
       estimatedRawBytes,
       rawvideoMaxBytes: RAWVIDEO_MAX_BYTES,
-      jsHeapSizeLimitMB,
-      deviceMemoryGB,
+      jsHeapSizeLimitMB: rawEligibility.jsHeapSizeLimitMB,
+      deviceMemoryGB: rawEligibility.deviceMemoryGB,
       enabled: shouldTryRawVideo,
     });
   }
@@ -408,6 +362,7 @@ export async function encodeWithFFmpegFallback(params: {
 
     const frameByteLength = width * height * 4;
     const bytesUsed = rawVideoFramesWritten * frameByteLength;
+    rawVideoBytesUsed = bytesUsed;
     const rawBytes = rawVideoBuffer.subarray(0, bytesUsed);
     await ffmpegService.writeVirtualFile(rawVideoFileName, rawBytes);
     fallbackTempFiles.push(rawVideoFileName);
@@ -450,5 +405,16 @@ export async function encodeWithFFmpegFallback(params: {
   const fallbackBlobWithMetadata = fallbackBlob as ConversionOutputBlob;
   fallbackBlobWithMetadata.encoderBackendUsed = format === 'gif' ? 'ffmpeg-palette' : 'ffmpeg';
   fallbackBlobWithMetadata.captureModeUsed = 'auto';
+
+  // Best-effort metadata for logs/debugging.
+  (fallbackBlobWithMetadata as unknown as { ffmpegFrameInputKind?: string }).ffmpegFrameInputKind =
+    shouldTryRawVideo ? 'rawvideo' : 'image-sequence';
+  if (rawVideoBytesUsed !== null) {
+    (
+      fallbackBlobWithMetadata as unknown as {
+        ffmpegRawvideoBytesUsed?: number;
+      }
+    ).ffmpegRawvideoBytesUsed = rawVideoBytesUsed;
+  }
   return fallbackBlobWithMetadata;
 }
