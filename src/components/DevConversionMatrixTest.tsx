@@ -1,8 +1,8 @@
-import type { Component } from 'solid-js';
-import { createMemo, createSignal, Show } from 'solid-js';
+import type { Component } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 
-import type { ConversionMatrixTestReport } from '@services/dev/conversion-matrix-test';
-import { runConversionMatrixTestWithReport } from '@services/dev/conversion-matrix-test';
+import type { ConversionMatrixTestReport } from "@services/dev/conversion-matrix-test";
+import { runConversionMatrixTestWithReport } from "@services/dev/conversion-matrix-test";
 import {
   buildMatrixTestReportFilename,
   clearMatrixTestReports,
@@ -11,25 +11,28 @@ import {
   listMatrixTestReports,
   loadMatrixTestReport,
   persistMatrixTestReport,
-} from '@services/dev/matrix-test-report-store';
+} from "@services/dev/matrix-test-report-store";
 import {
   conversionSettings,
   conversionStatusMessage,
   inputFile,
   videoMetadata,
-} from '@stores/conversion-store';
-import { logger } from '@utils/logger';
+} from "@stores/conversion-store";
+import { logger } from "@utils/logger";
 
 interface DevConversionMatrixTestProps {
   disabled?: boolean;
 }
 
-const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props) => {
+const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (
+  props
+) => {
   const [isRunning, setIsRunning] = createSignal(false);
   const [repeats, setRepeats] = createSignal<number>(3);
   const [includeGif, setIncludeGif] = createSignal(true);
   const [includeWebp, setIncludeWebp] = createSignal(true);
-  const [includeStrategyCodecScenarios, setIncludeStrategyCodecScenarios] = createSignal(false);
+  const [includeStrategyCodecScenarios, setIncludeStrategyCodecScenarios] =
+    createSignal(false);
   const [autoDownloadReport, setAutoDownloadReport] = createSignal(true);
   const [reportsRefreshToken, setReportsRefreshToken] = createSignal(0);
   const [lastReportId, setLastReportId] = createSignal<string | null>(null);
@@ -39,9 +42,9 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
   });
 
   const formatSummary = createMemo(() => {
-    const formats: Array<'gif' | 'webp'> = [];
-    if (includeGif()) formats.push('gif');
-    if (includeWebp()) formats.push('webp');
+    const formats: Array<"gif" | "webp"> = [];
+    if (includeGif()) formats.push("gif");
+    if (includeWebp()) formats.push("webp");
     return formats;
   });
 
@@ -54,7 +57,9 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
   const downloadReportById = (id: string): void => {
     const report = loadMatrixTestReport<ConversionMatrixTestReport>(id);
     if (!report) {
-      logger.warn('conversion', 'Matrix test report not found in storage', { id });
+      logger.warn("conversion", "Matrix test report not found in storage", {
+        id,
+      });
       return;
     }
 
@@ -62,13 +67,13 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
       startedAt: report.startedAt,
       fileName: report.file.name,
       reportId: report.reportId,
-      format: 'json',
+      format: "json",
     });
 
     downloadTextFile({
       filename,
       text: JSON.stringify(report, null, 2),
-      mimeType: 'application/json;charset=utf-8',
+      mimeType: "application/json;charset=utf-8",
     });
   };
 
@@ -116,18 +121,18 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
         startedAt: report.startedAt,
         fileName: report.file.name,
         reportId: report.reportId,
-        format: 'json',
+        format: "json",
       });
 
       if (autoDownloadReport()) {
         downloadTextFile({
           filename,
           text: reportJson,
-          mimeType: 'application/json;charset=utf-8',
+          mimeType: "application/json;charset=utf-8",
         });
       }
 
-      logger.info('conversion', 'Matrix test report saved (UI)', {
+      logger.info("conversion", "Matrix test report saved (UI)", {
         reportId: report.reportId,
         filename,
         summary: report.summary,
@@ -146,8 +151,9 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
               Dev Conversion Matrix
             </div>
             <div class="mt-1 text-xs text-indigo-800/80 dark:text-indigo-200/80">
-              Runs a conversion matrix (multiple path combinations) against the currently selected
-              video and writes results to logs. Output is not added to the UI results list.
+              Runs a conversion matrix (multiple path combinations) against the
+              currently selected video and writes results to logs. Output is not
+              added to the UI results list.
             </div>
           </div>
 
@@ -159,7 +165,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
             }}
             disabled={!canRun()}
           >
-            {isRunning() ? 'Running…' : `Run matrix (x${repeats()})`}
+            {isRunning() ? "Running…" : `Run matrix (x${repeats()})`}
           </button>
         </div>
 
@@ -174,7 +180,12 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
                 class="ml-2 w-20 rounded-md border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-950 px-2 py-1 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                 value={repeats()}
                 onInput={(e) =>
-                  setRepeats(Math.max(1, Math.min(10, Number(e.currentTarget.value) || 1)))
+                  setRepeats(
+                    Math.max(
+                      1,
+                      Math.min(10, Number(e.currentTarget.value) || 1)
+                    )
+                  )
                 }
                 disabled={props.disabled || isRunning()}
               />
@@ -207,7 +218,9 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
                 type="checkbox"
                 class="h-4 w-4 rounded border-indigo-300 dark:border-indigo-700 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                 checked={includeStrategyCodecScenarios()}
-                onChange={(e) => setIncludeStrategyCodecScenarios(e.currentTarget.checked)}
+                onChange={(e) =>
+                  setIncludeStrategyCodecScenarios(e.currentTarget.checked)
+                }
                 disabled={props.disabled || isRunning()}
               />
               Include strategy codec simulations
@@ -240,8 +253,8 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
 
           <Show when={isRunning()}>
             <div class="text-[11px] text-indigo-800/80 dark:text-indigo-200/80">
-              Running… check the console log. Current UI status message (if any):{' '}
-              {conversionStatusMessage()}
+              Running… check the console log. Current UI status message (if
+              any): {conversionStatusMessage()}
             </div>
           </Show>
 
@@ -284,12 +297,16 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
 
               <div class="mt-2 space-y-2">
                 {savedReports().map((item) => (
-                  <div class="flex flex-wrap items-center justify-between gap-2" role="listitem">
+                  <div
+                    class="flex flex-wrap items-center justify-between gap-2"
+                    role="listitem"
+                  >
                     <div class="text-[11px] text-indigo-900 dark:text-indigo-200">
                       <span class="font-mono">{item.id}</span>
                       <span class="ml-2 opacity-80">
-                        {item.fileName} · {item.successCount}/{item.totalRuns} ok ·{' '}
-                        {item.errorCount} err · {Math.round(item.durationMs / 1000)}s
+                        {item.fileName} · {item.successCount}/{item.totalRuns}{" "}
+                        ok · {item.errorCount} err ·{" "}
+                        {Math.round(item.durationMs / 1000)}s
                       </span>
                     </div>
                     <div class="flex items-center gap-2">

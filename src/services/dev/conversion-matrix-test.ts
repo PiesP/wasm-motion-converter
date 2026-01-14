@@ -1,4 +1,8 @@
-import type { ConversionFormat, ConversionOptions, VideoMetadata } from '@t/conversion-types';
+import type {
+  ConversionFormat,
+  ConversionOptions,
+  VideoMetadata,
+} from "@t/conversion-types";
 import {
   getDevConversionOverrides,
   setDevConversionOverrides,
@@ -6,18 +10,18 @@ import {
   type DevForcedCaptureMode,
   type DevForcedGifEncoder,
   type DevForcedStrategyCodec,
-} from '@services/orchestration/dev-conversion-overrides';
-import { convertVideo } from '@services/orchestration/conversion-orchestrator';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
+} from "@services/orchestration/dev-conversion-overrides";
+import { convertVideo } from "@services/orchestration/conversion-orchestrator";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
 
 export interface ConversionMatrixTestParams {
   file: File;
   metadata?: VideoMetadata | null;
-  formats: Array<Extract<ConversionFormat, 'gif' | 'webp'>>;
+  formats: Array<Extract<ConversionFormat, "gif" | "webp">>;
   repeats?: number;
-  quality: ConversionOptions['quality'];
-  scale: ConversionOptions['scale'];
+  quality: ConversionOptions["quality"];
+  scale: ConversionOptions["scale"];
   /** When true, include strategy-codec simulation scenarios (planning-only). */
   includeStrategyCodecScenarios?: boolean;
 }
@@ -37,14 +41,14 @@ export type ConversionMatrixTestRunRecord = {
   scenarioLabel: string;
   iteration: number;
   repeats: number;
-  format: Extract<ConversionFormat, 'gif' | 'webp'>;
+  format: Extract<ConversionFormat, "gif" | "webp">;
   overrides: DevConversionOverrides;
-  quality: ConversionOptions['quality'];
-  scale: ConversionOptions['scale'];
+  quality: ConversionOptions["quality"];
+  scale: ConversionOptions["scale"];
   startedAtPerfMs: number;
   endedAtPerfMs: number;
   elapsedMs: number;
-  outcome: 'success' | 'error';
+  outcome: "success" | "error";
   outputSizeBytes?: number;
   executedPath?: string;
   encoder?: string;
@@ -66,16 +70,16 @@ export type ConversionMatrixTestReport = {
     type: string;
   };
   params: {
-    formats: Array<Extract<ConversionFormat, 'gif' | 'webp'>>;
+    formats: Array<Extract<ConversionFormat, "gif" | "webp">>;
     repeats: number;
-    quality: ConversionOptions['quality'];
-    scale: ConversionOptions['scale'];
+    quality: ConversionOptions["quality"];
+    scale: ConversionOptions["scale"];
     includeStrategyCodecScenarios: boolean;
   };
   scenarios: Array<{
     id: string;
     label: string;
-    format: Extract<ConversionFormat, 'gif' | 'webp'>;
+    format: Extract<ConversionFormat, "gif" | "webp">;
     overrides: Partial<DevConversionOverrides>;
   }>;
   summary: ConversionMatrixTestSummary;
@@ -85,7 +89,7 @@ export type ConversionMatrixTestReport = {
 interface MatrixScenario {
   id: string;
   label: string;
-  format: Extract<ConversionFormat, 'gif' | 'webp'>;
+  format: Extract<ConversionFormat, "gif" | "webp">;
   overrides: Partial<DevConversionOverrides>;
 }
 
@@ -104,7 +108,10 @@ export interface ConversionMatrixTestSummary {
 function createReportId(): string {
   const base = `matrix-${Date.now()}`;
   try {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    if (
+      typeof crypto !== "undefined" &&
+      typeof crypto.randomUUID === "function"
+    ) {
       return `${base}-${crypto.randomUUID()}`;
     }
   } catch {
@@ -118,7 +125,7 @@ function createReportId(): string {
 function captureEnvSnapshot(): ConversionMatrixTestEnvSnapshot {
   const url = (() => {
     try {
-      return typeof location !== 'undefined' ? location.href : null;
+      return typeof location !== "undefined" ? location.href : null;
     } catch {
       return null;
     }
@@ -126,7 +133,7 @@ function captureEnvSnapshot(): ConversionMatrixTestEnvSnapshot {
 
   const userAgent = (() => {
     try {
-      return typeof navigator !== 'undefined' ? navigator.userAgent : null;
+      return typeof navigator !== "undefined" ? navigator.userAgent : null;
     } catch {
       return null;
     }
@@ -134,7 +141,9 @@ function captureEnvSnapshot(): ConversionMatrixTestEnvSnapshot {
 
   const crossOriginIsolatedValue = (() => {
     try {
-      return typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated === true : null;
+      return typeof crossOriginIsolated !== "undefined"
+        ? crossOriginIsolated === true
+        : null;
     } catch {
       return null;
     }
@@ -142,7 +151,8 @@ function captureEnvSnapshot(): ConversionMatrixTestEnvSnapshot {
 
   const hardwareConcurrency = (() => {
     try {
-      return typeof navigator !== 'undefined' && typeof navigator.hardwareConcurrency === 'number'
+      return typeof navigator !== "undefined" &&
+        typeof navigator.hardwareConcurrency === "number"
         ? navigator.hardwareConcurrency
         : null;
     } catch {
@@ -154,25 +164,25 @@ function captureEnvSnapshot(): ConversionMatrixTestEnvSnapshot {
     url,
     userAgent,
     crossOriginIsolated: crossOriginIsolatedValue,
-    sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+    sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
     hardwareConcurrency,
   };
 }
 
 const BASELINE_OVERRIDES: DevConversionOverrides = {
-  forcedPath: 'auto',
+  forcedPath: "auto",
   disableFallback: false,
-  forcedGifEncoder: 'auto',
-  forcedCaptureMode: 'auto',
+  forcedGifEncoder: "auto",
+  forcedCaptureMode: "auto",
   disableDemuxerInAuto: false,
-  forcedStrategyCodec: 'auto',
+  forcedStrategyCodec: "auto",
 };
 
 function scenarioId(parts: Array<string | number | null | undefined>): string {
   return parts
     .filter((p): p is string | number => p !== null && p !== undefined)
-    .map((p) => String(p).replaceAll(/\s+/g, '-'))
-    .join('__');
+    .map((p) => String(p).replaceAll(/\s+/g, "-"))
+    .join("__");
 }
 
 function applyScenarioOverrides(
@@ -182,19 +192,31 @@ function applyScenarioOverrides(
 }
 
 function buildCaptureModeScenarios(params: {
-  format: Extract<ConversionFormat, 'gif' | 'webp'>;
+  format: Extract<ConversionFormat, "gif" | "webp">;
   forcedGifEncoder?: DevForcedGifEncoder;
-  forcedPath?: DevConversionOverrides['forcedPath'];
+  forcedPath?: DevConversionOverrides["forcedPath"];
 }): MatrixScenario[] {
   const { format, forcedGifEncoder, forcedPath } = params;
 
-  const modes: DevForcedCaptureMode[] = ['auto', 'demuxer', 'track', 'frame-callback', 'seek'];
+  const modes: DevForcedCaptureMode[] = [
+    "auto",
+    "demuxer",
+    "track",
+    "frame-callback",
+    "seek",
+  ];
   const scenarios: MatrixScenario[] = [];
 
   for (const mode of modes) {
     // Base capture-mode scenario
     scenarios.push({
-      id: scenarioId([format, forcedPath ?? 'auto', forcedGifEncoder ?? 'auto', 'capture', mode]),
+      id: scenarioId([
+        format,
+        forcedPath ?? "auto",
+        forcedGifEncoder ?? "auto",
+        "capture",
+        mode,
+      ]),
       label: `${format.toUpperCase()} capture=${mode}`,
       format,
       overrides: {
@@ -206,22 +228,22 @@ function buildCaptureModeScenarios(params: {
     });
 
     // Auto-mode variants: disable demuxer
-    if (mode === 'auto') {
+    if (mode === "auto") {
       scenarios.push({
         id: scenarioId([
           format,
-          forcedPath ?? 'auto',
-          forcedGifEncoder ?? 'auto',
-          'capture',
-          'auto',
-          'no-demux',
+          forcedPath ?? "auto",
+          forcedGifEncoder ?? "auto",
+          "capture",
+          "auto",
+          "no-demux",
         ]),
         label: `${format.toUpperCase()} capture=auto (demuxer disabled)`,
         format,
         overrides: {
           forcedPath,
           forcedGifEncoder,
-          forcedCaptureMode: 'auto',
+          forcedCaptureMode: "auto",
           disableDemuxerInAuto: true,
         },
       });
@@ -232,18 +254,18 @@ function buildCaptureModeScenarios(params: {
 }
 
 function buildStrategyCodecScenarios(params: {
-  format: Extract<ConversionFormat, 'gif' | 'webp'>;
+  format: Extract<ConversionFormat, "gif" | "webp">;
 }): MatrixScenario[] {
-  const codecs: DevForcedStrategyCodec[] = ['h264', 'vp9', 'av1', 'unknown'];
+  const codecs: DevForcedStrategyCodec[] = ["h264", "vp9", "av1", "unknown"];
 
   return codecs.map((forcedStrategyCodec) => ({
-    id: scenarioId([params.format, 'strategy-codec', forcedStrategyCodec]),
+    id: scenarioId([params.format, "strategy-codec", forcedStrategyCodec]),
     label: `${params.format.toUpperCase()} strategyCodec=${forcedStrategyCodec}`,
     format: params.format,
     overrides: {
-      forcedPath: 'auto',
-      forcedGifEncoder: 'auto',
-      forcedCaptureMode: 'auto',
+      forcedPath: "auto",
+      forcedGifEncoder: "auto",
+      forcedCaptureMode: "auto",
       disableDemuxerInAuto: false,
       forcedStrategyCodec,
     },
@@ -251,7 +273,7 @@ function buildStrategyCodecScenarios(params: {
 }
 
 function buildScenarios(params: {
-  formats: Array<Extract<ConversionFormat, 'gif' | 'webp'>>;
+  formats: Array<Extract<ConversionFormat, "gif" | "webp">>;
   includeStrategyCodecScenarios: boolean;
 }): MatrixScenario[] {
   const scenarios: MatrixScenario[] = [];
@@ -259,75 +281,75 @@ function buildScenarios(params: {
   for (const format of params.formats) {
     // Baselines
     scenarios.push({
-      id: scenarioId([format, 'baseline']),
+      id: scenarioId([format, "baseline"]),
       label: `${format.toUpperCase()} baseline (auto)`,
       format,
       overrides: { ...BASELINE_OVERRIDES },
     });
 
     scenarios.push({
-      id: scenarioId([format, 'force', 'cpu']),
+      id: scenarioId([format, "force", "cpu"]),
       label: `${format.toUpperCase()} forcedPath=cpu`,
       format,
-      overrides: { ...BASELINE_OVERRIDES, forcedPath: 'cpu' },
+      overrides: { ...BASELINE_OVERRIDES, forcedPath: "cpu" },
     });
 
     scenarios.push({
-      id: scenarioId([format, 'force', 'gpu']),
+      id: scenarioId([format, "force", "gpu"]),
       label: `${format.toUpperCase()} forcedPath=gpu`,
       format,
-      overrides: { ...BASELINE_OVERRIDES, forcedPath: 'gpu' },
+      overrides: { ...BASELINE_OVERRIDES, forcedPath: "gpu" },
     });
 
     // GPU capture-mode variations (format-agnostic)
     scenarios.push(
       ...buildCaptureModeScenarios({
         format,
-        forcedPath: 'gpu',
+        forcedPath: "gpu",
       })
     );
 
-    if (format === 'gif') {
+    if (format === "gif") {
       // GIF encoder variations
       scenarios.push({
-        id: scenarioId([format, 'gif-encoder', 'modern-gif']),
-        label: 'GIF forcedGifEncoder=modern-gif',
+        id: scenarioId([format, "gif-encoder", "modern-gif"]),
+        label: "GIF forcedGifEncoder=modern-gif",
         format,
         overrides: {
           ...BASELINE_OVERRIDES,
-          forcedGifEncoder: 'modern-gif',
-          forcedPath: 'gpu',
+          forcedGifEncoder: "modern-gif",
+          forcedPath: "gpu",
         },
       });
 
       scenarios.push({
-        id: scenarioId([format, 'gif-encoder', 'ffmpeg-direct']),
-        label: 'GIF forcedGifEncoder=ffmpeg-direct',
+        id: scenarioId([format, "gif-encoder", "ffmpeg-direct"]),
+        label: "GIF forcedGifEncoder=ffmpeg-direct",
         format,
         overrides: {
           ...BASELINE_OVERRIDES,
-          forcedGifEncoder: 'ffmpeg-direct',
+          forcedGifEncoder: "ffmpeg-direct",
         },
       });
 
       scenarios.push({
-        id: scenarioId([format, 'gif-encoder', 'ffmpeg-palette']),
-        label: 'GIF forcedGifEncoder=ffmpeg-palette',
+        id: scenarioId([format, "gif-encoder", "ffmpeg-palette"]),
+        label: "GIF forcedGifEncoder=ffmpeg-palette",
         format,
         overrides: {
           ...BASELINE_OVERRIDES,
-          forcedGifEncoder: 'ffmpeg-palette',
+          forcedGifEncoder: "ffmpeg-palette",
         },
       });
 
       scenarios.push({
-        id: scenarioId([format, 'gif-encoder', 'ffmpeg-palette-frames']),
-        label: 'GIF forcedGifEncoder=ffmpeg-palette-frames',
+        id: scenarioId([format, "gif-encoder", "ffmpeg-palette-frames"]),
+        label: "GIF forcedGifEncoder=ffmpeg-palette-frames",
         format,
         overrides: {
           ...BASELINE_OVERRIDES,
-          forcedGifEncoder: 'ffmpeg-palette-frames',
-          forcedPath: 'gpu',
+          forcedGifEncoder: "ffmpeg-palette-frames",
+          forcedPath: "gpu",
         },
       });
 
@@ -335,16 +357,16 @@ function buildScenarios(params: {
       scenarios.push(
         ...buildCaptureModeScenarios({
           format,
-          forcedPath: 'gpu',
-          forcedGifEncoder: 'ffmpeg-palette-frames',
+          forcedPath: "gpu",
+          forcedGifEncoder: "ffmpeg-palette-frames",
         })
       );
 
       scenarios.push(
         ...buildCaptureModeScenarios({
           format,
-          forcedPath: 'gpu',
-          forcedGifEncoder: 'modern-gif',
+          forcedPath: "gpu",
+          forcedGifEncoder: "modern-gif",
         })
       );
     }
@@ -381,16 +403,17 @@ export async function runConversionMatrixTestWithReport(
   params: ConversionMatrixTestParams
 ): Promise<ConversionMatrixTestReport> {
   if (!import.meta.env.DEV) {
-    throw new Error('Conversion matrix test is only available in dev builds.');
+    throw new Error("Conversion matrix test is only available in dev builds.");
   }
 
   const repeats = Math.max(1, Math.floor(params.repeats ?? 3));
-  const formats: Array<Extract<ConversionFormat, 'gif' | 'webp'>> =
-    params.formats.length > 0 ? params.formats : (['gif'] as const);
+  const formats: Array<Extract<ConversionFormat, "gif" | "webp">> =
+    params.formats.length > 0 ? params.formats : (["gif"] as const);
 
   const scenarios = buildScenarios({
     formats,
-    includeStrategyCodecScenarios: params.includeStrategyCodecScenarios === true,
+    includeStrategyCodecScenarios:
+      params.includeStrategyCodecScenarios === true,
   });
 
   const totalRuns = scenarios.length * repeats;
@@ -404,10 +427,10 @@ export async function runConversionMatrixTestWithReport(
 
   const initialOverrides = getDevConversionOverrides();
 
-  logger.info('conversion', '=== Conversion Matrix Test: start ===', {
+  logger.info("conversion", "=== Conversion Matrix Test: start ===", {
     fileName: params.file.name,
     fileSizeBytes: params.file.size,
-    codec: params.metadata?.codec ?? 'unknown',
+    codec: params.metadata?.codec ?? "unknown",
     durationSeconds: params.metadata?.duration ?? null,
     formats,
     repeats,
@@ -428,14 +451,15 @@ export async function runConversionMatrixTestWithReport(
           quality: params.quality,
           scale: params.scale,
           duration:
-            typeof params.metadata?.duration === 'number' && params.metadata.duration > 0
+            typeof params.metadata?.duration === "number" &&
+            params.metadata.duration > 0
               ? params.metadata.duration
               : undefined,
         };
 
         const start = performance.now();
 
-        logger.info('conversion', 'Matrix run start', {
+        logger.info("conversion", "Matrix run start", {
           runIndex,
           totalRuns,
           scenarioId: scenario.id,
@@ -476,15 +500,16 @@ export async function runConversionMatrixTestWithReport(
             startedAtPerfMs: start,
             endedAtPerfMs: end,
             elapsedMs,
-            outcome: 'success',
+            outcome: "success",
             outputSizeBytes: result.blob.size,
             executedPath: result.metadata.path,
             encoder: result.metadata.encoder,
             captureModeUsed: result.metadata.captureModeUsed ?? null,
-            originalCodec: result.metadata.originalCodec ?? params.metadata?.codec ?? null,
+            originalCodec:
+              result.metadata.originalCodec ?? params.metadata?.codec ?? null,
           });
 
-          logger.info('conversion', 'Matrix run success', {
+          logger.info("conversion", "Matrix run success", {
             runIndex,
             totalRuns,
             scenarioId: scenario.id,
@@ -497,7 +522,8 @@ export async function runConversionMatrixTestWithReport(
             executedPath: result.metadata.path,
             encoder: result.metadata.encoder,
             captureModeUsed: result.metadata.captureModeUsed ?? null,
-            originalCodec: result.metadata.originalCodec ?? params.metadata?.codec ?? null,
+            originalCodec:
+              result.metadata.originalCodec ?? params.metadata?.codec ?? null,
           });
         } catch (error) {
           const end = performance.now();
@@ -518,11 +544,11 @@ export async function runConversionMatrixTestWithReport(
             startedAtPerfMs: start,
             endedAtPerfMs: end,
             elapsedMs,
-            outcome: 'error',
+            outcome: "error",
             error: getErrorMessage(error),
           });
 
-          logger.error('conversion', 'Matrix run error', {
+          logger.error("conversion", "Matrix run error", {
             runIndex,
             totalRuns,
             scenarioId: scenario.id,
@@ -548,7 +574,7 @@ export async function runConversionMatrixTestWithReport(
   const endedAt = Date.now();
   const durationMs = Math.round(performance.now() - perfStart);
 
-  logger.info('conversion', '=== Conversion Matrix Test: complete ===', {
+  logger.info("conversion", "=== Conversion Matrix Test: complete ===", {
     fileName: params.file.name,
     fileSizeBytes: params.file.size,
     formats,
@@ -589,7 +615,8 @@ export async function runConversionMatrixTestWithReport(
       repeats,
       quality: params.quality,
       scale: params.scale,
-      includeStrategyCodecScenarios: params.includeStrategyCodecScenarios === true,
+      includeStrategyCodecScenarios:
+        params.includeStrategyCodecScenarios === true,
     },
     scenarios: scenarios.map((scenario) => ({
       id: scenario.id,
