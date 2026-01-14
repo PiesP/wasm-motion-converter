@@ -1059,9 +1059,38 @@ class ConversionOrchestrator {
 
     this.throwIfAborted(params.abortSignal);
 
-    const plannedMetadata =
-      params.metadata ??
-      (plan.track ? this.buildLightweightMetadataFromTrack(plan.track) : undefined);
+    const trackMetadata = plan.track
+      ? this.buildLightweightMetadataFromTrack(plan.track)
+      : undefined;
+
+    // Prefer demuxer-derived track metadata when the caller provided only quick
+    // metadata (codec='unknown'). This prevents strategy selection from treating
+    // known codecs (e.g., AV1 in MP4) as unknown and choosing an unsafe path.
+    const plannedMetadata = trackMetadata
+      ? {
+          ...(params.metadata ?? trackMetadata),
+          codec:
+            params.metadata?.codec && params.metadata.codec !== 'unknown'
+              ? params.metadata.codec
+              : trackMetadata.codec,
+          width:
+            params.metadata?.width && params.metadata.width > 0
+              ? params.metadata.width
+              : trackMetadata.width,
+          height:
+            params.metadata?.height && params.metadata.height > 0
+              ? params.metadata.height
+              : trackMetadata.height,
+          duration:
+            params.metadata?.duration && params.metadata.duration > 0
+              ? params.metadata.duration
+              : trackMetadata.duration,
+          framerate:
+            params.metadata?.framerate && params.metadata.framerate > 0
+              ? params.metadata.framerate
+              : trackMetadata.framerate,
+        }
+      : params.metadata;
 
     // If pipeline planning forces FFmpeg full pipeline, respect it.
     if (plan.decodePath === 'ffmpeg-wasm-full') {
