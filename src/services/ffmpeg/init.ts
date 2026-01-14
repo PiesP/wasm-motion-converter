@@ -132,13 +132,23 @@ export async function initializeFFmpegRuntime(
 
     const errorMsg = error instanceof Error ? error.message : String(error);
 
+    // Check if offline
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+
     // ENHANCED: Detect worker CORS errors
     if (errorMsg.includes('Worker') && errorMsg.includes('cannot be accessed')) {
-      throw new Error(
-        'Failed to load FFmpeg worker due to cross-origin restrictions. ' +
-          'This usually happens on first visit. Please refresh the page and try again. ' +
-          'The app is now cached and will work on the next attempt.'
-      );
+      if (isOffline) {
+        throw new Error(
+          'Cannot initialize FFmpeg while offline on first visit. ' +
+            'Please connect to the internet and try again. ' +
+            'After the first conversion, offline conversions will work.'
+        );
+      } else {
+        throw new Error(
+          'Failed to load FFmpeg worker. Please refresh the page and try again. ' +
+            'If the problem persists, check your browser settings or try a different browser.'
+        );
+      }
     }
 
     if (errorMsg.includes('called FFmpeg.terminate()')) {
@@ -146,6 +156,14 @@ export async function initializeFFmpegRuntime(
         'FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers ' +
           'or strict browser security settings. Try disabling ad blockers, using an InPrivate window, ' +
           'or testing another browser.'
+      );
+    }
+
+    // Generic offline error
+    if (isOffline) {
+      throw new Error(
+        'Cannot complete FFmpeg initialization while offline. ' +
+          'Please connect to the internet or try again after caching is complete.'
       );
     }
 

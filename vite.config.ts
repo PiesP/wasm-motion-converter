@@ -12,7 +12,15 @@
  * @see CODE_STANDARDS.md Section 1 (File Organization)
  * @see AGENTS.md for FFmpeg SharedArrayBuffer requirements
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { build as esbuild } from 'esbuild';
 import { visualizer } from 'rollup-plugin-visualizer';
@@ -263,14 +271,15 @@ function importMapPlugin(): Plugin {
           continue;
         }
 
-        // CRITICAL: @ffmpeg/ffmpeg and @ffmpeg/util are bundled locally (not from CDN)
-        // This avoids worker CORS issues when these packages create workers internally
-        if (pkg === '@ffmpeg/ffmpeg' || pkg === '@ffmpeg/util') {
-          continue;
+        // Load @ffmpeg packages from CDN (Service Worker handles worker CORS)
+        // Use jsdelivr for better CORS support
+        const isFFmpegPackage = pkg.startsWith('@ffmpeg/');
+        if (isFFmpegPackage) {
+          imports[pkg] = `https://cdn.jsdelivr.net/npm/${pkg}@${version}/+esm`;
+        } else {
+          // Use esm.sh for all other packages
+          imports[pkg] = `${esmShBase}/${pkg}@${version}${targetQuery}`;
         }
-
-        // Use esm.sh for all other packages
-        imports[pkg] = `${esmShBase}/${pkg}@${version}${targetQuery}`;
       }
 
       const importMap = { imports };
@@ -300,7 +309,8 @@ function importMapPlugin(): Plugin {
         'solid-js', // Core reactivity
         'solid-js/store', // State management (used in conversion store)
         'comlink', // Worker communication for FFmpeg
-        // Note: @ffmpeg/ffmpeg and @ffmpeg/util are bundled locally (not from CDN)
+        '@ffmpeg/ffmpeg', // FFmpeg core library (from CDN)
+        '@ffmpeg/util', // FFmpeg utilities (from CDN)
         'modern-gif', // GIF encoder
         '@jsquash/webp', // WebP encoder fallback
       ] as const;
@@ -320,9 +330,12 @@ function importMapPlugin(): Plugin {
           // Add integrity attribute if SRI manifest is available
           if (sriManifest) {
             const entry = sriManifest.entries[dep];
+            // Use jsdelivr for FFmpeg packages, esm.sh for others
+            const isFFmpegPackage = dep.startsWith('@ffmpeg/');
+            const cdnKey = isFFmpegPackage ? 'jsdelivr' : 'esm.sh';
 
-            if (entry?.['esm.sh']?.integrity) {
-              integrityAttr = ` integrity="${entry['esm.sh'].integrity}"`;
+            if (entry?.[cdnKey]?.integrity) {
+              integrityAttr = ` integrity="${entry[cdnKey].integrity}"`;
             }
           }
 
@@ -573,11 +586,8 @@ export default defineConfig(({ mode }) => {
   const runtimeDeps = readRuntimeDependencies();
   const runtimeDepNames = Object.keys(runtimeDeps);
   const isExternalRuntimeDep = (id: string): boolean => {
-    // Bundle @ffmpeg/ffmpeg and @ffmpeg/util locally to avoid worker CORS issues
-    // These packages create workers internally, which fail when loaded from CDN
-    if (id === '@ffmpeg/ffmpeg' || id.startsWith('@ffmpeg/ffmpeg/')) return false;
-    if (id === '@ffmpeg/util' || id.startsWith('@ffmpeg/util/')) return false;
-
+    // All runtime dependencies are externalized to CDN
+    // Service Worker handles worker CORS via proxy pattern
     return runtimeDepNames.some((dep) => id === dep || id.startsWith(`${dep}/`));
   };
 
@@ -594,6 +604,45 @@ export default defineConfig(({ mode }) => {
       importMapPlugin(), // Generate import map for CDN dependencies (Phase 1)
       swCompilePlugin, // Compile service worker TypeScript to JavaScript
       injectServiceWorkerPlugin(swCompilePlugin), // Inline service worker registration in HTML
+      // Generate pre-cache manifest for Service Worker (Phase 5)
+      {
+        name: 'generate-precache-manifest',
+        closeBundle() {
+          const distDir = path.join(process.cwd(), 'dist');
+
+          // Recursively collect all files
+          const collectFiles = (dir: string, baseDir: string): string[] => {
+            const entries = readdirSync(dir, { withFileTypes: true });
+            const files: string[] = [];
+
+            for (const entry of entries) {
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                files.push(...collectFiles(fullPath, baseDir));
+              } else if (entry.isFile() && /\.(js|css|html)$/.test(entry.name)) {
+                const relativePath = path.relative(baseDir, fullPath);
+                files.push(`/${relativePath}`);
+              }
+            }
+
+            return files;
+          };
+
+          const precacheUrls = collectFiles(distDir, distDir).filter(
+            (p) => !p.includes('service-worker')
+          ); // Exclude SW itself
+
+          // Inject into Service Worker
+          const swPath = path.join(distDir, 'service-worker.js');
+          if (existsSync(swPath)) {
+            let swContent = readFileSync(swPath, 'utf-8');
+            // Replace the magic string placeholder with actual URLs
+            swContent = swContent.replace('"PRECACHE_MANIFEST"', JSON.stringify(precacheUrls));
+            writeFileSync(swPath, swContent);
+            console.log(`ℹ Injected ${precacheUrls.length} pre-cache URLs into Service Worker`);
+          }
+        },
+      },
       visualizer({
         // Bundle analysis tool - generates dist/stats.html
         filename: 'dist/stats.html',
@@ -682,10 +731,7 @@ export default defineConfig(({ mode }) => {
           // Separates stable vendor/service code from frequently-changing app code
           // Service bundles change less frequently than main app, enabling better caching
           manualChunks(id) {
-            // FFmpeg core bundle
-            if (id.includes('@ffmpeg/ffmpeg') || id.includes('@ffmpeg/util')) {
-              return 'vendor-ffmpeg';
-            }
+            // Note: FFmpeg packages are loaded from CDN (not bundled)
 
             // Shared internal modules used by multiple service bundles.
             // Keeping these in a dedicated chunk avoids circular chunk dependencies

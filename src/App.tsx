@@ -14,6 +14,7 @@ import {
 // Eagerly loaded components (used immediately)
 import ConfirmationModal from '@components/ConfirmationModal';
 import EnvironmentWarning from '@components/EnvironmentWarning';
+import { OfflineBanner } from '@components/OfflineBanner';
 import FileDropzone from '@components/FileDropzone';
 import FormatSelector from '@components/FormatSelector';
 import ExportLogsButton from '@components/ExportLogsButton';
@@ -39,6 +40,7 @@ import {
   loadingStatusMessage,
   setEnvironmentSupported,
 } from '@stores/app-store';
+import { useNetworkState } from '@stores/network-store';
 import {
   conversionProgress,
   conversionResults,
@@ -103,6 +105,9 @@ const App: Component = () => {
     setEstimatedSecondsRemaining,
     setMemoryWarning,
   });
+
+  // Initialize network state monitoring for offline support
+  useNetworkState();
 
   /**
    * Schedule task execution during browser idle time
@@ -408,6 +413,8 @@ const App: Component = () => {
 
         <main id="main-content" class="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
           <div class="space-y-6">
+            <OfflineBanner />
+
             <Show when={!environmentSupported()}>
               <EnvironmentWarning />
             </Show>

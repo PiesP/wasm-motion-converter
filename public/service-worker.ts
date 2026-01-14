@@ -50,6 +50,25 @@ const CACHE_NAMES = {
 const ALL_CACHE_NAMES = Object.values(CACHE_NAMES);
 
 /**
+ * Critical assets to pre-cache on install
+ * Ensures offline functionality from first visit
+ * PRECACHE_MANIFEST will be replaced by build process
+ */
+const PRECACHE_URLS: string[] = "PRECACHE_MANIFEST" as unknown as string[];
+
+/**
+ * FFmpeg assets to pre-cache for offline conversions
+ * Using jsdelivr URLs (same as import map for consistency)
+ */
+const FFMPEG_PRECACHE_URLS = [
+  'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm',
+  'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/+esm',
+  'https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.js',
+  'https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.wasm',
+  'https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.worker.js',
+];
+
+/**
  * CDN provider configuration aligned with unified system
  */
 interface CDNProvider {
@@ -384,9 +403,28 @@ function classifyRequest(url: URL): RequestType {
 }
 
 /**
+ * Detect if request is for a worker script
+ * FFmpeg internally creates workers that need same-origin headers
+ */
+function isWorkerRequest(request: Request): boolean {
+  const url = new URL(request.url);
+
+  // FFmpeg worker patterns
+  const workerPatterns = [
+    '/worker.js',
+    '/worker.mjs',
+    'ffmpeg/dist/esm/worker',
+  ];
+
+  return workerPatterns.some(pattern => url.pathname.includes(pattern)) ||
+         request.destination === 'worker' ||
+         request.mode === 'same-origin'; // Workers use same-origin mode
+}
+
+/**
  * Service Worker install event
  * Activates immediately without waiting for existing clients
- * Phase 4: Initializes fallback cache
+ * Phase 4: Pre-caches critical assets for offline support
  */
 self.addEventListener("install", (event: ExtendableEvent) => {
   console.log(`[SW ${SW_VERSION}] Installing...`);
@@ -394,14 +432,36 @@ self.addEventListener("install", (event: ExtendableEvent) => {
   // Skip waiting to activate immediately (aggressive update strategy)
   self.skipWaiting();
 
-  // Phase 4: Initialize fallback cache
-  // Note: Actual fallback bundles are populated on first successful CDN load
-  // This ensures fallback cache exists and is ready
+  // Phase 4: Pre-cache critical assets
   event.waitUntil(
-    caches.open(CACHE_NAMES.fallback).then(() => {
-      console.log(`[SW ${SW_VERSION}] Fallback cache initialized`);
-      return Promise.resolve();
-    })
+    (async () => {
+      // Initialize caches
+      await caches.open(CACHE_NAMES.fallback);
+
+      // Pre-cache app shell
+      const appCache = await caches.open(CACHE_NAMES.app);
+      try {
+        await appCache.addAll(PRECACHE_URLS);
+        console.log(`[SW ${SW_VERSION}] App shell pre-cached`);
+      } catch (error) {
+        console.warn(`[SW ${SW_VERSION}] Failed to pre-cache app shell:`, error);
+      }
+
+      // Pre-cache FFmpeg assets (best effort)
+      const ffmpegCache = await caches.open(CACHE_NAMES.ffmpeg);
+      try {
+        await Promise.allSettled(
+          FFMPEG_PRECACHE_URLS.map(url =>
+            fetch(url).then(res => {
+              if (res.ok) return ffmpegCache.put(url, res);
+            })
+          )
+        );
+        console.log(`[SW ${SW_VERSION}] FFmpeg assets pre-cached (best effort)`);
+      } catch (error) {
+        console.warn(`[SW ${SW_VERSION}] Failed to pre-cache FFmpeg:`, error);
+      }
+    })()
   );
 });
 
@@ -1090,6 +1150,60 @@ async function cacheFirstStrategy(
 }
 
 /**
+ * Handle worker requests by proxying from cache
+ * This solves CORS issues when FFmpeg creates workers from CDN URLs
+ */
+async function handleWorkerRequest(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+
+  console.log(`[SW ${SW_VERSION}] Worker request intercepted:`, url.href);
+
+  // Try to get from cache
+  const cache = await caches.open(CACHE_NAMES.cdn);
+  let cached = await cache.match(request);
+
+  if (cached) {
+    console.log(`[SW ${SW_VERSION}] Serving worker from cache`);
+    // Return with same-origin headers
+    return new Response(cached.body, {
+      status: cached.status,
+      statusText: cached.statusText,
+      headers: {
+        ...Object.fromEntries(cached.headers.entries()),
+        'Access-Control-Allow-Origin': '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+      },
+    });
+  }
+
+  // Fetch from network and cache
+  try {
+    const response = await fetch(request);
+
+    if (response.ok) {
+      // Clone and cache
+      await cache.put(request, response.clone());
+
+      // Return with CORS headers
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: {
+          ...Object.fromEntries(response.headers.entries()),
+          'Access-Control-Allow-Origin': '*',
+          'Cross-Origin-Resource-Policy': 'cross-origin',
+        },
+      });
+    }
+  } catch (error) {
+    console.error(`[SW ${SW_VERSION}] Worker fetch failed:`, error);
+  }
+
+  // Fallback to original request
+  return fetch(request);
+}
+
+/**
  * Checks if this is a returning user (has cache entries)
  * Used to determine whether to use cache-first or network-first
  *
@@ -1107,9 +1221,18 @@ async function isReturningUser(): Promise<boolean> {
  *
  * Phase 2: Network-first for CDN resources with multi-CDN fallback
  * Phase 2.3: Cache-first for returning users
+ * Phase 2: Worker proxy pattern for FFmpeg CORS handling
  */
 self.addEventListener("fetch", (event: FetchEvent) => {
-  const url = new URL(event.request.url);
+  const request = event.request;
+  const url = new URL(request.url);
+
+  // CRITICAL: Handle worker requests via proxy
+  if (isWorkerRequest(request)) {
+    event.respondWith(handleWorkerRequest(request));
+    return;
+  }
+
   const requestType = classifyRequest(url);
 
   // Only intercept CDN requests
