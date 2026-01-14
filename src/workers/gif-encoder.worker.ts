@@ -6,6 +6,30 @@ import { esmShModuleUrl } from 'virtual:cdn-deps';
 
 type ComlinkModule = typeof import('comlink');
 
+// Readiness handshake
+//
+// The main thread may create a worker and immediately call into a Comlink-wrapped
+// API proxy. If the worker is still loading Comlink (dynamic import), it may not
+// have attached its message handler yet. In that case, the first RPC message can
+// be dropped and the call can hang indefinitely.
+//
+// To prevent that, the main thread pings `__dropconvertWorkerPing` and waits for
+// a `__dropconvertWorkerPong` / `__dropconvertWorkerReady` signal before sending
+// any Comlink messages.
+let dropconvertWorkerReady = false;
+
+self.addEventListener('message', (event: MessageEvent) => {
+  const data = event.data as unknown as {
+    __dropconvertWorkerPing?: boolean;
+  } | null;
+  if (data?.__dropconvertWorkerPing) {
+    self.postMessage({
+      __dropconvertWorkerPong: dropconvertWorkerReady,
+      __dropconvertWorkerNotReady: !dropconvertWorkerReady,
+    });
+  }
+});
+
 /**
  * GIF encoder worker API exposed via Comlink
  *
@@ -150,4 +174,7 @@ void (async () => {
   const comlinkUrl = esmShModuleUrl('comlink');
   const Comlink = (await import(/* @vite-ignore */ comlinkUrl)) as unknown as ComlinkModule;
   Comlink.expose(api);
+
+  dropconvertWorkerReady = true;
+  self.postMessage({ __dropconvertWorkerReady: true });
 })();

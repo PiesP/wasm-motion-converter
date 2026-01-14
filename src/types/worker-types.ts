@@ -105,4 +105,24 @@ export interface WorkerPoolOptions {
    * If false, all workers are pre-created during pool initialization.
    */
   lazyInit?: boolean;
+
+  /**
+   * Maximum time to wait for a worker to become ready (default: 15000ms)
+   *
+   * @remarks
+   * This protects against a subtle race where the main thread calls into a
+   * Comlink-wrapped worker before the worker finishes loading Comlink and
+   * attaching its message handler. In that case, the first RPC message can be
+   * dropped, causing the call to hang indefinitely.
+   */
+  readyTimeoutMs?: number;
+
+  /**
+   * Default task timeout (default: 300000ms)
+   *
+   * @remarks
+   * Used as a safety net to prevent infinite hangs if a worker fails to respond.
+   * Call sites may override per-task via WorkerPool.execute(..., { timeoutMs }).
+   */
+  taskTimeoutMs?: number;
 }

@@ -967,18 +967,31 @@ class WebCodecsConversionService {
           }, WorkerEncodeKeepaliveMs);
 
           try {
-            outputBlob = await this.gifWorkerPool.execute(async (worker) => {
-              return await worker.encode(
-                serializableFrames,
-                {
-                  width: decodeResult.width,
-                  height: decodeResult.height,
-                  fps: targetFps,
-                  quality,
-                },
-                progressProxy
-              );
-            });
+            // Safety timeout: avoid infinite hangs if a worker never responds.
+            // Scale with frame count to support longer inputs without being too aggressive.
+            const workerEncodeTimeoutMs = Math.min(
+              10 * 60 * 1000,
+              Math.max(90 * 1000, 20 * 1000 + serializableFrames.length * 500)
+            );
+
+            outputBlob = await this.gifWorkerPool.execute(
+              async (worker) => {
+                return await worker.encode(
+                  serializableFrames,
+                  {
+                    width: decodeResult.width,
+                    height: decodeResult.height,
+                    fps: targetFps,
+                    quality,
+                  },
+                  progressProxy
+                );
+              },
+              {
+                signal: abortSignal,
+                timeoutMs: workerEncodeTimeoutMs,
+              }
+            );
           } finally {
             clearInterval(keepaliveInterval);
           }

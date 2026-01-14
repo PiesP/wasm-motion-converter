@@ -45,6 +45,42 @@ const MEMORY_PER_WEBP_WORKER = 50 * 1024 * 1024; // 50 MB
 const WORKER_POLL_INTERVAL = 50;
 
 /**
+ * Worker readiness ping interval (milliseconds)
+ *
+ * Used to avoid a race where the main thread sends a Comlink RPC message
+ * before the worker has finished loading Comlink and attaching its message
+ * handler. The first message can be dropped and the call can hang forever.
+ */
+const WORKER_READY_PING_INTERVAL = 50;
+
+/** Default worker-ready timeout (milliseconds) */
+const DEFAULT_WORKER_READY_TIMEOUT_MS = 15_000;
+
+/** Default task timeout (milliseconds) */
+const DEFAULT_TASK_TIMEOUT_MS = 300_000;
+
+type WorkerPoolExecuteOptions = {
+  /** Optional AbortSignal used to cancel waiting / task execution */
+  signal?: AbortSignal;
+  /** Per-task timeout override */
+  timeoutMs?: number;
+};
+
+type DropconvertWorkerReadyMessage = {
+  __dropconvertWorkerReady?: boolean;
+  __dropconvertWorkerPong?: boolean;
+  __dropconvertWorkerNotReady?: boolean;
+};
+
+type DropconvertWorkerPingMessage = {
+  __dropconvertWorkerPing: true;
+};
+
+const READY_PING_MESSAGE: DropconvertWorkerPingMessage = {
+  __dropconvertWorkerPing: true,
+};
+
+/**
  * Calculate optimal worker pool size based on hardware and memory
  *
  * @param format - Encoding format ('gif' or 'webp')
@@ -102,6 +138,11 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
   private maxWorkers: number;
   private initialized = false;
 
+  private readonly readyTimeoutMs: number;
+  private readonly defaultTaskTimeoutMs: number;
+  private workerReady: boolean[] = [];
+  private workerReadyPromise: Array<Promise<void> | null> = [];
+
   /**
    * Create worker pool
    *
@@ -111,6 +152,9 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
   constructor(workerUrl: URL | string, options: WorkerPoolOptions = {}) {
     this.workerUrl = workerUrl;
     this.maxWorkers = options.maxWorkers ?? Math.max(2, navigator.hardwareConcurrency || 4);
+
+    this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_WORKER_READY_TIMEOUT_MS;
+    this.defaultTaskTimeoutMs = options.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
 
     if (!options.lazyInit) {
       this.initialize();
@@ -131,17 +175,200 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
     logger.info('worker-pool', `Initializing worker pool with ${this.maxWorkers} workers`);
 
     for (let i = 0; i < this.maxWorkers; i++) {
-      const worker = new Worker(this.workerUrl, {
-        type: 'module',
-        name: `encoder-worker-${i}`,
-      });
-
-      this.workers.push(worker);
-      this.apis.push(Comlink.wrap<T>(worker) as T);
-      this.availableWorkers.push(i);
+      this.spawnWorker(i);
     }
 
     this.initialized = true;
+  }
+
+  private spawnWorker(workerId: number): void {
+    const worker = new Worker(this.workerUrl, {
+      type: 'module',
+      name: `encoder-worker-${workerId}`,
+    });
+
+    worker.addEventListener('error', (event) => {
+      logger.warn('worker-pool', 'Worker error event', {
+        workerId,
+        message: (event as ErrorEvent | undefined)?.message,
+      });
+      // Mark as not-ready so the next task forces a re-check.
+      this.workerReady[workerId] = false;
+      this.workerReadyPromise[workerId] = null;
+    });
+
+    worker.addEventListener('messageerror', () => {
+      logger.warn('worker-pool', 'Worker messageerror event', { workerId });
+      this.workerReady[workerId] = false;
+      this.workerReadyPromise[workerId] = null;
+    });
+
+    this.workers[workerId] = worker;
+    this.apis[workerId] = Comlink.wrap<T>(worker) as T;
+    this.workerReady[workerId] = false;
+    this.workerReadyPromise[workerId] = null;
+
+    // Keep existing behavior: workers are immediately considered available.
+    // execute() will block until the worker is actually ready.
+    this.availableWorkers.push(workerId);
+  }
+
+  private async respawnWorker(workerId: number, reason: string): Promise<void> {
+    logger.warn('worker-pool', 'Respawning worker', { workerId, reason });
+
+    try {
+      this.workers[workerId]?.terminate();
+    } catch {
+      // Ignore.
+    }
+
+    // Remove any cached readiness state.
+    this.workerReady[workerId] = false;
+    this.workerReadyPromise[workerId] = null;
+
+    // Replace worker + API proxy in-place.
+    const worker = new Worker(this.workerUrl, {
+      type: 'module',
+      name: `encoder-worker-${workerId}`,
+    });
+
+    worker.addEventListener('error', (event) => {
+      logger.warn('worker-pool', 'Worker error event', {
+        workerId,
+        message: (event as ErrorEvent | undefined)?.message,
+      });
+      this.workerReady[workerId] = false;
+      this.workerReadyPromise[workerId] = null;
+    });
+
+    worker.addEventListener('messageerror', () => {
+      logger.warn('worker-pool', 'Worker messageerror event', { workerId });
+      this.workerReady[workerId] = false;
+      this.workerReadyPromise[workerId] = null;
+    });
+
+    this.workers[workerId] = worker;
+    this.apis[workerId] = Comlink.wrap<T>(worker) as T;
+  }
+
+  private createAbortPromise(signal?: AbortSignal): Promise<never> {
+    if (!signal) {
+      return new Promise<never>(() => {
+        // Never resolves
+      });
+    }
+
+    if (signal.aborted) {
+      return Promise.reject(new Error('Conversion cancelled by user'));
+    }
+
+    return new Promise<never>((_, reject) => {
+      const onAbort = () => {
+        signal.removeEventListener('abort', onAbort);
+        reject(new Error('Conversion cancelled by user'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private createTimeoutPromise(timeoutMs: number, message: string): Promise<never> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return new Promise<never>(() => {
+        // Never resolves
+      });
+    }
+
+    return new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(message));
+      }, timeoutMs);
+
+      // Node-style timers are compatible in browser typings.
+      // Ensure this promise does not keep references alive.
+      (timer as unknown as { unref?: () => void }).unref?.();
+    });
+  }
+
+  private async ensureWorkerReady(workerId: number, signal?: AbortSignal): Promise<void> {
+    if (this.workerReady[workerId]) {
+      return;
+    }
+
+    if (!this.workerReadyPromise[workerId]) {
+      const worker = this.workers[workerId];
+      if (!worker) {
+        throw new Error(`Worker ${workerId} is not initialized`);
+      }
+
+      this.workerReadyPromise[workerId] = new Promise<void>((resolve, reject) => {
+        const startAt = Date.now();
+        let intervalId: ReturnType<typeof setInterval> | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+        const cleanup = () => {
+          if (intervalId !== undefined) {
+            clearInterval(intervalId);
+          }
+          if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+          }
+          worker.removeEventListener('message', onMessage as EventListener);
+        };
+
+        const onMessage = (event: MessageEvent<DropconvertWorkerReadyMessage>) => {
+          const data = event.data;
+          if (!data) {
+            return;
+          }
+
+          if (data.__dropconvertWorkerReady || data.__dropconvertWorkerPong) {
+            this.workerReady[workerId] = true;
+            cleanup();
+            logger.debug('worker-pool', 'Worker is ready', {
+              workerId,
+              waitMs: Date.now() - startAt,
+            });
+            resolve();
+          }
+        };
+
+        worker.addEventListener('message', onMessage as EventListener);
+
+        // Send periodic pings until the worker indicates readiness.
+        intervalId = globalThis.setInterval(() => {
+          try {
+            worker.postMessage(READY_PING_MESSAGE);
+          } catch {
+            // Ignore: worker may be terminating.
+          }
+        }, WORKER_READY_PING_INTERVAL);
+
+        try {
+          worker.postMessage(READY_PING_MESSAGE);
+        } catch {
+          // Ignore.
+        }
+
+        timeoutId = globalThis.setTimeout(() => {
+          cleanup();
+          reject(
+            new Error(`Worker ${workerId} did not become ready within ${this.readyTimeoutMs}ms`)
+          );
+        }, this.readyTimeoutMs);
+      });
+    }
+
+    try {
+      await Promise.race([
+        this.workerReadyPromise[workerId] as Promise<void>,
+        this.createAbortPromise(signal),
+      ]);
+    } catch (error) {
+      // Reset readiness state so future calls retry.
+      this.workerReady[workerId] = false;
+      this.workerReadyPromise[workerId] = null;
+      throw error;
+    }
   }
 
   /**
@@ -159,25 +386,65 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
    *   return api.encodeFrame(frameData);
    * });
    */
-  async execute<R>(task: (api: T) => Promise<R>): Promise<R> {
+  async execute<R>(
+    task: (api: T) => Promise<R>,
+    options: WorkerPoolExecuteOptions = {}
+  ): Promise<R> {
     if (!this.initialized) {
       this.initialize();
+    }
+
+    if (options.signal?.aborted) {
+      throw new Error('Conversion cancelled by user');
     }
 
     // Wait for available worker
     let workerId = this.availableWorkers.shift();
 
     while (workerId === undefined) {
+      if (options.signal?.aborted) {
+        throw new Error('Conversion cancelled by user');
+      }
       await new Promise((resolve) => setTimeout(resolve, WORKER_POLL_INTERVAL));
       workerId = this.availableWorkers.shift();
     }
 
     const api = this.apis[workerId] as T;
 
+    // Ensure we do not call into the Comlink proxy before the worker has
+    // finished loading Comlink and installed its message handler.
+    try {
+      await this.ensureWorkerReady(workerId, options.signal);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // If readiness failed, respawn the worker to avoid a permanently stuck slot.
+      await this.respawnWorker(workerId, `ready-failed: ${message}`);
+      throw error;
+    }
+
     try {
       logger.debug('worker-pool', `Executing task on worker ${workerId}`);
-      const result = await task(api);
+      const timeoutMs = options.timeoutMs ?? this.defaultTaskTimeoutMs;
+      const result = await Promise.race([
+        task(api),
+        this.createTimeoutPromise(
+          timeoutMs,
+          `Worker task timed out after ${timeoutMs}ms (worker ${workerId})`
+        ),
+        this.createAbortPromise(options.signal),
+      ]);
       return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isCancellation = message.toLowerCase().includes('cancelled by user');
+      const isTimeout = message.toLowerCase().includes('timed out');
+
+      if (isCancellation || isTimeout) {
+        // Prevent a stuck/in-flight Comlink call from poisoning the pool.
+        await this.respawnWorker(workerId, isCancellation ? 'cancelled' : 'timeout');
+      }
+
+      throw error;
     } finally {
       // Return worker to pool
       this.availableWorkers.push(workerId);
@@ -201,6 +468,9 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
     this.apis = [];
     this.availableWorkers = [];
     this.initialized = false;
+
+    this.workerReady = [];
+    this.workerReadyPromise = [];
   }
 
   /**

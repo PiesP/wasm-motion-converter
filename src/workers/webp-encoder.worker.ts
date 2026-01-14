@@ -20,6 +20,21 @@ import { esmShModuleUrl } from 'virtual:cdn-deps';
 
 type ComlinkModule = typeof import('comlink');
 
+// Readiness handshake (see gif-encoder.worker.ts for rationale)
+let dropconvertWorkerReady = false;
+
+self.addEventListener('message', (event: MessageEvent) => {
+  const data = event.data as unknown as {
+    __dropconvertWorkerPing?: boolean;
+  } | null;
+  if (data?.__dropconvertWorkerPing) {
+    self.postMessage({
+      __dropconvertWorkerPong: dropconvertWorkerReady,
+      __dropconvertWorkerNotReady: !dropconvertWorkerReady,
+    });
+  }
+});
+
 let cachedCanvas: OffscreenCanvas | null = null;
 let cachedContext: OffscreenCanvasRenderingContext2D | null = null;
 
@@ -195,4 +210,7 @@ void (async () => {
   const comlinkUrl = esmShModuleUrl('comlink');
   const Comlink = (await import(/* @vite-ignore */ comlinkUrl)) as unknown as ComlinkModule;
   Comlink.expose(api);
+
+  dropconvertWorkerReady = true;
+  self.postMessage({ __dropconvertWorkerReady: true });
 })();

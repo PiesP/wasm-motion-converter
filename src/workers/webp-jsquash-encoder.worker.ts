@@ -15,6 +15,21 @@ import { RUNTIME_DEP_VERSIONS, esmShModuleUrl } from 'virtual:cdn-deps';
 type ComlinkModule = typeof import('comlink');
 type JsquashWebPModule = typeof import('@jsquash/webp/encode.js');
 
+// Readiness handshake (see gif-encoder.worker.ts for rationale)
+let dropconvertWorkerReady = false;
+
+self.addEventListener('message', (event: MessageEvent) => {
+  const data = event.data as unknown as {
+    __dropconvertWorkerPing?: boolean;
+  } | null;
+  if (data?.__dropconvertWorkerPing) {
+    self.postMessage({
+      __dropconvertWorkerPong: dropconvertWorkerReady,
+      __dropconvertWorkerNotReady: !dropconvertWorkerReady,
+    });
+  }
+});
+
 let cachedComlink: ComlinkModule | null = null;
 let cachedJsquash: JsquashWebPModule | null = null;
 
@@ -185,4 +200,7 @@ const api = {
 void (async () => {
   const Comlink = await loadComlink();
   Comlink.expose(api);
+
+  dropconvertWorkerReady = true;
+  self.postMessage({ __dropconvertWorkerReady: true });
 })();
