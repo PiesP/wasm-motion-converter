@@ -244,28 +244,38 @@ function importMapPlugin(): Plugin {
     transformIndexHtml(html) {
       // Single source of truth: package.json dependencies.
       const runtimeDeps = readRuntimeDependencies();
-      const baseUrl = 'https://esm.sh';
+      const esmShBase = 'https://esm.sh';
+      const jsdelivrBase = 'https://cdn.jsdelivr.net/npm';
       const targetQuery = '?target=esnext';
 
       const imports: Record<string, string> = {};
 
       // Special-case SolidJS because we rely on subpath imports.
       const solidVersion = runtimeDeps['solid-js'] ?? '1.9.10';
-      imports['solid-js'] = `${baseUrl}/solid-js@${solidVersion}${targetQuery}`;
-      imports['solid-js/web'] = `${baseUrl}/solid-js@${solidVersion}/web${targetQuery}`;
-      imports['solid-js/store'] = `${baseUrl}/solid-js@${solidVersion}/store${targetQuery}`;
-      imports['solid-js/h'] = `${baseUrl}/solid-js@${solidVersion}/h${targetQuery}`;
-      imports['solid-js/html'] = `${baseUrl}/solid-js@${solidVersion}/html${targetQuery}`;
+      imports['solid-js'] = `${esmShBase}/solid-js@${solidVersion}${targetQuery}`;
+      imports['solid-js/web'] = `${esmShBase}/solid-js@${solidVersion}/web${targetQuery}`;
+      imports['solid-js/store'] = `${esmShBase}/solid-js@${solidVersion}/store${targetQuery}`;
+      imports['solid-js/h'] = `${esmShBase}/solid-js@${solidVersion}/h${targetQuery}`;
+      imports['solid-js/html'] = `${esmShBase}/solid-js@${solidVersion}/html${targetQuery}`;
 
-      // All other runtime deps are mapped 1:1 to esm.sh.
+      // All other runtime deps are mapped 1:1 to CDN.
       for (const [pkg, version] of Object.entries(runtimeDeps)) {
         if (pkg === 'solid-js') {
           continue;
         }
 
-        // Keep mapping exact (no barrel imports).
-        // Deep imports should either be explicit entries or use full URLs via esmShModuleUrl().
-        imports[pkg] = `${baseUrl}/${pkg}@${version}${targetQuery}`;
+        // CRITICAL FIX: Use jsdelivr for FFmpeg packages (better worker CORS support)
+        // jsdelivr returns IIFE code that works with blob:// URLs in workers.
+        // esm.sh returns shim code with bare imports that fails in worker contexts.
+        const isFFmpegPackage = pkg.startsWith('@ffmpeg/');
+
+        if (isFFmpegPackage) {
+          // jsdelivr ESM format: /npm/package@version/+esm
+          imports[pkg] = `${jsdelivrBase}/${pkg}@${version}/+esm`;
+        } else {
+          // Use esm.sh for non-FFmpeg packages
+          imports[pkg] = `${esmShBase}/${pkg}@${version}${targetQuery}`;
+        }
       }
 
       const importMap = { imports };
@@ -275,7 +285,7 @@ function importMapPlugin(): Plugin {
       const scriptTag = `<script type="importmap">${JSON.stringify(importMap, null, 2)}</script>`;
 
       // Load SRI manifest for integrity hashes
-      let sriManifest: { entries: Record<string, { 'esm.sh': { integrity: string } }> } | null =
+      let sriManifest: { entries: Record<string, Record<string, { integrity: string }>> } | null =
         null;
       try {
         const manifestPath = path.join(process.cwd(), 'public', 'cdn-integrity.json');
@@ -311,8 +321,12 @@ function importMapPlugin(): Plugin {
           // Add integrity attribute if SRI manifest is available
           if (sriManifest) {
             const entry = sriManifest.entries[dep];
-            if (entry?.['esm.sh']?.integrity) {
-              integrityAttr = ` integrity="${entry['esm.sh'].integrity}"`;
+            // Check which CDN is used for this dependency
+            const isFFmpegPackage = dep.startsWith('@ffmpeg/');
+            const cdnKey = isFFmpegPackage ? 'jsdelivr' : 'esm.sh';
+
+            if (entry?.[cdnKey]?.integrity) {
+              integrityAttr = ` integrity="${entry[cdnKey].integrity}"`;
             }
           }
 

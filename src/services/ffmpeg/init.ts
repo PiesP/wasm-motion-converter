@@ -5,6 +5,7 @@ import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { performanceTracker } from '@utils/performance-tracker';
 import { withTimeout } from '@utils/with-timeout';
+import { waitForSWReady, isLikelyFirstVisit } from '@services/sw/sw-readiness';
 import { loadFFmpegAsset } from './core-assets';
 import { verifyWorkerIsolation } from './worker-isolation';
 
@@ -73,6 +74,24 @@ export async function initializeFFmpegRuntime(
       : null;
 
   try {
+    // CRITICAL: Wait for Service Worker on first visit
+    // This prevents CORS errors when loading @ffmpeg/ffmpeg from CDN
+    if (isLikelyFirstVisit()) {
+      callbacks.reportStatus('Preparing app for first use...');
+      const swReady = await waitForSWReady(5000);
+
+      if (!swReady) {
+        console.warn(
+          '[FFmpeg Init] Service Worker not ready - conversion may fail on first attempt'
+        );
+        callbacks.reportStatus(
+          'Service Worker not ready. If conversion fails, please refresh and try again.'
+        );
+      } else {
+        callbacks.reportStatus('App ready. Starting conversion...');
+      }
+    }
+
     callbacks.reportStatus('Checking FFmpeg worker environment...');
     reportProgress(2);
     await verifyWorkerIsolation();
@@ -111,9 +130,22 @@ export async function initializeFFmpegRuntime(
       error: getErrorMessage(error),
     });
 
-    if (error instanceof Error && error.message.includes('called FFmpeg.terminate()')) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    // ENHANCED: Detect worker CORS errors
+    if (errorMsg.includes('Worker') && errorMsg.includes('cannot be accessed')) {
       throw new Error(
-        'FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers or strict browser security settings. Try disabling ad blockers, using an InPrivate window, or testing another browser.'
+        'Failed to load FFmpeg worker due to cross-origin restrictions. ' +
+          'This usually happens on first visit. Please refresh the page and try again. ' +
+          'The app is now cached and will work on the next attempt.'
+      );
+    }
+
+    if (errorMsg.includes('called FFmpeg.terminate()')) {
+      throw new Error(
+        'FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers ' +
+          'or strict browser security settings. Try disabling ad blockers, using an InPrivate window, ' +
+          'or testing another browser.'
       );
     }
 
