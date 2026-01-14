@@ -12,38 +12,42 @@
  * 4. Return result with metadata
  */
 
-import type { ConversionFormat, GifEncoderPreference, VideoMetadata } from '@t/conversion-types';
-import type { VideoTrackInfo } from '@t/video-pipeline-types';
-import type { WebAVMP4Service } from '@services/webav/webav-mp4-service';
-import { capabilityService } from '@services/video-pipeline/capability-service';
-import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
-import { videoPipelineService } from '@services/video-pipeline/video-pipeline-service';
-import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
-import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
+import type {
+  ConversionFormat,
+  GifEncoderPreference,
+  VideoMetadata,
+} from "@t/conversion-types";
+import type { VideoTrackInfo } from "@t/video-pipeline-types";
+import type { WebAVMP4Service } from "@services/webav/webav-mp4-service";
+import { capabilityService } from "@services/video-pipeline/capability-service";
+import { extendedCapabilityService } from "@services/video-pipeline/extended-capability-service";
+import { videoPipelineService } from "@services/video-pipeline/video-pipeline-service";
+import { strategyRegistryService } from "@services/orchestration/strategy-registry-service";
+import { strategyHistoryService } from "@services/orchestration/strategy-history-service";
 import {
   isAv1Codec,
   isH264Codec,
   isHevcCodec,
   isVp9Codec,
   normalizeCodecString,
-} from '@utils/codec-utils';
-import { detectContainerFormat } from '@utils/container-utils';
-import { createId } from '@utils/create-id';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
-import { QUALITY_PRESETS } from '@utils/constants';
-import { getOptimalFPS } from '@utils/quality-optimizer';
-import { ffmpegService } from '@services/ffmpeg-service'; // Legacy service (will be replaced in Phase 4)
-import { ProgressReporter } from '@services/shared/progress-reporter';
-import { computeRawvideoEligibility } from '@services/webcodecs/conversion/rawvideo-eligibility';
+} from "@utils/codec-utils";
+import { detectContainerFormat } from "@utils/container-utils";
+import { createId } from "@utils/create-id";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
+import { QUALITY_PRESETS } from "@utils/constants";
+import { getOptimalFPS } from "@utils/quality-optimizer";
+import { ffmpegService } from "@services/ffmpeg-service"; // Legacy service (will be replaced in Phase 4)
+import { ProgressReporter } from "@services/shared/progress-reporter";
+import { computeRawvideoEligibility } from "@services/webcodecs/conversion/rawvideo-eligibility";
 import {
   setConversionAutoSelectionDebug,
   setConversionPhaseTimingsDebug,
   updateConversionAutoSelectionDebug,
   type ConversionDebugOutcome,
-} from './conversion-debug';
-import { conversionMetricsService } from './conversion-metrics-service';
-import { getDevConversionOverrides } from './dev-conversion-overrides';
+} from "./conversion-debug";
+import { conversionMetricsService } from "./conversion-metrics-service";
+import { getDevConversionOverrides } from "./dev-conversion-overrides";
 import type {
   ConversionMetadata,
   ConversionRequest,
@@ -51,7 +55,7 @@ import type {
   ConversionPath,
   ConversionStatus,
   PathSelection,
-} from './types';
+} from "./types";
 
 /**
  * Conversion orchestrator class
@@ -62,7 +66,7 @@ class ConversionOrchestrator {
   private status: ConversionStatus = {
     isConverting: false,
     progress: 0,
-    statusMessage: '',
+    statusMessage: "",
   };
 
   private activeOperationId: string | null = null;
@@ -112,8 +116,8 @@ class ConversionOrchestrator {
         this.status = {
           isConverting: true,
           progress: 0,
-          statusMessage: 'Initializing conversion...',
-          phase: 'initializing',
+          statusMessage: "Initializing conversion...",
+          phase: "initializing",
         };
       }
 
@@ -138,31 +142,35 @@ class ConversionOrchestrator {
 
       // Define phases
       progressReporter.definePhases([
-        { name: 'initialization', weight: 1 },
-        { name: 'analysis', weight: 1 },
-        { name: 'conversion', weight: 18 }, // Main work
+        { name: "initialization", weight: 1 },
+        { name: "analysis", weight: 1 },
+        { name: "conversion", weight: 18 }, // Main work
       ]);
 
       // Phase 1: Initialization
-      progressReporter.startPhase('initialization', 'Initializing...');
+      progressReporter.startPhase("initialization", "Initializing...");
       // Warm up capability probing early to reduce latency for the planning step.
       // Intentionally non-blocking to keep UI responsive.
       void capabilityService.detectCapabilities().catch(() => undefined);
-      void extendedCapabilityService.detectCapabilities().catch(() => undefined);
+      void extendedCapabilityService
+        .detectCapabilities()
+        .catch(() => undefined);
       progressReporter.report(1.0);
 
       // Phase 2: Analysis
-      progressReporter.startPhase('analysis', 'Analyzing video...');
+      progressReporter.startPhase("analysis", "Analyzing video...");
       analysisStart = performance.now();
 
       throwIfAborted();
-      const { selection: pathSelection, metadata: plannedMetadata } = await this.selectPath({
-        file: request.file,
-        format: request.format,
-        metadata: request.metadata,
-        gifEncoderPreference: request.format === 'gif' ? request.options.gifEncoder : undefined,
-        abortSignal: abortController.signal,
-      });
+      const { selection: pathSelection, metadata: plannedMetadata } =
+        await this.selectPath({
+          file: request.file,
+          format: request.format,
+          metadata: request.metadata,
+          gifEncoderPreference:
+            request.format === "gif" ? request.options.gifEncoder : undefined,
+          abortSignal: abortController.signal,
+        });
 
       throwIfAborted();
 
@@ -172,7 +180,7 @@ class ConversionOrchestrator {
       // If we are taking the CPU path, ensure FFmpeg is ready and probe full metadata when needed.
       // This keeps GPU conversions from paying the FFmpeg init cost up front.
       const metadata =
-        pathSelection.path === 'cpu'
+        pathSelection.path === "cpu"
           ? await this.resolveMetadata(request.file, plannedMetadata)
           : plannedMetadata;
 
@@ -185,34 +193,40 @@ class ConversionOrchestrator {
       // - We still keep an internal hint field (options.gifEncoder) so the orchestrator can
       //   route complex codecs through a faster FFmpeg palette path when safe.
       const requestedGifEncoder: GifEncoderPreference | null =
-        request.format === 'gif' ? (request.options.gifEncoder ?? 'auto') : null;
+        request.format === "gif" ? request.options.gifEncoder ?? "auto" : null;
 
-      const devOverrides = import.meta.env.DEV ? getDevConversionOverrides() : null;
+      const devOverrides = import.meta.env.DEV
+        ? getDevConversionOverrides()
+        : null;
       const hasDevForcedGifEncoder =
-        request.format === 'gif' && !!devOverrides && devOverrides.forcedGifEncoder !== 'auto';
+        request.format === "gif" &&
+        !!devOverrides &&
+        devOverrides.forcedGifEncoder !== "auto";
 
       const effectiveOptions = { ...request.options };
-      let effectiveGifEncoder: GifEncoderPreference | null = requestedGifEncoder;
+      let effectiveGifEncoder: GifEncoderPreference | null =
+        requestedGifEncoder;
 
       if (
-        request.format === 'gif' &&
+        request.format === "gif" &&
         devOverrides &&
-        devOverrides.forcedGifEncoder === 'ffmpeg-palette'
+        devOverrides.forcedGifEncoder === "ffmpeg-palette"
       ) {
-        effectiveOptions.gifEncoder = 'ffmpeg-palette';
-        effectiveGifEncoder = 'ffmpeg-palette';
+        effectiveOptions.gifEncoder = "ffmpeg-palette";
+        effectiveGifEncoder = "ffmpeg-palette";
       }
 
       if (
-        request.format === 'gif' &&
-        requestedGifEncoder === 'auto' &&
-        pathSelection.path === 'gpu' &&
+        request.format === "gif" &&
+        requestedGifEncoder === "auto" &&
+        pathSelection.path === "gpu" &&
         !hasDevForcedGifEncoder
       ) {
         const caps = extendedCapabilityService.getCached();
 
         const codec = metadata?.codec;
-        const isComplexGifCodec = isAv1Codec(codec) || isHevcCodec(codec) || isVp9Codec(codec);
+        const isComplexGifCodec =
+          isAv1Codec(codec) || isHevcCodec(codec) || isVp9Codec(codec);
 
         // Session-local learning: prefer the GIF encoder that is most stable on this device.
         // This is intentionally conservative for AV1 to avoid catastrophic outliers.
@@ -224,52 +238,66 @@ class ConversionOrchestrator {
           userAgentData?: { mobile?: boolean };
         };
         const isProbablyMobile =
-          typeof nav.userAgentData?.mobile === 'boolean'
+          typeof nav.userAgentData?.mobile === "boolean"
             ? nav.userAgentData.mobile
             : /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
         // Prefer the scaled duration estimate from metadata when available.
         const preset = QUALITY_PRESETS.gif[effectiveOptions.quality];
-        const presetFps = 'fps' in preset ? preset.fps : 15;
+        const presetFps = "fps" in preset ? preset.fps : 15;
         const targetFps =
           metadata?.framerate && metadata.framerate > 0
-            ? getOptimalFPS(metadata.framerate, effectiveOptions.quality, 'gif')
+            ? getOptimalFPS(metadata.framerate, effectiveOptions.quality, "gif")
             : presetFps;
 
         const rawEligibility = computeRawvideoEligibility({
           metadata,
           targetFps,
           scale: effectiveOptions.scale,
-          format: 'gif',
-          intent: 'auto',
+          format: "gif",
+          intent: "auto",
         });
 
         const isLowMemoryDevice =
-          (typeof rawEligibility.deviceMemoryGB === 'number' &&
+          (typeof rawEligibility.deviceMemoryGB === "number" &&
             rawEligibility.deviceMemoryGB < 4) ||
-          (typeof rawEligibility.jsHeapSizeLimitMB === 'number' &&
+          (typeof rawEligibility.jsHeapSizeLimitMB === "number" &&
             rawEligibility.jsHeapSizeLimitMB < 1536);
 
         const ffmpegThreadingAvailable =
-          caps.crossOriginIsolated && caps.sharedArrayBuffer && caps.workerSupport;
+          caps.crossOriginIsolated &&
+          caps.sharedArrayBuffer &&
+          caps.workerSupport;
 
         const durationSeconds =
-          typeof metadata?.duration === 'number' && metadata.duration > 0
+          typeof metadata?.duration === "number" && metadata.duration > 0
             ? metadata.duration
             : null;
 
         const computeDurationBudgetSeconds = (): number => {
           const base =
-            effectiveOptions.scale === 1.0 ? 8 : effectiveOptions.scale === 0.75 ? 12 : 20;
+            effectiveOptions.scale === 1.0
+              ? 8
+              : effectiveOptions.scale === 0.75
+              ? 12
+              : 20;
           const qualityAdjust =
-            effectiveOptions.quality === 'high' ? -2 : effectiveOptions.quality === 'low' ? 2 : 0;
+            effectiveOptions.quality === "high"
+              ? -2
+              : effectiveOptions.quality === "low"
+              ? 2
+              : 0;
           return Math.max(6, base + qualityAdjust);
         };
 
         const computeFrameBudget = (): number => {
           const base =
-            effectiveOptions.scale === 1.0 ? 280 : effectiveOptions.scale === 0.75 ? 360 : 520;
-          const qualityAdjust = effectiveOptions.quality === 'high' ? -60 : 0;
+            effectiveOptions.scale === 1.0
+              ? 280
+              : effectiveOptions.scale === 0.75
+              ? 360
+              : 520;
+          const qualityAdjust = effectiveOptions.quality === "high" ? -60 : 0;
           return Math.max(180, base + qualityAdjust);
         };
 
@@ -280,7 +308,11 @@ class ConversionOrchestrator {
 
           // Base thresholds by scale. These are intentionally conservative for auto.
           let t =
-            effectiveOptions.scale === 1.0 ? 0.6 : effectiveOptions.scale === 0.75 ? 0.65 : 0.72;
+            effectiveOptions.scale === 1.0
+              ? 0.6
+              : effectiveOptions.scale === 0.75
+              ? 0.65
+              : 0.72;
 
           // Longer clips increase risk of allocation pressure and GC stalls.
           if (durationSeconds > 10) {
@@ -290,9 +322,9 @@ class ConversionOrchestrator {
           }
 
           // Higher quality tends to increase FPS and frame count.
-          if (effectiveOptions.quality === 'high') {
+          if (effectiveOptions.quality === "high") {
             t -= 0.05;
-          } else if (effectiveOptions.quality === 'low') {
+          } else if (effectiveOptions.quality === "low") {
             t += 0.03;
           }
 
@@ -316,7 +348,7 @@ class ConversionOrchestrator {
         const frameBudget = computeFrameBudget();
         const estimatedFramesForRaw = rawEligibility.estimatedFramesForRaw;
         const withinFrameBudget =
-          typeof estimatedFramesForRaw === 'number' &&
+          typeof estimatedFramesForRaw === "number" &&
           Number.isFinite(estimatedFramesForRaw) &&
           estimatedFramesForRaw > 0 &&
           estimatedFramesForRaw <= frameBudget;
@@ -347,23 +379,27 @@ class ConversionOrchestrator {
           !isLowMemoryDevice;
 
         const learnedPrefersModern =
-          learnedGifEncoder?.recommendedEncoder === 'modern-gif-worker' &&
+          learnedGifEncoder?.recommendedEncoder === "modern-gif-worker" &&
           learnedGifEncoder.confidence >= 0.5;
         const learnedPrefersPalette =
-          learnedGifEncoder?.recommendedEncoder === 'ffmpeg-palette' &&
+          learnedGifEncoder?.recommendedEncoder === "ffmpeg-palette" &&
           learnedGifEncoder.confidence >= 0.6;
 
         const allowAutoPaletteForCodec =
           // AV1 is the most sensitive to outliers; require evidence before auto-enabling.
           isAv1Codec(codec) ? learnedPrefersPalette : true;
 
-        if (shouldConsiderAutoPalette && allowAutoPaletteForCodec && !learnedPrefersModern) {
-          effectiveOptions.gifEncoder = 'ffmpeg-palette';
-          effectiveGifEncoder = 'ffmpeg-palette';
+        if (
+          shouldConsiderAutoPalette &&
+          allowAutoPaletteForCodec &&
+          !learnedPrefersModern
+        ) {
+          effectiveOptions.gifEncoder = "ffmpeg-palette";
+          effectiveGifEncoder = "ffmpeg-palette";
 
           logger.info(
-            'conversion',
-            'Auto GIF encoder resolved to FFmpeg palette (rawvideo eligible)',
+            "conversion",
+            "Auto GIF encoder resolved to FFmpeg palette (rawvideo eligible)",
             {
               requested: requestedGifEncoder,
               resolved: effectiveGifEncoder,
@@ -393,7 +429,7 @@ class ConversionOrchestrator {
             }
           );
         } else {
-          logger.debug('conversion', 'Auto GIF encoder kept default', {
+          logger.debug("conversion", "Auto GIF encoder kept default", {
             requested: requestedGifEncoder,
             resolved: requestedGifEncoder,
             codec,
@@ -425,7 +461,7 @@ class ConversionOrchestrator {
         options: effectiveOptions,
       };
 
-      logger.info('conversion', 'Starting conversion', {
+      logger.info("conversion", "Starting conversion", {
         file: request.file.name,
         fileSizeBytes: request.file.size,
         format: request.format,
@@ -435,18 +471,25 @@ class ConversionOrchestrator {
         quality: request.options.quality,
         scale: request.options.scale,
         gifEncoder: requestedGifEncoder,
-        gifEncoderResolved: request.format === 'gif' ? effectiveGifEncoder : null,
-        devForcedPath: import.meta.env.DEV ? (devOverrides?.forcedPath ?? null) : null,
-        devDisableFallback: import.meta.env.DEV ? (devOverrides?.disableFallback ?? null) : null,
-        devForcedGifEncoder: import.meta.env.DEV ? (devOverrides?.forcedGifEncoder ?? null) : null,
+        gifEncoderResolved:
+          request.format === "gif" ? effectiveGifEncoder : null,
+        devForcedPath: import.meta.env.DEV
+          ? devOverrides?.forcedPath ?? null
+          : null,
+        devDisableFallback: import.meta.env.DEV
+          ? devOverrides?.disableFallback ?? null
+          : null,
+        devForcedGifEncoder: import.meta.env.DEV
+          ? devOverrides?.forcedGifEncoder ?? null
+          : null,
         devForcedCaptureMode: import.meta.env.DEV
-          ? (devOverrides?.forcedCaptureMode ?? null)
+          ? devOverrides?.forcedCaptureMode ?? null
           : null,
         devDisableDemuxerInAuto: import.meta.env.DEV
-          ? (devOverrides?.disableDemuxerInAuto ?? null)
+          ? devOverrides?.disableDemuxerInAuto ?? null
           : null,
         devForcedStrategyCodec: import.meta.env.DEV
-          ? (devOverrides?.forcedStrategyCodec ?? null)
+          ? devOverrides?.forcedStrategyCodec ?? null
           : null,
         durationSeconds: request.options.duration ?? null,
       });
@@ -459,28 +502,41 @@ class ConversionOrchestrator {
           const reasoning = strategyRegistryService.getStrategyReasoning({
             codec: metadata.codec,
             format: request.format,
-            container: container as import('@t/video-pipeline-types').ContainerFormat,
+            container:
+              container as import("@t/video-pipeline-types").ContainerFormat,
             capabilities: extendedCaps,
             durationSeconds: metadata.duration,
           });
 
-          logger.debug('conversion', 'Strategy Decision Factors', reasoning.factors);
-          logger.debug('conversion', 'Alternatives Considered', reasoning.alternativesConsidered);
+          logger.debug(
+            "conversion",
+            "Strategy Decision Factors",
+            reasoning.factors
+          );
+          logger.debug(
+            "conversion",
+            "Alternatives Considered",
+            reasoning.alternativesConsidered
+          );
         } catch (error) {
           // Non-critical - don't block conversion
-          logger.debug('conversion', 'Strategy reasoning generation failed (non-critical)', {
-            error: getErrorMessage(error),
-          });
+          logger.debug(
+            "conversion",
+            "Strategy reasoning generation failed (non-critical)",
+            {
+              error: getErrorMessage(error),
+            }
+          );
         }
       }
 
       // Phase 3: Conversion
-      progressReporter.startPhase('conversion', 'Converting...');
+      progressReporter.startPhase("conversion", "Converting...");
       conversionStart = performance.now();
 
       const conversionMetadata: ConversionMetadata = {
         path: pathSelection.path,
-        encoder: 'unknown',
+        encoder: "unknown",
         conversionTimeMs: 0,
         wasTranscoded: false,
         originalCodec: metadata?.codec,
@@ -490,7 +546,7 @@ class ConversionOrchestrator {
 
       // Execute based on selected path
       switch (pathSelection.path) {
-        case 'webav':
+        case "webav":
           blob = await this.convertViaWebAVPath(
             request,
             metadata,
@@ -499,7 +555,7 @@ class ConversionOrchestrator {
           );
           break;
 
-        case 'gpu':
+        case "gpu":
           blob = await this.convertViaGPUPath(
             effectiveRequest,
             metadata,
@@ -524,7 +580,7 @@ class ConversionOrchestrator {
       // as a successful conversion. This avoids late-arriving completions mutating shared
       // UI/log state after rapid cancel/retry.
       if (!isActive() || abortController.signal.aborted) {
-        throw new Error('Conversion cancelled by user');
+        throw new Error("Conversion cancelled by user");
       }
 
       // Update final metadata
@@ -533,24 +589,27 @@ class ConversionOrchestrator {
       // Best-effort: conversion services may attach the actual encoder backend onto the
       // output blob. Prefer the runtime-reported backend over the planned one.
       const encoderBackendUsed =
-        (blob as unknown as { encoderBackendUsed?: string | null }).encoderBackendUsed ?? null;
+        (blob as unknown as { encoderBackendUsed?: string | null })
+          .encoderBackendUsed ?? null;
       if (encoderBackendUsed) {
         conversionMetadata.encoder = encoderBackendUsed;
       }
-      encoderBackendUsedForMetrics = encoderBackendUsed ?? conversionMetadata.encoder;
+      encoderBackendUsedForMetrics =
+        encoderBackendUsed ?? conversionMetadata.encoder;
 
       outputSizeBytes = blob.size;
 
       // Best-effort: WebCodecs conversion services may attach capture mode metadata
       // directly onto the output blob for debugging/learning purposes.
       const captureModeUsed =
-        (blob as unknown as { captureModeUsed?: string | null }).captureModeUsed ?? null;
+        (blob as unknown as { captureModeUsed?: string | null })
+          .captureModeUsed ?? null;
       if (captureModeUsed) {
         conversionMetadata.captureModeUsed = captureModeUsed;
       }
       captureModeUsedForMetrics = captureModeUsed;
 
-      debugOutcome = 'success';
+      debugOutcome = "success";
       if (import.meta.env.DEV) {
         updateConversionAutoSelectionDebug({
           executedPath: conversionMetadata.path,
@@ -559,17 +618,17 @@ class ConversionOrchestrator {
         });
       }
 
-      progressReporter.complete('Conversion complete');
+      progressReporter.complete("Conversion complete");
 
       if (isActive()) {
         this.status = {
           isConverting: false,
           progress: 100,
-          statusMessage: 'Complete',
+          statusMessage: "Complete",
         };
       }
 
-      logger.info('conversion', 'Conversion completed successfully', {
+      logger.info("conversion", "Conversion completed successfully", {
         file: request.file.name,
         format: request.format,
         path: conversionMetadata.path,
@@ -591,20 +650,25 @@ class ConversionOrchestrator {
           });
         } catch (error) {
           // Non-critical - don't block return
-          logger.debug('conversion', 'Failed to record conversion history (non-critical)', {
-            error: getErrorMessage(error),
-          });
+          logger.debug(
+            "conversion",
+            "Failed to record conversion history (non-critical)",
+            {
+              error: getErrorMessage(error),
+            }
+          );
         }
       }
 
       // Performance metrics logging (always visible, even in production)
       const ffmpegFrameInputKind =
-        (blob as unknown as { ffmpegFrameInputKind?: string | null }).ffmpegFrameInputKind ?? null;
+        (blob as unknown as { ffmpegFrameInputKind?: string | null })
+          .ffmpegFrameInputKind ?? null;
       const ffmpegRawvideoBytesUsed =
-        (blob as unknown as { ffmpegRawvideoBytesUsed?: number | null }).ffmpegRawvideoBytesUsed ??
-        null;
+        (blob as unknown as { ffmpegRawvideoBytesUsed?: number | null })
+          .ffmpegRawvideoBytesUsed ?? null;
 
-      logger.performance('Conversion Strategy Executed', {
+      logger.performance("Conversion Strategy Executed", {
         codec: metadata?.codec,
         format: request.format,
         path: conversionMetadata.path,
@@ -613,19 +677,23 @@ class ConversionOrchestrator {
         encoderBackendUsed: encoderBackendUsedForMetrics,
         captureModeUsed: captureModeUsedForMetrics,
         gifEncoderRequested:
-          request.format === 'gif' ? (request.options.gifEncoder ?? 'auto') : null,
+          request.format === "gif"
+            ? request.options.gifEncoder ?? "auto"
+            : null,
         gifEncoderResolved:
-          request.format === 'gif' ? (effectiveOptions.gifEncoder ?? 'auto') : null,
+          request.format === "gif"
+            ? effectiveOptions.gifEncoder ?? "auto"
+            : null,
         ffmpegFrameInputKind,
         ffmpegRawvideoBytesUsed,
         durationMs: conversionMetadata.conversionTimeMs,
         outputSizeMB: (blob.size / (1024 * 1024)).toFixed(2),
         performanceRating:
           conversionMetadata.conversionTimeMs < 10000
-            ? 'fast'
+            ? "fast"
             : conversionMetadata.conversionTimeMs < 30000
-              ? 'medium'
-              : 'slow',
+            ? "medium"
+            : "slow",
       });
 
       return {
@@ -638,26 +706,26 @@ class ConversionOrchestrator {
       const wasSuperseded = !isActive();
 
       if (wasCancelled || wasSuperseded) {
-        debugOutcome = 'cancelled';
+        debugOutcome = "cancelled";
         if (import.meta.env.DEV) {
           updateConversionAutoSelectionDebug({
             outcome: debugOutcome,
           });
         }
         if (!wasSuperseded) {
-          logger.info('conversion', 'Conversion was cancelled by user');
+          logger.info("conversion", "Conversion was cancelled by user");
         }
         if (isActive()) {
           this.status = {
             isConverting: false,
             progress: this.status.progress,
-            statusMessage: 'Cancelled by user',
+            statusMessage: "Cancelled by user",
           };
         }
-        throw new Error('Conversion cancelled by user');
+        throw new Error("Conversion cancelled by user");
       }
 
-      debugOutcome = 'error';
+      debugOutcome = "error";
       if (import.meta.env.DEV) {
         updateConversionAutoSelectionDebug({
           outcome: debugOutcome,
@@ -669,7 +737,7 @@ class ConversionOrchestrator {
         this.status = {
           isConverting: false,
           progress: 0,
-          statusMessage: 'Error',
+          statusMessage: "Error",
         };
       }
 
@@ -677,7 +745,7 @@ class ConversionOrchestrator {
 
       // Log the error without full classification (will be done in consumer)
       // to avoid redundant error processing and potential stack overflow
-      logger.error('conversion', 'Conversion failed', {
+      logger.error("conversion", "Conversion failed", {
         file: request.file.name,
         format: request.format,
         error: errorMessage,
@@ -689,16 +757,21 @@ class ConversionOrchestrator {
           strategyHistoryService.recordConversion({
             codec: plannedCodecForHistory,
             format: request.format,
-            path: plannedSelection?.path ?? 'cpu',
+            path: plannedSelection?.path ?? "cpu",
             durationMs: Date.now() - startTime,
             success: false,
+            errorMessage: errorMessage.slice(0, 300),
             timestamp: Date.now(),
           });
         } catch (historyError) {
           // Non-critical - don't mask original error
-          logger.debug('conversion', 'Failed to record conversion failure (non-critical)', {
-            error: getErrorMessage(historyError),
-          });
+          logger.debug(
+            "conversion",
+            "Failed to record conversion failure (non-critical)",
+            {
+              error: getErrorMessage(historyError),
+            }
+          );
         }
       }
 
@@ -725,13 +798,15 @@ class ConversionOrchestrator {
       // Skip superseded operations to avoid polluting metrics during rapid cancel/retry.
       if (isActive()) {
         try {
-          const codecForMetrics = plannedCodecForHistory ?? request.metadata?.codec ?? 'unknown';
+          const codecForMetrics =
+            plannedCodecForHistory ?? request.metadata?.codec ?? "unknown";
           conversionMetricsService.record({
             timestamp: Date.now(),
             codec: codecForMetrics,
             format: request.format,
-            plannedPath: plannedSelection?.path ?? 'cpu',
-            executedPath: executedPathForMetrics ?? plannedSelection?.path ?? 'cpu',
+            plannedPath: plannedSelection?.path ?? "cpu",
+            executedPath:
+              executedPathForMetrics ?? plannedSelection?.path ?? "cpu",
             encoderBackendUsed: encoderBackendUsedForMetrics,
             captureModeUsed: captureModeUsedForMetrics,
             durationMs: Math.max(0, Date.now() - startTime),
@@ -740,12 +815,16 @@ class ConversionOrchestrator {
             analysisMs: Math.round(analysisMs),
             conversionMs: Math.round(conversionMs),
             totalMs: Math.round(totalMs),
-            outcome: debugOutcome ?? 'error',
+            outcome: debugOutcome ?? "error",
           });
         } catch (metricsError) {
-          logger.debug('conversion', 'Failed to record conversion metrics (non-critical)', {
-            error: getErrorMessage(metricsError),
-          });
+          logger.debug(
+            "conversion",
+            "Failed to record conversion metrics (non-critical)",
+            {
+              error: getErrorMessage(metricsError),
+            }
+          );
         }
       }
 
@@ -792,11 +871,11 @@ class ConversionOrchestrator {
 
     if (this.abortController && !this.abortController.signal.aborted) {
       this.abortController.abort();
-      logger.info('conversion', 'Conversion cancellation requested');
+      logger.info("conversion", "Conversion cancellation requested");
       this.status = {
         isConverting: false,
         progress: this.status.progress,
-        statusMessage: 'Cancelled by user',
+        statusMessage: "Cancelled by user",
       };
     }
   }
@@ -811,7 +890,7 @@ class ConversionOrchestrator {
   private throwIfAborted(signal?: AbortSignal): void {
     const abortSignal = signal ?? this.abortController?.signal;
     if (abortSignal?.aborted) {
-      throw new Error('Conversion aborted');
+      throw new Error("Conversion aborted");
     }
   }
 
@@ -834,7 +913,9 @@ class ConversionOrchestrator {
   private async getWebAVService(): Promise<WebAVMP4Service> {
     if (this.webavService) return this.webavService;
 
-    const { createWebAVMP4Service } = await import('@services/webav/webav-mp4-service');
+    const { createWebAVMP4Service } = await import(
+      "@services/webav/webav-mp4-service"
+    );
     this.webavService = createWebAVMP4Service();
     return this.webavService;
   }
@@ -849,7 +930,7 @@ class ConversionOrchestrator {
     file: File,
     metadata?: VideoMetadata
   ): Promise<VideoMetadata | undefined> {
-    if (metadata?.codec && metadata.codec !== 'unknown') {
+    if (metadata?.codec && metadata.codec !== "unknown") {
       return metadata;
     }
 
@@ -859,19 +940,23 @@ class ConversionOrchestrator {
 
       // For complex codecs, metadata is mandatory
       const codec = probed?.codec?.toLowerCase();
-      if (codec === 'av1' || codec === 'vp9' || codec === 'hevc') {
+      if (codec === "av1" || codec === "vp9" || codec === "hevc") {
         if (!probed || !probed.duration || probed.duration === 0) {
           throw new Error(
             `Failed to extract metadata for ${codec.toUpperCase()} codec. ` +
-              'This codec requires complete metadata for processing. ' +
-              'The file may be corrupted or in an unsupported format.'
+              "This codec requires complete metadata for processing. " +
+              "The file may be corrupted or in an unsupported format."
           );
         }
-        logger.info('conversion', 'Mandatory metadata extracted for complex codec', {
-          codec: probed.codec,
-          duration: probed.duration,
-          resolution: `${probed.width}x${probed.height}`,
-        });
+        logger.info(
+          "conversion",
+          "Mandatory metadata extracted for complex codec",
+          {
+            codec: probed.codec,
+            duration: probed.duration,
+            resolution: `${probed.width}x${probed.height}`,
+          }
+        );
       }
 
       return probed;
@@ -879,13 +964,17 @@ class ConversionOrchestrator {
       const errorMsg = getErrorMessage(error);
 
       // Re-throw if it's our mandatory metadata error
-      if (errorMsg.includes('Failed to extract metadata')) {
+      if (errorMsg.includes("Failed to extract metadata")) {
         throw error;
       }
 
-      logger.warn('conversion', 'Metadata probe failed, continuing without codec', {
-        error: errorMsg,
-      });
+      logger.warn(
+        "conversion",
+        "Metadata probe failed, continuing without codec",
+        {
+          error: errorMsg,
+        }
+      );
       return metadata;
     }
   }
@@ -905,22 +994,28 @@ class ConversionOrchestrator {
   }> {
     const { file, format } = params;
 
-    const devOverrides = import.meta.env.DEV ? getDevConversionOverrides() : null;
+    const devOverrides = import.meta.env.DEV
+      ? getDevConversionOverrides()
+      : null;
     const gifEncoderPreference: GifEncoderPreference | undefined =
-      format === 'gif' && devOverrides && devOverrides.forcedGifEncoder === 'ffmpeg-palette'
-        ? 'ffmpeg-palette'
+      format === "gif" &&
+      devOverrides &&
+      devOverrides.forcedGifEncoder === "ffmpeg-palette"
+        ? "ffmpeg-palette"
         : params.gifEncoderPreference;
 
     this.throwIfAborted(params.abortSignal);
 
     // WebAV path for MP4 (native WebCodecs pipeline).
-    if (format === 'mp4') {
+    if (format === "mp4") {
       this.throwIfAborted(params.abortSignal);
       const webavService = await this.getWebAVService();
       this.throwIfAborted(params.abortSignal);
       const webavAvailable = await webavService.isAvailable();
       if (!webavAvailable) {
-        throw new Error('MP4 conversion is not available in this browser (WebAV required).');
+        throw new Error(
+          "MP4 conversion is not available in this browser (WebAV required)."
+        );
       }
 
       if (import.meta.env.DEV) {
@@ -930,8 +1025,8 @@ class ConversionOrchestrator {
           format,
           codec: params.metadata?.codec,
           container: detectContainerFormat(file),
-          plannedPath: 'webav',
-          plannedReason: 'WebAV MP4 encoding',
+          plannedPath: "webav",
+          plannedReason: "WebAV MP4 encoding",
           hardwareAccelerated: caps.hardwareAccelerated,
           sharedArrayBuffer: caps.sharedArrayBuffer,
           crossOriginIsolated: caps.crossOriginIsolated,
@@ -941,29 +1036,32 @@ class ConversionOrchestrator {
 
       return {
         selection: {
-          path: 'webav',
-          reason: 'WebAV MP4 encoding',
+          path: "webav",
+          reason: "WebAV MP4 encoding",
         },
         metadata: params.metadata,
       };
     }
 
-    if (format !== 'gif' && format !== 'webp') {
+    if (format !== "gif" && format !== "webp") {
       throw new Error(`Unsupported format: ${format}`);
     }
 
     // Dev-only escape hatches: allow deterministic forcing of path and select encoder variants.
     // Intended for performance/stability testing (not exposed in production).
     if (import.meta.env.DEV && devOverrides) {
-      if (format === 'gif' && devOverrides.forcedGifEncoder === 'ffmpeg-direct') {
+      if (
+        format === "gif" &&
+        devOverrides.forcedGifEncoder === "ffmpeg-direct"
+      ) {
         const caps = extendedCapabilityService.getCached();
         setConversionAutoSelectionDebug({
           timestamp: Date.now(),
           format,
           codec: params.metadata?.codec,
           container: detectContainerFormat(file),
-          plannedPath: 'cpu',
-          plannedReason: 'Dev override forced GIF encoder: ffmpeg-direct (CPU)',
+          plannedPath: "cpu",
+          plannedReason: "Dev override forced GIF encoder: ffmpeg-direct (CPU)",
           hardwareAccelerated: caps.hardwareAccelerated,
           sharedArrayBuffer: caps.sharedArrayBuffer,
           crossOriginIsolated: caps.crossOriginIsolated,
@@ -972,15 +1070,15 @@ class ConversionOrchestrator {
 
         return {
           selection: {
-            path: 'cpu',
-            reason: 'Dev override forced GIF encoder: ffmpeg-direct (CPU)',
+            path: "cpu",
+            reason: "Dev override forced GIF encoder: ffmpeg-direct (CPU)",
             useDemuxer: false,
           },
           metadata: params.metadata,
         };
       }
 
-      if (devOverrides.forcedPath === 'cpu') {
+      if (devOverrides.forcedPath === "cpu") {
         if (import.meta.env.DEV) {
           const caps = extendedCapabilityService.getCached();
           setConversionAutoSelectionDebug({
@@ -988,8 +1086,8 @@ class ConversionOrchestrator {
             format,
             codec: params.metadata?.codec,
             container: detectContainerFormat(file),
-            plannedPath: 'cpu',
-            plannedReason: 'Dev override forced CPU path (FFmpeg direct)',
+            plannedPath: "cpu",
+            plannedReason: "Dev override forced CPU path (FFmpeg direct)",
             hardwareAccelerated: caps.hardwareAccelerated,
             sharedArrayBuffer: caps.sharedArrayBuffer,
             crossOriginIsolated: caps.crossOriginIsolated,
@@ -999,8 +1097,8 @@ class ConversionOrchestrator {
 
         return {
           selection: {
-            path: 'cpu',
-            reason: 'Dev override forced CPU path (FFmpeg direct)',
+            path: "cpu",
+            reason: "Dev override forced CPU path (FFmpeg direct)",
             useDemuxer: false,
           },
           metadata: params.metadata,
@@ -1013,12 +1111,12 @@ class ConversionOrchestrator {
     // NOTE: AV1-in-MP4 decoding in ffmpeg.wasm is not reliable in all builds/environments.
     // If AV1 is detected, do not force the FFmpeg-direct CPU path. Instead, honor the
     // preference via a hybrid approach: WebCodecs decode + FFmpeg frame-sequence palette encode.
-    if (format === 'gif' && gifEncoderPreference === 'ffmpeg-palette') {
+    if (format === "gif" && gifEncoderPreference === "ffmpeg-palette") {
       const codec = params.metadata?.codec;
       if (isAv1Codec(codec)) {
         logger.info(
-          'conversion',
-          'FFmpeg palette preference detected for AV1 input; will use WebCodecs decode + FFmpeg frame-sequence encoding',
+          "conversion",
+          "FFmpeg palette preference detected for AV1 input; will use WebCodecs decode + FFmpeg frame-sequence encoding",
           { codec }
         );
       } else {
@@ -1029,8 +1127,8 @@ class ConversionOrchestrator {
             format,
             codec,
             container: detectContainerFormat(file),
-            plannedPath: 'cpu',
-            plannedReason: 'User forced FFmpeg palettegen/paletteuse',
+            plannedPath: "cpu",
+            plannedReason: "User forced FFmpeg palettegen/paletteuse",
             hardwareAccelerated: caps.hardwareAccelerated,
             sharedArrayBuffer: caps.sharedArrayBuffer,
             crossOriginIsolated: caps.crossOriginIsolated,
@@ -1040,8 +1138,8 @@ class ConversionOrchestrator {
 
         return {
           selection: {
-            path: 'cpu',
-            reason: 'User forced FFmpeg palettegen/paletteuse',
+            path: "cpu",
+            reason: "User forced FFmpeg palettegen/paletteuse",
             useDemuxer: false,
           },
           metadata: params.metadata,
@@ -1070,7 +1168,7 @@ class ConversionOrchestrator {
       ? {
           ...(params.metadata ?? trackMetadata),
           codec:
-            params.metadata?.codec && params.metadata.codec !== 'unknown'
+            params.metadata?.codec && params.metadata.codec !== "unknown"
               ? params.metadata.codec
               : trackMetadata.codec,
           width:
@@ -1093,10 +1191,10 @@ class ConversionOrchestrator {
       : params.metadata;
 
     // If pipeline planning forces FFmpeg full pipeline, respect it.
-    if (plan.decodePath === 'ffmpeg-wasm-full') {
+    if (plan.decodePath === "ffmpeg-wasm-full") {
       return {
         selection: {
-          path: 'cpu',
+          path: "cpu",
           reason: `video-pipeline selected ${plan.decodePath}`,
           useDemuxer: false,
         },
@@ -1110,12 +1208,13 @@ class ConversionOrchestrator {
     const extendedCaps = await extendedCapabilityService.detectCapabilities();
 
     this.throwIfAborted(params.abortSignal);
-    const codecForStrategyBase = plannedMetadata?.codec ?? plan.track?.codec ?? 'unknown';
+    const codecForStrategyBase =
+      plannedMetadata?.codec ?? plan.track?.codec ?? "unknown";
     const codecForStrategy =
       import.meta.env.DEV &&
       devOverrides &&
       devOverrides.forcedStrategyCodec &&
-      devOverrides.forcedStrategyCodec !== 'auto'
+      devOverrides.forcedStrategyCodec !== "auto"
         ? devOverrides.forcedStrategyCodec
         : codecForStrategyBase;
 
@@ -1128,7 +1227,7 @@ class ConversionOrchestrator {
     });
 
     if (import.meta.env.DEV) {
-      logger.debug('conversion', 'Auto-selection inputs (dev)', {
+      logger.debug("conversion", "Auto-selection inputs (dev)", {
         format,
         container: plan.container,
         codec: codecForStrategy,
@@ -1140,10 +1239,10 @@ class ConversionOrchestrator {
       });
     }
 
-    const strategyPath: PathSelection['path'] =
-      strategy.preferredPath === 'gpu' || strategy.preferredPath === 'cpu'
+    const strategyPath: PathSelection["path"] =
+      strategy.preferredPath === "gpu" || strategy.preferredPath === "cpu"
         ? strategy.preferredPath
-        : 'gpu';
+        : "gpu";
 
     const selection: PathSelection = {
       path: strategyPath,
@@ -1154,24 +1253,24 @@ class ConversionOrchestrator {
 
     // User-forced FFmpeg palette encoding for AV1 should stay on GPU path (WebCodecs decode),
     // but we want logs/debug state to reflect the explicit preference.
-    if (format === 'gif' && gifEncoderPreference === 'ffmpeg-palette') {
+    if (format === "gif" && gifEncoderPreference === "ffmpeg-palette") {
       const codec = codecForStrategy;
       if (isAv1Codec(codec)) {
-        selection.path = 'gpu';
+        selection.path = "gpu";
         selection.reason =
-          'User forced FFmpeg palettegen/paletteuse (WebCodecs decode + FFmpeg frame-sequence encode)';
+          "User forced FFmpeg palettegen/paletteuse (WebCodecs decode + FFmpeg frame-sequence encode)";
       }
     }
 
     if (import.meta.env.DEV && devOverrides) {
-      if (devOverrides.forcedPath === 'gpu') {
-        selection.path = 'gpu';
-        selection.reason = 'Dev override forced GPU path (WebCodecs decode)';
+      if (devOverrides.forcedPath === "gpu") {
+        selection.path = "gpu";
+        selection.reason = "Dev override forced GPU path (WebCodecs decode)";
       }
 
-      if (devOverrides.forcedPath === 'cpu') {
-        selection.path = 'cpu';
-        selection.reason = 'Dev override forced CPU path (FFmpeg direct)';
+      if (devOverrides.forcedPath === "cpu") {
+        selection.path = "cpu";
+        selection.reason = "Dev override forced CPU path (FFmpeg direct)";
         selection.useDemuxer = false;
       }
     }
@@ -1200,7 +1299,9 @@ class ConversionOrchestrator {
     };
   }
 
-  private buildLightweightMetadataFromTrack(track: VideoTrackInfo): VideoMetadata {
+  private buildLightweightMetadataFromTrack(
+    track: VideoTrackInfo
+  ): VideoMetadata {
     const codec = this.normalizeCodecForMetadata(track.codec);
 
     return {
@@ -1215,12 +1316,12 @@ class ConversionOrchestrator {
 
   private normalizeCodecForMetadata(codec: string): string {
     const c = normalizeCodecString(codec);
-    if (isAv1Codec(c)) return 'av1';
-    if (isH264Codec(c)) return 'h264';
-    if (isHevcCodec(c)) return 'hevc';
-    if (c.includes('vp09') || c.includes('vp9')) return 'vp9';
-    if (c.includes('vp08') || c.includes('vp8')) return 'vp8';
-    return c.length > 0 ? c : 'unknown';
+    if (isAv1Codec(c)) return "av1";
+    if (isH264Codec(c)) return "h264";
+    if (isHevcCodec(c)) return "hevc";
+    if (c.includes("vp09") || c.includes("vp9")) return "vp9";
+    if (c.includes("vp08") || c.includes("vp8")) return "vp8";
+    return c.length > 0 ? c : "unknown";
   }
 
   /**
@@ -1232,18 +1333,18 @@ class ConversionOrchestrator {
     conversionMetadata: ConversionMetadata,
     progressReporter: ProgressReporter
   ) {
-    logger.info('conversion', 'Executing WebAV path conversion', {
+    logger.info("conversion", "Executing WebAV path conversion", {
       format: request.format,
       codec: metadata?.codec,
     });
 
-    conversionMetadata.encoder = 'webav';
-    conversionMetadata.path = 'webav';
+    conversionMetadata.encoder = "webav";
+    conversionMetadata.path = "webav";
 
     if (import.meta.env.DEV) {
       updateConversionAutoSelectionDebug({
-        executedPath: 'webav',
-        encoderBackend: 'webav',
+        executedPath: "webav",
+        encoderBackend: "webav",
       });
     }
 
@@ -1260,14 +1361,14 @@ class ConversionOrchestrator {
         }
       );
 
-      logger.info('conversion', 'WebAV MP4 conversion completed', {
+      logger.info("conversion", "WebAV MP4 conversion completed", {
         outputSize: `${(blob.size / 1024 / 1024).toFixed(1)}MB`,
       });
 
       return blob;
     } catch (error) {
       const errorMessage = getErrorMessage(error);
-      logger.error('conversion', 'WebAV MP4 conversion failed', {
+      logger.error("conversion", "WebAV MP4 conversion failed", {
         error: errorMessage,
       });
 
@@ -1288,59 +1389,77 @@ class ConversionOrchestrator {
     conversionMetadata: ConversionMetadata,
     abortSignal: AbortSignal
   ) {
-    logger.info('conversion', 'Executing GPU path conversion', {
+    logger.info("conversion", "Executing GPU path conversion", {
       format: request.format,
       codec: metadata?.codec,
     });
 
     // GPU path only supports GIF/WebP formats
-    if (request.format !== 'gif' && request.format !== 'webp') {
+    if (request.format !== "gif" && request.format !== "webp") {
       if (import.meta.env.DEV) {
         const overrides = getDevConversionOverrides();
-        if (overrides.forcedPath === 'gpu' && overrides.disableFallback) {
+        if (overrides.forcedPath === "gpu" && overrides.disableFallback) {
           throw new Error(
             `Dev override forced GPU path with fallback disabled, but format '${request.format}' is not supported by GPU path.`
           );
         }
       }
 
-      logger.warn('conversion', 'GPU path does not support this format, falling back to FFmpeg', {
-        format: request.format,
-      });
-      return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
+      logger.warn(
+        "conversion",
+        "GPU path does not support this format, falling back to FFmpeg",
+        {
+          format: request.format,
+        }
+      );
+      return this.convertViaCPUPath(
+        request,
+        metadata,
+        conversionMetadata,
+        abortSignal
+      );
     }
 
-    if (import.meta.env.DEV && request.format === 'gif') {
+    if (import.meta.env.DEV && request.format === "gif") {
       const overrides = getDevConversionOverrides();
-      if (overrides.forcedGifEncoder === 'ffmpeg-direct') {
+      if (overrides.forcedGifEncoder === "ffmpeg-direct") {
         const message =
-          'Dev override forced GIF encoder ffmpeg-direct, but GPU path was selected/executed.';
+          "Dev override forced GIF encoder ffmpeg-direct, but GPU path was selected/executed.";
 
         if (overrides.disableFallback) {
-          throw new Error(`${message} Disable fallback is enabled, refusing to continue.`);
+          throw new Error(
+            `${message} Disable fallback is enabled, refusing to continue.`
+          );
         }
 
-        logger.warn('conversion', `${message} Falling back to CPU path.`, {
+        logger.warn("conversion", `${message} Falling back to CPU path.`, {
           codec: metadata?.codec,
         });
 
-        return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
+        return this.convertViaCPUPath(
+          request,
+          metadata,
+          conversionMetadata,
+          abortSignal
+        );
       }
     }
 
     // For AV1 and other WebCodecs-required codecs, use WebCodecs service
-    conversionMetadata.encoder = 'webcodecs';
-    conversionMetadata.path = 'gpu';
+    conversionMetadata.encoder = "webcodecs";
+    conversionMetadata.path = "gpu";
 
     if (import.meta.env.DEV) {
       updateConversionAutoSelectionDebug({
-        executedPath: 'gpu',
-        encoderBackend: 'webcodecs',
+        executedPath: "gpu",
+        encoderBackend: "webcodecs",
       });
     }
 
     // Use WebCodecs conversion service for GPU-accelerated decoding
-    const { webcodecsConversionService } = await import('@services/webcodecs-conversion-service');
+    const { webcodecsConversionService } = await import(
+      "@services/webcodecs-conversion-service"
+    );
     const result = await webcodecsConversionService.convert(
       request.file,
       request.format,
@@ -1353,10 +1472,11 @@ class ConversionOrchestrator {
       if (import.meta.env.DEV) {
         updateConversionAutoSelectionDebug({
           captureModeUsed:
-            (result as unknown as { captureModeUsed?: string }).captureModeUsed ?? null,
+            (result as unknown as { captureModeUsed?: string })
+              .captureModeUsed ?? null,
           encoderBackend:
-            (result as unknown as { encoderBackendUsed?: string }).encoderBackendUsed ??
-            conversionMetadata.encoder,
+            (result as unknown as { encoderBackendUsed?: string })
+              .encoderBackendUsed ?? conversionMetadata.encoder,
         });
       }
       return result;
@@ -1365,15 +1485,23 @@ class ConversionOrchestrator {
     // Fallback to CPU if WebCodecs fails
     if (import.meta.env.DEV) {
       const overrides = getDevConversionOverrides();
-      if (overrides.forcedPath === 'gpu' && overrides.disableFallback) {
+      if (overrides.forcedPath === "gpu" && overrides.disableFallback) {
         throw new Error(
-          'Dev override forced GPU path with fallback disabled, but WebCodecs conversion produced no result.'
+          "Dev override forced GPU path with fallback disabled, but WebCodecs conversion produced no result."
         );
       }
     }
 
-    logger.warn('conversion', 'GPU path (WebCodecs) failed, falling back to FFmpeg');
-    return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
+    logger.warn(
+      "conversion",
+      "GPU path (WebCodecs) failed, falling back to FFmpeg"
+    );
+    return this.convertViaCPUPath(
+      request,
+      metadata,
+      conversionMetadata,
+      abortSignal
+    );
   }
 
   /**
@@ -1401,7 +1529,7 @@ class ConversionOrchestrator {
   ): Promise<Blob> {
     this.throwIfAborted(abortSignal);
 
-    logger.info('conversion', 'Executing CPU path conversion (FFmpeg direct)', {
+    logger.info("conversion", "Executing CPU path conversion (FFmpeg direct)", {
       format: request.format,
     });
 
@@ -1409,24 +1537,32 @@ class ConversionOrchestrator {
 
     this.throwIfAborted(abortSignal);
 
-    conversionMetadata.encoder = 'ffmpeg';
-    conversionMetadata.path = 'cpu';
+    conversionMetadata.encoder = "ffmpeg";
+    conversionMetadata.path = "cpu";
 
     if (import.meta.env.DEV) {
       updateConversionAutoSelectionDebug({
-        executedPath: 'cpu',
-        encoderBackend: 'ffmpeg',
+        executedPath: "cpu",
+        encoderBackend: "ffmpeg",
       });
     }
 
     // Use legacy FFmpeg service (will be replaced with ffmpeg-pipeline in Phase 4)
     // Call the appropriate method based on format
-    if (request.format === 'gif') {
-      const blob = await ffmpegService.convertToGIF(request.file, request.options, metadata);
+    if (request.format === "gif") {
+      const blob = await ffmpegService.convertToGIF(
+        request.file,
+        request.options,
+        metadata
+      );
       this.throwIfAborted(abortSignal);
       return blob;
-    } else if (request.format === 'webp') {
-      const blob = await ffmpegService.convertToWebP(request.file, request.options, metadata);
+    } else if (request.format === "webp") {
+      const blob = await ffmpegService.convertToWebP(
+        request.file,
+        request.options,
+        metadata
+      );
       this.throwIfAborted(abortSignal);
       return blob;
     } else {
@@ -1457,7 +1593,9 @@ const orchestrator = new ConversionOrchestrator();
  *   onProgress: (p) => logger.debug('progress', 'Conversion progress', { progress: p })
  * });
  */
-export async function convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
+export async function convertVideo(
+  request: ConversionRequest
+): Promise<ConversionResponse> {
   return orchestrator.convertVideo(request);
 }
 
