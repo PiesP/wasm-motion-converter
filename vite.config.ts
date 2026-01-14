@@ -245,7 +245,6 @@ function importMapPlugin(): Plugin {
       // Single source of truth: package.json dependencies.
       const runtimeDeps = readRuntimeDependencies();
       const esmShBase = 'https://esm.sh';
-      const jsdelivrBase = 'https://cdn.jsdelivr.net/npm';
       const targetQuery = '?target=esnext';
 
       const imports: Record<string, string> = {};
@@ -264,18 +263,14 @@ function importMapPlugin(): Plugin {
           continue;
         }
 
-        // CRITICAL FIX: Use jsdelivr for FFmpeg packages (better worker CORS support)
-        // jsdelivr returns IIFE code that works with blob:// URLs in workers.
-        // esm.sh returns shim code with bare imports that fails in worker contexts.
-        const isFFmpegPackage = pkg.startsWith('@ffmpeg/');
-
-        if (isFFmpegPackage) {
-          // jsdelivr ESM format: /npm/package@version/+esm
-          imports[pkg] = `${jsdelivrBase}/${pkg}@${version}/+esm`;
-        } else {
-          // Use esm.sh for non-FFmpeg packages
-          imports[pkg] = `${esmShBase}/${pkg}@${version}${targetQuery}`;
+        // CRITICAL: @ffmpeg/ffmpeg and @ffmpeg/util are bundled locally (not from CDN)
+        // This avoids worker CORS issues when these packages create workers internally
+        if (pkg === '@ffmpeg/ffmpeg' || pkg === '@ffmpeg/util') {
+          continue;
         }
+
+        // Use esm.sh for all other packages
+        imports[pkg] = `${esmShBase}/${pkg}@${version}${targetQuery}`;
       }
 
       const importMap = { imports };
@@ -305,33 +300,35 @@ function importMapPlugin(): Plugin {
         'solid-js', // Core reactivity
         'solid-js/store', // State management (used in conversion store)
         'comlink', // Worker communication for FFmpeg
-        '@ffmpeg/ffmpeg', // FFmpeg main library
-        '@ffmpeg/util', // FFmpeg utilities (toBlobURL, etc.)
+        // Note: @ffmpeg/ffmpeg and @ffmpeg/util are bundled locally (not from CDN)
         'modern-gif', // GIF encoder
         '@jsquash/webp', // WebP encoder fallback
-        '@jsquash/png', // PNG encoder
-        'file-type', // File type detection
       ] as const;
 
       const modulePreloadHints = criticalDeps
         .map((dep) => {
           const href = importMap.imports[dep];
+
+          // Skip if dependency is not in import map
+          if (!href) {
+            console.warn(`⚠ Skipping modulepreload for ${dep} (not found in import map)`);
+            return null;
+          }
+
           let integrityAttr = '';
 
           // Add integrity attribute if SRI manifest is available
           if (sriManifest) {
             const entry = sriManifest.entries[dep];
-            // Check which CDN is used for this dependency
-            const isFFmpegPackage = dep.startsWith('@ffmpeg/');
-            const cdnKey = isFFmpegPackage ? 'jsdelivr' : 'esm.sh';
 
-            if (entry?.[cdnKey]?.integrity) {
-              integrityAttr = ` integrity="${entry[cdnKey].integrity}"`;
+            if (entry?.['esm.sh']?.integrity) {
+              integrityAttr = ` integrity="${entry['esm.sh'].integrity}"`;
             }
           }
 
           return `    <link rel="modulepreload" href="${href}" crossorigin${integrityAttr}>`;
         })
+        .filter((hint): hint is string => hint !== null)
         .join('\n');
 
       // Inject import map and modulepreload hints before closing </head> tag
@@ -340,8 +337,9 @@ function importMapPlugin(): Plugin {
         `  ${scriptTag}\n${modulePreloadHints}\n  </head>`
       );
 
+      const validHintsCount = modulePreloadHints ? modulePreloadHints.split('\n').length : 0;
       console.log('ℹ Import map generated with CDN URLs');
-      console.log(`ℹ Added modulepreload hints for ${criticalDeps.length} critical dependencies`);
+      console.log(`ℹ Added modulepreload hints for ${validHintsCount} critical dependencies`);
 
       return transformed;
     },
@@ -574,8 +572,14 @@ export default defineConfig(({ mode }) => {
 
   const runtimeDeps = readRuntimeDependencies();
   const runtimeDepNames = Object.keys(runtimeDeps);
-  const isExternalRuntimeDep = (id: string): boolean =>
-    runtimeDepNames.some((dep) => id === dep || id.startsWith(`${dep}/`));
+  const isExternalRuntimeDep = (id: string): boolean => {
+    // Bundle @ffmpeg/ffmpeg and @ffmpeg/util locally to avoid worker CORS issues
+    // These packages create workers internally, which fail when loaded from CDN
+    if (id === '@ffmpeg/ffmpeg' || id.startsWith('@ffmpeg/ffmpeg/')) return false;
+    if (id === '@ffmpeg/util' || id.startsWith('@ffmpeg/util/')) return false;
+
+    return runtimeDepNames.some((dep) => id === dep || id.startsWith(`${dep}/`));
+  };
 
   // Create service worker compilation plugin (needed by injection plugin)
   const swCompilePlugin = compileServiceWorkerPlugin();
