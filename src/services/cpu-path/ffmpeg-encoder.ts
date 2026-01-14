@@ -433,6 +433,18 @@ export class FFmpegEncoder {
     fps: number;
     durationSeconds: number;
     frameFiles?: string[];
+    frameInput?:
+      | {
+          kind: 'image-sequence';
+          frameFiles: string[];
+        }
+      | {
+          kind: 'rawvideo';
+          fileName: string;
+          width: number;
+          height: number;
+          pixelFormat: 'rgba';
+        };
     frameTimestamps?: number[];
   }): Promise<ConversionOutputBlob> {
     const {
@@ -442,6 +454,7 @@ export class FFmpegEncoder {
       fps,
       durationSeconds,
       frameFiles: providedFrameFiles,
+      frameInput,
     } = params;
     const { core, vfs } = this.getDeps();
 
@@ -472,7 +485,8 @@ export class FFmpegEncoder {
           outputFileName,
           { fps, frameCount, quality: options.quality },
           durationSeconds,
-          providedFrameFiles
+          providedFrameFiles,
+          frameInput
         );
       } else {
         await this.encodeFramesToWebP(
@@ -496,8 +510,14 @@ export class FFmpegEncoder {
       }) as ConversionOutputBlob;
 
       // Cleanup
-      const frameFilesToClean = providedFrameFiles || [];
-      if (frameFilesToClean.length === 0) {
+      const frameFilesToClean =
+        frameInput?.kind === 'image-sequence' ? frameInput.frameFiles : providedFrameFiles || [];
+
+      const additionalFilesToClean: string[] = [];
+      if (frameInput?.kind === 'rawvideo') {
+        additionalFilesToClean.push(frameInput.fileName);
+      }
+      if (frameFilesToClean.length === 0 && frameInput?.kind !== 'rawvideo') {
         // Fallback: reconstruct frame file names if not provided (old behavior for CPU path)
         for (let i = 0; i < frameCount; i++) {
           frameFilesToClean.push(`frame${i.toString().padStart(5, '0')}.png`);
@@ -506,7 +526,7 @@ export class FFmpegEncoder {
       await vfs.handleConversionCleanup(
         ffmpeg,
         outputFileName,
-        [...frameFilesToClean, FFMPEG_INTERNALS.PALETTE_FILE_NAME],
+        [...frameFilesToClean, ...additionalFilesToClean, FFMPEG_INTERNALS.PALETTE_FILE_NAME],
         isMemoryCritical
       );
 
@@ -549,7 +569,19 @@ export class FFmpegEncoder {
     outputFileName: string,
     settings: { fps: number; frameCount: number; quality: ConversionQuality },
     durationSeconds: number,
-    frameFiles?: string[]
+    frameFiles?: string[],
+    frameInput?:
+      | {
+          kind: 'image-sequence';
+          frameFiles: string[];
+        }
+      | {
+          kind: 'rawvideo';
+          fileName: string;
+          width: number;
+          height: number;
+          pixelFormat: 'rgba';
+        }
   ): Promise<void> {
     const { monitoring } = this.getDeps();
 
@@ -561,15 +593,52 @@ export class FFmpegEncoder {
     const paletteEnd = 70;
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
 
-    // Detect frame file extension (PNG or JPEG) for correct FFmpeg input pattern
-    const frameExtension = detectFrameExtension(frameFiles);
-    const inputPattern = `frame_%06d.${frameExtension}`;
+    const effectiveFrameInput =
+      frameInput ??
+      ({
+        kind: 'image-sequence' as const,
+        frameFiles: frameFiles || [],
+      } satisfies { kind: 'image-sequence'; frameFiles: string[] });
+
+    const buildInputArgs = (): {
+      args: string[];
+      frameFormatForLog: string;
+    } => {
+      if (effectiveFrameInput.kind === 'rawvideo') {
+        const size = `${effectiveFrameInput.width}x${effectiveFrameInput.height}`;
+        return {
+          args: [
+            '-f',
+            'rawvideo',
+            '-pixel_format',
+            effectiveFrameInput.pixelFormat,
+            '-video_size',
+            size,
+            '-framerate',
+            fps.toString(),
+            '-i',
+            effectiveFrameInput.fileName,
+          ],
+          frameFormatForLog: `rawvideo(${effectiveFrameInput.pixelFormat},${size})`,
+        };
+      }
+
+      // Detect frame file extension (PNG or JPEG) for correct FFmpeg input pattern
+      const frameExtension = detectFrameExtension(effectiveFrameInput.frameFiles);
+      const inputPattern = `frame_%06d.${frameExtension}`;
+      return {
+        args: ['-framerate', fps.toString(), '-i', inputPattern],
+        frameFormatForLog: frameExtension,
+      };
+    };
+
+    const { args: inputArgs, frameFormatForLog } = buildInputArgs();
 
     logger.info('conversion', 'Generating GIF palette from frame sequence', {
       frameCount,
       fps,
       colors: qualitySettings.colors,
-      frameFormat: frameExtension,
+      frameFormat: frameFormatForLog,
     });
 
     // Generate palette
@@ -577,11 +646,8 @@ export class FFmpegEncoder {
     // Use concat instead of spread to prevent stack overflow
     const paletteCmd = ([] as string[])
       .concat(Array.from(paletteThreadArgs))
+      .concat(inputArgs)
       .concat([
-        '-framerate',
-        fps.toString(),
-        '-i',
-        inputPattern,
         '-vf',
         `palettegen=max_colors=${qualitySettings.colors}`,
         '-update',
@@ -623,11 +689,8 @@ export class FFmpegEncoder {
     // Use concat instead of spread to prevent stack overflow
     const conversionCmd = ([] as string[])
       .concat(Array.from(conversionThreadArgs))
+      .concat(inputArgs)
       .concat([
-        '-framerate',
-        fps.toString(),
-        '-i',
-        inputPattern,
         '-i',
         paletteFileName,
         '-filter_complex',
@@ -897,7 +960,7 @@ export class FFmpegEncoder {
             }
           );
 
-          logger.debug('ffmpeg', 'Palette generation completed successfully');
+          logger.debug('ffmpeg', 'Palette generation command finished');
         } catch (execError) {
           // Log detailed error information
           const errorMsg = execError instanceof Error ? execError.message : String(execError);
@@ -952,6 +1015,27 @@ export class FFmpegEncoder {
       performanceTracker.endPhase('palette-gen');
       logger.performance('GIF palette generation complete');
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START);
+
+      // Validate palette output before starting the main GIF encode.
+      // This avoids confusing secondary errors like "palette.png: No such file or directory".
+      try {
+        const paletteBytes = await vfs.readFile(ffmpeg, paletteFileName);
+        if (paletteBytes.byteLength === 0) {
+          throw new Error('Palette file is 0 bytes');
+        }
+      } catch (paletteError) {
+        logger.error('conversion', 'Palette generation did not produce a readable palette file', {
+          paletteFile: paletteFileName,
+          codec: metadata?.codec,
+          error: getErrorMessage(paletteError),
+        });
+
+        throw new Error(
+          `GIF palette generation failed: ${paletteFileName} was not created. ` +
+            'This may indicate an unsupported codec or a decode failure. ' +
+            `Input codec: ${metadata?.codec ?? 'unknown'}.`
+        );
+      }
 
       if (this.cancellationRequested) {
         throw new Error('Conversion cancelled by user');
@@ -1043,8 +1127,6 @@ export class FFmpegEncoder {
         monitoring.stopProgressHeartbeat(heartbeat);
       }
 
-      logger.performance('GIF encoding complete');
-
       // Read + validate output (single pass to avoid double-reading the same file)
       const outputData = await vfs.readValidatedOutputFile(
         ffmpeg,
@@ -1052,6 +1134,8 @@ export class FFmpegEncoder {
         'gif',
         'GIF output validation failed'
       );
+
+      logger.performance('GIF encoding complete');
       const blob = new Blob([new Uint8Array(outputData)], {
         type: 'image/gif',
       }) as ConversionOutputBlob;

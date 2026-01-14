@@ -112,6 +112,7 @@ export async function performConversion(
       format: settings.format,
       quality: settings.quality,
       scale: settings.scale,
+      gifEncoder: settings.format === 'gif' ? (settings.gifEncoder ?? 'auto') : null,
       durationMs: videoDurationMs,
     });
 
@@ -142,6 +143,7 @@ export async function performConversion(
         quality: settings.quality,
         scale: settings.scale,
         duration: videoDurationMs ? videoDurationMs / MS_PER_SECOND : undefined,
+        gifEncoder: settings.format === 'gif' ? (settings.gifEncoder ?? 'auto') : undefined,
       },
       metadata: videoMetadata() ?? undefined,
       onProgress: progressCallback,

@@ -57,7 +57,24 @@ export interface FrameSequenceParams {
   frameCount: number;
   fps: number;
   durationSeconds: number;
+  // Legacy: image-sequence files already written to VFS.
+  // Keep this for backward compatibility.
   frameFiles: string[];
+  // Optional: alternative frame source that does not rely on per-frame image files.
+  frameInput?:
+    | {
+        kind: 'image-sequence';
+        frameFiles: string[];
+      }
+    | {
+        // Raw concatenated frames, stored as a single VFS file.
+        // This avoids slow PNG/JPEG encode/decode overhead when memory allows.
+        kind: 'rawvideo';
+        fileName: string;
+        width: number;
+        height: number;
+        pixelFormat: 'rgba';
+      };
   frameTimestamps?: number[]; // Optional array of frame timestamps in seconds
 }
 

@@ -12,7 +12,7 @@
  * 4. Return result with metadata
  */
 
-import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
+import type { ConversionFormat, GifEncoderPreference, VideoMetadata } from '@t/conversion-types';
 import type { VideoTrackInfo } from '@t/video-pipeline-types';
 import type { WebAVMP4Service } from '@services/webav/webav-mp4-service';
 import { capabilityService } from '@services/video-pipeline/capability-service';
@@ -150,6 +150,7 @@ class ConversionOrchestrator {
         file: request.file,
         format: request.format,
         metadata: request.metadata,
+        gifEncoderPreference: request.format === 'gif' ? request.options.gifEncoder : undefined,
         abortSignal: abortController.signal,
       });
 
@@ -177,6 +178,7 @@ class ConversionOrchestrator {
         codec: metadata?.codec,
         quality: request.options.quality,
         scale: request.options.scale,
+        gifEncoder: request.format === 'gif' ? (request.options.gifEncoder ?? 'auto') : null,
         durationSeconds: request.options.duration ?? null,
       });
 
@@ -612,6 +614,7 @@ class ConversionOrchestrator {
     file: File;
     format: ConversionFormat;
     metadata?: VideoMetadata;
+    gifEncoderPreference?: GifEncoderPreference;
     abortSignal: AbortSignal;
   }): Promise<{
     selection: PathSelection;
@@ -658,6 +661,47 @@ class ConversionOrchestrator {
 
     if (format !== 'gif' && format !== 'webp') {
       throw new Error(`Unsupported format: ${format}`);
+    }
+
+    // Experiment: allow users to force FFmpeg palettegen/paletteuse for GIF output.
+    // Handle this before pipeline planning so we avoid unnecessary analysis work.
+    // NOTE: AV1-in-MP4 decoding in ffmpeg.wasm is not reliable in all builds/environments.
+    // If AV1 is detected, do not force the FFmpeg-direct CPU path. Instead, honor the
+    // preference via a hybrid approach: WebCodecs decode + FFmpeg frame-sequence palette encode.
+    if (format === 'gif' && params.gifEncoderPreference === 'ffmpeg-palette') {
+      const codec = params.metadata?.codec;
+      if (isAv1Codec(codec)) {
+        logger.info(
+          'conversion',
+          'FFmpeg palette preference detected for AV1 input; will use WebCodecs decode + FFmpeg frame-sequence encoding',
+          { codec }
+        );
+      } else {
+        if (import.meta.env.DEV) {
+          const caps = extendedCapabilityService.getCached();
+          setConversionAutoSelectionDebug({
+            timestamp: Date.now(),
+            format,
+            codec,
+            container: detectContainerFormat(file),
+            plannedPath: 'cpu',
+            plannedReason: 'User forced FFmpeg palettegen/paletteuse',
+            hardwareAccelerated: caps.hardwareAccelerated,
+            sharedArrayBuffer: caps.sharedArrayBuffer,
+            crossOriginIsolated: caps.crossOriginIsolated,
+            workerSupport: caps.workerSupport,
+          });
+        }
+
+        return {
+          selection: {
+            path: 'cpu',
+            reason: 'User forced FFmpeg palettegen/paletteuse',
+            useDemuxer: false,
+          },
+          metadata: params.metadata,
+        };
+      }
     }
 
     this.throwIfAborted(params.abortSignal);
@@ -726,6 +770,17 @@ class ConversionOrchestrator {
       // Demuxer availability only (actual capture mode selection happens inside the WebCodecs services).
       useDemuxer: plan.demuxer !== null,
     };
+
+    // User-forced FFmpeg palette encoding for AV1 should stay on GPU path (WebCodecs decode),
+    // but we want logs/debug state to reflect the explicit preference.
+    if (format === 'gif' && params.gifEncoderPreference === 'ffmpeg-palette') {
+      const codec = codecForStrategy;
+      if (isAv1Codec(codec)) {
+        selection.path = 'gpu';
+        selection.reason =
+          'User forced FFmpeg palettegen/paletteuse (WebCodecs decode + FFmpeg frame-sequence encode)';
+      }
+    }
 
     if (import.meta.env.DEV) {
       setConversionAutoSelectionDebug({
@@ -896,6 +951,10 @@ class ConversionOrchestrator {
    * in January 2026 and rejected due to catastrophic performance (47x slower
    * than CPU path). See docs/TODO.md and tmp/benchmark-analysis-2026-01-13.md
    * for details.
+   *
+   * Exception (opt-in): when the user forces GIF `ffmpeg-palette` for AV1 input,
+   * we honor that preference via WebCodecs decode + FFmpeg frame-sequence palette
+   * encoding to avoid FFmpeg-direct AV1 decode failures in WASM.
    */
 
   /**

@@ -621,6 +621,14 @@ class WebCodecsConversionService {
       format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
     const useModernGif = format === 'gif' && isModernGifSupported();
 
+    // User preference: for AV1 (and other complex codecs), FFmpeg-direct decode can be unreliable
+    // in WASM. When the user explicitly requests the FFmpeg palette pipeline for GIF, honor it
+    // via a hybrid approach: WebCodecs decode → FFmpeg frame-sequence palette encode.
+    const shouldPreferFfmpegPaletteFromFrames =
+      format === 'gif' &&
+      options.gifEncoder === 'ffmpeg-palette' &&
+      isComplexCodec(metadata?.codec);
+
     // Orchestrator-driven conversions provide an AbortSignal; prefer it over the shared
     // FFmpeg cancellation flag so a previous FFmpeg cancel request cannot poison new
     // WebCodecs conversions.
@@ -635,7 +643,9 @@ class WebCodecsConversionService {
     };
 
     // GIF format: fall back to FFmpeg when modern-gif isn't available.
-    if (format === 'gif' && !useModernGif) {
+    // Exception: when user explicitly requested FFmpeg palette for a complex codec,
+    // use WebCodecs decode + FFmpeg frame-sequence encoding instead of FFmpeg-direct decode.
+    if (format === 'gif' && !useModernGif && !shouldPreferFfmpegPaletteFromFrames) {
       logger.info(
         'conversion',
         'GIF format detected: using direct FFmpeg path for optimal performance',
@@ -737,6 +747,62 @@ class WebCodecsConversionService {
     // NOTE: This direct path is only relevant for WebP output. GIF uses modern-gif
     // or FFmpeg direct conversion and should not be routed through the PNG/VFS path.
     try {
+      // AV1 + ffmpeg-palette: preferred hybrid palette encoding (decode with WebCodecs).
+      // This avoids FFmpeg decoding AV1 in WASM, which is a known failure mode.
+      if (shouldPreferFfmpegPaletteFromFrames) {
+        try {
+          const hybridResult = await encodeWithFFmpegFallbackUtil({
+            format: 'gif',
+            file,
+            options,
+            metadata,
+            errorMessage: 'User preference: ffmpeg-palette',
+            decoder,
+            targetFps,
+            scale,
+            reportDecodeProgress,
+            shouldCancel,
+            throwIfCancelled,
+            resetCaptureCollections: () => {
+              capturedFrames.length = 0;
+              releaseWebPFrames();
+              webpCapturedFrames.length = 0;
+              webpFrameTimestamps.length = 0;
+            },
+            intent: 'preferred',
+            // For complex codecs, avoid attempting FFmpeg-direct conversion as a last resort.
+            allowFFmpegDirectFallback: false,
+          });
+
+          endConversion();
+          return hybridResult;
+        } catch (error) {
+          const errorMessage = getErrorMessage(error);
+          if (
+            errorMessage.includes('cancelled by user') ||
+            (ffmpegService.isCancellationRequested() &&
+              errorMessage.includes('called FFmpeg.terminate()'))
+          ) {
+            throw error;
+          }
+
+          // If modern-gif is available, fall back rather than hard-failing.
+          // If it is not available, let the error surface (no viable alternative).
+          if (!useModernGif) {
+            throw error;
+          }
+
+          logger.warn(
+            'conversion',
+            'Preferred FFmpeg palette (frame-sequence) path failed; falling back to modern-gif',
+            {
+              codec: metadata?.codec,
+              error: errorMessage,
+            }
+          );
+        }
+      }
+
       if (format === 'webp' && this.shouldUseWebCodecsPath(metadata)) {
         logger.info('conversion', 'Using WebCodecs direct path for complex codec', {
           codec: metadata?.codec,

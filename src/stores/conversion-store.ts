@@ -51,6 +51,7 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   format: 'gif',
   quality: 'medium',
   scale: 1.0,
+  gifEncoder: 'auto',
 };
 
 /**
@@ -80,7 +81,16 @@ const getInitialConversionSettings = (): ConversionSettings => {
         typeof parsed.scale === 'number' &&
         [0.5, 0.75, 1.0].includes(parsed.scale)
       ) {
-        return parsed as ConversionSettings;
+        const gifEncoder =
+          parsed.gifEncoder === 'auto' || parsed.gifEncoder === 'ffmpeg-palette'
+            ? parsed.gifEncoder
+            : DEFAULT_CONVERSION_SETTINGS.gifEncoder;
+
+        return {
+          ...DEFAULT_CONVERSION_SETTINGS,
+          ...parsed,
+          gifEncoder,
+        };
       }
     }
   } catch (error) {
