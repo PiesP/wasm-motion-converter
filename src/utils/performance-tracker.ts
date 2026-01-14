@@ -110,7 +110,7 @@ class PerformanceTracker {
    *
    * @example
    * const report = performanceTracker.getReport();
-   * console.log(`Total time: ${report.totalTime}ms`);
+   * logger.info('performance', 'Total time', { totalTimeMs: report.totalTime });
    */
   getReport(): PerformanceReport {
     const summary = this.timings.reduce<Record<string, number>>((acc, t) => {

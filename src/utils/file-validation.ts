@@ -148,9 +148,9 @@ export function validateVideoFile(file: File): FileValidationResult {
  * try {
  *   const durationMs = await extractVideoDuration(file);
  *   const seconds = durationMs / 1000;
- *   console.log(`Video is ${seconds}s long`);
+ *   logger.debug('conversion', 'Video duration detected', { seconds });
  * } catch (error) {
- *   console.error('Unreadable video format:', error);
+ *   logger.warn('conversion', 'Unreadable video format', { error });
  * }
  */
 async function extractVideoDuration(file: File): Promise<number> {

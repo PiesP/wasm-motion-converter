@@ -22,7 +22,7 @@
  * ```ts
  * const error = { message: 'Custom error' };
  * if (isErrorWithMessage(error)) {
- *   console.log(error.message); // 'Custom error'
+ *   logger.debug('general', 'Error message', { message: error.message });
  * }
  * ```
  */
@@ -53,7 +53,7 @@ function isErrorWithMessage(error: unknown): error is { message: string } {
  *   throw new Error('Something went wrong');
  * } catch (error) {
  *   const message = getErrorMessage(error);
- *   console.error(message); // "Something went wrong"
+ *   logger.error('general', 'Something went wrong', { message });
  * }
  * ```
  *

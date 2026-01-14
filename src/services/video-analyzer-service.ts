@@ -27,7 +27,11 @@ const DEFAULT_METADATA_VALUE = 0;
  *
  * @example
  * const metadata = await analyzeVideo(file);
- * console.log(`${metadata.width}x${metadata.height} @ ${metadata.framerate}fps`);
+ * logger.info('conversion', 'Video metadata analyzed', {
+ *   width: metadata.width,
+ *   height: metadata.height,
+ *   framerate: metadata.framerate,
+ * });
  */
 export function analyzeVideo(file: File): Promise<VideoMetadata> {
   return ffmpegService.getVideoMetadata(file);
@@ -46,9 +50,12 @@ export function analyzeVideo(file: File): Promise<VideoMetadata> {
  * @example
  * try {
  *   const metadata = await analyzeVideoQuick(file);
- *   console.log(`Quick analysis: ${metadata.width}x${metadata.height}`);
+ *   logger.info('conversion', 'Quick video analysis complete', {
+ *     width: metadata.width,
+ *     height: metadata.height,
+ *   });
  * } catch (error) {
- *   console.error('Quick analysis failed, falling back to FFmpeg');
+ *   logger.warn('conversion', 'Quick analysis failed; falling back to FFmpeg', { error });
  *   const metadata = await analyzeVideo(file);
  * }
  */

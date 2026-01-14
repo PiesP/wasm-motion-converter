@@ -125,6 +125,7 @@ function safeJsonStringify(value: unknown): string {
  * - **general**: General application events not fitting other categories
  * - **performance**: Performance metrics and timing (always logged in all environments)
  * - **prefetch**: Prefetching and resource loading
+ * - **cdn**: CDN health tracking, scoring, and provider selection
  * - **worker-pool**: Web Worker pool management and task distribution
  * - **demuxer**: Demuxer library loading, container parsing, sample extraction
  * - **encoders**: Encoder factory and initialization
@@ -141,6 +142,7 @@ type LogCategory =
   | 'general'
   | 'performance'
   | 'prefetch'
+  | 'cdn'
   | 'worker-pool'
   | 'demuxer'
   | 'encoders'

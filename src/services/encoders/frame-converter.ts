@@ -97,7 +97,7 @@ export async function frameToImageData(
  *   videoFrames,
  *   640,
  *   480,
- *   (current, total) => console.log(`${current}/${total}`),
+ *   (current, total) => logger.debug('encoders', 'Frame conversion progress', { current, total }),
  *   () => cancelRequested
  * );
  */
@@ -184,7 +184,10 @@ export function needsConversion(frame: EncoderFrame): boolean {
  * canvas.width = width;
  * canvas.height = height;
  */
-export function getFrameDimensions(frame: EncoderFrame): { width: number; height: number } {
+export function getFrameDimensions(frame: EncoderFrame): {
+  width: number;
+  height: number;
+} {
   if (frame instanceof ImageData) {
     return { width: frame.width, height: frame.height };
   }

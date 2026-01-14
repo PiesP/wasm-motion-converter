@@ -28,14 +28,17 @@
  * @example
  * // Display file size in UI
  * const fileSize = formatBytes(file.size);
- * console.log(`Upload size: ${fileSize}`);
+ * logger.debug('general', 'Upload size', { fileSize });
  * // Output: "Upload size: 2.5 MB"
  *
  * @example
  * // Display download progress
  * const downloaded = 512 * 1024 * 1024; // 512 MB
  * const total = 2 * 1024 * 1024 * 1024; // 2 GB
- * console.log(`Downloaded ${formatBytes(downloaded)} of ${formatBytes(total)}`);
+ * logger.debug('general', 'Download progress', {
+ *   downloaded: formatBytes(downloaded),
+ *   total: formatBytes(total),
+ * });
  * // Output: "Downloaded 512.0 MB of 2.0 GB"
  */
 export function formatBytes(bytes: number): string {

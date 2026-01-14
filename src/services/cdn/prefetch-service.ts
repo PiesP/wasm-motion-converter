@@ -15,6 +15,8 @@
 
 import { loadFFmpegAsset } from '@services/ffmpeg/core-assets';
 import { shouldEnablePrefetch } from '@services/cdn/cdn-strategy-selector';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 
 /**
  * Prefetch status for tracking
@@ -99,7 +101,9 @@ class PrefetchManager {
       try {
         callback(progress);
       } catch (error) {
-        console.error('[Prefetch] Callback error:', error);
+        logger.warn('prefetch', 'Prefetch progress callback threw', {
+          error: getErrorMessage(error),
+        });
       }
     });
   }
@@ -144,7 +148,7 @@ class PrefetchManager {
 
     this.status = 'cancelled';
     this.emitProgress({ status: 'cancelled', asset: 'all' });
-    console.log('[Prefetch] Prefetch cancelled');
+    logger.info('prefetch', 'Prefetch cancelled');
   }
 
   /**
@@ -160,18 +164,18 @@ class PrefetchManager {
 
     // Check if already prefetched or in progress
     if (this.status === 'completed') {
-      console.log('[Prefetch] FFmpeg already prefetched');
+      logger.debug('prefetch', 'FFmpeg already prefetched');
       return;
     }
 
     if (this.status === 'in-progress') {
-      console.log('[Prefetch] Prefetch already in progress');
+      logger.debug('prefetch', 'Prefetch already in progress');
       return;
     }
 
     // Check connection type (skip on slow/mobile unless forced)
     if (!force && !shouldEnablePrefetch()) {
-      console.log('[Prefetch] Skipping prefetch on slow/mobile connection');
+      logger.info('prefetch', 'Skipping prefetch due to connection strategy');
       this.status = 'idle';
       return;
     }
@@ -186,9 +190,10 @@ class PrefetchManager {
           this.status = 'in-progress';
           this.abortController = new AbortController();
 
-          console.log(
-            `[Prefetch] Starting FFmpeg prefetch (${FFMPEG_ASSETS.length} assets, ~30MB)`
-          );
+          logger.info('prefetch', 'Starting FFmpeg prefetch', {
+            assetCount: FFMPEG_ASSETS.length,
+            approxSizeMb: 30,
+          });
 
           // Prefetch all assets in priority order
           for (const asset of FFMPEG_ASSETS) {
@@ -196,7 +201,10 @@ class PrefetchManager {
               throw new Error('Prefetch cancelled');
             }
 
-            console.log(`[Prefetch] Prefetching ${asset.label}...`);
+            logger.debug('prefetch', 'Prefetching FFmpeg asset', {
+              label: asset.label,
+              path: asset.path,
+            });
             this.emitProgress({
               status: 'in-progress',
               asset: asset.label,
@@ -206,12 +214,15 @@ class PrefetchManager {
             await loadFFmpegAsset(asset.path, asset.mimeType, asset.label);
 
             this.prefetchedAssets.add(asset.path);
-            console.log(`[Prefetch] ✓ ${asset.label} prefetched`);
+            logger.debug('prefetch', 'FFmpeg asset prefetched', {
+              label: asset.label,
+              path: asset.path,
+            });
           }
 
           this.status = 'completed';
           this.emitProgress({ status: 'completed', asset: 'all' });
-          console.log('[Prefetch] ✓ All FFmpeg assets prefetched successfully');
+          logger.info('prefetch', 'All FFmpeg assets prefetched successfully');
           resolve();
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
@@ -219,11 +230,17 @@ class PrefetchManager {
           if (errorMsg.includes('cancelled')) {
             this.status = 'cancelled';
             this.emitProgress({ status: 'cancelled', asset: 'all' });
-            console.log('[Prefetch] Prefetch cancelled');
+            logger.info('prefetch', 'Prefetch cancelled');
           } else {
             this.status = 'failed';
-            this.emitProgress({ status: 'failed', asset: 'all', error: errorMsg });
-            console.error('[Prefetch] Prefetch failed:', error);
+            this.emitProgress({
+              status: 'failed',
+              asset: 'all',
+              error: errorMsg,
+            });
+            logger.error('prefetch', 'Prefetch failed', {
+              error: getErrorMessage(error),
+            });
           }
 
           reject(error);
@@ -267,7 +284,7 @@ class PrefetchManager {
    * @param event - Event name for logging
    */
   public async trigger(event: string): Promise<void> {
-    console.log(`[Prefetch] Triggered by: ${event}`);
+    logger.debug('prefetch', 'Prefetch triggered', { event });
     return this.start({ force: false, delay: 1000 }); // 1s delay for UI interactions
   }
 }

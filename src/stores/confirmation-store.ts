@@ -62,7 +62,7 @@ export const getConfirmationState = () => {
  * showConfirmation(
  *   validationWarnings,
  *   () => startConversion(),
- *   () => console.log('User cancelled')
+ *   () => logger.info('general', 'User cancelled confirmation dialog')
  * );
  */
 export const showConfirmation = (

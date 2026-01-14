@@ -61,8 +61,8 @@ export interface ProgressReporterConfig {
  *
  * @example
  * const reporter = new ProgressReporter({
- *   onProgress: (p) => console.log(`${p}%`),
- *   onStatus: (s) => console.log(s)
+ *   onProgress: (p) => logger.debug('progress', 'Progress update', { progress: p }),
+ *   onStatus: (s) => logger.info('progress', 'Status update', { status: s })
  * });
  *
  * // Define phases

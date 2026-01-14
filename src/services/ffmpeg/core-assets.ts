@@ -3,6 +3,7 @@ import { toBlobURL } from '@ffmpeg/util';
 
 // Internal imports
 import { FFMPEG_CORE_VERSION } from '@utils/constants';
+import { logger } from '@utils/logger';
 import { withTimeout } from '@utils/with-timeout';
 import { getEnabledProviders } from '@services/cdn/cdn-config';
 import { buildAssetUrl } from '@services/cdn/cdn-url-builder';
@@ -58,7 +59,10 @@ export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<
     return URL.createObjectURL(cachedBlob);
   }
 
-  const response = await fetch(url, { cache: 'force-cache', credentials: 'omit' });
+  const response = await fetch(url, {
+    cache: 'force-cache',
+    credentials: 'omit',
+  });
   if (!response.ok) {
     return toBlobURL(url, mimeType);
   }
@@ -93,10 +97,13 @@ export async function loadFFmpegAsset(
 
   const errors: Array<{ provider: string; error: string }> = [];
 
-  console.log(
-    `[FFmpeg Asset] Loading ${label} from ${providers.length} CDN providers ` +
-      `(esm.sh/skypack excluded due to blob:// incompatibility)`
-  );
+  logger.info('ffmpeg', 'Loading FFmpeg asset from CDN providers', {
+    label,
+    assetPath,
+    providerCount: providers.length,
+    excludedProviders: ['esm.sh', 'skypack'],
+    exclusionReason: 'blob:// incompatibility (shim code with bare imports)',
+  });
 
   for (const provider of providers) {
     try {
@@ -108,7 +115,13 @@ export async function loadFFmpegAsset(
         `/dist/esm/${assetPath}`
       );
 
-      console.log(`[FFmpeg Asset] Trying ${provider.name}: ${url}`);
+      logger.debug('ffmpeg', 'Trying CDN provider for FFmpeg asset', {
+        label,
+        assetPath,
+        provider: provider.name,
+        url,
+        timeoutMs: provider.timeout,
+      });
 
       const startTime = performance.now();
 
@@ -124,9 +137,12 @@ export async function loadFFmpegAsset(
       // Record success
       recordCdnRequest(provider.hostname, true);
 
-      console.log(
-        `[FFmpeg Asset] ✓ ${provider.name}: ${label} loaded successfully (${elapsed.toFixed(0)}ms)`
-      );
+      logger.info('ffmpeg', 'FFmpeg asset loaded successfully', {
+        label,
+        assetPath,
+        provider: provider.name,
+        elapsedMs: Math.round(elapsed),
+      });
 
       return blobUrl;
     } catch (error) {
@@ -136,7 +152,12 @@ export async function loadFFmpegAsset(
       // Record failure
       recordCdnRequest(provider.hostname, false);
 
-      console.warn(`[FFmpeg Asset] ✗ ${provider.name}: ${label} failed - ${errorMsg}`);
+      logger.warn('ffmpeg', 'FFmpeg asset download failed; trying next provider', {
+        label,
+        assetPath,
+        provider: provider.name,
+        error: errorMsg,
+      });
 
       // Continue to next CDN
     }

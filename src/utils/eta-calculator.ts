@@ -180,9 +180,9 @@ export class ETACalculator {
    * const eta = new ETACalculator();
    * eta.addSample(25);
    * eta.addSample(50);
-   * console.log(eta.getSampleCount()); // 2 (not enough for ETA)
+   * logger.debug('performance', 'ETA sample count', { count: eta.getSampleCount() }); // 2 (not enough for ETA)
    * eta.addSample(75);
-   * console.log(eta.getSampleCount()); // 3 (ready for ETA)
+   * logger.debug('performance', 'ETA sample count', { count: eta.getSampleCount() }); // 3 (ready for ETA)
    */
   getSampleCount(): number {
     return this.samples.length;

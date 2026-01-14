@@ -81,9 +81,9 @@ export async function initializeFFmpegRuntime(
       const swReady = await waitForSWReady(5000);
 
       if (!swReady) {
-        console.warn(
-          '[FFmpeg Init] Service Worker not ready - conversion may fail on first attempt'
-        );
+        logger.warn('ffmpeg', 'Service Worker not ready; first conversion may fail', {
+          timeoutMs: 5000,
+        });
         callbacks.reportStatus(
           'Service Worker not ready. If conversion fails, please refresh and try again.'
         );
@@ -114,7 +114,9 @@ export async function initializeFFmpegRuntime(
         workerURL: workerUrl,
       }),
       TIMEOUT_FFMPEG_INIT,
-      `FFmpeg initialization timed out after ${TIMEOUT_FFMPEG_INIT / 1000} seconds. Please check your internet connection and try again.`,
+      `FFmpeg initialization timed out after ${
+        TIMEOUT_FFMPEG_INIT / 1000
+      } seconds. Please check your internet connection and try again.`,
       () => options.terminate()
     );
 

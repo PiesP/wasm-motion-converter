@@ -43,7 +43,7 @@ export type EncoderFrame = VideoFrame | ImageBitmap | ImageData;
  *   height: 480,
  *   fps: 10,
  *   quality: 'high',
- *   onProgress: (current, total) => console.log(`${current}/${total}`),
+ *   onProgress: (current, total) => logger.debug('encoders', 'Encode progress', { current, total }),
  *   shouldCancel: () => false
  * };
  */

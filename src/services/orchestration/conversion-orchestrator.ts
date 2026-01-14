@@ -1258,7 +1258,7 @@ const orchestrator = new ConversionOrchestrator();
  *   file,
  *   format: 'gif',
  *   options: { quality: 'high', scale: 1.0 },
- *   onProgress: (p) => console.log(`${p}%`)
+ *   onProgress: (p) => logger.debug('progress', 'Conversion progress', { progress: p })
  * });
  */
 export async function convertVideo(request: ConversionRequest): Promise<ConversionResponse> {

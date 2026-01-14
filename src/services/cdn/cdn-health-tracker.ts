@@ -13,6 +13,8 @@
  */
 
 import { getProviderByHostname, updateHealthScore } from './cdn-config';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 
 /**
  * CDN health metric entry
@@ -63,7 +65,10 @@ function loadHealthData(): HealthTrackingData | null {
 
     // Check version compatibility
     if (data.version !== STORAGE_VERSION) {
-      console.warn('[CDN Health] Version mismatch, clearing old data');
+      logger.warn('cdn', 'CDN health tracking version mismatch; clearing stored data', {
+        storedVersion: data.version,
+        expectedVersion: STORAGE_VERSION,
+      });
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
@@ -71,14 +76,19 @@ function loadHealthData(): HealthTrackingData | null {
     // Check TTL
     const age = Date.now() - data.createdAt;
     if (age > TTL_MS) {
-      console.log('[CDN Health] Data expired, clearing');
+      logger.info('cdn', 'CDN health tracking data expired; clearing', {
+        ageMs: age,
+        ttlMs: TTL_MS,
+      });
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
 
     return data;
   } catch (error) {
-    console.error('[CDN Health] Failed to load data:', error);
+    logger.warn('cdn', 'Failed to load CDN health tracking data', {
+      error: getErrorMessage(error),
+    });
     return null;
   }
 }
@@ -92,7 +102,9 @@ function saveHealthData(data: HealthTrackingData): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch (error) {
-    console.error('[CDN Health] Failed to save data:', error);
+    logger.warn('cdn', 'Failed to save CDN health tracking data', {
+      error: getErrorMessage(error),
+    });
   }
 }
 
@@ -189,10 +201,13 @@ export function recordCdnRequest(hostname: string, success: boolean): void {
   // Save to localStorage
   saveHealthData(data);
 
-  // Log health status
-  console.log(
-    `[CDN Health] ${hostname}: ${success ? '✓' : '✗'} (success rate: ${(metric.successRate * 100).toFixed(1)}%, total: ${metric.totalCount})`
-  );
+  // Log health status (dev-only to avoid noisy production consoles)
+  logger.debug('cdn', 'CDN request recorded', {
+    hostname,
+    success,
+    successRatePct: Number((metric.successRate * 100).toFixed(1)),
+    totalRequests: metric.totalCount,
+  });
 }
 
 /**
@@ -228,7 +243,7 @@ export function getHealthMetric(hostname: string): HealthMetric | null {
  */
 export function resetHealthTracking(): void {
   localStorage.removeItem(STORAGE_KEY);
-  console.log('[CDN Health] Health tracking data reset');
+  logger.info('cdn', 'CDN health tracking data reset');
 }
 
 /**
@@ -280,6 +295,8 @@ export function initializeHealthTracking(): void {
 
   const summary = getHealthSummary();
   if (summary.length > 0) {
-    console.log('[CDN Health] Initialized with stored metrics:', summary);
+    logger.info('cdn', 'Initialized CDN health tracking from stored metrics', {
+      summary,
+    });
   }
 }

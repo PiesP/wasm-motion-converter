@@ -29,7 +29,7 @@ import { logger } from './logger';
  *     'API request timed out'
  *   );
  * } catch (error) {
- *   console.error(error.message);
+ *   logger.error('general', 'Request failed', { error });
  * }
  *
  * @example

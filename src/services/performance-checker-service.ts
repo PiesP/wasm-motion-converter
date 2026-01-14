@@ -47,7 +47,7 @@ const CRITICAL_RESOLUTION_MULTIPLIER = 2;
  *
  * @example
  * const warnings = checkPerformance(file, metadata);
- * warnings.forEach(w => console.log(`${w.severity}: ${w.message}`));
+ * warnings.forEach((w) => logger.warn('performance', `${w.severity}: ${w.message}`));
  */
 export function checkPerformance(file: File, metadata: VideoMetadata): PerformanceWarning[] {
   const warnings: PerformanceWarning[] = [];
@@ -131,7 +131,10 @@ const preferLowerScale = (current: ConversionScale, target: ConversionScale): Co
  * @example
  * const recommended = getRecommendedSettings(file, metadata, currentSettings);
  * if (recommended) {
- *   console.log(`Recommend quality: ${recommended.quality}, scale: ${recommended.scale}`);
+ *   logger.info('performance', 'Recommended settings computed', {
+ *     quality: recommended.quality,
+ *     scale: recommended.scale,
+ *   });
  * }
  */
 export function getRecommendedSettings(

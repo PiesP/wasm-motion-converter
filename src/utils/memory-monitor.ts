@@ -48,7 +48,7 @@ function getMemoryInfo(): MemoryInfo | null {
  *
  * @example
  * if (isMemoryCritical()) {
- *   console.warn('Memory is running out, conversion may fail');
+ *   logger.warn('performance', 'Memory is running out; conversion may fail');
  * }
  */
 export function isMemoryCritical(): boolean {
@@ -69,7 +69,7 @@ export function isMemoryCritical(): boolean {
  * const available = getAvailableMemory();
  * const needed = 100_000_000; // 100 MB
  * if (available < needed) {
- *   console.warn('Insufficient memory available');
+ *   logger.warn('performance', 'Insufficient memory available', { available, needed });
  * }
  */
 export function getAvailableMemory(): number {

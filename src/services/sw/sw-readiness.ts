@@ -5,6 +5,8 @@
  * preventing CORS issues on first visit.
  */
 
+import { logger } from '@utils/logger';
+
 export interface SWReadinessState {
   isSupported: boolean;
   isActive: boolean;
@@ -40,22 +42,24 @@ export async function waitForSWReady(timeout = 10000): Promise<boolean> {
 
   // If not supported, return immediately (will work without SW)
   if (!state.isSupported) {
-    console.warn('[SW Readiness] Service Workers not supported - proceeding without caching');
+    logger.warn('general', 'Service Workers not supported; proceeding without caching');
     return true;
   }
 
   // If already ready, return immediately
   if (state.isReady) {
-    console.log('[SW Readiness] Service Worker already active and controlling');
+    logger.info('general', 'Service Worker already active and controlling');
     return true;
   }
 
   // Wait for SW to take control
-  console.log('[SW Readiness] Waiting for Service Worker to activate...');
+  logger.info('general', 'Waiting for Service Worker to activate...');
 
   return new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
-      console.warn('[SW Readiness] Timeout waiting for Service Worker');
+      logger.warn('general', 'Timeout waiting for Service Worker', {
+        timeoutMs: timeout,
+      });
       resolve(false);
     }, timeout);
 
@@ -63,7 +67,7 @@ export async function waitForSWReady(timeout = 10000): Promise<boolean> {
       if (checkSWReadiness().isReady) {
         clearTimeout(timeoutId);
         clearInterval(checkInterval);
-        console.log('[SW Readiness] Service Worker now active and controlling');
+        logger.info('general', 'Service Worker now active and controlling');
         resolve(true);
       }
     }, 100);
@@ -74,7 +78,7 @@ export async function waitForSWReady(timeout = 10000): Promise<boolean> {
       () => {
         clearTimeout(timeoutId);
         clearInterval(checkInterval);
-        console.log('[SW Readiness] Service Worker took control');
+        logger.info('general', 'Service Worker took control');
         resolve(true);
       },
       { once: true }
