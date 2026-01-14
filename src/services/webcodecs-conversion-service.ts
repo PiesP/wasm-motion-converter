@@ -1,56 +1,49 @@
 // External dependencies
-import * as Comlink from "comlink";
+import * as Comlink from 'comlink';
 
 // Internal dependencies
-import gifEncoderWorkerUrl from "@/workers/gif-encoder.worker?worker&url";
+import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
 
 // Type imports
-import type {
-  ConversionOptions,
-  ConversionOutputBlob,
-  VideoMetadata,
-} from "@t/conversion-types";
-import type { EncoderWorkerAPI } from "@t/worker-types";
-import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from "@utils/constants";
-import { getErrorMessage } from "@utils/error-utils";
-import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
-import { logger } from "@utils/logger";
-import { getAvailableMemory, isMemoryCritical } from "@utils/memory-monitor";
-import { getOptimalFPS } from "@utils/quality-optimizer";
-import { ffmpegService } from "./ffmpeg-service";
-import { encodeModernGif, isModernGifSupported } from "./modern-gif-service";
-import { isComplexCodec } from "@services/webcodecs/codec-utils";
-import { getDevConversionOverrides } from "@services/orchestration/dev-conversion-overrides";
-import { captureComplexCodecFramesForWebP } from "@services/webcodecs/conversion/complex-codec-capture";
-import { createThrottledProgressReporter } from "@services/webcodecs/conversion/progress-reporting";
-import { probeCanvasWebPEncodeSupport } from "@services/webcodecs/conversion/canvas-webp-support";
-import { encodeWithFFmpegFallback as encodeWithFFmpegFallbackUtil } from "@services/webcodecs/conversion/ffmpeg-fallback-encode";
+import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
+import type { EncoderWorkerAPI } from '@t/worker-types';
+import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '@utils/constants';
+import { getErrorMessage } from '@utils/error-utils';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { logger } from '@utils/logger';
+import { getAvailableMemory, isMemoryCritical } from '@utils/memory-monitor';
+import { getOptimalFPS } from '@utils/quality-optimizer';
+import { ffmpegService } from './ffmpeg-service';
+import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
+import { isComplexCodec } from '@services/webcodecs/codec-utils';
+import { getDevConversionOverrides } from '@services/orchestration/dev-conversion-overrides';
+import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture';
+import { createThrottledProgressReporter } from '@services/webcodecs/conversion/progress-reporting';
+import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support';
+import { encodeWithFFmpegFallback as encodeWithFFmpegFallbackUtil } from '@services/webcodecs/conversion/ffmpeg-fallback-encode';
 import {
   encodeWebPFramesInChunks,
   tryEncodeWebPWithEncoderFactory,
-} from "@services/webcodecs/conversion/webp-encoding";
-import { encodeWebPWithMuxFallback } from "@services/webcodecs/conversion/webp-encode-orchestrator";
-import { muxWebPFrames } from "@services/webcodecs/webp/mux-webp-frames";
-import { validateWebPBlob } from "@services/webcodecs/webp/validate-webp-blob";
+} from '@services/webcodecs/conversion/webp-encoding';
+import { encodeWebPWithMuxFallback } from '@services/webcodecs/conversion/webp-encode-orchestrator';
+import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames';
+import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob';
 import {
   buildDurationAlignedTimestamps as buildDurationAlignedTimestampsUtil,
   getMaxWebPFrames as getMaxWebPFramesUtil,
   resolveAnimationDurationSeconds as resolveAnimationDurationSecondsUtil,
   resolveWebPFps as resolveWebPFpsUtil,
-} from "@services/webcodecs/webp-timing";
+} from '@services/webcodecs/webp-timing';
 import {
   type WebCodecsCaptureMode,
   WebCodecsDecoderService,
   type WebCodecsFrameFormat,
-} from "./webcodecs-decoder-service";
-import {
-  isWebCodecsCodecSupported,
-  isWebCodecsDecodeSupported,
-} from "./webcodecs-support-service";
-import { getOptimalPoolSize, WorkerPool } from "./worker-pool-service";
-import type { EncoderFrame } from "@services/encoders/encoder-interface";
-import { EncoderFactory } from "@services/encoders/encoder-factory";
-import { convertFramesToImageData } from "@services/encoders/frame-converter";
+} from './webcodecs-decoder-service';
+import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support-service';
+import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
+import type { EncoderFrame } from '@services/encoders/encoder-interface';
+import { EncoderFactory } from '@services/encoders/encoder-factory';
+import { convertFramesToImageData } from '@services/encoders/frame-converter';
 
 /**
  * WebCodecs Conversion Service
@@ -74,18 +67,14 @@ class WebCodecsConversionService {
 
   constructor() {
     // Lazy initialize worker pools with dynamic sizing
-    if (typeof window !== "undefined") {
+    if (typeof window !== 'undefined') {
       const hwConcurrency = navigator.hardwareConcurrency || 4;
       const availableMem = getAvailableMemory();
 
       // Calculate optimal pool sizes based on hardware and memory
-      const optimalGifWorkers = getOptimalPoolSize(
-        "gif",
-        hwConcurrency,
-        availableMem
-      );
+      const optimalGifWorkers = getOptimalPoolSize('gif', hwConcurrency, availableMem);
 
-      logger.info("worker-pool", "Dynamic worker pool sizing", {
+      logger.info('worker-pool', 'Dynamic worker pool sizing', {
         hardwareConcurrency: hwConcurrency,
         availableMemory: `${Math.round(availableMem / 1024 / 1024)}MB`,
         gifWorkers: optimalGifWorkers,
@@ -108,10 +97,7 @@ class WebCodecsConversionService {
    * @param durationSeconds - Optional video duration in seconds
    * @returns Maximum number of frames to extract
    */
-  private getMaxWebPFrames(
-    targetFps: number,
-    durationSeconds?: number
-  ): number {
+  private getMaxWebPFrames(targetFps: number, durationSeconds?: number): number {
     return getMaxWebPFramesUtil(targetFps, durationSeconds);
   }
 
@@ -157,11 +143,7 @@ class WebCodecsConversionService {
    * Clamps to the requested target FPS to avoid overspeed playback while
    * preserving the original pacing for low-FPS or sparse frame captures.
    */
-  private resolveWebPFps(
-    frameCount: number,
-    targetFps: number,
-    durationSeconds?: number
-  ): number {
+  private resolveWebPFps(frameCount: number, targetFps: number, durationSeconds?: number): number {
     return resolveWebPFpsUtil(frameCount, targetFps, durationSeconds);
   }
 
@@ -195,7 +177,7 @@ class WebCodecsConversionService {
    * @returns True if WebCodecs conversion can be used
    */
   async canConvert(file: File, metadata?: VideoMetadata): Promise<boolean> {
-    if (!metadata?.codec || metadata.codec === "unknown") {
+    if (!metadata?.codec || metadata.codec === 'unknown') {
       return false;
     }
 
@@ -204,17 +186,12 @@ class WebCodecsConversionService {
     }
 
     if (isMemoryCritical()) {
-      logger.warn(
-        "conversion",
-        "Skipping WebCodecs decode due to critical memory usage"
-      );
+      logger.warn('conversion', 'Skipping WebCodecs decode due to critical memory usage');
       return false;
     }
 
     const normalizedCodec = metadata.codec.toLowerCase();
-    const isCandidate = WEBCODECS_ACCELERATED.some((codec) =>
-      normalizedCodec.includes(codec)
-    );
+    const isCandidate = WEBCODECS_ACCELERATED.some((codec) => normalizedCodec.includes(codec));
     if (!isCandidate) {
       return false;
     }
@@ -237,7 +214,7 @@ class WebCodecsConversionService {
    */
   async maybeConvert(
     file: File,
-    format: "gif" | "webp",
+    format: 'gif' | 'webp',
     options: ConversionOptions,
     metadata?: VideoMetadata
   ): Promise<ConversionOutputBlob | null> {
@@ -251,25 +228,21 @@ class WebCodecsConversionService {
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       if (
-        errorMessage.includes("cancelled by user") ||
+        errorMessage.includes('cancelled by user') ||
         (ffmpegService.isCancellationRequested() &&
-          errorMessage.includes("called FFmpeg.terminate()"))
+          errorMessage.includes('called FFmpeg.terminate()'))
       ) {
         throw error;
       }
 
-      logger.warn(
-        "conversion",
-        "WebCodecs path failed, falling back to FFmpeg",
-        {
-          error: errorMessage,
-          codec: metadata?.codec,
-          fallbackReason: "webcodecs_failed",
-        }
-      );
+      logger.warn('conversion', 'WebCodecs path failed, falling back to FFmpeg', {
+        error: errorMessage,
+        codec: metadata?.codec,
+        fallbackReason: 'webcodecs_failed',
+      });
 
-      logger.debug("conversion", "Returning null for FFmpeg fallback", {
-        reason: "webcodecs_failed",
+      logger.debug('conversion', 'Returning null for FFmpeg fallback', {
+        reason: 'webcodecs_failed',
         originalError: errorMessage,
       });
       return null;
@@ -289,7 +262,7 @@ class WebCodecsConversionService {
     if (!isComplexCodec(metadata?.codec)) {
       return false;
     }
-    if (typeof VideoFrame === "undefined") {
+    if (typeof VideoFrame === 'undefined') {
       return false;
     }
     return true;
@@ -317,7 +290,7 @@ class WebCodecsConversionService {
   private async convertViaWebCodecsFrames(params: {
     decoder: WebCodecsDecoderService;
     file: File;
-    format: "gif" | "webp";
+    format: 'gif' | 'webp';
     options: ConversionOptions;
     targetFps: number;
     scale: number;
@@ -338,10 +311,9 @@ class WebCodecsConversionService {
       shouldCancel,
     } = params;
 
-    const shouldCancelOrDefault =
-      shouldCancel ?? (() => ffmpegService.isCancellationRequested());
+    const shouldCancelOrDefault = shouldCancel ?? (() => ffmpegService.isCancellationRequested());
     if (shouldCancelOrDefault()) {
-      throw new Error("Conversion cancelled by user");
+      throw new Error('Conversion cancelled by user');
     }
     if (!this.shouldUseWebCodecsPath(metadata)) {
       return null;
@@ -349,19 +321,15 @@ class WebCodecsConversionService {
 
     // GIF: Skip WebCodecs path, use FFmpeg direct instead
     // WebCodecs frame extraction for GIF has VFS write stability issues
-    if (format === "gif") {
-      logger.info(
-        "conversion",
-        "GIF format with complex codec: skipping WebCodecs path",
-        {
-          codec: metadata?.codec,
-          reason: "Use FFmpeg direct path instead",
-        }
-      );
+    if (format === 'gif') {
+      logger.info('conversion', 'GIF format with complex codec: skipping WebCodecs path', {
+        codec: metadata?.codec,
+        reason: 'Use FFmpeg direct path instead',
+      });
       return null;
     }
 
-    logger.info("conversion", "Using WebCodecs direct frame extraction path", {
+    logger.info('conversion', 'Using WebCodecs direct frame extraction path', {
       codec: metadata?.codec,
       format,
     });
@@ -371,26 +339,25 @@ class WebCodecsConversionService {
     const canEncodeWebPFrames = await this.getCanvasWebPEncodeSupport();
     const hasFactoryWebPEncoder = canEncodeWebPFrames
       ? false
-      : await EncoderFactory.hasEncoder("webp");
+      : await EncoderFactory.hasEncoder('webp');
 
     if (!hasFactoryWebPEncoder && !canEncodeWebPFrames) {
       logger.info(
-        "conversion",
-        "Skipping WebCodecs direct WebP path (no available WebP encoder backend)",
+        'conversion',
+        'Skipping WebCodecs direct WebP path (no available WebP encoder backend)',
         {
           codec: metadata?.codec,
-          reason:
-            "No EncoderFactory WebP backend and canvas WebP encoding is unsupported",
+          reason: 'No EncoderFactory WebP backend and canvas WebP encoding is unsupported',
         }
       );
       return null;
     }
 
     try {
-      ffmpegService.reportStatus("Extracting frames via WebCodecs...");
+      ffmpegService.reportStatus('Extracting frames via WebCodecs...');
       const throwIfCancelled = (): void => {
         if (shouldCancelOrDefault()) {
-          throw new Error("Conversion cancelled by user");
+          throw new Error('Conversion cancelled by user');
         }
       };
 
@@ -411,18 +378,16 @@ class WebCodecsConversionService {
       const StatusTickIntervalMs = 400;
       let lastEncodeStatusAt = 0;
       let lastEncodeStatusCurrent = -1;
-      let encodeStatusPrefix = "Encoding WebP frames...";
+      let encodeStatusPrefix = 'Encoding WebP frames...';
       ffmpegService.reportStatus(encodeStatusPrefix);
 
       const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
       const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
       const reportEncodeProgress = (current: number, total: number) => {
         if (shouldCancelOrDefault()) {
-          throw new Error("Conversion cancelled by user");
+          throw new Error('Conversion cancelled by user');
         }
-        const progress =
-          encodeStart +
-          ((encodeEnd - encodeStart) * current) / Math.max(1, total);
+        const progress = encodeStart + ((encodeEnd - encodeStart) * current) / Math.max(1, total);
         ffmpegService.reportProgress(Math.round(progress));
 
         const now = Date.now();
@@ -433,18 +398,13 @@ class WebCodecsConversionService {
         ) {
           lastEncodeStatusAt = now;
           lastEncodeStatusCurrent = current;
-          ffmpegService.reportStatus(
-            `${encodeStatusPrefix} (${current}/${Math.max(1, total)})`
-          );
+          ffmpegService.reportStatus(`${encodeStatusPrefix} (${current}/${Math.max(1, total)})`);
         }
       };
 
       const releaseCapturedFrames = (): void => {
         for (const frame of orderedFrames) {
-          if (
-            typeof ImageBitmap !== "undefined" &&
-            frame instanceof ImageBitmap
-          ) {
+          if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
             try {
               frame.close();
             } catch {
@@ -452,10 +412,7 @@ class WebCodecsConversionService {
             }
           }
 
-          if (
-            typeof VideoFrame !== "undefined" &&
-            frame instanceof VideoFrame
-          ) {
+          if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
             try {
               frame.close();
             } catch {
@@ -480,17 +437,12 @@ class WebCodecsConversionService {
         );
 
         if (fpsForEncoding !== effectiveTargetFps) {
-          logger.info(
-            "conversion",
-            "Adjusted WebP FPS to match captured pacing",
-            {
-              targetFps: effectiveTargetFps,
-              adjustedFps: fpsForEncoding,
-              frameCount: orderedFrames.length,
-              durationSeconds:
-                animationDurationSeconds ?? decodeResult.duration,
-            }
-          );
+          logger.info('conversion', 'Adjusted WebP FPS to match captured pacing', {
+            targetFps: effectiveTargetFps,
+            adjustedFps: fpsForEncoding,
+            frameCount: orderedFrames.length,
+            durationSeconds: animationDurationSeconds ?? decodeResult.duration,
+          });
         }
 
         const timestampsForEncoding =
@@ -498,8 +450,7 @@ class WebCodecsConversionService {
             ? timestamps.slice(0, orderedFrames.length)
             : this.buildDurationAlignedTimestamps({
                 frameCount: orderedFrames.length,
-                durationSeconds:
-                  animationDurationSeconds ?? decodeResult.duration,
+                durationSeconds: animationDurationSeconds ?? decodeResult.duration,
                 fallbackFps: fpsForEncoding,
               });
 
@@ -529,16 +480,16 @@ class WebCodecsConversionService {
           // Fallback: main-thread WebP muxer path (requires canvas WebP support).
           if (!canEncodeWebPFrames) {
             logger.info(
-              "conversion",
-              "Skipping direct-path muxer fallback (canvas WebP unsupported); using standard path",
+              'conversion',
+              'Skipping direct-path muxer fallback (canvas WebP unsupported); using standard path',
               {
-                codec: metadata?.codec ?? "unknown",
+                codec: metadata?.codec ?? 'unknown',
               }
             );
             return null;
           }
 
-          encoderBackendUsed = "webp-muxer";
+          encoderBackendUsed = 'webp-muxer';
 
           const imageDataFrames = await convertFramesToImageData(
             orderedFrames,
@@ -556,7 +507,7 @@ class WebCodecsConversionService {
             shouldCancel: shouldCancelOrDefault,
           });
 
-          encodeStatusPrefix = "Muxing WebP frames...";
+          encodeStatusPrefix = 'Muxing WebP frames...';
           ffmpegService.reportStatus(encodeStatusPrefix);
 
           outputBlob = await muxWebPFrames({
@@ -574,11 +525,11 @@ class WebCodecsConversionService {
 
         if (!outputBlob) {
           logger.warn(
-            "conversion",
-            "WebCodecs direct path produced no output; using standard path",
+            'conversion',
+            'WebCodecs direct path produced no output; using standard path',
             {
-              codec: metadata?.codec ?? "unknown",
-              reason: "no_output",
+              codec: metadata?.codec ?? 'unknown',
+              reason: 'no_output',
             }
           );
           return null;
@@ -587,11 +538,11 @@ class WebCodecsConversionService {
         const validation = await validateWebPBlob(outputBlob);
         if (!validation.valid) {
           logger.warn(
-            "conversion",
-            "WebCodecs direct WebP output failed validation; using standard path",
+            'conversion',
+            'WebCodecs direct WebP output failed validation; using standard path',
             {
-              codec: metadata?.codec ?? "unknown",
-              reason: validation.reason ?? "validation_failed",
+              codec: metadata?.codec ?? 'unknown',
+              reason: validation.reason ?? 'validation_failed',
             }
           );
           return null;
@@ -615,23 +566,22 @@ class WebCodecsConversionService {
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       if (
-        errorMessage.includes("cancelled by user") ||
+        errorMessage.includes('cancelled by user') ||
         (ffmpegService.isCancellationRequested() &&
-          errorMessage.includes("called FFmpeg.terminate()"))
+          errorMessage.includes('called FFmpeg.terminate()'))
       ) {
         throw error;
       }
 
       // Log detailed error information for debugging
-      const errorStack =
-        error instanceof Error ? error.stack : "No stack trace";
+      const errorStack = error instanceof Error ? error.stack : 'No stack trace';
       const detailedError = {
         error: errorMessage,
         codec: metadata?.codec,
         format,
         stack: errorStack?.substring(0, 500), // Truncate stack for readability
       };
-      logger.error("conversion", "WebCodecs direct path failed", detailedError);
+      logger.error('conversion', 'WebCodecs direct path failed', detailedError);
       return null;
     }
   }
@@ -662,25 +612,21 @@ class WebCodecsConversionService {
    */
   async convert(
     file: File,
-    format: "gif" | "webp",
+    format: 'gif' | 'webp',
     options: ConversionOptions,
     metadata?: VideoMetadata,
     abortSignal?: AbortSignal
   ): Promise<ConversionOutputBlob> {
     const { quality, scale } = options;
     const settings =
-      format === "gif"
-        ? QUALITY_PRESETS.gif[quality]
-        : QUALITY_PRESETS.webp[quality];
+      format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
 
-    const gifEncoderPreference = options.gifEncoder ?? "auto";
-    const normalizedCodec = (metadata?.codec ?? "unknown").toLowerCase();
+    const gifEncoderPreference = options.gifEncoder ?? 'auto';
+    const normalizedCodec = (metadata?.codec ?? 'unknown').toLowerCase();
 
-    const devOverrides = import.meta.env.DEV
-      ? getDevConversionOverrides()
-      : null;
+    const devOverrides = import.meta.env.DEV ? getDevConversionOverrides() : null;
 
-    let useModernGif = format === "gif" && isModernGifSupported();
+    let useModernGif = format === 'gif' && isModernGifSupported();
 
     // User preference: FFmpeg-direct decode can be unreliable in WASM (and may increase memory
     // pressure on repeated conversions). When the caller requests the FFmpeg palette pipeline
@@ -690,7 +636,7 @@ class WebCodecsConversionService {
     // This is especially important for complex codecs (AV1/HEVC/VP9), but is also useful as a
     // stability-oriented execution path when WebCodecs decode is available.
     let shouldPreferFfmpegPaletteFromFrames =
-      format === "gif" && gifEncoderPreference === "ffmpeg-palette";
+      format === 'gif' && gifEncoderPreference === 'ffmpeg-palette';
 
     // Auto heuristic (production): modern-gif is reliable but slow on many inputs.
     // For complex codecs (or conservative 'unknown' codec metadata), prefer the hybrid
@@ -698,22 +644,22 @@ class WebCodecsConversionService {
     // This avoids FFmpeg decoding (a common source of WASM OOB failures) while keeping GIF
     // quality high and runtime reasonable.
     if (
-      format === "gif" &&
-      gifEncoderPreference === "auto" &&
-      (normalizedCodec === "unknown" || isComplexCodec(normalizedCodec))
+      format === 'gif' &&
+      gifEncoderPreference === 'auto' &&
+      (normalizedCodec === 'unknown' || isComplexCodec(normalizedCodec))
     ) {
       shouldPreferFfmpegPaletteFromFrames = true;
     }
 
     // Dev-only overrides: allow deterministic A/B testing of encoder and decode/capture paths.
-    if (import.meta.env.DEV && devOverrides && format === "gif") {
+    if (import.meta.env.DEV && devOverrides && format === 'gif') {
       const forcedGifEncoder = devOverrides.forcedGifEncoder;
 
-      if (forcedGifEncoder === "modern-gif") {
+      if (forcedGifEncoder === 'modern-gif') {
         if (!isModernGifSupported()) {
           if (devOverrides.disableFallback) {
             throw new Error(
-              "Dev override forced modern-gif, but modern-gif is not supported in this browser."
+              'Dev override forced modern-gif, but modern-gif is not supported in this browser.'
             );
           }
           useModernGif = false;
@@ -724,32 +670,25 @@ class WebCodecsConversionService {
         shouldPreferFfmpegPaletteFromFrames = false;
       }
 
-      if (forcedGifEncoder === "ffmpeg-direct") {
+      if (forcedGifEncoder === 'ffmpeg-direct') {
         useModernGif = false;
         shouldPreferFfmpegPaletteFromFrames = false;
       }
 
-      if (forcedGifEncoder === "ffmpeg-palette-frames") {
+      if (forcedGifEncoder === 'ffmpeg-palette-frames') {
         // Force the hybrid decode→palette encode path even if the UI did not request it.
         // This is intended for dev profiling and determinism tests.
         shouldPreferFfmpegPaletteFromFrames = true;
       }
 
-      if (
-        forcedGifEncoder === "ffmpeg-direct" &&
-        devOverrides.disableFallback
-      ) {
+      if (forcedGifEncoder === 'ffmpeg-direct' && devOverrides.disableFallback) {
         // When the caller wants FFmpeg-direct, using the GPU/WebCodecs service is an execution-time mismatch.
         // Prefer surfacing this rather than silently switching behavior.
         // Note: orchestrator should generally prevent reaching this state.
-        logger.warn(
-          "conversion",
-          "Dev override forced ffmpeg-direct while on WebCodecs path",
-          {
-            codec: metadata?.codec,
-            disableFallback: devOverrides.disableFallback,
-          }
-        );
+        logger.warn('conversion', 'Dev override forced ffmpeg-direct while on WebCodecs path', {
+          codec: metadata?.codec,
+          disableFallback: devOverrides.disableFallback,
+        });
       }
     }
 
@@ -762,21 +701,17 @@ class WebCodecsConversionService {
 
     const throwIfCancelled = (): void => {
       if (shouldCancel()) {
-        throw new Error("Conversion cancelled by user");
+        throw new Error('Conversion cancelled by user');
       }
     };
 
     // GIF format: fall back to FFmpeg when modern-gif isn't available.
     // Exception: when user explicitly requested FFmpeg palette for a complex codec,
     // use WebCodecs decode + FFmpeg frame-sequence encoding instead of FFmpeg-direct decode.
-    if (
-      format === "gif" &&
-      !useModernGif &&
-      !shouldPreferFfmpegPaletteFromFrames
-    ) {
+    if (format === 'gif' && !useModernGif && !shouldPreferFfmpegPaletteFromFrames) {
       logger.info(
-        "conversion",
-        "GIF format detected: using direct FFmpeg path for optimal performance",
+        'conversion',
+        'GIF format detected: using direct FFmpeg path for optimal performance',
         {
           fileSize: file.size,
           format,
@@ -785,7 +720,7 @@ class WebCodecsConversionService {
       await ffmpegService.initialize();
       const blob = await ffmpegService.convertToGIF(file, options, metadata);
       const blobWithMetadata = blob as ConversionOutputBlob;
-      blobWithMetadata.encoderBackendUsed = "ffmpeg";
+      blobWithMetadata.encoderBackendUsed = 'ffmpeg';
       return blobWithMetadata;
     }
 
@@ -801,16 +736,11 @@ class WebCodecsConversionService {
     // WebP: prefer GPU-friendly ImageBitmap frames to avoid explicit getImageData() readback.
     // GIF: modern-gif requires ImageData.
     const frameFormat: WebCodecsFrameFormat =
-      format === "webp" && typeof createImageBitmap === "function"
-        ? "bitmap"
-        : "rgba";
+      format === 'webp' && typeof createImageBitmap === 'function' ? 'bitmap' : 'rgba';
 
     const releaseWebPFrames = (): void => {
       for (const frame of webpCapturedFrames) {
-        if (
-          typeof ImageBitmap !== "undefined" &&
-          frame instanceof ImageBitmap
-        ) {
+        if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
           try {
             frame.close();
           } catch {
@@ -818,7 +748,7 @@ class WebCodecsConversionService {
           }
         }
 
-        if (typeof VideoFrame !== "undefined" && frame instanceof VideoFrame) {
+        if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
           try {
             frame.close();
           } catch {
@@ -829,14 +759,14 @@ class WebCodecsConversionService {
     };
 
     // Calculate optimal FPS based on source video FPS and quality preset
-    const presetFps = "fps" in settings ? settings.fps : 15;
+    const presetFps = 'fps' in settings ? settings.fps : 15;
     const targetFps =
       metadata?.framerate && metadata.framerate > 0
         ? getOptimalFPS(metadata.framerate, quality, format)
         : presetFps;
 
     if (metadata?.framerate && targetFps !== presetFps) {
-      logger.info("conversion", "Using adaptive FPS", {
+      logger.info('conversion', 'Using adaptive FPS', {
         sourceFPS: metadata.framerate,
         presetFPS: presetFps,
         optimalFPS: targetFps,
@@ -854,7 +784,7 @@ class WebCodecsConversionService {
       startPercent: decodeStart,
       endPercent: decodeEnd,
       tickIntervalMs: StatusTickIntervalMs,
-      initialStatusPrefix: "Decoding with WebCodecs...",
+      initialStatusPrefix: 'Decoding with WebCodecs...',
       throwIfCancelled,
       reportProgress: (percent) => ffmpegService.reportProgress(percent),
       reportStatus: (status) => ffmpegService.reportStatus(status),
@@ -885,11 +815,11 @@ class WebCodecsConversionService {
       if (shouldPreferFfmpegPaletteFromFrames) {
         try {
           const hybridResult = await encodeWithFFmpegFallbackUtil({
-            format: "gif",
+            format: 'gif',
             file,
             options,
             metadata,
-            errorMessage: "User preference: ffmpeg-palette",
+            errorMessage: 'User preference: ffmpeg-palette',
             decoder,
             targetFps,
             scale,
@@ -902,7 +832,7 @@ class WebCodecsConversionService {
               webpCapturedFrames.length = 0;
               webpFrameTimestamps.length = 0;
             },
-            intent: "preferred",
+            intent: 'preferred',
             // For complex codecs, avoid attempting FFmpeg-direct conversion as a last resort.
             allowFFmpegDirectFallback: false,
           });
@@ -912,9 +842,9 @@ class WebCodecsConversionService {
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           if (
-            errorMessage.includes("cancelled by user") ||
+            errorMessage.includes('cancelled by user') ||
             (ffmpegService.isCancellationRequested() &&
-              errorMessage.includes("called FFmpeg.terminate()"))
+              errorMessage.includes('called FFmpeg.terminate()'))
           ) {
             throw error;
           }
@@ -922,8 +852,8 @@ class WebCodecsConversionService {
           if (
             import.meta.env.DEV &&
             devOverrides?.disableFallback === true &&
-            (devOverrides.forcedGifEncoder === "ffmpeg-palette" ||
-              devOverrides.forcedGifEncoder === "ffmpeg-palette-frames")
+            (devOverrides.forcedGifEncoder === 'ffmpeg-palette' ||
+              devOverrides.forcedGifEncoder === 'ffmpeg-palette-frames')
           ) {
             throw error;
           }
@@ -935,8 +865,8 @@ class WebCodecsConversionService {
           }
 
           logger.warn(
-            "conversion",
-            "Preferred FFmpeg palette (frame-sequence) path failed; falling back to modern-gif",
+            'conversion',
+            'Preferred FFmpeg palette (frame-sequence) path failed; falling back to modern-gif',
             {
               codec: metadata?.codec,
               error: errorMessage,
@@ -945,16 +875,12 @@ class WebCodecsConversionService {
         }
       }
 
-      if (format === "webp" && this.shouldUseWebCodecsPath(metadata)) {
-        logger.info(
-          "conversion",
-          "Using WebCodecs direct path for complex codec",
-          {
-            codec: metadata?.codec,
-            format,
-            reason: "direct frame extraction",
-          }
-        );
+      if (format === 'webp' && this.shouldUseWebCodecsPath(metadata)) {
+        logger.info('conversion', 'Using WebCodecs direct path for complex codec', {
+          codec: metadata?.codec,
+          format,
+          reason: 'direct frame extraction',
+        });
 
         try {
           const webCodecsResult = await this.convertViaWebCodecsFrames({
@@ -977,74 +903,63 @@ class WebCodecsConversionService {
 
           // If the direct path returns null, fall through to the standard WebCodecs path
           // (media-element capture + muxer/encoder) which may still succeed.
-          logger.warn(
-            "conversion",
-            "WebCodecs direct path failed; continuing with standard path",
-            {
-              codec: metadata?.codec,
-              fallbackReason: "webcodecs_direct_failed",
-            }
-          );
+          logger.warn('conversion', 'WebCodecs direct path failed; continuing with standard path', {
+            codec: metadata?.codec,
+            fallbackReason: 'webcodecs_direct_failed',
+          });
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           if (
-            errorMessage.includes("cancelled by user") ||
+            errorMessage.includes('cancelled by user') ||
             (ffmpegService.isCancellationRequested() &&
-              errorMessage.includes("called FFmpeg.terminate()"))
+              errorMessage.includes('called FFmpeg.terminate()'))
           ) {
             throw error;
           }
 
           logger.warn(
-            "conversion",
-            "WebCodecs direct path errored; continuing with standard path",
+            'conversion',
+            'WebCodecs direct path errored; continuing with standard path',
             {
               error: errorMessage,
               codec: metadata?.codec,
-              fallbackReason: "webcodecs_direct_error",
+              fallbackReason: 'webcodecs_direct_error',
             }
           );
 
-          logger.debug(
-            "conversion",
-            "Continuing after WebCodecs direct path error",
-            {
-              reason: "webcodecs_direct_error",
-              originalError: errorMessage,
-            }
-          );
+          logger.debug('conversion', 'Continuing after WebCodecs direct path error', {
+            reason: 'webcodecs_direct_error',
+            originalError: errorMessage,
+          });
         }
       }
 
-      ffmpegService.reportStatus("Decoding with WebCodecs...");
+      ffmpegService.reportStatus('Decoding with WebCodecs...');
       ffmpegService.reportProgress(decodeStart);
 
       const forcedCaptureMode =
-        import.meta.env.DEV && devOverrides
-          ? devOverrides.forcedCaptureMode
-          : "auto";
+        import.meta.env.DEV && devOverrides ? devOverrides.forcedCaptureMode : 'auto';
       const captureModes: WebCodecsCaptureMode[] =
-        forcedCaptureMode && forcedCaptureMode !== "auto"
+        forcedCaptureMode && forcedCaptureMode !== 'auto'
           ? [forcedCaptureMode]
-          : ["auto", "demuxer", "track", "seek", "frame-callback"];
+          : ['auto', 'demuxer', 'track', 'seek', 'frame-callback'];
       const disableDemuxer =
         import.meta.env.DEV &&
         devOverrides?.disableDemuxerInAuto === true &&
-        (!forcedCaptureMode || forcedCaptureMode === "auto");
+        (!forcedCaptureMode || forcedCaptureMode === 'auto');
 
       let captureModeUsed: WebCodecsCaptureMode | null = null;
-      let decodeResult: Awaited<
-        ReturnType<WebCodecsDecoderService["decodeToFrames"]>
-      > | null = null;
+      let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>> | null =
+        null;
 
       for (const captureMode of captureModes) {
         try {
           throwIfCancelled();
-          if (disableDemuxer && captureMode === "demuxer") {
+          if (disableDemuxer && captureMode === 'demuxer') {
             continue;
           }
-          if (captureMode === "seek") {
-            ffmpegService.reportStatus("Retrying WebCodecs decode...");
+          if (captureMode === 'seek') {
+            ffmpegService.reportStatus('Retrying WebCodecs decode...');
             ffmpegService.reportProgress(decodeStart);
           }
 
@@ -1058,9 +973,7 @@ class WebCodecsConversionService {
             frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
             frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
             maxFrames:
-              format === "webp"
-                ? this.getMaxWebPFrames(targetFps, metadata?.duration)
-                : undefined,
+              format === 'webp' ? this.getMaxWebPFrames(targetFps, metadata?.duration) : undefined,
             captureMode,
             disableDemuxer,
             codec: metadata?.codec,
@@ -1069,12 +982,10 @@ class WebCodecsConversionService {
             onProgress: reportDecodeProgress,
             onFrame: async (frame) => {
               throwIfCancelled();
-              if (format === "webp") {
+              if (format === 'webp') {
                 const encoderFrame = frame.bitmap ?? frame.imageData;
                 if (!encoderFrame) {
-                  throw new Error(
-                    "WebCodecs did not provide a usable frame payload for WebP."
-                  );
+                  throw new Error('WebCodecs did not provide a usable frame payload for WebP.');
                 }
 
                 // Collect frames for batch encoding (parallelized later)
@@ -1084,7 +995,7 @@ class WebCodecsConversionService {
               }
 
               if (!frame.imageData) {
-                throw new Error("WebCodecs did not provide raw frame data.");
+                throw new Error('WebCodecs did not provide raw frame data.');
               }
 
               // format === 'gif' here (modern-gif path)
@@ -1097,14 +1008,14 @@ class WebCodecsConversionService {
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           if (
-            errorMessage.includes("cancelled by user") ||
+            errorMessage.includes('cancelled by user') ||
             (ffmpegService.isCancellationRequested() &&
-              errorMessage.includes("called FFmpeg.terminate()"))
+              errorMessage.includes('called FFmpeg.terminate()'))
           ) {
             throw error;
           }
 
-          logger.warn("conversion", "WebCodecs frame capture failed", {
+          logger.warn('conversion', 'WebCodecs frame capture failed', {
             error: errorMessage,
             mode: captureMode,
           });
@@ -1113,17 +1024,17 @@ class WebCodecsConversionService {
           webpCapturedFrames.length = 0;
           webpFrameTimestamps.length = 0;
 
-          if (captureMode === "seek") {
+          if (captureMode === 'seek') {
             throw error;
           }
         }
       }
 
       if (!decodeResult || !decodeResult.frameCount) {
-        throw new Error("WebCodecs decode produced no frames.");
+        throw new Error('WebCodecs decode produced no frames.');
       }
 
-      logger.info("conversion", "WebCodecs frame capture complete", {
+      logger.info('conversion', 'WebCodecs frame capture complete', {
         captureMode: captureModeUsed,
         frameCount: decodeResult.frameCount,
         width: decodeResult.width,
@@ -1143,23 +1054,20 @@ class WebCodecsConversionService {
 
       // modern-gif (GIF) does not provide granular progress while encoding.
       // Avoid showing misleading "(current/total)" counters to the user.
-      const shouldUseIndeterminateEncodeHeartbeat =
-        format === "gif" && useModernGif;
+      const shouldUseIndeterminateEncodeHeartbeat = format === 'gif' && useModernGif;
 
       const estimateModernGifEncodeSeconds = (params: {
         frameCount: number;
         width: number;
         height: number;
-        quality: ConversionOptions["quality"];
+        quality: ConversionOptions['quality'];
       }): number => {
         const { frameCount, width, height, quality } = params;
-        const megapixelFrames =
-          (width * height * Math.max(1, frameCount)) / 1_000_000;
+        const megapixelFrames = (width * height * Math.max(1, frameCount)) / 1_000_000;
 
         // Heuristic only: drives a progress heartbeat (best-effort UI feedback).
         // Higher quality tends to be slower.
-        const mpFramesPerSecond =
-          quality === "high" ? 5 : quality === "medium" ? 6.5 : 8;
+        const mpFramesPerSecond = quality === 'high' ? 5 : quality === 'medium' ? 6.5 : 8;
         const seconds = Math.round(megapixelFrames / mpFramesPerSecond);
         return Math.min(120, Math.max(5, seconds));
       };
@@ -1168,22 +1076,16 @@ class WebCodecsConversionService {
         frameCount: number;
         width: number;
         height: number;
-        quality: ConversionOptions["quality"];
+        quality: ConversionOptions['quality'];
       }): ReturnType<typeof setInterval> => {
         ffmpegService.reportStatus(initialEncodeStatusPrefix);
         ffmpegService.reportProgress(encodeStart);
 
         const estimatedSeconds = estimateModernGifEncodeSeconds(params);
-        return ffmpegService.startProgressHeartbeat(
-          encodeStart,
-          encodeEnd,
-          estimatedSeconds
-        );
+        return ffmpegService.startProgressHeartbeat(encodeStart, encodeEnd, estimatedSeconds);
       };
 
-      const stopEncodeHeartbeat = (
-        intervalId: ReturnType<typeof setInterval> | null
-      ): void => {
+      const stopEncodeHeartbeat = (intervalId: ReturnType<typeof setInterval> | null): void => {
         if (!intervalId) {
           return;
         }
@@ -1208,23 +1110,21 @@ class WebCodecsConversionService {
 
       const reportEncodeProgress = encodeReporter?.report;
 
-      const encodeWithFFmpegFallback = async (
-        errorMessage: string
-      ): Promise<Blob> => {
+      const encodeWithFFmpegFallback = async (errorMessage: string): Promise<Blob> => {
         throwIfCancelled();
 
         if (
-          format === "gif" &&
+          format === 'gif' &&
           import.meta.env.DEV &&
           devOverrides?.disableFallback === true &&
-          devOverrides.forcedGifEncoder === "modern-gif"
+          devOverrides.forcedGifEncoder === 'modern-gif'
         ) {
           throw new Error(
             `Dev override forced modern-gif with disableFallback; refusing FFmpeg fallback: ${errorMessage}`
           );
         }
 
-        encoderBackendUsed = "ffmpeg";
+        encoderBackendUsed = 'ffmpeg';
 
         return await encodeWithFFmpegFallbackUtil({
           format,
@@ -1306,16 +1206,12 @@ class WebCodecsConversionService {
             stopEncodeHeartbeat(encodeHeartbeat);
           }
 
-          encoderBackendUsed = "modern-gif-worker";
+          encoderBackendUsed = 'modern-gif-worker';
         } catch (error) {
           const errorMessage = getErrorMessage(error);
-          logger.warn(
-            "conversion",
-            "GIF worker encoding failed, retrying on main thread",
-            {
-              error: errorMessage,
-            }
-          );
+          logger.warn('conversion', 'GIF worker encoding failed, retrying on main thread', {
+            error: errorMessage,
+          });
           try {
             const encodeHeartbeat = shouldUseIndeterminateEncodeHeartbeat
               ? startEncodeHeartbeat({
@@ -1335,15 +1231,13 @@ class WebCodecsConversionService {
                 shouldCancel,
               });
               ffmpegService.reportProgress(encodeEnd);
-              encoderBackendUsed = "modern-gif-main";
+              encoderBackendUsed = 'modern-gif-main';
             } finally {
               stopEncodeHeartbeat(encodeHeartbeat);
             }
           } catch (fallbackError) {
             const fallbackMessage =
-              fallbackError instanceof Error
-                ? fallbackError.message
-                : String(fallbackError);
+              fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
             outputBlob = await encodeWithFFmpegFallback(fallbackMessage);
           }
         }
@@ -1368,7 +1262,7 @@ class WebCodecsConversionService {
               shouldCancel,
             });
             ffmpegService.reportProgress(encodeEnd);
-            encoderBackendUsed = "modern-gif-main";
+            encoderBackendUsed = 'modern-gif-main';
           } finally {
             stopEncodeHeartbeat(encodeHeartbeat);
           }
@@ -1376,18 +1270,17 @@ class WebCodecsConversionService {
           const errorMessage = getErrorMessage(error);
           outputBlob = await encodeWithFFmpegFallback(errorMessage);
         }
-      } else if (format === "webp") {
+      } else if (format === 'webp') {
         if (!encodeReporter) {
-          throw new Error("Encode reporter unavailable for WebP encoding.");
+          throw new Error('Encode reporter unavailable for WebP encoding.');
         }
 
-        const webpAnimationDurationSeconds =
-          this.resolveAnimationDurationSeconds(
-            webpCapturedFrames.length,
-            targetFps,
-            metadata,
-            decodeResult.duration
-          );
+        const webpAnimationDurationSeconds = this.resolveAnimationDurationSeconds(
+          webpCapturedFrames.length,
+          targetFps,
+          metadata,
+          decodeResult.duration
+        );
 
         const webpFpsForEncoding = this.resolveWebPFps(
           webpCapturedFrames.length,
@@ -1396,17 +1289,12 @@ class WebCodecsConversionService {
         );
 
         if (webpFpsForEncoding !== targetFps) {
-          logger.info(
-            "conversion",
-            "Adjusted WebP FPS to match captured pacing",
-            {
-              targetFps,
-              adjustedFps: webpFpsForEncoding,
-              frameCount: webpCapturedFrames.length,
-              durationSeconds:
-                webpAnimationDurationSeconds ?? decodeResult.duration,
-            }
-          );
+          logger.info('conversion', 'Adjusted WebP FPS to match captured pacing', {
+            targetFps,
+            adjustedFps: webpFpsForEncoding,
+            frameCount: webpCapturedFrames.length,
+            durationSeconds: webpAnimationDurationSeconds ?? decodeResult.duration,
+          });
         }
 
         const timestampsForEncoding =
@@ -1444,19 +1332,17 @@ class WebCodecsConversionService {
         webpFrameTimestamps.length = 0;
       } else {
         // Defensive fallback (should be unreachable due to early return for non-modern GIF).
-        outputBlob = await encodeWithFFmpegFallback(
-          "Unexpected encoder path (non-modern GIF)"
-        );
+        outputBlob = await encodeWithFFmpegFallback('Unexpected encoder path (non-modern GIF)');
       }
 
       const completionProgress =
-        format === "gif"
+        format === 'gif'
           ? FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE
           : FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE;
       ffmpegService.reportProgress(completionProgress);
 
       // Cleanup captured frames for non-FFmpeg encoders
-      if (capturedFrames.length > 0 && (useModernGif || format === "webp")) {
+      if (capturedFrames.length > 0 && (useModernGif || format === 'webp')) {
         capturedFrames.length = 0;
       }
 
@@ -1484,7 +1370,7 @@ class WebCodecsConversionService {
       try {
         endConversion();
       } catch (endError) {
-        logger.warn("conversion", "Error during endConversion cleanup", {
+        logger.warn('conversion', 'Error during endConversion cleanup', {
           error: getErrorMessage(endError),
         });
       }
@@ -1495,7 +1381,7 @@ class WebCodecsConversionService {
         try {
           ffmpegService.getMonitoring()?.forceCleanupAll();
         } catch (monitoringError) {
-          logger.warn("conversion", "Force cleanup failed (non-critical)", {
+          logger.warn('conversion', 'Force cleanup failed (non-critical)', {
             error: getErrorMessage(monitoringError),
           });
         }

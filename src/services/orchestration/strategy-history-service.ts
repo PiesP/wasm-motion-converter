@@ -11,14 +11,14 @@
  * - Confidence considers record count and success rate (high confidence after 5+ stable runs)
  */
 
-import type { ConversionFormat } from "@t/conversion-types";
-import type { ConversionPath } from "@services/orchestration/types";
-import { createSingleton } from "@services/shared/singleton-service";
-import { getErrorMessage } from "@utils/error-utils";
-import { logger } from "@utils/logger";
+import type { ConversionFormat } from '@t/conversion-types';
+import type { ConversionPath } from '@services/orchestration/types';
+import { createSingleton } from '@services/shared/singleton-service';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 
 // Versioned key to avoid stale path recommendations after algorithm changes.
-const STORAGE_KEY = "strategy_history_v2" as const;
+const STORAGE_KEY = 'strategy_history_v2' as const;
 const MAX_RECORDS = 50 as const;
 const HIGH_CONFIDENCE_THRESHOLD = 5 as const; // 5+ conversions for high confidence
 
@@ -26,7 +26,7 @@ const HIGH_CONFIDENCE_THRESHOLD = 5 as const; // 5+ conversions for high confide
  * Failure phase attribution
  * Helps distinguish between decoder failures and encoder failures
  */
-export type FailurePhase = "decode" | "encode" | "other" | null;
+export type FailurePhase = 'decode' | 'encode' | 'other' | null;
 
 /**
  * Record of a single conversion
@@ -86,11 +86,8 @@ class StrategyHistoryService {
   constructor() {
     // Best-effort cleanup for older schema keys.
     try {
-      if (
-        typeof window !== "undefined" &&
-        typeof window.sessionStorage !== "undefined"
-      ) {
-        window.sessionStorage.removeItem("strategy_history_v1");
+      if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
+        window.sessionStorage.removeItem('strategy_history_v1');
       }
     } catch {
       // Ignore
@@ -115,14 +112,14 @@ class StrategyHistoryService {
     // Persist to sessionStorage
     this.saveToStorage();
 
-    logger.debug("conversion", "Conversion recorded to history", {
+    logger.debug('conversion', 'Conversion recorded to history', {
       codec: record.codec,
       format: record.format,
       path: record.path,
       captureModeUsed: record.captureModeUsed ?? null,
       success: record.success,
       durationMs: record.durationMs,
-      errorMessage: record.success ? null : record.errorMessage ?? null,
+      errorMessage: record.success ? null : (record.errorMessage ?? null),
       totalRecords: this.records.length,
     });
   }
@@ -134,16 +131,12 @@ class StrategyHistoryService {
    * @param format - Output format
    * @returns Conversion history or null if no records exist
    */
-  getHistory(
-    codec: string,
-    format: ConversionFormat
-  ): ConversionHistory | null {
+  getHistory(codec: string, format: ConversionFormat): ConversionHistory | null {
     const normalizedCodec = this.normalizeCodec(codec);
 
     // Filter records for this codec+format
     const filtered = this.records.filter(
-      (r) =>
-        this.normalizeCodec(r.codec) === normalizedCodec && r.format === format
+      (r) => this.normalizeCodec(r.codec) === normalizedCodec && r.format === format
     );
 
     if (filtered.length === 0) {
@@ -153,10 +146,7 @@ class StrategyHistoryService {
     // Calculate aggregate statistics
     const totalConversions = filtered.length;
     const successfulConversions = filtered.filter((r) => r.success);
-    const successRate =
-      totalConversions > 0
-        ? successfulConversions.length / totalConversions
-        : 0;
+    const successRate = totalConversions > 0 ? successfulConversions.length / totalConversions : 0;
     const avgDurationMs =
       successfulConversions.length > 0
         ? successfulConversions.reduce((sum, r) => sum + r.durationMs, 0) /
@@ -187,19 +177,14 @@ class StrategyHistoryService {
    * @param format - Output format
    * @returns Recommended path with confidence, or null if insufficient data
    */
-  getRecommendedPath(
-    codec: string,
-    format: ConversionFormat
-  ): RecommendedPath | null {
+  getRecommendedPath(codec: string, format: ConversionFormat): RecommendedPath | null {
     const history = this.getHistory(codec, format);
     if (!history) {
       return null;
     }
 
     const preferredPath = history.statistics.preferredPath;
-    const preferredAll = history.records.filter(
-      (r) => r.path === preferredPath
-    );
+    const preferredAll = history.records.filter((r) => r.path === preferredPath);
     const preferredSuccesses = preferredAll.filter((r) => r.success);
 
     if (preferredSuccesses.length === 0) {
@@ -207,23 +192,14 @@ class StrategyHistoryService {
     }
 
     const preferredSuccessRate =
-      preferredAll.length > 0
-        ? preferredSuccesses.length / preferredAll.length
-        : 0;
+      preferredAll.length > 0 ? preferredSuccesses.length / preferredAll.length : 0;
 
     // Confidence: require both enough samples and a stable success rate.
-    const confidenceByCount = Math.min(
-      preferredAll.length / HIGH_CONFIDENCE_THRESHOLD,
-      1.0
-    );
-    const confidence = Math.max(
-      0,
-      Math.min(1, confidenceByCount * preferredSuccessRate)
-    );
+    const confidenceByCount = Math.min(preferredAll.length / HIGH_CONFIDENCE_THRESHOLD, 1.0);
+    const confidence = Math.max(0, Math.min(1, confidenceByCount * preferredSuccessRate));
 
     const avgDurationMs =
-      preferredSuccesses.reduce((sum, r) => sum + r.durationMs, 0) /
-      preferredSuccesses.length;
+      preferredSuccesses.reduce((sum, r) => sum + r.durationMs, 0) / preferredSuccesses.length;
 
     return {
       path: preferredPath,
@@ -253,7 +229,7 @@ class StrategyHistoryService {
     // Convert to ConversionHistory objects
     const histories: ConversionHistory[] = [];
     for (const [key, records] of grouped) {
-      const parts = key.split(":");
+      const parts = key.split(':');
       if (parts.length !== 2) continue; // Skip invalid keys
 
       const codec = parts[0]!; // Safe because we checked parts.length === 2
@@ -264,8 +240,8 @@ class StrategyHistoryService {
         const totalConversions = records.length;
         const successRate = successfulRecords.length / totalConversions;
         const avgDurationMs =
-          successfulRecords.reduce((sum, r) => sum + r.durationMs, 0) /
-            successfulRecords.length || 0;
+          successfulRecords.reduce((sum, r) => sum + r.durationMs, 0) / successfulRecords.length ||
+          0;
         const pathStats = this.calculatePathStatistics(records);
         const preferredPath = this.selectPreferredPath(pathStats);
 
@@ -292,17 +268,14 @@ class StrategyHistoryService {
   clearHistory(): void {
     this.records = [];
     this.saveToStorage();
-    logger.debug("conversion", "Conversion history cleared");
+    logger.debug('conversion', 'Conversion history cleared');
   }
 
   /**
    * Load records from sessionStorage
    */
   private loadFromStorage(): void {
-    if (
-      typeof window === "undefined" ||
-      typeof window.sessionStorage === "undefined"
-    ) {
+    if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
       return;
     }
 
@@ -316,35 +289,23 @@ class StrategyHistoryService {
 
       // Validate version
       if (storage.version !== 2) {
-        logger.debug(
-          "conversion",
-          "Strategy history version mismatch, clearing",
-          {
-            storedVersion: storage.version,
-            currentVersion: 2,
-          }
-        );
+        logger.debug('conversion', 'Strategy history version mismatch, clearing', {
+          storedVersion: storage.version,
+          currentVersion: 2,
+        });
         window.sessionStorage.removeItem(STORAGE_KEY);
         return;
       }
 
       // Load records
       this.records = storage.records || [];
-      logger.debug(
-        "conversion",
-        "Strategy history loaded from sessionStorage",
-        {
-          recordCount: this.records.length,
-        }
-      );
+      logger.debug('conversion', 'Strategy history loaded from sessionStorage', {
+        recordCount: this.records.length,
+      });
     } catch (error) {
-      logger.warn(
-        "conversion",
-        "Failed to load strategy history (non-critical)",
-        {
-          error: getErrorMessage(error),
-        }
-      );
+      logger.warn('conversion', 'Failed to load strategy history (non-critical)', {
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -352,10 +313,7 @@ class StrategyHistoryService {
    * Save records to sessionStorage
    */
   private saveToStorage(): void {
-    if (
-      typeof window === "undefined" ||
-      typeof window.sessionStorage === "undefined"
-    ) {
+    if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
       return;
     }
 
@@ -368,13 +326,9 @@ class StrategyHistoryService {
 
       window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
     } catch (error) {
-      logger.warn(
-        "conversion",
-        "Failed to save strategy history (non-critical)",
-        {
-          error: getErrorMessage(error),
-        }
-      );
+      logger.warn('conversion', 'Failed to save strategy history (non-critical)', {
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -419,14 +373,11 @@ class StrategyHistoryService {
       if (record.success) {
         pathStats.successCount++;
         pathStats.totalDuration += record.durationMs;
-        pathStats.avgDuration =
-          pathStats.totalDuration / pathStats.successCount;
+        pathStats.avgDuration = pathStats.totalDuration / pathStats.successCount;
       }
 
       pathStats.successRate =
-        pathStats.count > 0
-          ? pathStats.successCount / pathStats.count
-          : pathStats.successRate;
+        pathStats.count > 0 ? pathStats.successCount / pathStats.count : pathStats.successRate;
     }
 
     return stats;
@@ -453,10 +404,10 @@ class StrategyHistoryService {
     >
   ): ConversionPath {
     if (pathStats.size === 0) {
-      return "cpu"; // Default fallback
+      return 'cpu'; // Default fallback
     }
 
-    let preferredPath: ConversionPath = "cpu";
+    let preferredPath: ConversionPath = 'cpu';
     let bestSuccessRate = -1;
     let bestSuccessCount = -1;
     let bestAvgDuration = Number.POSITIVE_INFINITY;
@@ -477,10 +428,7 @@ class StrategyHistoryService {
       }
 
       // 2) Tie-breaker: more successful samples
-      if (
-        stats.successRate === bestSuccessRate &&
-        stats.successCount > bestSuccessCount
-      ) {
+      if (stats.successRate === bestSuccessRate && stats.successCount > bestSuccessCount) {
         preferredPath = path;
         bestSuccessCount = stats.successCount;
         bestAvgDuration = stats.avgDuration;
@@ -507,22 +455,17 @@ class StrategyHistoryService {
   private normalizeCodec(codec: string): string {
     const lower = codec.toLowerCase();
 
-    if (lower.includes("h264") || lower.includes("avc")) return "h264";
-    if (
-      lower.includes("hevc") ||
-      lower.includes("h265") ||
-      lower.includes("hvc")
-    )
-      return "hevc";
-    if (lower.includes("av1") || lower.includes("av01")) return "av1";
-    if (lower.includes("vp09") || lower.includes("vp9")) return "vp9";
-    if (lower.includes("vp08") || lower.includes("vp8")) return "vp8";
+    if (lower.includes('h264') || lower.includes('avc')) return 'h264';
+    if (lower.includes('hevc') || lower.includes('h265') || lower.includes('hvc')) return 'hevc';
+    if (lower.includes('av1') || lower.includes('av01')) return 'av1';
+    if (lower.includes('vp09') || lower.includes('vp9')) return 'vp9';
+    if (lower.includes('vp08') || lower.includes('vp8')) return 'vp8';
 
     return lower;
   }
 }
 
 export const strategyHistoryService = createSingleton(
-  "StrategyHistoryService",
+  'StrategyHistoryService',
   () => new StrategyHistoryService()
 );
