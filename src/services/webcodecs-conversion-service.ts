@@ -625,13 +625,15 @@ class WebCodecsConversionService {
 
     let useModernGif = format === 'gif' && isModernGifSupported();
 
-    // User preference: for AV1 (and other complex codecs), FFmpeg-direct decode can be unreliable
-    // in WASM. When the user explicitly requests the FFmpeg palette pipeline for GIF, honor it
-    // via a hybrid approach: WebCodecs decode → FFmpeg frame-sequence palette encode.
+    // User preference: FFmpeg-direct decode can be unreliable in WASM (and may increase memory
+    // pressure on repeated conversions). When the caller requests the FFmpeg palette pipeline
+    // for GIF, prefer a hybrid approach:
+    //   WebCodecs decode → FFmpeg frame-sequence palette encode.
+    //
+    // This is especially important for complex codecs (AV1/HEVC/VP9), but is also useful as a
+    // stability-oriented execution path when WebCodecs decode is available.
     let shouldPreferFfmpegPaletteFromFrames =
-      format === 'gif' &&
-      options.gifEncoder === 'ffmpeg-palette' &&
-      isComplexCodec(metadata?.codec);
+      format === 'gif' && options.gifEncoder === 'ffmpeg-palette';
 
     // Dev-only overrides: allow deterministic A/B testing of encoder and decode/capture paths.
     if (import.meta.env.DEV && devOverrides && format === 'gif') {
@@ -922,7 +924,9 @@ class WebCodecsConversionService {
       const forcedCaptureMode =
         import.meta.env.DEV && devOverrides ? devOverrides.forcedCaptureMode : 'auto';
       const captureModes: WebCodecsCaptureMode[] =
-        forcedCaptureMode && forcedCaptureMode !== 'auto' ? [forcedCaptureMode] : ['auto', 'seek'];
+        forcedCaptureMode && forcedCaptureMode !== 'auto'
+          ? [forcedCaptureMode]
+          : ['auto', 'demuxer', 'track', 'frame-callback', 'seek'];
       const disableDemuxer =
         import.meta.env.DEV &&
         devOverrides?.disableDemuxerInAuto === true &&
@@ -935,6 +939,9 @@ class WebCodecsConversionService {
       for (const captureMode of captureModes) {
         try {
           throwIfCancelled();
+          if (disableDemuxer && captureMode === 'demuxer') {
+            continue;
+          }
           if (captureMode === 'seek') {
             ffmpegService.reportStatus('Retrying WebCodecs decode...');
             ffmpegService.reportProgress(decodeStart);

@@ -47,9 +47,13 @@ function shouldRunFullAnalysis(file: File, metadata: VideoMetadata | null): bool
   if (!metadata) {
     return true;
   }
-  if (metadata.codec === 'unknown' || metadata.framerate <= 0 || metadata.bitrate <= 0) {
+
+  // Quick analysis intentionally does not provide codec/fps/bitrate.
+  // Only require full analysis when we are missing basic fields.
+  if (metadata.width <= 0 || metadata.height <= 0 || metadata.duration <= 0) {
     return true;
   }
+
   const isSmallFile = file.size <= SMALL_FILE_SIZE_THRESHOLD;
   const isShort = metadata.duration > 0 ? metadata.duration <= SHORT_VIDEO_DURATION : false;
   const isLowRes = metadata.width * metadata.height <= WARN_RESOLUTION_PIXELS;

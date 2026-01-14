@@ -541,8 +541,16 @@ class StrategyRegistryService {
           ? this.applyDurationHeuristics(baseStrategy, durationSeconds, normalizedCodec, format)
           : baseStrategy;
 
+        const containerAdjusted = this.applyContainerHeuristics({
+          strategy: durationAdjusted,
+          container,
+          codec: normalizedCodec,
+          format,
+          capabilities,
+        });
+
         return this.applyRecentFailureAvoidance(
-          this.applyGifGpuPreference(durationAdjusted, capabilities),
+          this.applyGifGpuPreference(containerAdjusted, capabilities),
           history
         );
       }
@@ -640,6 +648,40 @@ class StrategyRegistryService {
             1
           )}s) amortizes GPU setup cost`,
           confidence: 'medium',
+        };
+      }
+    }
+
+    return strategy;
+  }
+
+  private applyContainerHeuristics(params: {
+    strategy: StrategyWithConfidence;
+    container: ContainerFormat;
+    codec: string;
+    format: ConversionFormat;
+    capabilities: ExtendedCapabilities;
+  }): StrategyWithConfidence {
+    const { strategy, container, codec, format, capabilities } = params;
+
+    // VP8/VP9-in-MP4 is a common case where WebCodecs decode succeeds, while FFmpeg WASM decode
+    // can be slower or less stable for GIF under repeated conversions. Prefer GPU decode when
+    // the environment advertises codec support.
+    if (
+      format === 'gif' &&
+      (codec === 'vp8' || codec === 'vp9') &&
+      container === 'mp4' &&
+      capabilities.webcodecsDecode &&
+      this.hasCodecSupport(codec, capabilities)
+    ) {
+      if (strategy.preferredPath !== 'gpu') {
+        return {
+          ...strategy,
+          preferredPath: 'gpu',
+          fallbackPath: 'cpu',
+          benchmarks: undefined,
+          confidence: strategy.confidence === 'high' ? 'medium' : strategy.confidence,
+          reason: `${strategy.reason} + VP8/VP9 in MP4 prefers WebCodecs decode for stability`,
         };
       }
     }
@@ -867,8 +909,23 @@ class StrategyRegistryService {
     format: ConversionFormat,
     capabilities: ExtendedCapabilities
   ): StrategyWithConfidence {
-    // Unknown codec - safe fallback to CPU
-    if (!this.hasCodecSupport(codec, capabilities)) {
+    const hasSupport = this.hasCodecSupport(codec, capabilities);
+
+    // Unknown codec: prefer best-effort GPU attempt when WebCodecs is available.
+    // Rationale: some inputs are "unknown" because detection is conservative, but WebCodecs
+    // can still decode them. When GPU fails, fallback to FFmpeg.
+    if (!hasSupport) {
+      if (capabilities.webcodecsDecode) {
+        return {
+          codec,
+          format,
+          preferredPath: 'gpu',
+          fallbackPath: 'cpu',
+          reason: 'Unknown codec - trying GPU/WebCodecs first, with FFmpeg fallback',
+          confidence: 'low',
+        };
+      }
+
       return {
         codec,
         format,

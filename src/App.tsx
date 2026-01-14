@@ -47,6 +47,7 @@ import {
   loadingStatusMessage,
   setEnvironmentSupported,
 } from '@stores/app-store';
+import { devMatrixTestIsRunning, requestDevMatrixTestCancel } from '@stores/dev-matrix-test-store';
 import { useNetworkState } from '@stores/network-store';
 import {
   conversionProgress,
@@ -543,9 +544,16 @@ const App: Component = () => {
                     type="button"
                     aria-label="Stop video conversion"
                     class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900"
-                    onClick={handleCancelConversion}
+                    onClick={() => {
+                      if (import.meta.env.DEV && devMatrixTestIsRunning()) {
+                        requestDevMatrixTestCancel();
+                      }
+                      handleCancelConversion();
+                    }}
                   >
-                    Stop Conversion
+                    {import.meta.env.DEV && devMatrixTestIsRunning()
+                      ? 'Stop Test'
+                      : 'Stop Conversion'}
                   </button>
                 </Show>
               </div>

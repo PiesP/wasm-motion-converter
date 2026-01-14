@@ -36,6 +36,23 @@ import { FFmpegEncoder } from './ffmpeg-encoder';
 import { FFmpegMonitoring } from './ffmpeg-monitoring';
 import { FFmpegVFS } from './ffmpeg-vfs';
 
+function isFFmpegWasmOutOfBoundsError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+
+  // Most common crash signature observed in repeated runs:
+  // "RuntimeError: memory access out of bounds"
+  if (message.includes('memory access out of bounds')) {
+    return true;
+  }
+
+  // Defensive fallback for variations.
+  if (message.includes('out of bounds') && message.includes('memory')) {
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Pipeline callbacks for conversion operations
  */
@@ -97,6 +114,56 @@ export class FFmpegPipeline {
   // External conversion monitoring is used by non-FFmpeg conversion paths (e.g., WebCodecs).
   // Keep it idempotent and safe against duplicate cleanup calls.
   private externalConversionDepth = 0;
+
+  /**
+   * Hard-reset FFmpeg after a fatal WASM error.
+   *
+   * IMPORTANT: This is intentionally different from terminate().
+   * - terminate() is a public/user-facing action that releases locks and clears callbacks.
+   * - This reset is used internally to retry the current operation once, so it must
+   *   preserve the pipeline lock and callbacks.
+   */
+  private hardResetForRetry(reason: string, error: unknown): void {
+    logger.warn('ffmpeg', 'Hard resetting FFmpeg after fatal WASM error', {
+      reason,
+      error: getErrorMessage(error),
+    });
+
+    try {
+      // Ensure any watchdog is stopped before tearing down the runtime.
+      this.monitoring.stopWatchdog();
+      this.monitoring.cleanupResources();
+    } catch {
+      // Best-effort cleanup.
+    }
+
+    try {
+      // Terminate FFmpeg runtime (worker + wasm instance)
+      this.core.terminate();
+    } catch {
+      // Best-effort cleanup.
+    }
+
+    // Clear VFS bookkeeping. The next attempt will rewrite inputs.
+    this.vfs.clearInputCacheTimer();
+    this.vfs.clearKnownFiles();
+
+    // Ensure a previous cancellation request does not poison the retry.
+    this.encoder.resetCancellation();
+  }
+
+  private shouldRetryAfterWasmCrash(error: unknown): boolean {
+    if (!isFFmpegWasmOutOfBoundsError(error)) {
+      return false;
+    }
+
+    // Never retry if the user requested cancellation.
+    if (this.encoder.isCancellationRequested() || this.callbacks.shouldCancel?.() === true) {
+      return false;
+    }
+
+    return true;
+  }
 
   constructor() {
     this.core = new FFmpegCore();
@@ -287,20 +354,40 @@ export class FFmpegPipeline {
       this.core.clearAllListeners();
 
       // Start monitoring
-      this.monitoring.startWatchdog({
+      const watchdogConfig = {
         metadata,
         quality: options.quality,
-        format: 'gif',
+        format: 'gif' as const,
         enableLogSilenceCheck: true,
-      });
+      };
 
-      // Execute conversion
-      const result = await this.encoder.convertToGIF(file, options, metadata, inputOverride);
+      this.monitoring.startWatchdog(watchdogConfig);
 
-      // Stop monitoring
-      this.monitoring.stopWatchdog();
+      let attempt = 0;
+      // Retry exactly once on fatal WASM crashes.
+      while (true) {
+        try {
+          const result = await this.encoder.convertToGIF(file, options, metadata, inputOverride);
+          this.monitoring.stopWatchdog();
+          return result;
+        } catch (error) {
+          this.monitoring.stopWatchdog();
 
-      return result;
+          if (attempt === 0 && this.shouldRetryAfterWasmCrash(error)) {
+            attempt += 1;
+            this.callbacks.onStatusUpdate?.(
+              'FFmpeg crashed (WASM out-of-bounds). Resetting and retrying once...'
+            );
+            this.hardResetForRetry('convertToGIF', error);
+            await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
+            this.core.clearAllListeners();
+            this.monitoring.startWatchdog(watchdogConfig);
+            continue;
+          }
+
+          throw error;
+        }
+      }
     } finally {
       // Always release lock and cleanup
       this.monitoring.stopWatchdog();
@@ -347,20 +434,40 @@ export class FFmpegPipeline {
       this.core.clearAllListeners();
 
       // Start monitoring
-      this.monitoring.startWatchdog({
+      const watchdogConfig = {
         metadata,
         quality: options.quality,
-        format: 'webp',
+        format: 'webp' as const,
         enableLogSilenceCheck: true,
-      });
+      };
 
-      // Execute conversion
-      const result = await this.encoder.convertToWebP(file, options, metadata, inputOverride);
+      this.monitoring.startWatchdog(watchdogConfig);
 
-      // Stop monitoring
-      this.monitoring.stopWatchdog();
+      let attempt = 0;
+      // Retry exactly once on fatal WASM crashes.
+      while (true) {
+        try {
+          const result = await this.encoder.convertToWebP(file, options, metadata, inputOverride);
+          this.monitoring.stopWatchdog();
+          return result;
+        } catch (error) {
+          this.monitoring.stopWatchdog();
 
-      return result;
+          if (attempt === 0 && this.shouldRetryAfterWasmCrash(error)) {
+            attempt += 1;
+            this.callbacks.onStatusUpdate?.(
+              'FFmpeg crashed (WASM out-of-bounds). Resetting and retrying once...'
+            );
+            this.hardResetForRetry('convertToWebP', error);
+            await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
+            this.core.clearAllListeners();
+            this.monitoring.startWatchdog(watchdogConfig);
+            continue;
+          }
+
+          throw error;
+        }
+      }
     } finally {
       // Always release lock and cleanup
       this.monitoring.stopWatchdog();
@@ -399,22 +506,42 @@ export class FFmpegPipeline {
       }
 
       // Start monitoring
-      this.monitoring.startWatchdog({
+      const watchdogConfig = {
         quality: params.options.quality,
         format: params.format,
         // Frame-sequence encoding can legitimately go quiet on logs for >20s
         // (especially libwebp in WASM). Avoid false-positive stall termination.
         // Real stalls are handled by the explicit withTimeout() guards in the encoder.
         enableLogSilenceCheck: false,
-      });
+      };
 
-      // Execute encoding
-      const result = await this.encoder.encodeFrameSequence(params);
+      this.monitoring.startWatchdog(watchdogConfig);
 
-      // Stop monitoring
-      this.monitoring.stopWatchdog();
+      let attempt = 0;
+      // Retry exactly once on fatal WASM crashes.
+      while (true) {
+        try {
+          const result = await this.encoder.encodeFrameSequence(params);
+          this.monitoring.stopWatchdog();
+          return result;
+        } catch (error) {
+          this.monitoring.stopWatchdog();
 
-      return result;
+          if (attempt === 0 && this.shouldRetryAfterWasmCrash(error)) {
+            attempt += 1;
+            this.callbacks.onStatusUpdate?.(
+              'FFmpeg crashed (WASM out-of-bounds). Resetting and retrying once...'
+            );
+            this.hardResetForRetry('encodeFrameSequence', error);
+            await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
+            this.core.clearAllListeners();
+            this.monitoring.startWatchdog(watchdogConfig);
+            continue;
+          }
+
+          throw error;
+        }
+      }
     } finally {
       // Always release lock and cleanup
       this.monitoring.stopWatchdog();

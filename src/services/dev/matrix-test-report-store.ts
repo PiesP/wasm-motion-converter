@@ -1,4 +1,4 @@
-import { logger } from "@utils/logger";
+import { logger } from '@utils/logger';
 
 /**
  * Matrix test report storage (dev-only).
@@ -17,12 +17,12 @@ export type MatrixTestReportIndexItem = {
   durationMs: number;
 };
 
-const INDEX_KEY = "dev_matrix_test_reports_index_v1";
-const REPORT_KEY_PREFIX = "dev_matrix_test_report_v1_";
+const INDEX_KEY = 'dev_matrix_test_reports_index_v1';
+const REPORT_KEY_PREFIX = 'dev_matrix_test_report_v1_';
 const MAX_REPORTS_TO_KEEP = 10;
 
 const isBrowser = (): boolean =>
-  typeof window !== "undefined" && typeof localStorage !== "undefined";
+  typeof window !== 'undefined' && typeof localStorage !== 'undefined';
 
 function safeParseJson<T>(text: string): T | null {
   try {
@@ -140,7 +140,7 @@ export function persistMatrixTestReport(params: {
     }
   } catch (error) {
     // localStorage may be full or disabled.
-    logger.warn("general", "Failed to persist matrix test report", {
+    logger.warn('general', 'Failed to persist matrix test report', {
       reportId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -149,13 +149,13 @@ export function persistMatrixTestReport(params: {
 
 function sanitizeFilenamePart(value: string): string {
   return value
-    .replaceAll(/[^a-zA-Z0-9._-]+/g, "_")
-    .replaceAll(/_+/g, "_")
+    .replaceAll(/[^a-zA-Z0-9._-]+/g, '_')
+    .replaceAll(/_+/g, '_')
     .slice(0, 80);
 }
 
 function formatTimestampForFilename(date: Date): string {
-  const pad = (v: number) => v.toString().padStart(2, "0");
+  const pad = (v: number) => v.toString().padStart(2, '0');
   const yyyy = date.getFullYear();
   const mm = pad(date.getMonth() + 1);
   const dd = pad(date.getDate());
@@ -169,16 +169,12 @@ export function buildMatrixTestReportFilename(params: {
   startedAt: number;
   fileName: string;
   reportId?: string;
-  format: "json" | "jsonl";
+  format: 'json' | 'jsonl';
 }): string {
   const ts = formatTimestampForFilename(new Date(params.startedAt));
   const base = sanitizeFilenamePart(params.fileName);
-  const suffix = params.reportId
-    ? sanitizeFilenamePart(params.reportId).slice(0, 16)
-    : null;
-  return `matrix-test-${ts}-${base}${suffix ? `-${suffix}` : ""}.${
-    params.format
-  }`;
+  const suffix = params.reportId ? sanitizeFilenamePart(params.reportId).slice(0, 16) : null;
+  return `matrix-test-${ts}-${base}${suffix ? `-${suffix}` : ''}.${params.format}`;
 }
 
 export function downloadTextFile(params: {
@@ -186,17 +182,17 @@ export function downloadTextFile(params: {
   text: string;
   mimeType?: string;
 }): void {
-  if (typeof document === "undefined") {
+  if (typeof document === 'undefined') {
     return;
   }
 
   const blob = new Blob([params.text], {
-    type: params.mimeType ?? "text/plain;charset=utf-8",
+    type: params.mimeType ?? 'text/plain;charset=utf-8',
   });
   const url = URL.createObjectURL(blob);
 
   try {
-    const a = document.createElement("a");
+    const a = document.createElement('a');
     a.href = url;
     a.download = params.filename;
     document.body.appendChild(a);
@@ -209,9 +205,8 @@ export function downloadTextFile(params: {
 
 export function isFileSystemAccessSupported(): boolean {
   return (
-    typeof window !== "undefined" &&
-    typeof (window as unknown as { showSaveFilePicker?: unknown })
-      .showSaveFilePicker === "function"
+    typeof window !== 'undefined' &&
+    typeof (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker === 'function'
   );
 }
 
@@ -235,9 +230,7 @@ export async function requestSaveFileHandle(params: {
       {
         description: params.description,
         accept: {
-          [params.mimeType]: [
-            `.${params.suggestedName.split(".").pop() ?? "txt"}`,
-          ],
+          [params.mimeType]: [`.${params.suggestedName.split('.').pop() ?? 'txt'}`],
         },
       },
     ],
@@ -256,7 +249,7 @@ export async function writeTextToFileHandle(params: {
   };
 
   if (!h?.createWritable) {
-    throw new Error("File handle does not support createWritable()");
+    throw new Error('File handle does not support createWritable()');
   }
 
   const writable = await h.createWritable();

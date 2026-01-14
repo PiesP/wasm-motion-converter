@@ -61,11 +61,22 @@ const PRECACHE_URLS: string[] = "PRECACHE_MANIFEST" as unknown as string[];
  * Using jsdelivr URLs (same as import map for consistency)
  */
 const FFMPEG_PRECACHE_URLS = [
-  'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm',
-  'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/+esm',
-  'https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.js',
-  'https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.wasm',
-  'https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.worker.js',
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm",
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/+esm",
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.js",
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.wasm",
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.worker.js",
+];
+
+/**
+ * Demuxer libraries used for optimized extraction.
+ *
+ * These are loaded from CDNs and should be cached on install so first-time
+ * visitors still benefit (first navigation happens before SW controls page).
+ */
+const DEMUXER_PRECACHE_URLS = [
+  "https://esm.sh/mp4box@0.5.2",
+  "https://esm.sh/web-demuxer@4.0.0",
 ];
 
 /**
@@ -84,9 +95,19 @@ interface CDNProvider {
  */
 const CDN_PROVIDERS: CDNProvider[] = [
   { name: "esm.sh", hostname: "esm.sh", priority: 1, healthScore: 100 },
-  { name: "jsdelivr", hostname: "cdn.jsdelivr.net", priority: 2, healthScore: 100 },
+  {
+    name: "jsdelivr",
+    hostname: "cdn.jsdelivr.net",
+    priority: 2,
+    healthScore: 100,
+  },
   { name: "unpkg", hostname: "unpkg.com", priority: 3, healthScore: 100 },
-  { name: "skypack", hostname: "cdn.skypack.dev", priority: 4, healthScore: 100 },
+  {
+    name: "skypack",
+    hostname: "cdn.skypack.dev",
+    priority: 4,
+    healthScore: 100,
+  },
 ];
 
 /**
@@ -136,13 +157,17 @@ async function loadSRIManifest(): Promise<SRIManifest | null> {
   try {
     const response = await fetch("/cdn-integrity.json");
     if (!response.ok) {
-      console.warn(`[SW ${SW_VERSION}] Failed to load SRI manifest: HTTP ${response.status}`);
+      console.warn(
+        `[SW ${SW_VERSION}] Failed to load SRI manifest: HTTP ${response.status}`
+      );
       return null;
     }
 
     sriManifest = (await response.json()) as SRIManifest;
     console.log(
-      `[SW ${SW_VERSION}] SRI manifest loaded: ${Object.keys(sriManifest.entries).length} entries`
+      `[SW ${SW_VERSION}] SRI manifest loaded: ${
+        Object.keys(sriManifest.entries).length
+      } entries`
     );
     return sriManifest;
   } catch (error) {
@@ -275,7 +300,10 @@ function loadHealthScores(): Map<string, number> {
       scores.set(hostname, healthScore);
     }
 
-    console.log(`[SW ${SW_VERSION}] Loaded health scores:`, Object.fromEntries(scores));
+    console.log(
+      `[SW ${SW_VERSION}] Loaded health scores:`,
+      Object.fromEntries(scores)
+    );
   } catch (error) {
     console.warn(`[SW ${SW_VERSION}] Failed to load health scores:`, error);
   }
@@ -326,7 +354,8 @@ function updateHealthScore(hostname: string, success: boolean): void {
       metric.failureCount++;
     }
     metric.totalCount = metric.successCount + metric.failureCount;
-    metric.successRate = metric.totalCount > 0 ? metric.successCount / metric.totalCount : 1.0;
+    metric.successRate =
+      metric.totalCount > 0 ? metric.successCount / metric.totalCount : 1.0;
     metric.lastUpdated = Date.now();
 
     // Save back to localStorage
@@ -411,14 +440,16 @@ function isWorkerRequest(request: Request): boolean {
 
   // FFmpeg worker patterns
   const workerPatterns = [
-    '/worker.js',
-    '/worker.mjs',
-    'ffmpeg/dist/esm/worker',
+    "/worker.js",
+    "/worker.mjs",
+    "ffmpeg/dist/esm/worker",
   ];
 
-  return workerPatterns.some(pattern => url.pathname.includes(pattern)) ||
-         request.destination === 'worker' ||
-         request.mode === 'same-origin'; // Workers use same-origin mode
+  return (
+    workerPatterns.some((pattern) => url.pathname.includes(pattern)) ||
+    request.destination === "worker" ||
+    request.mode === "same-origin"
+  ); // Workers use same-origin mode
 }
 
 /**
@@ -436,7 +467,7 @@ self.addEventListener("install", (event: ExtendableEvent) => {
   event.waitUntil(
     (async () => {
       // Initialize caches
-      await caches.open(CACHE_NAMES.fallback);
+      const fallbackCache = await caches.open(CACHE_NAMES.fallback);
 
       // Pre-cache app shell
       const appCache = await caches.open(CACHE_NAMES.app);
@@ -444,22 +475,74 @@ self.addEventListener("install", (event: ExtendableEvent) => {
         await appCache.addAll(PRECACHE_URLS);
         console.log(`[SW ${SW_VERSION}] App shell pre-cached`);
       } catch (error) {
-        console.warn(`[SW ${SW_VERSION}] Failed to pre-cache app shell:`, error);
+        console.warn(
+          `[SW ${SW_VERSION}] Failed to pre-cache app shell:`,
+          error
+        );
       }
 
       // Pre-cache FFmpeg assets (best effort)
       const ffmpegCache = await caches.open(CACHE_NAMES.ffmpeg);
       try {
         await Promise.allSettled(
-          FFMPEG_PRECACHE_URLS.map(url =>
-            fetch(url).then(res => {
+          FFMPEG_PRECACHE_URLS.map((url) =>
+            fetch(url).then((res) => {
               if (res.ok) return ffmpegCache.put(url, res);
             })
           )
         );
-        console.log(`[SW ${SW_VERSION}] FFmpeg assets pre-cached (best effort)`);
+        console.log(
+          `[SW ${SW_VERSION}] FFmpeg assets pre-cached (best effort)`
+        );
       } catch (error) {
         console.warn(`[SW ${SW_VERSION}] Failed to pre-cache FFmpeg:`, error);
+      }
+
+      // Pre-cache critical CDN ESM dependencies (best effort)
+      // Notes:
+      // - On the first navigation, the SW is not yet controlling the page.
+      // - This step ensures external libraries are stored in CacheStorage
+      //   even for first-time users.
+      const cdnCache = await caches.open(CACHE_NAMES.cdn);
+      try {
+        const manifest = await loadSRIManifest();
+
+        const sriUrls: string[] = manifest
+          ? Object.values(manifest.entries)
+              .map((entry) => entry["esm.sh"]?.url)
+              .filter(
+                (url): url is string =>
+                  typeof url === "string" && url.length > 0
+              )
+          : [];
+
+        const urls = Array.from(
+          new Set([...DEMUXER_PRECACHE_URLS, ...sriUrls])
+        );
+
+        await Promise.allSettled(
+          urls.map(async (url) => {
+            try {
+              const response = await fetchWithCascade(url, 15000, false);
+              if (!response.ok) {
+                return;
+              }
+              await cdnCache.put(url, response.clone());
+              await fallbackCache.put(url, response.clone());
+            } catch (error) {
+              console.warn(
+                `[SW ${SW_VERSION}] CDN pre-cache failed: ${url}`,
+                error
+              );
+            }
+          })
+        );
+
+        console.log(`[SW ${SW_VERSION}] CDN deps pre-cached (best effort)`, {
+          count: urls.length,
+        });
+      } catch (error) {
+        console.warn(`[SW ${SW_VERSION}] Failed to pre-cache CDN deps:`, error);
       }
     })()
   );
@@ -673,7 +756,10 @@ function logCDNMetrics(metrics: CDNMetrics): void {
  * @param targetProvider - Target CDN provider name
  * @returns Converted URL or null if conversion not possible
  */
-function convertToCDN(originalUrl: string, targetProvider: string): string | null {
+function convertToCDN(
+  originalUrl: string,
+  targetProvider: string
+): string | null {
   switch (targetProvider) {
     case "esm.sh":
       return originalUrl; // Already esm.sh format
@@ -745,7 +831,9 @@ async function tryFetchFromCDN(
           updateHealthScore(provider.hostname, false);
           return null;
         }
-        console.log(`[SW ${SW_VERSION}] ✓ Integrity verified for ${provider.name}`);
+        console.log(
+          `[SW ${SW_VERSION}] ✓ Integrity verified for ${provider.name}`
+        );
       } else {
         console.warn(
           `[SW ${SW_VERSION}] ⚠ No SRI hash found for ${url}, proceeding without verification`
@@ -957,13 +1045,12 @@ async function fetchWithCascade(
 
   // Determine strategy: parallel racing on fast connections, sequential otherwise
   const shouldRace =
-    useRacing !== undefined
-      ? useRacing
-      : connectionType === "fast";
+    useRacing !== undefined ? useRacing : connectionType === "fast";
 
   console.log(
-    `[SW ${SW_VERSION}] CDN strategy: ${shouldRace ? "parallel racing" : "sequential cascade"} ` +
-      `(connection: ${connectionType}, timeout: ${adaptiveTimeout}ms)`
+    `[SW ${SW_VERSION}] CDN strategy: ${
+      shouldRace ? "parallel racing" : "sequential cascade"
+    } ` + `(connection: ${connectionType}, timeout: ${adaptiveTimeout}ms)`
   );
 
   // Load SRI manifest for integrity verification
@@ -998,11 +1085,18 @@ async function fetchWithCascade(
   for (const provider of orderedProviders) {
     const url = convertToCDN(originalUrl, provider.name);
     if (!url) {
-      console.warn(`[SW ${SW_VERSION}] Cannot convert to ${provider.name}, skipping`);
+      console.warn(
+        `[SW ${SW_VERSION}] Cannot convert to ${provider.name}, skipping`
+      );
       continue;
     }
 
-    const response = await tryFetchFromCDN(url, provider, adaptiveTimeout, manifest);
+    const response = await tryFetchFromCDN(
+      url,
+      provider,
+      adaptiveTimeout,
+      manifest
+    );
     if (response) {
       return response; // Success!
     }
@@ -1170,8 +1264,8 @@ async function handleWorkerRequest(request: Request): Promise<Response> {
       statusText: cached.statusText,
       headers: {
         ...Object.fromEntries(cached.headers.entries()),
-        'Access-Control-Allow-Origin': '*',
-        'Cross-Origin-Resource-Policy': 'cross-origin',
+        "Access-Control-Allow-Origin": "*",
+        "Cross-Origin-Resource-Policy": "cross-origin",
       },
     });
   }
@@ -1190,8 +1284,8 @@ async function handleWorkerRequest(request: Request): Promise<Response> {
         statusText: response.statusText,
         headers: {
           ...Object.fromEntries(response.headers.entries()),
-          'Access-Control-Allow-Origin': '*',
-          'Cross-Origin-Resource-Policy': 'cross-origin',
+          "Access-Control-Allow-Origin": "*",
+          "Cross-Origin-Resource-Policy": "cross-origin",
         },
       });
     }
