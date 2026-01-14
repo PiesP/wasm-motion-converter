@@ -22,6 +22,7 @@ import LicenseAttribution from '@components/LicenseAttribution';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
 import DevRouteOverrides from '@components/DevRouteOverrides';
+import DevConversionMatrixTest from '@components/DevConversionMatrixTest';
 import ThemeToggle from '@components/ThemeToggle';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
@@ -572,6 +573,7 @@ const App: Component = () => {
               />
 
               <DevRouteOverrides disabled={isBusy()} />
+              <DevConversionMatrixTest disabled={isBusy()} />
             </div>
           </div>
 
