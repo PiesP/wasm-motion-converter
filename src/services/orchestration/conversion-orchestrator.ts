@@ -43,6 +43,7 @@ import {
   type ConversionDebugOutcome,
 } from './conversion-debug';
 import { conversionMetricsService } from './conversion-metrics-service';
+import { getDevConversionOverrides } from './dev-conversion-overrides';
 import type {
   ConversionMetadata,
   ConversionRequest,
@@ -186,18 +187,38 @@ class ConversionOrchestrator {
       const requestedGifEncoder: GifEncoderPreference | null =
         request.format === 'gif' ? (request.options.gifEncoder ?? 'auto') : null;
 
+      const devOverrides = import.meta.env.DEV ? getDevConversionOverrides() : null;
+      const hasDevForcedGifEncoder =
+        request.format === 'gif' && !!devOverrides && devOverrides.forcedGifEncoder !== 'auto';
+
       const effectiveOptions = { ...request.options };
       let effectiveGifEncoder: GifEncoderPreference | null = requestedGifEncoder;
 
       if (
         request.format === 'gif' &&
+        devOverrides &&
+        devOverrides.forcedGifEncoder === 'ffmpeg-palette'
+      ) {
+        effectiveOptions.gifEncoder = 'ffmpeg-palette';
+        effectiveGifEncoder = 'ffmpeg-palette';
+      }
+
+      if (
+        request.format === 'gif' &&
         requestedGifEncoder === 'auto' &&
-        pathSelection.path === 'gpu'
+        pathSelection.path === 'gpu' &&
+        !hasDevForcedGifEncoder
       ) {
         const caps = extendedCapabilityService.getCached();
 
         const codec = metadata?.codec;
         const isComplexGifCodec = isAv1Codec(codec) || isHevcCodec(codec) || isVp9Codec(codec);
+
+        // Session-local learning: prefer the GIF encoder that is most stable on this device.
+        // This is intentionally conservative for AV1 to avoid catastrophic outliers.
+        const learnedGifEncoder = codec
+          ? conversionMetricsService.getGifEncoderRecommendation(codec)
+          : null;
 
         const nav = navigator as Navigator & {
           userAgentData?: { mobile?: boolean };
@@ -314,15 +335,29 @@ class ConversionOrchestrator {
           withinRawByteRatioBudget;
 
         // Auto strategy: for complex codecs (AV1/HEVC/VP9), prefer WebCodecs decode.
-        // If we have enough memory headroom to stage rawvideo, prefer the FFmpeg palette pipeline.
+        // If we have enough memory headroom to stage rawvideo, *optionally* prefer the
+        // FFmpeg palette pipeline. For AV1, only enable this automatically when the
+        // session metrics indicate it is stable on this device.
         // Guardrails: avoid this path on mobile / low-memory devices.
-        if (
+        const shouldConsiderAutoPalette =
           isComplexGifCodec &&
           ffmpegThreadingAvailable &&
           rawvideoHasHeadroom &&
           !isProbablyMobile &&
-          !isLowMemoryDevice
-        ) {
+          !isLowMemoryDevice;
+
+        const learnedPrefersModern =
+          learnedGifEncoder?.recommendedEncoder === 'modern-gif-worker' &&
+          learnedGifEncoder.confidence >= 0.5;
+        const learnedPrefersPalette =
+          learnedGifEncoder?.recommendedEncoder === 'ffmpeg-palette' &&
+          learnedGifEncoder.confidence >= 0.6;
+
+        const allowAutoPaletteForCodec =
+          // AV1 is the most sensitive to outliers; require evidence before auto-enabling.
+          isAv1Codec(codec) ? learnedPrefersPalette : true;
+
+        if (shouldConsiderAutoPalette && allowAutoPaletteForCodec && !learnedPrefersModern) {
           effectiveOptions.gifEncoder = 'ffmpeg-palette';
           effectiveGifEncoder = 'ffmpeg-palette';
 
@@ -334,6 +369,7 @@ class ConversionOrchestrator {
               resolved: effectiveGifEncoder,
               codec,
               isComplexGifCodec,
+              learnedGifEncoder,
               crossOriginIsolated: caps.crossOriginIsolated,
               sharedArrayBuffer: caps.sharedArrayBuffer,
               workerSupport: caps.workerSupport,
@@ -367,6 +403,7 @@ class ConversionOrchestrator {
             rawvideoHasHeadroom,
             isProbablyMobile,
             isLowMemoryDevice,
+            learnedGifEncoder,
             durationSeconds,
             durationBudgetSeconds,
             withinDurationBudget,
@@ -399,6 +436,18 @@ class ConversionOrchestrator {
         scale: request.options.scale,
         gifEncoder: requestedGifEncoder,
         gifEncoderResolved: request.format === 'gif' ? effectiveGifEncoder : null,
+        devForcedPath: import.meta.env.DEV ? (devOverrides?.forcedPath ?? null) : null,
+        devDisableFallback: import.meta.env.DEV ? (devOverrides?.disableFallback ?? null) : null,
+        devForcedGifEncoder: import.meta.env.DEV ? (devOverrides?.forcedGifEncoder ?? null) : null,
+        devForcedCaptureMode: import.meta.env.DEV
+          ? (devOverrides?.forcedCaptureMode ?? null)
+          : null,
+        devDisableDemuxerInAuto: import.meta.env.DEV
+          ? (devOverrides?.disableDemuxerInAuto ?? null)
+          : null,
+        devForcedStrategyCodec: import.meta.env.DEV
+          ? (devOverrides?.forcedStrategyCodec ?? null)
+          : null,
         durationSeconds: request.options.duration ?? null,
       });
 
@@ -856,6 +905,12 @@ class ConversionOrchestrator {
   }> {
     const { file, format } = params;
 
+    const devOverrides = import.meta.env.DEV ? getDevConversionOverrides() : null;
+    const gifEncoderPreference: GifEncoderPreference | undefined =
+      format === 'gif' && devOverrides && devOverrides.forcedGifEncoder === 'ffmpeg-palette'
+        ? 'ffmpeg-palette'
+        : params.gifEncoderPreference;
+
     this.throwIfAborted(params.abortSignal);
 
     // WebAV path for MP4 (native WebCodecs pipeline).
@@ -897,12 +952,68 @@ class ConversionOrchestrator {
       throw new Error(`Unsupported format: ${format}`);
     }
 
+    // Dev-only escape hatches: allow deterministic forcing of path and select encoder variants.
+    // Intended for performance/stability testing (not exposed in production).
+    if (import.meta.env.DEV && devOverrides) {
+      if (format === 'gif' && devOverrides.forcedGifEncoder === 'ffmpeg-direct') {
+        const caps = extendedCapabilityService.getCached();
+        setConversionAutoSelectionDebug({
+          timestamp: Date.now(),
+          format,
+          codec: params.metadata?.codec,
+          container: detectContainerFormat(file),
+          plannedPath: 'cpu',
+          plannedReason: 'Dev override forced GIF encoder: ffmpeg-direct (CPU)',
+          hardwareAccelerated: caps.hardwareAccelerated,
+          sharedArrayBuffer: caps.sharedArrayBuffer,
+          crossOriginIsolated: caps.crossOriginIsolated,
+          workerSupport: caps.workerSupport,
+        });
+
+        return {
+          selection: {
+            path: 'cpu',
+            reason: 'Dev override forced GIF encoder: ffmpeg-direct (CPU)',
+            useDemuxer: false,
+          },
+          metadata: params.metadata,
+        };
+      }
+
+      if (devOverrides.forcedPath === 'cpu') {
+        if (import.meta.env.DEV) {
+          const caps = extendedCapabilityService.getCached();
+          setConversionAutoSelectionDebug({
+            timestamp: Date.now(),
+            format,
+            codec: params.metadata?.codec,
+            container: detectContainerFormat(file),
+            plannedPath: 'cpu',
+            plannedReason: 'Dev override forced CPU path (FFmpeg direct)',
+            hardwareAccelerated: caps.hardwareAccelerated,
+            sharedArrayBuffer: caps.sharedArrayBuffer,
+            crossOriginIsolated: caps.crossOriginIsolated,
+            workerSupport: caps.workerSupport,
+          });
+        }
+
+        return {
+          selection: {
+            path: 'cpu',
+            reason: 'Dev override forced CPU path (FFmpeg direct)',
+            useDemuxer: false,
+          },
+          metadata: params.metadata,
+        };
+      }
+    }
+
     // Experiment: allow users to force FFmpeg palettegen/paletteuse for GIF output.
     // Handle this before pipeline planning so we avoid unnecessary analysis work.
     // NOTE: AV1-in-MP4 decoding in ffmpeg.wasm is not reliable in all builds/environments.
     // If AV1 is detected, do not force the FFmpeg-direct CPU path. Instead, honor the
     // preference via a hybrid approach: WebCodecs decode + FFmpeg frame-sequence palette encode.
-    if (format === 'gif' && params.gifEncoderPreference === 'ffmpeg-palette') {
+    if (format === 'gif' && gifEncoderPreference === 'ffmpeg-palette') {
       const codec = params.metadata?.codec;
       if (isAv1Codec(codec)) {
         logger.info(
@@ -970,7 +1081,14 @@ class ConversionOrchestrator {
     const extendedCaps = await extendedCapabilityService.detectCapabilities();
 
     this.throwIfAborted(params.abortSignal);
-    const codecForStrategy = plannedMetadata?.codec ?? plan.track?.codec ?? 'unknown';
+    const codecForStrategyBase = plannedMetadata?.codec ?? plan.track?.codec ?? 'unknown';
+    const codecForStrategy =
+      import.meta.env.DEV &&
+      devOverrides &&
+      devOverrides.forcedStrategyCodec &&
+      devOverrides.forcedStrategyCodec !== 'auto'
+        ? devOverrides.forcedStrategyCodec
+        : codecForStrategyBase;
 
     const strategy = strategyRegistryService.getStrategy({
       codec: codecForStrategy,
@@ -1007,12 +1125,25 @@ class ConversionOrchestrator {
 
     // User-forced FFmpeg palette encoding for AV1 should stay on GPU path (WebCodecs decode),
     // but we want logs/debug state to reflect the explicit preference.
-    if (format === 'gif' && params.gifEncoderPreference === 'ffmpeg-palette') {
+    if (format === 'gif' && gifEncoderPreference === 'ffmpeg-palette') {
       const codec = codecForStrategy;
       if (isAv1Codec(codec)) {
         selection.path = 'gpu';
         selection.reason =
           'User forced FFmpeg palettegen/paletteuse (WebCodecs decode + FFmpeg frame-sequence encode)';
+      }
+    }
+
+    if (import.meta.env.DEV && devOverrides) {
+      if (devOverrides.forcedPath === 'gpu') {
+        selection.path = 'gpu';
+        selection.reason = 'Dev override forced GPU path (WebCodecs decode)';
+      }
+
+      if (devOverrides.forcedPath === 'cpu') {
+        selection.path = 'cpu';
+        selection.reason = 'Dev override forced CPU path (FFmpeg direct)';
+        selection.useDemuxer = false;
       }
     }
 
@@ -1135,10 +1266,37 @@ class ConversionOrchestrator {
 
     // GPU path only supports GIF/WebP formats
     if (request.format !== 'gif' && request.format !== 'webp') {
+      if (import.meta.env.DEV) {
+        const overrides = getDevConversionOverrides();
+        if (overrides.forcedPath === 'gpu' && overrides.disableFallback) {
+          throw new Error(
+            `Dev override forced GPU path with fallback disabled, but format '${request.format}' is not supported by GPU path.`
+          );
+        }
+      }
+
       logger.warn('conversion', 'GPU path does not support this format, falling back to FFmpeg', {
         format: request.format,
       });
       return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
+    }
+
+    if (import.meta.env.DEV && request.format === 'gif') {
+      const overrides = getDevConversionOverrides();
+      if (overrides.forcedGifEncoder === 'ffmpeg-direct') {
+        const message =
+          'Dev override forced GIF encoder ffmpeg-direct, but GPU path was selected/executed.';
+
+        if (overrides.disableFallback) {
+          throw new Error(`${message} Disable fallback is enabled, refusing to continue.`);
+        }
+
+        logger.warn('conversion', `${message} Falling back to CPU path.`, {
+          codec: metadata?.codec,
+        });
+
+        return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
+      }
     }
 
     // For AV1 and other WebCodecs-required codecs, use WebCodecs service
@@ -1176,6 +1334,15 @@ class ConversionOrchestrator {
     }
 
     // Fallback to CPU if WebCodecs fails
+    if (import.meta.env.DEV) {
+      const overrides = getDevConversionOverrides();
+      if (overrides.forcedPath === 'gpu' && overrides.disableFallback) {
+        throw new Error(
+          'Dev override forced GPU path with fallback disabled, but WebCodecs conversion produced no result.'
+        );
+      }
+    }
+
     logger.warn('conversion', 'GPU path (WebCodecs) failed, falling back to FFmpeg');
     return this.convertViaCPUPath(request, metadata, conversionMetadata, abortSignal);
   }

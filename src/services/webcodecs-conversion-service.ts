@@ -16,6 +16,7 @@ import { getOptimalFPS } from '@utils/quality-optimizer';
 import { ffmpegService } from './ffmpeg-service';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { isComplexCodec } from '@services/webcodecs/codec-utils';
+import { getDevConversionOverrides } from '@services/orchestration/dev-conversion-overrides';
 import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture';
 import { createThrottledProgressReporter } from '@services/webcodecs/conversion/progress-reporting';
 import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support';
@@ -619,15 +620,59 @@ class WebCodecsConversionService {
     const { quality, scale } = options;
     const settings =
       format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
-    const useModernGif = format === 'gif' && isModernGifSupported();
+
+    const devOverrides = import.meta.env.DEV ? getDevConversionOverrides() : null;
+
+    let useModernGif = format === 'gif' && isModernGifSupported();
 
     // User preference: for AV1 (and other complex codecs), FFmpeg-direct decode can be unreliable
     // in WASM. When the user explicitly requests the FFmpeg palette pipeline for GIF, honor it
     // via a hybrid approach: WebCodecs decode → FFmpeg frame-sequence palette encode.
-    const shouldPreferFfmpegPaletteFromFrames =
+    let shouldPreferFfmpegPaletteFromFrames =
       format === 'gif' &&
       options.gifEncoder === 'ffmpeg-palette' &&
       isComplexCodec(metadata?.codec);
+
+    // Dev-only overrides: allow deterministic A/B testing of encoder and decode/capture paths.
+    if (import.meta.env.DEV && devOverrides && format === 'gif') {
+      const forcedGifEncoder = devOverrides.forcedGifEncoder;
+
+      if (forcedGifEncoder === 'modern-gif') {
+        if (!isModernGifSupported()) {
+          if (devOverrides.disableFallback) {
+            throw new Error(
+              'Dev override forced modern-gif, but modern-gif is not supported in this browser.'
+            );
+          }
+          useModernGif = false;
+        } else {
+          useModernGif = true;
+        }
+
+        shouldPreferFfmpegPaletteFromFrames = false;
+      }
+
+      if (forcedGifEncoder === 'ffmpeg-direct') {
+        useModernGif = false;
+        shouldPreferFfmpegPaletteFromFrames = false;
+      }
+
+      if (forcedGifEncoder === 'ffmpeg-palette-frames') {
+        // Force the hybrid decode→palette encode path even if the UI did not request it.
+        // This is intended for dev profiling and determinism tests.
+        shouldPreferFfmpegPaletteFromFrames = true;
+      }
+
+      if (forcedGifEncoder === 'ffmpeg-direct' && devOverrides.disableFallback) {
+        // When the caller wants FFmpeg-direct, using the GPU/WebCodecs service is an execution-time mismatch.
+        // Prefer surfacing this rather than silently switching behavior.
+        // Note: orchestrator should generally prevent reaching this state.
+        logger.warn('conversion', 'Dev override forced ffmpeg-direct while on WebCodecs path', {
+          codec: metadata?.codec,
+          disableFallback: devOverrides.disableFallback,
+        });
+      }
+    }
 
     // Orchestrator-driven conversions provide an AbortSignal; prefer it over the shared
     // FFmpeg cancellation flag so a previous FFmpeg cancel request cannot poison new
@@ -786,6 +831,15 @@ class WebCodecsConversionService {
             throw error;
           }
 
+          if (
+            import.meta.env.DEV &&
+            devOverrides?.disableFallback === true &&
+            (devOverrides.forcedGifEncoder === 'ffmpeg-palette' ||
+              devOverrides.forcedGifEncoder === 'ffmpeg-palette-frames')
+          ) {
+            throw error;
+          }
+
           // If modern-gif is available, fall back rather than hard-failing.
           // If it is not available, let the error surface (no viable alternative).
           if (!useModernGif) {
@@ -865,7 +919,15 @@ class WebCodecsConversionService {
       ffmpegService.reportStatus('Decoding with WebCodecs...');
       ffmpegService.reportProgress(decodeStart);
 
-      const captureModes: WebCodecsCaptureMode[] = ['auto', 'seek'];
+      const forcedCaptureMode =
+        import.meta.env.DEV && devOverrides ? devOverrides.forcedCaptureMode : 'auto';
+      const captureModes: WebCodecsCaptureMode[] =
+        forcedCaptureMode && forcedCaptureMode !== 'auto' ? [forcedCaptureMode] : ['auto', 'seek'];
+      const disableDemuxer =
+        import.meta.env.DEV &&
+        devOverrides?.disableDemuxerInAuto === true &&
+        (!forcedCaptureMode || forcedCaptureMode === 'auto');
+
       let captureModeUsed: WebCodecsCaptureMode | null = null;
       let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>> | null =
         null;
@@ -890,6 +952,7 @@ class WebCodecsConversionService {
             maxFrames:
               format === 'webp' ? this.getMaxWebPFrames(targetFps, metadata?.duration) : undefined,
             captureMode,
+            disableDemuxer,
             codec: metadata?.codec,
             quality: options.quality,
             shouldCancel,
@@ -1026,6 +1089,18 @@ class WebCodecsConversionService {
 
       const encodeWithFFmpegFallback = async (errorMessage: string): Promise<Blob> => {
         throwIfCancelled();
+
+        if (
+          format === 'gif' &&
+          import.meta.env.DEV &&
+          devOverrides?.disableFallback === true &&
+          devOverrides.forcedGifEncoder === 'modern-gif'
+        ) {
+          throw new Error(
+            `Dev override forced modern-gif with disableFallback; refusing FFmpeg fallback: ${errorMessage}`
+          );
+        }
+
         encoderBackendUsed = 'ffmpeg';
 
         return await encodeWithFFmpegFallbackUtil({

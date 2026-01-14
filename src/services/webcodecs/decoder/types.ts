@@ -74,6 +74,13 @@ export interface WebCodecsDecodeOptions {
   maxFrames?: number;
   /** Frame capture mode (auto, track, frame-callback, seek) */
   captureMode?: WebCodecsCaptureMode;
+
+  /**
+   * When true, skip attempting the demuxer path even when captureMode is auto.
+   *
+   * This is primarily intended for dev/testing to compare decode paths.
+   */
+  disableDemuxer?: boolean;
   /** Optional video codec for timeout optimization (e.g., 'av01', 'vp9', 'avc1') */
   codec?: string;
   /** Conversion quality level (low, medium, high) - determines encoding format */

@@ -6,9 +6,9 @@
  *
  * Learning Logic:
  * - Store last 50 successful conversions
- * - Calculate success rate per path for each codec+format
- * - Recommend path with highest success rate, then fastest duration
- * - Confidence = min(recordCount / 5, 1.0) (high confidence after 5+ conversions)
+ * - Calculate success rate per path for each codec+format (including failures)
+ * - Recommend path with highest success rate, then fastest successful duration
+ * - Confidence considers record count and success rate (high confidence after 5+ stable runs)
  */
 
 import type { ConversionFormat } from '@t/conversion-types';
@@ -17,7 +17,8 @@ import { createSingleton } from '@services/shared/singleton-service';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
-const STORAGE_KEY = 'strategy_history_v1' as const;
+// Versioned key to avoid stale path recommendations after algorithm changes.
+const STORAGE_KEY = 'strategy_history_v2' as const;
 const MAX_RECORDS = 50 as const;
 const HIGH_CONFIDENCE_THRESHOLD = 5 as const; // 5+ conversions for high confidence
 
@@ -81,6 +82,14 @@ class StrategyHistoryService {
   private records: ConversionRecord[] = [];
 
   constructor() {
+    // Best-effort cleanup for older schema keys.
+    try {
+      if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
+        window.sessionStorage.removeItem('strategy_history_v1');
+      }
+    } catch {
+      // Ignore
+    }
     this.loadFromStorage();
   }
 
@@ -131,16 +140,18 @@ class StrategyHistoryService {
       return null;
     }
 
-    // Calculate statistics
+    // Calculate aggregate statistics
     const totalConversions = filtered.length;
     const successfulConversions = filtered.filter((r) => r.success);
-    const successRate = successfulConversions.length / totalConversions;
+    const successRate = totalConversions > 0 ? successfulConversions.length / totalConversions : 0;
     const avgDurationMs =
-      successfulConversions.reduce((sum, r) => sum + r.durationMs, 0) /
-        successfulConversions.length || 0;
+      successfulConversions.length > 0
+        ? successfulConversions.reduce((sum, r) => sum + r.durationMs, 0) /
+          successfulConversions.length
+        : 0;
 
-    // Find preferred path (highest success rate, then fastest)
-    const pathStats = this.calculatePathStatistics(successfulConversions);
+    // Find preferred path (highest success rate, then fastest successful duration)
+    const pathStats = this.calculatePathStatistics(filtered);
     const preferredPath = this.selectPreferredPath(pathStats);
 
     return {
@@ -169,26 +180,28 @@ class StrategyHistoryService {
       return null;
     }
 
-    const successfulRecords = history.records.filter((r) => r.success);
-    if (successfulRecords.length === 0) {
+    const preferredPath = history.statistics.preferredPath;
+    const preferredAll = history.records.filter((r) => r.path === preferredPath);
+    const preferredSuccesses = preferredAll.filter((r) => r.success);
+
+    if (preferredSuccesses.length === 0) {
       return null;
     }
 
-    // Calculate confidence (0-1, based on number of successful conversions)
-    const confidence = Math.min(successfulRecords.length / HIGH_CONFIDENCE_THRESHOLD, 1.0);
+    const preferredSuccessRate =
+      preferredAll.length > 0 ? preferredSuccesses.length / preferredAll.length : 0;
 
-    // Get average duration for preferred path
-    const preferredPathRecords = successfulRecords.filter(
-      (r) => r.path === history.statistics.preferredPath
-    );
+    // Confidence: require both enough samples and a stable success rate.
+    const confidenceByCount = Math.min(preferredAll.length / HIGH_CONFIDENCE_THRESHOLD, 1.0);
+    const confidence = Math.max(0, Math.min(1, confidenceByCount * preferredSuccessRate));
+
     const avgDurationMs =
-      preferredPathRecords.reduce((sum, r) => sum + r.durationMs, 0) /
-        preferredPathRecords.length || 0;
+      preferredSuccesses.reduce((sum, r) => sum + r.durationMs, 0) / preferredSuccesses.length;
 
     return {
-      path: history.statistics.preferredPath,
+      path: preferredPath,
       confidence,
-      basedOnRecords: successfulRecords.length,
+      basedOnRecords: preferredAll.length,
       avgDurationMs,
     };
   }
@@ -226,7 +239,7 @@ class StrategyHistoryService {
         const avgDurationMs =
           successfulRecords.reduce((sum, r) => sum + r.durationMs, 0) / successfulRecords.length ||
           0;
-        const pathStats = this.calculatePathStatistics(successfulRecords);
+        const pathStats = this.calculatePathStatistics(records);
         const preferredPath = this.selectPreferredPath(pathStats);
 
         histories.push({
@@ -272,10 +285,10 @@ class StrategyHistoryService {
       const storage = JSON.parse(raw) as HistoryStorage;
 
       // Validate version
-      if (storage.version !== 1) {
+      if (storage.version !== 2) {
         logger.debug('conversion', 'Strategy history version mismatch, clearing', {
           storedVersion: storage.version,
-          currentVersion: 1,
+          currentVersion: 2,
         });
         window.sessionStorage.removeItem(STORAGE_KEY);
         return;
@@ -305,7 +318,7 @@ class StrategyHistoryService {
       const storage: HistoryStorage = {
         records: this.records,
         maxRecords: MAX_RECORDS,
-        version: 1,
+        version: 2,
       };
 
       window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
@@ -323,6 +336,7 @@ class StrategyHistoryService {
     ConversionPath,
     {
       count: number;
+      successCount: number;
       totalDuration: number;
       avgDuration: number;
       successRate: number;
@@ -332,6 +346,7 @@ class StrategyHistoryService {
       ConversionPath,
       {
         count: number;
+        successCount: number;
         totalDuration: number;
         avgDuration: number;
         successRate: number;
@@ -342,16 +357,24 @@ class StrategyHistoryService {
       if (!stats.has(record.path)) {
         stats.set(record.path, {
           count: 0,
+          successCount: 0,
           totalDuration: 0,
           avgDuration: 0,
-          successRate: 1.0, // All records here are successful
+          successRate: 0,
         });
       }
 
       const pathStats = stats.get(record.path)!;
       pathStats.count++;
-      pathStats.totalDuration += record.durationMs;
-      pathStats.avgDuration = pathStats.totalDuration / pathStats.count;
+
+      if (record.success) {
+        pathStats.successCount++;
+        pathStats.totalDuration += record.durationMs;
+        pathStats.avgDuration = pathStats.totalDuration / pathStats.successCount;
+      }
+
+      pathStats.successRate =
+        pathStats.count > 0 ? pathStats.successCount / pathStats.count : pathStats.successRate;
     }
 
     return stats;
@@ -370,6 +393,7 @@ class StrategyHistoryService {
       ConversionPath,
       {
         count: number;
+        successCount: number;
         totalDuration: number;
         avgDuration: number;
         successRate: number;
@@ -381,21 +405,41 @@ class StrategyHistoryService {
     }
 
     let preferredPath: ConversionPath = 'cpu';
-    let maxCount = 0;
-    let minAvgDuration = Number.POSITIVE_INFINITY;
+    let bestSuccessRate = -1;
+    let bestSuccessCount = -1;
+    let bestAvgDuration = Number.POSITIVE_INFINITY;
 
     for (const [path, stats] of pathStats) {
-      // Prefer path with more conversions
-      if (stats.count > maxCount) {
+      // Exclude paths that never succeeded.
+      if (stats.successCount <= 0) {
+        continue;
+      }
+
+      // 1) Highest success rate
+      if (stats.successRate > bestSuccessRate) {
         preferredPath = path;
-        maxCount = stats.count;
-        minAvgDuration = stats.avgDuration;
-      } else if (stats.count === maxCount) {
-        // Tie-breaker: Prefer faster path
-        if (stats.avgDuration < minAvgDuration) {
-          preferredPath = path;
-          minAvgDuration = stats.avgDuration;
-        }
+        bestSuccessRate = stats.successRate;
+        bestSuccessCount = stats.successCount;
+        bestAvgDuration = stats.avgDuration;
+        continue;
+      }
+
+      // 2) Tie-breaker: more successful samples
+      if (stats.successRate === bestSuccessRate && stats.successCount > bestSuccessCount) {
+        preferredPath = path;
+        bestSuccessCount = stats.successCount;
+        bestAvgDuration = stats.avgDuration;
+        continue;
+      }
+
+      // 3) Tie-breaker: faster average duration among successes
+      if (
+        stats.successRate === bestSuccessRate &&
+        stats.successCount === bestSuccessCount &&
+        stats.avgDuration < bestAvgDuration
+      ) {
+        preferredPath = path;
+        bestAvgDuration = stats.avgDuration;
       }
     }
 

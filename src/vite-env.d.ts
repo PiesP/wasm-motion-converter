@@ -245,6 +245,52 @@ declare global {
       metrics: () => ConversionMetricRecord[];
       metricsSummary: () => ConversionMetricGroup[];
       clearMetrics: () => void;
+
+      /** Dev-only: read persisted dev conversion overrides (session-scoped). */
+      devOverrides?: () => {
+        forcedPath: 'auto' | 'cpu' | 'gpu';
+        disableFallback: boolean;
+        forcedGifEncoder:
+          | 'auto'
+          | 'modern-gif'
+          | 'ffmpeg-direct'
+          | 'ffmpeg-palette'
+          | 'ffmpeg-palette-frames';
+        forcedCaptureMode: 'auto' | 'demuxer' | 'track' | 'frame-callback' | 'seek';
+        disableDemuxerInAuto: boolean;
+        forcedStrategyCodec: 'auto' | 'h264' | 'hevc' | 'av1' | 'vp8' | 'vp9' | 'unknown';
+      };
+
+      /** Dev-only: update persisted dev conversion overrides (session-scoped). */
+      setDevOverrides?: (patch: {
+        forcedPath?: 'auto' | 'cpu' | 'gpu';
+        disableFallback?: boolean;
+        forcedGifEncoder?:
+          | 'auto'
+          | 'modern-gif'
+          | 'ffmpeg-direct'
+          | 'ffmpeg-palette'
+          | 'ffmpeg-palette-frames';
+        forcedCaptureMode?: 'auto' | 'demuxer' | 'track' | 'frame-callback' | 'seek';
+        disableDemuxerInAuto?: boolean;
+        forcedStrategyCodec?: 'auto' | 'h264' | 'hevc' | 'av1' | 'vp8' | 'vp9' | 'unknown';
+      }) => {
+        forcedPath: 'auto' | 'cpu' | 'gpu';
+        disableFallback: boolean;
+        forcedGifEncoder:
+          | 'auto'
+          | 'modern-gif'
+          | 'ffmpeg-direct'
+          | 'ffmpeg-palette'
+          | 'ffmpeg-palette-frames';
+        forcedCaptureMode: 'auto' | 'demuxer' | 'track' | 'frame-callback' | 'seek';
+        disableDemuxerInAuto: boolean;
+        forcedStrategyCodec: 'auto' | 'h264' | 'hevc' | 'av1' | 'vp8' | 'vp9' | 'unknown';
+      };
+
+      /** Dev-only: clear persisted dev conversion overrides (session-scoped). */
+      clearDevOverrides?: () => void;
+
       lastDecision: () => {
         timestamp: number;
         format: 'gif' | 'webp' | 'mp4';

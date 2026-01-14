@@ -21,6 +21,7 @@ import ExportLogsButton from '@components/ExportLogsButton';
 import LicenseAttribution from '@components/LicenseAttribution';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
+import DevRouteOverrides from '@components/DevRouteOverrides';
 import ThemeToggle from '@components/ThemeToggle';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
@@ -32,6 +33,11 @@ import { extendedCapabilityService } from '@services/video-pipeline/extended-cap
 import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
 import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
 import { conversionMetricsService } from '@services/orchestration/conversion-metrics-service';
+import {
+  clearDevConversionOverrides,
+  getDevConversionOverrides,
+  setDevConversionOverrides,
+} from '@services/orchestration/dev-conversion-overrides';
 import { startPrefetch } from '@services/cdn/prefetch-service';
 import {
   appState,
@@ -194,6 +200,21 @@ const App: Component = () => {
               metrics: () => conversionMetricsService.getAll(),
               metricsSummary: () => conversionMetricsService.getSummary(),
               clearMetrics: () => conversionMetricsService.clear(),
+              devOverrides: () => getDevConversionOverrides(),
+              setDevOverrides: (patch: {
+                forcedPath?: 'auto' | 'cpu' | 'gpu';
+                disableFallback?: boolean;
+                forcedGifEncoder?:
+                  | 'auto'
+                  | 'modern-gif'
+                  | 'ffmpeg-direct'
+                  | 'ffmpeg-palette'
+                  | 'ffmpeg-palette-frames';
+                forcedCaptureMode?: 'auto' | 'demuxer' | 'track' | 'frame-callback' | 'seek';
+                disableDemuxerInAuto?: boolean;
+                forcedStrategyCodec?: 'auto' | 'h264' | 'hevc' | 'av1' | 'vp8' | 'vp9' | 'unknown';
+              }) => setDevConversionOverrides(patch),
+              clearDevOverrides: () => clearDevConversionOverrides(),
               lastDecision: () => getConversionAutoSelectionDebug(),
               phaseTimings: () => getConversionPhaseTimingsDebug(),
               testStrategy: (codec: string, format: 'gif' | 'webp' | 'mp4') => {
@@ -549,6 +570,8 @@ const App: Component = () => {
                 disabled={!videoMetadata() || isBusy()}
                 tooltip="Reduce dimensions to decrease file size and speed up conversion"
               />
+
+              <DevRouteOverrides disabled={isBusy()} />
             </div>
           </div>
 

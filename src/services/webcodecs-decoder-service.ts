@@ -160,6 +160,7 @@ export class WebCodecsDecoderService {
       frameStartNumber,
       maxFrames,
       captureMode = 'auto',
+      disableDemuxer = false,
       codec,
       quality,
       onFrame,
@@ -182,11 +183,16 @@ export class WebCodecsDecoderService {
 
     // Priority 1: Try demuxer path first (eliminates seeking overhead for AV1/HEVC/VP9)
     // Only attempt if captureMode is 'auto' or explicitly 'demuxer'
-    if (captureMode === 'demuxer' && !canUseDemuxer(file, demuxerMetadata)) {
+    if (disableDemuxer) {
+      if (captureMode === 'demuxer') {
+        throw new Error('Demuxer capture mode requested but demuxer was disabled by caller.');
+      }
+    } else if (captureMode === 'demuxer' && !canUseDemuxer(file, demuxerMetadata)) {
       throw new Error('Demuxer capture mode requested but is not available for this file.');
     }
 
     if (
+      !disableDemuxer &&
       (captureMode === 'auto' || captureMode === 'demuxer') &&
       canUseDemuxer(file, demuxerMetadata)
     ) {

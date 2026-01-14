@@ -332,8 +332,15 @@ class StrategyRegistryService {
       return true;
     }
 
-    // Check hardware decode support for HEVC and H.264
-    if (isHevcCodec(normalized) || isH264Codec(normalized)) {
+    // H.264: prefer the FFmpeg CPU palette pipeline for GIF.
+    // Rationale: in practice, FFmpeg palettegen/paletteuse is usually faster and more stable
+    // than WebCodecs decode + JS-side GIF encoding, even when hardware decode is available.
+    if (isH264Codec(normalized)) {
+      return false;
+    }
+
+    // Check hardware decode support for HEVC
+    if (isHevcCodec(normalized)) {
       const hint = this.getCodecHardwareDecodeHint(normalized, capabilities);
 
       // Explicit hardware decode hint takes precedence
@@ -621,11 +628,9 @@ class StrategyRegistryService {
       }
     }
 
-    // For complex codecs (HEVC, AV1, VP9) with long clips: prefer GPU
-    if (
-      (isHevcCodec(codec) || isAv1Codec(codec) || codec === 'vp9' || codec === 'vp8') &&
-      durationSeconds > LONG_CLIP_THRESHOLD
-    ) {
+    // For complex codecs (HEVC, AV1) with long clips: prefer GPU.
+    // Note: VP8/VP9 GIF stays on CPU because FFmpeg palettegen is typically faster.
+    if ((isHevcCodec(codec) || isAv1Codec(codec)) && durationSeconds > LONG_CLIP_THRESHOLD) {
       if (strategy.preferredPath !== 'gpu') {
         return {
           ...strategy,
