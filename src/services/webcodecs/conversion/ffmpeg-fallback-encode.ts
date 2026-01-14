@@ -93,7 +93,43 @@ export async function encodeWithFFmpegFallback(params: {
 
   // Rawvideo avoids expensive PNG/JPEG encoding/decoding, but can require large contiguous memory.
   // Only use it when explicitly preferred and the estimated memory footprint looks safe.
-  const RAWVIDEO_MAX_BYTES = 256 * 1024 * 1024; // 256MB
+  const MB = 1024 * 1024;
+
+  // Prefer `performance.memory.jsHeapSizeLimit` when available (Chrome).
+  // This is NOT total system memory, but it's a useful upper bound for JS allocations.
+  const jsHeapSizeLimitBytes = (
+    performance as Performance & { memory?: { jsHeapSizeLimit?: number } }
+  ).memory?.jsHeapSizeLimit;
+  const jsHeapSizeLimitMB = jsHeapSizeLimitBytes ? Math.floor(jsHeapSizeLimitBytes / MB) : null;
+
+  // As a fallback, use `navigator.deviceMemory` (GB, coarse). Not all browsers expose it.
+  const deviceMemoryGB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  const deviceMemoryMB =
+    typeof deviceMemoryGB === 'number' && Number.isFinite(deviceMemoryGB)
+      ? Math.floor(deviceMemoryGB * 1024)
+      : null;
+
+  // Conservative cap because the raw buffer lives in JS and is then copied into FFmpeg's WASM VFS
+  // (so peak memory can be ~2x the raw frame bytes).
+  const RAWVIDEO_MAX_BYTES = (() => {
+    // If we can see JS heap limit, allow up to 8% of it (clamped).
+    if (jsHeapSizeLimitMB) {
+      // NOTE: 700x700 @ ~138 frames is ~270MB. On some browsers the JS heap limit can be ~2GB;
+      // 8% would be too conservative and prevent rawvideo from ever engaging.
+      const bytes = Math.floor(jsHeapSizeLimitMB * MB * 0.15);
+      return Math.min(512 * MB, Math.max(192 * MB, bytes));
+    }
+
+    if (deviceMemoryMB) {
+      if (deviceMemoryMB >= 8192) return 512 * MB;
+      if (deviceMemoryMB >= 4096) return 384 * MB;
+      if (deviceMemoryMB >= 2048) return 256 * MB;
+      return 192 * MB;
+    }
+
+    // Baseline fallback: keep it conservative but not so low that rawvideo never triggers.
+    return 320 * MB;
+  })();
   const estimatedScaledWidth = metadata?.width
     ? Math.max(1, Math.round(metadata.width * scale))
     : null;
@@ -111,7 +147,7 @@ export async function encodeWithFFmpegFallback(params: {
       ? estimatedScaledWidth * estimatedScaledHeight * 4 * estimatedFramesForRaw
       : null;
 
-  const shouldTryRawVideo: boolean =
+  let shouldTryRawVideo: boolean =
     intent === 'preferred' &&
     format === 'gif' &&
     !isMemoryCritical() &&
@@ -125,10 +161,37 @@ export async function encodeWithFFmpegFallback(params: {
   let rawVideoBuffer: Uint8Array | null = null;
   let rawVideoFramesWritten = 0;
 
+  if (intent === 'preferred' && format === 'gif') {
+    logger.debug('conversion', 'Rawvideo frame staging eligibility', {
+      codec: metadata?.codec,
+      isMemoryCritical: isMemoryCritical(),
+      estimatedRawBytes,
+      rawvideoMaxBytes: RAWVIDEO_MAX_BYTES,
+      jsHeapSizeLimitMB,
+      deviceMemoryGB,
+      enabled: shouldTryRawVideo,
+    });
+  }
+
   // Important for TypeScript control-flow: the buffer is mutated inside an async callback.
   // If we only assign it there, TS may treat it as always-null here.
+  // Also, try to preallocate to avoid repeated growth copies (best effort).
   if (shouldTryRawVideo) {
-    rawVideoBuffer = new Uint8Array(0);
+    const initialBytes = Math.max(0, Math.min(RAWVIDEO_MAX_BYTES, estimatedRawBytes ?? 0));
+    try {
+      rawVideoBuffer = new Uint8Array(initialBytes);
+    } catch (error) {
+      // Allocation can fail on memory-constrained devices; fall back to PNG/JPEG sequence.
+      shouldTryRawVideo = false;
+      rawVideoBuffer = null;
+      logger.warn('conversion', 'Disabling rawvideo frame staging due to allocation failure', {
+        codec: metadata?.codec,
+        initialBytes,
+        rawvideoMaxBytes: RAWVIDEO_MAX_BYTES,
+        estimatedRawBytes,
+        error: String(error),
+      });
+    }
   }
 
   const ensureRawBufferCapacity = (requiredFrames: number, frameByteLength: number): void => {
@@ -348,6 +411,19 @@ export async function encodeWithFFmpegFallback(params: {
     const rawBytes = rawVideoBuffer.subarray(0, bytesUsed);
     await ffmpegService.writeVirtualFile(rawVideoFileName, rawBytes);
     fallbackTempFiles.push(rawVideoFileName);
+
+    logger.info('conversion', 'Rawvideo frames staged for FFmpeg', {
+      fileName: rawVideoFileName,
+      width,
+      height,
+      frameCount: rawVideoFramesWritten,
+      bytesUsed,
+      sizeMB: Number((bytesUsed / MB).toFixed(1)),
+    });
+
+    // Release large JS buffers as early as possible (FFmpeg has its own VFS copy).
+    rawVideoBuffer = null;
+    lastValidFallbackRgbaFrame = null;
   }
 
   const fallbackBlob = await ffmpegService.encodeFrameSequence({
