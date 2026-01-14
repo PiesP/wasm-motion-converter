@@ -22,6 +22,66 @@ export interface ConversionMatrixTestParams {
   includeStrategyCodecScenarios?: boolean;
 }
 
+export type ConversionMatrixTestEnvSnapshot = {
+  url: string | null;
+  userAgent: string | null;
+  crossOriginIsolated: boolean | null;
+  sharedArrayBuffer: boolean;
+  hardwareConcurrency: number | null;
+};
+
+export type ConversionMatrixTestRunRecord = {
+  runIndex: number;
+  totalRuns: number;
+  scenarioId: string;
+  scenarioLabel: string;
+  iteration: number;
+  repeats: number;
+  format: Extract<ConversionFormat, 'gif' | 'webp'>;
+  overrides: DevConversionOverrides;
+  quality: ConversionOptions['quality'];
+  scale: ConversionOptions['scale'];
+  startedAtPerfMs: number;
+  endedAtPerfMs: number;
+  elapsedMs: number;
+  outcome: 'success' | 'error';
+  outputSizeBytes?: number;
+  executedPath?: string;
+  encoder?: string;
+  captureModeUsed?: string | null;
+  originalCodec?: string | null;
+  error?: string;
+};
+
+export type ConversionMatrixTestReport = {
+  schemaVersion: 1;
+  reportId: string;
+  startedAt: number;
+  endedAt: number;
+  durationMs: number;
+  env: ConversionMatrixTestEnvSnapshot;
+  file: {
+    name: string;
+    sizeBytes: number;
+    type: string;
+  };
+  params: {
+    formats: Array<Extract<ConversionFormat, 'gif' | 'webp'>>;
+    repeats: number;
+    quality: ConversionOptions['quality'];
+    scale: ConversionOptions['scale'];
+    includeStrategyCodecScenarios: boolean;
+  };
+  scenarios: Array<{
+    id: string;
+    label: string;
+    format: Extract<ConversionFormat, 'gif' | 'webp'>;
+    overrides: Partial<DevConversionOverrides>;
+  }>;
+  summary: ConversionMatrixTestSummary;
+  runs: ConversionMatrixTestRunRecord[];
+};
+
 interface MatrixScenario {
   id: string;
   label: string;
@@ -39,6 +99,64 @@ export interface ConversionMatrixTestSummary {
   totalRuns: number;
   successCount: number;
   errorCount: number;
+}
+
+function createReportId(): string {
+  const base = `matrix-${Date.now()}`;
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `${base}-${crypto.randomUUID()}`;
+    }
+  } catch {
+    // ignore
+  }
+
+  const rand = Math.random().toString(16).slice(2);
+  return `${base}-${rand}`;
+}
+
+function captureEnvSnapshot(): ConversionMatrixTestEnvSnapshot {
+  const url = (() => {
+    try {
+      return typeof location !== 'undefined' ? location.href : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const userAgent = (() => {
+    try {
+      return typeof navigator !== 'undefined' ? navigator.userAgent : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const crossOriginIsolatedValue = (() => {
+    try {
+      return typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated === true : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const hardwareConcurrency = (() => {
+    try {
+      return typeof navigator !== 'undefined' && typeof navigator.hardwareConcurrency === 'number'
+        ? navigator.hardwareConcurrency
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  return {
+    url,
+    userAgent,
+    crossOriginIsolated: crossOriginIsolatedValue,
+    sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+    hardwareConcurrency,
+  };
 }
 
 const BASELINE_OVERRIDES: DevConversionOverrides = {
@@ -255,6 +373,13 @@ async function yieldToUI(): Promise<void> {
 export async function runConversionMatrixTest(
   params: ConversionMatrixTestParams
 ): Promise<ConversionMatrixTestSummary> {
+  const report = await runConversionMatrixTestWithReport(params);
+  return report.summary;
+}
+
+export async function runConversionMatrixTestWithReport(
+  params: ConversionMatrixTestParams
+): Promise<ConversionMatrixTestReport> {
   if (!import.meta.env.DEV) {
     throw new Error('Conversion matrix test is only available in dev builds.');
   }
@@ -271,6 +396,8 @@ export async function runConversionMatrixTest(
   const totalRuns = scenarios.length * repeats;
   const startedAt = Date.now();
   const perfStart = performance.now();
+  const reportId = createReportId();
+  const runs: ConversionMatrixTestRunRecord[] = [];
 
   let successCount = 0;
   let errorCount = 0;
@@ -331,8 +458,31 @@ export async function runConversionMatrixTest(
             onStatus: () => undefined,
           });
 
-          const elapsedMs = Math.round(performance.now() - start);
+          const end = performance.now();
+          const elapsedMs = Math.round(end - start);
           successCount++;
+
+          runs.push({
+            runIndex,
+            totalRuns,
+            scenarioId: scenario.id,
+            scenarioLabel: scenario.label,
+            iteration: i + 1,
+            repeats,
+            format: scenario.format,
+            overrides: effectiveOverrides,
+            quality: options.quality,
+            scale: options.scale,
+            startedAtPerfMs: start,
+            endedAtPerfMs: end,
+            elapsedMs,
+            outcome: 'success',
+            outputSizeBytes: result.blob.size,
+            executedPath: result.metadata.path,
+            encoder: result.metadata.encoder,
+            captureModeUsed: result.metadata.captureModeUsed ?? null,
+            originalCodec: result.metadata.originalCodec ?? params.metadata?.codec ?? null,
+          });
 
           logger.info('conversion', 'Matrix run success', {
             runIndex,
@@ -350,8 +500,27 @@ export async function runConversionMatrixTest(
             originalCodec: result.metadata.originalCodec ?? params.metadata?.codec ?? null,
           });
         } catch (error) {
-          const elapsedMs = Math.round(performance.now() - start);
+          const end = performance.now();
+          const elapsedMs = Math.round(end - start);
           errorCount++;
+
+          runs.push({
+            runIndex,
+            totalRuns,
+            scenarioId: scenario.id,
+            scenarioLabel: scenario.label,
+            iteration: i + 1,
+            repeats,
+            format: scenario.format,
+            overrides: effectiveOverrides,
+            quality: options.quality,
+            scale: options.scale,
+            startedAtPerfMs: start,
+            endedAtPerfMs: end,
+            elapsedMs,
+            outcome: 'error',
+            error: getErrorMessage(error),
+          });
 
           logger.error('conversion', 'Matrix run error', {
             runIndex,
@@ -391,7 +560,7 @@ export async function runConversionMatrixTest(
     durationMs,
   });
 
-  return {
+  const summary: ConversionMatrixTestSummary = {
     startedAt,
     endedAt,
     durationMs,
@@ -401,5 +570,34 @@ export async function runConversionMatrixTest(
     totalRuns,
     successCount,
     errorCount,
+  };
+
+  return {
+    schemaVersion: 1,
+    reportId,
+    startedAt,
+    endedAt,
+    durationMs,
+    env: captureEnvSnapshot(),
+    file: {
+      name: params.file.name,
+      sizeBytes: params.file.size,
+      type: params.file.type,
+    },
+    params: {
+      formats,
+      repeats,
+      quality: params.quality,
+      scale: params.scale,
+      includeStrategyCodecScenarios: params.includeStrategyCodecScenarios === true,
+    },
+    scenarios: scenarios.map((scenario) => ({
+      id: scenario.id,
+      label: scenario.label,
+      format: scenario.format,
+      overrides: scenario.overrides,
+    })),
+    summary,
+    runs,
   };
 }

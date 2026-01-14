@@ -54,7 +54,13 @@ export async function captureWithDemuxer(
 
     const targetWidth = Math.max(1, Math.round(decoderConfig.codedWidth * scale));
     const targetHeight = Math.max(1, Math.round(decoderConfig.codedHeight * scale));
-    const totalFrames = maxFrames ?? Math.ceil(demuxerMetadata.duration * targetFps);
+
+    // maxFrames is a budget cap, not a promise that we can extract frames beyond the
+    // media duration. Always bound the expected frame count to the demuxer-reported duration.
+    const estimatedTotalFrames = Math.max(1, Math.ceil(demuxerMetadata.duration * targetFps));
+    const totalFrames = maxFrames
+      ? Math.min(maxFrames, estimatedTotalFrames)
+      : estimatedTotalFrames;
     const requiredFramesForSuccess = Math.max(1, totalFrames - 1);
 
     // Dev-only diagnostics (rate-limited) to help debug demuxer decode stalls.
@@ -69,7 +75,7 @@ export async function captureWithDemuxer(
     // to preserve reference chains. We downsample AFTER decode by selecting decoded
     // frames based on timestamps.
     const captureIntervalMicros = Math.max(1, Math.round(1_000_000 / targetFps));
-    const maxDurationSeconds = maxFrames ? maxFrames / targetFps : demuxerMetadata.duration;
+    const maxDurationSeconds = Math.min(demuxerMetadata.duration, totalFrames / targetFps);
     const maxDurationMicros = Math.round(maxDurationSeconds * 1_000_000);
     const durationSlackMicros = Math.round(1_000_000);
     let baseTimestampMicros: number | null = null;

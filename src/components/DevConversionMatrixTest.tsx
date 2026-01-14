@@ -1,7 +1,17 @@
 import type { Component } from 'solid-js';
 import { createMemo, createSignal, Show } from 'solid-js';
 
-import { runConversionMatrixTest } from '@services/dev/conversion-matrix-test';
+import type { ConversionMatrixTestReport } from '@services/dev/conversion-matrix-test';
+import { runConversionMatrixTestWithReport } from '@services/dev/conversion-matrix-test';
+import {
+  buildMatrixTestReportFilename,
+  clearMatrixTestReports,
+  deleteMatrixTestReport,
+  downloadTextFile,
+  listMatrixTestReports,
+  loadMatrixTestReport,
+  persistMatrixTestReport,
+} from '@services/dev/matrix-test-report-store';
 import {
   conversionSettings,
   conversionStatusMessage,
@@ -20,6 +30,9 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
   const [includeGif, setIncludeGif] = createSignal(true);
   const [includeWebp, setIncludeWebp] = createSignal(true);
   const [includeStrategyCodecScenarios, setIncludeStrategyCodecScenarios] = createSignal(false);
+  const [autoDownloadReport, setAutoDownloadReport] = createSignal(true);
+  const [reportsRefreshToken, setReportsRefreshToken] = createSignal(0);
+  const [lastReportId, setLastReportId] = createSignal<string | null>(null);
 
   const canRun = createMemo(() => {
     return !!inputFile() && !props.disabled && !isRunning();
@@ -31,6 +44,33 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
     if (includeWebp()) formats.push('webp');
     return formats;
   });
+
+  const savedReports = createMemo(() => {
+    // This signal exists purely to trigger memo recomputation after mutations.
+    reportsRefreshToken();
+    return listMatrixTestReports();
+  });
+
+  const downloadReportById = (id: string): void => {
+    const report = loadMatrixTestReport<ConversionMatrixTestReport>(id);
+    if (!report) {
+      logger.warn('conversion', 'Matrix test report not found in storage', { id });
+      return;
+    }
+
+    const filename = buildMatrixTestReportFilename({
+      startedAt: report.startedAt,
+      fileName: report.file.name,
+      reportId: report.reportId,
+      format: 'json',
+    });
+
+    downloadTextFile({
+      filename,
+      text: JSON.stringify(report, null, 2),
+      mimeType: 'application/json;charset=utf-8',
+    });
+  };
 
   const run = async (): Promise<void> => {
     const file = inputFile();
@@ -46,7 +86,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
     setIsRunning(true);
     try {
       const settings = conversionSettings();
-      const summary = await runConversionMatrixTest({
+      const report = await runConversionMatrixTestWithReport({
         file,
         metadata: videoMetadata(),
         formats,
@@ -56,7 +96,42 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
         includeStrategyCodecScenarios: includeStrategyCodecScenarios(),
       });
 
-      logger.info('conversion', 'Matrix test summary (UI)', summary);
+      const reportJson = JSON.stringify(report, null, 2);
+
+      persistMatrixTestReport({
+        reportId: report.reportId,
+        createdAt: report.startedAt,
+        fileName: report.file.name,
+        totalRuns: report.summary.totalRuns,
+        successCount: report.summary.successCount,
+        errorCount: report.summary.errorCount,
+        durationMs: report.summary.durationMs,
+        reportJson,
+      });
+
+      setLastReportId(report.reportId);
+      setReportsRefreshToken((v) => v + 1);
+
+      const filename = buildMatrixTestReportFilename({
+        startedAt: report.startedAt,
+        fileName: report.file.name,
+        reportId: report.reportId,
+        format: 'json',
+      });
+
+      if (autoDownloadReport()) {
+        downloadTextFile({
+          filename,
+          text: reportJson,
+          mimeType: 'application/json;charset=utf-8',
+        });
+      }
+
+      logger.info('conversion', 'Matrix test report saved (UI)', {
+        reportId: report.reportId,
+        filename,
+        summary: report.summary,
+      });
     } finally {
       setIsRunning(false);
     }
@@ -84,7 +159,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
             }}
             disabled={!canRun()}
           >
-            {isRunning() ? 'Running…' : 'Run matrix (x3)'}
+            {isRunning() ? 'Running…' : `Run matrix (x${repeats()})`}
           </button>
         </div>
 
@@ -137,6 +212,17 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
               />
               Include strategy codec simulations
             </label>
+
+            <label class="inline-flex items-center gap-2 text-xs text-indigo-900 dark:text-indigo-200">
+              <input
+                type="checkbox"
+                class="h-4 w-4 rounded border-indigo-300 dark:border-indigo-700 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                checked={autoDownloadReport()}
+                onChange={(e) => setAutoDownloadReport(e.currentTarget.checked)}
+                disabled={props.disabled || isRunning()}
+              />
+              Auto-download report (JSON)
+            </label>
           </div>
 
           <Show when={!!inputFile()}>
@@ -156,6 +242,82 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
             <div class="text-[11px] text-indigo-800/80 dark:text-indigo-200/80">
               Running… check the console log. Current UI status message (if any):{' '}
               {conversionStatusMessage()}
+            </div>
+          </Show>
+
+          <Show when={lastReportId()}>
+            <div class="text-[11px] text-indigo-800/80 dark:text-indigo-200/80">
+              Last report saved: <span class="font-mono">{lastReportId()}</span>
+              <button
+                type="button"
+                class="ml-2 inline-flex items-center rounded-md border border-indigo-300 dark:border-indigo-700 px-2 py-0.5 text-[11px] font-medium text-indigo-900 dark:text-indigo-200 bg-white/70 dark:bg-gray-900/40 hover:bg-white dark:hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                onClick={() => {
+                  const id = lastReportId();
+                  if (!id) return;
+                  downloadReportById(id);
+                }}
+              >
+                Download again
+              </button>
+            </div>
+          </Show>
+
+          <Show when={savedReports().length > 0}>
+            <div class="mt-2 rounded-md border border-indigo-200 dark:border-indigo-800 bg-white/50 dark:bg-gray-950/20 p-3">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-xs font-semibold text-indigo-900 dark:text-indigo-200">
+                  Saved matrix reports (local)
+                </div>
+                <button
+                  type="button"
+                  class="inline-flex items-center rounded-md border border-indigo-300 dark:border-indigo-700 px-2 py-1 text-[11px] font-medium text-indigo-900 dark:text-indigo-200 bg-white/70 dark:bg-gray-900/40 hover:bg-white dark:hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  onClick={() => {
+                    clearMatrixTestReports();
+                    setReportsRefreshToken((v) => v + 1);
+                    setLastReportId(null);
+                  }}
+                  disabled={isRunning()}
+                >
+                  Clear
+                </button>
+              </div>
+
+              <div class="mt-2 space-y-2">
+                {savedReports().map((item) => (
+                  <div class="flex flex-wrap items-center justify-between gap-2" role="listitem">
+                    <div class="text-[11px] text-indigo-900 dark:text-indigo-200">
+                      <span class="font-mono">{item.id}</span>
+                      <span class="ml-2 opacity-80">
+                        {item.fileName} · {item.successCount}/{item.totalRuns} ok ·{' '}
+                        {item.errorCount} err · {Math.round(item.durationMs / 1000)}s
+                      </span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="inline-flex items-center rounded-md border border-indigo-300 dark:border-indigo-700 px-2 py-0.5 text-[11px] font-medium text-indigo-900 dark:text-indigo-200 bg-white/70 dark:bg-gray-900/40 hover:bg-white dark:hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        onClick={() => downloadReportById(item.id)}
+                      >
+                        Download
+                      </button>
+                      <button
+                        type="button"
+                        class="inline-flex items-center rounded-md border border-red-300 dark:border-red-700 px-2 py-0.5 text-[11px] font-medium text-red-900 dark:text-red-200 bg-white/70 dark:bg-gray-900/40 hover:bg-white dark:hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
+                        onClick={() => {
+                          deleteMatrixTestReport(item.id);
+                          setReportsRefreshToken((v) => v + 1);
+                          if (lastReportId() === item.id) {
+                            setLastReportId(null);
+                          }
+                        }}
+                        disabled={isRunning()}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </Show>
         </div>

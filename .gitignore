@@ -15,6 +15,7 @@ build/
 *.tsbuildinfo
 
 # Logs / temp
+logs/
 *.log
 tmp/
 temp/
