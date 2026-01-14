@@ -129,15 +129,15 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     },
   ],
 
-  // AV1 strategies (no fallback - fail-fast)
+  // AV1 strategies (CPU fallback for compatibility)
   [
     'av1:gif',
     {
       codec: 'av1',
       format: 'gif',
       preferredPath: 'gpu',
-      fallbackPath: 'gpu', // No actual fallback - will error if unsupported
-      reason: 'AV1 requires WebCodecs decode (FFmpeg AV1 decode is too slow)',
+      fallbackPath: 'cpu', // CPU fallback available (slow but compatible)
+      reason: 'AV1 prefers WebCodecs HW decode; falls back to FFmpeg CPU decode if unavailable',
       benchmarks: {
         avgTimeSeconds: 6.2,
         successRate: 0.89,
@@ -150,8 +150,8 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
       codec: 'av1',
       format: 'webp',
       preferredPath: 'gpu',
-      fallbackPath: 'gpu', // No actual fallback - will error if unsupported
-      reason: 'AV1 requires WebCodecs decode (FFmpeg AV1 decode is too slow)',
+      fallbackPath: 'cpu', // CPU fallback available (slow but compatible)
+      reason: 'AV1 prefers WebCodecs HW decode; falls back to FFmpeg CPU decode if unavailable',
       benchmarks: {
         avgTimeSeconds: 5.8,
         successRate: 0.88,
@@ -164,8 +164,8 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
       codec: 'av1',
       format: 'mp4',
       preferredPath: 'webav',
-      fallbackPath: 'webav', // No actual fallback - will error if unsupported
-      reason: 'AV1 requires WebCodecs support for efficient processing',
+      fallbackPath: 'cpu', // CPU fallback available (FFmpeg re-encode as last resort)
+      reason: 'AV1 prefers WebAV; falls back to FFmpeg CPU transcode if unavailable',
       benchmarks: {
         avgTimeSeconds: 4.9,
         successRate: 0.91,
