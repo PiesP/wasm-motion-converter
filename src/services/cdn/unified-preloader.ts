@@ -12,6 +12,7 @@
  */
 
 import { loadFFmpegAsset, loadFFmpegClassWorker } from '@services/ffmpeg/core-assets';
+import { ffmpegService } from '@services/ffmpeg-service';
 import { waitForSWReady } from '@services/sw/sw-readiness';
 import { loadFromCDN } from '@utils/cdn-loader';
 import { getErrorMessage } from '@utils/error-utils';
@@ -21,7 +22,7 @@ import { logger } from '@utils/logger';
  * Preload progress state
  */
 export interface PreloadProgress {
-  phase: 'waiting-sw' | 'downloading' | 'validating' | 'complete' | 'error';
+  phase: 'waiting-sw' | 'downloading' | 'initializing-ffmpeg' | 'validating' | 'complete' | 'error';
   currentFile: string;
   completedFiles: number;
   totalFiles: number;
@@ -236,7 +237,53 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
       }
     }
 
-    // Phase 3: Complete
+    // Phase 3: Initialize FFmpeg runtime
+    emitProgress({
+      phase: 'initializing-ffmpeg',
+      currentFile: 'FFmpeg runtime',
+      completedFiles: PRELOAD_ASSETS.length,
+      totalFiles: PRELOAD_ASSETS.length,
+      percentage: 95,
+    });
+
+    logger.info('general', 'Initializing FFmpeg runtime');
+
+    try {
+      await ffmpegService.initialize(
+        (progress) => {
+          // Map 0-100 init progress to 95-99 overall
+          const mappedProgress = 95 + Math.round(progress * 0.04);
+          emitProgress({
+            phase: 'initializing-ffmpeg',
+            currentFile: 'FFmpeg runtime',
+            completedFiles: PRELOAD_ASSETS.length,
+            totalFiles: PRELOAD_ASSETS.length,
+            percentage: Math.min(mappedProgress, 99),
+          });
+        },
+        (status) => {
+          emitProgress({
+            phase: 'initializing-ffmpeg',
+            currentFile: status,
+            completedFiles: PRELOAD_ASSETS.length,
+            totalFiles: PRELOAD_ASSETS.length,
+            percentage: 98,
+          });
+        }
+      );
+      logger.info('general', 'FFmpeg runtime initialized');
+    } catch (ffmpegError) {
+      // Log but don't fail - FFmpeg can be initialized on-demand when selecting a file
+      logger.warn(
+        'general',
+        'FFmpeg initialization failed during preload, will retry on file selection',
+        {
+          error: getErrorMessage(ffmpegError),
+        }
+      );
+    }
+
+    // Phase 4: Complete
     preloadComplete = true;
     preloadInProgress = false;
 

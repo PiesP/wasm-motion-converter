@@ -737,24 +737,37 @@ export default defineConfig(({ mode }) => {
             // Shared internal modules used by multiple service bundles.
             // Keeping these in a dedicated chunk avoids circular chunk dependencies
             // (e.g., services-ffmpeg <-> services-core) when both rely on common utils.
-            if (id.includes('src/utils/') || id.includes('src/services/shared/')) {
+            // Also includes CDN utilities (cdn-config, cdn-url-builder, cdn-health-tracker)
+            // that are used by both FFmpeg and unified-preloader to break cycles.
+            if (
+              id.includes('src/utils/') ||
+              id.includes('src/services/shared/') ||
+              id.includes('cdn-config') ||
+              id.includes('cdn-url-builder') ||
+              id.includes('cdn-health-tracker') ||
+              id.includes('cdn-loader')
+            ) {
               return 'services-shared';
             }
 
-            // Core services (orchestration + WebCodecs + video pipeline)
-            // Keep these together to avoid circular chunk dependencies between
-            // webcodecs + orchestration during manual chunking.
+            // Conversion services - ALL conversion-related modules in one chunk
+            // Includes: ffmpeg-service, cpu-path, ffmpeg, cdn, orchestration,
+            // webcodecs, video-pipeline, encoders, sw
+            // These are tightly coupled (webcodecs-conversion-service imports ffmpegService,
+            // unified-preloader imports ffmpegService) so must be in same chunk
+            // to avoid circular chunk dependencies.
             if (
+              id.includes('ffmpeg-service') ||
+              id.includes('src/services/cpu-path/') ||
+              id.includes('src/services/ffmpeg/') ||
+              id.includes('src/services/cdn/') ||
               id.includes('src/services/orchestration') ||
               id.includes('src/services/webcodecs') ||
-              id.includes('src/services/video-pipeline')
+              id.includes('src/services/video-pipeline') ||
+              id.includes('src/services/encoders') ||
+              id.includes('src/services/sw/')
             ) {
-              return 'services-core';
-            }
-
-            // FFmpeg service - separate chunk for CPU path
-            if (id.includes('ffmpeg-service')) {
-              return 'services-ffmpeg';
+              return 'services-conversion';
             }
 
             // UI components - can be lazy-loaded

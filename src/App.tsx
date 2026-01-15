@@ -174,6 +174,11 @@ const App: Component = () => {
           setPreloadStatusMessage(`${progress.completedFiles}/${progress.totalFiles} files loaded`);
           setPreloadProgress(progress.percentage);
           break;
+        case 'initializing-ffmpeg':
+          setPreloadStatus('Initializing FFmpeg runtime...');
+          setPreloadStatusMessage(progress.currentFile);
+          setPreloadProgress(progress.percentage);
+          break;
         case 'validating':
           setPreloadStatus('Validating assets...');
           setPreloadProgress(95);
