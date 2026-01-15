@@ -503,7 +503,8 @@ export class FFmpegCore {
       });
       resolveInit();
     } catch (error) {
-      let errorMsg = getErrorMessage(error);
+      let initError: unknown = error;
+      let errorMsg = getErrorMessage(initError);
 
       if (shouldFallbackToSingleThread(errorMsg)) {
         logger.warn('ffmpeg', 'Retrying FFmpeg init with single-threaded core', {
@@ -525,8 +526,8 @@ export class FFmpegCore {
           resolveInit();
           return;
         } catch (fallbackError) {
-          error = fallbackError;
-          errorMsg = getErrorMessage(fallbackError);
+          initError = fallbackError;
+          errorMsg = getErrorMessage(initError);
         }
       }
 
@@ -539,8 +540,8 @@ export class FFmpegCore {
           isLoaded: this.loaded,
         },
       });
-      rejectInit(error);
-      throw error;
+      rejectInit(initError);
+      throw initError;
     } finally {
       this.initializePromise = null;
       this.clearInitCallbacks();

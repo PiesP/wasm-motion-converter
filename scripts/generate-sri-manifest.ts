@@ -92,6 +92,22 @@ const CDN_PROVIDERS = {
  */
 const SOLID_JS_SUBPATHS = ["", "/web", "/store", "/h", "/html"];
 
+const getProvidersForDependency = (
+  pkg: string,
+  subpath: string
+): Array<keyof typeof CDN_PROVIDERS> => {
+  const providers = Object.keys(CDN_PROVIDERS) as Array<
+    keyof typeof CDN_PROVIDERS
+  >;
+
+  // unpkg does not expose solid-js subpath modules (404). Skip to avoid warnings.
+  if (pkg === "solid-js" && subpath) {
+    return providers.filter((provider) => provider !== "unpkg");
+  }
+
+  return providers;
+};
+
 /**
  * Reads runtime dependencies from package.json
  * (dependencies + cdnDependencies).
@@ -189,7 +205,10 @@ async function generateEntryForDependency(
   const entry: Partial<ManifestEntry> = {};
 
   // Fetch from all CDN providers
-  for (const [providerKey, provider] of Object.entries(CDN_PROVIDERS)) {
+  const providerKeys = getProvidersForDependency(pkg, subpath);
+
+  for (const providerKey of providerKeys) {
+    const provider = CDN_PROVIDERS[providerKey];
     const url = provider.buildUrl(pkg, version, subpath);
     console.log(`  Fetching from ${provider.name}...`);
 

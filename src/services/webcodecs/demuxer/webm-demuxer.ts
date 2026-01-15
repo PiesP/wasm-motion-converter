@@ -1,13 +1,13 @@
-import { buildRuntimeModuleUrls } from "@services/cdn/runtime-dep-urls";
-import { loadFromCDN } from "@utils/cdn-loader";
-import { getErrorMessage } from "@utils/error-utils";
-import { logger } from "@utils/logger";
+import { buildRuntimeModuleUrls } from '@services/cdn/runtime-dep-urls';
+import { loadFromCDN } from '@utils/cdn-loader';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 import type {
   DemuxerAdapter,
   DemuxerMetadata,
   EncodedVideoChunk,
   VideoDecoderConfig,
-} from "./demuxer-adapter";
+} from './demuxer-adapter';
 
 /**
  * Web-demuxer-based demuxer for WebM/MKV containers
@@ -68,7 +68,7 @@ export class WebMDemuxer implements DemuxerAdapter {
       const config = await this.demuxer.getVideoDecoderConfig();
 
       if (!config) {
-        throw new Error("No video track found in WebM/MKV");
+        throw new Error('No video track found in WebM/MKV');
       }
 
       const duration = this.demuxer.duration ?? 0;
@@ -77,13 +77,12 @@ export class WebMDemuxer implements DemuxerAdapter {
       this.metadata = {
         duration,
         sampleCount,
-        framerate:
-          sampleCount > 0 && duration > 0 ? sampleCount / duration : undefined,
+        framerate: sampleCount > 0 && duration > 0 ? sampleCount / duration : undefined,
       };
 
       this.initialized = true;
 
-      logger.info("demuxer", "WebMDemuxer initialized", {
+      logger.info('demuxer', 'WebMDemuxer initialized', {
         codec: config.codec,
         width: config.codedWidth,
         height: config.codedHeight,
@@ -93,7 +92,7 @@ export class WebMDemuxer implements DemuxerAdapter {
 
       return config;
     } catch (error) {
-      logger.error("demuxer", "Failed to initialize WebMDemuxer", {
+      logger.error('demuxer', 'Failed to initialize WebMDemuxer', {
         error: getErrorMessage(error),
       });
       throw error;
@@ -120,7 +119,7 @@ export class WebMDemuxer implements DemuxerAdapter {
     maxFrames?: number
   ): AsyncGenerator<EncodedVideoChunk, void, unknown> {
     if (!this.initialized || !this.demuxer || !this.metadata) {
-      throw new Error("Demuxer not initialized");
+      throw new Error('Demuxer not initialized');
     }
 
     try {
@@ -133,11 +132,11 @@ export class WebMDemuxer implements DemuxerAdapter {
         : undefined;
       const durationSlackMicros = Math.round(1_000_000);
 
-      logger.info("demuxer", "Extracting WebM samples", {
+      logger.info('demuxer', 'Extracting WebM samples', {
         totalSamples: this.metadata.sampleCount,
         sourceFps: sourceFps.toFixed(2),
         targetFps,
-        maxDurationSeconds: maxDurationSeconds?.toFixed(3) ?? "full",
+        maxDurationSeconds: maxDurationSeconds?.toFixed(3) ?? 'full',
       });
 
       let yieldedSamples = 0;
@@ -158,14 +157,13 @@ export class WebMDemuxer implements DemuxerAdapter {
 
         if (
           maxDurationMicros !== undefined &&
-          timestamp >
-            baseTimestampMicros + maxDurationMicros + durationSlackMicros
+          timestamp > baseTimestampMicros + maxDurationMicros + durationSlackMicros
         ) {
           break;
         }
 
         yield {
-          type: sample.type === "key" ? "key" : "delta",
+          type: sample.type === 'key' ? 'key' : 'delta',
           timestamp,
           duration: sample.duration ?? 0,
           data: new Uint8Array(sample.data),
@@ -176,11 +174,11 @@ export class WebMDemuxer implements DemuxerAdapter {
         sampleIndex++;
       }
 
-      logger.info("demuxer", "WebM sample extraction completed", {
+      logger.info('demuxer', 'WebM sample extraction completed', {
         yieldedSamples,
       });
     } catch (error) {
-      logger.error("demuxer", "WebM sample extraction failed", {
+      logger.error('demuxer', 'WebM sample extraction failed', {
         error: getErrorMessage(error),
       });
       throw error;
@@ -198,7 +196,7 @@ export class WebMDemuxer implements DemuxerAdapter {
    */
   getMetadata(): DemuxerMetadata {
     if (!this.initialized || !this.metadata) {
-      throw new Error("Demuxer not initialized");
+      throw new Error('Demuxer not initialized');
     }
 
     return this.metadata;
@@ -213,11 +211,11 @@ export class WebMDemuxer implements DemuxerAdapter {
   destroy(): void {
     if (this.demuxer) {
       try {
-        if (typeof this.demuxer.close === "function") {
+        if (typeof this.demuxer.close === 'function') {
           this.demuxer.close();
         }
       } catch (error) {
-        logger.warn("demuxer", "Error during WebMDemuxer cleanup", {
+        logger.warn('demuxer', 'Error during WebMDemuxer cleanup', {
           error: getErrorMessage(error),
         });
       }
@@ -239,9 +237,6 @@ export class WebMDemuxer implements DemuxerAdapter {
    * @internal Private method, called during initialize()
    */
   private async loadWebDemuxer(): Promise<WebDemuxerModule> {
-    return loadFromCDN<WebDemuxerModule>(
-      "web-demuxer",
-      buildRuntimeModuleUrls("web-demuxer")
-    );
+    return loadFromCDN<WebDemuxerModule>('web-demuxer', buildRuntimeModuleUrls('web-demuxer'));
   }
 }

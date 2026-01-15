@@ -1,28 +1,22 @@
-import type { CDNProvider } from "@services/cdn/cdn-config";
-import { getEnabledProviders } from "@services/cdn/cdn-config";
-import { getRuntimeDepVersion } from "@utils/runtime-deps";
+import type { CDNProvider } from '@services/cdn/cdn-config';
+import { getProvidersByHealth } from '@services/cdn/cdn-config';
+import { getRuntimeDepVersion } from '@utils/runtime-deps';
 
-const DEFAULT_PROVIDER_NAMES = ["esm.sh", "jsdelivr", "unpkg"] as const;
+const DEFAULT_PROVIDER_NAMES = ['esm.sh', 'jsdelivr', 'unpkg'] as const;
 
 /**
  * Build CDN module URLs for a runtime dependency using package.json versions.
  */
-function buildLegacyModuleUrl(
-  provider: CDNProvider,
-  packageName: string,
-  version: string
-): string {
+function buildLegacyModuleUrl(provider: CDNProvider, packageName: string, version: string): string {
   switch (provider.name) {
-    case "esm.sh":
+    case 'esm.sh':
       return `${provider.baseUrl}/${packageName}@${version}?target=esnext`;
-    case "jsdelivr":
+    case 'jsdelivr':
       return `${provider.baseUrl}/npm/${packageName}@${version}/+esm`;
-    case "unpkg":
+    case 'unpkg':
       return `${provider.baseUrl}/${packageName}@${version}/+esm`;
     default:
-      throw new Error(
-        `[cdn-deps] Unsupported CDN provider for module URLs: ${provider.name}`
-      );
+      throw new Error(`[cdn-deps] Unsupported CDN provider for module URLs: ${provider.name}`);
   }
 }
 
@@ -31,7 +25,7 @@ export function buildRuntimeModuleUrls(
   providerNames: readonly string[] = DEFAULT_PROVIDER_NAMES
 ): string[] {
   const version = getRuntimeDepVersion(packageName);
-  const providers = getEnabledProviders().filter((provider) =>
+  const providers = getProvidersByHealth().filter((provider) =>
     providerNames.includes(provider.name)
   );
 
@@ -39,7 +33,5 @@ export function buildRuntimeModuleUrls(
     throw new Error(`[cdn-deps] No enabled CDN providers for ${packageName}`);
   }
 
-  return providers.map((provider) =>
-    buildLegacyModuleUrl(provider, packageName, version)
-  );
+  return providers.map((provider) => buildLegacyModuleUrl(provider, packageName, version));
 }

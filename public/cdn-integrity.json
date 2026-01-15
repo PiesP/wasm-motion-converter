@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-01-15T09:39:48.054Z",
+  "generated": "2026-01-15T10:14:22.490Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -244,6 +244,72 @@
         "url": "https://cdn.skypack.dev/solid-js@1.9.10/html",
         "integrity": "sha384-zmdsBj4aWmHHDkKyMRXGS58F/3yzKKkbZV0F55fx3Cr2xmv0Z4POQDxclaXVc0pv",
         "size": 812
+      }
+    },
+    "@ffmpeg/core-mt": {
+      "esm.sh": {
+        "url": "https://esm.sh/@ffmpeg/core-mt@0.12.10?target=esnext",
+        "integrity": "sha384-MI+v8oVLxDwRa/jf5wiyuDi8QBjdRx2uW8/H4gxxIvitd5kshfzgFMjoZV1Enmrx",
+        "size": 171
+      },
+      "jsdelivr": {
+        "url": "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/+esm",
+        "integrity": "sha384-tw+fRTcThTMz0DLp+w5tuOW4OYXvkza8O3wlxV1k487DUV0eEi2jCN7uYIx6XDgb",
+        "size": 79321
+      },
+      "unpkg": {
+        "url": "https://unpkg.com/@ffmpeg/core-mt@0.12.10?module",
+        "integrity": "sha384-91GpZ3Ow5AIa5wmICIKrQaOAmJPc0sPFNaeuZKtD1Dx7Xr/F8kfGZHM++VOj308v",
+        "size": 129115
+      },
+      "skypack": {
+        "url": "https://cdn.skypack.dev/@ffmpeg/core-mt@0.12.10",
+        "integrity": "sha384-Pf1bPewXpVPEgyEUqSrUyoAGR2sIG1ZKEGDVJgy5TIo3dOPJDgHZKriJZZiaQ8zE",
+        "size": 1019
+      }
+    },
+    "mp4box": {
+      "esm.sh": {
+        "url": "https://esm.sh/mp4box@0.5.2?target=esnext",
+        "integrity": "sha384-iPyIT3QWtys6xuC14F9a6hUfA04JE5PKM9tjtUSYc7DWc3Jv1OZIDBgXYtpuezqa",
+        "size": 136
+      },
+      "jsdelivr": {
+        "url": "https://cdn.jsdelivr.net/npm/mp4box@0.5.2/+esm",
+        "integrity": "sha384-usVTfowp0OTkQDQgsh8JKMCyVLJj4173PGzv37VZqqJEQLT0GpPGJLFymcMN+Qxx",
+        "size": 140288
+      },
+      "unpkg": {
+        "url": "https://unpkg.com/mp4box@0.5.2?module",
+        "integrity": "sha384-A7axPrEke8n1oQHoH4v5+38YQTjRoGkMMn7xxTN/lkGY8uMBVLaFfj+bK+Nh6XnB",
+        "size": 262648
+      },
+      "skypack": {
+        "url": "https://cdn.skypack.dev/mp4box@0.5.2",
+        "integrity": "sha384-tr0Z5m6zVLC8eIqFZmRbcGISgzANLiFRd5GivcavnMHpFDiTekJn9qGgIVUoOnSB",
+        "size": 767
+      }
+    },
+    "web-demuxer": {
+      "esm.sh": {
+        "url": "https://esm.sh/web-demuxer@4.0.0?target=esnext",
+        "integrity": "sha384-tU5DtY16Gu7lLHE1G44MoGggMPWBqDVqB3DW34eBtsOKmYKKF5zFXjcQmR4Un9Lc",
+        "size": 92
+      },
+      "jsdelivr": {
+        "url": "https://cdn.jsdelivr.net/npm/web-demuxer@4.0.0/+esm",
+        "integrity": "sha384-Sk1+2Tk27gjXf5FnyO6nztdXQ+yWdghhZG7LjIM8Prbtxjf0XWGbSkWFB9ItzZu1",
+        "size": 113327
+      },
+      "unpkg": {
+        "url": "https://unpkg.com/web-demuxer@4.0.0?module",
+        "integrity": "sha384-v5OLeKYvZWcJ73+8XkcQ0EX/FY3yPfPhTe7K3OWrVLGFucCChHX9esCgmO9e3Myf",
+        "size": 118338
+      },
+      "skypack": {
+        "url": "https://cdn.skypack.dev/web-demuxer@4.0.0",
+        "integrity": "sha384-Fz3ZeFS60wOSdCsyWHMngyyTHBLhxQwICE1xo7T4fZzmedziH6TG/b9AI+RAm1z/",
+        "size": 993
       }
     }
   }

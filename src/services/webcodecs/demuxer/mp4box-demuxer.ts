@@ -1,13 +1,13 @@
-import { buildRuntimeModuleUrls } from "@services/cdn/runtime-dep-urls";
-import { loadFromCDN } from "@utils/cdn-loader";
-import { getErrorMessage } from "@utils/error-utils";
-import { logger } from "@utils/logger";
+import { buildRuntimeModuleUrls } from '@services/cdn/runtime-dep-urls';
+import { loadFromCDN } from '@utils/cdn-loader';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 import type {
   DemuxerAdapter,
   DemuxerMetadata,
   EncodedVideoChunk,
   VideoDecoderConfig,
-} from "./demuxer-adapter";
+} from './demuxer-adapter';
 
 /**
  * MP4Box-based demuxer for MP4/MOV containers
@@ -24,11 +24,7 @@ type Mp4BoxFileInstance = object & {
   flush: () => void;
   start: () => void;
   stop: () => void;
-  setExtractionOptions: (
-    trackId: number,
-    user: unknown,
-    options: Record<string, unknown>
-  ) => void;
+  setExtractionOptions: (trackId: number, user: unknown, options: Record<string, unknown>) => void;
   onReady?: (info: Mp4BoxInfo) => void;
   onError?: (error: Error) => void;
   onSamples?: (trackId: number, user: unknown, samples: Mp4BoxSample[]) => void;
@@ -94,12 +90,12 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
 
       const mp4boxFile = this.mp4boxFile;
       if (!mp4boxFile) {
-        throw new Error("MP4Box file not initialized");
+        throw new Error('MP4Box file not initialized');
       }
 
       const infoPromise = new Promise<Mp4BoxInfo>((resolve, reject) => {
         mp4boxFile.onReady = (info: Mp4BoxInfo) => {
-          logger.info("demuxer", "MP4Box parsed container", {
+          logger.info('demuxer', 'MP4Box parsed container', {
             duration: info.duration,
             timescale: info.timescale,
             videoTracks: info.videoTracks?.length ?? 0,
@@ -108,7 +104,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
 
           const videoTrack = info.videoTracks?.[0];
           if (!videoTrack) {
-            reject(new Error("No video track found in MP4"));
+            reject(new Error('No video track found in MP4'));
             return;
           }
 
@@ -117,7 +113,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
         };
 
         mp4boxFile.onError = (error: Error) => {
-          logger.error("demuxer", "MP4Box error", {
+          logger.error('demuxer', 'MP4Box error', {
             error: getErrorMessage(error),
           });
           reject(error);
@@ -125,7 +121,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
 
         setTimeout(() => {
           if (!this.videoTrack) {
-            reject(new Error("MP4Box initialization timeout"));
+            reject(new Error('MP4Box initialization timeout'));
           }
         }, 10000);
       });
@@ -143,13 +139,13 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
 
       const videoTrack = this.videoTrack;
       if (!videoTrack) {
-        throw new Error("Video track not initialized");
+        throw new Error('Video track not initialized');
       }
 
       const config = this.extractDecoderConfig(videoTrack, arrayBuffer);
       this.initialized = true;
 
-      logger.info("demuxer", "MP4BoxDemuxer initialized", {
+      logger.info('demuxer', 'MP4BoxDemuxer initialized', {
         codec: config.codec,
         width: config.codedWidth,
         height: config.codedHeight,
@@ -158,7 +154,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
 
       return config;
     } catch (error) {
-      logger.error("demuxer", "Failed to initialize MP4BoxDemuxer", {
+      logger.error('demuxer', 'Failed to initialize MP4BoxDemuxer', {
         error: getErrorMessage(error),
       });
       throw error;
@@ -186,7 +182,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
     maxFrames?: number
   ): AsyncGenerator<EncodedVideoChunk, void, unknown> {
     if (!this.initialized || !this.videoTrack) {
-      throw new Error("Demuxer not initialized");
+      throw new Error('Demuxer not initialized');
     }
 
     try {
@@ -205,7 +201,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
       const durationSlackMicros = Math.round(1_000_000); // 1s slack for rounding/edits
 
       if (!mp4boxFile || !videoTrack) {
-        throw new Error("Demuxer not initialized");
+        throw new Error('Demuxer not initialized');
       }
 
       const extractionStartedAtMs = Date.now();
@@ -223,7 +219,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
         const timeoutTimer = setTimeout(() => {
           clearIdle();
           if (!samplesReceived) {
-            reject(new Error("Sample extraction timeout"));
+            reject(new Error('Sample extraction timeout'));
           } else {
             // We got some samples but mp4box didn't call again; proceed with what we have.
             resolve();
@@ -232,10 +228,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
 
         const settleIfComplete = () => {
           // Resolve when we have all samples, otherwise resolve after a short idle period.
-          if (
-            videoTrack.nb_samples > 0 &&
-            sampleQueue.length >= videoTrack.nb_samples
-          ) {
+          if (videoTrack.nb_samples > 0 && sampleQueue.length >= videoTrack.nb_samples) {
             clearIdle();
             clearTimeout(timeoutTimer);
             resolve();
@@ -249,19 +242,15 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
           }, 250);
         };
 
-        mp4boxFile.onSamples = (
-          trackId: number,
-          _user: unknown,
-          samples: Mp4BoxSample[]
-        ) => {
-          logger.info("demuxer", "Received samples from MP4Box", {
+        mp4boxFile.onSamples = (trackId: number, _user: unknown, samples: Mp4BoxSample[]) => {
+          logger.info('demuxer', 'Received samples from MP4Box', {
             trackId,
             sampleCount: samples.length,
           });
 
           if (firstSamplesAtMs === null) {
             firstSamplesAtMs = Date.now();
-            logger.debug("demuxer", "First MP4Box samples received", {
+            logger.debug('demuxer', 'First MP4Box samples received', {
               trackId,
               firstBatchSamples: samples.length,
               waitMs: firstSamplesAtMs - extractionStartedAtMs,
@@ -286,24 +275,21 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
       await samplePromise;
       mp4boxFile.stop();
 
-      logger.debug("demuxer", "MP4Box sample queue ready", {
+      logger.debug('demuxer', 'MP4Box sample queue ready', {
         queuedSamples: sampleQueue.length,
         expectedSamples: videoTrack.nb_samples,
         waitMs: Date.now() - extractionStartedAtMs,
-        firstSamplesWaitMs: firstSamplesAtMs
-          ? firstSamplesAtMs - extractionStartedAtMs
-          : null,
+        firstSamplesWaitMs: firstSamplesAtMs ? firstSamplesAtMs - extractionStartedAtMs : null,
       });
 
       const sourceFps =
-        videoTrack.nb_samples /
-        (videoTrack.movie_duration / videoTrack.movie_timescale);
+        videoTrack.nb_samples / (videoTrack.movie_duration / videoTrack.movie_timescale);
 
-      logger.info("demuxer", "Extracting samples", {
+      logger.info('demuxer', 'Extracting samples', {
         totalSamples: sampleQueue.length,
         sourceFps: sourceFps.toFixed(2),
         targetFps,
-        maxDurationSeconds: maxDurationSeconds?.toFixed(3) ?? "full",
+        maxDurationSeconds: maxDurationSeconds?.toFixed(3) ?? 'full',
       });
 
       let yieldedSamples = 0;
@@ -321,24 +307,19 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
           break;
         }
 
-        const timestampMicros = Math.round(
-          (sample.cts / videoTrack.timescale) * 1_000_000
-        );
-        const durationMicros = Math.round(
-          (sample.duration / videoTrack.timescale) * 1_000_000
-        );
+        const timestampMicros = Math.round((sample.cts / videoTrack.timescale) * 1_000_000);
+        const durationMicros = Math.round((sample.duration / videoTrack.timescale) * 1_000_000);
         lastTimestampMicros = timestampMicros;
 
         if (
           maxDurationMicros !== undefined &&
-          timestampMicros >
-            baseTimestampMicros + maxDurationMicros + durationSlackMicros
+          timestampMicros > baseTimestampMicros + maxDurationMicros + durationSlackMicros
         ) {
           break;
         }
 
         yield {
-          type: sample.is_sync ? "key" : "delta",
+          type: sample.is_sync ? 'key' : 'delta',
           timestamp: timestampMicros,
           duration: durationMicros,
           data: new Uint8Array(sample.data),
@@ -352,11 +333,11 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
         }
       }
 
-      logger.info("demuxer", "Sample extraction completed", {
+      logger.info('demuxer', 'Sample extraction completed', {
         yieldedSamples,
       });
 
-      logger.debug("demuxer", "MP4Box sample extraction stats", {
+      logger.debug('demuxer', 'MP4Box sample extraction stats', {
         yieldedSamples,
         keySamples,
         deltaSamples,
@@ -365,7 +346,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
         durationMicros: Math.max(0, lastTimestampMicros - baseTimestampMicros),
       });
     } catch (error) {
-      logger.error("demuxer", "Sample extraction failed", {
+      logger.error('demuxer', 'Sample extraction failed', {
         error: getErrorMessage(error),
       });
       throw error;
@@ -383,11 +364,10 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    */
   getMetadata(): DemuxerMetadata {
     if (!this.initialized || !this.videoTrack) {
-      throw new Error("Demuxer not initialized");
+      throw new Error('Demuxer not initialized');
     }
 
-    const duration =
-      this.videoTrack.movie_duration / this.videoTrack.movie_timescale;
+    const duration = this.videoTrack.movie_duration / this.videoTrack.movie_timescale;
     const framerate =
       this.videoTrack.nb_samples /
       (this.videoTrack.movie_duration / this.videoTrack.movie_timescale);
@@ -412,7 +392,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
         mp4boxFile.stop();
         mp4boxFile.flush();
       } catch (error) {
-        logger.warn("demuxer", "Error during MP4Box cleanup", {
+        logger.warn('demuxer', 'Error during MP4Box cleanup', {
           error: getErrorMessage(error),
         });
       }
@@ -432,10 +412,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @returns VideoDecoderConfig with codec, dimensions, and optional description
    * @internal Private method, use initialize() instead
    */
-  private extractDecoderConfig(
-    track: Mp4BoxTrack,
-    fileBytes?: ArrayBuffer
-  ): VideoDecoderConfig {
+  private extractDecoderConfig(track: Mp4BoxTrack, fileBytes?: ArrayBuffer): VideoDecoderConfig {
     const codec = this.buildCodecString(track);
     const description = this.extractCodecDescription(track, fileBytes);
 
@@ -469,15 +446,14 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
     }
 
     if (fourCc) {
-      logger.warn("demuxer", "Using FourCC as codec string", {
+      logger.warn('demuxer', 'Using FourCC as codec string', {
         fourCC: fourCc,
-        message:
-          "Detailed codec string unavailable - may cause VideoDecoder issues",
+        message: 'Detailed codec string unavailable - may cause VideoDecoder issues',
       });
       return fourCc;
     }
 
-    throw new Error("Unable to determine codec string from track");
+    throw new Error('Unable to determine codec string from track');
   }
 
   /**
@@ -522,12 +498,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
 
     // Scan for [size][type] patterns. We validate size bounds to reduce false positives.
     for (let i = 0; i <= u8.length - 8; i += 1) {
-      if (
-        u8[i + 4] !== t0 ||
-        u8[i + 5] !== t1 ||
-        u8[i + 6] !== t2 ||
-        u8[i + 7] !== t3
-      ) {
+      if (u8[i + 4] !== t0 || u8[i + 5] !== t1 || u8[i + 6] !== t2 || u8[i + 7] !== t3) {
         continue;
       }
 
@@ -538,7 +509,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
 
       if (size32 === 1) {
         // 64-bit largesize
-        if (typeof view.getBigUint64 !== "function") {
+        if (typeof view.getBigUint64 !== 'function') {
           continue;
         }
         if (i + 16 > u8.length) {
@@ -612,42 +583,29 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
       }
     }
 
-    const codecHint = (
-      track.codec_string ||
-      track.codec ||
-      track.fourCC ||
-      ""
-    ).toLowerCase();
+    const codecHint = (track.codec_string || track.codec || track.fourCC || '').toLowerCase();
 
     if (fileBytes) {
       const candidateBoxes: string[] = [];
 
-      if (codecHint.includes("av01") || codecHint.includes("av1")) {
-        candidateBoxes.push("av1C");
+      if (codecHint.includes('av01') || codecHint.includes('av1')) {
+        candidateBoxes.push('av1C');
       }
-      if (
-        codecHint.includes("hvc1") ||
-        codecHint.includes("hev1") ||
-        codecHint.includes("hevc")
-      ) {
-        candidateBoxes.push("hvcC");
+      if (codecHint.includes('hvc1') || codecHint.includes('hev1') || codecHint.includes('hevc')) {
+        candidateBoxes.push('hvcC');
       }
-      if (
-        codecHint.includes("avc1") ||
-        codecHint.includes("avc") ||
-        codecHint.includes("h264")
-      ) {
-        candidateBoxes.push("avcC");
+      if (codecHint.includes('avc1') || codecHint.includes('avc') || codecHint.includes('h264')) {
+        candidateBoxes.push('avcC');
       }
-      if (codecHint.includes("vp09") || codecHint.includes("vp9")) {
+      if (codecHint.includes('vp09') || codecHint.includes('vp9')) {
         // ISO-BMFF VP9 config record box
-        candidateBoxes.push("vpcC");
+        candidateBoxes.push('vpcC');
       }
 
       for (const boxType of candidateBoxes) {
         const payload = this.findIsobmffBoxPayload(fileBytes, boxType);
         if (payload && payload.byteLength > 0) {
-          logger.info("demuxer", "Extracted codec description from MP4 bytes", {
+          logger.info('demuxer', 'Extracted codec description from MP4 bytes', {
             codec: track.codec || track.fourCC,
             boxType,
             byteLength: payload.byteLength,
@@ -657,10 +615,9 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
       }
     }
 
-    logger.warn("demuxer", "No codec description found", {
+    logger.warn('demuxer', 'No codec description found', {
       codec: track.codec || track.fourCC,
-      message:
-        "VideoDecoder may fail without codec-specific initialization data",
+      message: 'VideoDecoder may fail without codec-specific initialization data',
     });
 
     return undefined;
@@ -680,8 +637,8 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
   private async loadMP4Box(): Promise<Mp4BoxModule> {
     if (!mp4boxModulePromise) {
       mp4boxModulePromise = loadFromCDN<Mp4BoxModule>(
-        "mp4box.js",
-        buildRuntimeModuleUrls("mp4box")
+        'mp4box.js',
+        buildRuntimeModuleUrls('mp4box')
       );
     }
 

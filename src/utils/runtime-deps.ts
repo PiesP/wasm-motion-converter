@@ -1,4 +1,4 @@
-import { RUNTIME_DEP_VERSIONS } from "virtual:cdn-deps";
+import { RUNTIME_DEP_VERSIONS } from 'virtual:cdn-deps';
 
 /**
  * Runtime dependency versions resolved from package.json.
@@ -12,9 +12,7 @@ export { RUNTIME_DEP_VERSIONS };
 export function getRuntimeDepVersion(packageName: string): string {
   const version = RUNTIME_DEP_VERSIONS[packageName];
   if (!version) {
-    throw new Error(
-      `[runtime-deps] Missing runtime dependency version for ${packageName}`
-    );
+    throw new Error(`[runtime-deps] Missing runtime dependency version for ${packageName}`);
   }
   return version;
 }
