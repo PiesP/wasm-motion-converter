@@ -101,6 +101,12 @@ type PackageAssetOptions = {
   label: string;
 };
 
+type WorkerModuleRewriteResult = {
+  source: string;
+  rewriteCount: number;
+  rewriteSamples: string[];
+};
+
 const FFMPEG_CLASS_WORKER_PATH = '/dist/esm/worker.js';
 
 const getFFmpegPackageVersion = (): string => getRuntimeDepVersion('@ffmpeg/ffmpeg');
@@ -200,6 +206,175 @@ async function loadPackageAsset({
   );
 }
 
+const resolveWorkerModuleSpecifier = (specifier: string, baseUrl: string): string => {
+  if (
+    specifier.startsWith('http:') ||
+    specifier.startsWith('https:') ||
+    specifier.startsWith('blob:') ||
+    specifier.startsWith('data:')
+  ) {
+    return specifier;
+  }
+
+  if (!specifier.startsWith('.') && !specifier.startsWith('/')) {
+    return specifier;
+  }
+
+  try {
+    return new URL(specifier, baseUrl).toString();
+  } catch {
+    return specifier;
+  }
+};
+
+const rewriteWorkerModuleImports = (source: string, baseUrl: string): WorkerModuleRewriteResult => {
+  let rewritten = source;
+  let rewriteCount = 0;
+  const rewriteSamples: string[] = [];
+
+  const recordRewrite = (original: string, resolved: string): void => {
+    if (original === resolved) {
+      return;
+    }
+    rewriteCount += 1;
+    if (rewriteSamples.length < 4) {
+      rewriteSamples.push(`${original} -> ${resolved}`);
+    }
+  };
+
+  const rewriteSpecifier = (specifier: string): string => {
+    const resolved = resolveWorkerModuleSpecifier(specifier, baseUrl);
+    recordRewrite(specifier, resolved);
+    return resolved;
+  };
+
+  const importRegexes = [
+    /import\s+[^'"\n]+\s+from\s+['"]([^'"]+)['"]/g,
+    /import\s+['"]([^'"]+)['"]/g,
+    /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+  ];
+
+  for (const regex of importRegexes) {
+    rewritten = rewritten.replace(regex, (match, specifier: string) => {
+      const resolved = rewriteSpecifier(specifier);
+      return match.replace(specifier, resolved);
+    });
+  }
+
+  rewritten = rewritten.replace(/importScripts\(([^)]+)\)/g, (_match, args: string) => {
+    const updatedArgs = args.replace(/(['"])([^'"]+)\1/g, (_full, quote, specifier: string) => {
+      const resolved = rewriteSpecifier(specifier);
+      return `${quote}${resolved}${quote}`;
+    });
+    return `importScripts(${updatedArgs})`;
+  });
+
+  return {
+    source: rewritten,
+    rewriteCount,
+    rewriteSamples,
+  };
+};
+
+async function loadPackageWorkerModule({
+  packageName,
+  version,
+  assetPath,
+  label,
+}: Omit<PackageAssetOptions, 'mimeType'>): Promise<string> {
+  const providers = getBlobCompatibleProviders();
+  const errors: Array<{ provider: string; error: string }> = [];
+
+  logger.info('ffmpeg', 'Loading FFmpeg worker module from CDN providers', {
+    label,
+    assetPath,
+    packageName,
+    version,
+    providerCount: providers.length,
+    ...logProviderExclusions(),
+  });
+
+  for (const provider of providers) {
+    try {
+      const url = buildAssetUrl(provider, packageName, version, normalizeAssetPath(assetPath));
+
+      logger.debug('ffmpeg', 'Trying CDN provider for FFmpeg worker module', {
+        label,
+        assetPath,
+        packageName,
+        provider: provider.name,
+        url,
+        timeoutMs: provider.timeout,
+      });
+
+      const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const response = await withTimeout(
+        fetch(url, { cache: 'force-cache', credentials: 'omit' }),
+        provider.timeout,
+        `Timeout after ${provider.timeout / 1000}s`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Worker module fetch failed: ${response.status}`);
+      }
+
+      const source = await response.text();
+      const baseUrl = new URL('.', url).toString();
+      const rewriteResult = rewriteWorkerModuleImports(source, baseUrl);
+
+      if (rewriteResult.rewriteCount > 0) {
+        logger.info('ffmpeg', 'Rewrote FFmpeg worker module imports', {
+          label,
+          baseUrl,
+          rewriteCount: rewriteResult.rewriteCount,
+          rewriteSamples: rewriteResult.rewriteSamples,
+        });
+      } else {
+        logger.debug('ffmpeg', 'No worker module import rewrites needed', {
+          label,
+          baseUrl,
+        });
+      }
+
+      const blobUrl = URL.createObjectURL(
+        new Blob([rewriteResult.source], { type: 'text/javascript' })
+      );
+
+      const elapsed =
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startTime;
+
+      recordCdnRequest(provider.hostname, true);
+      logger.info('ffmpeg', 'FFmpeg worker module loaded successfully', {
+        label,
+        assetPath,
+        packageName,
+        provider: provider.name,
+        elapsedMs: Math.round(elapsed),
+      });
+
+      return blobUrl;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      errors.push({ provider: provider.name, error: errorMsg });
+
+      recordCdnRequest(provider.hostname, false);
+
+      logger.warn('ffmpeg', 'FFmpeg worker module download failed; trying next provider', {
+        label,
+        assetPath,
+        packageName,
+        provider: provider.name,
+        error: errorMsg,
+      });
+    }
+  }
+
+  const errorSummary = errors.map((e) => `${e.provider} (${e.error})`).join(', ');
+  throw new Error(
+    `Failed to download ${label} from all CDN providers. Errors: ${errorSummary}. Please check your network connection.`
+  );
+}
+
 /**
  * Clear FFmpeg cache for recovery from corrupted cache entries.
  * Call this when FFmpeg initialization fails repeatedly.
@@ -251,11 +426,10 @@ export async function loadFFmpegAsset(
  * Required to avoid cross-origin worker restrictions in production.
  */
 export async function loadFFmpegClassWorker(): Promise<string> {
-  return loadPackageAsset({
+  return loadPackageWorkerModule({
     packageName: '@ffmpeg/ffmpeg',
     version: getFFmpegPackageVersion(),
     assetPath: FFMPEG_CLASS_WORKER_PATH,
-    mimeType: 'text/javascript',
     label: 'FFmpeg class worker',
   });
 }
