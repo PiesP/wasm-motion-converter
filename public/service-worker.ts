@@ -50,6 +50,24 @@ const CACHE_NAMES = {
 const ALL_CACHE_NAMES = Object.values(CACHE_NAMES);
 
 /**
+ * Runtime dependency versions injected at build time from package.json.
+ */
+type RuntimeDepVersions = Record<string, string>;
+const RUNTIME_DEP_VERSIONS = JSON.parse(
+  "__RUNTIME_DEP_VERSIONS__"
+) as RuntimeDepVersions;
+
+const getRuntimeDepVersion = (pkg: string): string => {
+  const version = RUNTIME_DEP_VERSIONS[pkg];
+  if (!version) {
+    throw new Error(
+      `[SW ${SW_VERSION}] Missing runtime dependency version for ${pkg}`
+    );
+  }
+  return version;
+};
+
+/**
  * Critical assets to pre-cache on install
  * Ensures offline functionality from first visit
  * PRECACHE_MANIFEST will be replaced by build process
@@ -59,13 +77,18 @@ const PRECACHE_URLS: string[] = "PRECACHE_MANIFEST" as unknown as string[];
 /**
  * FFmpeg assets to pre-cache for offline conversions
  * Using jsdelivr URLs (same as import map for consistency)
+ * Versions are injected from package.json at build time.
  */
+const ffmpegPackageVersion = getRuntimeDepVersion("@ffmpeg/ffmpeg");
+const ffmpegUtilVersion = getRuntimeDepVersion("@ffmpeg/util");
+const ffmpegCoreVersion = getRuntimeDepVersion("@ffmpeg/core-mt");
+
 const FFMPEG_PRECACHE_URLS = [
-  "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm",
-  "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/+esm",
-  "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.js",
-  "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.wasm",
-  "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm/ffmpeg-core.worker.js",
+  `https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@${ffmpegPackageVersion}/+esm`,
+  `https://cdn.jsdelivr.net/npm/@ffmpeg/util@${ffmpegUtilVersion}/+esm`,
+  `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${ffmpegCoreVersion}/dist/esm/ffmpeg-core.js`,
+  `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${ffmpegCoreVersion}/dist/esm/ffmpeg-core.wasm`,
+  `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${ffmpegCoreVersion}/dist/esm/ffmpeg-core.worker.js`,
 ];
 
 /**
@@ -73,10 +96,14 @@ const FFMPEG_PRECACHE_URLS = [
  *
  * These are loaded from CDNs and should be cached on install so first-time
  * visitors still benefit (first navigation happens before SW controls page).
+ * Versions are injected from package.json at build time.
  */
+const mp4boxVersion = getRuntimeDepVersion("mp4box");
+const webDemuxerVersion = getRuntimeDepVersion("web-demuxer");
+
 const DEMUXER_PRECACHE_URLS = [
-  "https://esm.sh/mp4box@0.5.2",
-  "https://esm.sh/web-demuxer@4.0.0",
+  `https://esm.sh/mp4box@${mp4boxVersion}?target=esnext`,
+  `https://esm.sh/web-demuxer@${webDemuxerVersion}?target=esnext`,
 ];
 
 /**
@@ -610,10 +637,10 @@ const CDN_CONVERTERS = {
    * Parses an esm.sh URL into { pkg, version, path }.
    *
    * Supported examples:
-   * - https://esm.sh/solid-js@1.9.10/web?target=esnext
-   * - https://esm.sh/@ffmpeg/ffmpeg@0.12.15?target=esnext
-   * - https://esm.sh/@jsquash/webp@1.5.0/encode.js?target=esnext
-   * - https://esm.sh/@jsquash/webp@1.5.0/codec/enc/webp_enc.wasm
+   * - https://esm.sh/solid-js@<version>/web?target=esnext
+   * - https://esm.sh/@ffmpeg/ffmpeg@<version>?target=esnext
+   * - https://esm.sh/@jsquash/webp@<version>/encode.js?target=esnext
+   * - https://esm.sh/@jsquash/webp@<version>/codec/enc/webp_enc.wasm
    */
   parseEsmSh(
     url: string

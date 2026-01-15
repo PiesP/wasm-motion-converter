@@ -1,10 +1,10 @@
 // External dependencies
 import { toBlobURL } from "@ffmpeg/util";
-import { RUNTIME_DEP_VERSIONS } from "virtual:cdn-deps";
 
 // Internal imports
 import { FFMPEG_CORE_VERSION } from "@utils/constants";
 import { logger } from "@utils/logger";
+import { getRuntimeDepVersion } from "@utils/runtime-deps";
 import { withTimeout } from "@utils/with-timeout";
 import { getEnabledProviders } from "@services/cdn/cdn-config";
 import { buildAssetUrl } from "@services/cdn/cdn-url-builder";
@@ -105,11 +105,10 @@ type PackageAssetOptions = {
   label: string;
 };
 
-const FALLBACK_FFMPEG_PACKAGE_VERSION = "0.12.15";
 const FFMPEG_CLASS_WORKER_PATH = "/dist/esm/worker.js";
 
 const getFFmpegPackageVersion = (): string =>
-  RUNTIME_DEP_VERSIONS["@ffmpeg/ffmpeg"] ?? FALLBACK_FFMPEG_PACKAGE_VERSION;
+  getRuntimeDepVersion("@ffmpeg/ffmpeg");
 
 const normalizeAssetPath = (assetPath: string): string =>
   assetPath.startsWith("/") ? assetPath : `/${assetPath}`;

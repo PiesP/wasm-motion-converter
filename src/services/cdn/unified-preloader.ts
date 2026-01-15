@@ -11,18 +11,28 @@
  * - Validates cached assets before reporting complete
  */
 
-import { loadFFmpegAsset, loadFFmpegClassWorker } from '@services/ffmpeg/core-assets';
-import { ffmpegService } from '@services/ffmpeg-service';
-import { waitForSWReady } from '@services/sw/sw-readiness';
-import { loadFromCDN } from '@utils/cdn-loader';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
+import {
+  loadFFmpegAsset,
+  loadFFmpegClassWorker,
+} from "@services/ffmpeg/core-assets";
+import { ffmpegService } from "@services/ffmpeg-service";
+import { waitForSWReady } from "@services/sw/sw-readiness";
+import { buildRuntimeModuleUrls } from "@services/cdn/runtime-dep-urls";
+import { loadFromCDN } from "@utils/cdn-loader";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
 
 /**
  * Preload progress state
  */
 export interface PreloadProgress {
-  phase: 'waiting-sw' | 'downloading' | 'initializing-ffmpeg' | 'validating' | 'complete' | 'error';
+  phase:
+    | "waiting-sw"
+    | "downloading"
+    | "initializing-ffmpeg"
+    | "validating"
+    | "complete"
+    | "error";
   currentFile: string;
   completedFiles: number;
   totalFiles: number;
@@ -49,63 +59,69 @@ interface PreloadAsset {
 const PRELOAD_ASSETS: PreloadAsset[] = [
   // FFmpeg core assets (largest, highest priority)
   {
-    id: 'ffmpeg-wasm',
-    label: 'FFmpeg core (WASM)',
-    load: () => loadFFmpegAsset('ffmpeg-core.wasm', 'application/wasm', 'FFmpeg core WASM'),
+    id: "ffmpeg-wasm",
+    label: "FFmpeg core (WASM)",
+    load: () =>
+      loadFFmpegAsset(
+        "ffmpeg-core.wasm",
+        "application/wasm",
+        "FFmpeg core WASM"
+      ),
     weight: 85, // ~31MB out of ~32MB total
   },
   {
-    id: 'ffmpeg-js',
-    label: 'FFmpeg core (JS)',
-    load: () => loadFFmpegAsset('ffmpeg-core.js', 'text/javascript', 'FFmpeg core script'),
+    id: "ffmpeg-js",
+    label: "FFmpeg core (JS)",
+    load: () =>
+      loadFFmpegAsset(
+        "ffmpeg-core.js",
+        "text/javascript",
+        "FFmpeg core script"
+      ),
     weight: 3,
   },
   {
-    id: 'ffmpeg-worker',
-    label: 'FFmpeg worker',
-    load: () => loadFFmpegAsset('ffmpeg-core.worker.js', 'text/javascript', 'FFmpeg worker'),
+    id: "ffmpeg-worker",
+    label: "FFmpeg worker",
+    load: () =>
+      loadFFmpegAsset(
+        "ffmpeg-core.worker.js",
+        "text/javascript",
+        "FFmpeg worker"
+      ),
     weight: 2,
   },
   {
-    id: 'ffmpeg-class-worker',
-    label: 'FFmpeg class worker',
+    id: "ffmpeg-class-worker",
+    label: "FFmpeg class worker",
     load: loadFFmpegClassWorker,
     weight: 2,
   },
   // Encoder libraries (loaded via import for now)
   {
-    id: 'modern-gif',
-    label: 'GIF encoder',
-    load: () => import('modern-gif'),
+    id: "modern-gif",
+    label: "GIF encoder",
+    load: () => import("modern-gif"),
     weight: 3,
   },
   {
-    id: 'jsquash-webp',
-    label: 'WebP encoder',
-    load: () => import('@jsquash/webp'),
+    id: "jsquash-webp",
+    label: "WebP encoder",
+    load: () => import("@jsquash/webp"),
     weight: 2,
   },
   // Demuxer libraries (loaded from CDN)
   {
-    id: 'mp4box',
-    label: 'MP4 demuxer',
-    load: () =>
-      loadFromCDN('mp4box.js', [
-        'https://esm.sh/mp4box@0.5.2',
-        'https://cdn.jsdelivr.net/npm/mp4box@0.5.2/+esm',
-        'https://unpkg.com/mp4box@0.5.2/+esm',
-      ]),
+    id: "mp4box",
+    label: "MP4 demuxer",
+    load: () => loadFromCDN("mp4box.js", buildRuntimeModuleUrls("mp4box")),
     weight: 2,
   },
   {
-    id: 'web-demuxer',
-    label: 'WebM demuxer',
+    id: "web-demuxer",
+    label: "WebM demuxer",
     load: () =>
-      loadFromCDN('web-demuxer', [
-        'https://esm.sh/web-demuxer@4.0.0',
-        'https://cdn.jsdelivr.net/npm/web-demuxer@4.0.0/+esm',
-        'https://unpkg.com/web-demuxer@4.0.0/+esm',
-      ]),
+      loadFromCDN("web-demuxer", buildRuntimeModuleUrls("web-demuxer")),
     weight: 1,
   },
 ];
@@ -141,7 +157,10 @@ export function getPreloadError(): string | null {
 /**
  * Calculate total weight for progress
  */
-const totalWeight = PRELOAD_ASSETS.reduce((sum, asset) => sum + asset.weight, 0);
+const totalWeight = PRELOAD_ASSETS.reduce(
+  (sum, asset) => sum + asset.weight,
+  0
+);
 
 /**
  * Preload all external dependencies
@@ -149,13 +168,15 @@ const totalWeight = PRELOAD_ASSETS.reduce((sum, asset) => sum + asset.weight, 0)
  * @param onProgress - Optional progress callback
  * @returns Promise that resolves when all assets are loaded
  */
-export async function preloadAllDependencies(onProgress?: PreloadProgressCallback): Promise<void> {
+export async function preloadAllDependencies(
+  onProgress?: PreloadProgressCallback
+): Promise<void> {
   // Skip if already complete
   if (preloadComplete) {
-    logger.debug('general', 'Preload already complete, skipping');
+    logger.debug("general", "Preload already complete, skipping");
     onProgress?.({
-      phase: 'complete',
-      currentFile: '',
+      phase: "complete",
+      currentFile: "",
       completedFiles: PRELOAD_ASSETS.length,
       totalFiles: PRELOAD_ASSETS.length,
       percentage: 100,
@@ -165,7 +186,7 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
 
   // Skip if already in progress
   if (preloadInProgress) {
-    logger.debug('general', 'Preload already in progress');
+    logger.debug("general", "Preload already in progress");
     return;
   }
 
@@ -176,7 +197,7 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
     try {
       onProgress?.(progress);
     } catch (error) {
-      logger.warn('general', 'Progress callback error', {
+      logger.warn("general", "Progress callback error", {
         error: getErrorMessage(error),
       });
     }
@@ -185,20 +206,20 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
   try {
     // Phase 1: Wait for Service Worker
     emitProgress({
-      phase: 'waiting-sw',
-      currentFile: 'Service Worker',
+      phase: "waiting-sw",
+      currentFile: "Service Worker",
       completedFiles: 0,
       totalFiles: PRELOAD_ASSETS.length,
       percentage: 0,
     });
 
-    logger.info('general', 'Waiting for Service Worker to be ready');
+    logger.info("general", "Waiting for Service Worker to be ready");
     const swReady = await waitForSWReady(15000);
 
     if (!swReady) {
-      logger.warn('general', 'Service Worker not ready; proceeding anyway');
+      logger.warn("general", "Service Worker not ready; proceeding anyway");
     } else {
-      logger.info('general', 'Service Worker ready');
+      logger.info("general", "Service Worker ready");
     }
 
     // Phase 2: Download assets
@@ -207,27 +228,27 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
 
     for (const asset of PRELOAD_ASSETS) {
       emitProgress({
-        phase: 'downloading',
+        phase: "downloading",
         currentFile: asset.label,
         completedFiles: completedCount,
         totalFiles: PRELOAD_ASSETS.length,
         percentage: Math.round((completedWeight / totalWeight) * 100),
       });
 
-      logger.debug('general', `Loading ${asset.label}`, { id: asset.id });
+      logger.debug("general", `Loading ${asset.label}`, { id: asset.id });
 
       try {
         await asset.load();
         completedWeight += asset.weight;
         completedCount++;
 
-        logger.debug('general', `Loaded ${asset.label}`, {
+        logger.debug("general", `Loaded ${asset.label}`, {
           id: asset.id,
           progress: Math.round((completedWeight / totalWeight) * 100),
         });
       } catch (error) {
         // Log but continue with other assets
-        logger.warn('general', `Failed to load ${asset.label}`, {
+        logger.warn("general", `Failed to load ${asset.label}`, {
           id: asset.id,
           error: getErrorMessage(error),
         });
@@ -239,14 +260,14 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
 
     // Phase 3: Initialize FFmpeg runtime
     emitProgress({
-      phase: 'initializing-ffmpeg',
-      currentFile: 'FFmpeg runtime',
+      phase: "initializing-ffmpeg",
+      currentFile: "FFmpeg runtime",
       completedFiles: PRELOAD_ASSETS.length,
       totalFiles: PRELOAD_ASSETS.length,
       percentage: 95,
     });
 
-    logger.info('general', 'Initializing FFmpeg runtime');
+    logger.info("general", "Initializing FFmpeg runtime");
 
     try {
       await ffmpegService.initialize(
@@ -254,8 +275,8 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
           // Map 0-100 init progress to 95-99 overall
           const mappedProgress = 95 + Math.round(progress * 0.04);
           emitProgress({
-            phase: 'initializing-ffmpeg',
-            currentFile: 'FFmpeg runtime',
+            phase: "initializing-ffmpeg",
+            currentFile: "FFmpeg runtime",
             completedFiles: PRELOAD_ASSETS.length,
             totalFiles: PRELOAD_ASSETS.length,
             percentage: Math.min(mappedProgress, 99),
@@ -263,7 +284,7 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
         },
         (status) => {
           emitProgress({
-            phase: 'initializing-ffmpeg',
+            phase: "initializing-ffmpeg",
             currentFile: status,
             completedFiles: PRELOAD_ASSETS.length,
             totalFiles: PRELOAD_ASSETS.length,
@@ -271,12 +292,12 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
           });
         }
       );
-      logger.info('general', 'FFmpeg runtime initialized');
+      logger.info("general", "FFmpeg runtime initialized");
     } catch (ffmpegError) {
       // Log but don't fail - FFmpeg can be initialized on-demand when selecting a file
       logger.warn(
-        'general',
-        'FFmpeg initialization failed during preload, will retry on file selection',
+        "general",
+        "FFmpeg initialization failed during preload, will retry on file selection",
         {
           error: getErrorMessage(ffmpegError),
         }
@@ -288,28 +309,28 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
     preloadInProgress = false;
 
     emitProgress({
-      phase: 'complete',
-      currentFile: '',
+      phase: "complete",
+      currentFile: "",
       completedFiles: PRELOAD_ASSETS.length,
       totalFiles: PRELOAD_ASSETS.length,
       percentage: 100,
     });
 
-    logger.info('general', 'All dependencies preloaded successfully');
+    logger.info("general", "All dependencies preloaded successfully");
   } catch (error) {
     preloadInProgress = false;
     preloadError = getErrorMessage(error);
 
     emitProgress({
-      phase: 'error',
-      currentFile: '',
+      phase: "error",
+      currentFile: "",
       completedFiles: 0,
       totalFiles: PRELOAD_ASSETS.length,
       percentage: 0,
       error: preloadError,
     });
 
-    logger.error('general', 'Preload failed', { error: preloadError });
+    logger.error("general", "Preload failed", { error: preloadError });
     throw error;
   }
 }

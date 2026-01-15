@@ -97,7 +97,7 @@ dropconvert-wasm/
 ### Stack
 
 - SolidJS 1.9 · TypeScript 5.9 · Vite 7 · Tailwind CSS 4
-- ffmpeg.wasm `@ffmpeg/ffmpeg` 0.12 + `@ffmpeg/util` 0.12
+- ffmpeg.wasm (versions pinned in `package.json`: `@ffmpeg/ffmpeg`, `@ffmpeg/util`)
 - Biome 2.3 for lint/format
 
 ### Cross-origin isolation (SharedArrayBuffer)
@@ -112,10 +112,12 @@ FFmpeg multithreading needs COOP/COEP headers.
 
 ### FFmpeg core from CDN
 
-The app downloads ffmpeg core assets at runtime via `toBlobURL` from **unpkg** using `@ffmpeg/core-mt` (includes worker file):
+The app downloads ffmpeg core assets at runtime via `toBlobURL` from **unpkg** using `@ffmpeg/core-mt` (includes worker file).
+Versions are pinned in `package.json` and injected into runtime helpers:
 
 ```ts
-const baseURL = `https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/esm`;
+const coreVersion = getRuntimeDepVersion("@ffmpeg/core-mt");
+const baseURL = `https://unpkg.com/@ffmpeg/core-mt@${coreVersion}/dist/esm`;
 await ffmpeg.load({
   coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
   wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),

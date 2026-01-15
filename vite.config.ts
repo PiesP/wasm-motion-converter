@@ -20,13 +20,13 @@ import {
   rmSync,
   unlinkSync,
   writeFileSync,
-} from 'node:fs';
-import path from 'node:path';
-import { build as esbuild } from 'esbuild';
-import { visualizer } from 'rollup-plugin-visualizer';
-import type { Plugin, PluginOption } from 'vite';
-import { defineConfig, loadEnv } from 'vite';
-import solid from 'vite-plugin-solid';
+} from "node:fs";
+import path from "node:path";
+import { build as esbuild } from "esbuild";
+import { visualizer } from "rollup-plugin-visualizer";
+import type { Plugin, PluginOption } from "vite";
+import { defineConfig, loadEnv } from "vite";
+import solid from "vite-plugin-solid";
 
 /**
  * Reads runtime dependencies from package.json.
@@ -34,24 +34,60 @@ import solid from 'vite-plugin-solid';
  * This is used as the single source of truth for:
  * - Import map generation (CDN-based ESM loading)
  * - Rollup externalization (avoid bundling runtime deps)
+ *
+ * Runtime deps are sourced from:
+ * - dependencies (installed runtime libs)
+ * - cdnDependencies (CDN-only libs; not installed, but version-pinned)
  */
 function readRuntimeDependencies(): Record<string, string> {
-  const pkgJsonPath = path.join(process.cwd(), 'package.json');
-  const raw = readFileSync(pkgJsonPath, 'utf-8');
+  const pkgJsonPath = path.join(process.cwd(), "package.json");
+  const raw = readFileSync(pkgJsonPath, "utf-8");
 
   // biome-ignore lint/suspicious/noExplicitAny: package.json is untyped external input
   const pkg = JSON.parse(raw) as any;
   const deps = (pkg?.dependencies ?? {}) as Record<string, string>;
+  const cdnDeps = (pkg?.cdnDependencies ?? {}) as Record<string, string>;
+
+  const normalizeVersion = (spec: string): string =>
+    String(spec)
+      .trim()
+      .replace(/^[\^~]/, "");
 
   const normalized: Record<string, string> = {};
-  for (const [name, spec] of Object.entries(deps)) {
-    const trimmed = String(spec).trim();
-    // esm.sh/jsdelivr/unpkg URLs behave best with concrete versions.
-    // This project pins actual versions via pnpm-lock.yaml; strip common range prefixes.
-    normalized[name] = trimmed.replace(/^[\^~]/, '');
-  }
+  const addDeps = (source: Record<string, string>, label: string): void => {
+    for (const [name, spec] of Object.entries(source)) {
+      const version = normalizeVersion(spec);
+      const existing = normalized[name];
+      if (existing && existing !== version) {
+        throw new Error(
+          `[cdn-deps] Version mismatch for ${name}: ${existing} (previous) vs ${version} (${label})`
+        );
+      }
+
+      // esm.sh/jsdelivr/unpkg URLs behave best with concrete versions.
+      normalized[name] = version;
+    }
+  };
+
+  addDeps(deps, "dependencies");
+  addDeps(cdnDeps, "cdnDependencies");
 
   return normalized;
+}
+
+function injectRuntimeDepsIntoServiceWorker(code: string): string {
+  const runtimeDeps = readRuntimeDependencies();
+  const json = JSON.stringify(runtimeDeps);
+  const escaped = json.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const replaced = code.replaceAll("__RUNTIME_DEP_VERSIONS__", escaped);
+
+  if (replaced === code) {
+    console.warn(
+      "[cdn-deps] Service worker runtime dependency placeholder not replaced"
+    );
+  }
+
+  return replaced;
 }
 
 /**
@@ -64,15 +100,15 @@ function readRuntimeDependencies(): Record<string, string> {
  * - esmShAssetUrl('@jsquash/webp', '/codec/enc/webp_enc.wasm')
  */
 function cdnDepsVirtualModulePlugin(): Plugin {
-  const virtualId = 'virtual:cdn-deps';
+  const virtualId = "virtual:cdn-deps";
   const resolvedVirtualId = `\0${virtualId}`;
 
   const runtimeDeps = readRuntimeDependencies();
-  const baseUrl = 'https://esm.sh';
-  const target = 'esnext';
+  const baseUrl = "https://esm.sh";
+  const target = "esnext";
 
   return {
-    name: 'cdn-deps-virtual-module',
+    name: "cdn-deps-virtual-module",
     resolveId(id) {
       if (id === virtualId) {
         return resolvedVirtualId;
@@ -170,25 +206,31 @@ type DevSwOptions = {
  */
 function htmlTransformPlugin(env: Record<string, string>): Plugin {
   return {
-    name: 'html-transform',
+    name: "html-transform",
     transformIndexHtml(html) {
-      const enableAds = env.VITE_ENABLE_ADS === 'true';
-      const publisherId = env.VITE_ADSENSE_PUBLISHER_ID || '';
+      const enableAds = env.VITE_ENABLE_ADS === "true";
+      const publisherId = env.VITE_ADSENSE_PUBLISHER_ID || "";
 
       let transformed = html;
 
       if (enableAds && publisherId) {
         // Inject AdSense meta tag
         const metaTag = `<meta name="google-adsense-account" content="${publisherId}">`;
-        transformed = transformed.replace('%%ADSENSE_META%%', metaTag);
+        transformed = transformed.replace("%%ADSENSE_META%%", metaTag);
 
         // Inject AdSense script
         const scriptTag = `<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${publisherId}" crossorigin="anonymous"></script>`;
-        transformed = transformed.replace('%%ADSENSE_SCRIPT%%', scriptTag);
+        transformed = transformed.replace("%%ADSENSE_SCRIPT%%", scriptTag);
       } else {
         // Remove placeholders in development
-        transformed = transformed.replace('%%ADSENSE_META%%', '<!-- AdSense disabled -->');
-        transformed = transformed.replace('%%ADSENSE_SCRIPT%%', '<!-- AdSense disabled -->');
+        transformed = transformed.replace(
+          "%%ADSENSE_META%%",
+          "<!-- AdSense disabled -->"
+        );
+        transformed = transformed.replace(
+          "%%ADSENSE_SCRIPT%%",
+          "<!-- AdSense disabled -->"
+        );
       }
 
       return transformed;
@@ -207,29 +249,33 @@ function htmlTransformPlugin(env: Record<string, string>): Plugin {
  */
 function generateAdsTxtPlugin(env: Record<string, string>): Plugin {
   return {
-    name: 'generate-ads-txt',
+    name: "generate-ads-txt",
     buildStart() {
-      const enableAds = env.VITE_ENABLE_ADS === 'true';
-      const publisherId = env.VITE_ADSENSE_PUBLISHER_ID || '';
+      const enableAds = env.VITE_ENABLE_ADS === "true";
+      const publisherId = env.VITE_ADSENSE_PUBLISHER_ID || "";
 
       // Only generate ads.txt if ads are enabled and publisher ID is set
-      if (enableAds && publisherId && !publisherId.includes('XXXX')) {
-        const publicDir = path.join(process.cwd(), 'public');
-        const adsTxtPath = path.join(publicDir, 'ads.txt');
+      if (enableAds && publisherId && !publisherId.includes("XXXX")) {
+        const publicDir = path.join(process.cwd(), "public");
+        const adsTxtPath = path.join(publicDir, "ads.txt");
 
         // Extract numeric ID from ca-pub-XXXXXXXXXXXXXXXX
-        const numericId = publisherId.replace('ca-pub-', '');
+        const numericId = publisherId.replace("ca-pub-", "");
         const adsTxtContent = `google.com, pub-${numericId}, DIRECT, f08c47fec0942fa0\n`;
 
         try {
           mkdirSync(publicDir, { recursive: true });
-          writeFileSync(adsTxtPath, adsTxtContent, 'utf-8');
-          console.log(`✓ Generated public/ads.txt with publisher ID: ${publisherId}`);
+          writeFileSync(adsTxtPath, adsTxtContent, "utf-8");
+          console.log(
+            `✓ Generated public/ads.txt with publisher ID: ${publisherId}`
+          );
         } catch (error) {
           console.warn(`⚠ Failed to generate ads.txt:`, error);
         }
       } else {
-        console.log('ℹ Skipping ads.txt generation (ads disabled or placeholder ID)');
+        console.log(
+          "ℹ Skipping ads.txt generation (ads disabled or placeholder ID)"
+        );
       }
     },
   };
@@ -242,8 +288,8 @@ function generateAdsTxtPlugin(env: Record<string, string>): Plugin {
  * Enables native ESM imports while reducing bundle size by ~36%.
  *
  * Import maps allow:
- * - import 'solid-js' → resolves to https://esm.sh/solid-js@1.9.10
- * - import 'modern-gif' → resolves to https://esm.sh/modern-gif@2.0.4
+ * - import 'solid-js' → resolves to https://esm.sh/solid-js@<version-from-package.json>
+ * - import 'modern-gif' → resolves to https://esm.sh/modern-gif@<version-from-package.json>
  *
  * Phase 1: Generates import map but dependencies still bundled
  * Phase 3: Dependencies externalized, import map becomes active
@@ -252,32 +298,47 @@ function generateAdsTxtPlugin(env: Record<string, string>): Plugin {
  */
 function importMapPlugin(): Plugin {
   return {
-    name: 'generate-import-map',
+    name: "generate-import-map",
     transformIndexHtml(html) {
       // Single source of truth: package.json dependencies.
       const runtimeDeps = readRuntimeDependencies();
-      const esmShBase = 'https://esm.sh';
-      const targetQuery = '?target=esnext';
+      const esmShBase = "https://esm.sh";
+      const targetQuery = "?target=esnext";
 
       const imports: Record<string, string> = {};
 
       // Special-case SolidJS because we rely on subpath imports.
-      const solidVersion = runtimeDeps['solid-js'] ?? '1.9.10';
-      imports['solid-js'] = `${esmShBase}/solid-js@${solidVersion}${targetQuery}`;
-      imports['solid-js/web'] = `${esmShBase}/solid-js@${solidVersion}/web${targetQuery}`;
-      imports['solid-js/store'] = `${esmShBase}/solid-js@${solidVersion}/store${targetQuery}`;
-      imports['solid-js/h'] = `${esmShBase}/solid-js@${solidVersion}/h${targetQuery}`;
-      imports['solid-js/html'] = `${esmShBase}/solid-js@${solidVersion}/html${targetQuery}`;
+      const solidVersion = runtimeDeps["solid-js"];
+      if (!solidVersion) {
+        throw new Error(
+          "[cdn-deps] solid-js version missing from package.json"
+        );
+      }
+      imports[
+        "solid-js"
+      ] = `${esmShBase}/solid-js@${solidVersion}${targetQuery}`;
+      imports[
+        "solid-js/web"
+      ] = `${esmShBase}/solid-js@${solidVersion}/web${targetQuery}`;
+      imports[
+        "solid-js/store"
+      ] = `${esmShBase}/solid-js@${solidVersion}/store${targetQuery}`;
+      imports[
+        "solid-js/h"
+      ] = `${esmShBase}/solid-js@${solidVersion}/h${targetQuery}`;
+      imports[
+        "solid-js/html"
+      ] = `${esmShBase}/solid-js@${solidVersion}/html${targetQuery}`;
 
       // All other runtime deps are mapped 1:1 to CDN.
       for (const [pkg, version] of Object.entries(runtimeDeps)) {
-        if (pkg === 'solid-js') {
+        if (pkg === "solid-js") {
           continue;
         }
 
         // Load @ffmpeg packages from CDN (Service Worker handles worker CORS)
         // Use jsdelivr for better CORS support
-        const isFFmpegPackage = pkg.startsWith('@ffmpeg/');
+        const isFFmpegPackage = pkg.startsWith("@ffmpeg/");
         if (isFFmpegPackage) {
           imports[pkg] = `https://cdn.jsdelivr.net/npm/${pkg}@${version}/+esm`;
         } else {
@@ -290,19 +351,27 @@ function importMapPlugin(): Plugin {
 
       // Create import map script tag
       // Must be placed before any module scripts to be effective
-      const scriptTag = `<script type="importmap">${JSON.stringify(importMap, null, 2)}</script>`;
+      const scriptTag = `<script type="importmap">${JSON.stringify(
+        importMap,
+        null,
+        2
+      )}</script>`;
 
       // Load SRI manifest for integrity hashes
       let sriManifest: {
         entries: Record<string, Record<string, { integrity: string }>>;
       } | null = null;
       try {
-        const manifestPath = path.join(process.cwd(), 'public', 'cdn-integrity.json');
-        const manifestContent = readFileSync(manifestPath, 'utf-8');
+        const manifestPath = path.join(
+          process.cwd(),
+          "public",
+          "cdn-integrity.json"
+        );
+        const manifestContent = readFileSync(manifestPath, "utf-8");
         sriManifest = JSON.parse(manifestContent);
       } catch (_error) {
         console.warn(
-          '⚠ SRI manifest not found, modulepreload hints will be generated without integrity hashes'
+          "⚠ SRI manifest not found, modulepreload hints will be generated without integrity hashes"
         );
       }
 
@@ -310,14 +379,16 @@ function importMapPlugin(): Plugin {
       // Preloads modules during idle time to reduce runtime fetch latency
       // Expanded from 3 to 10 dependencies for better cold start performance
       const criticalDeps = [
-        'solid-js/web', // Most critical - rendering engine
-        'solid-js', // Core reactivity
-        'solid-js/store', // State management (used in conversion store)
-        'comlink', // Worker communication for FFmpeg
-        '@ffmpeg/ffmpeg', // FFmpeg core library (from CDN)
-        '@ffmpeg/util', // FFmpeg utilities (from CDN)
-        'modern-gif', // GIF encoder
-        '@jsquash/webp', // WebP encoder fallback
+        "solid-js/web", // Most critical - rendering engine
+        "solid-js", // Core reactivity
+        "solid-js/store", // State management (used in conversion store)
+        "comlink", // Worker communication for FFmpeg
+        "@ffmpeg/ffmpeg", // FFmpeg core library (from CDN)
+        "@ffmpeg/util", // FFmpeg utilities (from CDN)
+        "modern-gif", // GIF encoder
+        "@jsquash/webp", // WebP encoder fallback
+        "mp4box", // MP4 demuxer
+        "web-demuxer", // WebM demuxer
       ] as const;
 
       const modulePreloadHints = criticalDeps
@@ -326,18 +397,20 @@ function importMapPlugin(): Plugin {
 
           // Skip if dependency is not in import map
           if (!href) {
-            console.warn(`⚠ Skipping modulepreload for ${dep} (not found in import map)`);
+            console.warn(
+              `⚠ Skipping modulepreload for ${dep} (not found in import map)`
+            );
             return null;
           }
 
-          let integrityAttr = '';
+          let integrityAttr = "";
 
           // Add integrity attribute if SRI manifest is available
           if (sriManifest) {
             const entry = sriManifest.entries[dep];
             // Use jsdelivr for FFmpeg packages, esm.sh for others
-            const isFFmpegPackage = dep.startsWith('@ffmpeg/');
-            const cdnKey = isFFmpegPackage ? 'jsdelivr' : 'esm.sh';
+            const isFFmpegPackage = dep.startsWith("@ffmpeg/");
+            const cdnKey = isFFmpegPackage ? "jsdelivr" : "esm.sh";
 
             if (entry?.[cdnKey]?.integrity) {
               integrityAttr = ` integrity="${entry[cdnKey].integrity}"`;
@@ -347,17 +420,21 @@ function importMapPlugin(): Plugin {
           return `    <link rel="modulepreload" href="${href}" crossorigin${integrityAttr}>`;
         })
         .filter((hint): hint is string => hint !== null)
-        .join('\n');
+        .join("\n");
 
       // Inject import map and modulepreload hints before closing </head> tag
       const transformed = html.replace(
-        '</head>',
+        "</head>",
         `  ${scriptTag}\n${modulePreloadHints}\n  </head>`
       );
 
-      const validHintsCount = modulePreloadHints ? modulePreloadHints.split('\n').length : 0;
-      console.log('ℹ Import map generated with CDN URLs');
-      console.log(`ℹ Added modulepreload hints for ${validHintsCount} critical dependencies`);
+      const validHintsCount = modulePreloadHints
+        ? modulePreloadHints.split("\n").length
+        : 0;
+      console.log("ℹ Import map generated with CDN URLs");
+      console.log(
+        `ℹ Added modulepreload hints for ${validHintsCount} critical dependencies`
+      );
 
       return transformed;
     },
@@ -376,23 +453,27 @@ function importMapPlugin(): Plugin {
  *
  * @returns Vite plugin for service worker compilation
  */
-function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin {
+function compileServiceWorkerPlugin(
+  options: DevSwOptions = {}
+): SwCompilePlugin {
   let isDev = false;
   const enableDev = options.enableDev ?? false;
-  let compiledSwCode = '';
-  let compiledSwrCode = '';
+  let compiledSwCode = "";
+  let compiledSwrCode = "";
   let devCompilePromise: Promise<void> | null = null;
 
-  const compileServiceWorkerFiles = async (mode: 'dev' | 'build'): Promise<void> => {
+  const compileServiceWorkerFiles = async (
+    mode: "dev" | "build"
+  ): Promise<void> => {
     console.log(
-      mode === 'dev'
-        ? 'ℹ Compiling Service Worker files for dev mode'
-        : 'ℹ Compiling Service Worker files...'
+      mode === "dev"
+        ? "ℹ Compiling Service Worker files for dev mode"
+        : "ℹ Compiling Service Worker files..."
     );
 
     const projectRoot = process.cwd();
-    const publicDir = path.join(projectRoot, 'public');
-    const tempDir = path.join(projectRoot, '.vite-sw-temp');
+    const publicDir = path.join(projectRoot, "public");
+    const tempDir = path.join(projectRoot, ".vite-sw-temp");
 
     try {
       // Create temp directory outside dist to avoid Vite cleaning
@@ -402,37 +483,44 @@ function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin
 
       // Compile service-worker.ts
       await esbuild({
-        entryPoints: [path.join(publicDir, 'service-worker.ts')],
-        outfile: path.join(tempDir, 'service-worker.js'),
+        entryPoints: [path.join(publicDir, "service-worker.ts")],
+        outfile: path.join(tempDir, "service-worker.js"),
         bundle: false,
-        format: 'esm',
-        target: 'es2020',
+        format: "esm",
+        target: "es2020",
         minify: true,
         sourcemap: false,
-        platform: 'browser',
-        logLevel: 'warning',
+        platform: "browser",
+        logLevel: "warning",
       });
 
       // Compile sw-register.ts
       await esbuild({
-        entryPoints: [path.join(publicDir, 'sw-register.ts')],
-        outfile: path.join(tempDir, 'sw-register.js'),
+        entryPoints: [path.join(publicDir, "sw-register.ts")],
+        outfile: path.join(tempDir, "sw-register.js"),
         bundle: false,
-        format: 'esm',
-        target: 'es2020',
+        format: "esm",
+        target: "es2020",
         minify: true,
         sourcemap: false,
-        platform: 'browser',
-        logLevel: 'warning',
+        platform: "browser",
+        logLevel: "warning",
       });
 
       // Read compiled code into memory
-      compiledSwCode = readFileSync(path.join(tempDir, 'service-worker.js'), 'utf-8');
-      compiledSwrCode = readFileSync(path.join(tempDir, 'sw-register.js'), 'utf-8');
+      compiledSwCode = readFileSync(
+        path.join(tempDir, "service-worker.js"),
+        "utf-8"
+      );
+      compiledSwCode = injectRuntimeDepsIntoServiceWorker(compiledSwCode);
+      compiledSwrCode = readFileSync(
+        path.join(tempDir, "sw-register.js"),
+        "utf-8"
+      );
 
-      console.log('✓ Service Worker files compiled successfully');
+      console.log("✓ Service Worker files compiled successfully");
     } catch (error) {
-      console.error('✗ Service Worker compilation failed:', error);
+      console.error("✗ Service Worker compilation failed:", error);
       throw error;
     }
   };
@@ -443,7 +531,7 @@ function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin
     }
 
     if (!devCompilePromise) {
-      devCompilePromise = compileServiceWorkerFiles('dev').finally(() => {
+      devCompilePromise = compileServiceWorkerFiles("dev").finally(() => {
         devCompilePromise = null;
       });
     }
@@ -452,32 +540,32 @@ function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin
   };
 
   return {
-    name: 'compile-service-worker',
+    name: "compile-service-worker",
 
     configResolved(config) {
-      isDev = config.mode === 'development';
+      isDev = config.mode === "development";
     },
 
     async buildStart() {
       if (isDev && !enableDev) {
-        console.log('ℹ Service Worker compilation skipped in dev mode');
+        console.log("ℹ Service Worker compilation skipped in dev mode");
         return;
       }
 
-      await compileServiceWorkerFiles(isDev ? 'dev' : 'build');
+      await compileServiceWorkerFiles(isDev ? "dev" : "build");
     },
 
     writeBundle() {
       if (isDev) return;
 
-      const distDir = path.join(process.cwd(), 'dist');
+      const distDir = path.join(process.cwd(), "dist");
 
       try {
         // Write service-worker.js to dist
-        writeFileSync(path.join(distDir, 'service-worker.js'), compiledSwCode);
-        console.log('✓ Service Worker written to dist/service-worker.js');
+        writeFileSync(path.join(distDir, "service-worker.js"), compiledSwCode);
+        console.log("✓ Service Worker written to dist/service-worker.js");
       } catch (error) {
-        console.error('✗ Failed to write service worker:', error);
+        console.error("✗ Failed to write service worker:", error);
         throw error;
       }
     },
@@ -486,8 +574,8 @@ function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin
       if (isDev) return;
 
       const projectRoot = process.cwd();
-      const tempDir = path.join(projectRoot, '.vite-sw-temp');
-      const distDir = path.join(projectRoot, 'dist');
+      const tempDir = path.join(projectRoot, ".vite-sw-temp");
+      const distDir = path.join(projectRoot, "dist");
 
       try {
         // Clean up temp directory
@@ -496,20 +584,20 @@ function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin
         }
 
         // Delete source TypeScript files from dist/ if they were copied
-        const swTs = path.join(distDir, 'service-worker.ts');
-        const swrTs = path.join(distDir, 'sw-register.ts');
+        const swTs = path.join(distDir, "service-worker.ts");
+        const swrTs = path.join(distDir, "sw-register.ts");
 
         if (existsSync(swTs)) {
           unlinkSync(swTs);
-          console.log('✓ Removed service-worker.ts from dist/');
+          console.log("✓ Removed service-worker.ts from dist/");
         }
 
         if (existsSync(swrTs)) {
           unlinkSync(swrTs);
-          console.log('✓ Removed sw-register.ts from dist/');
+          console.log("✓ Removed sw-register.ts from dist/");
         }
       } catch (error) {
-        console.warn('⚠ Service Worker cleanup encountered errors:', error);
+        console.warn("⚠ Service Worker cleanup encountered errors:", error);
       }
     },
 
@@ -519,36 +607,36 @@ function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin
       }
 
       server.middlewares.use((req, res, next) => {
-        const requestPath = req.url?.split('?')[0];
+        const requestPath = req.url?.split("?")[0];
 
-        if (requestPath === '/service-worker.js') {
+        if (requestPath === "/service-worker.js") {
           void ensureDevCompilation()
             .then(() => {
               res.statusCode = 200;
-              res.setHeader('Content-Type', 'text/javascript');
-              res.setHeader('Cache-Control', 'no-store');
+              res.setHeader("Content-Type", "text/javascript");
+              res.setHeader("Cache-Control", "no-store");
               res.end(compiledSwCode);
             })
             .catch((error) => {
-              console.error('✗ Failed to serve dev service worker:', error);
+              console.error("✗ Failed to serve dev service worker:", error);
               res.statusCode = 500;
-              res.end('Service worker compilation failed in dev mode.');
+              res.end("Service worker compilation failed in dev mode.");
             });
           return;
         }
 
-        if (requestPath === '/sw-register.js') {
+        if (requestPath === "/sw-register.js") {
           void ensureDevCompilation()
             .then(() => {
               res.statusCode = 200;
-              res.setHeader('Content-Type', 'text/javascript');
-              res.setHeader('Cache-Control', 'no-store');
+              res.setHeader("Content-Type", "text/javascript");
+              res.setHeader("Cache-Control", "no-store");
               res.end(compiledSwrCode);
             })
             .catch((error) => {
-              console.error('✗ Failed to serve dev SW register script:', error);
+              console.error("✗ Failed to serve dev SW register script:", error);
               res.statusCode = 500;
-              res.end('SW registration script compilation failed in dev mode.');
+              res.end("SW registration script compilation failed in dev mode.");
             });
           return;
         }
@@ -588,24 +676,24 @@ function injectServiceWorkerPlugin(
   let loggedDev = false;
 
   return {
-    name: 'inject-service-worker-registration',
+    name: "inject-service-worker-registration",
 
     configResolved(config) {
-      isDev = config.mode === 'development';
+      isDev = config.mode === "development";
     },
 
     transformIndexHtml(html) {
       if (isDev && !enableDev) {
-        console.log('ℹ Service Worker registration skipped in dev mode');
+        console.log("ℹ Service Worker registration skipped in dev mode");
         return html;
       }
 
       if (isDev && enableDev && !loggedDev) {
-        console.log('ℹ Service Worker registration enabled in dev mode');
+        console.log("ℹ Service Worker registration enabled in dev mode");
         loggedDev = true;
       }
 
-      let registrationCode = '';
+      let registrationCode = "";
 
       // Get compiled code from compilation plugin API
       const compiledCode = compilePlugin.api.getCompiledSWRCode();
@@ -651,8 +739,11 @@ if ('serviceWorker' in navigator) {
 </script>`;
       }
 
-      const transformed = html.replace('</head>', `  ${registrationCode}\n  </head>`);
-      console.log('✓ Service Worker registration injected into HTML');
+      const transformed = html.replace(
+        "</head>",
+        `  ${registrationCode}\n  </head>`
+      );
+      console.log("✓ Service Worker registration injected into HTML");
 
       return transformed;
     },
@@ -661,7 +752,7 @@ if ('serviceWorker' in navigator) {
 
 export default defineConfig(({ mode }) => {
   // Load environment variables based on mode (development/production)
-  const env = loadEnv(mode, process.cwd(), '');
+  const env = loadEnv(mode, process.cwd(), "");
 
   // Reuse a single plugin instance across both main and worker builds.
   const cdnDepsPlugin = cdnDepsVirtualModulePlugin();
@@ -671,11 +762,13 @@ export default defineConfig(({ mode }) => {
   const isExternalRuntimeDep = (id: string): boolean => {
     // All runtime dependencies are externalized to CDN
     // Service Worker handles worker CORS via proxy pattern
-    return runtimeDepNames.some((dep) => id === dep || id.startsWith(`${dep}/`));
+    return runtimeDepNames.some(
+      (dep) => id === dep || id.startsWith(`${dep}/`)
+    );
   };
 
   // Create service worker compilation plugin (needed by injection plugin)
-  const enableSwDev = env.VITE_ENABLE_SW_DEV === 'true';
+  const enableSwDev = env.VITE_ENABLE_SW_DEV === "true";
   const swCompilePlugin = compileServiceWorkerPlugin({
     enableDev: enableSwDev,
   });
@@ -692,9 +785,9 @@ export default defineConfig(({ mode }) => {
       injectServiceWorkerPlugin(swCompilePlugin, { enableDev: enableSwDev }),
       // Generate pre-cache manifest for Service Worker (Phase 5)
       {
-        name: 'generate-precache-manifest',
+        name: "generate-precache-manifest",
         closeBundle() {
-          const distDir = path.join(process.cwd(), 'dist');
+          const distDir = path.join(process.cwd(), "dist");
 
           // Recursively collect all files
           const collectFiles = (dir: string, baseDir: string): string[] => {
@@ -705,7 +798,10 @@ export default defineConfig(({ mode }) => {
               const fullPath = path.join(dir, entry.name);
               if (entry.isDirectory()) {
                 files.push(...collectFiles(fullPath, baseDir));
-              } else if (entry.isFile() && /\.(js|css|html)$/.test(entry.name)) {
+              } else if (
+                entry.isFile() &&
+                /\.(js|css|html)$/.test(entry.name)
+              ) {
                 const relativePath = path.relative(baseDir, fullPath);
                 files.push(`/${relativePath}`);
               }
@@ -715,23 +811,28 @@ export default defineConfig(({ mode }) => {
           };
 
           const precacheUrls = collectFiles(distDir, distDir).filter(
-            (p) => !p.includes('service-worker')
+            (p) => !p.includes("service-worker")
           ); // Exclude SW itself
 
           // Inject into Service Worker
-          const swPath = path.join(distDir, 'service-worker.js');
+          const swPath = path.join(distDir, "service-worker.js");
           if (existsSync(swPath)) {
-            let swContent = readFileSync(swPath, 'utf-8');
+            let swContent = readFileSync(swPath, "utf-8");
             // Replace the magic string placeholder with actual URLs
-            swContent = swContent.replace('"PRECACHE_MANIFEST"', JSON.stringify(precacheUrls));
+            swContent = swContent.replace(
+              '"PRECACHE_MANIFEST"',
+              JSON.stringify(precacheUrls)
+            );
             writeFileSync(swPath, swContent);
-            console.log(`ℹ Injected ${precacheUrls.length} pre-cache URLs into Service Worker`);
+            console.log(
+              `ℹ Injected ${precacheUrls.length} pre-cache URLs into Service Worker`
+            );
           }
         },
       },
       visualizer({
         // Bundle analysis tool - generates dist/stats.html
-        filename: 'dist/stats.html',
+        filename: "dist/stats.html",
         gzipSize: true, // Calculate gzipped bundle sizes
         brotliSize: true, // Calculate brotli-compressed sizes
       }) as PluginOption,
@@ -741,12 +842,12 @@ export default defineConfig(({ mode }) => {
     // Enables cleaner imports: '@components/...' instead of '../../components/...'
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, './src'),
-        '@components': path.resolve(__dirname, './src/components'),
-        '@services': path.resolve(__dirname, './src/services'),
-        '@utils': path.resolve(__dirname, './src/utils'),
-        '@stores': path.resolve(__dirname, './src/stores'),
-        '@t': path.resolve(__dirname, './src/types'),
+        "@": path.resolve(__dirname, "./src"),
+        "@components": path.resolve(__dirname, "./src/components"),
+        "@services": path.resolve(__dirname, "./src/services"),
+        "@utils": path.resolve(__dirname, "./src/utils"),
+        "@stores": path.resolve(__dirname, "./src/stores"),
+        "@t": path.resolve(__dirname, "./src/types"),
       },
     },
 
@@ -754,7 +855,7 @@ export default defineConfig(({ mode }) => {
     // Some worker dependencies (e.g., WASM packages) trigger code-splitting,
     // which is not supported with IIFE/UMD worker output formats.
     worker: {
-      format: 'es',
+      format: "es",
       plugins: () => [cdnDepsPlugin],
     },
 
@@ -763,16 +864,16 @@ export default defineConfig(({ mode }) => {
       // Required headers for SharedArrayBuffer support (FFmpeg.wasm multithreading)
       // Cross-origin isolation enables ffmpeg-core-mt.wasm worker threads
       headers: {
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-        'Cross-Origin-Opener-Policy': 'same-origin',
+        "Cross-Origin-Embedder-Policy": "require-corp",
+        "Cross-Origin-Opener-Policy": "same-origin",
       },
     },
 
     // Preview server configuration (same isolation requirements as dev)
     preview: {
       headers: {
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-        'Cross-Origin-Opener-Policy': 'same-origin',
+        "Cross-Origin-Embedder-Policy": "require-corp",
+        "Cross-Origin-Opener-Policy": "same-origin",
       },
     },
 
@@ -781,17 +882,17 @@ export default defineConfig(({ mode }) => {
     // Vite's dependency pre-bundling can break FFmpeg's internal worker module resolution
     // Include solid-js for faster dev server startup
     optimizeDeps: {
-      exclude: ['@ffmpeg/ffmpeg'],
-      include: ['solid-js/web', 'solid-js/store'],
+      exclude: ["@ffmpeg/ffmpeg"],
+      include: ["solid-js/web", "solid-js/store"],
     },
 
     // Production build configuration
     build: {
-      target: 'esnext', // Target modern browsers with ESNext features
+      target: "esnext", // Target modern browsers with ESNext features
       chunkSizeWarningLimit: 1000, // Increase limit for FFmpeg bundles (1MB)
       cssCodeSplit: true, // Enable CSS code splitting for better caching
       sourcemap: false, // Disable source maps for smaller bundle
-      minify: 'esbuild', // Use esbuild for faster minification
+      minify: "esbuild", // Use esbuild for faster minification
 
       rollupOptions: {
         // Externalize ALL runtime deps so the production bundle contains app code only.
@@ -799,16 +900,16 @@ export default defineConfig(({ mode }) => {
         external: (id) => isExternalRuntimeDep(id),
 
         output: {
-          format: 'es', // ES module format for tree-shaking
+          format: "es", // ES module format for tree-shaking
 
           // Optimized file naming for better caching
-          entryFileNames: 'assets/[name].[hash].js',
-          chunkFileNames: 'assets/[name].[hash].js',
-          assetFileNames: 'assets/[name].[hash].[ext]',
+          entryFileNames: "assets/[name].[hash].js",
+          chunkFileNames: "assets/[name].[hash].js",
+          assetFileNames: "assets/[name].[hash].[ext]",
 
           // Improve tree-shaking
           preserveModules: false,
-          exports: 'auto',
+          exports: "auto",
 
           // Compact output for smaller bundles
           compact: true,
@@ -825,14 +926,14 @@ export default defineConfig(({ mode }) => {
             // Also includes CDN utilities (cdn-config, cdn-url-builder, cdn-health-tracker)
             // that are used by both FFmpeg and unified-preloader to break cycles.
             if (
-              id.includes('src/utils/') ||
-              id.includes('src/services/shared/') ||
-              id.includes('cdn-config') ||
-              id.includes('cdn-url-builder') ||
-              id.includes('cdn-health-tracker') ||
-              id.includes('cdn-loader')
+              id.includes("src/utils/") ||
+              id.includes("src/services/shared/") ||
+              id.includes("cdn-config") ||
+              id.includes("cdn-url-builder") ||
+              id.includes("cdn-health-tracker") ||
+              id.includes("cdn-loader")
             ) {
-              return 'services-shared';
+              return "services-shared";
             }
 
             // Conversion services - ALL conversion-related modules in one chunk
@@ -842,26 +943,26 @@ export default defineConfig(({ mode }) => {
             // unified-preloader imports ffmpegService) so must be in same chunk
             // to avoid circular chunk dependencies.
             if (
-              id.includes('ffmpeg-service') ||
-              id.includes('src/services/cpu-path/') ||
-              id.includes('src/services/ffmpeg/') ||
-              id.includes('src/services/cdn/') ||
-              id.includes('src/services/orchestration') ||
-              id.includes('src/services/webcodecs') ||
-              id.includes('src/services/video-pipeline') ||
-              id.includes('src/services/encoders') ||
-              id.includes('src/services/sw/')
+              id.includes("ffmpeg-service") ||
+              id.includes("src/services/cpu-path/") ||
+              id.includes("src/services/ffmpeg/") ||
+              id.includes("src/services/cdn/") ||
+              id.includes("src/services/orchestration") ||
+              id.includes("src/services/webcodecs") ||
+              id.includes("src/services/video-pipeline") ||
+              id.includes("src/services/encoders") ||
+              id.includes("src/services/sw/")
             ) {
-              return 'services-conversion';
+              return "services-conversion";
             }
 
             // UI components - can be lazy-loaded
             if (
-              id.includes('FileDropzone') ||
-              id.includes('ConversionProgress') ||
-              id.includes('ProgressBar')
+              id.includes("FileDropzone") ||
+              id.includes("ConversionProgress") ||
+              id.includes("ProgressBar")
             ) {
-              return 'components-ui';
+              return "components-ui";
             }
           },
         },

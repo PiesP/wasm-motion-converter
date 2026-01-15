@@ -1,5 +1,5 @@
-import { getErrorMessage } from './error-utils';
-import { logger } from './logger';
+import { getErrorMessage } from "./error-utils";
+import { logger } from "./logger";
 
 /**
  * Load ECMAScript module from multiple CDN sources with automatic fallback
@@ -19,7 +19,7 @@ import { logger } from './logger';
  * ```typescript
  * const mp4Box = await loadFromCDN<MP4BoxModule>(
  *   'mp4box.js',
- *   ['https://esm.sh/mp4box@0.5.2', 'https://cdn.jsdelivr.net/npm/mp4box@0.5.2/+esm'],
+ *   buildRuntimeModuleUrls('mp4box'),
  *   15000
  * );
  * ```
@@ -33,7 +33,7 @@ export async function loadFromCDN<T>(
 
   for (const cdn of cdnUrls) {
     try {
-      logger.info('demuxer', `Attempting to load ${moduleName} from CDN`, {
+      logger.info("demuxer", `Attempting to load ${moduleName} from CDN`, {
         cdn,
         timeout: timeoutMs,
       });
@@ -41,11 +41,11 @@ export async function loadFromCDN<T>(
       const module = await Promise.race([
         import(/* @vite-ignore */ cdn),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('CDN timeout')), timeoutMs)
+          setTimeout(() => reject(new Error("CDN timeout")), timeoutMs)
         ),
       ]);
 
-      logger.info('demuxer', `Successfully loaded ${moduleName} from CDN`, {
+      logger.info("demuxer", `Successfully loaded ${moduleName} from CDN`, {
         cdn,
       });
 
@@ -55,7 +55,7 @@ export async function loadFromCDN<T>(
       const reason = getErrorMessage(error);
       errors.push({ cdn, reason });
 
-      logger.warn('demuxer', `Failed to load ${moduleName} from CDN`, {
+      logger.warn("demuxer", `Failed to load ${moduleName} from CDN`, {
         cdn,
         error: reason,
       });
@@ -63,11 +63,13 @@ export async function loadFromCDN<T>(
   }
 
   // All CDN sources exhausted
-  logger.error('demuxer', `All CDN sources failed for ${moduleName}`, {
+  logger.error("demuxer", `All CDN sources failed for ${moduleName}`, {
     moduleName,
     attemptCount: cdnUrls.length,
     errors,
   });
 
-  throw new Error(`Failed to load ${moduleName} from all CDN sources (${cdnUrls.length} attempts)`);
+  throw new Error(
+    `Failed to load ${moduleName} from all CDN sources (${cdnUrls.length} attempts)`
+  );
 }
