@@ -760,6 +760,30 @@ function convertToCDN(
   originalUrl: string,
   targetProvider: string
 ): string | null {
+  try {
+    const parsedUrl = new URL(originalUrl);
+    const providerByHostname: Record<string, string> = {
+      "esm.sh": "esm.sh",
+      "cdn.jsdelivr.net": "jsdelivr",
+      "unpkg.com": "unpkg",
+      "cdn.skypack.dev": "skypack",
+    };
+
+    const originalProvider = providerByHostname[parsedUrl.hostname];
+
+    // If the URL is already targeting the requested provider, use it as-is.
+    if (originalProvider && originalProvider === targetProvider) {
+      return originalUrl;
+    }
+
+    // Only esm.sh URLs can be converted to other CDNs by our rules.
+    if (originalProvider && originalProvider !== "esm.sh") {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
   switch (targetProvider) {
     case "esm.sh":
       return originalUrl; // Already esm.sh format
