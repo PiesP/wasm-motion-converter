@@ -532,6 +532,7 @@ export class FFmpegCore {
       }
 
       const initTime = Date.now() - initStartTime;
+      const recentLogs = this.ffmpegLogBuffer.slice(-12);
       logger.error('ffmpeg', 'FFmpeg initialization failed', {
         elapsedMs: initTime,
         error: errorMsg,
@@ -539,6 +540,7 @@ export class FFmpegCore {
           ffmpegExists: Boolean(this.ffmpeg),
           isLoaded: this.loaded,
         },
+        recentLogs: recentLogs.length > 0 ? recentLogs : undefined,
       });
       rejectInit(initError);
       throw initError;

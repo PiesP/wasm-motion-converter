@@ -17,10 +17,19 @@ import { verifyWorkerIsolation } from './worker-isolation';
 type InitEnvironmentSnapshot = {
   online?: boolean;
   visibilityState?: DocumentVisibilityState;
+  documentHidden?: boolean;
+  hasFocus?: boolean;
+  isSecureContext?: boolean;
   hardwareConcurrency?: number;
   deviceMemoryGB?: number;
   isLikelyFirstVisit?: boolean;
   swReadiness?: ReturnType<typeof checkSWReadiness>;
+  connection?: {
+    effectiveType?: string;
+    downlinkMbps?: number;
+    rttMs?: number;
+    saveData?: boolean;
+  };
 };
 
 const getInitEnvironmentSnapshot = (): InitEnvironmentSnapshot => {
@@ -30,15 +39,36 @@ const getInitEnvironmentSnapshot = (): InitEnvironmentSnapshot => {
 
   const navigatorWithMemory = navigator as Navigator & {
     deviceMemory?: number;
+    connection?: {
+      effectiveType?: string;
+      downlink?: number;
+      rtt?: number;
+      saveData?: boolean;
+    };
   };
+
+  const hasDocument = typeof document !== 'undefined';
+  const connection = navigatorWithMemory.connection;
 
   return {
     online: navigator.onLine,
-    visibilityState: typeof document !== 'undefined' ? document.visibilityState : undefined,
+    visibilityState: hasDocument ? document.visibilityState : undefined,
+    documentHidden: hasDocument ? document.hidden : undefined,
+    hasFocus:
+      hasDocument && typeof document.hasFocus === 'function' ? document.hasFocus() : undefined,
+    isSecureContext: typeof isSecureContext !== 'undefined' ? isSecureContext : undefined,
     hardwareConcurrency: navigator.hardwareConcurrency,
     deviceMemoryGB: navigatorWithMemory.deviceMemory,
     isLikelyFirstVisit: isLikelyFirstVisit(),
     swReadiness: checkSWReadiness(),
+    connection: connection
+      ? {
+          effectiveType: connection.effectiveType,
+          downlinkMbps: connection.downlink,
+          rttMs: connection.rtt,
+          saveData: connection.saveData,
+        }
+      : undefined,
   };
 };
 
@@ -121,6 +151,7 @@ export async function initializeFFmpegRuntime(
   let downloadProgress = 0;
   let initHeartbeatId: ReturnType<typeof setInterval> | number | null = null;
   let initStatusTimeoutId: ReturnType<typeof setTimeout> | number | null = null;
+  let visibilityChangeHandler: (() => void) | null = null;
 
   const reportProgress = (value: number): void => {
     const clamped = Math.min(100, Math.max(0, Math.round(value)));
@@ -181,6 +212,17 @@ export async function initializeFFmpegRuntime(
       : null;
 
   try {
+    if (typeof document !== 'undefined') {
+      visibilityChangeHandler = () => {
+        logger.info('ffmpeg', 'Document visibility changed during FFmpeg init', {
+          visibilityState: document.visibilityState,
+          documentHidden: document.hidden,
+          hasFocus: typeof document.hasFocus === 'function' ? document.hasFocus() : undefined,
+        });
+      };
+      document.addEventListener('visibilitychange', visibilityChangeHandler);
+    }
+
     logger.debug('ffmpeg', 'FFmpeg init preflight snapshot', getInitEnvironmentSnapshot());
     await ensureServiceWorkerControl(callbacks);
 
@@ -246,25 +288,49 @@ export async function initializeFFmpegRuntime(
       workerUrl: workerUrl.substring(0, 50),
     });
 
-    await withTimeout(
-      ffmpeg.load({
-        classWorkerURL: classWorkerUrl,
-        coreURL: coreUrl,
-        wasmURL: wasmUrl,
-        workerURL: workerUrl,
-      }),
-      TIMEOUT_FFMPEG_INIT,
-      `FFmpeg initialization timed out after ${
-        TIMEOUT_FFMPEG_INIT / 1000
-      } seconds. Please check your internet connection and try again.`,
-      () => {
-        logger.warn('ffmpeg', 'FFmpeg load timed out', {
-          downloadProgress,
-          initSnapshot: getInitEnvironmentSnapshot(),
-        });
-        options.terminate();
-      }
+    const loadStartTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+
+    try {
+      await withTimeout(
+        ffmpeg.load({
+          classWorkerURL: classWorkerUrl,
+          coreURL: coreUrl,
+          wasmURL: wasmUrl,
+          workerURL: workerUrl,
+        }),
+        TIMEOUT_FFMPEG_INIT,
+        `FFmpeg initialization timed out after ${
+          TIMEOUT_FFMPEG_INIT / 1000
+        } seconds. Please check your internet connection and try again.`,
+        () => {
+          logger.warn('ffmpeg', 'FFmpeg load timed out', {
+            downloadProgress,
+            coreVariant,
+            initSnapshot: getInitEnvironmentSnapshot(),
+          });
+          options.terminate();
+        }
+      );
+    } catch (error) {
+      const elapsedMs = Math.round(
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) - loadStartTime
+      );
+      logger.error('ffmpeg', 'FFmpeg load failed', {
+        elapsedMs,
+        coreVariant,
+        error: getErrorMessage(error),
+        initSnapshot: getInitEnvironmentSnapshot(),
+      });
+      throw error;
+    }
+
+    const loadElapsedMs = Math.round(
+      (typeof performance !== 'undefined' ? performance.now() : Date.now()) - loadStartTime
     );
+    logger.debug('ffmpeg', 'FFmpeg load resolved', {
+      elapsedMs: loadElapsedMs,
+      coreVariant,
+    });
 
     performanceTracker.endPhase('ffmpeg-init');
     logger.performance('FFmpeg initialization complete');
@@ -335,6 +401,9 @@ export async function initializeFFmpegRuntime(
     }
     if (initStatusTimeoutId) {
       clearTimeout(initStatusTimeoutId);
+    }
+    if (visibilityChangeHandler && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', visibilityChangeHandler);
     }
   }
 }
