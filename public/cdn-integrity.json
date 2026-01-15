@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-01-15T11:07:03.761Z",
+  "generated": "2026-01-15T11:36:50.743Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -44,28 +44,6 @@
         "url": "https://cdn.skypack.dev/@ffmpeg/util@0.12.2",
         "integrity": "sha384-jpcSXz9sZsmCIwfZ2ve2tiurb8KqUBV8ecSIbIZapmGxYm55biT3Z8N6VI65vYKi",
         "size": 832
-      }
-    },
-    "@jsquash/webp": {
-      "esm.sh": {
-        "url": "https://esm.sh/@jsquash/webp@1.5.0?target=esnext",
-        "integrity": "sha384-fFpV0u7nDSMqcBlpiOAR66BsDKSoaB+sjHrMNkE2EfQtE7L49EhxcebavkOJ0Ewo",
-        "size": 170
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/@jsquash/webp@1.5.0/+esm",
-        "integrity": "sha384-TfVCRE97tKp3uYt9ALxDgLABDW3lWm6igfngvqGWyepkXnEkl5tlb935X9U6F7BU",
-        "size": 21315
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/@jsquash/webp@1.5.0?module",
-        "integrity": "sha384-MQlD6nManzRPVzyk699/mjrOFcEBorM7msXoFUognhUMrPA8BckEF8KunG7pSOmr",
-        "size": 112
-      },
-      "skypack": {
-        "url": "https://cdn.skypack.dev/@jsquash/webp@1.5.0",
-        "integrity": "sha384-KUGrbGwGf/dFZ6Cj3LIORV5JB5eSs5J0BA3UuGwLun/Ou+3+Znh7rXgFskJspWme",
-        "size": 837
       }
     },
     "@webav/av-cliper": {

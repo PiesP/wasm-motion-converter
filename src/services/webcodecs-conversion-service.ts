@@ -335,7 +335,7 @@ class WebCodecsConversionService {
     });
 
     // Preflight: allow direct path when an EncoderFactory backend is available
-    // even if canvas WebP encoding is unsupported (e.g., jsquash WASM fallback).
+    // even if canvas WebP encoding is unsupported.
     const canEncodeWebPFrames = await this.getCanvasWebPEncodeSupport();
     const hasFactoryWebPEncoder = canEncodeWebPFrames
       ? false

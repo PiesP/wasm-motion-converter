@@ -7,10 +7,27 @@
  * @module services/webav/webav-mp4-service
  */
 
-import { Combinator, MP4Clip, OffscreenSprite } from '@webav/av-cliper';
 import type { ConversionOptions, ConversionOutputBlob } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { performanceTracker } from '@utils/performance-tracker';
+
+// Type definitions for lazy-loaded @webav/av-cliper
+type AVCliperModule = typeof import('@webav/av-cliper');
+type Combinator = InstanceType<AVCliperModule['Combinator']>;
+
+// Cached module reference for lazy loading
+let avCliperModule: AVCliperModule | null = null;
+
+/**
+ * Lazy-load @webav/av-cliper module
+ */
+async function loadAVCliper(): Promise<AVCliperModule> {
+  if (!avCliperModule) {
+    logger.debug('webav-mp4', 'Loading @webav/av-cliper module');
+    avCliperModule = await import('@webav/av-cliper');
+  }
+  return avCliperModule;
+}
 
 /**
  * WebAV MP4 Conversion Service
@@ -60,6 +77,9 @@ export class WebAVMP4Service {
         scale: options.scale,
       });
 
+      // Lazy-load @webav/av-cliper module
+      const { MP4Clip, Combinator: CombinatorClass, OffscreenSprite } = await loadAVCliper();
+
       onProgress?.(10);
       const arrayBuffer = await file.arrayBuffer();
       // biome-ignore lint/suspicious/noExplicitAny: WebAV types are complex
@@ -78,7 +98,7 @@ export class WebAVMP4Service {
       const outputWidth = Math.round(width * (options.scale || 1));
       const outputHeight = Math.round(height * (options.scale || 1));
 
-      this.combinator = new Combinator({
+      this.combinator = new CombinatorClass({
         width: outputWidth,
         height: outputHeight,
       });

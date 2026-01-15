@@ -354,7 +354,6 @@ function importMapPlugin(): Plugin {
         '@ffmpeg/ffmpeg', // FFmpeg core library (from CDN)
         '@ffmpeg/util', // FFmpeg utilities (from CDN)
         'modern-gif', // GIF encoder
-        '@jsquash/webp', // WebP encoder fallback
         'mp4box', // MP4 demuxer
         'web-demuxer', // WebM demuxer
       ] as const;

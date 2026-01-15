@@ -39,7 +39,6 @@
   "dependencies": {
     "@ffmpeg/ffmpeg": "0.12.15",
     "@ffmpeg/util": "0.12.2",
-    "@jsquash/webp": "1.5.0",
     "@webav/av-cliper": "1.2.8",
     "comlink": "4.4.2",
     "mediabunny": "1.27.4",

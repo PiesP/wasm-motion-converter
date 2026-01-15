@@ -80,12 +80,6 @@ const PRELOAD_ASSETS: PreloadAsset[] = [
     load: () => import('modern-gif'),
     weight: 3,
   },
-  {
-    id: 'jsquash-webp',
-    label: 'WebP encoder',
-    load: () => import('@jsquash/webp'),
-    weight: 2,
-  },
   // Demuxer libraries (loaded from CDN)
   {
     id: 'mp4box',

@@ -22,13 +22,23 @@
 import { logger } from '@utils/logger';
 import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface';
 import { convertFramesToImageData } from '@services/encoders/frame-converter';
-import {
-  BufferTarget,
-  EncodedPacket,
-  EncodedVideoPacketSource,
-  Mp4OutputFormat,
-  Output,
-} from 'mediabunny';
+
+// Type definitions for lazy-loaded mediabunny
+type MediabunnyModule = typeof import('mediabunny');
+
+// Cached module reference for lazy loading
+let mediabunnyModule: MediabunnyModule | null = null;
+
+/**
+ * Lazy-load mediabunny module
+ */
+async function loadMediabunny(): Promise<MediabunnyModule> {
+  if (!mediabunnyModule) {
+    logger.debug('mp4-encoder', 'Loading mediabunny module');
+    mediabunnyModule = await import('mediabunny');
+  }
+  return mediabunnyModule;
+}
 
 /**
  * MP4 encoder adapter
@@ -471,6 +481,10 @@ export class MP4EncoderAdapter implements EncoderAdapter {
     if (!firstMeta?.decoderConfig) {
       throw new Error('Missing decoderConfig from the first encoded chunk; cannot mux MP4');
     }
+
+    // Lazy-load mediabunny module
+    const { BufferTarget, EncodedPacket, EncodedVideoPacketSource, Mp4OutputFormat, Output } =
+      await loadMediabunny();
 
     logger.debug('mp4-encoder', 'Muxing MP4 container (Mediabunny)', {
       chunkCount: chunks.length,
