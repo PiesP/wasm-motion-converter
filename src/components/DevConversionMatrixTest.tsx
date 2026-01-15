@@ -1,6 +1,3 @@
-import type { Component } from 'solid-js';
-import { createMemo, createSignal, Show } from 'solid-js';
-
 import type { ConversionMatrixTestReport } from '@services/dev/conversion-matrix-test';
 import { runConversionMatrixTestWithReport } from '@services/dev/conversion-matrix-test';
 import {
@@ -12,21 +9,22 @@ import {
   loadMatrixTestReport,
   persistMatrixTestReport,
 } from '@services/dev/matrix-test-report-store';
+import { appState, setAppState } from '@stores/app-store';
+import { inputFile, videoMetadata } from '@stores/conversion-media-store';
 import {
-  conversionSettings,
   conversionStatusMessage,
-  inputFile,
   setConversionProgress,
   setConversionStatusMessage,
-  videoMetadata,
-} from '@stores/conversion-store';
-import { appState, setAppState } from '@stores/app-store';
+} from '@stores/conversion-progress-store';
+import { conversionSettings } from '@stores/conversion-settings-store';
 import {
   devMatrixTestCancelRequested,
   resetDevMatrixTestCancel,
   setDevMatrixTestIsRunning,
 } from '@stores/dev-matrix-test-store';
 import { logger } from '@utils/logger';
+import type { Component } from 'solid-js';
+import { createMemo, createSignal, Show } from 'solid-js';
 
 interface DevConversionMatrixTestProps {
   disabled?: boolean;

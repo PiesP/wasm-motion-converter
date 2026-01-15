@@ -1,38 +1,40 @@
-import { batch } from 'solid-js';
+import { ffmpegService } from '@services/ffmpeg-service';
 
 import { cancelConversion, convertVideo } from '@services/orchestration/conversion-orchestrator';
-import { ffmpegService } from '@services/ffmpeg-service';
-import { showConfirmation } from '@stores/confirmation-store';
-import {
-  conversionSettings,
-  DEFAULT_CONVERSION_SETTINGS,
-  inputFile,
-  MAX_RESULTS,
-  setAutoAppliedRecommendation,
-  setConversionResults,
-  setConversionSettings,
-  setConversionStatusMessage,
-  setErrorContext,
-  setErrorMessage,
-  setInputFile,
-  setPerformanceWarnings,
-  setVideoMetadata,
-  videoMetadata,
-  videoPreviewUrl,
-  setVideoPreviewUrl,
-} from '@stores/conversion-store';
 import {
   appState,
   setAppState,
   setLoadingProgress,
   setLoadingStatusMessage,
 } from '@stores/app-store';
+import { showConfirmation } from '@stores/confirmation-store';
+import { setErrorContext, setErrorMessage } from '@stores/conversion-error-store';
+import {
+  inputFile,
+  setInputFile,
+  setVideoMetadata,
+  setVideoPreviewUrl,
+  videoMetadata,
+  videoPreviewUrl,
+} from '@stores/conversion-media-store';
+import {
+  setAutoAppliedRecommendation,
+  setPerformanceWarnings,
+} from '@stores/conversion-performance-store';
+import { setConversionStatusMessage } from '@stores/conversion-progress-store';
+import { MAX_RESULTS, setConversionResults } from '@stores/conversion-result-store';
+import {
+  conversionSettings,
+  DEFAULT_CONVERSION_SETTINGS,
+  setConversionSettings,
+} from '@stores/conversion-settings-store';
 import type { ConversionResult, ConversionSettings } from '@t/conversion-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { createId } from '@utils/create-id';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { logger } from '@utils/logger';
+import { batch } from 'solid-js';
 
 import type { ConversionRuntimeController } from './conversion-runtime-controller';
 import { handleFileSelected } from './handle-file-selected';

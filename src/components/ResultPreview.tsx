@@ -1,10 +1,11 @@
-import { createEffect, createMemo, createSignal, onCleanup, Show, splitProps } from 'solid-js';
-
+import Button from '@components/ui/button';
+import Panel from '@components/ui/panel';
+import type { ConversionSettings } from '@t/conversion-types';
 import { formatBytes } from '@utils/format-bytes';
 import { formatDuration } from '@utils/format-duration';
 
 import type { Component } from 'solid-js';
-import type { ConversionSettings } from '@t/conversion-types';
+import { createEffect, createMemo, createSignal, onCleanup, Show, splitProps } from 'solid-js';
 
 /**
  * Scale percentage multiplier for display
@@ -113,17 +114,16 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   };
 
   return (
-    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6">
+    <Panel class="p-6">
       <div class="flex gap-3">
-        <button
-          type="button"
-          data-download-button
-          aria-label="Download converted file"
-          class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900"
+        <Button
+          ariaLabel="Download converted file"
+          class="flex-1"
           onClick={handleDownload}
+          data-download-button
         >
           Download
-        </button>
+        </Button>
       </div>
 
       <div class="mt-4 flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg p-4 relative overflow-hidden">
@@ -188,7 +188,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           </div>
         </div>
       </div>
-    </div>
+    </Panel>
   );
 };
 

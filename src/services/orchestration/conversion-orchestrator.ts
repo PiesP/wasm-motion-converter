@@ -12,43 +12,38 @@
  * 4. Return result with metadata
  */
 
-import type { ConversionFormat, GifEncoderPreference, VideoMetadata } from '@t/conversion-types';
-import type { VideoTrackInfo } from '@t/video-pipeline-types';
-import type { WebAVMP4Service } from '@services/webav/webav-mp4-service';
+import { ffmpegService } from '@services/ffmpeg-service'; // Legacy service (will be replaced in Phase 4)
+import {
+  buildLightweightMetadataFromTrack,
+  resolveMetadata,
+} from '@services/orchestration/conversion-metadata-utils';
+import { resolveGifEncoderStrategy } from '@services/orchestration/gif-encoder-strategy';
+import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
+import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
+import { ProgressReporter } from '@services/shared/progress-reporter';
 import { capabilityService } from '@services/video-pipeline/capability-service';
 import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
 import { videoPipelineService } from '@services/video-pipeline/video-pipeline-service';
-import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
-import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
-import {
-  isAv1Codec,
-  isH264Codec,
-  isHevcCodec,
-  isVp9Codec,
-  normalizeCodecString,
-} from '@utils/codec-utils';
+import type { WebAVMP4Service } from '@services/webav/webav-mp4-service';
+import type { ConversionFormat, GifEncoderPreference, VideoMetadata } from '@t/conversion-types';
+import { isAv1Codec } from '@utils/codec-utils';
 import { detectContainerFormat } from '@utils/container-utils';
 import { createId } from '@utils/create-id';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
-import { QUALITY_PRESETS } from '@utils/constants';
-import { getOptimalFPS } from '@utils/quality-optimizer';
-import { ffmpegService } from '@services/ffmpeg-service'; // Legacy service (will be replaced in Phase 4)
-import { ProgressReporter } from '@services/shared/progress-reporter';
-import { computeRawvideoEligibility } from '@services/webcodecs/conversion/rawvideo-eligibility';
 import {
+  type ConversionDebugOutcome,
   setConversionAutoSelectionDebug,
   setConversionPhaseTimingsDebug,
   updateConversionAutoSelectionDebug,
-  type ConversionDebugOutcome,
 } from './conversion-debug';
 import { conversionMetricsService } from './conversion-metrics-service';
 import { getDevConversionOverrides } from './dev-conversion-overrides';
 import type {
   ConversionMetadata,
+  ConversionPath,
   ConversionRequest,
   ConversionResponse,
-  ConversionPath,
   ConversionStatus,
   PathSelection,
 } from './types';
@@ -173,7 +168,7 @@ class ConversionOrchestrator {
       // This keeps GPU conversions from paying the FFmpeg init cost up front.
       const metadata =
         pathSelection.path === 'cpu'
-          ? await this.resolveMetadata(request.file, plannedMetadata)
+          ? await resolveMetadata(request.file, plannedMetadata)
           : plannedMetadata;
 
       throwIfAborted();
@@ -209,215 +204,15 @@ class ConversionOrchestrator {
         pathSelection.path === 'gpu' &&
         !hasDevForcedGifEncoder
       ) {
-        const caps = extendedCapabilityService.getCached();
-
-        const codec = metadata?.codec;
-        const isComplexGifCodec = isAv1Codec(codec) || isHevcCodec(codec) || isVp9Codec(codec);
-
-        // Session-local learning: prefer the GIF encoder that is most stable on this device.
-        // This is intentionally conservative for AV1 to avoid catastrophic outliers.
-        const learnedGifEncoder = codec
-          ? conversionMetricsService.getGifEncoderRecommendation(codec)
-          : null;
-
-        const nav = navigator as Navigator & {
-          userAgentData?: { mobile?: boolean };
-        };
-        const isProbablyMobile =
-          typeof nav.userAgentData?.mobile === 'boolean'
-            ? nav.userAgentData.mobile
-            : /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-        // Prefer the scaled duration estimate from metadata when available.
-        const preset = QUALITY_PRESETS.gif[effectiveOptions.quality];
-        const presetFps = 'fps' in preset ? preset.fps : 15;
-        const targetFps =
-          metadata?.framerate && metadata.framerate > 0
-            ? getOptimalFPS(metadata.framerate, effectiveOptions.quality, 'gif')
-            : presetFps;
-
-        const rawEligibility = computeRawvideoEligibility({
+        const resolved = resolveGifEncoderStrategy({
+          path: pathSelection.path,
+          options: effectiveOptions,
+          requestedGifEncoder,
           metadata,
-          targetFps,
-          scale: effectiveOptions.scale,
-          format: 'gif',
-          intent: 'auto',
+          hasDevForcedGifEncoder,
         });
-
-        const isLowMemoryDevice =
-          (typeof rawEligibility.deviceMemoryGB === 'number' &&
-            rawEligibility.deviceMemoryGB < 4) ||
-          (typeof rawEligibility.jsHeapSizeLimitMB === 'number' &&
-            rawEligibility.jsHeapSizeLimitMB < 1536);
-
-        const ffmpegThreadingAvailable =
-          caps.crossOriginIsolated && caps.sharedArrayBuffer && caps.workerSupport;
-
-        const durationSeconds =
-          typeof metadata?.duration === 'number' && metadata.duration > 0
-            ? metadata.duration
-            : null;
-
-        const computeDurationBudgetSeconds = (): number => {
-          const base =
-            effectiveOptions.scale === 1.0 ? 8 : effectiveOptions.scale === 0.75 ? 12 : 20;
-          const qualityAdjust =
-            effectiveOptions.quality === 'high' ? -2 : effectiveOptions.quality === 'low' ? 2 : 0;
-          return Math.max(6, base + qualityAdjust);
-        };
-
-        const computeFrameBudget = (): number => {
-          const base =
-            effectiveOptions.scale === 1.0 ? 280 : effectiveOptions.scale === 0.75 ? 360 : 520;
-          const qualityAdjust = effectiveOptions.quality === 'high' ? -60 : 0;
-          return Math.max(180, base + qualityAdjust);
-        };
-
-        const computeRawByteRatioThreshold = (): number | null => {
-          if (durationSeconds === null) {
-            return null;
-          }
-
-          // Base thresholds by scale. These are intentionally conservative for auto.
-          let t =
-            effectiveOptions.scale === 1.0 ? 0.6 : effectiveOptions.scale === 0.75 ? 0.65 : 0.72;
-
-          // Longer clips increase risk of allocation pressure and GC stalls.
-          if (durationSeconds > 10) {
-            t -= 0.1;
-          } else if (durationSeconds > 6) {
-            t -= 0.05;
-          }
-
-          // Higher quality tends to increase FPS and frame count.
-          if (effectiveOptions.quality === 'high') {
-            t -= 0.05;
-          } else if (effectiveOptions.quality === 'low') {
-            t += 0.03;
-          }
-
-          // Clamp to a sane range.
-          return Math.min(0.78, Math.max(0.45, t));
-        };
-
-        const estimatedRawBytes = rawEligibility.estimatedRawBytes ?? 0;
-        const rawByteRatio =
-          rawEligibility.rawvideoMaxBytes > 0 && estimatedRawBytes > 0
-            ? estimatedRawBytes / rawEligibility.rawvideoMaxBytes
-            : null;
-        const rawByteRatioThreshold = computeRawByteRatioThreshold();
-
-        const durationBudgetSeconds = computeDurationBudgetSeconds();
-        const withinDurationBudget =
-          durationSeconds !== null &&
-          Number.isFinite(durationSeconds) &&
-          durationSeconds <= durationBudgetSeconds;
-
-        const frameBudget = computeFrameBudget();
-        const estimatedFramesForRaw = rawEligibility.estimatedFramesForRaw;
-        const withinFrameBudget =
-          typeof estimatedFramesForRaw === 'number' &&
-          Number.isFinite(estimatedFramesForRaw) &&
-          estimatedFramesForRaw > 0 &&
-          estimatedFramesForRaw <= frameBudget;
-
-        const withinRawByteRatioBudget =
-          rawByteRatio !== null &&
-          rawByteRatioThreshold !== null &&
-          Number.isFinite(rawByteRatio) &&
-          rawByteRatio <= rawByteRatioThreshold;
-
-        const rawvideoHasHeadroom =
-          rawEligibility.enabled &&
-          estimatedRawBytes > 0 &&
-          withinDurationBudget &&
-          withinFrameBudget &&
-          withinRawByteRatioBudget;
-
-        // Auto strategy: for complex codecs (AV1/HEVC/VP9), prefer WebCodecs decode.
-        // If we have enough memory headroom to stage rawvideo, *optionally* prefer the
-        // FFmpeg palette pipeline. For AV1, only enable this automatically when the
-        // session metrics indicate it is stable on this device.
-        // Guardrails: avoid this path on mobile / low-memory devices.
-        const shouldConsiderAutoPalette =
-          isComplexGifCodec &&
-          ffmpegThreadingAvailable &&
-          rawvideoHasHeadroom &&
-          !isProbablyMobile &&
-          !isLowMemoryDevice;
-
-        const learnedPrefersModern =
-          learnedGifEncoder?.recommendedEncoder === 'modern-gif-worker' &&
-          learnedGifEncoder.confidence >= 0.5;
-        const learnedPrefersPalette =
-          learnedGifEncoder?.recommendedEncoder === 'ffmpeg-palette' &&
-          learnedGifEncoder.confidence >= 0.6;
-
-        const allowAutoPaletteForCodec =
-          // AV1 is the most sensitive to outliers; require evidence before auto-enabling.
-          isAv1Codec(codec) ? learnedPrefersPalette : true;
-
-        if (shouldConsiderAutoPalette && allowAutoPaletteForCodec && !learnedPrefersModern) {
-          effectiveOptions.gifEncoder = 'ffmpeg-palette';
-          effectiveGifEncoder = 'ffmpeg-palette';
-
-          logger.info(
-            'conversion',
-            'Auto GIF encoder resolved to FFmpeg palette (rawvideo eligible)',
-            {
-              requested: requestedGifEncoder,
-              resolved: effectiveGifEncoder,
-              codec,
-              isComplexGifCodec,
-              learnedGifEncoder,
-              crossOriginIsolated: caps.crossOriginIsolated,
-              sharedArrayBuffer: caps.sharedArrayBuffer,
-              workerSupport: caps.workerSupport,
-              isProbablyMobile,
-              isLowMemoryDevice,
-              durationSeconds,
-              durationBudgetSeconds,
-              withinDurationBudget,
-              targetFps,
-              estimatedFramesForRaw,
-              frameBudget,
-              withinFrameBudget,
-              estimatedRawBytes: rawEligibility.estimatedRawBytes,
-              rawvideoMaxBytes: rawEligibility.rawvideoMaxBytes,
-              rawByteRatio,
-              rawByteRatioThreshold,
-              withinRawByteRatioBudget,
-              jsHeapSizeLimitMB: rawEligibility.jsHeapSizeLimitMB,
-              deviceMemoryGB: rawEligibility.deviceMemoryGB,
-              isMemoryCritical: rawEligibility.isMemoryCritical,
-            }
-          );
-        } else {
-          logger.debug('conversion', 'Auto GIF encoder kept default', {
-            requested: requestedGifEncoder,
-            resolved: requestedGifEncoder,
-            codec,
-            isComplexGifCodec,
-            ffmpegThreadingAvailable,
-            rawvideoEligible: rawEligibility.enabled,
-            rawvideoHasHeadroom,
-            isProbablyMobile,
-            isLowMemoryDevice,
-            learnedGifEncoder,
-            durationSeconds,
-            durationBudgetSeconds,
-            withinDurationBudget,
-            estimatedRawBytes: rawEligibility.estimatedRawBytes,
-            rawvideoMaxBytes: rawEligibility.rawvideoMaxBytes,
-            rawByteRatio,
-            rawByteRatioThreshold,
-            withinRawByteRatioBudget,
-            estimatedFramesForRaw,
-            frameBudget,
-            withinFrameBudget,
-            isMemoryCritical: rawEligibility.isMemoryCritical,
-          });
-        }
+        effectiveOptions.gifEncoder = resolved.options.gifEncoder;
+        effectiveGifEncoder = resolved.resolved;
       }
 
       const effectiveRequest: ConversionRequest = {
@@ -846,51 +641,6 @@ class ConversionOrchestrator {
    * For complex codecs (AV1, VP9, HEVC), metadata is mandatory for proper processing.
    * This prevents issues with timeout calculation and codec detection.
    */
-  private async resolveMetadata(
-    file: File,
-    metadata?: VideoMetadata
-  ): Promise<VideoMetadata | undefined> {
-    if (metadata?.codec && metadata.codec !== 'unknown') {
-      return metadata;
-    }
-
-    try {
-      await this.ensureFFmpegInitialized();
-      const probed = await ffmpegService.getVideoMetadata(file);
-
-      // For complex codecs, metadata is mandatory
-      const codec = probed?.codec?.toLowerCase();
-      if (codec === 'av1' || codec === 'vp9' || codec === 'hevc') {
-        if (!probed || !probed.duration || probed.duration === 0) {
-          throw new Error(
-            `Failed to extract metadata for ${codec.toUpperCase()} codec. ` +
-              'This codec requires complete metadata for processing. ' +
-              'The file may be corrupted or in an unsupported format.'
-          );
-        }
-        logger.info('conversion', 'Mandatory metadata extracted for complex codec', {
-          codec: probed.codec,
-          duration: probed.duration,
-          resolution: `${probed.width}x${probed.height}`,
-        });
-      }
-
-      return probed;
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-
-      // Re-throw if it's our mandatory metadata error
-      if (errorMsg.includes('Failed to extract metadata')) {
-        throw error;
-      }
-
-      logger.warn('conversion', 'Metadata probe failed, continuing without codec', {
-        error: errorMsg,
-      });
-      return metadata;
-    }
-  }
-
   /**
    * Select conversion path (video-pipeline powered)
    */
@@ -1060,9 +810,7 @@ class ConversionOrchestrator {
 
     this.throwIfAborted(params.abortSignal);
 
-    const trackMetadata = plan.track
-      ? this.buildLightweightMetadataFromTrack(plan.track)
-      : undefined;
+    const trackMetadata = plan.track ? buildLightweightMetadataFromTrack(plan.track) : undefined;
 
     // Prefer demuxer-derived track metadata when the caller provided only quick
     // metadata (codec='unknown'). This prevents strategy selection from treating
@@ -1199,29 +947,6 @@ class ConversionOrchestrator {
       selection,
       metadata: plannedMetadata,
     };
-  }
-
-  private buildLightweightMetadataFromTrack(track: VideoTrackInfo): VideoMetadata {
-    const codec = this.normalizeCodecForMetadata(track.codec);
-
-    return {
-      width: track.width,
-      height: track.height,
-      duration: Number.isFinite(track.duration) ? track.duration : 0,
-      codec,
-      framerate: Number.isFinite(track.frameRate) ? track.frameRate : 0,
-      bitrate: 0,
-    };
-  }
-
-  private normalizeCodecForMetadata(codec: string): string {
-    const c = normalizeCodecString(codec);
-    if (isAv1Codec(c)) return 'av1';
-    if (isH264Codec(c)) return 'h264';
-    if (isHevcCodec(c)) return 'hevc';
-    if (c.includes('vp09') || c.includes('vp9')) return 'vp9';
-    if (c.includes('vp08') || c.includes('vp8')) return 'vp8';
-    return c.length > 0 ? c : 'unknown';
   }
 
   /**

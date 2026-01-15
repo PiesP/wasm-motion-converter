@@ -1,3 +1,57 @@
+// Eagerly loaded components (used immediately)
+import ConfirmationModal from '@components/ConfirmationModal';
+import DevConversionMatrixTest from '@components/DevConversionMatrixTest';
+import DevRouteOverrides from '@components/DevRouteOverrides';
+import EnvironmentWarning from '@components/EnvironmentWarning';
+import ExportLogsButton from '@components/ExportLogsButton';
+import FileDropzone from '@components/FileDropzone';
+import FormatSelector from '@components/FormatSelector';
+import LicenseAttribution from '@components/LicenseAttribution';
+import LoadingOverlay from '@components/LoadingOverlay';
+import { OfflineBanner } from '@components/OfflineBanner';
+import QualitySelector from '@components/QualitySelector';
+import ScaleSelector from '@components/ScaleSelector';
+import ThemeToggle from '@components/ThemeToggle';
+import Button from '@components/ui/button';
+import Panel from '@components/ui/panel';
+import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
+import { type PreloadProgress, preloadAllDependencies } from '@services/cdn/unified-preloader';
+import {
+  getConversionAutoSelectionDebug,
+  getConversionPhaseTimingsDebug,
+} from '@services/orchestration/conversion-debug';
+import { conversionMetricsService } from '@services/orchestration/conversion-metrics-service';
+import {
+  clearDevConversionOverrides,
+  getDevConversionOverrides,
+  setDevConversionOverrides,
+} from '@services/orchestration/dev-conversion-overrides';
+import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
+import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
+import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
+import {
+  appState,
+  environmentSupported,
+  loadingProgress,
+  loadingStatusMessage,
+  setEnvironmentSupported,
+} from '@stores/app-store';
+import { errorContext, errorMessage } from '@stores/conversion-error-store';
+import { inputFile, videoMetadata, videoPreviewUrl } from '@stores/conversion-media-store';
+import { conversionProgress, conversionStatusMessage } from '@stores/conversion-progress-store';
+import { conversionResults } from '@stores/conversion-result-store';
+import {
+  conversionSettings,
+  saveConversionSettings,
+  setConversionSettings,
+} from '@stores/conversion-settings-store';
+import { devMatrixTestIsRunning, requestDevMatrixTestCancel } from '@stores/dev-matrix-test-store';
+import { useNetworkState } from '@stores/network-store';
+import { debounce } from '@utils/debounce';
+import { getErrorMessage } from '@utils/error-utils';
+import { isHardwareCacheValid } from '@utils/hardware-profile';
+import { logger } from '@utils/logger';
+import { isMemoryCritical } from '@utils/memory-monitor';
 import {
   type Component,
   createEffect,
@@ -11,69 +65,173 @@ import {
   Show,
   Suspense,
 } from 'solid-js';
-// Eagerly loaded components (used immediately)
-import ConfirmationModal from '@components/ConfirmationModal';
-import EnvironmentWarning from '@components/EnvironmentWarning';
-import { OfflineBanner } from '@components/OfflineBanner';
-import FileDropzone from '@components/FileDropzone';
-import FormatSelector from '@components/FormatSelector';
-import ExportLogsButton from '@components/ExportLogsButton';
-import LicenseAttribution from '@components/LicenseAttribution';
-import LoadingOverlay from '@components/LoadingOverlay';
-import QualitySelector from '@components/QualitySelector';
-import ScaleSelector from '@components/ScaleSelector';
-import DevRouteOverrides from '@components/DevRouteOverrides';
-import DevConversionMatrixTest from '@components/DevConversionMatrixTest';
-import ThemeToggle from '@components/ThemeToggle';
-import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
-import {
-  getConversionAutoSelectionDebug,
-  getConversionPhaseTimingsDebug,
-} from '@services/orchestration/conversion-debug';
-import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
-import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
-import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
-import { conversionMetricsService } from '@services/orchestration/conversion-metrics-service';
-import {
-  clearDevConversionOverrides,
-  getDevConversionOverrides,
-  setDevConversionOverrides,
-} from '@services/orchestration/dev-conversion-overrides';
-import { preloadAllDependencies, type PreloadProgress } from '@services/cdn/unified-preloader';
-import {
-  appState,
-  environmentSupported,
-  loadingProgress,
-  loadingStatusMessage,
-  setEnvironmentSupported,
-} from '@stores/app-store';
-import { devMatrixTestIsRunning, requestDevMatrixTestCancel } from '@stores/dev-matrix-test-store';
-import { useNetworkState } from '@stores/network-store';
-import {
-  conversionProgress,
-  conversionResults,
-  conversionSettings,
-  conversionStatusMessage,
-  errorContext,
-  errorMessage,
-  inputFile,
-  saveConversionSettings,
-  setConversionSettings,
-  videoMetadata,
-  videoPreviewUrl,
-} from '@stores/conversion-store';
-import { debounce } from '@utils/debounce';
-import { getErrorMessage } from '@utils/error-utils';
-import { isHardwareCacheValid } from '@utils/hardware-profile';
-import { logger } from '@utils/logger';
-import { isMemoryCritical } from '@utils/memory-monitor';
 
 // Lazy loaded components (conditionally shown - reduces initial bundle by ~15KB)
 const ConversionProgress = lazy(() => import('@components/ConversionProgress'));
 const ErrorDisplay = lazy(() => import('@components/ErrorDisplay'));
 const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
 const ResultPreview = lazy(() => import('@components/ResultPreview'));
+
+interface StatusAlertsProps {
+  environmentSupported: boolean;
+  showError: boolean;
+  errorMessage: string | null;
+  errorContext: { suggestion?: string; type?: string } | null;
+  onRetry: () => void;
+  onSelectNewFile: () => void;
+  onDismissError: () => void;
+}
+
+const StatusAlerts: Component<StatusAlertsProps> = (props) => {
+  return (
+    <div class="space-y-6">
+      <OfflineBanner />
+
+      <Show when={!props.environmentSupported}>
+        <EnvironmentWarning />
+      </Show>
+
+      <Show when={props.showError && props.errorMessage}>
+        <Suspense
+          fallback={<div class="animate-pulse h-32 bg-gray-100 dark:bg-gray-800 rounded-lg" />}
+        >
+          <ErrorDisplay
+            message={props.errorMessage!}
+            suggestion={props.errorContext?.suggestion}
+            errorType={props.errorContext?.type as never}
+            onRetry={props.onRetry}
+            onSelectNewFile={props.onSelectNewFile}
+            onDismiss={props.onDismissError}
+          />
+        </Suspense>
+      </Show>
+    </div>
+  );
+};
+
+interface SettingsPanelProps {
+  isBusy: boolean;
+  isConverting: boolean;
+  conversionSettings: typeof conversionSettings extends () => infer T ? T : never;
+  videoMetadata: typeof videoMetadata extends () => infer T ? T : never;
+  onConvert: () => void;
+  onCancel: () => void;
+  onFormatChange: (
+    format: typeof conversionSettings extends () => infer T
+      ? T extends { format: infer F }
+        ? F
+        : never
+      : never
+  ) => void;
+  onQualityChange: (
+    quality: typeof conversionSettings extends () => infer T
+      ? T extends { quality: infer Q }
+        ? Q
+        : never
+      : never
+  ) => void;
+  onScaleChange: (
+    scale: typeof conversionSettings extends () => infer T
+      ? T extends { scale: infer S }
+        ? S
+        : never
+      : never
+  ) => void;
+  devMatrixTestIsRunning: boolean;
+  onRequestDevCancel: () => void;
+}
+
+const SettingsPanel: Component<SettingsPanelProps> = (props) => {
+  return (
+    <Panel class="p-6">
+      <div class="flex gap-3 mb-6">
+        <Show
+          when={props.isConverting}
+          fallback={
+            <Button
+              disabled={!props.videoMetadata || props.isBusy}
+              ariaLabel="Convert video to animated image"
+              class="flex-1"
+              onClick={props.onConvert}
+            >
+              Convert
+            </Button>
+          }
+        >
+          <Button
+            variant="danger"
+            ariaLabel="Stop video conversion"
+            class="flex-1"
+            onClick={() => {
+              if (props.devMatrixTestIsRunning) {
+                props.onRequestDevCancel();
+              }
+              props.onCancel();
+            }}
+          >
+            {props.devMatrixTestIsRunning ? 'Stop Test' : 'Stop Conversion'}
+          </Button>
+        </Show>
+      </div>
+
+      <FormatSelector
+        value={props.conversionSettings.format}
+        onChange={props.onFormatChange}
+        disabled={!props.videoMetadata || props.isBusy}
+        tooltip="GIF works everywhere, WebP is smaller but requires modern browsers"
+      />
+
+      <QualitySelector
+        value={props.conversionSettings.quality}
+        onChange={props.onQualityChange}
+        disabled={!props.videoMetadata || props.isBusy}
+        tooltip="Higher quality = larger file size and slower conversion"
+      />
+
+      <ScaleSelector
+        value={props.conversionSettings.scale}
+        inputMetadata={props.videoMetadata}
+        onChange={props.onScaleChange}
+        disabled={!props.videoMetadata || props.isBusy}
+        tooltip="Reduce dimensions to decrease file size and speed up conversion"
+      />
+
+      <DevRouteOverrides disabled={props.isBusy} />
+      <DevConversionMatrixTest disabled={props.isBusy} />
+    </Panel>
+  );
+};
+
+interface ResultSectionProps {
+  results: typeof conversionResults extends () => infer T ? T : never;
+}
+
+const ResultSection: Component<ResultSectionProps> = (props) => {
+  return (
+    <Show when={props.results.length > 0}>
+      <div class="mt-8 space-y-6">
+        <For each={props.results}>
+          {(result) => (
+            <Suspense
+              fallback={<div class="animate-pulse h-96 bg-gray-100 dark:bg-gray-800 rounded-lg" />}
+            >
+              <ResultPreview
+                outputBlob={result.outputBlob}
+                originalName={result.originalName}
+                originalSize={result.originalSize}
+                settings={result.settings}
+                conversionDurationSeconds={result.conversionDurationSeconds}
+                wasTranscoded={result.wasTranscoded}
+                originalCodec={result.originalCodec}
+              />
+            </Suspense>
+          )}
+        </For>
+      </div>
+    </Show>
+  );
+};
 
 /**
  * Main application component orchestrating the video conversion workflow
@@ -489,30 +647,15 @@ const App: Component = () => {
         </header>
 
         <main id="main-content" class="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
-          <div class="space-y-6">
-            <OfflineBanner />
-
-            <Show when={!environmentSupported()}>
-              <EnvironmentWarning />
-            </Show>
-
-            <Show when={appState() === 'error' && errorMessage()}>
-              <Suspense
-                fallback={
-                  <div class="animate-pulse h-32 bg-gray-100 dark:bg-gray-800 rounded-lg" />
-                }
-              >
-                <ErrorDisplay
-                  message={errorMessage()!}
-                  suggestion={errorContext()?.suggestion}
-                  errorType={errorContext()?.type}
-                  onRetry={handleRetry}
-                  onSelectNewFile={handleReset}
-                  onDismiss={handleDismissError}
-                />
-              </Suspense>
-            </Show>
-          </div>
+          <StatusAlerts
+            environmentSupported={environmentSupported()}
+            showError={appState() === 'error'}
+            errorMessage={errorMessage()}
+            errorContext={errorContext()}
+            onRetry={handleRetry}
+            onSelectNewFile={handleReset}
+            onDismissError={handleDismissError}
+          />
 
           <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-8 lg:items-start">
             <div class="space-y-6">
@@ -578,91 +721,27 @@ const App: Component = () => {
             </div>
 
             {/* Conversion settings - ALWAYS visible (from first screen) */}
-            <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6">
-              <div class="flex gap-3 mb-6">
-                <Show
-                  when={appState() === 'converting'}
-                  fallback={
-                    <button
-                      type="button"
-                      disabled={!videoMetadata() || isBusy()}
-                      aria-label="Convert video to animated image"
-                      class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
-                      onClick={handleConvertWithMemoryCheck}
-                    >
-                      Convert
-                    </button>
-                  }
-                >
-                  <button
-                    type="button"
-                    aria-label="Stop video conversion"
-                    class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900"
-                    onClick={() => {
-                      if (import.meta.env.DEV && devMatrixTestIsRunning()) {
-                        requestDevMatrixTestCancel();
-                      }
-                      handleCancelConversion();
-                    }}
-                  >
-                    {import.meta.env.DEV && devMatrixTestIsRunning()
-                      ? 'Stop Test'
-                      : 'Stop Conversion'}
-                  </button>
-                </Show>
-              </div>
-
-              <FormatSelector
-                value={conversionSettings().format}
-                onChange={(format) => setConversionSettings({ ...conversionSettings(), format })}
-                disabled={!videoMetadata() || isBusy()}
-                tooltip="GIF works everywhere, WebP is smaller but requires modern browsers"
-              />
-
-              <QualitySelector
-                value={conversionSettings().quality}
-                onChange={(quality) => setConversionSettings({ ...conversionSettings(), quality })}
-                disabled={!videoMetadata() || isBusy()}
-                tooltip="Higher quality = larger file size and slower conversion"
-              />
-
-              <ScaleSelector
-                value={conversionSettings().scale}
-                inputMetadata={videoMetadata()}
-                onChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
-                disabled={!videoMetadata() || isBusy()}
-                tooltip="Reduce dimensions to decrease file size and speed up conversion"
-              />
-
-              <DevRouteOverrides disabled={isBusy()} />
-              <DevConversionMatrixTest disabled={isBusy()} />
-            </div>
+            <SettingsPanel
+              isBusy={isBusy()}
+              isConverting={appState() === 'converting'}
+              conversionSettings={conversionSettings()}
+              videoMetadata={videoMetadata()}
+              onConvert={handleConvertWithMemoryCheck}
+              onCancel={handleCancelConversion}
+              onFormatChange={(format) =>
+                setConversionSettings({ ...conversionSettings(), format })
+              }
+              onQualityChange={(quality) =>
+                setConversionSettings({ ...conversionSettings(), quality })
+              }
+              onScaleChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
+              devMatrixTestIsRunning={import.meta.env.DEV && devMatrixTestIsRunning()}
+              onRequestDevCancel={requestDevMatrixTestCancel}
+            />
           </div>
 
           {/* Result previews */}
-          <Show when={conversionResults().length > 0}>
-            <div class="mt-8 space-y-6">
-              <For each={conversionResults()}>
-                {(result) => (
-                  <Suspense
-                    fallback={
-                      <div class="animate-pulse h-96 bg-gray-100 dark:bg-gray-800 rounded-lg" />
-                    }
-                  >
-                    <ResultPreview
-                      outputBlob={result.outputBlob}
-                      originalName={result.originalName}
-                      originalSize={result.originalSize}
-                      settings={result.settings}
-                      conversionDurationSeconds={result.conversionDurationSeconds}
-                      wasTranscoded={result.wasTranscoded}
-                      originalCodec={result.originalCodec}
-                    />
-                  </Suspense>
-                )}
-              </For>
-            </div>
-          </Show>
+          <ResultSection results={conversionResults()} />
         </main>
 
         <LicenseAttribution />

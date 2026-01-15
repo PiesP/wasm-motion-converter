@@ -1,10 +1,12 @@
-import { batch, type Setter } from 'solid-js';
-
-import { setConversionProgress, setConversionStatusMessage } from '@stores/conversion-store';
-import { formatDuration } from '@utils/format-duration';
+import {
+  setConversionProgress,
+  setConversionStatusMessage,
+} from '@stores/conversion-progress-store';
 import { ETACalculator } from '@utils/eta-calculator';
+import { formatDuration } from '@utils/format-duration';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
+import { batch, type Setter } from 'solid-js';
 
 /** Memory check interval during conversion (5 seconds). */
 const MEMORY_CHECK_INTERVAL = 5000;

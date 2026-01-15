@@ -2,18 +2,18 @@ import { ffmpegService } from '@services/ffmpeg-service';
 import { checkPerformance, getRecommendedSettings } from '@services/performance-checker-service';
 import { analyzeVideo, analyzeVideoQuick } from '@services/video-analyzer-service';
 import { setAppState, setLoadingProgress, setLoadingStatusMessage } from '@stores/app-store';
+import { setErrorContext, setErrorMessage } from '@stores/conversion-error-store';
 import {
-  conversionSettings,
-  setConversionSettings,
-  setErrorContext,
-  setErrorMessage,
   setInputFile,
-  setAutoAppliedRecommendation,
-  setPerformanceWarnings,
   setVideoMetadata,
   setVideoPreviewUrl,
   videoPreviewUrl,
-} from '@stores/conversion-store';
+} from '@stores/conversion-media-store';
+import {
+  setAutoAppliedRecommendation,
+  setPerformanceWarnings,
+} from '@stores/conversion-performance-store';
+import { conversionSettings, setConversionSettings } from '@stores/conversion-settings-store';
 import type { VideoMetadata } from '@t/conversion-types';
 import { WARN_RESOLUTION_PIXELS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';

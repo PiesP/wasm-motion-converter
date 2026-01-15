@@ -1,7 +1,8 @@
-import { createMemo, onMount, Show, splitProps } from 'solid-js';
+import Panel from '@components/ui/panel';
+import type { ConversionErrorType } from '@t/conversion-types';
 
 import type { Component } from 'solid-js';
-import type { ConversionErrorType } from '@t/conversion-types';
+import { createMemo, onMount, Show, splitProps } from 'solid-js';
 
 /**
  * Error display component props
@@ -91,10 +92,10 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
   });
 
   return (
-    <div
-      class="relative bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-500 p-4 rounded-lg"
+    <Panel
+      class="relative border-l-4 border-red-400 dark:border-red-500 p-4 bg-red-50 dark:bg-red-950"
       role="alert"
-      aria-live="assertive"
+      ariaLive="assertive"
     >
       <Show when={local.onDismiss}>
         <button
@@ -180,7 +181,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
           </div>
         </div>
       </div>
-    </div>
+    </Panel>
   );
 };
 
