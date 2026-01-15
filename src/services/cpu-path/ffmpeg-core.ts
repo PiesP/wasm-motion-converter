@@ -15,15 +15,22 @@
  * @module cpu-path/ffmpeg-core
  */
 
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import type { VideoMetadata } from '@t/conversion-types';
-import { FFMPEG_CORE_BASE_URLS, TIMEOUT_VIDEO_ANALYSIS } from '@utils/constants';
-import { getErrorMessage } from '@utils/error-utils';
-import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
-import { logger } from '@utils/logger';
-import { withTimeout } from '@utils/with-timeout';
-import { cacheAwareBlobURL, requestIdle, supportsCacheStorage } from '@services/ffmpeg/core-assets';
-import { initializeFFmpegRuntime } from '@services/ffmpeg/init';
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import type { VideoMetadata } from "@t/conversion-types";
+import {
+  FFMPEG_CORE_BASE_URLS,
+  TIMEOUT_VIDEO_ANALYSIS,
+} from "@utils/constants";
+import { getErrorMessage } from "@utils/error-utils";
+import { FFMPEG_INTERNALS } from "@utils/ffmpeg-constants";
+import { logger } from "@utils/logger";
+import { withTimeout } from "@utils/with-timeout";
+import {
+  cacheAwareBlobURL,
+  requestIdle,
+  supportsCacheStorage,
+} from "@services/ffmpeg/core-assets";
+import { initializeFFmpegRuntime } from "@services/ffmpeg/init";
 
 const MIN_MEANINGFUL_NON_TERMINAL_PROGRESS_FOR_TERMINAL = 5;
 
@@ -62,9 +69,13 @@ export class FFmpegCore {
   private progressCallback: ((progress: number) => void) | null = null;
   private statusCallback: ((message: string) => void) | null = null;
   private terminateCallback: (() => void) | null = null;
+  private useSingleThreadCore = false;
 
   // Log buffer for debugging
   private ffmpegLogBuffer: string[] = [];
+  private initLogHandler:
+    | ((event: { type: string; message: string }) => void)
+    | null = null;
 
   /**
    * Set global callbacks for progress and status
@@ -96,7 +107,7 @@ export class FFmpegCore {
    */
   getFFmpeg(): FFmpeg {
     if (!this.ffmpeg || !this.loaded) {
-      throw new Error('FFmpeg not initialized');
+      throw new Error("FFmpeg not initialized");
     }
     return this.ffmpeg;
   }
@@ -114,7 +125,10 @@ export class FFmpegCore {
     // FFmpeg.wasm's EventEmitter doesn't expose a way to remove all listeners,
     // but we can at least log this for debugging and rely on proper cleanup
     // in individual conversion methods (off() calls in finally blocks)
-    logger.debug('ffmpeg', 'Clearing FFmpeg event listeners (log handlers managed by encoder)');
+    logger.debug(
+      "ffmpeg",
+      "Clearing FFmpeg event listeners (log handlers managed by encoder)"
+    );
   }
 
   /**
@@ -177,7 +191,10 @@ export class FFmpegCore {
     const timeDelta = now - this.lastProgressEmitTime;
     const progressDelta = Math.abs(progress - this.lastProgressValue);
 
-    if (timeDelta < FFMPEG_INTERNALS.PROGRESS_THROTTLE_MS && progressDelta < 1) {
+    if (
+      timeDelta < FFMPEG_INTERNALS.PROGRESS_THROTTLE_MS &&
+      progressDelta < 1
+    ) {
       return false;
     }
 
@@ -224,16 +241,24 @@ export class FFmpegCore {
       /**
        * Attempt to load all assets from a single CDN mirror in parallel
        */
-      const tryLoadAllAssets = async (baseUrl: string): Promise<string[] | null> => {
+      const tryLoadAllAssets = async (
+        baseUrl: string
+      ): Promise<string[] | null> => {
         try {
           const urls = await Promise.all([
-            cacheAwareBlobURL(`${baseUrl}/ffmpeg-core.js`, 'text/javascript'),
-            cacheAwareBlobURL(`${baseUrl}/ffmpeg-core.wasm`, 'application/wasm'),
-            cacheAwareBlobURL(`${baseUrl}/ffmpeg-core.worker.js`, 'text/javascript'),
+            cacheAwareBlobURL(`${baseUrl}/ffmpeg-core.js`, "text/javascript"),
+            cacheAwareBlobURL(
+              `${baseUrl}/ffmpeg-core.wasm`,
+              "application/wasm"
+            ),
+            cacheAwareBlobURL(
+              `${baseUrl}/ffmpeg-core.worker.js`,
+              "text/javascript"
+            ),
           ]);
           return urls;
         } catch (error) {
-          logger.debug('prefetch', `Failed to load from ${baseUrl}`, {
+          logger.debug("prefetch", `Failed to load from ${baseUrl}`, {
             error: getErrorMessage(error),
           });
           return null;
@@ -249,9 +274,14 @@ export class FFmpegCore {
           if (urls) {
             const retryLog =
               attempt > 0
-                ? ` (succeeded after ${attempt} ${attempt === 1 ? 'retry' : 'retries'})`
-                : '';
-            logger.debug('prefetch', `Loaded assets from ${baseUrl}${retryLog}`);
+                ? ` (succeeded after ${attempt} ${
+                    attempt === 1 ? "retry" : "retries"
+                  })`
+                : "";
+            logger.debug(
+              "prefetch",
+              `Loaded assets from ${baseUrl}${retryLog}`
+            );
             return urls;
           }
 
@@ -261,7 +291,9 @@ export class FFmpegCore {
             await new Promise((resolve) => setTimeout(resolve, waitTime));
           }
         }
-        throw new Error(`Failed to load from ${baseUrl} after ${MaxRetries + 1} attempts`);
+        throw new Error(
+          `Failed to load from ${baseUrl} after ${MaxRetries + 1} attempts`
+        );
       };
 
       // Try each CDN mirror in sequence
@@ -271,21 +303,31 @@ export class FFmpegCore {
           const urls = await loadWithRetry(baseUrl);
           // Cleanup blob URLs after caching (they're already cached)
           urls.forEach((url) => URL.revokeObjectURL(url));
-          logger.debug('prefetch', `Successfully cached FFmpeg core assets from ${baseUrl}`);
+          logger.debug(
+            "prefetch",
+            `Successfully cached FFmpeg core assets from ${baseUrl}`
+          );
           return;
         } catch (error) {
           lastError = error;
-          logger.debug('prefetch', `Mirror ${baseUrl} exhausted retries`, {
+          logger.debug("prefetch", `Mirror ${baseUrl} exhausted retries`, {
             error: getErrorMessage(error),
           });
         }
       }
 
       if (lastError) {
-        logger.warn('prefetch', 'All CDN mirrors failed for FFmpeg core assets', {
-          error: lastError instanceof Error ? lastError.message : String(lastError),
-          mirrorsAttempted: FFMPEG_CORE_BASE_URLS.length,
-        });
+        logger.warn(
+          "prefetch",
+          "All CDN mirrors failed for FFmpeg core assets",
+          {
+            error:
+              lastError instanceof Error
+                ? lastError.message
+                : String(lastError),
+            mirrorsAttempted: FFMPEG_CORE_BASE_URLS.length,
+          }
+        );
         throw lastError;
       }
     };
@@ -310,7 +352,7 @@ export class FFmpegCore {
       const elapsed = Date.now() - startTime;
 
       if (elapsed > timeoutMs) {
-        logger.warn('ffmpeg', 'Termination wait timed out, proceeding anyway', {
+        logger.warn("ffmpeg", "Termination wait timed out, proceeding anyway", {
           elapsed: `${elapsed}ms`,
         });
         this.isTerminating = false; // Force reset
@@ -334,7 +376,10 @@ export class FFmpegCore {
    */
   async initialize(callbacks?: InitializationCallbacks): Promise<void> {
     if (this.loaded) {
-      logger.debug('ffmpeg', 'FFmpeg already loaded, skipping reinitialization');
+      logger.debug(
+        "ffmpeg",
+        "FFmpeg already loaded, skipping reinitialization"
+      );
       return;
     }
 
@@ -346,7 +391,10 @@ export class FFmpegCore {
     }
 
     if (this.initializePromise) {
-      logger.debug('ffmpeg', 'FFmpeg initialization in progress, waiting for existing promise');
+      logger.debug(
+        "ffmpeg",
+        "FFmpeg initialization in progress, waiting for existing promise"
+      );
       await this.initializePromise;
       return;
     }
@@ -367,39 +415,31 @@ export class FFmpegCore {
 
     const initStartTime = Date.now();
 
-    try {
-      const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
-      const isCrossOriginIsolated =
-        typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
-
-      logger.info('ffmpeg', 'FFmpeg initialization starting', {
-        hasSharedArrayBuffer,
-        isCrossOriginIsolated,
-        canUseMultithreading: hasSharedArrayBuffer && isCrossOriginIsolated,
-      });
-
-      if (!hasSharedArrayBuffer || !isCrossOriginIsolated) {
-        const error = new Error(
-          'SharedArrayBuffer is not available. This app requires cross-origin isolation (COOP/COEP headers) to initialize FFmpeg.'
-        );
-        logger.error('ffmpeg', 'Environment validation failed', {
-          hasSharedArrayBuffer,
-          isCrossOriginIsolated,
-          error: getErrorMessage(error),
-        });
-        throw error;
+    const shouldFallbackToSingleThread = (errorMessage: string): boolean => {
+      if (this.useSingleThreadCore) {
+        return false;
       }
 
-      // Wait for any ongoing termination to complete (with timeout protection)
-      logger.debug('ffmpeg', 'Waiting for any ongoing termination to complete');
-      await this.waitForTermination();
+      return (
+        errorMessage.includes("initialization timed out") ||
+        errorMessage.includes("Failed to load FFmpeg worker") ||
+        errorMessage.includes("FFmpeg worker failed to initialize") ||
+        errorMessage.includes("called FFmpeg.terminate()")
+      );
+    };
 
-      logger.debug('ffmpeg', 'Creating FFmpeg instance');
-      const ffmpeg = new FFmpeg();
-      this.ffmpeg = ffmpeg;
+    const setupFFmpegInstance = (): FFmpeg => {
+      logger.debug("ffmpeg", "Creating FFmpeg instance");
+      const ffmpegInstance = new FFmpeg();
+      this.ffmpeg = ffmpegInstance;
+
+      this.initLogHandler = ({ type, message }) => {
+        this.addLogEntry(type, message);
+      };
+      ffmpegInstance.on("log", this.initLogHandler);
 
       // Setup progress handler
-      ffmpeg.on('progress', ({ progress }) => {
+      ffmpegInstance.on("progress", ({ progress }) => {
         const progressPercent = Math.round(progress * 100);
         const normalizedProgress = Number.isFinite(progressPercent)
           ? Math.min(100, Math.max(0, progressPercent))
@@ -412,7 +452,8 @@ export class FFmpegCore {
         if (
           !isInitializationProgress &&
           normalizedProgress <= 1 &&
-          this.lastProgressValue >= MIN_MEANINGFUL_NON_TERMINAL_PROGRESS_FOR_TERMINAL
+          this.lastProgressValue >=
+            MIN_MEANINGFUL_NON_TERMINAL_PROGRESS_FOR_TERMINAL
         ) {
           this.maxNonTerminalProgressSinceLastTerminal = 0;
         }
@@ -447,32 +488,112 @@ export class FFmpegCore {
             this.reportInitProgress(normalizedProgress);
           }
 
-          logger.debug('progress', `FFmpeg progress: ${normalizedProgress}% (source: ffmpeg)`);
+          logger.debug(
+            "progress",
+            `FFmpeg progress: ${normalizedProgress}% (source: ffmpeg)`
+          );
           this.emitProgress(normalizedProgress);
         }
       });
 
-      // Initialize FFmpeg runtime
-      logger.debug('ffmpeg', 'Initializing FFmpeg runtime');
+      return ffmpegInstance;
+    };
+
+    const initializeWithVariant = async (
+      coreVariant: "mt" | "st"
+    ): Promise<void> => {
+      const variantLabel =
+        coreVariant === "mt" ? "multithreaded" : "single-threaded";
+      logger.debug("ffmpeg", `Initializing FFmpeg runtime (${variantLabel})`);
+
+      const ffmpegInstance = setupFFmpegInstance();
       await initializeFFmpegRuntime(
-        ffmpeg,
+        ffmpegInstance,
         {
           reportProgress: (progress) => this.reportInitProgress(progress),
           reportStatus: (message) => this.reportInitStatus(message),
         },
-        { terminate: () => this.terminateCallback?.() }
+        {
+          terminate: () => this.terminateCallback?.(),
+          coreVariant,
+        }
       );
+    };
+
+    try {
+      const hasSharedArrayBuffer = typeof SharedArrayBuffer !== "undefined";
+      const isCrossOriginIsolated =
+        typeof crossOriginIsolated !== "undefined" &&
+        crossOriginIsolated === true;
+
+      logger.info("ffmpeg", "FFmpeg initialization starting", {
+        hasSharedArrayBuffer,
+        isCrossOriginIsolated,
+        canUseMultithreading: hasSharedArrayBuffer && isCrossOriginIsolated,
+      });
+
+      if (!hasSharedArrayBuffer || !isCrossOriginIsolated) {
+        const error = new Error(
+          "SharedArrayBuffer is not available. This app requires cross-origin isolation (COOP/COEP headers) to initialize FFmpeg."
+        );
+        logger.error("ffmpeg", "Environment validation failed", {
+          hasSharedArrayBuffer,
+          isCrossOriginIsolated,
+          error: getErrorMessage(error),
+        });
+        throw error;
+      }
+
+      // Wait for any ongoing termination to complete (with timeout protection)
+      logger.debug("ffmpeg", "Waiting for any ongoing termination to complete");
+      await this.waitForTermination();
+
+      await initializeWithVariant(this.useSingleThreadCore ? "st" : "mt");
 
       const initTime = Date.now() - initStartTime;
       this.loaded = true;
-      logger.info('ffmpeg', 'FFmpeg initialization successful', {
+      logger.info("ffmpeg", "FFmpeg initialization successful", {
         elapsedMs: initTime,
       });
       resolveInit();
     } catch (error) {
+      let errorMsg = getErrorMessage(error);
+
+      if (shouldFallbackToSingleThread(errorMsg)) {
+        logger.warn(
+          "ffmpeg",
+          "Retrying FFmpeg init with single-threaded core",
+          {
+            error: errorMsg,
+          }
+        );
+        this.reportInitStatus("Retrying with single-threaded FFmpeg core...");
+        this.useSingleThreadCore = true;
+
+        this.terminate();
+        await this.waitForTermination();
+
+        try {
+          await initializeWithVariant("st");
+          const initTime = Date.now() - initStartTime;
+          this.loaded = true;
+          logger.info(
+            "ffmpeg",
+            "FFmpeg initialization successful (single-threaded core)",
+            {
+              elapsedMs: initTime,
+            }
+          );
+          resolveInit();
+          return;
+        } catch (fallbackError) {
+          error = fallbackError;
+          errorMsg = getErrorMessage(fallbackError);
+        }
+      }
+
       const initTime = Date.now() - initStartTime;
-      const errorMsg = getErrorMessage(error);
-      logger.error('ffmpeg', 'FFmpeg initialization failed', {
+      logger.error("ffmpeg", "FFmpeg initialization failed", {
         elapsedMs: initTime,
         error: errorMsg,
         state: {
@@ -509,25 +630,25 @@ export class FFmpegCore {
       width: 0,
       height: 0,
       duration: 0,
-      codec: 'unknown',
+      codec: "unknown",
       framerate: 0,
       bitrate: 0,
     };
 
-    let logOutput = '';
+    let logOutput = "";
 
     const logHandler = ({ message }: { message: string }) => {
       logOutput += `${message}\n`;
     };
 
-    ffmpeg.on('log', logHandler);
+    ffmpeg.on("log", logHandler);
 
     try {
       await ensureInputFileFn(file);
 
       // Use standard ffmpeg info output - ffprobe-style args don't work in ffmpeg.wasm
       await withTimeout(
-        ffmpeg.exec(['-i', inputFileName]),
+        ffmpeg.exec(["-i", inputFileName]),
         TIMEOUT_VIDEO_ANALYSIS,
         `Video analysis timed out after ${
           TIMEOUT_VIDEO_ANALYSIS / 1000
@@ -543,61 +664,66 @@ export class FFmpegCore {
       // Parse metadata from FFmpeg output
       const resolutionMatch = logOutput.match(/(\d{2,5})x(\d{2,5})/);
       if (resolutionMatch) {
-        metadata.width = Number.parseInt(resolutionMatch[1] ?? '0', 10);
-        metadata.height = Number.parseInt(resolutionMatch[2] ?? '0', 10);
+        metadata.width = Number.parseInt(resolutionMatch[1] ?? "0", 10);
+        metadata.height = Number.parseInt(resolutionMatch[2] ?? "0", 10);
       }
 
-      const durationMatch = logOutput.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+      const durationMatch = logOutput.match(
+        /Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/
+      );
       if (durationMatch) {
-        const hours = Number.parseInt(durationMatch[1] ?? '0', 10);
-        const minutes = Number.parseInt(durationMatch[2] ?? '0', 10);
-        const seconds = Number.parseFloat(durationMatch[3] ?? '0');
+        const hours = Number.parseInt(durationMatch[1] ?? "0", 10);
+        const minutes = Number.parseInt(durationMatch[2] ?? "0", 10);
+        const seconds = Number.parseFloat(durationMatch[3] ?? "0");
         metadata.duration = hours * 3600 + minutes * 60 + seconds;
       }
 
       // Enhanced codec detection with comprehensive pattern matching
-      const codecMatch = logOutput.match(/Video:\s+([a-zA-Z0-9_]+(?:-[a-zA-Z0-9]+)*)(?:\s|\(|,)/i);
+      const codecMatch = logOutput.match(
+        /Video:\s+([a-zA-Z0-9_]+(?:-[a-zA-Z0-9]+)*)(?:\s|\(|,)/i
+      );
       if (codecMatch) {
-        const detectedCodec = codecMatch[1]?.toLowerCase() ?? 'unknown';
+        const detectedCodec = codecMatch[1]?.toLowerCase() ?? "unknown";
 
         // Normalize codec names
         const codecAliases: Record<string, string> = {
-          h264: 'H.264',
-          avc: 'H.264',
-          h265: 'H.265',
-          hevc: 'H.265',
-          vp8: 'VP8',
-          vp9: 'VP9',
-          av1: 'AV1',
-          av01: 'AV1',
-          prores: 'ProRes',
-          dnxhd: 'DNxHD',
-          mpeg2video: 'MPEG2',
-          mpeg1video: 'MPEG1',
-          msmpeg4v2: 'MSMPEG4v2',
-          wmv1: 'WMV1',
-          wmv2: 'WMV2',
-          mjpeg: 'MJPEG',
-          png: 'PNG',
-          bmp: 'BMP',
+          h264: "H.264",
+          avc: "H.264",
+          h265: "H.265",
+          hevc: "H.265",
+          vp8: "VP8",
+          vp9: "VP9",
+          av1: "AV1",
+          av01: "AV1",
+          prores: "ProRes",
+          dnxhd: "DNxHD",
+          mpeg2video: "MPEG2",
+          mpeg1video: "MPEG1",
+          msmpeg4v2: "MSMPEG4v2",
+          wmv1: "WMV1",
+          wmv2: "WMV2",
+          mjpeg: "MJPEG",
+          png: "PNG",
+          bmp: "BMP",
         };
 
-        metadata.codec = codecAliases[detectedCodec] || detectedCodec.toUpperCase();
+        metadata.codec =
+          codecAliases[detectedCodec] || detectedCodec.toUpperCase();
       }
 
       const framerateMatch = logOutput.match(/(\d+(?:\.\d+)?)\s*fps/);
       if (framerateMatch) {
-        metadata.framerate = Number.parseFloat(framerateMatch[1] ?? '0');
+        metadata.framerate = Number.parseFloat(framerateMatch[1] ?? "0");
       }
 
       const bitrateMatch = logOutput.match(/bitrate:\s*(\d+)\s*kb\/s/i);
       if (bitrateMatch) {
-        metadata.bitrate = Number.parseInt(bitrateMatch[1] ?? '0', 10) * 1000;
+        metadata.bitrate = Number.parseInt(bitrateMatch[1] ?? "0", 10) * 1000;
       }
 
       return metadata;
     } finally {
-      ffmpeg.off('log', logHandler);
+      ffmpeg.off("log", logHandler);
     }
   }
 
@@ -609,9 +735,13 @@ export class FFmpegCore {
 
     if (this.ffmpeg) {
       try {
+        if (this.initLogHandler) {
+          this.ffmpeg.off("log", this.initLogHandler);
+          this.initLogHandler = null;
+        }
         this.ffmpeg.terminate();
       } catch (error) {
-        logger.error('ffmpeg', 'Error during termination', {
+        logger.error("ffmpeg", "Error during termination", {
           error: getErrorMessage(error),
         });
       }
@@ -633,7 +763,10 @@ export class FFmpegCore {
    *
    * Terminates FFmpeg instance if memory is critical and no conversion is active.
    */
-  scheduleIdleTrim(isConverting: () => boolean, isMemoryCriticalFn: () => boolean): void {
+  scheduleIdleTrim(
+    isConverting: () => boolean,
+    isMemoryCriticalFn: () => boolean
+  ): void {
     requestIdle(
       () => {
         if (isConverting()) {

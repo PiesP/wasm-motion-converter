@@ -196,7 +196,7 @@ export async function preloadAllDependencies(onProgress?: PreloadProgressCallbac
     const swReady = await waitForSWReady(15000);
 
     if (!swReady) {
-      logger.warn('general', 'Service Worker not ready after 15s, proceeding anyway');
+      logger.warn('general', 'Service Worker not ready; proceeding anyway');
     } else {
       logger.info('general', 'Service Worker ready');
     }

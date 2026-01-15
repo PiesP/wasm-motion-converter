@@ -1,5 +1,6 @@
 // Internal imports
 import { TIMEOUT_FFMPEG_WORKER_CHECK } from '@utils/constants';
+import { logger } from '@utils/logger';
 import { withTimeout } from '@utils/with-timeout';
 
 /**
@@ -58,6 +59,11 @@ export async function verifyWorkerIsolation(): Promise<void> {
       TIMEOUT_FFMPEG_WORKER_CHECK,
       `FFmpeg worker check timed out after ${WORKER_CHECK_TIMEOUT_SECONDS} seconds.`
     );
+
+    logger.debug('ffmpeg', 'FFmpeg worker isolation verified', {
+      sharedArrayBuffer: status.sharedArrayBuffer,
+      crossOriginIsolated: status.crossOriginIsolated,
+    });
 
     if (!status.sharedArrayBuffer || !status.crossOriginIsolated) {
       throw new Error(

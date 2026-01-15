@@ -1,13 +1,98 @@
-import type { FFmpeg } from '@ffmpeg/ffmpeg';
+import type { FFmpeg } from "@ffmpeg/ffmpeg";
 
-import { TIMEOUT_FFMPEG_INIT } from '@utils/constants';
-import { getErrorMessage } from '@utils/error-utils';
-import { logger } from '@utils/logger';
-import { performanceTracker } from '@utils/performance-tracker';
-import { withTimeout } from '@utils/with-timeout';
-import { waitForSWReady, isLikelyFirstVisit } from '@services/sw/sw-readiness';
-import { clearFFmpegCache, loadFFmpegAsset, loadFFmpegClassWorker } from './core-assets';
-import { verifyWorkerIsolation } from './worker-isolation';
+import { TIMEOUT_FFMPEG_INIT } from "@utils/constants";
+import { getErrorMessage } from "@utils/error-utils";
+import { logger } from "@utils/logger";
+import { performanceTracker } from "@utils/performance-tracker";
+import { withTimeout } from "@utils/with-timeout";
+import {
+  checkSWReadiness,
+  isLikelyFirstVisit,
+  waitForSWReady,
+} from "@services/sw/sw-readiness";
+import {
+  clearFFmpegCache,
+  loadFFmpegClassWorker,
+  loadFFmpegCoreAsset,
+  type FFmpegCoreVariant,
+} from "./core-assets";
+import { verifyWorkerIsolation } from "./worker-isolation";
+
+type InitEnvironmentSnapshot = {
+  online?: boolean;
+  visibilityState?: DocumentVisibilityState;
+  hardwareConcurrency?: number;
+  deviceMemoryGB?: number;
+  isLikelyFirstVisit?: boolean;
+  swReadiness?: ReturnType<typeof checkSWReadiness>;
+};
+
+const getInitEnvironmentSnapshot = (): InitEnvironmentSnapshot => {
+  if (typeof navigator === "undefined") {
+    return {};
+  }
+
+  const navigatorWithMemory = navigator as Navigator & {
+    deviceMemory?: number;
+  };
+
+  return {
+    online: navigator.onLine,
+    visibilityState:
+      typeof document !== "undefined" ? document.visibilityState : undefined,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    deviceMemoryGB: navigatorWithMemory.deviceMemory,
+    isLikelyFirstVisit: isLikelyFirstVisit(),
+    swReadiness: checkSWReadiness(),
+  };
+};
+
+const SW_CONTROL_TIMEOUT_MS = 30_000;
+
+const ensureServiceWorkerControl = async (
+  callbacks: FFmpegInitCallbacks
+): Promise<void> => {
+  const readiness = checkSWReadiness();
+
+  if (!readiness.isSupported) {
+    logger.warn("ffmpeg", "Service Workers not supported; skipping SW gate");
+    return;
+  }
+
+  if (readiness.isReady) {
+    return;
+  }
+
+  callbacks.reportStatus("Waiting for Service Worker to take control...");
+  logger.info(
+    "ffmpeg",
+    "Waiting for Service Worker control before FFmpeg init",
+    {
+      timeoutMs: SW_CONTROL_TIMEOUT_MS,
+      readiness,
+    }
+  );
+
+  const swReady = await waitForSWReady(SW_CONTROL_TIMEOUT_MS);
+
+  if (!swReady) {
+    logger.warn(
+      "ffmpeg",
+      "Service Worker not ready; continuing FFmpeg init without SW control",
+      {
+        timeoutMs: SW_CONTROL_TIMEOUT_MS,
+        readiness: checkSWReadiness(),
+        initSnapshot: getInitEnvironmentSnapshot(),
+      }
+    );
+    callbacks.reportStatus(
+      "Service Worker not ready. Continuing without offline cache (refresh later to enable it)."
+    );
+    return;
+  }
+
+  callbacks.reportStatus("Service Worker active. Continuing initialization...");
+};
 
 /**
  * Validate that a blob URL is accessible before passing to ffmpeg.load().
@@ -20,11 +105,13 @@ async function validateBlobUrl(url: string, label: string): Promise<void> {
       throw new Error(`Blob URL not accessible: ${response.status}`);
     }
   } catch (error) {
-    logger.error('ffmpeg', `Blob URL validation failed for ${label}`, {
+    logger.error("ffmpeg", `Blob URL validation failed for ${label}`, {
       url: url.substring(0, 50),
       error: getErrorMessage(error),
     });
-    throw new Error(`Failed to validate ${label} blob URL. Cache may be corrupted.`);
+    throw new Error(
+      `Failed to validate ${label} blob URL. Cache may be corrupted.`
+    );
   }
 }
 
@@ -35,6 +122,7 @@ export type FFmpegInitCallbacks = {
 
 export type FFmpegInitOptions = {
   terminate: () => void;
+  coreVariant?: FFmpegCoreVariant;
 };
 
 /**
@@ -46,98 +134,156 @@ export async function initializeFFmpegRuntime(
   callbacks: FFmpegInitCallbacks,
   options: FFmpegInitOptions
 ): Promise<void> {
+  const coreVariant: FFmpegCoreVariant = options.coreVariant ?? "mt";
   let downloadProgress = 0;
+  let initHeartbeatId: ReturnType<typeof setInterval> | number | null = null;
+  let initStatusTimeoutId: ReturnType<typeof setTimeout> | number | null = null;
 
   const reportProgress = (value: number): void => {
     const clamped = Math.min(100, Math.max(0, Math.round(value)));
     callbacks.reportProgress(clamped);
   };
 
-  const applyDownloadProgress = (weight: number, message: string) => (url: string) => {
-    downloadProgress = Math.min(90, downloadProgress + weight);
-    reportProgress(downloadProgress);
-    callbacks.reportStatus(message);
-    return url;
-  };
+  const applyDownloadProgress =
+    (weight: number, message: string) => (url: string) => {
+      downloadProgress = Math.min(90, downloadProgress + weight);
+      reportProgress(downloadProgress);
+      callbacks.reportStatus(message);
+      return url;
+    };
 
-  const resolveFFmpegAssets = async (): Promise<[string, string, string, string]> => {
-    callbacks.reportStatus('Downloading FFmpeg assets from CDN...');
+  const resolveFFmpegAssets = async (): Promise<
+    [string, string, string, string]
+  > => {
+    const coreLabel =
+      coreVariant === "mt" ? "multithreaded" : "single-threaded";
+    callbacks.reportStatus(
+      `Downloading FFmpeg assets (${coreLabel}) from CDN...`
+    );
 
-    performanceTracker.startPhase('ffmpeg-download', { cdn: 'unified-system' });
-    logger.performance('Starting FFmpeg asset download (unified CDN system with 4-CDN cascade)');
+    performanceTracker.startPhase("ffmpeg-download", {
+      cdn: "unified-system",
+      core: coreVariant,
+    });
+    logger.performance(
+      "Starting FFmpeg asset download (unified CDN system with 4-CDN cascade)"
+    );
 
     // Load all three assets in parallel
     // Each asset will try all 4 CDN providers (esm.sh → jsdelivr → unpkg → skypack)
     return await Promise.all([
-      loadFFmpegClassWorker().then(applyDownloadProgress(10, 'FFmpeg class worker downloaded.')),
-      loadFFmpegAsset('ffmpeg-core.js', 'text/javascript', 'FFmpeg core script').then(
-        applyDownloadProgress(10, 'FFmpeg core script downloaded.')
+      loadFFmpegClassWorker().then(
+        applyDownloadProgress(10, "FFmpeg class worker downloaded.")
       ),
-      loadFFmpegAsset('ffmpeg-core.wasm', 'application/wasm', 'FFmpeg core WASM').then(
-        applyDownloadProgress(60, 'FFmpeg core WASM downloaded.')
-      ),
-      loadFFmpegAsset('ffmpeg-core.worker.js', 'text/javascript', 'FFmpeg worker').then(
-        applyDownloadProgress(10, 'FFmpeg worker downloaded.')
-      ),
+      loadFFmpegCoreAsset(
+        "ffmpeg-core.js",
+        "text/javascript",
+        "FFmpeg core script",
+        coreVariant
+      ).then(applyDownloadProgress(10, "FFmpeg core script downloaded.")),
+      loadFFmpegCoreAsset(
+        "ffmpeg-core.wasm",
+        "application/wasm",
+        "FFmpeg core WASM",
+        coreVariant
+      ).then(applyDownloadProgress(60, "FFmpeg core WASM downloaded.")),
+      loadFFmpegCoreAsset(
+        "ffmpeg-core.worker.js",
+        "text/javascript",
+        "FFmpeg worker",
+        coreVariant
+      ).then(applyDownloadProgress(10, "FFmpeg worker downloaded.")),
     ]);
   };
 
   const slowNetworkTimer =
-    typeof window !== 'undefined'
+    typeof window !== "undefined"
       ? window.setTimeout(() => {
           if (downloadProgress < 25) {
             callbacks.reportStatus(
-              'Network seems slow. If this persists, check your connection or firewall.'
+              "Network seems slow. If this persists, check your connection or firewall."
             );
           }
         }, 12_000)
       : null;
 
   try {
-    // CRITICAL: Wait for Service Worker on first visit
-    // This prevents CORS errors when loading @ffmpeg/ffmpeg from CDN
-    if (isLikelyFirstVisit()) {
-      callbacks.reportStatus('Preparing app for first use...');
-      const swReady = await waitForSWReady(5000);
+    logger.debug(
+      "ffmpeg",
+      "FFmpeg init preflight snapshot",
+      getInitEnvironmentSnapshot()
+    );
+    await ensureServiceWorkerControl(callbacks);
 
-      if (!swReady) {
-        logger.warn('ffmpeg', 'Service Worker not ready; first conversion may fail', {
-          timeoutMs: 5000,
-        });
-        callbacks.reportStatus(
-          'Service Worker not ready. If conversion fails, please refresh and try again.'
-        );
-      } else {
-        callbacks.reportStatus('App ready. Starting conversion...');
-      }
-    }
-
-    callbacks.reportStatus('Checking FFmpeg worker environment...');
+    callbacks.reportStatus("Checking FFmpeg worker environment...");
+    logger.debug(
+      "ffmpeg",
+      "FFmpeg init environment snapshot",
+      getInitEnvironmentSnapshot()
+    );
     reportProgress(2);
     await verifyWorkerIsolation();
 
     reportProgress(5);
-    const [classWorkerUrl, coreUrl, wasmUrl, workerUrl] = await resolveFFmpegAssets();
-    performanceTracker.endPhase('ffmpeg-download');
-    logger.performance('FFmpeg asset download complete');
+    const [classWorkerUrl, coreUrl, wasmUrl, workerUrl] =
+      await resolveFFmpegAssets();
+    performanceTracker.endPhase("ffmpeg-download");
+    logger.performance("FFmpeg asset download complete");
 
     // Validate blob URLs are accessible before passing to ffmpeg.load()
-    callbacks.reportStatus('Validating FFmpeg assets...');
+    callbacks.reportStatus("Validating FFmpeg assets...");
     await Promise.all([
-      validateBlobUrl(classWorkerUrl, 'classWorker'),
-      validateBlobUrl(coreUrl, 'core'),
-      validateBlobUrl(wasmUrl, 'wasm'),
-      validateBlobUrl(workerUrl, 'worker'),
+      validateBlobUrl(classWorkerUrl, "classWorker"),
+      validateBlobUrl(coreUrl, "core"),
+      validateBlobUrl(wasmUrl, "wasm"),
+      validateBlobUrl(workerUrl, "worker"),
     ]);
-    logger.debug('ffmpeg', 'All blob URLs validated successfully');
+    logger.debug("ffmpeg", "All blob URLs validated successfully");
 
-    reportProgress(Math.max(downloadProgress, 90));
-    callbacks.reportStatus('Initializing FFmpeg runtime...');
+    const initBaseProgress = Math.max(downloadProgress, 92);
+    reportProgress(initBaseProgress);
+    callbacks.reportStatus("Initializing FFmpeg runtime...");
 
-    performanceTracker.startPhase('ffmpeg-init');
-    logger.performance('Starting FFmpeg initialization');
+    const initStartTime =
+      typeof performance !== "undefined" ? performance.now() : Date.now();
+    let initProgress = initBaseProgress;
 
-    logger.debug('ffmpeg', 'Calling ffmpeg.load() with blob URLs', {
+    if (typeof window !== "undefined") {
+      initHeartbeatId = window.setInterval(() => {
+        const now =
+          typeof performance !== "undefined" ? performance.now() : Date.now();
+        const elapsedMs = now - initStartTime;
+        const progressBoost = Math.min(7, Math.floor(elapsedMs / 4000));
+        const nextProgress = Math.min(99, initBaseProgress + progressBoost);
+        if (nextProgress > initProgress) {
+          initProgress = nextProgress;
+          reportProgress(nextProgress);
+        }
+      }, 1200);
+
+      initStatusTimeoutId = window.setTimeout(() => {
+        callbacks.reportStatus(
+          "Still initializing FFmpeg runtime (first run can take up to a minute)..."
+        );
+        logger.warn(
+          "ffmpeg",
+          "FFmpeg initialization taking longer than expected",
+          {
+            elapsedMs: Math.round(
+              (typeof performance !== "undefined"
+                ? performance.now()
+                : Date.now()) - initStartTime
+            ),
+            initSnapshot: getInitEnvironmentSnapshot(),
+          }
+        );
+      }, 15_000);
+    }
+
+    performanceTracker.startPhase("ffmpeg-init");
+    logger.performance("Starting FFmpeg initialization");
+
+    logger.debug("ffmpeg", "Calling ffmpeg.load() with blob URLs", {
       classWorkerUrl: classWorkerUrl.substring(0, 50),
       coreUrl: coreUrl.substring(0, 50),
       wasmUrl: wasmUrl.substring(0, 50),
@@ -155,65 +301,77 @@ export async function initializeFFmpegRuntime(
       `FFmpeg initialization timed out after ${
         TIMEOUT_FFMPEG_INIT / 1000
       } seconds. Please check your internet connection and try again.`,
-      () => options.terminate()
+      () => {
+        logger.warn("ffmpeg", "FFmpeg load timed out", {
+          downloadProgress,
+          initSnapshot: getInitEnvironmentSnapshot(),
+        });
+        options.terminate();
+      }
     );
 
-    performanceTracker.endPhase('ffmpeg-init');
-    logger.performance('FFmpeg initialization complete');
+    performanceTracker.endPhase("ffmpeg-init");
+    logger.performance("FFmpeg initialization complete");
 
     reportProgress(100);
-    callbacks.reportStatus('FFmpeg ready.');
+    callbacks.reportStatus("FFmpeg ready.");
   } catch (error) {
     options.terminate();
 
-    logger.error('ffmpeg', 'FFmpeg initialization failed', {
+    logger.error("ffmpeg", "FFmpeg initialization failed", {
       error: getErrorMessage(error),
     });
 
     const errorMsg = error instanceof Error ? error.message : String(error);
 
     // Check if offline
-    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
 
     // ENHANCED: Detect worker CORS errors
-    if (errorMsg.includes('Worker') && errorMsg.includes('cannot be accessed')) {
+    if (
+      errorMsg.includes("Worker") &&
+      errorMsg.includes("cannot be accessed")
+    ) {
       if (isOffline) {
         throw new Error(
-          'Cannot initialize FFmpeg while offline on first visit. ' +
-            'Please connect to the internet and try again. ' +
-            'After the first conversion, offline conversions will work.'
+          "Cannot initialize FFmpeg while offline on first visit. " +
+            "Please connect to the internet and try again. " +
+            "After the first conversion, offline conversions will work."
         );
       } else {
         throw new Error(
-          'Failed to load FFmpeg worker. Please refresh the page and try again. ' +
-            'If the problem persists, check your browser settings or try a different browser.'
+          "Failed to load FFmpeg worker. Please refresh the page and try again. " +
+            "If the problem persists, check your browser settings or try a different browser."
         );
       }
     }
 
-    if (errorMsg.includes('called FFmpeg.terminate()')) {
+    if (errorMsg.includes("called FFmpeg.terminate()")) {
       throw new Error(
-        'FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers ' +
-          'or strict browser security settings. Try disabling ad blockers, using an InPrivate window, ' +
-          'or testing another browser.'
+        "FFmpeg worker failed to initialize. This is often caused by blocked module/blob workers " +
+          "or strict browser security settings. Try disabling ad blockers, using an InPrivate window, " +
+          "or testing another browser."
       );
     }
 
     // Handle cache corruption errors
-    if (errorMsg.includes('Blob URL') || errorMsg.includes('Cache may be corrupted')) {
+    if (
+      errorMsg.includes("Blob URL") ||
+      errorMsg.includes("Cache may be corrupted")
+    ) {
       // Clear cache for recovery
       await clearFFmpegCache();
       throw new Error(
-        'FFmpeg cache may be corrupted. Cache has been cleared. ' +
-          'Please refresh the page to re-download FFmpeg assets.'
+        "FFmpeg cache may be corrupted. Cache has been cleared. " +
+          "Please refresh the page to re-download FFmpeg assets."
       );
     }
 
     // Generic offline error
     if (isOffline) {
       throw new Error(
-        'Cannot complete FFmpeg initialization while offline. ' +
-          'Please connect to the internet or try again after caching is complete.'
+        "Cannot complete FFmpeg initialization while offline. " +
+          "Please connect to the internet or try again after caching is complete."
       );
     }
 
@@ -221,6 +379,12 @@ export async function initializeFFmpegRuntime(
   } finally {
     if (slowNetworkTimer) {
       clearTimeout(slowNetworkTimer);
+    }
+    if (initHeartbeatId) {
+      clearInterval(initHeartbeatId);
+    }
+    if (initStatusTimeoutId) {
+      clearTimeout(initStatusTimeoutId);
     }
   }
 }

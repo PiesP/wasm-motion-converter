@@ -155,6 +155,10 @@ interface SwCompilePlugin extends Plugin {
   api: SwCompilePluginApi;
 }
 
+type DevSwOptions = {
+  enableDev?: boolean;
+};
+
 /**
  * HTML transform plugin for injecting AdSense code conditionally
  *
@@ -372,10 +376,80 @@ function importMapPlugin(): Plugin {
  *
  * @returns Vite plugin for service worker compilation
  */
-function compileServiceWorkerPlugin(): SwCompilePlugin {
+function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin {
   let isDev = false;
+  const enableDev = options.enableDev ?? false;
   let compiledSwCode = '';
   let compiledSwrCode = '';
+  let devCompilePromise: Promise<void> | null = null;
+
+  const compileServiceWorkerFiles = async (mode: 'dev' | 'build'): Promise<void> => {
+    console.log(
+      mode === 'dev'
+        ? 'ℹ Compiling Service Worker files for dev mode'
+        : 'ℹ Compiling Service Worker files...'
+    );
+
+    const projectRoot = process.cwd();
+    const publicDir = path.join(projectRoot, 'public');
+    const tempDir = path.join(projectRoot, '.vite-sw-temp');
+
+    try {
+      // Create temp directory outside dist to avoid Vite cleaning
+      if (!existsSync(tempDir)) {
+        mkdirSync(tempDir, { recursive: true });
+      }
+
+      // Compile service-worker.ts
+      await esbuild({
+        entryPoints: [path.join(publicDir, 'service-worker.ts')],
+        outfile: path.join(tempDir, 'service-worker.js'),
+        bundle: false,
+        format: 'esm',
+        target: 'es2020',
+        minify: true,
+        sourcemap: false,
+        platform: 'browser',
+        logLevel: 'warning',
+      });
+
+      // Compile sw-register.ts
+      await esbuild({
+        entryPoints: [path.join(publicDir, 'sw-register.ts')],
+        outfile: path.join(tempDir, 'sw-register.js'),
+        bundle: false,
+        format: 'esm',
+        target: 'es2020',
+        minify: true,
+        sourcemap: false,
+        platform: 'browser',
+        logLevel: 'warning',
+      });
+
+      // Read compiled code into memory
+      compiledSwCode = readFileSync(path.join(tempDir, 'service-worker.js'), 'utf-8');
+      compiledSwrCode = readFileSync(path.join(tempDir, 'sw-register.js'), 'utf-8');
+
+      console.log('✓ Service Worker files compiled successfully');
+    } catch (error) {
+      console.error('✗ Service Worker compilation failed:', error);
+      throw error;
+    }
+  };
+
+  const ensureDevCompilation = async (): Promise<void> => {
+    if (!isDev || !enableDev) {
+      return;
+    }
+
+    if (!devCompilePromise) {
+      devCompilePromise = compileServiceWorkerFiles('dev').finally(() => {
+        devCompilePromise = null;
+      });
+    }
+
+    await devCompilePromise;
+  };
 
   return {
     name: 'compile-service-worker',
@@ -385,58 +459,12 @@ function compileServiceWorkerPlugin(): SwCompilePlugin {
     },
 
     async buildStart() {
-      if (isDev) {
+      if (isDev && !enableDev) {
         console.log('ℹ Service Worker compilation skipped in dev mode');
         return;
       }
 
-      console.log('ℹ Compiling Service Worker files...');
-
-      const projectRoot = process.cwd();
-      const publicDir = path.join(projectRoot, 'public');
-      const tempDir = path.join(projectRoot, '.vite-sw-temp');
-
-      try {
-        // Create temp directory outside dist to avoid Vite cleaning
-        if (!existsSync(tempDir)) {
-          mkdirSync(tempDir, { recursive: true });
-        }
-
-        // Compile service-worker.ts
-        await esbuild({
-          entryPoints: [path.join(publicDir, 'service-worker.ts')],
-          outfile: path.join(tempDir, 'service-worker.js'),
-          bundle: false,
-          format: 'esm',
-          target: 'es2020',
-          minify: true,
-          sourcemap: false,
-          platform: 'browser',
-          logLevel: 'warning',
-        });
-
-        // Compile sw-register.ts
-        await esbuild({
-          entryPoints: [path.join(publicDir, 'sw-register.ts')],
-          outfile: path.join(tempDir, 'sw-register.js'),
-          bundle: false,
-          format: 'esm',
-          target: 'es2020',
-          minify: true,
-          sourcemap: false,
-          platform: 'browser',
-          logLevel: 'warning',
-        });
-
-        // Read compiled code into memory
-        compiledSwCode = readFileSync(path.join(tempDir, 'service-worker.js'), 'utf-8');
-        compiledSwrCode = readFileSync(path.join(tempDir, 'sw-register.js'), 'utf-8');
-
-        console.log('✓ Service Worker files compiled successfully');
-      } catch (error) {
-        console.error('✗ Service Worker compilation failed:', error);
-        throw error;
-      }
+      await compileServiceWorkerFiles(isDev ? 'dev' : 'build');
     },
 
     writeBundle() {
@@ -485,6 +513,50 @@ function compileServiceWorkerPlugin(): SwCompilePlugin {
       }
     },
 
+    configureServer(server) {
+      if (!enableDev) {
+        return;
+      }
+
+      server.middlewares.use((req, res, next) => {
+        const requestPath = req.url?.split('?')[0];
+
+        if (requestPath === '/service-worker.js') {
+          void ensureDevCompilation()
+            .then(() => {
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'text/javascript');
+              res.setHeader('Cache-Control', 'no-store');
+              res.end(compiledSwCode);
+            })
+            .catch((error) => {
+              console.error('✗ Failed to serve dev service worker:', error);
+              res.statusCode = 500;
+              res.end('Service worker compilation failed in dev mode.');
+            });
+          return;
+        }
+
+        if (requestPath === '/sw-register.js') {
+          void ensureDevCompilation()
+            .then(() => {
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'text/javascript');
+              res.setHeader('Cache-Control', 'no-store');
+              res.end(compiledSwrCode);
+            })
+            .catch((error) => {
+              console.error('✗ Failed to serve dev SW register script:', error);
+              res.statusCode = 500;
+              res.end('SW registration script compilation failed in dev mode.');
+            });
+          return;
+        }
+
+        next();
+      });
+    },
+
     // Provide compiled code to injection plugin
     api: {
       getCompiledSWRCode() {
@@ -507,8 +579,13 @@ function compileServiceWorkerPlugin(): SwCompilePlugin {
  *
  * @returns Vite plugin for SW registration injection
  */
-function injectServiceWorkerPlugin(compilePlugin: SwCompilePlugin): Plugin {
+function injectServiceWorkerPlugin(
+  compilePlugin: SwCompilePlugin,
+  options: DevSwOptions = {}
+): Plugin {
   let isDev = false;
+  const enableDev = options.enableDev ?? false;
+  let loggedDev = false;
 
   return {
     name: 'inject-service-worker-registration',
@@ -518,9 +595,14 @@ function injectServiceWorkerPlugin(compilePlugin: SwCompilePlugin): Plugin {
     },
 
     transformIndexHtml(html) {
-      if (isDev) {
+      if (isDev && !enableDev) {
         console.log('ℹ Service Worker registration skipped in dev mode');
         return html;
+      }
+
+      if (isDev && enableDev && !loggedDev) {
+        console.log('ℹ Service Worker registration enabled in dev mode');
+        loggedDev = true;
       }
 
       let registrationCode = '';
@@ -593,7 +675,10 @@ export default defineConfig(({ mode }) => {
   };
 
   // Create service worker compilation plugin (needed by injection plugin)
-  const swCompilePlugin = compileServiceWorkerPlugin();
+  const enableSwDev = env.VITE_ENABLE_SW_DEV === 'true';
+  const swCompilePlugin = compileServiceWorkerPlugin({
+    enableDev: enableSwDev,
+  });
 
   return {
     // Vite plugins configuration
@@ -604,7 +689,7 @@ export default defineConfig(({ mode }) => {
       generateAdsTxtPlugin(env), // Generate ads.txt for AdSense verification
       importMapPlugin(), // Generate import map for CDN dependencies (Phase 1)
       swCompilePlugin, // Compile service worker TypeScript to JavaScript
-      injectServiceWorkerPlugin(swCompilePlugin), // Inline service worker registration in HTML
+      injectServiceWorkerPlugin(swCompilePlugin, { enableDev: enableSwDev }),
       // Generate pre-cache manifest for Service Worker (Phase 5)
       {
         name: 'generate-precache-manifest',

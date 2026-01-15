@@ -1,14 +1,18 @@
 // External dependencies
-import { toBlobURL } from '@ffmpeg/util';
-import { RUNTIME_DEP_VERSIONS } from 'virtual:cdn-deps';
+import { toBlobURL } from "@ffmpeg/util";
+import { RUNTIME_DEP_VERSIONS } from "virtual:cdn-deps";
 
 // Internal imports
-import { FFMPEG_CORE_VERSION } from '@utils/constants';
-import { logger } from '@utils/logger';
-import { withTimeout } from '@utils/with-timeout';
-import { getEnabledProviders } from '@services/cdn/cdn-config';
-import { buildAssetUrl } from '@services/cdn/cdn-url-builder';
-import { recordCdnRequest } from '@services/cdn/cdn-health-tracker';
+import { FFMPEG_CORE_VERSION } from "@utils/constants";
+import { logger } from "@utils/logger";
+import { withTimeout } from "@utils/with-timeout";
+import { getEnabledProviders } from "@services/cdn/cdn-config";
+import { buildAssetUrl } from "@services/cdn/cdn-url-builder";
+import { recordCdnRequest } from "@services/cdn/cdn-health-tracker";
+
+export type FFmpegCoreVariant = "mt" | "st";
+
+const FFMPEG_CORE_ST_VERSION = FFMPEG_CORE_VERSION;
 
 /**
  * Cache name for FFmpeg core assets with version identifier.
@@ -26,7 +30,7 @@ export const requestIdle = (
   callback: IdleRequestCallback,
   options?: IdleRequestOptions
 ): number => {
-  if (typeof requestIdleCallback !== 'undefined') {
+  if (typeof requestIdleCallback !== "undefined") {
     return requestIdleCallback(callback, options);
   }
   return window.setTimeout(
@@ -38,7 +42,8 @@ export const requestIdle = (
 /**
  * Check if Cache Storage API is available in current environment.
  */
-export const supportsCacheStorage = (): boolean => typeof caches !== 'undefined';
+export const supportsCacheStorage = (): boolean =>
+  typeof caches !== "undefined";
 
 /**
  * Load blob URL with cache awareness.
@@ -48,7 +53,10 @@ export const supportsCacheStorage = (): boolean => typeof caches !== 'undefined'
  * NOTE: This intentionally mirrors the previous in-file implementation to
  * avoid behavior changes during refactoring.
  */
-export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<string> {
+export async function cacheAwareBlobURL(
+  url: string,
+  mimeType: string
+): Promise<string> {
   if (!supportsCacheStorage()) {
     return toBlobURL(url, mimeType);
   }
@@ -56,7 +64,7 @@ export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<
   const cache = await caches.open(FFMPEG_CACHE_NAME);
   const cachedResponse = await cache.match(url);
   if (cachedResponse) {
-    const contentLength = cachedResponse.headers.get('content-length');
+    const contentLength = cachedResponse.headers.get("content-length");
     const cachedBlob = await cachedResponse.blob();
 
     // Validate blob has expected size (not empty/corrupted)
@@ -64,7 +72,7 @@ export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<
       cachedBlob.size === 0 ||
       (contentLength && cachedBlob.size < Number.parseInt(contentLength, 10))
     ) {
-      logger.warn('ffmpeg', 'Cached response appears corrupted, refetching', {
+      logger.warn("ffmpeg", "Cached response appears corrupted, refetching", {
         url,
         expectedSize: contentLength,
         actualSize: cachedBlob.size,
@@ -77,8 +85,8 @@ export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<
   }
 
   const response = await fetch(url, {
-    cache: 'force-cache',
-    credentials: 'omit',
+    cache: "force-cache",
+    credentials: "omit",
   });
   if (!response.ok) {
     return toBlobURL(url, mimeType);
@@ -97,21 +105,23 @@ type PackageAssetOptions = {
   label: string;
 };
 
-const FALLBACK_FFMPEG_PACKAGE_VERSION = '0.12.15';
-const FFMPEG_CLASS_WORKER_PATH = '/dist/esm/worker.js';
+const FALLBACK_FFMPEG_PACKAGE_VERSION = "0.12.15";
+const FFMPEG_CLASS_WORKER_PATH = "/dist/esm/worker.js";
 
 const getFFmpegPackageVersion = (): string =>
-  RUNTIME_DEP_VERSIONS['@ffmpeg/ffmpeg'] ?? FALLBACK_FFMPEG_PACKAGE_VERSION;
+  RUNTIME_DEP_VERSIONS["@ffmpeg/ffmpeg"] ?? FALLBACK_FFMPEG_PACKAGE_VERSION;
 
 const normalizeAssetPath = (assetPath: string): string =>
-  assetPath.startsWith('/') ? assetPath : `/${assetPath}`;
+  assetPath.startsWith("/") ? assetPath : `/${assetPath}`;
 
 const getBlobCompatibleProviders = () =>
-  getEnabledProviders().filter((p) => p.name !== 'esm.sh' && p.name !== 'skypack');
+  getEnabledProviders().filter(
+    (p) => p.name !== "esm.sh" && p.name !== "skypack"
+  );
 
 const logProviderExclusions = () => ({
-  excludedProviders: ['esm.sh', 'skypack'],
-  exclusionReason: 'blob:// incompatibility (shim code with bare imports)',
+  excludedProviders: ["esm.sh", "skypack"],
+  exclusionReason: "blob:// incompatibility (shim code with bare imports)",
 });
 
 async function loadPackageAsset({
@@ -126,7 +136,7 @@ async function loadPackageAsset({
 
   const errors: Array<{ provider: string; error: string }> = [];
 
-  logger.info('ffmpeg', 'Loading FFmpeg asset from CDN providers', {
+  logger.info("ffmpeg", "Loading FFmpeg asset from CDN providers", {
     label,
     assetPath,
     packageName,
@@ -138,9 +148,14 @@ async function loadPackageAsset({
   for (const provider of providers) {
     try {
       // Build URL for this CDN provider
-      const url = buildAssetUrl(provider, packageName, version, normalizeAssetPath(assetPath));
+      const url = buildAssetUrl(
+        provider,
+        packageName,
+        version,
+        normalizeAssetPath(assetPath)
+      );
 
-      logger.debug('ffmpeg', 'Trying CDN provider for FFmpeg asset', {
+      logger.debug("ffmpeg", "Trying CDN provider for FFmpeg asset", {
         label,
         assetPath,
         packageName,
@@ -163,7 +178,7 @@ async function loadPackageAsset({
       // Record success
       recordCdnRequest(provider.hostname, true);
 
-      logger.info('ffmpeg', 'FFmpeg asset loaded successfully', {
+      logger.info("ffmpeg", "FFmpeg asset loaded successfully", {
         label,
         assetPath,
         packageName,
@@ -179,20 +194,26 @@ async function loadPackageAsset({
       // Record failure
       recordCdnRequest(provider.hostname, false);
 
-      logger.warn('ffmpeg', 'FFmpeg asset download failed; trying next provider', {
-        label,
-        assetPath,
-        packageName,
-        provider: provider.name,
-        error: errorMsg,
-      });
+      logger.warn(
+        "ffmpeg",
+        "FFmpeg asset download failed; trying next provider",
+        {
+          label,
+          assetPath,
+          packageName,
+          provider: provider.name,
+          error: errorMsg,
+        }
+      );
 
       // Continue to next CDN
     }
   }
 
   // All CDNs failed
-  const errorSummary = errors.map((e) => `${e.provider} (${e.error})`).join(', ');
+  const errorSummary = errors
+    .map((e) => `${e.provider} (${e.error})`)
+    .join(", ");
   throw new Error(
     `Failed to download ${label} from all CDN providers. Errors: ${errorSummary}. Please check your network connection.`
   );
@@ -205,7 +226,7 @@ async function loadPackageAsset({
 export async function clearFFmpegCache(): Promise<void> {
   if (supportsCacheStorage()) {
     await caches.delete(FFMPEG_CACHE_NAME);
-    logger.info('ffmpeg', 'FFmpeg cache cleared');
+    logger.info("ffmpeg", "FFmpeg cache cleared");
   }
 }
 
@@ -218,18 +239,31 @@ export async function clearFFmpegCache(): Promise<void> {
  * @param label - Human-readable label for error messages
  * @returns Blob URL that can be used to load the asset
  */
+export async function loadFFmpegCoreAsset(
+  assetPath: string,
+  mimeType: string,
+  label: string,
+  variant: FFmpegCoreVariant = "mt"
+): Promise<string> {
+  const packageName = variant === "mt" ? "@ffmpeg/core-mt" : "@ffmpeg/core";
+  const version =
+    variant === "mt" ? FFMPEG_CORE_VERSION : FFMPEG_CORE_ST_VERSION;
+
+  return loadPackageAsset({
+    packageName,
+    version,
+    assetPath: `/dist/esm/${assetPath}`,
+    mimeType,
+    label,
+  });
+}
+
 export async function loadFFmpegAsset(
   assetPath: string,
   mimeType: string,
   label: string
 ): Promise<string> {
-  return loadPackageAsset({
-    packageName: '@ffmpeg/core-mt',
-    version: FFMPEG_CORE_VERSION,
-    assetPath: `/dist/esm/${assetPath}`,
-    mimeType,
-    label,
-  });
+  return loadFFmpegCoreAsset(assetPath, mimeType, label, "mt");
 }
 
 /**
@@ -238,10 +272,10 @@ export async function loadFFmpegAsset(
  */
 export async function loadFFmpegClassWorker(): Promise<string> {
   return loadPackageAsset({
-    packageName: '@ffmpeg/ffmpeg',
+    packageName: "@ffmpeg/ffmpeg",
     version: getFFmpegPackageVersion(),
     assetPath: FFMPEG_CLASS_WORKER_PATH,
-    mimeType: 'text/javascript',
-    label: 'FFmpeg class worker',
+    mimeType: "text/javascript",
+    label: "FFmpeg class worker",
   });
 }

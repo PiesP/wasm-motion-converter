@@ -1,8 +1,8 @@
 /**
  * Service Worker readiness checks and utilities
  *
- * Ensures conversions only start after SW is active and controlling,
- * preventing CORS issues on first visit.
+ * Attempts to wait for SW to be active and controlling when available.
+ * Falls back gracefully when SW is not registered or supported.
  */
 
 import { logger } from '@utils/logger';
@@ -40,6 +40,8 @@ export function checkSWReadiness(): SWReadinessState {
 export async function waitForSWReady(timeout = 10000): Promise<boolean> {
   const state = checkSWReadiness();
 
+  logger.debug('general', 'Service Worker readiness snapshot', state);
+
   // If not supported, return immediately (will work without SW)
   if (!state.isSupported) {
     logger.warn('general', 'Service Workers not supported; proceeding without caching');
@@ -52,11 +54,24 @@ export async function waitForSWReady(timeout = 10000): Promise<boolean> {
     return true;
   }
 
+  // If no registration exists, skip waiting (common in dev or when SW is disabled)
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) {
+      logger.warn('general', 'Service Worker not registered; skipping readiness wait');
+      return false;
+    }
+  } catch {
+    logger.warn('general', 'Failed to read Service Worker registration; skipping readiness wait');
+    return false;
+  }
+
   // Wait for SW to take control
   logger.info('general', 'Waiting for Service Worker to activate...');
 
   return new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
+      logger.warn('general', 'Service Worker readiness snapshot at timeout', checkSWReadiness());
       logger.warn('general', 'Timeout waiting for Service Worker', {
         timeoutMs: timeout,
       });
