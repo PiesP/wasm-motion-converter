@@ -15,6 +15,7 @@
 
 import { loadFFmpegAsset } from '@services/ffmpeg/core-assets';
 import { shouldEnablePrefetch } from '@services/cdn/cdn-strategy-selector';
+import { isPreloadComplete } from '@services/cdn/unified-preloader';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
@@ -161,6 +162,13 @@ class PrefetchManager {
    */
   public async start(options: { force?: boolean; delay?: number } = {}): Promise<void> {
     const { force = false, delay = 5000 } = options;
+
+    // Check if unified preloader has already completed
+    if (isPreloadComplete()) {
+      logger.debug('prefetch', 'Unified preloader already completed, skipping prefetch');
+      this.status = 'completed';
+      return;
+    }
 
     // Check if already prefetched or in progress
     if (this.status === 'completed') {

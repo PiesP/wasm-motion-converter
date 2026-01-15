@@ -19,6 +19,7 @@ import FileDropzone from '@components/FileDropzone';
 import FormatSelector from '@components/FormatSelector';
 import ExportLogsButton from '@components/ExportLogsButton';
 import LicenseAttribution from '@components/LicenseAttribution';
+import LoadingOverlay from '@components/LoadingOverlay';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
 import DevRouteOverrides from '@components/DevRouteOverrides';
@@ -39,7 +40,7 @@ import {
   getDevConversionOverrides,
   setDevConversionOverrides,
 } from '@services/orchestration/dev-conversion-overrides';
-import { startPrefetch } from '@services/cdn/prefetch-service';
+import { preloadAllDependencies, type PreloadProgress } from '@services/cdn/unified-preloader';
 import {
   appState,
   environmentSupported,
@@ -100,6 +101,14 @@ const App: Component = () => {
   );
   const [memoryWarning, setMemoryWarning] = createSignal(false);
 
+  // Preload state
+  const [preloadComplete, setPreloadComplete] = createSignal(false);
+  const [preloadStatus, setPreloadStatus] = createSignal('Initializing...');
+  const [preloadProgress, setPreloadProgress] = createSignal(0);
+  const [preloadStatusMessage, setPreloadStatusMessage] = createSignal<string | undefined>(
+    undefined
+  );
+
   const {
     handleFileSelected,
     handleConvert,
@@ -139,9 +148,9 @@ const App: Component = () => {
    *
    * @remarks
    * - Detects SharedArrayBuffer and cross-origin isolation support
-   * - Prefetches FFmpeg assets using unified CDN prefetch service
-   * - Uses idle scheduling to avoid blocking initial render
-   * - Connection-aware prefetching (WiFi/4G only)
+   * - Preloads all external dependencies with unified preloader
+   * - Shows loading overlay until preload completes
+   * - Extended capability detection runs after preload
    */
   onMount(() => {
     const isSupported = typeof SharedArrayBuffer !== 'undefined' && crossOriginIsolated === true;
@@ -152,14 +161,46 @@ const App: Component = () => {
       logger.info('general', 'Hardware profile changed or first run, cache invalidated');
     }
 
-    // Start FFmpeg prefetch with unified CDN service
-    // Automatically detects connection type and only prefetches on WiFi/4G
-    runIdle(() => {
-      void startPrefetch({ delay: 5000 }).catch((error) => {
-        logger.debug('prefetch', 'FFmpeg prefetch skipped or failed', {
-          error: error instanceof Error ? error.message : String(error),
-        });
+    // Handle preload progress updates
+    const handlePreloadProgress = (progress: PreloadProgress): void => {
+      switch (progress.phase) {
+        case 'waiting-sw':
+          setPreloadStatus('Preparing app...');
+          setPreloadStatusMessage('Waiting for Service Worker');
+          setPreloadProgress(0);
+          break;
+        case 'downloading':
+          setPreloadStatus(`Loading ${progress.currentFile}...`);
+          setPreloadStatusMessage(`${progress.completedFiles}/${progress.totalFiles} files loaded`);
+          setPreloadProgress(progress.percentage);
+          break;
+        case 'validating':
+          setPreloadStatus('Validating assets...');
+          setPreloadProgress(95);
+          break;
+        case 'complete':
+          setPreloadStatus('Ready!');
+          setPreloadStatusMessage(undefined);
+          setPreloadProgress(100);
+          // Delay hiding overlay for visual feedback
+          setTimeout(() => setPreloadComplete(true), 500);
+          break;
+        case 'error':
+          setPreloadStatus('Loading failed');
+          setPreloadStatusMessage(progress.error);
+          // Still allow app usage on error
+          setTimeout(() => setPreloadComplete(true), 2000);
+          break;
+      }
+    };
+
+    // Start preloading all dependencies immediately
+    void preloadAllDependencies(handlePreloadProgress).catch((error) => {
+      logger.error('general', 'Preload failed', {
+        error: error instanceof Error ? error.message : String(error),
       });
+      // Allow app usage even on preload failure
+      setPreloadComplete(true);
     });
 
     // Extended capability detection (idle-scheduled, non-blocking)
@@ -410,6 +451,14 @@ const App: Component = () => {
         </div>
       )}
     >
+      {/* Loading overlay - shown during preload */}
+      <LoadingOverlay
+        visible={!preloadComplete()}
+        status={preloadStatus()}
+        progress={preloadProgress()}
+        statusMessage={preloadStatusMessage()}
+      />
+
       <div class="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col transition-colors">
         <a
           href="#main-content"
