@@ -3,7 +3,6 @@
  *
  * Configures Vite build system for SolidJS application with:
  * - FFmpeg.wasm cross-origin isolation (SharedArrayBuffer support)
- * - Dynamic AdSense integration via environment variables
  * - Path aliases for cleaner imports
  * - Manual code splitting for optimal caching
  * - Bundle analysis via rollup-plugin-visualizer
@@ -15,8 +14,8 @@
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -192,82 +191,6 @@ interface SwCompilePlugin extends Plugin {
 type DevSwOptions = {
   enableDev?: boolean;
 };
-
-/**
- * HTML transform plugin for injecting AdSense code conditionally
- *
- * Replaces %%ADSENSE_META%% and %%ADSENSE_SCRIPT%% placeholders in index.html
- * with actual AdSense code when VITE_ENABLE_ADS=true and publisher ID is set.
- *
- * @param env - Environment variables loaded by Vite
- * @returns Vite plugin for HTML transformation
- */
-function htmlTransformPlugin(env: Record<string, string>): Plugin {
-  return {
-    name: 'html-transform',
-    transformIndexHtml(html) {
-      const enableAds = env.VITE_ENABLE_ADS === 'true';
-      const publisherId = env.VITE_ADSENSE_PUBLISHER_ID || '';
-
-      let transformed = html;
-
-      if (enableAds && publisherId) {
-        // Inject AdSense meta tag
-        const metaTag = `<meta name="google-adsense-account" content="${publisherId}">`;
-        transformed = transformed.replace('%%ADSENSE_META%%', metaTag);
-
-        // Inject AdSense script
-        const scriptTag = `<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${publisherId}" crossorigin="anonymous"></script>`;
-        transformed = transformed.replace('%%ADSENSE_SCRIPT%%', scriptTag);
-      } else {
-        // Remove placeholders in development
-        transformed = transformed.replace('%%ADSENSE_META%%', '<!-- AdSense disabled -->');
-        transformed = transformed.replace('%%ADSENSE_SCRIPT%%', '<!-- AdSense disabled -->');
-      }
-
-      return transformed;
-    },
-  };
-}
-
-/**
- * Plugin to dynamically generate public/ads.txt from environment variables
- *
- * Creates ads.txt file required by Google AdSense for ad serving verification.
- * Only generates when VITE_ENABLE_ADS=true and valid publisher ID is provided.
- *
- * @param env - Environment variables loaded by Vite
- * @returns Vite plugin for ads.txt generation
- */
-function generateAdsTxtPlugin(env: Record<string, string>): Plugin {
-  return {
-    name: 'generate-ads-txt',
-    buildStart() {
-      const enableAds = env.VITE_ENABLE_ADS === 'true';
-      const publisherId = env.VITE_ADSENSE_PUBLISHER_ID || '';
-
-      // Only generate ads.txt if ads are enabled and publisher ID is set
-      if (enableAds && publisherId && !publisherId.includes('XXXX')) {
-        const publicDir = path.join(process.cwd(), 'public');
-        const adsTxtPath = path.join(publicDir, 'ads.txt');
-
-        // Extract numeric ID from ca-pub-XXXXXXXXXXXXXXXX
-        const numericId = publisherId.replace('ca-pub-', '');
-        const adsTxtContent = `google.com, pub-${numericId}, DIRECT, f08c47fec0942fa0\n`;
-
-        try {
-          mkdirSync(publicDir, { recursive: true });
-          writeFileSync(adsTxtPath, adsTxtContent, 'utf-8');
-          console.log(`✓ Generated public/ads.txt with publisher ID: ${publisherId}`);
-        } catch (error) {
-          console.warn(`⚠ Failed to generate ads.txt:`, error);
-        }
-      } else {
-        console.log('ℹ Skipping ads.txt generation (ads disabled or placeholder ID)');
-      }
-    },
-  };
-}
 
 /**
  * Import map plugin for CDN dependencies
@@ -724,8 +647,6 @@ export default defineConfig(({ mode }) => {
     plugins: [
       cdnDepsPlugin, // virtual:cdn-deps for consistent CDN URL generation
       solid(), // SolidJS JSX transformation and HMR
-      htmlTransformPlugin(env), // Inject AdSense code conditionally
-      generateAdsTxtPlugin(env), // Generate ads.txt for AdSense verification
       importMapPlugin(), // Generate import map for CDN dependencies (Phase 1)
       swCompilePlugin, // Compile service worker TypeScript to JavaScript
       injectServiceWorkerPlugin(swCompilePlugin, { enableDev: enableSwDev }),

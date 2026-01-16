@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-01-16T05:00:42.328Z",
+  "generated": "2026-01-16T20:21:43.679Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -12,11 +12,6 @@
         "url": "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm",
         "integrity": "sha384-t9ezkbzwJrFIIhQVxXgU9kDQDFOhmmDcloJB8Qu6P6tHccWy6qTXLplWAlht5a/1",
         "size": 3438
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15?module",
-        "integrity": "sha384-6gtICseWoSfROfflbGSkg1kwPTH+2SxMvyn0e3THJbNoyPxx5tzNk4EXfLIHD2iD",
-        "size": 4420
       },
       "skypack": {
         "url": "https://cdn.skypack.dev/@ffmpeg/ffmpeg@0.12.15",
@@ -92,24 +87,24 @@
     },
     "mediabunny": {
       "esm.sh": {
-        "url": "https://esm.sh/mediabunny@1.27.4?target=esnext",
-        "integrity": "sha384-wEnLNyICqWOtnQx+UnshbuiJmow6N1iMJjtxrBzP0qsNsOYJME5L6cQ4ELf1sjEu",
+        "url": "https://esm.sh/mediabunny@1.27.6?target=esnext",
+        "integrity": "sha384-DdVApDNdzJBL0n3XoPHRSgh2uWE/Gfanf1F8/MJbOnhv9TyttY1o4DXRUle2+1WP",
         "size": 91
       },
       "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/mediabunny@1.27.4/+esm",
-        "integrity": "sha384-w6PPGgzLqENmV7d1XYtqmNjnFRN7c4WGW1963jjURpMXm1W2lw9PJ6V0eZcyItiP",
-        "size": 442672
+        "url": "https://cdn.jsdelivr.net/npm/mediabunny@1.27.6/+esm",
+        "integrity": "sha384-If7/rt4JywkDrvsFW9aB6oW6BkNXFxQyENrB9eJra6bgBErdwh4DXZfhTMkzp5tV",
+        "size": 443253
       },
       "unpkg": {
-        "url": "https://unpkg.com/mediabunny@1.27.4?module",
-        "integrity": "sha384-4fpdra8pGK8L44/bgOVEh8AnkWiSZFPL6SmioMXj8JY8UPQYlUAKD3jAbCJ8n9y5",
-        "size": 2833
+        "url": "https://unpkg.com/mediabunny@1.27.6?module",
+        "integrity": "sha384-x/fkCUWvmL2Ob9wn4IQxij+2FmDur7R4zfaDhZC6UXwlV3OCsfIlyM2J2QJrFDAF",
+        "size": 2858
       },
       "skypack": {
-        "url": "https://cdn.skypack.dev/mediabunny@1.27.4",
-        "integrity": "sha384-Kt0xN43UbRZzmWRlqhTwe4linT4AZE/Pxeg6YmRUQF8aswt0kQziUaqnc7fZYOiB",
-        "size": 1199012
+        "url": "https://cdn.skypack.dev/mediabunny@1.27.6",
+        "integrity": "sha384-7POg3OEkYoU8XkFq8HJcCeR890jDgwkRRwToGTGc6+anplrfyrmAZ4rS1ef0zppQ",
+        "size": 1200738
       }
     },
     "modern-gif": {

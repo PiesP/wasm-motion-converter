@@ -34,17 +34,11 @@ declare global {
    * for the application to function.
    *
    * Configuration:
-   * - VITE_ADSENSE_PUBLISHER_ID: Google AdSense publisher ID for monetization
-   * - VITE_ENABLE_ADS: Boolean string to enable/disable ads display
    * - VITE_DEBUG_FFMPEG: Enable detailed FFmpeg logging
    * - VITE_DEBUG_APP: Enable general application debug logging
    * - VITE_FFMPEG_HARD_TIMEOUT_MS: Override default FFmpeg timeout (milliseconds)
    */
   interface ImportMetaEnv {
-    /** Google AdSense publisher ID (optional) */
-    readonly VITE_ADSENSE_PUBLISHER_ID?: string;
-    /** Enable ads display as "true" or "false" string (optional) */
-    readonly VITE_ENABLE_ADS?: string;
     /** Enable FFmpeg debug logging as "true" or "false" string (optional) */
     readonly VITE_DEBUG_FFMPEG?: string;
     /** Enable general app debug logging as "true" or "false" string (optional) */
