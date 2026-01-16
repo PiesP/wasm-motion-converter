@@ -6,11 +6,10 @@
  * with conversion (e.g., file size warnings, format compatibility issues).
  */
 
-// External dependencies
-import { createSignal } from 'solid-js';
-
 // Type imports
 import type { ValidationWarning } from '@t/validation-types';
+// External dependencies
+import { createSignal } from 'solid-js';
 
 /**
  * Confirmation dialog state
@@ -23,6 +22,12 @@ interface ConfirmationState {
   isVisible: boolean;
   /** Warnings requiring user confirmation */
   warnings: ValidationWarning[];
+  /** Modal title override */
+  title?: string;
+  /** Modal confirm button label */
+  confirmLabel?: string;
+  /** Modal cancel button label */
+  cancelLabel?: string;
   /** Callback when user confirms */
   onConfirm?: () => void;
   /** Callback when user cancels */
@@ -57,6 +62,7 @@ export const getConfirmationState = () => {
  * @param warnings - All validation warnings
  * @param onConfirm - Callback when user confirms
  * @param onCancel - Callback when user cancels
+ * @param options - Optional modal copy overrides
  *
  * @example
  * showConfirmation(
@@ -68,11 +74,19 @@ export const getConfirmationState = () => {
 export const showConfirmation = (
   warnings: ValidationWarning[],
   onConfirm: () => void,
-  onCancel: () => void
+  onCancel: () => void,
+  options?: {
+    title?: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+  }
 ): void => {
   setConfirmationState({
     isVisible: true,
     warnings: warnings.filter((w) => w.requiresConfirmation),
+    title: options?.title,
+    confirmLabel: options?.confirmLabel,
+    cancelLabel: options?.cancelLabel,
     onConfirm,
     onCancel,
   });

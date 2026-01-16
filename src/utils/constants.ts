@@ -24,6 +24,9 @@ export const WARN_FILE_SIZE_HIGH = 200 * 1024 * 1024;
 /** Warn if file size exceeds this threshold; suggest scale reduction (300 MB) */
 export const WARN_FILE_SIZE_CRITICAL = 300 * 1024 * 1024;
 
+/** Estimated first-load download size for runtime dependencies (35 MB). */
+export const INITIAL_DOWNLOAD_ESTIMATE_BYTES = 35 * 1024 * 1024;
+
 // ============================================================================
 // VIDEO RESOLUTION & DURATION THRESHOLDS
 // ============================================================================

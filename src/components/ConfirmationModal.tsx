@@ -1,7 +1,7 @@
-import type { Component } from 'solid-js';
-import { createEffect, For, onCleanup, onMount, Show } from 'solid-js';
 import { cancelDialog, confirmDialog, getConfirmationState } from '@stores/confirmation-store';
 import type { ValidationWarning } from '@t/validation-types';
+import type { Component } from 'solid-js';
+import { createEffect, For, onCleanup, onMount, Show } from 'solid-js';
 
 /**
  * Get Tailwind color classes based on warning severity
@@ -134,7 +134,7 @@ const ConfirmationModal: Component = () => {
           tabIndex={-1}
         >
           <h2 id="modal-title" class="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">
-            Conversion Warning
+            {state().title ?? 'Conversion Warning'}
           </h2>
 
           <div id="modal-description" class="space-y-3 mb-6" role="list">
@@ -182,7 +182,7 @@ const ConfirmationModal: Component = () => {
               class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-gray-900 dark:text-gray-100"
               aria-label="Cancel conversion and close modal"
             >
-              Cancel
+              {state().cancelLabel ?? 'Cancel'}
             </button>
             <button
               type="button"
@@ -190,7 +190,7 @@ const ConfirmationModal: Component = () => {
               class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
               aria-label="Proceed with conversion despite warnings"
             >
-              Proceed Anyway
+              {state().confirmLabel ?? 'Proceed Anyway'}
             </button>
           </div>
         </div>

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-01-16T20:21:43.679Z",
+  "generated": "2026-01-16T20:41:22.639Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -12,6 +12,11 @@
         "url": "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm",
         "integrity": "sha384-t9ezkbzwJrFIIhQVxXgU9kDQDFOhmmDcloJB8Qu6P6tHccWy6qTXLplWAlht5a/1",
         "size": 3438
+      },
+      "unpkg": {
+        "url": "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15?module",
+        "integrity": "sha384-6gtICseWoSfROfflbGSkg1kwPTH+2SxMvyn0e3THJbNoyPxx5tzNk4EXfLIHD2iD",
+        "size": 4420
       },
       "skypack": {
         "url": "https://cdn.skypack.dev/@ffmpeg/ffmpeg@0.12.15",

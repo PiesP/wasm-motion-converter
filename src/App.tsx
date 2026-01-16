@@ -15,7 +15,11 @@ import ThemeToggle from '@components/ThemeToggle';
 import Button from '@components/ui/button';
 import Panel from '@components/ui/panel';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
-import { type PreloadProgress, preloadAllDependencies } from '@services/cdn/unified-preloader';
+import {
+  isPreloadComplete,
+  type PreloadProgress,
+  preloadAllDependencies,
+} from '@services/cdn/unified-preloader';
 import {
   getConversionAutoSelectionDebug,
   getConversionPhaseTimingsDebug,
@@ -28,6 +32,7 @@ import {
 } from '@services/orchestration/dev-conversion-overrides';
 import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
 import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
+import { isLikelyFirstVisit } from '@services/sw/sw-readiness';
 import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
 import {
   appState,
@@ -36,6 +41,7 @@ import {
   loadingStatusMessage,
   setEnvironmentSupported,
 } from '@stores/app-store';
+import { showConfirmation } from '@stores/confirmation-store';
 import { errorContext, errorMessage } from '@stores/conversion-error-store';
 import { inputFile, videoMetadata, videoPreviewUrl } from '@stores/conversion-media-store';
 import { conversionProgress, conversionStatusMessage } from '@stores/conversion-progress-store';
@@ -47,8 +53,10 @@ import {
 } from '@stores/conversion-settings-store';
 import { devMatrixTestIsRunning, requestDevMatrixTestCancel } from '@stores/dev-matrix-test-store';
 import { useNetworkState } from '@stores/network-store';
+import { INITIAL_DOWNLOAD_ESTIMATE_BYTES } from '@utils/constants';
 import { debounce } from '@utils/debounce';
 import { getErrorMessage } from '@utils/error-utils';
+import { formatBytes } from '@utils/format-bytes';
 import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
@@ -310,15 +318,7 @@ const App: Component = () => {
    * - Shows loading overlay until preload completes
    * - Extended capability detection runs after preload
    */
-  onMount(() => {
-    const isSupported = typeof SharedArrayBuffer !== 'undefined' && crossOriginIsolated === true;
-    setEnvironmentSupported(isSupported);
-
-    // Validate hardware profile and invalidate caches if hardware changed
-    if (!isHardwareCacheValid()) {
-      logger.info('general', 'Hardware profile changed or first run, cache invalidated');
-    }
-
+  const startPreload = (): void => {
     // Handle preload progress updates
     const handlePreloadProgress = (progress: PreloadProgress): void => {
       switch (progress.phase) {
@@ -357,7 +357,7 @@ const App: Component = () => {
       }
     };
 
-    // Start preloading all dependencies immediately
+    // Start preloading all dependencies
     void preloadAllDependencies(handlePreloadProgress).catch((error) => {
       logger.error('general', 'Preload failed', {
         error: error instanceof Error ? error.message : String(error),
@@ -365,6 +365,56 @@ const App: Component = () => {
       // Allow app usage even on preload failure
       setPreloadComplete(true);
     });
+  };
+
+  const requestInitialDownload = (): void => {
+    if (isPreloadComplete() || preloadComplete()) {
+      setPreloadComplete(true);
+      return;
+    }
+
+    const estimatedBytes = INITIAL_DOWNLOAD_ESTIMATE_BYTES;
+    const estimatedSize = formatBytes(estimatedBytes);
+
+    showConfirmation(
+      [
+        {
+          severity: 'info',
+          message: 'Initial download required to run conversions',
+          details: `About ${estimatedSize} will be downloaded and cached for offline use.`,
+          suggestedAction: 'Continue when you are ready to download.',
+          requiresConfirmation: true,
+        },
+      ],
+      () => {
+        startPreload();
+      },
+      () => {
+        logger.info('general', 'User postponed initial download');
+        setPreloadComplete(true);
+      },
+      {
+        title: 'Download Required',
+        confirmLabel: 'Download Now',
+        cancelLabel: 'Not Now',
+      }
+    );
+  };
+
+  onMount(() => {
+    const isSupported = typeof SharedArrayBuffer !== 'undefined' && crossOriginIsolated === true;
+    setEnvironmentSupported(isSupported);
+
+    // Validate hardware profile and invalidate caches if hardware changed
+    if (!isHardwareCacheValid()) {
+      logger.info('general', 'Hardware profile changed or first run, cache invalidated');
+    }
+
+    if (isLikelyFirstVisit()) {
+      requestInitialDownload();
+    } else {
+      startPreload();
+    }
 
     // Extended capability detection (idle-scheduled, non-blocking)
     runIdle(async () => {
