@@ -18,14 +18,23 @@ import {
   resolveMetadata,
 } from '@services/orchestration/conversion-metadata-utils';
 import { resolveGifEncoderStrategy } from '@services/orchestration/gif-encoder-strategy';
-import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
+import {
+  type FailurePhase,
+  strategyHistoryService,
+} from '@services/orchestration/strategy-history-service';
 import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
 import { ProgressReporter } from '@services/shared/progress-reporter';
 import { capabilityService } from '@services/video-pipeline/capability-service';
 import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
 import { videoPipelineService } from '@services/video-pipeline/video-pipeline-service';
 import type { WebAVMP4Service } from '@services/webav/webav-mp4-service';
-import type { ConversionFormat, GifEncoderPreference, VideoMetadata } from '@t/conversion-types';
+import type {
+  ConversionFormat,
+  ErrorContext,
+  GifEncoderPreference,
+  VideoMetadata,
+} from '@t/conversion-types';
+import { classifyConversionError } from '@utils/classify-conversion-error';
 import { isAv1Codec } from '@utils/codec-utils';
 import { detectContainerFormat } from '@utils/container-utils';
 import { createId } from '@utils/create-id';
@@ -469,6 +478,11 @@ class ConversionOrchestrator {
       }
 
       const errorMessage = getErrorMessage(error);
+      const errorContext: ErrorContext = classifyConversionError(
+        errorMessage,
+        request.metadata ?? null,
+        { format: request.format, quality: request.options.quality, scale: request.options.scale }
+      );
 
       // Log the error without full classification (will be done in consumer)
       // to avoid redundant error processing and potential stack overflow
@@ -476,6 +490,7 @@ class ConversionOrchestrator {
         file: request.file.name,
         format: request.format,
         error: errorMessage,
+        failurePhase: errorContext.phase ?? null,
       });
 
       // Record failed conversion to history (if we have enough info)
@@ -488,6 +503,7 @@ class ConversionOrchestrator {
             durationMs: Date.now() - startTime,
             success: false,
             errorMessage: errorMessage.slice(0, 300),
+            failurePhase: (errorContext.phase ?? null) as FailurePhase,
             timestamp: Date.now(),
           });
         } catch (historyError) {

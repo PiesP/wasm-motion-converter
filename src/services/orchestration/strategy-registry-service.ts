@@ -12,16 +12,16 @@
  * 5. Build fallback chain (primary → fallback → FFmpeg CPU as last resort)
  */
 
-import type { ConversionFormat } from '@t/conversion-types';
-import type { ContainerFormat, ExtendedCapabilities } from '@t/video-pipeline-types';
+import type { ConversionHistory } from '@services/orchestration/strategy-history-service';
+import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
 import type {
   CodecPathPreference,
   ConversionPath,
   StrategyReasoning,
 } from '@services/orchestration/types';
-import type { ConversionHistory } from '@services/orchestration/strategy-history-service';
-import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
 import { createSingleton } from '@services/shared/singleton-service';
+import type { ConversionFormat } from '@t/conversion-types';
+import type { ContainerFormat, ExtendedCapabilities } from '@t/video-pipeline-types';
 import { isAv1Codec, isH264Codec, isHevcCodec } from '@utils/codec-utils';
 import { logger } from '@utils/logger';
 
@@ -223,9 +223,9 @@ const STRATEGY_MATRIX = new Map<string, CodecPathPreference>([
     {
       codec: 'vp9',
       format: 'gif',
-      preferredPath: 'cpu',
-      fallbackPath: 'gpu',
-      reason: 'FFmpeg palettegen is typically faster than WebCodecs for VP9 GIF',
+      preferredPath: 'gpu',
+      fallbackPath: 'cpu',
+      reason: 'VP9 GIF conversions are more stable with WebCodecs decode in this environment',
       benchmarks: {
         avgTimeSeconds: 5.4,
         successRate: 0.91,
@@ -692,7 +692,7 @@ class StrategyRegistryService {
     };
 
     // Avoid repeatedly selecting a path that just failed in this session.
-    // Keep it conservative: require multiple failures and no successes in the recent window.
+    // Use a quick single-failure avoidance when the preferred path failed most recently.
     const recentWindow = 3;
     const recent = [...history.records]
       .sort((a, b) => a.timestamp - b.timestamp)
@@ -709,6 +709,10 @@ class StrategyRegistryService {
     const hadRecentFatalCpuFailure = recentFatal.some(
       (r) => r.path === 'cpu' && !r.success && isFatalFfmpegFailure(r.errorMessage)
     );
+
+    const lastRecord = recent[recent.length - 1];
+    const lastWasPreferredFailure =
+      lastRecord?.path === strategy.preferredPath && lastRecord.success === false;
 
     if (
       hadRecentFatalCpuFailure &&
@@ -733,6 +737,22 @@ class StrategyRegistryService {
     const recentForPath = recent.filter((r) => r.path === strategy.preferredPath);
     const recentFailures = recentForPath.filter((r) => !r.success).length;
     const recentSuccesses = recentForPath.filter((r) => r.success).length;
+
+    if (lastWasPreferredFailure && strategy.fallbackPath !== strategy.preferredPath) {
+      logger.debug('conversion', 'Avoiding path due to immediate recent failure', {
+        codec: strategy.codec,
+        format: strategy.format,
+        preferredPath: strategy.preferredPath,
+        fallbackPath: strategy.fallbackPath,
+      });
+
+      return {
+        ...strategy,
+        preferredPath: strategy.fallbackPath,
+        confidence: strategy.confidence === 'high' ? 'medium' : strategy.confidence,
+        reason: `${strategy.reason} (avoiding last failed ${strategy.preferredPath} run)`,
+      };
+    }
 
     if (
       recentFailures >= 2 &&

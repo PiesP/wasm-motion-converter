@@ -11,9 +11,9 @@
  * - Confidence considers record count and success rate (high confidence after 5+ stable runs)
  */
 
-import type { ConversionFormat } from '@t/conversion-types';
 import type { ConversionPath } from '@services/orchestration/types';
 import { createSingleton } from '@services/shared/singleton-service';
+import type { ConversionFormat } from '@t/conversion-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
@@ -101,8 +101,13 @@ class StrategyHistoryService {
    * @param record - Conversion record
    */
   recordConversion(record: ConversionRecord): void {
+    const normalized: ConversionRecord = {
+      ...record,
+      failurePhase: record.success ? null : (record.failurePhase ?? null),
+    };
+
     // Add to in-memory records
-    this.records.push(record);
+    this.records.push(normalized);
 
     // Keep only last MAX_RECORDS
     if (this.records.length > MAX_RECORDS) {
@@ -113,13 +118,14 @@ class StrategyHistoryService {
     this.saveToStorage();
 
     logger.debug('conversion', 'Conversion recorded to history', {
-      codec: record.codec,
-      format: record.format,
-      path: record.path,
-      captureModeUsed: record.captureModeUsed ?? null,
-      success: record.success,
-      durationMs: record.durationMs,
-      errorMessage: record.success ? null : (record.errorMessage ?? null),
+      codec: normalized.codec,
+      format: normalized.format,
+      path: normalized.path,
+      captureModeUsed: normalized.captureModeUsed ?? null,
+      success: normalized.success,
+      durationMs: normalized.durationMs,
+      errorMessage: normalized.success ? null : (normalized.errorMessage ?? null),
+      failurePhase: normalized.failurePhase ?? null,
       totalRecords: this.records.length,
     });
   }
