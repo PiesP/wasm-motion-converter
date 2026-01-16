@@ -10,7 +10,7 @@
     "pnpm": "^10.28.0"
   },
   "volta": {
-    "node": "24.12.0",
+    "node": "24.13.0",
     "pnpm": "10.28.0"
   },
   "pnpm": {
@@ -41,7 +41,7 @@
     "@ffmpeg/util": "0.12.2",
     "@webav/av-cliper": "1.2.8",
     "comlink": "4.4.2",
-    "mediabunny": "1.27.4",
+    "mediabunny": "1.27.6",
     "modern-gif": "2.0.4",
     "solid-js": "1.9.10"
   },
@@ -53,7 +53,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.3.11",
     "@tailwindcss/postcss": "^4.1.18",
-    "@types/node": "^25.0.6",
+    "@types/node": "^25.0.8",
     "esbuild": "0.27.2",
     "knip": "^5.80.2",
     "postcss": "^8.5.6",
