@@ -193,9 +193,6 @@ export const QUALITY_PRESETS = {
 /** Timeout for FFmpeg initialization and library loading (90 seconds) */
 export const TIMEOUT_FFMPEG_INIT = 90_000;
 
-/** Timeout for each FFmpeg core asset download from CDN (90 seconds) */
-export const TIMEOUT_FFMPEG_DOWNLOAD = 90_000;
-
 /** Timeout for worker isolation check via SharedArrayBuffer (10 seconds) */
 export const TIMEOUT_FFMPEG_WORKER_CHECK = 10_000;
 

@@ -18,7 +18,7 @@
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
-export type LogEntry = {
+type LogEntry = {
   timestampMs: number;
   timestampIso: string;
   time: string; // HH:MM:SS (local)

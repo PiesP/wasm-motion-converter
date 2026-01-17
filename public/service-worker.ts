@@ -1295,6 +1295,54 @@ async function cacheFirstStrategy(
 }
 
 /**
+ * Cache-first strategy for app assets
+ * Ensures app shell is available offline
+ *
+ * @param request - Request to handle
+ * @returns Response from cache or network
+ */
+async function cacheFirstAppAsset(request: Request): Promise<Response> {
+  const cache = await caches.open(CACHE_NAMES.app);
+
+  const cachedResponse = await cache.match(request);
+  if (cachedResponse) {
+    return cachedResponse;
+  }
+
+  const response = await fetch(request);
+  if (response.ok) {
+    cache.put(request, response.clone());
+  }
+
+  return response;
+}
+
+/**
+ * Network-first strategy for app navigations
+ * Falls back to cached app shell when offline
+ *
+ * @param request - Navigation request
+ * @returns Response for navigation
+ */
+async function networkFirstNavigation(request: Request): Promise<Response> {
+  const cache = await caches.open(CACHE_NAMES.app);
+
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    const cachedShell = await cache.match('/index.html');
+    if (cachedShell) {
+      return cachedShell;
+    }
+    throw error;
+  }
+}
+
+/**
  * Handle worker requests by proxying from cache
  * This solves CORS issues when FFmpeg creates workers from CDN URLs
  */
@@ -1378,7 +1426,17 @@ self.addEventListener("fetch", (event: FetchEvent) => {
     return;
   }
 
+  if (request.mode === "navigate") {
+    event.respondWith(networkFirstNavigation(event.request));
+    return;
+  }
+
   const requestType = classifyRequest(url);
+
+  if (requestType === "app") {
+    event.respondWith(cacheFirstAppAsset(event.request));
+    return;
+  }
 
   // Only intercept CDN requests
   if (requestType === "cdn") {

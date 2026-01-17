@@ -40,7 +40,7 @@ export interface SerializableImageData {
  * Extends ModernGifOptions to provide standardized encoding configuration
  * for the worker pool system.
  */
-export type EncoderOptions = ModernGifOptions;
+type EncoderOptions = ModernGifOptions;
 
 /**
  * Public API interface for encoder web worker

@@ -3,7 +3,6 @@ import { RUNTIME_DEP_VERSIONS } from 'virtual:cdn-deps';
 /**
  * Runtime dependency versions resolved from package.json.
  */
-export { RUNTIME_DEP_VERSIONS };
 
 /**
  * Get a runtime dependency version by package name.

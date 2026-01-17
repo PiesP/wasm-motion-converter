@@ -62,7 +62,7 @@ export function writeSessionString(key: string, value: string): void {
 // Capture Mode Caching
 // ============================================================================
 
-export type CaptureMode = 'seek' | 'frame-callback' | 'track' | 'demuxer';
+type CaptureMode = 'seek' | 'frame-callback' | 'track' | 'demuxer';
 
 /**
  * Get cached successful capture mode for a codec
@@ -108,7 +108,7 @@ export function cacheWebPChunkSize(chunkSize: number): void {
 /**
  * Performance metrics for a specific capture mode
  */
-export interface CapturePerformance {
+interface CapturePerformance {
   /** The capture mode that was used */
   mode: CaptureMode;
   /** Average time per frame in milliseconds */

@@ -44,7 +44,7 @@
  * @note The debounced function discards return values from the original function.
  *       Only use debounce for fire-and-forget operations or side effects.
  */
-export type DebouncedFunction<Args extends unknown[]> = ((...args: Args) => void) & {
+type DebouncedFunction<Args extends unknown[]> = ((...args: Args) => void) & {
   cancel: () => void;
   flush: () => void;
 };

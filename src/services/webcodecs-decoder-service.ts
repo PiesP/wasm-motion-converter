@@ -1,50 +1,43 @@
 // Internal dependencies
 
-// Type imports
-import type { VideoMetadata } from '@t/conversion-types';
-import { getErrorMessage } from '@utils/error-utils';
-import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
-import { logger } from '@utils/logger';
-
-import { captureWithDemuxer as captureWithDemuxerMode } from '@services/webcodecs/decoder/demuxer-capture';
-import { captureWithFrameCallback as captureWithFrameCallbackMode } from '@services/webcodecs/decoder/capture-modes/frame-callback-capture';
-import { captureWithSeeking as captureWithSeekingMode } from '@services/webcodecs/decoder/capture-modes/seek-capture';
-import { captureWithTrackProcessor as captureWithTrackProcessorMode } from '@services/webcodecs/decoder/capture-modes/track-processor-capture';
-import { runPlaybackCaptureMode } from '@services/webcodecs/decoder/capture-modes/run-playback-capture';
+import { createCanvas } from '@services/webcodecs/decoder/canvas-service';
 import {
-  captureFrameAndEmit,
   type CaptureFrameState,
-} from '@services/webcodecs/decoder/capture-frame';
-import { createCanvas } from '@services/webcodecs/decoder/canvas';
-import { computeMaxTotalDecodeMs } from '@services/webcodecs/decoder/decode-budget';
-import { waitForEvent } from '@services/webcodecs/decoder/wait-for-event';
+  captureFrameAndEmit,
+} from '@services/webcodecs/decoder/capture-frame-service';
+import { captureWithFrameCallback as captureWithFrameCallbackMode } from '@services/webcodecs/decoder/capture-modes/frame-callback-capture-service';
+import { runPlaybackCaptureMode } from '@services/webcodecs/decoder/capture-modes/run-playback-capture-service';
+import { captureWithSeeking as captureWithSeekingMode } from '@services/webcodecs/decoder/capture-modes/seek-capture-service';
+import { captureWithTrackProcessor as captureWithTrackProcessorMode } from '@services/webcodecs/decoder/capture-modes/track-processor-capture-service';
+import { computeMaxTotalDecodeMs } from '@services/webcodecs/decoder/decode-budget-service';
+import { captureWithDemuxer as captureWithDemuxerMode } from '@services/webcodecs/decoder/demuxer-capture-service';
+import type {
+  WebCodecsCaptureMode,
+  WebCodecsDecodeOptions,
+  WebCodecsDecodeResult,
+} from '@services/webcodecs/decoder/types-service';
 import {
   attachVideoForDecode,
   cleanupVideo,
   getSeekTimeoutForCodec,
   normalizeDuration,
   seekTo,
-} from '@services/webcodecs/decoder/video-element';
-import { canUseDemuxer, detectContainer } from '@services/webcodecs/demuxer/demuxer-factory';
-import type {
-  WebCodecsCaptureMode,
-  WebCodecsDecodeOptions,
-  WebCodecsDecodeResult,
-} from '@services/webcodecs/decoder/types';
+} from '@services/webcodecs/decoder/video-element-service';
+import { waitForEvent } from '@services/webcodecs/decoder/wait-for-event-service';
+import {
+  canUseDemuxer,
+  detectContainer,
+} from '@services/webcodecs/demuxer/demuxer-factory-service';
+// Type imports
+import type { VideoMetadata } from '@t/conversion-types';
+import { getErrorMessage } from '@utils/error-utils';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { logger } from '@utils/logger';
 import {
   getWebCodecsSupportStatus,
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
 } from './webcodecs-support-service';
-
-export type {
-  WebCodecsCaptureMode,
-  WebCodecsDecodeOptions,
-  WebCodecsDecodeResult,
-  WebCodecsFrameFormat,
-  WebCodecsFramePayload,
-  WebCodecsProgressCallback,
-} from '@services/webcodecs/decoder/types';
 
 /**
  * Maximum time (ms) allowed for canvas.convertToBlob() operation

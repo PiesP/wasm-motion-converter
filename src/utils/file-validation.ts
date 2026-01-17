@@ -46,7 +46,7 @@ import { logger } from './logger';
  *   displayError(result.error); // e.g., "Unsupported format..."
  * }
  */
-export interface FileValidationResult {
+interface FileValidationResult {
   valid: boolean;
   error?: string;
 }

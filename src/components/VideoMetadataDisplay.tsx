@@ -1,50 +1,23 @@
-import { splitProps } from 'solid-js';
-
+import type { VideoMetadata } from '@t/conversion-types';
 import { formatBytes } from '@utils/format-bytes';
 import { formatDuration } from '@utils/format-duration';
+import { type Component, createMemo, splitProps } from 'solid-js';
 
-import type { Component } from 'solid-js';
-import type { VideoMetadata } from '@t/conversion-types';
-
-/**
- * Codec value when detection is in progress or unknown
- */
 const UNKNOWN_CODEC = 'unknown';
-
-/**
- * Label displayed while codec is being detected
- */
 const DETECTING_LABEL = 'Detecting...';
 
-/**
- * VideoMetadataDisplay component props
- */
 interface VideoMetadataDisplayProps {
-  /** Video metadata information */
   metadata: VideoMetadata;
-  /** Name of the video file */
   fileName: string;
-  /** Size of the video file in bytes */
   fileSize: number;
 }
 
-/**
- * VideoMetadataDisplay component
- *
- * Displays video metadata information including filename, resolution,
- * duration, codec, and file size in a formatted card layout.
- *
- * @param props - Component props
- * @returns Video metadata display card
- */
 const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
   const [local] = splitProps(props, ['metadata', 'fileName', 'fileSize']);
-  /**
-   * Get formatted codec display text
-   */
-  const codecDisplay = (): string => {
-    return local.metadata.codec === UNKNOWN_CODEC ? DETECTING_LABEL : local.metadata.codec;
-  };
+
+  const codecDisplay = createMemo(() =>
+    local.metadata.codec === UNKNOWN_CODEC ? DETECTING_LABEL : local.metadata.codec
+  );
 
   return (
     <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">

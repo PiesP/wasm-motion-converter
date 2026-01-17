@@ -1,30 +1,22 @@
-import { Show, type Component } from 'solid-js';
+import { type Component, Show, splitProps } from 'solid-js';
 
 import ProgressBar from './ProgressBar';
 
-/**
- * Loading overlay component props
- */
+const APP_TITLE = 'Motion Converter';
+const LOADING_HINT = 'First load may take up to 2 minutes depending on your connection';
+
 interface LoadingOverlayProps {
-  /** Whether the overlay is visible */
   visible: boolean;
-  /** Current loading status message */
   status: string;
-  /** Progress percentage (0-100) */
   progress: number;
-  /** Optional detailed status message */
   statusMessage?: string;
 }
 
-/**
- * Full-screen loading overlay for app initialization
- *
- * Displays during preloading of external dependencies.
- * Blocks user interaction until loading completes.
- */
 const LoadingOverlay: Component<LoadingOverlayProps> = (props) => {
+  const [local] = splitProps(props, ['visible', 'status', 'progress', 'statusMessage']);
+
   return (
-    <Show when={props.visible}>
+    <Show when={local.visible}>
       <div
         class="fixed inset-0 bg-gray-50 dark:bg-gray-950 flex items-center justify-center z-50"
         role="dialog"
@@ -35,20 +27,18 @@ const LoadingOverlay: Component<LoadingOverlayProps> = (props) => {
         <div class="w-full max-w-md px-6">
           <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6 shadow-lg">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4 text-center">
-              Motion Converter
+              {APP_TITLE}
             </h2>
 
             <ProgressBar
-              progress={props.progress}
-              status={props.status}
-              statusMessage={props.statusMessage}
+              progress={local.progress}
+              status={local.status}
+              statusMessage={local.statusMessage}
               showSpinner={true}
               layout="horizontal"
             />
 
-            <p class="mt-4 text-xs text-gray-500 dark:text-gray-400 text-center">
-              First load may take up to 2 minutes depending on your connection
-            </p>
+            <p class="mt-4 text-xs text-gray-500 dark:text-gray-400 text-center">{LOADING_HINT}</p>
           </div>
         </div>
       </div>

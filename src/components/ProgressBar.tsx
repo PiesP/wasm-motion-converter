@@ -1,58 +1,27 @@
-import { createEffect, createSignal, onCleanup, Show, splitProps } from 'solid-js';
-
 import { formatDuration } from '@utils/format-duration';
+import {
+  type Component,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  Show,
+  splitProps,
+} from 'solid-js';
 
-import type { Component } from 'solid-js';
-
-/**
- * Update interval for elapsed time counter (in milliseconds)
- */
 const ELAPSED_TIME_UPDATE_INTERVAL = 1000;
 
-/**
- * Progress bar component props
- */
-/**
- * Progress bar component props
- */
 interface ProgressBarProps {
-  /** Current progress percentage (0-100) */
   progress: number;
-  /** Status label text */
   status: string;
-  /** Optional detailed status message */
   statusMessage?: string;
-  /** Whether to show loading spinner */
   showSpinner?: boolean;
-  /** Whether to show elapsed time counter */
   showElapsedTime?: boolean;
-  /** Start timestamp for elapsed time calculation */
   startTime?: number;
-  /** Estimated seconds remaining (null if unknown) */
   estimatedSecondsRemaining?: number | null;
-  /** Layout orientation for label and percentage display */
   layout?: 'horizontal' | 'vertical';
 }
 
-/**
- * Reusable progress bar component with elapsed time and ETA display
- *
- * Provides consistent progress indication with optional spinner, elapsed time counter,
- * and estimated time remaining. Supports horizontal and vertical layouts.
- * Fully accessible with ARIA attributes and live region updates.
- *
- * @example
- * ```tsx
- * <ProgressBar
- *   progress={45}
- *   status="Converting..."
- *   showSpinner={true}
- *   showElapsedTime={true}
- *   startTime={Date.now()}
- *   estimatedSecondsRemaining={30}
- * />
- * ```
- */
 const ProgressBar: Component<ProgressBarProps> = (props) => {
   const [local] = splitProps(props, [
     'progress',
@@ -66,6 +35,16 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
   ]);
   const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
 
+  const progressValue = createMemo(() => {
+    const rawValue = Number(local.progress);
+    if (!Number.isFinite(rawValue)) {
+      return 0;
+    }
+    return Math.min(100, Math.max(0, Math.round(rawValue)));
+  });
+
+  const isHorizontal = createMemo(() => local.layout === 'horizontal');
+
   createEffect(() => {
     if (!local.showElapsedTime || !local.startTime) {
       return;
@@ -76,10 +55,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       setElapsedSeconds(Math.floor((now - (local.startTime || now)) / 1000));
     };
 
-    // Initial update
     updateElapsed();
-
-    // Update every second
     const interval = setInterval(updateElapsed, ELAPSED_TIME_UPDATE_INTERVAL);
 
     onCleanup(() => {
@@ -87,13 +63,12 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     });
   });
 
-  const isHorizontal = (): boolean => local.layout === 'horizontal';
-
   return (
     <div class="flex flex-col gap-2">
-      {/* Status and progress percentage header */}
       <div
-        class={`flex items-center ${isHorizontal() ? 'justify-between' : 'justify-center'} text-sm font-medium text-gray-700 dark:text-gray-300`}
+        class={`flex items-center ${
+          isHorizontal() ? 'justify-between' : 'justify-center'
+        } text-sm font-medium text-gray-700 dark:text-gray-300`}
       >
         <Show when={local.showSpinner}>
           <svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" aria-hidden="true">
@@ -114,26 +89,24 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         </Show>
         <span class={isHorizontal() ? '' : 'mr-2'}>{local.status}</span>
         <span class={`text-gray-600 dark:text-gray-400 ${isHorizontal() ? '' : 'ml-2'}`}>
-          {local.progress}%
+          {progressValue()}%
         </span>
       </div>
 
-      {/* Progress bar */}
       <div
         class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5"
         role="progressbar"
-        aria-valuenow={local.progress}
+        aria-valuenow={progressValue()}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={local.status}
       >
         <div
           class="bg-blue-600 dark:bg-blue-500 h-2.5 rounded-full transition-all duration-300"
-          style={{ width: `${Math.max(0, Math.min(100, local.progress))}%` }}
+          style={{ width: `${progressValue()}%` }}
         />
       </div>
 
-      {/* Elapsed time and ETA */}
       <Show when={local.showElapsedTime && local.startTime}>
         <div class="text-xs text-gray-600 dark:text-gray-400 text-center font-mono">
           <span>Elapsed: {formatDuration(elapsedSeconds())}</span>
@@ -145,7 +118,6 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         </div>
       </Show>
 
-      {/* Status message */}
       <Show when={local.statusMessage}>
         <p
           class="text-xs text-gray-600 dark:text-gray-400 text-center italic"

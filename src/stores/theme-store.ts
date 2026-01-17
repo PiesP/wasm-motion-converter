@@ -6,11 +6,10 @@
  * the document root element for CSS integration.
  */
 
-// External dependencies
-import { createSignal } from 'solid-js';
-
 // Internal dependencies
 import { logger } from '@utils/logger';
+// External dependencies
+import { createSignal } from 'solid-js';
 
 type Theme = 'light' | 'dark';
 
@@ -78,7 +77,9 @@ const saveTheme = (themeValue: Theme): void => {
  * Initialized from localStorage or system preference. Changes are automatically
  * persisted and applied to the document root element.
  */
-export const [theme, setTheme] = createSignal<Theme>(getInitialTheme());
+const [theme, setTheme] = createSignal<Theme>(getInitialTheme());
+
+export { theme };
 
 /**
  * Toggle between light and dark themes

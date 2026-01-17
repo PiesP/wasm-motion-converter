@@ -1,9 +1,32 @@
 // External dependencies
-import * as Comlink from 'comlink';
 
-// Internal dependencies
-import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
-
+import { EncoderFactory } from '@services/encoders/encoder-factory-service';
+import type { EncoderFrame } from '@services/encoders/encoder-interface-service';
+import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
+import { getDevConversionOverrides } from '@services/orchestration/dev-conversion-overrides-service';
+import { isComplexCodec } from '@services/webcodecs/codec-utils-service';
+import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support-service';
+import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture-service';
+import { encodeWithFFmpegFallback as encodeWithFFmpegFallbackUtil } from '@services/webcodecs/conversion/ffmpeg-fallback-encode-service';
+import { createThrottledProgressReporter } from '@services/webcodecs/conversion/progress-reporting-service';
+import { encodeWebPWithMuxFallback } from '@services/webcodecs/conversion/webp-encode-orchestrator-service';
+import {
+  encodeWebPFramesInChunks,
+  tryEncodeWebPWithEncoderFactory,
+} from '@services/webcodecs/conversion/webp-encoding-service';
+import type {
+  WebCodecsCaptureMode,
+  WebCodecsFrameFormat,
+} from '@services/webcodecs/decoder/types-service';
+import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames-service';
+import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
+import {
+  buildDurationAlignedTimestamps as buildDurationAlignedTimestampsUtil,
+  getMaxWebPFrames as getMaxWebPFramesUtil,
+  resolveAnimationDurationSeconds as resolveAnimationDurationSecondsUtil,
+  resolveWebPFps as resolveWebPFpsUtil,
+} from '@services/webcodecs/webp-timing-service';
+import { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
 // Type imports
 import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
 import type { EncoderWorkerAPI } from '@t/worker-types';
@@ -13,37 +36,13 @@ import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
 import { getAvailableMemory, isMemoryCritical } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
+import * as Comlink from 'comlink';
+// Internal dependencies
+import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
 import { ffmpegService } from './ffmpeg-service';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
-import { isComplexCodec } from '@services/webcodecs/codec-utils';
-import { getDevConversionOverrides } from '@services/orchestration/dev-conversion-overrides';
-import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture';
-import { createThrottledProgressReporter } from '@services/webcodecs/conversion/progress-reporting';
-import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support';
-import { encodeWithFFmpegFallback as encodeWithFFmpegFallbackUtil } from '@services/webcodecs/conversion/ffmpeg-fallback-encode';
-import {
-  encodeWebPFramesInChunks,
-  tryEncodeWebPWithEncoderFactory,
-} from '@services/webcodecs/conversion/webp-encoding';
-import { encodeWebPWithMuxFallback } from '@services/webcodecs/conversion/webp-encode-orchestrator';
-import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames';
-import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob';
-import {
-  buildDurationAlignedTimestamps as buildDurationAlignedTimestampsUtil,
-  getMaxWebPFrames as getMaxWebPFramesUtil,
-  resolveAnimationDurationSeconds as resolveAnimationDurationSecondsUtil,
-  resolveWebPFps as resolveWebPFpsUtil,
-} from '@services/webcodecs/webp-timing';
-import {
-  type WebCodecsCaptureMode,
-  WebCodecsDecoderService,
-  type WebCodecsFrameFormat,
-} from './webcodecs-decoder-service';
 import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support-service';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
-import type { EncoderFrame } from '@services/encoders/encoder-interface';
-import { EncoderFactory } from '@services/encoders/encoder-factory';
-import { convertFramesToImageData } from '@services/encoders/frame-converter';
 
 /**
  * WebCodecs Conversion Service
@@ -980,7 +979,11 @@ class WebCodecsConversionService {
             quality: options.quality,
             shouldCancel,
             onProgress: reportDecodeProgress,
-            onFrame: async (frame) => {
+            onFrame: async (frame: {
+              bitmap?: ImageBitmap;
+              imageData?: ImageData;
+              timestamp: number;
+            }) => {
               throwIfCancelled();
               if (format === 'webp') {
                 const encoderFrame = frame.bitmap ?? frame.imageData;

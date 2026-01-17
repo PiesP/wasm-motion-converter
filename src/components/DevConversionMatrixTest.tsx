@@ -1,14 +1,7 @@
-import type { ConversionMatrixTestReport } from '@services/dev/conversion-matrix-test';
-import { runConversionMatrixTestWithReport } from '@services/dev/conversion-matrix-test';
 import {
-  buildMatrixTestReportFilename,
-  clearMatrixTestReports,
-  deleteMatrixTestReport,
-  downloadTextFile,
-  listMatrixTestReports,
-  loadMatrixTestReport,
-  persistMatrixTestReport,
-} from '@services/dev/matrix-test-report-store';
+  type ConversionMatrixTestReport,
+  runConversionMatrixTestWithReport,
+} from '@services/dev/conversion-matrix-test-service';
 import { appState, setAppState } from '@stores/app-store';
 import { inputFile, videoMetadata } from '@stores/conversion-media-store';
 import {
@@ -22,9 +15,21 @@ import {
   resetDevMatrixTestCancel,
   setDevMatrixTestIsRunning,
 } from '@stores/dev-matrix-test-store';
+import {
+  buildMatrixTestReportFilename,
+  clearMatrixTestReports,
+  deleteMatrixTestReport,
+  downloadTextFile,
+  listMatrixTestReports,
+  loadMatrixTestReport,
+  persistMatrixTestReport,
+} from '@stores/matrix-test-report-store';
 import { logger } from '@utils/logger';
-import type { Component } from 'solid-js';
-import { createMemo, createSignal, Show } from 'solid-js';
+import { type Component, createMemo, createSignal, type JSX, Show } from 'solid-js';
+
+const DEFAULT_REPEAT_COUNT = 3;
+const MIN_REPEAT_COUNT = 1;
+const MAX_REPEAT_COUNT = 10;
 
 interface DevConversionMatrixTestProps {
   disabled?: boolean;
@@ -32,7 +37,7 @@ interface DevConversionMatrixTestProps {
 
 const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props) => {
   const [isRunning, setIsRunning] = createSignal(false);
-  const [repeats, setRepeats] = createSignal<number>(3);
+  const [repeats, setRepeats] = createSignal<number>(DEFAULT_REPEAT_COUNT);
   const [includeGif, setIncludeGif] = createSignal(true);
   const [includeWebp, setIncludeWebp] = createSignal(true);
   const [includeStrategyCodecScenarios, setIncludeStrategyCodecScenarios] = createSignal(false);
@@ -40,22 +45,71 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
   const [reportsRefreshToken, setReportsRefreshToken] = createSignal(0);
   const [lastReportId, setLastReportId] = createSignal<string | null>(null);
 
-  const canRun = createMemo(() => {
-    return !!inputFile() && !props.disabled && !isRunning();
-  });
+  const canRun = createMemo(() => !!inputFile() && !props.disabled && !isRunning());
 
   const formatSummary = createMemo(() => {
     const formats: Array<'gif' | 'webp'> = [];
-    if (includeGif()) formats.push('gif');
-    if (includeWebp()) formats.push('webp');
+    if (includeGif()) {
+      formats.push('gif');
+    }
+    if (includeWebp()) {
+      formats.push('webp');
+    }
     return formats;
   });
 
   const savedReports = createMemo(() => {
-    // This signal exists purely to trigger memo recomputation after mutations.
     reportsRefreshToken();
     return listMatrixTestReports();
   });
+
+  const updateRepeats: JSX.EventHandlerUnion<HTMLInputElement, InputEvent> = (event) => {
+    const nextValue = Number(event.currentTarget.value) || MIN_REPEAT_COUNT;
+    const clampedValue = Math.max(MIN_REPEAT_COUNT, Math.min(MAX_REPEAT_COUNT, nextValue));
+    setRepeats(clampedValue);
+  };
+
+  const handleRunClick = () => {
+    void runMatrixTest();
+  };
+
+  const handleGifToggle: JSX.EventHandlerUnion<HTMLInputElement, Event> = (event) => {
+    setIncludeGif(event.currentTarget.checked);
+  };
+
+  const handleWebpToggle: JSX.EventHandlerUnion<HTMLInputElement, Event> = (event) => {
+    setIncludeWebp(event.currentTarget.checked);
+  };
+
+  const handleStrategyToggle: JSX.EventHandlerUnion<HTMLInputElement, Event> = (event) => {
+    setIncludeStrategyCodecScenarios(event.currentTarget.checked);
+  };
+
+  const handleAutoDownloadToggle: JSX.EventHandlerUnion<HTMLInputElement, Event> = (event) => {
+    setAutoDownloadReport(event.currentTarget.checked);
+  };
+
+  const handleClearReports = () => {
+    clearMatrixTestReports();
+    setReportsRefreshToken((value) => value + 1);
+    setLastReportId(null);
+  };
+
+  const handleDeleteReport = (reportId: string) => {
+    deleteMatrixTestReport(reportId);
+    setReportsRefreshToken((value) => value + 1);
+    if (lastReportId() === reportId) {
+      setLastReportId(null);
+    }
+  };
+
+  const handleDownloadLatest = () => {
+    const id = lastReportId();
+    if (!id) {
+      return;
+    }
+    downloadReportById(id);
+  };
 
   const downloadReportById = (id: string): void => {
     const report = loadMatrixTestReport<ConversionMatrixTestReport>(id);
@@ -80,7 +134,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
     });
   };
 
-  const run = async (): Promise<void> => {
+  const runMatrixTest = async (): Promise<void> => {
     const file = inputFile();
     if (!file) {
       return;
@@ -98,6 +152,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
     setConversionStatusMessage('Preparing matrix test...');
     setAppState('converting');
     setIsRunning(true);
+
     try {
       const settings = conversionSettings();
       const report = await runConversionMatrixTestWithReport({
@@ -131,7 +186,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
       });
 
       setLastReportId(report.reportId);
-      setReportsRefreshToken((v) => v + 1);
+      setReportsRefreshToken((value) => value + 1);
 
       const filename = buildMatrixTestReportFilename({
         startedAt: report.startedAt,
@@ -159,12 +214,11 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
       resetDevMatrixTestCancel();
       setConversionProgress(0);
       setConversionStatusMessage('');
-
-      // Restore whatever state the user was in before starting the matrix test.
-      // (Do not keep the app in "converting" since the test output is not shown in UI.)
       setAppState(previousAppState);
     }
   };
+
+  const isDisabled = () => props.disabled || isRunning();
 
   return (
     <Show when={import.meta.env.DEV}>
@@ -183,9 +237,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
           <button
             type="button"
             class="shrink-0 inline-flex items-center rounded-md border border-indigo-300 dark:border-indigo-700 px-3 py-1.5 text-xs font-medium text-indigo-900 dark:text-indigo-200 bg-white/70 dark:bg-gray-900/40 hover:bg-white dark:hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={() => {
-              void run();
-            }}
+            onClick={handleRunClick}
             disabled={!canRun()}
           >
             {isRunning() ? 'Running…' : `Run matrix (x${repeats()})`}
@@ -198,14 +250,12 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
               Repeats
               <input
                 type="number"
-                min="1"
-                max="10"
+                min={MIN_REPEAT_COUNT}
+                max={MAX_REPEAT_COUNT}
                 class="ml-2 w-20 rounded-md border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-950 px-2 py-1 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                 value={repeats()}
-                onInput={(e) =>
-                  setRepeats(Math.max(1, Math.min(10, Number(e.currentTarget.value) || 1)))
-                }
-                disabled={props.disabled || isRunning()}
+                onInput={updateRepeats}
+                disabled={isDisabled()}
               />
             </label>
 
@@ -214,8 +264,8 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
                 type="checkbox"
                 class="h-4 w-4 rounded border-indigo-300 dark:border-indigo-700 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                 checked={includeGif()}
-                onChange={(e) => setIncludeGif(e.currentTarget.checked)}
-                disabled={props.disabled || isRunning()}
+                onChange={handleGifToggle}
+                disabled={isDisabled()}
               />
               GIF
             </label>
@@ -225,8 +275,8 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
                 type="checkbox"
                 class="h-4 w-4 rounded border-indigo-300 dark:border-indigo-700 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                 checked={includeWebp()}
-                onChange={(e) => setIncludeWebp(e.currentTarget.checked)}
-                disabled={props.disabled || isRunning()}
+                onChange={handleWebpToggle}
+                disabled={isDisabled()}
               />
               WebP
             </label>
@@ -236,8 +286,8 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
                 type="checkbox"
                 class="h-4 w-4 rounded border-indigo-300 dark:border-indigo-700 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                 checked={includeStrategyCodecScenarios()}
-                onChange={(e) => setIncludeStrategyCodecScenarios(e.currentTarget.checked)}
-                disabled={props.disabled || isRunning()}
+                onChange={handleStrategyToggle}
+                disabled={isDisabled()}
               />
               Include strategy codec simulations
             </label>
@@ -247,8 +297,8 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
                 type="checkbox"
                 class="h-4 w-4 rounded border-indigo-300 dark:border-indigo-700 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                 checked={autoDownloadReport()}
-                onChange={(e) => setAutoDownloadReport(e.currentTarget.checked)}
-                disabled={props.disabled || isRunning()}
+                onChange={handleAutoDownloadToggle}
+                disabled={isDisabled()}
               />
               Auto-download report (JSON)
             </label>
@@ -280,11 +330,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
               <button
                 type="button"
                 class="ml-2 inline-flex items-center rounded-md border border-indigo-300 dark:border-indigo-700 px-2 py-0.5 text-[11px] font-medium text-indigo-900 dark:text-indigo-200 bg-white/70 dark:bg-gray-900/40 hover:bg-white dark:hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                onClick={() => {
-                  const id = lastReportId();
-                  if (!id) return;
-                  downloadReportById(id);
-                }}
+                onClick={handleDownloadLatest}
               >
                 Download again
               </button>
@@ -300,11 +346,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
                 <button
                   type="button"
                   class="inline-flex items-center rounded-md border border-indigo-300 dark:border-indigo-700 px-2 py-1 text-[11px] font-medium text-indigo-900 dark:text-indigo-200 bg-white/70 dark:bg-gray-900/40 hover:bg-white dark:hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  onClick={() => {
-                    clearMatrixTestReports();
-                    setReportsRefreshToken((v) => v + 1);
-                    setLastReportId(null);
-                  }}
+                  onClick={handleClearReports}
                   disabled={isRunning()}
                 >
                   Clear
@@ -332,13 +374,7 @@ const DevConversionMatrixTest: Component<DevConversionMatrixTestProps> = (props)
                       <button
                         type="button"
                         class="inline-flex items-center rounded-md border border-red-300 dark:border-red-700 px-2 py-0.5 text-[11px] font-medium text-red-900 dark:text-red-200 bg-white/70 dark:bg-gray-900/40 hover:bg-white dark:hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"
-                        onClick={() => {
-                          deleteMatrixTestReport(item.id);
-                          setReportsRefreshToken((v) => v + 1);
-                          if (lastReportId() === item.id) {
-                            setLastReportId(null);
-                          }
-                        }}
+                        onClick={() => handleDeleteReport(item.id)}
                         disabled={isRunning()}
                       >
                         Delete

@@ -1,54 +1,22 @@
-import type { Component } from 'solid-js';
-import { createSignal, Show, splitProps } from 'solid-js';
+import { type Component, createMemo, createSignal, Show, splitProps } from 'solid-js';
+
 import ProgressBar from './ProgressBar';
 
-/**
- * Duration for visual feedback after file selection (ms)
- */
-const SELECTION_FEEDBACK_DURATION = 500;
+const SELECTION_FEEDBACK_DURATION_MS = 500;
+const DEFAULT_STATUS = 'Processing';
 
-/**
- * File dropzone component props
- */
 interface FileDropzoneProps {
-  /** Callback when a file is selected */
   onFileSelected: (file: File) => void;
-  /** Whether the dropzone is disabled */
   disabled?: boolean;
-  /** Current progress percentage (0-100) */
   progress?: number;
-  /** Current processing status text */
   status?: string;
-  /** Optional detailed status message */
   statusMessage?: string;
-  /** Whether to show elapsed time */
   showElapsedTime?: boolean;
-  /** Processing start timestamp in milliseconds */
   startTime?: number;
-  /** Estimated seconds remaining (null if unknown) */
   estimatedSecondsRemaining?: number | null;
-  /** Video preview URL (null if no preview) */
   previewUrl?: string | null;
 }
 
-/**
- * File dropzone component for video file selection
- *
- * Displays a drag-and-drop zone for video file selection with support for
- * keyboard navigation, progress display, and video preview.
- * Includes accessibility features for screen readers and keyboard users.
- *
- * @example
- * ```tsx
- * <FileDropzone
- *   onFileSelected={(file) => handleFile(file)}
- *   disabled={isProcessing}
- *   progress={50}
- *   status="Converting..."
- *   previewUrl={videoUrl}
- * />
- * ```
- */
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [local] = splitProps(props, [
     'onFileSelected',
@@ -65,27 +33,36 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [justSelected, setJustSelected] = createSignal(false);
   let fileInputElement: HTMLInputElement | undefined;
 
-  const isBusy = (): boolean => Boolean(local.status);
-  const isInteractive = (): boolean => !local.disabled && !isBusy();
-  const progressValue = (): number => {
+  const isBusy = createMemo(() => Boolean(local.status));
+  const isInteractive = createMemo(() => !local.disabled && !isBusy());
+  const progressValue = createMemo(() => {
     const raw = local.progress ?? 0;
     if (!Number.isFinite(raw)) {
       return 0;
     }
     return Math.min(100, Math.max(0, Math.round(raw)));
-  };
+  });
 
   const selectFile = (files?: FileList | null): void => {
     const file = files?.[0];
-    if (file) {
-      setJustSelected(true);
-      setTimeout(() => setJustSelected(false), SELECTION_FEEDBACK_DURATION);
-      local.onFileSelected(file);
+    if (!file) {
+      return;
     }
+
+    setJustSelected(true);
+    setTimeout(() => setJustSelected(false), SELECTION_FEEDBACK_DURATION_MS);
+    local.onFileSelected(file);
   };
 
-  const handleDragOver = (e: DragEvent): void => {
-    e.preventDefault();
+  const openFilePicker = (): void => {
+    if (!isInteractive()) {
+      return;
+    }
+    fileInputElement?.click();
+  };
+
+  const handleDragOver = (event: DragEvent): void => {
+    event.preventDefault();
     if (!isInteractive()) {
       return;
     }
@@ -96,31 +73,35 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     setIsDragging(false);
   };
 
-  const handleDrop = (e: DragEvent): void => {
-    e.preventDefault();
+  const handleDrop = (event: DragEvent): void => {
+    event.preventDefault();
     setIsDragging(false);
     if (!isInteractive()) {
       return;
     }
-    selectFile(e.dataTransfer?.files);
+    selectFile(event.dataTransfer?.files);
   };
 
-  const handleFileInput = (e: Event): void => {
+  const handleFileInput = (event: Event): void => {
     if (!isInteractive()) {
       return;
     }
-    const input = e.target as HTMLInputElement;
+    const input = event.target as HTMLInputElement;
     selectFile(input.files);
   };
 
-  const openFilePicker = (): void => {
+  const handleKeyDown = (event: KeyboardEvent): void => {
     if (!isInteractive()) {
       return;
     }
-    fileInputElement?.click();
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openFilePicker();
+    }
   };
 
-  const dropzoneStateClass = (): string => {
+  const dropzoneStateClass = createMemo(() => {
     if (isBusy()) {
       return 'border-blue-500 bg-blue-50 dark:bg-blue-950 dark:border-blue-400';
     }
@@ -128,28 +109,28 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       return 'border-blue-500 bg-blue-50 dark:bg-blue-950 dark:border-blue-400';
     }
     return 'border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-gray-400 dark:hover:border-gray-600';
-  };
+  });
 
-  const opacityClass = (): string => {
-    return local.disabled && !isBusy() ? 'opacity-60 cursor-not-allowed' : '';
-  };
+  const opacityClass = createMemo(() =>
+    local.disabled && !isBusy() ? 'opacity-60 cursor-not-allowed' : ''
+  );
+
+  const dropzoneClass = createMemo(
+    () =>
+      `border-2 border-dashed rounded-lg p-4 sm:p-6 md:p-8 lg:p-12 text-center transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900 ${dropzoneStateClass()} ${opacityClass()}`
+  );
 
   return (
     <div
-      class={`border-2 border-dashed rounded-lg p-4 sm:p-6 md:p-8 lg:p-12 text-center transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900 ${dropzoneStateClass()} ${opacityClass()}`}
+      class={dropzoneClass()}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onKeyDown={handleKeyDown}
       role="region"
       aria-label="Video file dropzone - Press Enter or Space to select a file"
       aria-busy={isBusy()}
       tabIndex={isInteractive() ? 0 : -1}
-      onKeyDown={(e) => {
-        if ((e.key === 'Enter' || e.key === ' ') && isInteractive()) {
-          e.preventDefault();
-          openFilePicker();
-        }
-      }}
     >
       <Show
         when={isBusy()}
@@ -217,7 +198,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         <div class="max-w-md mx-auto">
           <ProgressBar
             progress={progressValue()}
-            status={local.status || 'Processing'}
+            status={local.status || DEFAULT_STATUS}
             statusMessage={local.statusMessage}
             showSpinner={true}
             showElapsedTime={local.showElapsedTime}

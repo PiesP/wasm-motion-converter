@@ -11,16 +11,18 @@
  * - Confidence considers record count and success rate (high confidence after 5+ stable runs)
  */
 
-import type { ConversionPath } from '@services/orchestration/types';
+import type { ConversionPath } from '@services/orchestration/types-service';
 import { createSingleton } from '@services/shared/singleton-service';
 import type { ConversionFormat } from '@t/conversion-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
-// Versioned key to avoid stale path recommendations after algorithm changes.
 const STORAGE_KEY = 'strategy_history_v2' as const;
+const LEGACY_STORAGE_KEY = 'strategy_history_v1' as const;
+const STORAGE_VERSION = 2 as const;
 const MAX_RECORDS = 50 as const;
-const HIGH_CONFIDENCE_THRESHOLD = 5 as const; // 5+ conversions for high confidence
+const HIGH_CONFIDENCE_THRESHOLD = 5 as const;
+const DEFAULT_FALLBACK_PATH: ConversionPath = 'cpu';
 
 /**
  * Failure phase attribution
@@ -80,18 +82,50 @@ interface HistoryStorage {
   version: number;
 }
 
+type PathStats = {
+  count: number;
+  successCount: number;
+  totalDuration: number;
+  avgDuration: number;
+  successRate: number;
+};
+
+function canUseStorage(): boolean {
+  return typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined';
+}
+
+function removeLegacyStorage(): void {
+  if (!canUseStorage()) return;
+
+  try {
+    window.sessionStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function buildHistoryKey(codec: string, format: ConversionFormat): string {
+  return `${codec}:${format}`;
+}
+
+function parseHistoryKey(key: string): { codec: string; format: ConversionFormat } | null {
+  const parts = key.split(':');
+  if (parts.length !== 2) return null;
+
+  const [codec, format] = parts;
+  if (!codec || !format) return null;
+
+  return {
+    codec,
+    format: format as ConversionFormat,
+  };
+}
+
 class StrategyHistoryService {
   private records: ConversionRecord[] = [];
 
   constructor() {
-    // Best-effort cleanup for older schema keys.
-    try {
-      if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
-        window.sessionStorage.removeItem('strategy_history_v1');
-      }
-    } catch {
-      // Ignore
-    }
+    removeLegacyStorage();
     this.loadFromStorage();
   }
 
@@ -106,15 +140,7 @@ class StrategyHistoryService {
       failurePhase: record.success ? null : (record.failurePhase ?? null),
     };
 
-    // Add to in-memory records
-    this.records.push(normalized);
-
-    // Keep only last MAX_RECORDS
-    if (this.records.length > MAX_RECORDS) {
-      this.records = this.records.slice(-MAX_RECORDS);
-    }
-
-    // Persist to sessionStorage
+    this.appendRecord(normalized);
     this.saveToStorage();
 
     logger.debug('conversion', 'Conversion recorded to history', {
@@ -140,39 +166,19 @@ class StrategyHistoryService {
   getHistory(codec: string, format: ConversionFormat): ConversionHistory | null {
     const normalizedCodec = this.normalizeCodec(codec);
 
-    // Filter records for this codec+format
     const filtered = this.records.filter(
-      (r) => this.normalizeCodec(r.codec) === normalizedCodec && r.format === format
+      (record) => this.normalizeCodec(record.codec) === normalizedCodec && record.format === format
     );
 
     if (filtered.length === 0) {
       return null;
     }
 
-    // Calculate aggregate statistics
-    const totalConversions = filtered.length;
-    const successfulConversions = filtered.filter((r) => r.success);
-    const successRate = totalConversions > 0 ? successfulConversions.length / totalConversions : 0;
-    const avgDurationMs =
-      successfulConversions.length > 0
-        ? successfulConversions.reduce((sum, r) => sum + r.durationMs, 0) /
-          successfulConversions.length
-        : 0;
-
-    // Find preferred path (highest success rate, then fastest successful duration)
-    const pathStats = this.calculatePathStatistics(filtered);
-    const preferredPath = this.selectPreferredPath(pathStats);
-
     return {
       codec: normalizedCodec,
       format,
       records: filtered,
-      statistics: {
-        totalConversions,
-        successRate,
-        avgDurationMs,
-        preferredPath,
-      },
+      statistics: this.buildStatistics(filtered),
     };
   }
 
@@ -190,8 +196,8 @@ class StrategyHistoryService {
     }
 
     const preferredPath = history.statistics.preferredPath;
-    const preferredAll = history.records.filter((r) => r.path === preferredPath);
-    const preferredSuccesses = preferredAll.filter((r) => r.success);
+    const preferredAll = history.records.filter((record) => record.path === preferredPath);
+    const preferredSuccesses = preferredAll.filter((record) => record.success);
 
     if (preferredSuccesses.length === 0) {
       return null;
@@ -200,12 +206,11 @@ class StrategyHistoryService {
     const preferredSuccessRate =
       preferredAll.length > 0 ? preferredSuccesses.length / preferredAll.length : 0;
 
-    // Confidence: require both enough samples and a stable success rate.
     const confidenceByCount = Math.min(preferredAll.length / HIGH_CONFIDENCE_THRESHOLD, 1.0);
     const confidence = Math.max(0, Math.min(1, confidenceByCount * preferredSuccessRate));
-
     const avgDurationMs =
-      preferredSuccesses.reduce((sum, r) => sum + r.durationMs, 0) / preferredSuccesses.length;
+      preferredSuccesses.reduce((sum, record) => sum + record.durationMs, 0) /
+      preferredSuccesses.length;
 
     return {
       path: preferredPath,
@@ -223,46 +228,27 @@ class StrategyHistoryService {
   getAllHistory(): ConversionHistory[] {
     const grouped = new Map<string, ConversionRecord[]>();
 
-    // Group records by codec+format
     for (const record of this.records) {
-      const key = `${this.normalizeCodec(record.codec)}:${record.format}`;
-      if (!grouped.has(key)) {
-        grouped.set(key, []);
+      const key = buildHistoryKey(this.normalizeCodec(record.codec), record.format);
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.push(record);
+      } else {
+        grouped.set(key, [record]);
       }
-      grouped.get(key)!.push(record);
     }
 
-    // Convert to ConversionHistory objects
     const histories: ConversionHistory[] = [];
     for (const [key, records] of grouped) {
-      const parts = key.split(':');
-      if (parts.length !== 2) continue; // Skip invalid keys
+      const parsed = parseHistoryKey(key);
+      if (!parsed) continue;
 
-      const codec = parts[0]!; // Safe because we checked parts.length === 2
-      const format = parts[1]!; // Safe because we checked parts.length === 2
-      const successfulRecords = records.filter((r) => r.success);
-
-      if (records.length > 0) {
-        const totalConversions = records.length;
-        const successRate = successfulRecords.length / totalConversions;
-        const avgDurationMs =
-          successfulRecords.reduce((sum, r) => sum + r.durationMs, 0) / successfulRecords.length ||
-          0;
-        const pathStats = this.calculatePathStatistics(records);
-        const preferredPath = this.selectPreferredPath(pathStats);
-
-        histories.push({
-          codec,
-          format: format as ConversionFormat,
-          records,
-          statistics: {
-            totalConversions,
-            successRate,
-            avgDurationMs,
-            preferredPath,
-          },
-        });
-      }
+      histories.push({
+        codec: parsed.codec,
+        format: parsed.format,
+        records,
+        statistics: this.buildStatistics(records),
+      });
     }
 
     return histories;
@@ -277,13 +263,38 @@ class StrategyHistoryService {
     logger.debug('conversion', 'Conversion history cleared');
   }
 
+  private appendRecord(record: ConversionRecord): void {
+    this.records.push(record);
+
+    if (this.records.length > MAX_RECORDS) {
+      this.records = this.records.slice(-MAX_RECORDS);
+    }
+  }
+
+  private buildStatistics(records: ConversionRecord[]): ConversionHistory['statistics'] {
+    const totalConversions = records.length;
+    const successfulConversions = records.filter((record) => record.success);
+    const successRate = totalConversions > 0 ? successfulConversions.length / totalConversions : 0;
+    const avgDurationMs =
+      successfulConversions.length > 0
+        ? successfulConversions.reduce((sum, record) => sum + record.durationMs, 0) /
+          successfulConversions.length
+        : 0;
+    const pathStats = this.calculatePathStatistics(records);
+
+    return {
+      totalConversions,
+      successRate,
+      avgDurationMs,
+      preferredPath: this.selectPreferredPath(pathStats),
+    };
+  }
+
   /**
    * Load records from sessionStorage
    */
   private loadFromStorage(): void {
-    if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
-      return;
-    }
+    if (!canUseStorage()) return;
 
     try {
       const raw = window.sessionStorage.getItem(STORAGE_KEY);
@@ -293,18 +304,16 @@ class StrategyHistoryService {
 
       const storage = JSON.parse(raw) as HistoryStorage;
 
-      // Validate version
-      if (storage.version !== 2) {
+      if (storage.version !== STORAGE_VERSION) {
         logger.debug('conversion', 'Strategy history version mismatch, clearing', {
           storedVersion: storage.version,
-          currentVersion: 2,
+          currentVersion: STORAGE_VERSION,
         });
         window.sessionStorage.removeItem(STORAGE_KEY);
         return;
       }
 
-      // Load records
-      this.records = storage.records || [];
+      this.records = Array.isArray(storage.records) ? storage.records : [];
       logger.debug('conversion', 'Strategy history loaded from sessionStorage', {
         recordCount: this.records.length,
       });
@@ -319,15 +328,13 @@ class StrategyHistoryService {
    * Save records to sessionStorage
    */
   private saveToStorage(): void {
-    if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
-      return;
-    }
+    if (!canUseStorage()) return;
 
     try {
       const storage: HistoryStorage = {
         records: this.records,
         maxRecords: MAX_RECORDS,
-        version: 2,
+        version: STORAGE_VERSION,
       };
 
       window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
@@ -341,43 +348,15 @@ class StrategyHistoryService {
   /**
    * Calculate statistics per path
    */
-  private calculatePathStatistics(records: ConversionRecord[]): Map<
-    ConversionPath,
-    {
-      count: number;
-      successCount: number;
-      totalDuration: number;
-      avgDuration: number;
-      successRate: number;
-    }
-  > {
-    const stats = new Map<
-      ConversionPath,
-      {
-        count: number;
-        successCount: number;
-        totalDuration: number;
-        avgDuration: number;
-        successRate: number;
-      }
-    >();
+  private calculatePathStatistics(records: ConversionRecord[]): Map<ConversionPath, PathStats> {
+    const stats = new Map<ConversionPath, PathStats>();
 
     for (const record of records) {
-      if (!stats.has(record.path)) {
-        stats.set(record.path, {
-          count: 0,
-          successCount: 0,
-          totalDuration: 0,
-          avgDuration: 0,
-          successRate: 0,
-        });
-      }
-
-      const pathStats = stats.get(record.path)!;
-      pathStats.count++;
+      const pathStats = this.getPathStats(stats, record.path);
+      pathStats.count += 1;
 
       if (record.success) {
-        pathStats.successCount++;
+        pathStats.successCount += 1;
         pathStats.totalDuration += record.durationMs;
         pathStats.avgDuration = pathStats.totalDuration / pathStats.successCount;
       }
@@ -397,34 +376,21 @@ class StrategyHistoryService {
    * 2. Most conversions (more data = more confidence)
    * 3. Fastest average duration
    */
-  private selectPreferredPath(
-    pathStats: Map<
-      ConversionPath,
-      {
-        count: number;
-        successCount: number;
-        totalDuration: number;
-        avgDuration: number;
-        successRate: number;
-      }
-    >
-  ): ConversionPath {
+  private selectPreferredPath(pathStats: Map<ConversionPath, PathStats>): ConversionPath {
     if (pathStats.size === 0) {
-      return 'cpu'; // Default fallback
+      return DEFAULT_FALLBACK_PATH;
     }
 
-    let preferredPath: ConversionPath = 'cpu';
+    let preferredPath: ConversionPath = DEFAULT_FALLBACK_PATH;
     let bestSuccessRate = -1;
     let bestSuccessCount = -1;
     let bestAvgDuration = Number.POSITIVE_INFINITY;
 
     for (const [path, stats] of pathStats) {
-      // Exclude paths that never succeeded.
       if (stats.successCount <= 0) {
         continue;
       }
 
-      // 1) Highest success rate
       if (stats.successRate > bestSuccessRate) {
         preferredPath = path;
         bestSuccessRate = stats.successRate;
@@ -433,7 +399,6 @@ class StrategyHistoryService {
         continue;
       }
 
-      // 2) Tie-breaker: more successful samples
       if (stats.successRate === bestSuccessRate && stats.successCount > bestSuccessCount) {
         preferredPath = path;
         bestSuccessCount = stats.successCount;
@@ -441,7 +406,6 @@ class StrategyHistoryService {
         continue;
       }
 
-      // 3) Tie-breaker: faster average duration among successes
       if (
         stats.successRate === bestSuccessRate &&
         stats.successCount === bestSuccessCount &&
@@ -453,6 +417,21 @@ class StrategyHistoryService {
     }
 
     return preferredPath;
+  }
+
+  private getPathStats(stats: Map<ConversionPath, PathStats>, path: ConversionPath): PathStats {
+    const existing = stats.get(path);
+    if (existing) return existing;
+
+    const next: PathStats = {
+      count: 0,
+      successCount: 0,
+      totalDuration: 0,
+      avgDuration: 0,
+      successRate: 0,
+    };
+    stats.set(path, next);
+    return next;
   }
 
   /**

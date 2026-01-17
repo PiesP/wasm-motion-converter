@@ -1,5 +1,5 @@
-import { getProviderByHostname } from '@services/cdn/cdn-config';
-import { getAllHealthMetrics, recordCdnRequest } from '@services/cdn/cdn-health-tracker';
+import { getProviderByHostname } from '@services/cdn/cdn-config-service';
+import { getAllHealthMetrics, recordCdnRequest } from '@services/cdn/cdn-health-tracker-service';
 import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
 

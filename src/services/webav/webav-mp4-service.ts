@@ -8,15 +8,32 @@
  */
 
 import type { ConversionOptions, ConversionOutputBlob } from '@t/conversion-types';
+import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { performanceTracker } from '@utils/performance-tracker';
 
 // Type definitions for lazy-loaded @webav/av-cliper
+
+// biome-ignore lint/suspicious/noExplicitAny: WebAV types are complex
+type Mp4ClipInput = Uint8Array | any;
+
 type AVCliperModule = typeof import('@webav/av-cliper');
+
 type Combinator = InstanceType<AVCliperModule['Combinator']>;
 
 // Cached module reference for lazy loading
 let avCliperModule: AVCliperModule | null = null;
+
+const PROGRESS_LIMITS = {
+  init: 10,
+  load: 20,
+  sprite: 30,
+  encode: 40,
+  finalize: 95,
+  done: 100,
+} as const;
+
+const PROGRESS_SAMPLE_INTERVAL_MS = 100;
 
 /**
  * Lazy-load @webav/av-cliper module
@@ -27,6 +44,16 @@ async function loadAVCliper(): Promise<AVCliperModule> {
     avCliperModule = await import('@webav/av-cliper');
   }
   return avCliperModule;
+}
+
+function createProgressEstimator(durationMicros: number): (chunkCount: number) => number {
+  const durationSeconds = durationMicros > 0 ? durationMicros / 1e6 : 1;
+  return (chunkCount: number): number =>
+    Math.min(90, PROGRESS_LIMITS.encode + Math.round(50 * (chunkCount / durationSeconds)));
+}
+
+function setProgress(value: number, onProgress?: (progress: number) => void): void {
+  onProgress?.(value);
 }
 
 /**
@@ -50,7 +77,7 @@ export class WebAVMP4Service {
       return true;
     } catch (error) {
       logger.debug('webav-mp4', 'WebAV availability check failed', {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return false;
     }
@@ -77,13 +104,11 @@ export class WebAVMP4Service {
         scale: options.scale,
       });
 
-      // Lazy-load @webav/av-cliper module
       const { MP4Clip, Combinator: CombinatorClass, OffscreenSprite } = await loadAVCliper();
 
-      onProgress?.(10);
+      setProgress(PROGRESS_LIMITS.init, onProgress);
       const arrayBuffer = await file.arrayBuffer();
-      // biome-ignore lint/suspicious/noExplicitAny: WebAV types are complex
-      const mp4Clip = new MP4Clip(new Uint8Array(arrayBuffer) as any);
+      const mp4Clip = new MP4Clip(new Uint8Array(arrayBuffer) as Mp4ClipInput);
       await mp4Clip.ready;
 
       const { width, height, duration } = mp4Clip.meta;
@@ -94,7 +119,7 @@ export class WebAVMP4Service {
         duration: `${(duration / 1e6).toFixed(1)}s`,
       });
 
-      onProgress?.(20);
+      setProgress(PROGRESS_LIMITS.load, onProgress);
       const outputWidth = Math.round(width * (options.scale || 1));
       const outputHeight = Math.round(height * (options.scale || 1));
 
@@ -108,32 +133,33 @@ export class WebAVMP4Service {
         height: outputHeight,
       });
 
-      onProgress?.(30);
+      setProgress(PROGRESS_LIMITS.sprite, onProgress);
       const sprite = new OffscreenSprite(mp4Clip);
       sprite.time = { offset: 0, duration };
       await this.combinator.addSprite(sprite);
 
       logger.debug('webav-mp4', 'Sprite added to combinator');
 
-      onProgress?.(40);
+      setProgress(PROGRESS_LIMITS.encode, onProgress);
       const mp4Data = await this.encodeMP4(this.combinator, duration, onProgress);
 
-      onProgress?.(95);
-      // biome-ignore lint/suspicious/noExplicitAny: WebAV types are complex
-      const blob = new Blob([mp4Data as any], { type: 'video/mp4' }) as ConversionOutputBlob;
+      setProgress(PROGRESS_LIMITS.finalize, onProgress);
+      const blob = new Blob([mp4Data.slice().buffer], {
+        type: 'video/mp4',
+      }) as ConversionOutputBlob;
       blob.wasTranscoded = true;
 
-      const duration_ms = performance.now() - startTime;
+      const durationMs = performance.now() - startTime;
 
       logger.info('webav-mp4', 'WebAV MP4 conversion completed', {
         outputSize: `${(blob.size / 1024 / 1024).toFixed(1)}MB`,
-        durationMs: Math.round(duration_ms),
+        durationMs: Math.round(durationMs),
       });
 
-      onProgress?.(100);
+      setProgress(PROGRESS_LIMITS.done, onProgress);
       return blob;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       logger.error('webav-mp4', 'WebAV MP4 conversion failed', { error: errorMessage });
       throw new Error(`WebAV MP4 conversion failed: ${errorMessage}`);
     } finally {
@@ -150,10 +176,11 @@ export class WebAVMP4Service {
     videoDuration: number,
     onProgress?: (progress: number) => void
   ): Promise<Uint8Array> {
+    const estimateProgress = createProgressEstimator(videoDuration);
+
     return new Promise((resolve, reject) => {
       const chunks: Uint8Array[] = [];
       let lastProgressTime = 0;
-      const progressInterval = 100;
 
       try {
         // biome-ignore lint/suspicious/noExplicitAny: WebAV types are complex
@@ -164,24 +191,13 @@ export class WebAVMP4Service {
               chunks.push(new Uint8Array(data));
 
               const now = performance.now();
-              if (now - lastProgressTime > progressInterval) {
-                const estimatedProgress = Math.min(
-                  90,
-                  40 + Math.round(50 * (chunks.length / (videoDuration / 1e6)))
-                );
-                onProgress?.(estimatedProgress);
+              if (now - lastProgressTime > PROGRESS_SAMPLE_INTERVAL_MS) {
+                setProgress(estimateProgress(chunks.length), onProgress);
                 lastProgressTime = now;
               }
             },
             ondone: () => {
-              const totalSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-              const result = new Uint8Array(totalSize);
-              let offset = 0;
-              for (const chunk of chunks) {
-                result.set(chunk, offset);
-                offset += chunk.byteLength;
-              }
-              resolve(result);
+              resolve(this.concatChunks(chunks));
             },
             onerror: (error: Error) => {
               reject(error);
@@ -192,6 +208,19 @@ export class WebAVMP4Service {
         reject(error);
       }
     });
+  }
+
+  private concatChunks(chunks: Uint8Array[]): Uint8Array {
+    const totalSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+    const result = new Uint8Array(totalSize);
+    let offset = 0;
+
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    return result;
   }
 
   /**
@@ -209,7 +238,7 @@ export class WebAVMP4Service {
         await (this.combinator as any).destroy?.();
       } catch (error) {
         logger.debug('webav-mp4', 'Error cleaning up combinator', {
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
       this.combinator = null;

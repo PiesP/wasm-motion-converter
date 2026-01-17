@@ -1,72 +1,91 @@
-import type { Component } from 'solid-js';
-import { createSignal, Show } from 'solid-js';
-
 import {
   clearDevConversionOverrides,
-  getDevConversionOverrides,
-  setDevConversionOverrides,
   type DevForcedCaptureMode,
   type DevForcedGifEncoder,
   type DevForcedPath,
   type DevForcedStrategyCodec,
-} from '@services/orchestration/dev-conversion-overrides';
+  getDevConversionOverrides,
+  setDevConversionOverrides,
+} from '@services/orchestration/dev-conversion-overrides-service';
+import { type Component, createMemo, createSignal, type JSX, Show } from 'solid-js';
 
 interface DevRouteOverridesProps {
   disabled?: boolean;
 }
 
 const DevRouteOverrides: Component<DevRouteOverridesProps> = (props) => {
-  const [forcedPath, setForcedPath] = createSignal<DevForcedPath>(
-    getDevConversionOverrides().forcedPath
-  );
-  const [disableFallback, setDisableFallback] = createSignal<boolean>(
-    getDevConversionOverrides().disableFallback
-  );
-
+  const overrides = getDevConversionOverrides();
+  const [forcedPath, setForcedPath] = createSignal<DevForcedPath>(overrides.forcedPath);
+  const [disableFallback, setDisableFallback] = createSignal<boolean>(overrides.disableFallback);
   const [forcedGifEncoder, setForcedGifEncoder] = createSignal<DevForcedGifEncoder>(
-    getDevConversionOverrides().forcedGifEncoder
+    overrides.forcedGifEncoder
   );
   const [forcedCaptureMode, setForcedCaptureMode] = createSignal<DevForcedCaptureMode>(
-    getDevConversionOverrides().forcedCaptureMode
+    overrides.forcedCaptureMode
   );
   const [disableDemuxerInAuto, setDisableDemuxerInAuto] = createSignal<boolean>(
-    getDevConversionOverrides().disableDemuxerInAuto
+    overrides.disableDemuxerInAuto
   );
   const [forcedStrategyCodec, setForcedStrategyCodec] = createSignal<DevForcedStrategyCodec>(
-    getDevConversionOverrides().forcedStrategyCodec
+    overrides.forcedStrategyCodec
   );
 
-  const handleChange = (value: DevForcedPath): void => {
+  const hasAnyForce = createMemo(
+    () =>
+      [forcedPath(), forcedGifEncoder(), forcedCaptureMode(), forcedStrategyCodec()].some(
+        (value) => value !== 'auto'
+      ) || disableDemuxerInAuto()
+  );
+
+  const isDisabled = () => props.disabled ?? false;
+  const isDemuxerToggleDisabled = () => isDisabled() || forcedCaptureMode() !== 'auto';
+  const isFallbackToggleDisabled = () => isDisabled() || !hasAnyForce();
+
+  const handleForcedPathChange: JSX.ChangeEventHandlerUnion<HTMLSelectElement, Event> = (event) => {
+    const value = event.currentTarget.value as DevForcedPath;
     setForcedPath(value);
     setDevConversionOverrides({ forcedPath: value });
   };
 
-  const handleToggleDisableFallback = (value: boolean): void => {
-    setDisableFallback(value);
-    setDevConversionOverrides({ disableFallback: value });
-  };
-
-  const handleChangeGifEncoder = (value: DevForcedGifEncoder): void => {
+  const handleGifEncoderChange: JSX.ChangeEventHandlerUnion<HTMLSelectElement, Event> = (event) => {
+    const value = event.currentTarget.value as DevForcedGifEncoder;
     setForcedGifEncoder(value);
     setDevConversionOverrides({ forcedGifEncoder: value });
   };
 
-  const handleChangeCaptureMode = (value: DevForcedCaptureMode): void => {
+  const handleCaptureModeChange: JSX.ChangeEventHandlerUnion<HTMLSelectElement, Event> = (
+    event
+  ) => {
+    const value = event.currentTarget.value as DevForcedCaptureMode;
     setForcedCaptureMode(value);
     setDevConversionOverrides({ forcedCaptureMode: value });
   };
 
-  const handleToggleDisableDemuxerInAuto = (value: boolean): void => {
-    setDisableDemuxerInAuto(value);
-    setDevConversionOverrides({ disableDemuxerInAuto: value });
-  };
-
-  const handleChangeStrategyCodec = (value: DevForcedStrategyCodec): void => {
+  const handleStrategyCodecChange: JSX.ChangeEventHandlerUnion<HTMLSelectElement, Event> = (
+    event
+  ) => {
+    const value = event.currentTarget.value as DevForcedStrategyCodec;
     setForcedStrategyCodec(value);
     setDevConversionOverrides({ forcedStrategyCodec: value });
   };
 
-  const handleReset = (): void => {
+  const handleDisableFallbackToggle: JSX.ChangeEventHandlerUnion<HTMLInputElement, Event> = (
+    event
+  ) => {
+    const value = event.currentTarget.checked;
+    setDisableFallback(value);
+    setDevConversionOverrides({ disableFallback: value });
+  };
+
+  const handleDisableDemuxerToggle: JSX.ChangeEventHandlerUnion<HTMLInputElement, Event> = (
+    event
+  ) => {
+    const value = event.currentTarget.checked;
+    setDisableDemuxerInAuto(value);
+    setDevConversionOverrides({ disableDemuxerInAuto: value });
+  };
+
+  const handleReset = () => {
     clearDevConversionOverrides();
     setForcedPath('auto');
     setDisableFallback(false);
@@ -74,16 +93,6 @@ const DevRouteOverrides: Component<DevRouteOverridesProps> = (props) => {
     setForcedCaptureMode('auto');
     setDisableDemuxerInAuto(false);
     setForcedStrategyCodec('auto');
-  };
-
-  const hasAnyForce = (): boolean => {
-    return (
-      forcedPath() !== 'auto' ||
-      forcedGifEncoder() !== 'auto' ||
-      forcedCaptureMode() !== 'auto' ||
-      forcedStrategyCodec() !== 'auto' ||
-      disableDemuxerInAuto() === true
-    );
   };
 
   return (
@@ -103,7 +112,7 @@ const DevRouteOverrides: Component<DevRouteOverridesProps> = (props) => {
             type="button"
             class="shrink-0 inline-flex items-center rounded-md border border-amber-300 dark:border-amber-700 px-3 py-1.5 text-xs font-medium text-amber-900 dark:text-amber-200 bg-white/70 dark:bg-gray-900/40 hover:bg-white dark:hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleReset}
-            disabled={props.disabled}
+            disabled={isDisabled()}
           >
             Reset
           </button>
@@ -120,8 +129,8 @@ const DevRouteOverrides: Component<DevRouteOverridesProps> = (props) => {
             id="dev-forced-path"
             class="mt-1 block w-full rounded-md border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
             value={forcedPath()}
-            onChange={(e) => handleChange(e.currentTarget.value as DevForcedPath)}
-            disabled={props.disabled}
+            onChange={handleForcedPathChange}
+            disabled={isDisabled()}
           >
             <option value="auto">Auto (strategy registry)</option>
             <option value="gpu">GPU (WebCodecs decode)</option>
@@ -144,8 +153,8 @@ const DevRouteOverrides: Component<DevRouteOverridesProps> = (props) => {
             id="dev-forced-gif-encoder"
             class="mt-1 block w-full rounded-md border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
             value={forcedGifEncoder()}
-            onChange={(e) => handleChangeGifEncoder(e.currentTarget.value as DevForcedGifEncoder)}
-            disabled={props.disabled}
+            onChange={handleGifEncoderChange}
+            disabled={isDisabled()}
           >
             <option value="auto">Auto (default behavior)</option>
             <option value="modern-gif">modern-gif (GPU/WebCodecs path)</option>
@@ -170,8 +179,8 @@ const DevRouteOverrides: Component<DevRouteOverridesProps> = (props) => {
             id="dev-forced-capture-mode"
             class="mt-1 block w-full rounded-md border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
             value={forcedCaptureMode()}
-            onChange={(e) => handleChangeCaptureMode(e.currentTarget.value as DevForcedCaptureMode)}
-            disabled={props.disabled}
+            onChange={handleCaptureModeChange}
+            disabled={isDisabled()}
           >
             <option value="auto">Auto (demuxer → playback modes)</option>
             <option value="demuxer">Demuxer</option>
@@ -187,8 +196,8 @@ const DevRouteOverrides: Component<DevRouteOverridesProps> = (props) => {
               type="checkbox"
               class="mt-0.5 h-4 w-4 rounded border-amber-300 dark:border-amber-700 text-amber-600 focus:ring-amber-500 disabled:opacity-50"
               checked={disableDemuxerInAuto()}
-              onChange={(e) => handleToggleDisableDemuxerInAuto(e.currentTarget.checked)}
-              disabled={props.disabled || forcedCaptureMode() !== 'auto'}
+              onChange={handleDisableDemuxerToggle}
+              disabled={isDemuxerToggleDisabled()}
             />
             <span>
               Disable demuxer in auto mode
@@ -210,10 +219,8 @@ const DevRouteOverrides: Component<DevRouteOverridesProps> = (props) => {
             id="dev-forced-strategy-codec"
             class="mt-1 block w-full rounded-md border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
             value={forcedStrategyCodec()}
-            onChange={(e) =>
-              handleChangeStrategyCodec(e.currentTarget.value as DevForcedStrategyCodec)
-            }
-            disabled={props.disabled}
+            onChange={handleStrategyCodecChange}
+            disabled={isDisabled()}
           >
             <option value="auto">Auto (actual codec)</option>
             <option value="h264">h264</option>
@@ -235,8 +242,8 @@ const DevRouteOverrides: Component<DevRouteOverridesProps> = (props) => {
               type="checkbox"
               class="mt-0.5 h-4 w-4 rounded border-amber-300 dark:border-amber-700 text-amber-600 focus:ring-amber-500 disabled:opacity-50"
               checked={disableFallback()}
-              onChange={(e) => handleToggleDisableFallback(e.currentTarget.checked)}
-              disabled={props.disabled || !hasAnyForce()}
+              onChange={handleDisableFallbackToggle}
+              disabled={isFallbackToggleDisabled()}
             />
             <span>
               Disable fallback (fail-fast) when a forced path cannot proceed.

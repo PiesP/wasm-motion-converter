@@ -9,17 +9,23 @@
  * - Intended for debugging/benchmarking; does not upload data anywhere.
  */
 
-import type { ConversionFormat } from '@t/conversion-types';
+import type { ConversionPath } from '@services/orchestration/types-service';
 import { createSingleton } from '@services/shared/singleton-service';
+import type { ConversionFormat } from '@t/conversion-types';
 import { normalizeCodecString } from '@utils/codec-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
-import type { ConversionPath } from './types';
-
 // Versioned key to avoid stale strategy tuning after algorithm changes.
 const STORAGE_KEY = 'conversion_metrics_v2' as const;
 const MAX_RECORDS = 50 as const;
+const LEGACY_STORAGE_KEY = 'conversion_metrics_v1';
+const RECENT_SAMPLE_LIMIT = 12;
+const GIF_RECOMMENDATION_MIN_SAMPLES = 3;
+const STRONG_CONFIDENCE_SAMPLE_DIVISOR = 10;
+const PALLETTE_CONFIDENCE_SAMPLE_DIVISOR = 12;
+const PARTIAL_CONFIDENCE_SAMPLE_DIVISOR = 8;
+const SUCCESS_RATE_OVERRIDE_THRESHOLD = 0.2;
 
 export type ConversionMetricOutcome = 'success' | 'error' | 'cancelled';
 
@@ -83,7 +89,7 @@ class ConversionMetricsService {
     // Best-effort cleanup for older schema keys.
     try {
       if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
-        window.sessionStorage.removeItem('conversion_metrics_v1');
+        window.sessionStorage.removeItem(LEGACY_STORAGE_KEY);
       }
     } catch {
       // Ignore
@@ -198,7 +204,6 @@ class ConversionMetricsService {
     // Prefer the most recent evidence to reflect current build behavior.
     // This is especially important for ffmpeg-palette where performance can change
     // significantly after algorithm tweaks.
-    const RECENT_SAMPLE_LIMIT = 12;
     const relevantRecent = relevantAll.slice(-RECENT_SAMPLE_LIMIT);
     const relevant = relevantRecent.length > 0 ? relevantRecent : relevantAll;
 
@@ -248,19 +253,18 @@ class ConversionMetricsService {
 
     // Require enough samples to make a recommendation.
     // Keep this low so the system can adapt quickly after a build update.
-    const minTotalSamples = 3;
-    if (palette.total + modern.total < minTotalSamples) {
+    if (palette.total + modern.total < GIF_RECOMMENDATION_MIN_SAMPLES) {
       return null;
     }
 
     // Prefer the encoder with better success rate first.
     const successRateDelta = modern.successRate - palette.successRate;
-    if (Math.abs(successRateDelta) >= 0.2) {
+    if (Math.abs(successRateDelta) >= SUCCESS_RATE_OVERRIDE_THRESHOLD) {
       const recommendedEncoder: GifEncoderBackend =
         successRateDelta > 0 ? 'modern-gif-worker' : 'ffmpeg-palette';
 
       const confidence =
-        Math.min(1, (palette.total + modern.total) / 10) *
+        Math.min(1, (palette.total + modern.total) / STRONG_CONFIDENCE_SAMPLE_DIVISOR) *
         Math.max(modern.successRate, palette.successRate);
 
       return {
@@ -284,7 +288,7 @@ class ConversionMetricsService {
 
       // Confidence increases with samples and decreases if either encoder has low success rate.
       const confidence =
-        Math.min(1, (palette.total + modern.total) / 12) *
+        Math.min(1, (palette.total + modern.total) / PALLETTE_CONFIDENCE_SAMPLE_DIVISOR) *
         Math.max(modern.successRate, palette.successRate);
 
       return {
@@ -303,7 +307,8 @@ class ConversionMetricsService {
         format: 'gif',
         executedPath: 'gpu',
         recommendedEncoder: 'modern-gif-worker',
-        confidence: Math.min(1, modern.total / 8) * modern.successRate,
+        confidence:
+          Math.min(1, modern.total / PARTIAL_CONFIDENCE_SAMPLE_DIVISOR) * modern.successRate,
         reason: 'insufficient_palette_data',
       };
     }
@@ -314,7 +319,8 @@ class ConversionMetricsService {
         format: 'gif',
         executedPath: 'gpu',
         recommendedEncoder: 'ffmpeg-palette',
-        confidence: Math.min(1, palette.total / 8) * palette.successRate,
+        confidence:
+          Math.min(1, palette.total / PARTIAL_CONFIDENCE_SAMPLE_DIVISOR) * palette.successRate,
         reason: 'insufficient_modern_data',
       };
     }

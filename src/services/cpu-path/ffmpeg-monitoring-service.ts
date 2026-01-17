@@ -1,0 +1,460 @@
+/**
+ * FFmpeg Monitoring
+ *
+ * Watchdog timers, heartbeat progress tracking, and log silence detection
+ * for FFmpeg conversion operations.
+ *
+ * Features:
+ * - Adaptive watchdog timeout based on video characteristics
+ * - Progress heartbeat for long-running operations
+ * - Log silence detection with strike system
+ * - Stall detection and automatic recovery
+ *
+ * @module cpu-path/ffmpeg-monitoring
+ */
+
+import type { ConversionQuality, VideoMetadata } from '@t/conversion-types';
+import { calculateAdaptiveWatchdogTimeout, FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
+import { logger } from '@utils/logger';
+
+/**
+ * Monitoring callbacks
+ */
+export interface MonitoringCallbacks {
+  /** Called when progress updates */
+  onProgress?: (progress: number, isHeartbeat: boolean) => void;
+  /** Called when status message updates */
+  onStatus?: (message: string) => void;
+  /** Called when watchdog detects stall and needs termination */
+  onTerminate?: () => void;
+}
+
+/**
+ * Watchdog start options
+ */
+export interface WatchdogOptions {
+  /** Video metadata for adaptive timeout calculation */
+  metadata?: VideoMetadata;
+  /** Conversion quality for adaptive timeout calculation */
+  quality?: ConversionQuality;
+  /** Output format (affects base timeout - WebP needs longer timeout) */
+  format?: 'gif' | 'webp' | 'mp4';
+  /** Enable log silence detection (default: true) */
+  enableLogSilenceCheck?: boolean;
+}
+
+/**
+ * FFmpeg monitoring service
+ *
+ * Manages watchdog timers, progress heartbeats, and log silence detection
+ * to ensure FFmpeg conversions don't stall indefinitely.
+ */
+export class FFmpegMonitoring {
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private logSilenceInterval: ReturnType<typeof setInterval> | null = null;
+  private activeHeartbeats: Set<ReturnType<typeof setInterval>> = new Set();
+
+  private lastProgressTime = 0;
+  private lastLogTime = 0;
+  private lastProgressValue = -1;
+  private logSilenceStrikes = 0;
+  private isConverting = false;
+  private currentWatchdogTimeout: number = FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS;
+
+  private callbacks: MonitoringCallbacks = {};
+
+  /**
+   * Set monitoring callbacks
+   */
+  setCallbacks(callbacks: MonitoringCallbacks): void {
+    this.callbacks = callbacks;
+  }
+
+  private clearIntervalRef(timer: ReturnType<typeof setInterval> | null): null {
+    if (timer) {
+      clearInterval(timer);
+    }
+    return null;
+  }
+
+  private clearHeartbeats(): void {
+    for (const interval of this.activeHeartbeats) {
+      clearInterval(interval);
+    }
+    this.activeHeartbeats.clear();
+  }
+
+  /**
+   * Update progress and reset watchdog
+   *
+   * @param progress - Progress percentage (0-100)
+   * @param isHeartbeat - Whether this is a heartbeat update
+   */
+  updateProgress(progress: number, isHeartbeat = false): void {
+    const clamped = Math.min(100, Math.max(0, progress));
+
+    const previousProgressValue = this.lastProgressValue;
+
+    // Progress should not move backwards within a single conversion run.
+    // Multiple progress sources (e.g., heartbeat vs real progress, monitoring restarts)
+    // can otherwise cause the percent prefix to regress (confusing in logs and UI).
+    const monotonic =
+      this.isConverting && this.lastProgressValue >= 0
+        ? Math.max(clamped, this.lastProgressValue)
+        : clamped;
+
+    // Always keep internal progress state updated so manual progress reporting
+    // (e.g., WebCodecs pipelines) can be deduped even when watchdog monitoring
+    // is not currently active.
+    const now = Date.now();
+    this.lastProgressTime = now;
+    this.lastProgressValue = monotonic;
+
+    if (this.isConverting) {
+      // Keep the logger's conversion progress context in sync so all log lines
+      // can be annotated with the current percent while converting.
+      logger.setConversionProgress(monotonic);
+    }
+
+    // Only emit to consumers when the visible progress changes.
+    // Heartbeats are primarily for watchdog keepalive and should not spam the UI.
+    if (monotonic !== previousProgressValue) {
+      this.callbacks.onProgress?.(monotonic, isHeartbeat);
+    }
+  }
+
+  /**
+   * Update log timestamp to reset silence detection
+   */
+  updateLogActivity(): void {
+    this.lastLogTime = Date.now();
+    this.logSilenceStrikes = 0;
+  }
+
+  /**
+   * Start watchdog monitoring
+   *
+   * Monitors conversion progress and detects stalls. Uses adaptive timeout
+   * based on video characteristics (resolution, duration, quality) and format.
+   * WebP format uses 360s base timeout to handle VP9/complex codec encoding.
+   *
+   * @param options - Watchdog configuration options
+   */
+  startWatchdog(options: WatchdogOptions = {}): void {
+    // Idempotent start: ensure any previous timers/heartbeats are cleared first.
+    // This prevents duplicate watchdog intervals from leaking across runs.
+    //
+    // Note: startWatchdog() can be called mid-conversion (e.g., between capture and encode).
+    // Preserve the last progress value in that case so log prefixes and watchdog state do not
+    // jump backwards.
+    const restartingWithinConversion = this.isConverting;
+    const previousProgressValue = this.lastProgressValue;
+    this.stopWatchdog();
+
+    const { metadata, quality, format, enableLogSilenceCheck = true } = options;
+
+    this.lastProgressTime = Date.now();
+    this.lastLogTime = Date.now();
+    this.logSilenceStrikes = 0;
+    this.isConverting = true;
+    this.lastProgressValue = restartingWithinConversion ? previousProgressValue : -1;
+
+    // Note: do NOT reset the logger's conversion progress context here.
+    // The orchestrator owns conversion lifecycle decoration and may have already
+    // set a meaningful percent (e.g., 10% after planning, 50% after capture).
+    // Resetting to 0% makes the prefix jump backwards when monitoring restarts.
+
+    // Use format-specific base timeout
+    // WebP needs longer timeout due to slow libwebp encoder with VP9/complex codecs
+    const baseTimeout: number =
+      format === 'webp'
+        ? FFMPEG_INTERNALS.WATCHDOG_WEBP_BASE_TIMEOUT_MS
+        : FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS;
+
+    // Calculate adaptive timeout based on video characteristics
+    this.currentWatchdogTimeout = calculateAdaptiveWatchdogTimeout(baseTimeout, {
+      resolution: metadata ? { width: metadata.width, height: metadata.height } : undefined,
+      duration: metadata?.duration,
+      quality,
+    });
+
+    logger.debug('watchdog', 'Watchdog started', {
+      format: format || 'unknown',
+      baseTimeout:
+        format === 'webp'
+          ? `${FFMPEG_INTERNALS.WATCHDOG_WEBP_BASE_TIMEOUT_MS / 1000}s`
+          : `${FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS / 1000}s`,
+      adaptiveTimeout: `${this.currentWatchdogTimeout / 1000}s`,
+      resolution: metadata ? `${metadata.width}x${metadata.height}` : 'unknown',
+      duration: metadata?.duration ? `${metadata.duration.toFixed(1)}s` : 'unknown',
+      quality: quality || 'unknown',
+    });
+
+    // Clear existing timers (defensive; stopWatchdog() already cleared these)
+    this.watchdogTimer = this.clearIntervalRef(this.watchdogTimer);
+    this.logSilenceInterval = this.clearIntervalRef(this.logSilenceInterval);
+
+    // Start log silence detection
+    if (enableLogSilenceCheck) {
+      this.logSilenceInterval = setInterval(() => {
+        const silenceMs = Date.now() - this.lastLogTime;
+        if (silenceMs > FFMPEG_INTERNALS.LOG_SILENCE_TIMEOUT_MS) {
+          this.logSilenceStrikes += 1;
+          logger.warn('ffmpeg', 'No FFmpeg logs detected for extended period', {
+            silenceMs,
+            strike: this.logSilenceStrikes,
+            maxStrikes: FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES,
+          });
+
+          this.callbacks.onStatus?.('FFmpeg encoder is unresponsive, checking...');
+
+          if (this.logSilenceStrikes >= FFMPEG_INTERNALS.LOG_SILENCE_MAX_STRIKES) {
+            logger.error(
+              'ffmpeg',
+              'FFmpeg produced no output after multiple checks, terminating as stalled'
+            );
+            this.callbacks.onStatus?.('Conversion stalled - terminating (no encoder output)...');
+            this.callbacks.onTerminate?.();
+          }
+        }
+      }, FFMPEG_INTERNALS.LOG_SILENCE_CHECK_INTERVAL_MS);
+    }
+
+    // Start watchdog timer
+    this.watchdogTimer = setInterval(() => {
+      const timeSinceProgress = Date.now() - this.lastProgressTime;
+      // Avoid noisy "Watchdog check" lines when progress is flowing normally.
+      // Only emit a debug line once we have gone longer than a full check interval
+      // without any progress updates.
+      if (timeSinceProgress > FFMPEG_INTERNALS.WATCHDOG_CHECK_INTERVAL_MS) {
+        logger.debug(
+          'watchdog',
+          `Watchdog check: ${(timeSinceProgress / 1000).toFixed(
+            1
+          )}s since last progress (timeout: ${this.currentWatchdogTimeout / 1000}s)`
+        );
+      }
+
+      if (timeSinceProgress > this.currentWatchdogTimeout) {
+        logger.error(
+          'watchdog',
+          `Conversion stalled - no progress for ${(this.currentWatchdogTimeout / 1000).toFixed(
+            1
+          )}s`,
+          {
+            lastProgress: this.lastProgressValue,
+            timeSinceProgress: `${(timeSinceProgress / 1000).toFixed(1)}s`,
+            timeout: `${(this.currentWatchdogTimeout / 1000).toFixed(1)}s`,
+          }
+        );
+        this.callbacks.onStatus?.('Conversion stalled - terminating...');
+        this.callbacks.onTerminate?.();
+      }
+    }, FFMPEG_INTERNALS.WATCHDOG_CHECK_INTERVAL_MS);
+  }
+
+  /**
+   * Stop watchdog monitoring
+   *
+   * Clears all watchdog timers and resets conversion state.
+   * After stopping, no watchdog checks will occur until startWatchdog() is called again.
+   */
+  stopWatchdog(): void {
+    const hadWatchdogTimer = Boolean(this.watchdogTimer);
+    const hadLogSilenceMonitor = Boolean(this.logSilenceInterval);
+    const hadActiveHeartbeats = this.activeHeartbeats.size > 0;
+    const wasConverting = this.isConverting;
+
+    // Stop watchdog timer
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+      logger.debug('watchdog', 'Watchdog timer cleared');
+    }
+
+    // Stop log silence detection
+    if (this.logSilenceInterval) {
+      clearInterval(this.logSilenceInterval);
+      this.logSilenceInterval = null;
+      logger.debug('watchdog', 'Log silence monitor cleared');
+    }
+
+    // Stop all active heartbeats
+    this.clearHeartbeats();
+
+    // Mark conversion as complete
+    this.isConverting = false;
+
+    // Important: do not clear the logger's conversion progress context here.
+    // stopWatchdog() is called defensively and can be invoked multiple times
+    // during a single conversion (e.g., when restarting monitoring). The
+    // orchestrator is responsible for clearing prefix decoration in `finally`.
+
+    // Avoid noisy duplicate reset logs when stopWatchdog() is called repeatedly.
+    // Only emit when we actually transitioned from an active state.
+    if (hadWatchdogTimer || hadLogSilenceMonitor || hadActiveHeartbeats || wasConverting) {
+      logger.debug('watchdog', 'Monitoring state reset');
+    }
+  }
+
+  /**
+   * Start progress heartbeat
+   *
+   * Emits synthetic progress updates for long-running operations to prevent
+   * watchdog timeouts and provide user feedback.
+   *
+   * @param startProgress - Starting progress percentage
+   * @param endProgress - Ending progress percentage
+   * @param estimatedDurationSeconds - Estimated operation duration
+   * @returns Interval ID for stopping the heartbeat
+   */
+  startProgressHeartbeat(
+    startProgress: number,
+    endProgress: number,
+    estimatedDurationSeconds: number
+  ): ReturnType<typeof setInterval> {
+    const startTime = Date.now();
+    const progressRange = endProgress - startProgress;
+
+    logger.debug(
+      'progress',
+      `Starting heartbeat: ${startProgress}% -> ${endProgress}% (estimated ${estimatedDurationSeconds}s)`
+    );
+
+    const interval = setInterval(() => {
+      const elapsedSeconds = (Date.now() - startTime) / 1000;
+      const progressFraction = Math.min(elapsedSeconds / estimatedDurationSeconds, 0.99);
+      const currentProgress = startProgress + progressRange * progressFraction;
+      const roundedProgress = Math.round(currentProgress);
+
+      // Progress is monotonic during a conversion run. When a heartbeat fires after real progress has
+      // already advanced further (e.g., FFmpeg progress updates), logging the raw heartbeat percent can
+      // appear as a regression. Clamp to the current conversion progress for logging and reporting.
+      const previousProgress = this.lastProgressValue;
+      const monotonicProgress =
+        this.isConverting && previousProgress >= 0
+          ? Math.max(roundedProgress, previousProgress)
+          : roundedProgress;
+
+      // Only log when the heartbeat actually advances the visible progress. If it does not, it still
+      // acts as a keepalive by resetting the watchdog timers via updateProgress().
+      if (monotonicProgress !== previousProgress) {
+        logger.debug(
+          'progress',
+          `Heartbeat update: ${monotonicProgress}% (elapsed: ${elapsedSeconds.toFixed(
+            1
+          )}s, source: heartbeat)`
+        );
+      }
+
+      this.updateProgress(monotonicProgress, true);
+    }, FFMPEG_INTERNALS.HEARTBEAT_INTERVAL_MS);
+
+    // Track the interval for cleanup
+    this.activeHeartbeats.add(interval);
+    return interval;
+  }
+
+  /**
+   * Stop progress heartbeat
+   *
+   * @param intervalId - Interval ID from startProgressHeartbeat
+   */
+  stopProgressHeartbeat(intervalId: ReturnType<typeof setInterval> | null): void {
+    if (!intervalId) {
+      return;
+    }
+
+    // Idempotent: callers may stop the same heartbeat from multiple cleanup paths.
+    if (!this.activeHeartbeats.has(intervalId)) {
+      return;
+    }
+
+    clearInterval(intervalId);
+    this.activeHeartbeats.delete(intervalId);
+    logger.debug('progress', 'Heartbeat stopped');
+  }
+
+  /**
+   * Clean up all monitoring resources
+   *
+   * Clears all active timers and intervals to prevent memory leaks.
+   */
+  cleanupResources(): void {
+    // Clear all active heartbeats
+    this.clearHeartbeats();
+
+    // Clear watchdog timer
+    this.watchdogTimer = this.clearIntervalRef(this.watchdogTimer);
+
+    // Clear log silence monitor
+    this.logSilenceInterval = this.clearIntervalRef(this.logSilenceInterval);
+    this.logSilenceStrikes = 0;
+
+    logger.debug('general', 'Monitoring resources cleaned up');
+
+    // Defensive: ensure we don't keep showing a stale conversion percent.
+    logger.clearConversionProgress();
+  }
+
+  /**
+   * Force cleanup of ALL monitoring resources (emergency cleanup)
+   *
+   * More aggressive than stopWatchdog() and cleanupResources() - clears everything
+   * regardless of state and resets isConverting flag. Used in error/timeout paths
+   * to guarantee no timers continue running.
+   */
+  forceCleanupAll(): void {
+    const hadWatchdogTimer = Boolean(this.watchdogTimer);
+    const hadLogSilenceMonitor = Boolean(this.logSilenceInterval);
+    const heartbeatCount = this.activeHeartbeats.size;
+    const wasConverting = this.isConverting;
+
+    const didAnything =
+      hadWatchdogTimer || hadLogSilenceMonitor || heartbeatCount > 0 || wasConverting;
+
+    if (didAnything) {
+      logger.debug('watchdog', 'Force cleanup initiated (clearing all timers)');
+    }
+
+    // Clear watchdog timer
+    this.watchdogTimer = this.clearIntervalRef(this.watchdogTimer);
+
+    // Clear log silence monitor
+    this.logSilenceInterval = this.clearIntervalRef(this.logSilenceInterval);
+    this.logSilenceStrikes = 0;
+
+    // Clear ALL active heartbeats
+    this.clearHeartbeats();
+
+    // Reset conversion state
+    this.isConverting = false;
+
+    // Stop annotating log prefixes once we force-stop conversion monitoring.
+    logger.clearConversionProgress();
+
+    // Avoid redundant cleanup logs when forceCleanupAll() is called defensively after resources
+    // were already cleared (e.g., stopWatchdog() ran first on successful conversions).
+    if (didAnything) {
+      logger.info('watchdog', 'Force cleanup complete', {
+        heartbeatsCleared: heartbeatCount,
+        watchdogCleared: hadWatchdogTimer,
+        logMonitorCleared: hadLogSilenceMonitor,
+      });
+    }
+  }
+
+  /**
+   * Check if watchdog is currently active
+   */
+  isActive(): boolean {
+    return this.isConverting;
+  }
+
+  /**
+   * Get current watchdog timeout
+   */
+  getCurrentTimeout(): number {
+    return this.currentWatchdogTimeout;
+  }
+}

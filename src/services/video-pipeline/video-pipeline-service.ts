@@ -7,23 +7,22 @@
  * - emits structured logs required by the pipeline spec
  */
 
+import { createSingleton } from '@services/shared/singleton-service';
+import { demuxerService } from '@services/video-pipeline/demuxer-service';
+import { type EncodePlan, encodeService } from '@services/video-pipeline/encode-service';
+import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
+import { selectPipeline } from '@services/video-pipeline/pipeline-selector-service';
+import type { VideoMetadata } from '@t/conversion-types';
 import type {
   ContainerFormat,
-  PipelineType,
   ExtendedCapabilities,
+  PipelineType,
   VideoDemuxer,
   VideoTrackInfo,
 } from '@t/video-pipeline-types';
-import type { VideoMetadata } from '@t/conversion-types';
+import { detectContainerFormat, isDemuxableContainer } from '@utils/container-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
-import { detectContainerFormat, isDemuxableContainer } from '@utils/container-utils';
-
-import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
-import { demuxerService } from '@services/video-pipeline/demuxer-service';
-import { encodeService, type EncodePlan } from '@services/video-pipeline/encode-service';
-import { selectPipeline } from '@services/video-pipeline/pipeline-selector';
-import { createSingleton } from '@services/shared/singleton-service';
 
 interface PipelinePlan {
   caps: ExtendedCapabilities;
@@ -33,6 +32,22 @@ interface PipelinePlan {
   decodePath: PipelineType;
   encodePlan: EncodePlan;
 }
+
+type PlanParams = {
+  file: File;
+  format: 'gif' | 'webp';
+  abortSignal?: AbortSignal;
+  metadata?: VideoMetadata;
+};
+
+const FORCED_FFMPEG_CONTAINERS: ContainerFormat[] = ['avi', 'wmv'];
+
+const logEncodePlan = (encodePlan: EncodePlan): void => {
+  logger.info('conversion', '[EncodePlan]', {
+    encodePlan,
+    note: 'Planning label only; runtime encoder may differ',
+  });
+};
 
 const getDemuxerNameForContainer = (container: ContainerFormat): VideoDemuxer['name'] | null => {
   switch (container) {
@@ -55,13 +70,8 @@ class VideoPipelineService {
    * This does not perform conversion yet; it only probes container/track
    * information and selects the intended pipeline.
    */
-  async planPipeline(params: {
-    file: File;
-    format: 'gif' | 'webp';
-    abortSignal?: AbortSignal;
-    metadata?: VideoMetadata;
-  }): Promise<PipelinePlan> {
-    const throwIfAborted = () => {
+  async planPipeline(params: PlanParams): Promise<PipelinePlan> {
+    const throwIfAborted = (): void => {
       if (params.abortSignal?.aborted) {
         throw new Error('Pipeline planning cancelled');
       }
@@ -70,111 +80,141 @@ class VideoPipelineService {
     throwIfAborted();
     const container = detectContainerFormat(params.file);
 
-    // MUST be detected before any processing starts.
     const caps = await extendedCapabilityService.detectCapabilities();
 
     throwIfAborted();
 
     logger.info('conversion', '[VideoCaps]', caps);
 
-    // Forced full pipeline containers
-    if (container === 'avi' || container === 'wmv') {
-      logger.info('conversion', '[Demuxer] ffmpeg', { container });
-      logger.info('conversion', '[DecodePath] ffmpeg-wasm-full', { container });
-      const encodePlan: EncodePlan = 'ffmpeg';
-      logger.info('conversion', '[EncodePlan]', {
-        encodePlan,
-        note: 'Planning label only; runtime encoder may differ',
-      });
-
-      return {
-        caps,
-        container,
-        demuxer: null,
-        track: null,
-        decodePath: 'ffmpeg-wasm-full',
-        encodePlan,
-      };
+    if (this.shouldUseFfmpegOnly(container)) {
+      return this.buildFfmpegPlan(caps, container);
     }
 
-    // Non-demuxable containers (including unknown) fall back to FFmpeg.
     if (!isDemuxableContainer(container)) {
-      logger.info('conversion', '[Demuxer] ffmpeg', { container });
-      logger.info('conversion', '[DecodePath] ffmpeg-wasm-full', { container });
-      const encodePlan: EncodePlan = 'ffmpeg';
-      logger.info('conversion', '[EncodePlan]', {
-        encodePlan,
-        note: 'Planning label only; runtime encoder may differ',
-      });
-
-      return {
-        caps,
-        container,
-        demuxer: null,
-        track: null,
-        decodePath: 'ffmpeg-wasm-full',
-        encodePlan,
-      };
+      return this.buildFfmpegPlan(caps, container);
     }
 
-    // When we already have reliable metadata, avoid initializing demuxers during
-    // planning. This keeps CPU conversions from depending on mp4box/web-demuxer
-    // CDN availability and reduces duplicated container parsing.
     const metadata = params.metadata;
-    const hasUsableMetadata =
-      metadata !== undefined && metadata.codec.trim().length > 0 && metadata.codec !== 'unknown';
+    const trackFromMetadata = this.getTrackFromMetadata(metadata);
+    if (trackFromMetadata) {
+      return this.buildMetadataPlan({
+        caps,
+        container,
+        track: trackFromMetadata,
+        format: params.format,
+      });
+    }
 
-    if (hasUsableMetadata && metadata) {
-      const trackFromMetadata: VideoTrackInfo = {
-        codec: metadata.codec,
-        width: metadata.width,
-        height: metadata.height,
-        duration: metadata.duration,
-        frameRate: metadata.framerate,
-      };
+    return this.buildDemuxerPlan({
+      caps,
+      container,
+      format: params.format,
+      file: params.file,
+      abortSignal: params.abortSignal,
+    });
+  }
 
-      const demuxerName = getDemuxerNameForContainer(container);
-      if (demuxerName) {
-        logger.info('conversion', '[Demuxer]', {
-          name: demuxerName,
-          source: 'metadata',
-        });
-      }
-      logger.info('conversion', '[Codec]', {
-        codec: trackFromMetadata.codec,
+  private shouldUseFfmpegOnly(container: ContainerFormat): boolean {
+    return FORCED_FFMPEG_CONTAINERS.includes(container);
+  }
+
+  private buildFfmpegPlan(caps: ExtendedCapabilities, container: ContainerFormat): PipelinePlan {
+    logger.info('conversion', '[Demuxer] ffmpeg', { container });
+    logger.info('conversion', '[DecodePath] ffmpeg-wasm-full', { container });
+
+    const encodePlan: EncodePlan = 'ffmpeg';
+    logEncodePlan(encodePlan);
+
+    return {
+      caps,
+      container,
+      demuxer: null,
+      track: null,
+      decodePath: 'ffmpeg-wasm-full',
+      encodePlan,
+    };
+  }
+
+  private getTrackFromMetadata(metadata?: VideoMetadata): VideoTrackInfo | null {
+    if (!metadata) {
+      return null;
+    }
+
+    const hasCodec = metadata.codec.trim().length > 0 && metadata.codec !== 'unknown';
+    if (!hasCodec) {
+      return null;
+    }
+
+    return {
+      codec: metadata.codec,
+      width: metadata.width,
+      height: metadata.height,
+      duration: metadata.duration,
+      frameRate: metadata.framerate,
+    };
+  }
+
+  private buildMetadataPlan(params: {
+    caps: ExtendedCapabilities;
+    container: ContainerFormat;
+    track: VideoTrackInfo;
+    format: 'gif' | 'webp';
+  }): PipelinePlan {
+    const { caps, container, track, format } = params;
+    const demuxerName = getDemuxerNameForContainer(container);
+
+    if (demuxerName) {
+      logger.info('conversion', '[Demuxer]', {
+        name: demuxerName,
         source: 'metadata',
       });
-
-      const decodePath = selectPipeline(caps, trackFromMetadata, container);
-      logger.info('conversion', '[DecodePath]', { decodePath });
-
-      const encodePlan = encodeService.selectEncodePlan({
-        format: params.format,
-        codec: trackFromMetadata.codec,
-      });
-      logger.info('conversion', '[EncodePlan]', {
-        encodePlan,
-        note: 'Planning label only; runtime encoder may differ',
-      });
-
-      return {
-        caps,
-        container,
-        demuxer: demuxerName ? { name: demuxerName } : null,
-        track: trackFromMetadata,
-        decodePath,
-        encodePlan,
-      };
     }
+    logger.info('conversion', '[Codec]', {
+      codec: track.codec,
+      source: 'metadata',
+    });
 
+    const decodePath = selectPipeline(caps, track, container);
+    logger.info('conversion', '[DecodePath]', { decodePath });
+
+    const encodePlan = encodeService.selectEncodePlan({
+      format,
+      codec: track.codec,
+    });
+    logEncodePlan(encodePlan);
+
+    return {
+      caps,
+      container,
+      demuxer: demuxerName ? { name: demuxerName } : null,
+      track,
+      decodePath,
+      encodePlan,
+    };
+  }
+
+  private async buildDemuxerPlan(params: {
+    caps: ExtendedCapabilities;
+    container: ContainerFormat;
+    format: 'gif' | 'webp';
+    file: File;
+    abortSignal?: AbortSignal;
+  }): Promise<PipelinePlan> {
+    const { caps, container, format, file, abortSignal } = params;
     let demuxer: VideoDemuxer | null = null;
+
+    const throwIfAborted = (): void => {
+      if (abortSignal?.aborted) {
+        throw new Error('Pipeline planning cancelled');
+      }
+    };
 
     try {
       throwIfAborted();
-      demuxer = demuxerService.getDemuxerForFile(params.file);
+      demuxer = demuxerService.getDemuxerForFile(file);
 
       throwIfAborted();
-      await demuxer.initialize(params.file);
+      await demuxer.initialize(file);
 
       throwIfAborted();
       const track = demuxer.getTrackInfo();
@@ -183,16 +223,13 @@ class VideoPipelineService {
       logger.info('conversion', '[Codec]', { codec: track.codec });
 
       const decodePath = selectPipeline(caps, track, container);
-
       logger.info('conversion', '[DecodePath]', { decodePath });
+
       const encodePlan = encodeService.selectEncodePlan({
-        format: params.format,
+        format,
         codec: track.codec,
       });
-      logger.info('conversion', '[EncodePlan]', {
-        encodePlan,
-        note: 'Planning label only; runtime encoder may differ',
-      });
+      logEncodePlan(encodePlan);
 
       return {
         caps,
@@ -203,16 +240,11 @@ class VideoPipelineService {
         encodePlan,
       };
     } catch (error) {
-      if (params.abortSignal?.aborted) {
-        // Avoid error-level noise for user cancellation.
-        try {
-          demuxer?.destroy();
-        } catch (cleanupError) {
-          logger.debug('demuxer', 'Demuxer cleanup failed after cancellation (non-critical)', {
-            error: getErrorMessage(cleanupError),
-          });
-        }
-
+      if (abortSignal?.aborted) {
+        this.destroyDemuxerSafely(
+          demuxer,
+          'Demuxer cleanup failed after cancellation (non-critical)'
+        );
         throw error;
       }
 
@@ -221,16 +253,21 @@ class VideoPipelineService {
         error: getErrorMessage(error),
       });
 
-      // Ensure cleanup if a demuxer was created.
-      try {
-        demuxer?.destroy();
-      } catch (cleanupError) {
-        logger.warn('demuxer', 'Demuxer cleanup failed after planning error (non-critical)', {
-          error: getErrorMessage(cleanupError),
-        });
-      }
-
+      this.destroyDemuxerSafely(
+        demuxer,
+        'Demuxer cleanup failed after planning error (non-critical)'
+      );
       throw error;
+    }
+  }
+
+  private destroyDemuxerSafely(demuxer: VideoDemuxer | null, message: string): void {
+    try {
+      demuxer?.destroy();
+    } catch (cleanupError) {
+      logger.warn('demuxer', message, {
+        error: getErrorMessage(cleanupError),
+      });
     }
   }
 }

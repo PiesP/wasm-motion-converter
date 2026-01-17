@@ -93,7 +93,7 @@ export interface VideoTrackInfo {
  */
 export type PipelineType = 'webcodecs-hw' | 'webcodecs-sw' | 'ffmpeg-wasm-full';
 
-export type VideoPipelineSelectionErrorCode =
+type VideoPipelineSelectionErrorCode =
   | 'DecodingNotSupported'
   | 'ContainerNotSupported'
   | 'MissingCapabilities';

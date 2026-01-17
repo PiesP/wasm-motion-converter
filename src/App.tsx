@@ -8,31 +8,31 @@ import FileDropzone from '@components/FileDropzone';
 import FormatSelector from '@components/FormatSelector';
 import LicenseAttribution from '@components/LicenseAttribution';
 import LoadingOverlay from '@components/LoadingOverlay';
-import { OfflineBanner } from '@components/OfflineBanner';
+import OfflineBanner from '@components/OfflineBanner';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
 import ThemeToggle from '@components/ThemeToggle';
-import Button from '@components/ui/button';
-import Panel from '@components/ui/panel';
+import Button from '@components/ui/Button';
+import Panel from '@components/ui/Panel';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import {
   isPreloadComplete,
   type PreloadProgress,
   preloadAllDependencies,
-} from '@services/cdn/unified-preloader';
+} from '@services/cdn/unified-preloader-service';
 import {
   getConversionAutoSelectionDebug,
   getConversionPhaseTimingsDebug,
-} from '@services/orchestration/conversion-debug';
+} from '@services/orchestration/conversion-debug-service';
 import { conversionMetricsService } from '@services/orchestration/conversion-metrics-service';
 import {
   clearDevConversionOverrides,
   getDevConversionOverrides,
   setDevConversionOverrides,
-} from '@services/orchestration/dev-conversion-overrides';
+} from '@services/orchestration/dev-conversion-overrides-service';
 import { strategyHistoryService } from '@services/orchestration/strategy-history-service';
 import { strategyRegistryService } from '@services/orchestration/strategy-registry-service';
-import { isLikelyFirstVisit } from '@services/sw/sw-readiness';
+import { isLikelyFirstVisit } from '@services/sw/sw-readiness-service';
 import { extendedCapabilityService } from '@services/video-pipeline/extended-capability-service';
 import {
   appState,
@@ -482,7 +482,7 @@ const App: Component = () => {
                 });
               },
               pickVideoFile: async (accept?: string) => {
-                const mod = await import('@services/dev/mp4-smoke-test');
+                const mod = await import('@services/dev/mp4-smoke-test-service');
                 return mod.pickVideoFile(accept);
               },
               smokeMp4: async (
@@ -500,7 +500,7 @@ const App: Component = () => {
                   playbackTimeoutMs?: number;
                 }
               ) => {
-                const mod = await import('@services/dev/mp4-smoke-test');
+                const mod = await import('@services/dev/mp4-smoke-test-service');
                 const promise = mod.runMp4SmokeTest({ file, options });
 
                 // Dev-only ergonomics: users often call this from the console without await.

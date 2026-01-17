@@ -1,114 +1,98 @@
 import { cancelDialog, confirmDialog, getConfirmationState } from '@stores/confirmation-store';
 import type { ValidationWarning } from '@t/validation-types';
-import type { Component } from 'solid-js';
-import { createEffect, For, onCleanup, onMount, Show } from 'solid-js';
+import { type Component, createEffect, For, type JSX, onCleanup, onMount, Show } from 'solid-js';
 
-/**
- * Get Tailwind color classes based on warning severity
- *
- * @param severity - Warning severity level
- * @returns Tailwind CSS color classes
- */
-function getSeverityColor(severity: ValidationWarning['severity']): string {
-  switch (severity) {
-    case 'error':
-      return 'text-red-600 dark:text-red-400';
-    case 'warning':
-      return 'text-yellow-600 dark:text-yellow-400';
-    case 'info':
-      return 'text-blue-600 dark:text-blue-400';
-  }
-}
+const SEVERITY_COLORS: Record<ValidationWarning['severity'], string> = {
+  error: 'text-red-600 dark:text-red-400',
+  warning: 'text-yellow-600 dark:text-yellow-400',
+  info: 'text-blue-600 dark:text-blue-400',
+};
 
-/**
- * Get emoji icon based on warning severity
- *
- * @param severity - Warning severity level
- * @returns Emoji icon string
- */
-function getSeverityIcon(severity: ValidationWarning['severity']): string {
-  switch (severity) {
-    case 'error':
-      return '⛔';
-    case 'warning':
-      return '⚠️';
-    case 'info':
-      return 'ℹ️';
-  }
-}
+const SEVERITY_ICONS: Record<ValidationWarning['severity'], string> = {
+  error: '⛔',
+  warning: '⚠️',
+  info: 'ℹ️',
+};
 
-/**
- * Confirmation modal for displaying validation warnings
- * and requiring user confirmation before proceeding
- *
- * @example
- * ```tsx
- * <ConfirmationModal />
- * ```
- */
 const ConfirmationModal: Component = () => {
   const state = getConfirmationState;
   let modalRef: HTMLDivElement | undefined;
   let cancelButtonRef: HTMLButtonElement | undefined;
   let previouslyFocusedElement: HTMLElement | null = null;
 
-  // Handle ESC key to close modal
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Escape' && state().isVisible) {
       cancelDialog();
     }
   };
 
-  // Focus trap for modal accessibility
   const handleFocusTrap = (event: KeyboardEvent) => {
-    if (event.key === 'Tab' && state().isVisible && modalRef) {
-      const focusableElements = modalRef.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
+    if (!modalRef || event.key !== 'Tab' || !state().isVisible) {
+      return;
+    }
 
-      if (focusableElements.length === 0) {
-        return;
-      }
+    const focusableElements = modalRef.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
 
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements[focusableElements.length - 1];
+    if (focusableElements.length === 0) {
+      return;
+    }
 
-      if (event.shiftKey && document.activeElement === firstElement) {
-        event.preventDefault();
-        lastElement?.focus();
-      } else if (!event.shiftKey && document.activeElement === lastElement) {
-        event.preventDefault();
-        firstElement?.focus();
-      }
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault();
+      lastElement?.focus();
+      return;
+    }
+
+    if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault();
+      firstElement?.focus();
     }
   };
 
+  const handleBackdropClick: JSX.EventHandlerUnion<HTMLDivElement, MouseEvent> = (event) => {
+    if (event.target === event.currentTarget) {
+      cancelDialog();
+    }
+  };
+
+  const scheduleRestoreFocus = (element: HTMLElement | null) => {
+    if (!element) {
+      return;
+    }
+
+    queueMicrotask(() => {
+      element.focus();
+    });
+  };
+
+  const scheduleCancelFocus = () => {
+    queueMicrotask(() => {
+      cancelButtonRef?.focus();
+    });
+  };
+
   onMount(() => {
-    // Add event listeners for keyboard navigation
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keydown', handleFocusTrap);
   });
 
   createEffect(() => {
-    const isVisible = state().isVisible;
-    if (isVisible) {
+    if (state().isVisible) {
       previouslyFocusedElement = (document.activeElement as HTMLElement | null) ?? null;
-      queueMicrotask(() => {
-        cancelButtonRef?.focus();
-      });
+      scheduleCancelFocus();
       return;
     }
 
-    if (previouslyFocusedElement) {
-      queueMicrotask(() => {
-        previouslyFocusedElement?.focus();
-      });
-      previouslyFocusedElement = null;
-    }
+    scheduleRestoreFocus(previouslyFocusedElement);
+    previouslyFocusedElement = null;
   });
 
   onCleanup(() => {
-    // Remove event listeners on cleanup
     document.removeEventListener('keydown', handleKeyDown);
     document.removeEventListener('keydown', handleFocusTrap);
   });
@@ -121,12 +105,7 @@ const ConfirmationModal: Component = () => {
         aria-modal="true"
         aria-labelledby="modal-title"
         aria-describedby="modal-description"
-        onClick={(e) => {
-          // Close modal when clicking backdrop
-          if (e.target === e.currentTarget) {
-            cancelDialog();
-          }
-        }}
+        onClick={handleBackdropClick}
       >
         <div
           ref={modalRef}
@@ -151,10 +130,10 @@ const ConfirmationModal: Component = () => {
                 >
                   <div class="flex items-start gap-2">
                     <span class="text-lg" aria-hidden="true">
-                      {getSeverityIcon(warning.severity)}
+                      {SEVERITY_ICONS[warning.severity]}
                     </span>
                     <div class="flex-1">
-                      <p class={`font-medium ${getSeverityColor(warning.severity)}`}>
+                      <p class={`font-medium ${SEVERITY_COLORS[warning.severity]}`}>
                         {warning.message}
                       </p>
                       <Show when={warning.details}>
@@ -178,7 +157,7 @@ const ConfirmationModal: Component = () => {
             <button
               ref={cancelButtonRef}
               type="button"
-              onClick={() => cancelDialog()}
+              onClick={cancelDialog}
               class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-gray-900 dark:text-gray-100"
               aria-label="Cancel conversion and close modal"
             >
@@ -186,7 +165,7 @@ const ConfirmationModal: Component = () => {
             </button>
             <button
               type="button"
-              onClick={() => confirmDialog()}
+              onClick={confirmDialog}
               class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
               aria-label="Proceed with conversion despite warnings"
             >

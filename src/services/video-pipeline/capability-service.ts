@@ -26,8 +26,25 @@ const DEFAULT_CAPS: VideoCapabilities = {
   hardwareAccelerated: false,
 };
 
+type HardwareAccelerationPreference = 'prefer-hardware' | 'prefer-software';
+
 type VideoDecoderConfigWithAcceleration = VideoDecoderConfig & {
-  hardwareAcceleration?: 'prefer-hardware' | 'prefer-software';
+  hardwareAcceleration?: HardwareAccelerationPreference;
+};
+
+type DecodeSupportResult = {
+  supported: boolean;
+  hardwareAccelerationParamSupported: boolean;
+};
+
+type CodecProbeResult = {
+  supported: boolean;
+  hwHint?: boolean;
+};
+
+type WebpEncodeSupport = {
+  canvasWebpEncode: boolean;
+  offscreenWebpEncode: boolean;
 };
 
 class CapabilityService {
@@ -90,7 +107,7 @@ class CapabilityService {
   }
 
   private exposeToWindow(caps: VideoCapabilities): void {
-    if (typeof window === 'undefined') {
+    if (!this.hasWindow()) {
       return;
     }
 
@@ -104,7 +121,7 @@ class CapabilityService {
   }
 
   private readFromStorage(): VideoCapabilities | null {
-    if (typeof window === 'undefined') {
+    if (!this.canUseStorage()) {
       return null;
     }
 
@@ -115,33 +132,7 @@ class CapabilityService {
       }
 
       const parsed = JSON.parse(raw) as Partial<VideoCapabilities>;
-
-      const canvasWebpEncode = parsed.canvasWebpEncode === true;
-      const offscreenWebpEncode = parsed.offscreenWebpEncode === true;
-      const webpEncode = parsed.webpEncode === true || canvasWebpEncode || offscreenWebpEncode;
-
-      // Defensive validation: ensure booleans
-      const safe: VideoCapabilities = {
-        h264: parsed.h264 === true,
-        hevc: parsed.hevc === true,
-        av1: parsed.av1 === true,
-        canvasWebpEncode,
-        offscreenWebpEncode,
-        webpEncode,
-        hardwareAccelerated: parsed.hardwareAccelerated === true,
-      };
-
-      if (typeof parsed.h264HardwareDecode === 'boolean') {
-        safe.h264HardwareDecode = parsed.h264HardwareDecode;
-      }
-      if (typeof parsed.hevcHardwareDecode === 'boolean') {
-        safe.hevcHardwareDecode = parsed.hevcHardwareDecode;
-      }
-      if (typeof parsed.av1HardwareDecode === 'boolean') {
-        safe.av1HardwareDecode = parsed.av1HardwareDecode;
-      }
-
-      return safe;
+      return this.sanitizeStoredCaps(parsed);
     } catch (error) {
       logger.warn('general', 'Failed to read cached video caps (non-critical)', {
         error: getErrorMessage(error),
@@ -151,7 +142,7 @@ class CapabilityService {
   }
 
   private writeToStorage(caps: VideoCapabilities): void {
-    if (typeof window === 'undefined') {
+    if (!this.canUseStorage()) {
       return;
     }
 
@@ -164,190 +155,45 @@ class CapabilityService {
     }
   }
 
+  private sanitizeStoredCaps(parsed: Partial<VideoCapabilities>): VideoCapabilities {
+    const canvasWebpEncode = parsed.canvasWebpEncode === true;
+    const offscreenWebpEncode = parsed.offscreenWebpEncode === true;
+    const webpEncode = parsed.webpEncode === true || canvasWebpEncode || offscreenWebpEncode;
+
+    const safe: VideoCapabilities = {
+      h264: parsed.h264 === true,
+      hevc: parsed.hevc === true,
+      av1: parsed.av1 === true,
+      canvasWebpEncode,
+      offscreenWebpEncode,
+      webpEncode,
+      hardwareAccelerated: parsed.hardwareAccelerated === true,
+    };
+
+    if (typeof parsed.h264HardwareDecode === 'boolean') {
+      safe.h264HardwareDecode = parsed.h264HardwareDecode;
+    }
+    if (typeof parsed.hevcHardwareDecode === 'boolean') {
+      safe.hevcHardwareDecode = parsed.hevcHardwareDecode;
+    }
+    if (typeof parsed.av1HardwareDecode === 'boolean') {
+      safe.av1HardwareDecode = parsed.av1HardwareDecode;
+    }
+
+    return safe;
+  }
+
   private async probe(): Promise<VideoCapabilities> {
-    // Capability probing is browser-only.
-    if (typeof window === 'undefined') {
+    if (!this.hasWindow()) {
       return { ...DEFAULT_CAPS };
     }
 
-    const hasVideoDecoder = 'VideoDecoder' in window && typeof VideoDecoder !== 'undefined';
+    const h264 = await this.probeCodec('avc1.42E01E');
+    const hevc = await this.probeCodec('hvc1.1.6.L93.B0');
+    const av1 = await this.probeCodec('av01.0.05M.08');
 
-    const baseDecodeConfig = (codec: string): VideoDecoderConfig => ({
-      codec,
-      codedWidth: 640,
-      codedHeight: 360,
-    });
-
-    const probeDecodeSupport = async (params: {
-      codec: string;
-      prefer?: 'prefer-hardware' | 'prefer-software';
-    }): Promise<{
-      supported: boolean;
-      hardwareAccelerationParamSupported: boolean;
-    }> => {
-      if (!hasVideoDecoder || typeof VideoDecoder.isConfigSupported !== 'function') {
-        return { supported: false, hardwareAccelerationParamSupported: false };
-      }
-
-      const base = baseDecodeConfig(params.codec);
-
-      // Try with `hardwareAcceleration` first (when requested) to infer HW/SW signals.
-      if (params.prefer) {
-        const withAcceleration: VideoDecoderConfigWithAcceleration = {
-          ...base,
-          hardwareAcceleration: params.prefer,
-        };
-
-        try {
-          const support = await VideoDecoder.isConfigSupported(
-            withAcceleration as VideoDecoderConfig
-          );
-          return {
-            supported: support.supported ?? false,
-            hardwareAccelerationParamSupported: true,
-          };
-        } catch (error) {
-          // Some browsers reject the `hardwareAcceleration` field entirely.
-          // Fall back to a baseline probe so we don't incorrectly mark codecs unsupported.
-          try {
-            const support = await VideoDecoder.isConfigSupported(base);
-            logger.debug(
-              'general',
-              'VideoDecoder.isConfigSupported rejected hardwareAcceleration; using baseline probe',
-              {
-                codec: params.codec,
-                prefer: params.prefer,
-                error: getErrorMessage(error),
-              }
-            );
-            return {
-              supported: support.supported ?? false,
-              hardwareAccelerationParamSupported: false,
-            };
-          } catch (fallbackError) {
-            logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
-              codec: params.codec,
-              prefer: params.prefer,
-              error: getErrorMessage(fallbackError),
-            });
-            return {
-              supported: false,
-              hardwareAccelerationParamSupported: false,
-            };
-          }
-        }
-      }
-
-      // Baseline probe (no hardwareAcceleration)
-      try {
-        const support = await VideoDecoder.isConfigSupported(base);
-        return {
-          supported: support.supported ?? false,
-          hardwareAccelerationParamSupported: false,
-        };
-      } catch (error) {
-        logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
-          codec: params.codec,
-          error: getErrorMessage(error),
-        });
-        return { supported: false, hardwareAccelerationParamSupported: false };
-      }
-    };
-
-    const probeCodec = async (codec: string): Promise<{ supported: boolean; hwHint?: boolean }> => {
-      const base = await probeDecodeSupport({ codec });
-      const hw = await probeDecodeSupport({ codec, prefer: 'prefer-hardware' });
-      const sw = await probeDecodeSupport({ codec, prefer: 'prefer-software' });
-
-      const supported = base.supported || hw.supported || sw.supported;
-      const accelParamSupported =
-        hw.hardwareAccelerationParamSupported || sw.hardwareAccelerationParamSupported;
-
-      if (!accelParamSupported) {
-        return { supported };
-      }
-
-      if (hw.hardwareAccelerationParamSupported && hw.supported) {
-        return { supported, hwHint: true };
-      }
-
-      if (sw.hardwareAccelerationParamSupported && sw.supported) {
-        return { supported, hwHint: false };
-      }
-
-      return { supported };
-    };
-
-    const testOffscreenWebPEncode = async (): Promise<boolean> => {
-      try {
-        // OffscreenCanvas WebP encode probe (best-effort; mirrors worker-based encoder checks)
-        if (typeof OffscreenCanvas !== 'undefined') {
-          try {
-            const canvas = new OffscreenCanvas(1, 1);
-            const blob = await canvas.convertToBlob({ type: 'image/webp' });
-            if (blob && blob.size > 0 && blob.type === 'image/webp') {
-              return true;
-            }
-          } catch {
-            return false;
-          }
-        }
-
-        return false;
-      } catch (error) {
-        logger.debug('general', 'OffscreenCanvas WebP encoding probe failed', {
-          error: getErrorMessage(error),
-        });
-        return false;
-      }
-    };
-
-    const testCanvasWebPEncode = async (): Promise<boolean> => {
-      try {
-        // HTMLCanvas WebP encode probe (mirrors `webp-canvas` encoder adapter)
-        if (typeof document === 'undefined') {
-          return false;
-        }
-
-        const createdCanvas = document.createElement('canvas');
-        createdCanvas.width = 1;
-        createdCanvas.height = 1;
-
-        const ctx = createdCanvas.getContext('2d');
-        if (!ctx) {
-          return false;
-        }
-
-        ctx.fillStyle = 'rgb(0,0,0)';
-        ctx.fillRect(0, 0, 1, 1);
-
-        const blob = await new Promise<Blob | null>((resolve) => {
-          createdCanvas.toBlob(
-            (result) => {
-              resolve(result);
-            },
-            'image/webp',
-            0.9
-          );
-        });
-
-        return Boolean(blob && blob.size > 0 && blob.type === 'image/webp');
-      } catch (error) {
-        logger.debug('general', 'Canvas WebP encoding probe failed during capability detection', {
-          error: getErrorMessage(error),
-        });
-        return false;
-      }
-    };
-
-    // Decode support probing (required codec strings)
-    const h264 = await probeCodec('avc1.42E01E');
-    const hevc = await probeCodec('hvc1.1.6.L93.B0');
-    const av1 = await probeCodec('av01.0.05M.08');
-
-    const offscreenWebpEncode = await testOffscreenWebPEncode();
-    const canvasWebpEncode = await testCanvasWebPEncode();
-    const webpEncode = offscreenWebpEncode || canvasWebpEncode;
+    const webpSupport = await this.probeWebpEncodeSupport();
+    const webpEncode = webpSupport.offscreenWebpEncode || webpSupport.canvasWebpEncode;
 
     const anyHw = h264.hwHint === true || hevc.hwHint === true || av1.hwHint === true;
 
@@ -355,13 +201,12 @@ class CapabilityService {
       h264: h264.supported,
       hevc: hevc.supported,
       av1: av1.supported,
-      canvasWebpEncode,
-      offscreenWebpEncode,
+      canvasWebpEncode: webpSupport.canvasWebpEncode,
+      offscreenWebpEncode: webpSupport.offscreenWebpEncode,
       webpEncode,
       hardwareAccelerated: anyHw,
     };
 
-    // Preserve per-codec hardware decode signals when we can infer them.
     if (typeof h264.hwHint === 'boolean') {
       caps.h264HardwareDecode = h264.hwHint;
     }
@@ -373,6 +218,189 @@ class CapabilityService {
     }
 
     return caps;
+  }
+
+  private async probeCodec(codec: string): Promise<CodecProbeResult> {
+    const base = await this.probeDecodeSupport({ codec });
+    const hw = await this.probeDecodeSupport({ codec, prefer: 'prefer-hardware' });
+    const sw = await this.probeDecodeSupport({ codec, prefer: 'prefer-software' });
+
+    const supported = base.supported || hw.supported || sw.supported;
+    const accelParamSupported =
+      hw.hardwareAccelerationParamSupported || sw.hardwareAccelerationParamSupported;
+
+    if (!accelParamSupported) {
+      return { supported };
+    }
+
+    if (hw.hardwareAccelerationParamSupported && hw.supported) {
+      return { supported, hwHint: true };
+    }
+
+    if (sw.hardwareAccelerationParamSupported && sw.supported) {
+      return { supported, hwHint: false };
+    }
+
+    return { supported };
+  }
+
+  private async probeDecodeSupport(params: {
+    codec: string;
+    prefer?: HardwareAccelerationPreference;
+  }): Promise<DecodeSupportResult> {
+    if (!this.canProbeVideoDecoder()) {
+      return { supported: false, hardwareAccelerationParamSupported: false };
+    }
+
+    const base = this.createBaseDecodeConfig(params.codec);
+
+    if (params.prefer) {
+      const withAcceleration: VideoDecoderConfigWithAcceleration = {
+        ...base,
+        hardwareAcceleration: params.prefer,
+      };
+
+      try {
+        const support = await VideoDecoder.isConfigSupported(
+          withAcceleration as VideoDecoderConfig
+        );
+        return {
+          supported: support.supported ?? false,
+          hardwareAccelerationParamSupported: true,
+        };
+      } catch (error) {
+        try {
+          const support = await VideoDecoder.isConfigSupported(base);
+          logger.debug(
+            'general',
+            'VideoDecoder.isConfigSupported rejected hardwareAcceleration; using baseline probe',
+            {
+              codec: params.codec,
+              prefer: params.prefer,
+              error: getErrorMessage(error),
+            }
+          );
+          return {
+            supported: support.supported ?? false,
+            hardwareAccelerationParamSupported: false,
+          };
+        } catch (fallbackError) {
+          logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
+            codec: params.codec,
+            prefer: params.prefer,
+            error: getErrorMessage(fallbackError),
+          });
+          return {
+            supported: false,
+            hardwareAccelerationParamSupported: false,
+          };
+        }
+      }
+    }
+
+    try {
+      const support = await VideoDecoder.isConfigSupported(base);
+      return {
+        supported: support.supported ?? false,
+        hardwareAccelerationParamSupported: false,
+      };
+    } catch (error) {
+      logger.debug('general', 'VideoDecoder.isConfigSupported failed during probing', {
+        codec: params.codec,
+        error: getErrorMessage(error),
+      });
+      return { supported: false, hardwareAccelerationParamSupported: false };
+    }
+  }
+
+  private async probeWebpEncodeSupport(): Promise<WebpEncodeSupport> {
+    const [offscreenWebpEncode, canvasWebpEncode] = await Promise.all([
+      this.testOffscreenWebpEncode(),
+      this.testCanvasWebpEncode(),
+    ]);
+
+    return {
+      offscreenWebpEncode,
+      canvasWebpEncode,
+    };
+  }
+
+  private async testOffscreenWebpEncode(): Promise<boolean> {
+    try {
+      if (typeof OffscreenCanvas === 'undefined') {
+        return false;
+      }
+
+      const canvas = new OffscreenCanvas(1, 1);
+      const blob = await canvas.convertToBlob({ type: 'image/webp' });
+      return Boolean(blob && blob.size > 0 && blob.type === 'image/webp');
+    } catch (error) {
+      logger.debug('general', 'OffscreenCanvas WebP encoding probe failed', {
+        error: getErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  private async testCanvasWebpEncode(): Promise<boolean> {
+    try {
+      if (typeof document === 'undefined') {
+        return false;
+      }
+
+      const createdCanvas = document.createElement('canvas');
+      createdCanvas.width = 1;
+      createdCanvas.height = 1;
+
+      const ctx = createdCanvas.getContext('2d');
+      if (!ctx) {
+        return false;
+      }
+
+      ctx.fillStyle = 'rgb(0,0,0)';
+      ctx.fillRect(0, 0, 1, 1);
+
+      const blob = await new Promise<Blob | null>((resolve) => {
+        createdCanvas.toBlob(
+          (result) => {
+            resolve(result);
+          },
+          'image/webp',
+          0.9
+        );
+      });
+
+      return Boolean(blob && blob.size > 0 && blob.type === 'image/webp');
+    } catch (error) {
+      logger.debug('general', 'Canvas WebP encoding probe failed during capability detection', {
+        error: getErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  private createBaseDecodeConfig(codec: string): VideoDecoderConfig {
+    return {
+      codec,
+      codedWidth: 640,
+      codedHeight: 360,
+    };
+  }
+
+  private canProbeVideoDecoder(): boolean {
+    return (
+      this.hasWindow() &&
+      typeof VideoDecoder !== 'undefined' &&
+      typeof VideoDecoder.isConfigSupported === 'function'
+    );
+  }
+
+  private hasWindow(): boolean {
+    return typeof window !== 'undefined';
+  }
+
+  private canUseStorage(): boolean {
+    return this.hasWindow() && typeof window.localStorage !== 'undefined';
   }
 }
 

@@ -13,7 +13,7 @@
 /// <reference types="vite/client" />
 
 import type { ExtendedCapabilities, VideoCapabilities } from '@t/video-pipeline-types';
-import type { CodecPathPreference } from '@services/orchestration/types';
+import type { CodecPathPreference } from '@services/orchestration/types-service';
 import type { ConversionHistory } from '@services/orchestration/strategy-history-service';
 import type {
   ConversionMetricGroup,

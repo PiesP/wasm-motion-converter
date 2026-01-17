@@ -13,9 +13,9 @@
  * - Cancellable prefetch operations
  */
 
-import { loadFFmpegAsset } from '@services/ffmpeg/core-assets';
-import { shouldEnablePrefetch } from '@services/cdn/cdn-strategy-selector';
-import { isPreloadComplete } from '@services/cdn/unified-preloader';
+import { shouldEnablePrefetch } from '@services/cdn/cdn-strategy-selector-service';
+import { isPreloadComplete } from '@services/cdn/unified-preloader-service';
+import { loadFFmpegAsset } from '@services/ffmpeg/core-assets-service';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
@@ -50,7 +50,7 @@ const FFMPEG_ASSETS = [
     path: 'ffmpeg-core.wasm',
     mimeType: 'application/wasm',
     label: 'FFmpeg core WASM',
-    priority: 0, // Highest priority
+    priority: 0,
   },
   {
     path: 'ffmpeg-core.js',
@@ -65,6 +65,10 @@ const FFMPEG_ASSETS = [
     priority: 2,
   },
 ] as const;
+
+const DEFAULT_PREFETCH_DELAY_MS = 5000;
+const TRIGGER_PREFETCH_DELAY_MS = 1000;
+const PREFETCH_IDLE_TIMEOUT_MS = 1000;
 
 /**
  * Prefetch manager singleton
@@ -161,7 +165,7 @@ class PrefetchManager {
    * @returns Promise that resolves when prefetch completes or fails
    */
   public async start(options: { force?: boolean; delay?: number } = {}): Promise<void> {
-    const { force = false, delay = 5000 } = options;
+    const { force = false, delay = DEFAULT_PREFETCH_DELAY_MS } = options;
 
     // Check if unified preloader has already completed
     if (isPreloadComplete()) {
@@ -265,7 +269,7 @@ class PrefetchManager {
               () => {
                 startPrefetch();
               },
-              { timeout: 1000 }
+              { timeout: PREFETCH_IDLE_TIMEOUT_MS }
             );
           } else {
             // Fallback for browsers without requestIdleCallback
@@ -293,7 +297,7 @@ class PrefetchManager {
    */
   public async trigger(event: string): Promise<void> {
     logger.debug('prefetch', 'Prefetch triggered', { event });
-    return this.start({ force: false, delay: 1000 }); // 1s delay for UI interactions
+    return this.start({ force: false, delay: TRIGGER_PREFETCH_DELAY_MS });
   }
 }
 
@@ -308,54 +312,9 @@ const prefetchManager = new PrefetchManager();
  *
  * @param options - Prefetch options
  */
-export async function startPrefetch(options?: { force?: boolean; delay?: number }): Promise<void> {
-  return prefetchManager.start(options);
-}
-
-/**
- * Triggers prefetch on user interaction (e.g., dropzone hover)
- *
- * @param event - Event name for logging
- */
-export async function triggerPrefetch(event: string): Promise<void> {
-  return prefetchManager.trigger(event);
-}
-
-/**
- * Cancels ongoing prefetch
- */
-export function cancelPrefetch(): void {
-  prefetchManager.cancel();
-}
-
 /**
  * Checks if FFmpeg is already prefetched
  */
 export function isPrefetched(): boolean {
   return prefetchManager.isPrefetched();
-}
-
-/**
- * Gets current prefetch status
- */
-export function getPrefetchStatus(): PrefetchStatus {
-  return prefetchManager.getStatus();
-}
-
-/**
- * Registers a progress callback
- *
- * @param callback - Progress callback function
- */
-export function onPrefetchProgress(callback: PrefetchProgressCallback): void {
-  prefetchManager.onProgress(callback);
-}
-
-/**
- * Unregisters a progress callback
- *
- * @param callback - Progress callback function
- */
-export function offPrefetchProgress(callback: PrefetchProgressCallback): void {
-  prefetchManager.offProgress(callback);
 }

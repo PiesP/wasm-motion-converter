@@ -12,18 +12,19 @@
  * Invalidation: hardware profile change, version bump, TTL expiry, browser updates
  */
 
-import type { ExtendedCapabilities } from '@t/video-pipeline-types';
-import { capabilityService } from '@services/video-pipeline/capability-service';
 import { createSingleton } from '@services/shared/singleton-service';
+import { capabilityService } from '@services/video-pipeline/capability-service';
 import { isWebCodecsDecodeSupported } from '@services/webcodecs-support-service';
-import { isHardwareCacheValid } from '@utils/hardware-profile';
+import type { ExtendedCapabilities } from '@t/video-pipeline-types';
 import { getErrorMessage } from '@utils/error-utils';
+import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { logger } from '@utils/logger';
 
 // NOTE: bumped to invalidate older cached results where `hardwareAcceleration` probing
 // could throw and incorrectly report codecs as unsupported.
 const STORAGE_KEY = 'extended_video_caps_v4' as const;
 const DETECTION_VERSION = 6 as const;
+
 /**
  * Capability cache TTL (24 hours)
  *
@@ -33,7 +34,7 @@ const DETECTION_VERSION = 6 as const;
  * - Hardware availability changes
  * - WebCodecs API changes
  */
-const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Cached extended capabilities with TTL and version
@@ -46,8 +47,20 @@ interface CachedExtendedCapabilities {
   hardwareProfileHash: string;
 }
 
+type HardwareAccelerationPreference = 'prefer-hardware' | 'prefer-software';
+
 type VideoDecoderConfigWithAcceleration = VideoDecoderConfig & {
-  hardwareAcceleration?: 'prefer-hardware' | 'prefer-software';
+  hardwareAcceleration?: HardwareAccelerationPreference;
+};
+
+type DecodeSupportResult = {
+  supported: boolean;
+  hardwareAccelerationParamSupported: boolean;
+};
+
+type CodecDecodeResult = {
+  supported: boolean;
+  hwHint?: boolean;
 };
 
 const DEFAULT_EXTENDED_CAPS: ExtendedCapabilities = {
@@ -116,7 +129,6 @@ class ExtendedCapabilityService {
    * @returns Promise resolving to extended capabilities
    */
   async detectCapabilities(): Promise<ExtendedCapabilities> {
-    // Check cache first
     if (this.cached) {
       return this.cached;
     }
@@ -128,10 +140,8 @@ class ExtendedCapabilityService {
       return cached;
     }
 
-    // Probe capabilities
     const caps = await this.probe();
 
-    // Cache results
     this.cached = caps;
     this.writeToStorage(caps);
     this.exposeToWindow(caps);
@@ -146,14 +156,17 @@ class ExtendedCapabilityService {
    */
   clearCache(): void {
     this.cached = null;
-    if (typeof window !== 'undefined') {
-      try {
-        window.localStorage.removeItem(STORAGE_KEY);
-      } catch (error) {
-        logger.warn('general', 'Failed to clear extended capability cache', {
-          error: getErrorMessage(error),
-        });
-      }
+
+    if (!this.canUseStorage()) {
+      return;
+    }
+
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+    } catch (error) {
+      logger.warn('general', 'Failed to clear extended capability cache', {
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -161,7 +174,7 @@ class ExtendedCapabilityService {
    * Expose capabilities on window for debugging (dev mode only)
    */
   private exposeToWindow(caps: ExtendedCapabilities): void {
-    if (typeof window === 'undefined') {
+    if (!this.hasWindow()) {
       return;
     }
 
@@ -180,7 +193,7 @@ class ExtendedCapabilityService {
    * Read capabilities from localStorage with validation
    */
   private readFromStorage(): ExtendedCapabilities | null {
-    if (typeof window === 'undefined') {
+    if (!this.canUseStorage()) {
       return null;
     }
 
@@ -192,7 +205,6 @@ class ExtendedCapabilityService {
 
       const parsed = JSON.parse(raw) as CachedExtendedCapabilities;
 
-      // Validate cache
       if (!this.isCacheValid(parsed)) {
         logger.debug('general', 'Extended capability cache invalid, will re-detect', {
           reason: this.getCacheInvalidReason(parsed),
@@ -214,7 +226,7 @@ class ExtendedCapabilityService {
    * Write capabilities to localStorage
    */
   private writeToStorage(caps: ExtendedCapabilities): void {
-    if (typeof window === 'undefined') {
+    if (!this.canUseStorage()) {
       return;
     }
 
@@ -240,22 +252,18 @@ class ExtendedCapabilityService {
    * Check if cached data is still valid
    */
   private isCacheValid(cached: CachedExtendedCapabilities): boolean {
-    // Check version
     if (cached.version !== DETECTION_VERSION) {
       return false;
     }
 
-    // Check TTL
     if (Date.now() > cached.expiresAt) {
       return false;
     }
 
-    // Check hardware profile
     if (cached.hardwareProfileHash !== this.getHardwareProfileHash()) {
       return false;
     }
 
-    // Check if hardware cache is valid (from existing hardware-profile.ts)
     if (!isHardwareCacheValid()) {
       return false;
     }
@@ -294,9 +302,8 @@ class ExtendedCapabilityService {
       return 'server';
     }
 
-    // Simple hash based on hardware concurrency and user agent
     const cores = navigator.hardwareConcurrency || 0;
-    const ua = navigator.userAgent.substring(0, 50); // Truncate for storage efficiency
+    const ua = navigator.userAgent.substring(0, 50);
 
     return `${cores}:${ua}`;
   }
@@ -305,22 +312,18 @@ class ExtendedCapabilityService {
    * Probe all capabilities
    */
   private async probe(): Promise<ExtendedCapabilities> {
-    if (typeof window === 'undefined') {
+    if (!this.hasWindow()) {
       return { ...DEFAULT_EXTENDED_CAPS };
     }
 
-    // Get base capabilities from existing service
     const baseCaps = await capabilityService.detectCapabilities();
 
-    // Test VP8/VP9 decode support (avoid false negatives if `hardwareAcceleration` is unsupported)
     const vp8 = await this.probeCodecDecode('vp8');
     const vp9 = await this.probeCodecDecode('vp09.00.10.08');
 
-    // Test encoder availability
-    const gifEncode = true; // Always true (modern-gif WASM)
+    const gifEncode = true;
     const mp4Encode = await this.testMP4Encode();
 
-    // Environment detection
     const sharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
     const crossOriginIsolated =
       typeof window.crossOriginIsolated !== 'undefined' && window.crossOriginIsolated === true;
@@ -328,34 +331,22 @@ class ExtendedCapabilityService {
     const webcodecsDecode = isWebCodecsDecodeSupported();
     const offscreenCanvas = typeof OffscreenCanvas !== 'undefined';
 
-    // Performance indicators
     const hardwareDecodeCores = navigator.hardwareConcurrency;
     const estimatedMemoryMB = this.estimateMemory();
 
     const caps: ExtendedCapabilities = {
-      // Base capabilities
       ...baseCaps,
-
-      // Extended codec support
       vp8: vp8.supported,
       vp9: vp9.supported,
-
-      // Encoder capabilities
       gifEncode,
       mp4Encode,
-
-      // Environment features
       sharedArrayBuffer,
       crossOriginIsolated,
       workerSupport,
       webcodecsDecode,
       offscreenCanvas,
-
-      // Performance indicators
       hardwareDecodeCores,
       estimatedMemoryMB,
-
-      // Detection metadata
       detectedAt: Date.now(),
       detectionVersion: DETECTION_VERSION,
     };
@@ -370,7 +361,7 @@ class ExtendedCapabilityService {
     return caps;
   }
 
-  private baseDecodeConfig(codec: string): VideoDecoderConfig {
+  private createBaseDecodeConfig(codec: string): VideoDecoderConfig {
     return {
       codec,
       codedWidth: 640,
@@ -380,19 +371,13 @@ class ExtendedCapabilityService {
 
   private async probeDecodeSupport(params: {
     codec: string;
-    prefer?: 'prefer-hardware' | 'prefer-software';
-  }): Promise<{
-    supported: boolean;
-    hardwareAccelerationParamSupported: boolean;
-  }> {
-    if (
-      typeof VideoDecoder === 'undefined' ||
-      typeof VideoDecoder.isConfigSupported !== 'function'
-    ) {
+    prefer?: HardwareAccelerationPreference;
+  }): Promise<DecodeSupportResult> {
+    if (!this.canProbeVideoDecoder()) {
       return { supported: false, hardwareAccelerationParamSupported: false };
     }
 
-    const base = this.baseDecodeConfig(params.codec);
+    const base = this.createBaseDecodeConfig(params.codec);
 
     if (params.prefer) {
       const withAcceleration: VideoDecoderConfigWithAcceleration = {
@@ -453,16 +438,10 @@ class ExtendedCapabilityService {
     }
   }
 
-  private async probeCodecDecode(codec: string): Promise<{ supported: boolean; hwHint?: boolean }> {
+  private async probeCodecDecode(codec: string): Promise<CodecDecodeResult> {
     const base = await this.probeDecodeSupport({ codec });
-    const hw = await this.probeDecodeSupport({
-      codec,
-      prefer: 'prefer-hardware',
-    });
-    const sw = await this.probeDecodeSupport({
-      codec,
-      prefer: 'prefer-software',
-    });
+    const hw = await this.probeDecodeSupport({ codec, prefer: 'prefer-hardware' });
+    const sw = await this.probeDecodeSupport({ codec, prefer: 'prefer-software' });
 
     const supported = base.supported || hw.supported || sw.supported;
     const accelParamSupported =
@@ -508,7 +487,6 @@ class ExtendedCapabilityService {
       return undefined;
     }
 
-    // Check for performance.memory (non-standard, Chrome only)
     const performanceMemory = (
       performance as Performance & { memory?: { jsHeapSizeLimit?: number } }
     ).memory;
@@ -516,15 +494,30 @@ class ExtendedCapabilityService {
       return Math.round(performanceMemory.jsHeapSizeLimit / (1024 * 1024));
     }
 
-    // Fallback: Estimate based on device class
     const cores = navigator.hardwareConcurrency || 2;
     if (cores >= 8) {
-      return 4096; // High-end device
-    } else if (cores >= 4) {
-      return 2048; // Mid-range device
-    } else {
-      return 1024; // Low-end device
+      return 4096;
     }
+    if (cores >= 4) {
+      return 2048;
+    }
+    return 1024;
+  }
+
+  private hasWindow(): boolean {
+    return typeof window !== 'undefined';
+  }
+
+  private canUseStorage(): boolean {
+    return this.hasWindow() && typeof window.localStorage !== 'undefined';
+  }
+
+  private canProbeVideoDecoder(): boolean {
+    return (
+      this.hasWindow() &&
+      typeof VideoDecoder !== 'undefined' &&
+      typeof VideoDecoder.isConfigSupported === 'function'
+    );
   }
 }
 

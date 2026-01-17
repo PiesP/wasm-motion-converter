@@ -1,31 +1,14 @@
-import type { Component } from 'solid-js';
-import { createSignal, onMount, Show } from 'solid-js';
 import { logger } from '@utils/logger';
+import { type Component, createMemo, createSignal, onMount, Show } from 'solid-js';
 
-/**
- * LocalStorage key for storing expanded state
- */
 const STORAGE_KEY = 'envWarningExpanded';
 
-/**
- * Environment warning component
- *
- * Displays a warning banner when the environment doesn't support SharedArrayBuffer
- * or cross-origin isolation, which are required for FFmpeg multithreading.
- * Includes expandable details and an environment test button.
- *
- * @example
- * ```tsx
- * <EnvironmentWarning />
- * ```
- */
 const EnvironmentWarning: Component = () => {
   const [isExpanded, setIsExpanded] = createSignal(true);
 
-  const hasSharedArrayBuffer = (): boolean => typeof SharedArrayBuffer !== 'undefined';
-  const isCrossOriginIsolated = (): boolean => crossOriginIsolated === true;
+  const hasSharedArrayBuffer = createMemo(() => typeof SharedArrayBuffer !== 'undefined');
+  const isCrossOriginIsolated = createMemo(() => crossOriginIsolated === true);
 
-  // Load state from localStorage on mount
   onMount(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -37,33 +20,33 @@ const EnvironmentWarning: Component = () => {
     }
   });
 
-  /**
-   * Toggle expanded state and persist to localStorage
-   */
-  const handleToggleExpanded = (): void => {
-    const newState = !isExpanded();
-    setIsExpanded(newState);
-
+  const persistExpandedState = (nextValue: boolean) => {
     try {
-      localStorage.setItem(STORAGE_KEY, String(newState));
+      localStorage.setItem(STORAGE_KEY, String(nextValue));
     } catch (error) {
       logger.warn('general', 'Failed to save environment warning state', { error });
     }
   };
 
-  /**
-   * Test environment capabilities and display results
-   */
-  const handleTestEnvironment = (): void => {
-    const sharedArrayBufferAvailable = hasSharedArrayBuffer();
-    const crossOriginIsolationEnabled = isCrossOriginIsolated();
-
-    // Use WARN so results remain visible in production builds (INFO is filtered).
-    logger.warn('general', 'Environment test results', {
-      hasSharedArrayBuffer: sharedArrayBufferAvailable,
-      isCrossOriginIsolated: crossOriginIsolationEnabled,
+  const handleToggleExpanded = () => {
+    setIsExpanded((current) => {
+      const nextValue = !current;
+      persistExpandedState(nextValue);
+      return nextValue;
     });
   };
+
+  const handleTestEnvironment = () => {
+    logger.warn('general', 'Environment test results', {
+      hasSharedArrayBuffer: hasSharedArrayBuffer(),
+      isCrossOriginIsolated: isCrossOriginIsolated(),
+    });
+  };
+
+  const sharedArrayBufferLabel = createMemo(() =>
+    hasSharedArrayBuffer() ? 'Available' : 'Unavailable'
+  );
+  const crossOriginIsolatedLabel = createMemo(() => (isCrossOriginIsolated() ? 'true' : 'false'));
 
   return (
     <div
@@ -120,9 +103,8 @@ const EnvironmentWarning: Component = () => {
                 </p>
               </Show>
               <p class="mt-2">
-                Detected: SharedArrayBuffer{' '}
-                <strong>{hasSharedArrayBuffer() ? 'Available' : 'Unavailable'}</strong>,
-                crossOriginIsolated <strong>{isCrossOriginIsolated() ? 'true' : 'false'}</strong>.
+                Detected: SharedArrayBuffer <strong>{sharedArrayBufferLabel()}</strong>,
+                crossOriginIsolated <strong>{crossOriginIsolatedLabel()}</strong>.
               </p>
               <p class="mt-2">
                 <strong>If you're running this locally:</strong> Make sure you're using the Vite dev

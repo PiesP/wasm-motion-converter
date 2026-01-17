@@ -35,8 +35,7 @@
  * - Works with existing patterns
  */
 
-// biome-ignore lint/suspicious/noExplicitAny: Generic singleton requires 'any' for type storage
-const instances = new Map<string, any>();
+const instances = new Map<string, unknown>();
 
 /**
  * Create a singleton instance with automatic memoization

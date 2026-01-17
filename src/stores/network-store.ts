@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, onMount } from 'solid-js';
 
-export type NetworkState = {
+type NetworkState = {
   online: boolean;
   effectiveType: '4g' | '3g' | '2g' | 'slow-2g' | 'unknown';
   saveData: boolean;

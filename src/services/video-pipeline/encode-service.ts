@@ -15,19 +15,24 @@ import { isAv1Codec, isH264Codec, isHevcCodec, normalizeCodecString } from '@uti
 // capability checks, and fallbacks.
 export type EncodePlan = 'ffmpeg' | 'modern-gif' | 'encoder-factory-webp';
 
+type EncodePlanParams = {
+  format: 'gif' | 'webp';
+  codec?: string | null;
+};
+
+const VP_CODEC_HINTS = ['vp8', 'vp09', 'vp9'] as const;
+
+const hasVpCodecHint = (codec: string): boolean =>
+  VP_CODEC_HINTS.some((hint) => codec.includes(hint));
+
 class EncodeService {
-  selectEncodePlan(params: { format: 'gif' | 'webp'; codec?: string | null }): EncodePlan {
+  selectEncodePlan(params: EncodePlanParams): EncodePlan {
     if (params.format === 'gif') {
       const normalized = normalizeCodecString(params.codec ?? undefined);
       if (isAv1Codec(normalized) || isHevcCodec(normalized)) {
         return 'modern-gif';
       }
-      if (
-        isH264Codec(normalized) ||
-        normalized.includes('vp8') ||
-        normalized.includes('vp09') ||
-        normalized.includes('vp9')
-      ) {
+      if (isH264Codec(normalized) || hasVpCodecHint(normalized)) {
         return 'ffmpeg';
       }
 

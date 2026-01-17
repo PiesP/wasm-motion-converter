@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-01-16T20:41:22.639Z",
+  "generated": "2026-01-17T09:46:58.057Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -149,11 +149,6 @@
         "url": "https://unpkg.com/solid-js@1.9.10?module",
         "integrity": "sha384-TApbsA/o5atOfg08Vh4heb30RasqwxomKulmQ1CnfXEvoiRxOTRDDjK0AO1RNGhy",
         "size": 20472
-      },
-      "skypack": {
-        "url": "https://cdn.skypack.dev/solid-js@1.9.10",
-        "integrity": "sha384-PwQCXAv7jqnJbTzsxvqAxH5ltQSvtk9uHunjrOhASWri5+N9Ry2kaUM59H1f+zvs",
-        "size": 792
       }
     },
     "solid-js/web": {

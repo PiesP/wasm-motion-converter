@@ -1,42 +1,14 @@
-import { Show, splitProps } from 'solid-js';
+import { type Component, createMemo, Show, splitProps } from 'solid-js';
 
-import type { Component } from 'solid-js';
-
-/**
- * Memory usage threshold percentage for critical warning
- */
 const MEMORY_CRITICAL_THRESHOLD = 80;
 
-/**
- * Memory warning component props
- */
 interface MemoryWarningProps {
-  /** Whether the warning is shown during active conversion */
   isDuringConversion: boolean;
-  /** Callback to reduce conversion settings */
   onReduceSettings?: () => void;
-  /** Callback to cancel ongoing conversion */
   onCancel?: () => void;
-  /** Callback to dismiss the warning */
   onDismiss?: () => void;
 }
 
-/**
- * Memory warning alert component
- *
- * Displays a critical warning when browser memory usage exceeds threshold.
- * Shows different messages and actions depending on whether conversion is active.
- * Includes accessibility attributes for screen readers and proper alert semantics.
- *
- * @example
- * ```tsx
- * <MemoryWarning
- *   isDuringConversion={false}
- *   onReduceSettings={() => setQuality('low')}
- *   onDismiss={() => setShowWarning(false)}
- * />
- * ```
- */
 const MemoryWarning: Component<MemoryWarningProps> = (props) => {
   const [local] = splitProps(props, [
     'isDuringConversion',
@@ -44,13 +16,20 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
     'onCancel',
     'onDismiss',
   ]);
-  const warningTitle = (): string =>
-    local.isDuringConversion ? 'High Memory Usage Detected' : 'High Memory Warning';
 
-  const warningMessage = (): string =>
+  const warningTitle = createMemo(() =>
+    local.isDuringConversion ? 'High Memory Usage Detected' : 'High Memory Warning'
+  );
+
+  const warningMessage = createMemo(() =>
     local.isDuringConversion
       ? `Browser memory usage is critically high (>${MEMORY_CRITICAL_THRESHOLD}% of JS heap). This could cause the conversion to fail or the browser to crash.`
-      : `Your browser memory usage is already high (>${MEMORY_CRITICAL_THRESHOLD}% of JS heap). Starting conversion now may cause failures or crashes.`;
+      : `Your browser memory usage is already high (>${MEMORY_CRITICAL_THRESHOLD}% of JS heap). Starting conversion now may cause failures or crashes.`
+  );
+
+  const handleReduceSettings = () => local.onReduceSettings?.();
+  const handleCancel = () => local.onCancel?.();
+  const handleDismiss = () => local.onDismiss?.();
 
   return (
     <div
@@ -94,7 +73,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                   <Show when={local.onDismiss}>
                     <button
                       type="button"
-                      onClick={local.onDismiss}
+                      onClick={handleDismiss}
                       class="inline-flex items-center px-3 py-2 border border-red-300 dark:border-red-700 text-sm leading-4 font-medium rounded-md text-red-700 dark:text-red-300 bg-white dark:bg-red-950 hover:bg-red-50 dark:hover:bg-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                       aria-label="Close memory warning and try again"
                     >
@@ -104,7 +83,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                   <Show when={local.onReduceSettings}>
                     <button
                       type="button"
-                      onClick={local.onReduceSettings}
+                      onClick={handleReduceSettings}
                       class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                       aria-label="Reduce quality settings and start conversion"
                     >
@@ -117,7 +96,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
               <Show when={local.onCancel}>
                 <button
                   type="button"
-                  onClick={local.onCancel}
+                  onClick={handleCancel}
                   class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                   aria-label="Cancel ongoing conversion"
                 >
@@ -127,7 +106,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
               <Show when={local.onDismiss}>
                 <button
                   type="button"
-                  onClick={local.onDismiss}
+                  onClick={handleDismiss}
                   class="inline-flex items-center px-3 py-2 border border-red-300 dark:border-red-700 text-sm leading-4 font-medium rounded-md text-red-700 dark:text-red-300 bg-white dark:bg-red-950 hover:bg-red-50 dark:hover:bg-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                   aria-label="Dismiss warning and continue conversion"
                 >

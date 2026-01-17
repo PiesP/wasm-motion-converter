@@ -1,40 +1,17 @@
-import type { Component } from 'solid-js';
-import { createEffect, Show } from 'solid-js';
 import { theme, toggleTheme } from '@stores/theme-store';
+import { type Component, createEffect, createMemo, Show } from 'solid-js';
 
-/**
- * LocalStorage key for theme persistence
- */
 const THEME_STORAGE_KEY = 'theme';
-
-/**
- * CSS class for dark mode
- */
 const DARK_MODE_CLASS = 'dark';
 
-/**
- * Theme toggle button component
- *
- * Provides a button to toggle between light and dark themes.
- * Automatically syncs theme state to DOM (Tailwind dark mode) and localStorage.
- * Displays moon icon for light theme and sun icon for dark theme.
- *
- * @example
- * ```tsx
- * <ThemeToggle />
- * ```
- */
 const ThemeToggle: Component = () => {
-  // Computed values
-  const isDarkTheme = (): boolean => theme() === 'dark';
-  const themeLabel = (): string => `Switch to ${isDarkTheme() ? 'light' : 'dark'} theme`;
+  const isDarkTheme = createMemo(() => theme() === 'dark');
+  const themeLabel = createMemo(() => `Switch to ${isDarkTheme() ? 'light' : 'dark'} theme`);
 
-  // Sync theme state to DOM and localStorage
   createEffect(() => {
     const currentTheme = theme();
     const html = document.documentElement;
 
-    // Update DOM for Tailwind dark mode
     if (currentTheme === 'dark') {
       html.classList.add(DARK_MODE_CLASS);
       html.style.colorScheme = 'dark';
@@ -43,7 +20,6 @@ const ThemeToggle: Component = () => {
       html.style.colorScheme = 'light';
     }
 
-    // Persist theme preference
     localStorage.setItem(THEME_STORAGE_KEY, currentTheme);
   });
 

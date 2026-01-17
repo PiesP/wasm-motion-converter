@@ -17,7 +17,7 @@ import App from './App';
 import './index.css';
 
 // Initialize encoder registry
-import '@services/encoders/init';
+import '@services/encoders/init-service';
 
 import { capabilityService } from '@services/video-pipeline/capability-service';
 

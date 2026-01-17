@@ -18,12 +18,17 @@ import type {
   CodecPathPreference,
   ConversionPath,
   StrategyReasoning,
-} from '@services/orchestration/types';
+} from '@services/orchestration/types-service';
 import { createSingleton } from '@services/shared/singleton-service';
 import type { ConversionFormat } from '@t/conversion-types';
 import type { ContainerFormat, ExtendedCapabilities } from '@t/video-pipeline-types';
 import { isAv1Codec, isH264Codec, isHevcCodec } from '@utils/codec-utils';
 import { logger } from '@utils/logger';
+
+const RECENT_FAILURE_WINDOW = 3 as const;
+const FATAL_FAILURE_WINDOW = 5 as const;
+
+const buildStrategyKey = (codec: string, format: ConversionFormat): string => `${codec}:${format}`;
 
 /**
  * Strategy with confidence scoring
@@ -450,7 +455,7 @@ class StrategyRegistryService {
 
     // Normalize codec string for matching
     const normalizedCodec = this.normalizeCodec(codec);
-    const key = `${normalizedCodec}:${format}`;
+    const key = buildStrategyKey(normalizedCodec, format);
 
     // Check mandatory blockers first
     const blockerResult = this.checkMandatoryBlockers(codec, format, container, capabilities);
@@ -693,7 +698,7 @@ class StrategyRegistryService {
 
     // Avoid repeatedly selecting a path that just failed in this session.
     // Use a quick single-failure avoidance when the preferred path failed most recently.
-    const recentWindow = 3;
+    const recentWindow = RECENT_FAILURE_WINDOW;
     const recent = [...history.records]
       .sort((a, b) => a.timestamp - b.timestamp)
       .slice(-recentWindow);
@@ -701,7 +706,7 @@ class StrategyRegistryService {
     // Special-case: FFmpeg WASM fatal failures tend to persist within a session.
     // If we recently saw an OOB/terminate/palette-missing failure on the CPU path,
     // switch away from CPU immediately when a fallback exists.
-    const fatalWindow = 5;
+    const fatalWindow = FATAL_FAILURE_WINDOW;
     const recentFatal = [...history.records]
       .sort((a, b) => a.timestamp - b.timestamp)
       .slice(-fatalWindow);
@@ -915,11 +920,7 @@ class StrategyRegistryService {
 
     // GPU path requires WebCodecs support for the codec
     if (preferredPath === 'gpu') {
-      if (!capabilities.webcodecsDecode) {
-        return false;
-      }
-
-      return this.hasCodecSupport(codec, capabilities);
+      return this.canUseGpuPath(codec, capabilities);
     }
 
     // WebAV path requires mp4Encode capability
@@ -929,6 +930,14 @@ class StrategyRegistryService {
 
     // CPU path always available (FFmpeg)
     return true;
+  }
+
+  private canUseGpuPath(codec: string, capabilities: ExtendedCapabilities): boolean {
+    if (!capabilities.webcodecsDecode) {
+      return false;
+    }
+
+    return this.hasCodecSupport(codec, capabilities);
   }
 
   /**

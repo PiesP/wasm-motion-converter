@@ -11,12 +11,12 @@
  * @module services/ffmpeg-service
  */
 
-import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
 import {
   type FFmpegInputOverride,
-  type FrameSequenceParams,
   FFmpegPipeline,
-} from '@services/cpu-path/ffmpeg-pipeline';
+  type FrameSequenceParams,
+} from '@services/cpu-path/ffmpeg-pipeline-service';
+import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
 
 /**
  * FFmpeg Service

@@ -1,12 +1,36 @@
-import type { Component } from 'solid-js';
-import { Show } from 'solid-js';
 import { ffmpegService } from '@services/ffmpeg-service';
 import { logger } from '@utils/logger';
+import { type Component, Show, splitProps } from 'solid-js';
 
 type ExportOptions = {
   includeVerboseFfmpegProgress: boolean;
   format: 'text' | 'jsonl';
 };
+
+type ExportLogsButtonProps = {
+  class?: string;
+};
+
+const DEFAULT_BUTTON_CLASS =
+  'p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900';
+const LOG_FILENAME_PREFIX = 'motion-converter-logs';
+const STDOUT_PREFIX = '[stdout] ';
+const STDERR_PREFIX = '[stderr] ';
+
+const NOISY_FFMPEG_PROGRESS_KEYS = new Set([
+  'frame',
+  'fps',
+  'stream_0_0_q',
+  'bitrate',
+  'total_size',
+  'out_time_us',
+  'out_time_ms',
+  'out_time',
+  'dup_frames',
+  'drop_frames',
+  'speed',
+  'progress',
+]);
 
 const formatTimestampForFilename = (date: Date): string => {
   const pad = (value: number) => value.toString().padStart(2, '0');
@@ -17,6 +41,11 @@ const formatTimestampForFilename = (date: Date): string => {
   const min = pad(date.getMinutes());
   const ss = pad(date.getSeconds());
   return `${yyyy}${mm}${dd}-${hh}${min}${ss}`;
+};
+
+const buildExportFilename = (format: ExportOptions['format'], timestamp: Date): string => {
+  const suffix = format === 'jsonl' ? 'jsonl' : 'log';
+  return `${LOG_FILENAME_PREFIX}-${formatTimestampForFilename(timestamp)}.${suffix}`;
 };
 
 const downloadText = (params: { filename: string; text: string; mimeType?: string }): void => {
@@ -30,46 +59,28 @@ const downloadText = (params: { filename: string; text: string; mimeType?: strin
   const url = URL.createObjectURL(blob);
 
   try {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = params.filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = params.filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
   } finally {
     URL.revokeObjectURL(url);
   }
 };
 
 const isNoisyFfmpegProgressStdoutLine = (line: string): boolean => {
-  if (!line.startsWith('[stdout] ')) {
+  if (!line.startsWith(STDOUT_PREFIX)) {
     return false;
   }
 
-  // FFmpeg `-progress -` key/value lines are useful for debugging parsers but are extremely noisy.
-  // Example: "[stdout] out_time_ms=2160000".
-  const key = line.slice('[stdout] '.length).split('=')[0]?.trim() ?? '';
+  const key = line.slice(STDOUT_PREFIX.length).split('=')[0]?.trim() ?? '';
   if (!key) {
     return false;
   }
 
-  // Keep this list conservative: only filter the well-known `-progress` fields.
-  const noisyKeys = new Set([
-    'frame',
-    'fps',
-    'stream_0_0_q',
-    'bitrate',
-    'total_size',
-    'out_time_us',
-    'out_time_ms',
-    'out_time',
-    'dup_frames',
-    'drop_frames',
-    'speed',
-    'progress',
-  ]);
-
-  return noisyKeys.has(key);
+  return NOISY_FFMPEG_PROGRESS_KEYS.has(key);
 };
 
 const filterFfmpegLogsForExport = (
@@ -84,7 +95,6 @@ const filterFfmpegLogsForExport = (
   let removedCount = 0;
 
   for (const line of logs) {
-    // `Aborted()` is often emitted by ffmpeg.wasm after success; we suppress it from export by default.
     if (line === '[stderr] Aborted()') {
       removedCount += 1;
       continue;
@@ -109,37 +119,25 @@ const tryParseJson = (value: string): unknown => {
   }
 };
 
+const safeValue = (resolve: () => string, fallback: string): string => {
+  try {
+    return resolve();
+  } catch {
+    return fallback;
+  }
+};
+
 const buildExportText = (options: ExportOptions): string => {
   const now = new Date();
 
   const envLines: string[] = [];
   envLines.push('dropconvert-wasm log export');
   envLines.push(`timestamp: ${now.toISOString()}`);
-
-  try {
-    envLines.push(`url: ${typeof location !== 'undefined' ? location.href : 'unavailable'}`);
-  } catch {
-    envLines.push('url: unavailable');
-  }
-
-  try {
-    envLines.push(
-      `userAgent: ${typeof navigator !== 'undefined' ? navigator.userAgent : 'unavailable'}`
-    );
-  } catch {
-    envLines.push('userAgent: unavailable');
-  }
-
-  try {
-    envLines.push(
-      `crossOriginIsolated: ${
-        typeof crossOriginIsolated !== 'undefined' ? String(crossOriginIsolated) : 'unavailable'
-      }`
-    );
-  } catch {
-    envLines.push('crossOriginIsolated: unavailable');
-  }
-
+  envLines.push(`url: ${safeValue(() => location.href, 'unavailable')}`);
+  envLines.push(`userAgent: ${safeValue(() => navigator.userAgent, 'unavailable')}`);
+  envLines.push(
+    `crossOriginIsolated: ${safeValue(() => String(crossOriginIsolated), 'unavailable')}`
+  );
   envLines.push(`SharedArrayBuffer: ${typeof SharedArrayBuffer !== 'undefined'}`);
 
   const appLogs = logger.getRecentLogs();
@@ -175,27 +173,9 @@ const buildExportJsonl = (options: ExportOptions): string => {
     schemaVersion: 1,
     app: 'dropconvert-wasm',
     exportedAt: now.toISOString(),
-    url: (() => {
-      try {
-        return typeof location !== 'undefined' ? location.href : 'unavailable';
-      } catch {
-        return 'unavailable';
-      }
-    })(),
-    userAgent: (() => {
-      try {
-        return typeof navigator !== 'undefined' ? navigator.userAgent : 'unavailable';
-      } catch {
-        return 'unavailable';
-      }
-    })(),
-    crossOriginIsolated: (() => {
-      try {
-        return typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : 'unavailable';
-      } catch {
-        return 'unavailable';
-      }
-    })(),
+    url: safeValue(() => location.href, 'unavailable'),
+    userAgent: safeValue(() => navigator.userAgent, 'unavailable'),
+    crossOriginIsolated: safeValue(() => String(crossOriginIsolated), 'unavailable'),
     sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
     includeVerboseFfmpegProgress: options.includeVerboseFfmpegProgress,
     filteredFfmpegProgressLines: options.includeVerboseFfmpegProgress ? 0 : removedCount,
@@ -224,9 +204,9 @@ const buildExportJsonl = (options: ExportOptions): string => {
   }
 
   for (const line of ffmpegLogs) {
-    const stream = line.startsWith('[stdout] ')
+    const stream = line.startsWith(STDOUT_PREFIX)
       ? 'stdout'
-      : line.startsWith('[stderr] ')
+      : line.startsWith(STDERR_PREFIX)
         ? 'stderr'
         : null;
 
@@ -243,16 +223,9 @@ const buildExportJsonl = (options: ExportOptions): string => {
   return lines.join('\n');
 };
 
-type ExportLogsButtonProps = {
-  class?: string;
-};
-
-/**
- * Export Logs button (dev mode only).
- *
- * Downloads a clean text file containing recent app logs and the recent FFmpeg ring buffer.
- */
 const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
+  const [local] = splitProps(props, ['class']);
+
   const handleExport = (event: MouseEvent): void => {
     try {
       const includeVerboseFfmpegProgress = event.shiftKey === true;
@@ -263,9 +236,11 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
         format,
       });
 
+      const now = new Date();
+      const filename = buildExportFilename(format, now);
+
       if (format === 'jsonl') {
         const text = buildExportJsonl({ includeVerboseFfmpegProgress, format });
-        const filename = `motion-converter-logs-${formatTimestampForFilename(new Date())}.jsonl`;
         downloadText({
           filename,
           text,
@@ -275,22 +250,20 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
       }
 
       const text = buildExportText({ includeVerboseFfmpegProgress, format });
-      const filename = `motion-converter-logs-${formatTimestampForFilename(new Date())}.log`;
       downloadText({ filename, text });
     } catch (error) {
       logger.error('general', 'Failed to export logs', { error });
     }
   };
 
+  const buttonClass = () => local.class ?? DEFAULT_BUTTON_CLASS;
+
   return (
     <Show when={import.meta.env.DEV}>
       <button
         type="button"
         onClick={handleExport}
-        class={
-          props.class ??
-          'p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900'
-        }
+        class={buttonClass()}
         aria-label="Export logs"
         title="Export logs (Shift: verbose FFmpeg progress, Alt: JSONL for AI analysis)"
       >

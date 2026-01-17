@@ -1,8 +1,13 @@
 import { type Component, type JSX, Match, Switch, splitProps } from 'solid-js';
 
-/**
- * Available icon names
- */
+const ICON_SIZES = {
+  xs: 'h-3 w-3',
+  sm: 'h-4 w-4',
+  md: 'h-5 w-5',
+  lg: 'h-6 w-6',
+  xl: 'h-8 w-8',
+} satisfies Record<string, string>;
+
 type IconName =
   | 'info'
   | 'warning'
@@ -17,56 +22,20 @@ type IconName =
   | 'moon'
   | 'sun';
 
-/**
- * Icon size variants
- */
-type IconSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+type IconSize = keyof typeof ICON_SIZES;
 
-/**
- * Icon component props
- */
 interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'name'> {
-  /** Name of the icon to display */
   name: IconName;
-  /** Size variant of the icon (default: 'md') */
   size?: IconSize;
-  /** Custom CSS class names */
   class?: string;
-  /** Whether the icon is decorative or conveys meaning */
   'aria-hidden'?: boolean | 'true' | 'false';
 }
 
-/**
- * Icon component for displaying SVG icons
- *
- * @example
- * ```tsx
- * <Icon name="success" size="lg" aria-hidden={false} />
- * <Icon name="spinner" size="sm" class="animate-spin" />
- * ```
- */
 const Icon: Component<IconProps> = (props) => {
   const [local, others] = splitProps(props, ['name', 'size', 'class', 'aria-hidden']);
 
-  const size = () => local.size ?? 'md';
-
-  const sizeClasses = (): string => {
-    switch (size()) {
-      case 'xs':
-        return 'h-3 w-3';
-      case 'sm':
-        return 'h-4 w-4';
-      case 'md':
-        return 'h-5 w-5';
-      case 'lg':
-        return 'h-6 w-6';
-      case 'xl':
-        return 'h-8 w-8';
-    }
-  };
-
-  const combinedClasses = (): string => [sizeClasses(), local.class].filter(Boolean).join(' ');
-
+  const sizeClass = () => ICON_SIZES[local.size ?? 'md'];
+  const combinedClasses = () => [sizeClass(), local.class].filter(Boolean).join(' ');
   const ariaHidden = () => local['aria-hidden'] ?? true;
 
   return (

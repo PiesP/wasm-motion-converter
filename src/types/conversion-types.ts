@@ -127,7 +127,7 @@ export type ConversionOutputBlob = Blob & ConversionBlobMetadata;
  *
  * Complete record of a successful conversion including the output blob,
  * original file information, conversion settings, and performance metrics.
- * Results are stored in conversion-store for download and preview.
+ * Results are stored in conversion stores for download and preview.
  *
  * @example
  * const result: ConversionResult = {
@@ -261,7 +261,7 @@ export interface VideoMetadata {
  * @example
  * const type: PerformanceWarningType = 'resolution';
  */
-export type PerformanceWarningType = 'fileSize' | 'resolution' | 'duration' | 'codec';
+type PerformanceWarningType = 'fileSize' | 'resolution' | 'duration' | 'codec';
 
 /**
  * Performance warning severity levels
@@ -273,7 +273,7 @@ export type PerformanceWarningType = 'fileSize' | 'resolution' | 'duration' | 'c
  * @example
  * const severity: PerformanceWarningSeverity = 'high';
  */
-export type PerformanceWarningSeverity = 'critical' | 'high' | 'warning';
+type PerformanceWarningSeverity = 'critical' | 'high' | 'warning';
 
 /**
  * Performance warning with recommendation

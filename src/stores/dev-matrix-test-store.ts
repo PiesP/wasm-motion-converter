@@ -12,12 +12,18 @@
 import { createSignal } from 'solid-js';
 
 export const [devMatrixTestIsRunning, setDevMatrixTestIsRunning] = createSignal(false);
-export const [devMatrixTestCancelRequested, setDevMatrixTestCancelRequested] = createSignal(false);
+const [devMatrixTestCancelRequested, setDevMatrixTestCancelRequested] = createSignal(false);
+
+export { devMatrixTestCancelRequested };
+
+const setDevMatrixTestCancelRequestedValue = (value: boolean): void => {
+  setDevMatrixTestCancelRequested(value);
+};
 
 export function requestDevMatrixTestCancel(): void {
-  setDevMatrixTestCancelRequested(true);
+  setDevMatrixTestCancelRequestedValue(true);
 }
 
 export function resetDevMatrixTestCancel(): void {
-  setDevMatrixTestCancelRequested(false);
+  setDevMatrixTestCancelRequestedValue(false);
 }

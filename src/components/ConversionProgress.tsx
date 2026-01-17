@@ -1,6 +1,5 @@
-import Panel from '@components/ui/panel';
-import type { Component } from 'solid-js';
-import { splitProps } from 'solid-js';
+import Panel from '@components/ui/Panel';
+import { type Component, splitProps } from 'solid-js';
 import ProgressBar from './ProgressBar';
 
 /**
@@ -45,6 +44,7 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
     'startTime',
   ]);
   const isInProgress = () => local.progress < 100;
+  const ariaBusy = () => (isInProgress() ? true : undefined);
 
   return (
     <Panel
@@ -52,7 +52,7 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
       role="region"
       ariaLabel="Video conversion progress"
       ariaLive="polite"
-      ariaBusy={isInProgress()}
+      ariaBusy={ariaBusy()}
     >
       <ProgressBar
         progress={local.progress}
