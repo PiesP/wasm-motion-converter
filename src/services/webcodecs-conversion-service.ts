@@ -729,6 +729,7 @@ class WebCodecsConversionService {
 
     const decoder = new WebCodecsDecoderService();
     const capturedFrames: ImageData[] = [];
+    const gifFrameTimestamps: number[] = [];
     const webpCapturedFrames: EncoderFrame[] = []; // Collect WebP frames for batch encoding
     const webpFrameTimestamps: number[] = [];
 
@@ -827,6 +828,7 @@ class WebCodecsConversionService {
             throwIfCancelled,
             resetCaptureCollections: () => {
               capturedFrames.length = 0;
+              gifFrameTimestamps.length = 0;
               releaseWebPFrames();
               webpCapturedFrames.length = 0;
               webpFrameTimestamps.length = 0;
@@ -1003,6 +1005,7 @@ class WebCodecsConversionService {
 
               // format === 'gif' here (modern-gif path)
               capturedFrames.push(frame.imageData);
+              gifFrameTimestamps.push(frame.timestamp);
             },
           });
 
@@ -1023,6 +1026,7 @@ class WebCodecsConversionService {
             mode: captureMode,
           });
           capturedFrames.length = 0;
+          gifFrameTimestamps.length = 0;
           releaseWebPFrames();
           webpCapturedFrames.length = 0;
           webpFrameTimestamps.length = 0;
@@ -1143,6 +1147,7 @@ class WebCodecsConversionService {
           throwIfCancelled,
           resetCaptureCollections: () => {
             capturedFrames.length = 0;
+            gifFrameTimestamps.length = 0;
             releaseWebPFrames();
             webpCapturedFrames.length = 0;
             webpFrameTimestamps.length = 0;
@@ -1195,6 +1200,8 @@ class WebCodecsConversionService {
                     height: decodeResult.height,
                     fps: targetFps,
                     quality,
+                    timestamps: gifFrameTimestamps,
+                    durationSeconds: decodeResult.duration,
                   },
                   progressProxy
                 );
@@ -1231,6 +1238,9 @@ class WebCodecsConversionService {
                 height: decodeResult.height,
                 fps: targetFps,
                 quality,
+                timestamps: gifFrameTimestamps,
+                durationSeconds: decodeResult.duration,
+                onProgress: reportEncodeProgress,
                 shouldCancel,
               });
               ffmpegService.reportProgress(encodeEnd);
@@ -1262,6 +1272,9 @@ class WebCodecsConversionService {
               height: decodeResult.height,
               fps: targetFps,
               quality,
+              timestamps: gifFrameTimestamps,
+              durationSeconds: decodeResult.duration,
+              onProgress: reportEncodeProgress,
               shouldCancel,
             });
             ffmpegService.reportProgress(encodeEnd);
@@ -1367,6 +1380,7 @@ class WebCodecsConversionService {
         // Non-fatal.
       }
       webpCapturedFrames.length = 0;
+      gifFrameTimestamps.length = 0;
 
       // Ensure external monitoring is stopped
       // endExternalConversion now includes forceCleanupAll (see Step 5)

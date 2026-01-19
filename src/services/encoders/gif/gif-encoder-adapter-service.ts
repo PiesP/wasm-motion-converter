@@ -53,7 +53,17 @@ export class GIFEncoderAdapter implements EncoderAdapter {
    * Encode frames to GIF
    */
   async encode(request: EncoderRequest): Promise<Blob> {
-    const { frames, width, height, fps, quality, onProgress, shouldCancel } = request;
+    const {
+      frames,
+      width,
+      height,
+      fps,
+      quality,
+      timestamps,
+      durationSeconds,
+      onProgress,
+      shouldCancel,
+    } = request;
 
     logger.info('gif-encoder', 'Starting GIF encoding', {
       frameCount: frames.length,
@@ -73,6 +83,8 @@ export class GIFEncoderAdapter implements EncoderAdapter {
         height,
         fps,
         quality,
+        timestamps,
+        durationSeconds,
         onProgress: (current: number, total: number) => {
           onProgress?.(current, total);
         },

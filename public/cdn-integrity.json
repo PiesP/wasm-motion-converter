@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-01-19T01:27:54.035Z",
+  "generated": "2026-01-19T02:09:42.255Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -92,24 +92,24 @@
     },
     "mediabunny": {
       "esm.sh": {
-        "url": "https://esm.sh/mediabunny@1.27.6?target=esnext",
-        "integrity": "sha384-DdVApDNdzJBL0n3XoPHRSgh2uWE/Gfanf1F8/MJbOnhv9TyttY1o4DXRUle2+1WP",
+        "url": "https://esm.sh/mediabunny@1.28.0?target=esnext",
+        "integrity": "sha384-sMGDYv6mjFnRnNdU6VhWvsQpNortVka+sAGYOzL/r721XBpIKAjZNItHVIfXh1V9",
         "size": 91
       },
       "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/mediabunny@1.27.6/+esm",
-        "integrity": "sha384-If7/rt4JywkDrvsFW9aB6oW6BkNXFxQyENrB9eJra6bgBErdwh4DXZfhTMkzp5tV",
-        "size": 443253
+        "url": "https://cdn.jsdelivr.net/npm/mediabunny@1.28.0/+esm",
+        "integrity": "sha384-Q49X3t7yhtM3kuyRqdMRU5dEovu9wubJo6/pZQOuE7ebJqH9Yi6zDdlTG6+SB6AJ",
+        "size": 443844
       },
       "unpkg": {
-        "url": "https://unpkg.com/mediabunny@1.27.6?module",
+        "url": "https://unpkg.com/mediabunny@1.28.0?module",
         "integrity": "sha384-x/fkCUWvmL2Ob9wn4IQxij+2FmDur7R4zfaDhZC6UXwlV3OCsfIlyM2J2QJrFDAF",
         "size": 2858
       },
       "skypack": {
-        "url": "https://cdn.skypack.dev/mediabunny@1.27.6",
-        "integrity": "sha384-7POg3OEkYoU8XkFq8HJcCeR890jDgwkRRwToGTGc6+anplrfyrmAZ4rS1ef0zppQ",
-        "size": 1200738
+        "url": "https://cdn.skypack.dev/mediabunny@1.28.0",
+        "integrity": "sha384-5UKFgh0R2k/Cesm2wBZw8XsbpWURo7QCZpBI2ROLL3KL5C84+LsDIWhaR9C+pAKw",
+        "size": 1201894
       }
     },
     "modern-gif": {

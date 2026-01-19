@@ -41,6 +41,8 @@ export interface ModernGifOptions {
   height: number;
   fps: number;
   quality: 'low' | 'medium' | 'high';
+  timestamps?: number[];
+  durationSeconds?: number;
   loop?: number;
   onProgress?: (current: number, total: number) => void;
   shouldCancel?: () => boolean;
@@ -85,7 +87,8 @@ export async function encodeModernGif(
     throw new Error('No frames provided for GIF encoding.');
   }
 
-  const { width, height, fps, quality, onProgress, shouldCancel } = options;
+  const { width, height, fps, quality, timestamps, durationSeconds, onProgress, shouldCancel } =
+    options;
 
   if (shouldCancel?.()) {
     throw new Error('Conversion cancelled by user');
@@ -102,6 +105,8 @@ export async function encodeModernGif(
     height,
     fps,
     maxColors,
+    hasTimestamps: Boolean(timestamps && timestamps.length > 0),
+    durationSeconds,
   });
 
   // Convert frames to ImageData if needed (VideoFrame/ImageBitmap → ImageData)
@@ -115,6 +120,95 @@ export async function encodeModernGif(
 
   const totalFrames = imageDataFrames.length;
   const maxBeforeEncode = Math.max(0, totalFrames - 1);
+  const baseDelayMs = Math.max(10, Math.round(1000 / Math.max(1, fps)));
+
+  const resolveTargetDurationMs = (): number | null => {
+    if (!Number.isFinite(durationSeconds) || !durationSeconds || durationSeconds <= 0) {
+      return null;
+    }
+
+    return Math.round(durationSeconds * 1000);
+  };
+
+  const resolveDelayMs = (index: number): number => {
+    if (timestamps && timestamps.length >= totalFrames) {
+      const current = timestamps[index];
+      const next = timestamps[index + 1];
+
+      if (current !== undefined && next !== undefined) {
+        if (Number.isFinite(current) && Number.isFinite(next)) {
+          const deltaMs = Math.round((next - current) * 1000);
+          return Math.max(10, deltaMs);
+        }
+      }
+    }
+
+    return baseDelayMs;
+  };
+
+  const normalizeDelaysToTotal = (delays: number[], targetMs: number): number[] => {
+    if (!delays.length) {
+      return delays;
+    }
+
+    const normalized = delays.map((delay) => Math.max(10, Math.round(delay)));
+    let currentTotal = normalized.reduce((sum, value) => sum + value, 0);
+    let diff = targetMs - currentTotal;
+
+    if (diff === 0) {
+      return normalized;
+    }
+
+    const maxIterations = normalized.length * 4 + Math.min(10_000, Math.abs(diff));
+    let iterations = 0;
+
+    while (diff !== 0 && iterations < maxIterations) {
+      iterations += 1;
+      const direction = diff > 0 ? 1 : -1;
+      let adjusted = false;
+
+      for (let i = 0; i < normalized.length && diff !== 0; i += 1) {
+        const nextValue = normalized[i]! + direction;
+        if (nextValue < 10) {
+          continue;
+        }
+        normalized[i] = nextValue;
+        diff -= direction;
+        adjusted = true;
+      }
+
+      if (!adjusted) {
+        break;
+      }
+    }
+
+    currentTotal = normalized.reduce((sum, value) => sum + value, 0);
+    if (currentTotal !== targetMs) {
+      logger.warn('conversion', 'Failed to perfectly align GIF delays to target duration', {
+        targetTotalMs: targetMs,
+        currentTotalMs: currentTotal,
+        frameCount: normalized.length,
+      });
+    }
+
+    return normalized;
+  };
+
+  const initialDelays = imageDataFrames.map((_, index) => resolveDelayMs(index));
+  const targetDurationMs = resolveTargetDurationMs();
+  const delays = targetDurationMs
+    ? normalizeDelaysToTotal(initialDelays, targetDurationMs)
+    : initialDelays;
+
+  if (delays.length > 0) {
+    const avgDelay = delays.reduce((sum, value) => sum + value, 0) / delays.length;
+    logger.debug('conversion', 'Computed GIF frame delays', {
+      frameCount: delays.length,
+      avgDelayMs: avgDelay.toFixed(2),
+      minDelayMs: Math.min(...delays),
+      maxDelayMs: Math.max(...delays),
+    });
+  }
 
   // Convert ImageData frames to UnencodedFrame format
   const gifFrames = imageDataFrames.map((imageData, index) => {
@@ -128,7 +222,7 @@ export async function encodeModernGif(
 
     return {
       data: imageData.data,
-      delay: Math.max(1, Math.round(1000 / fps)),
+      delay: delays[index] ?? baseDelayMs,
     };
   });
 
