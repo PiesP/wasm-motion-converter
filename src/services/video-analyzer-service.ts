@@ -1,6 +1,5 @@
-import { ffmpegService } from './ffmpeg-service';
-
 import type { VideoMetadata } from '@t/conversion-types';
+import { ffmpegService } from './ffmpeg-service';
 
 /**
  * Timeout for video metadata loading (5 seconds)
@@ -35,6 +34,17 @@ const DEFAULT_METADATA_VALUE = 0;
  */
 export function analyzeVideo(file: File): Promise<VideoMetadata> {
   return ffmpegService.getVideoMetadata(file);
+}
+
+export async function analyzeVideoCodecOnly(
+  file: File
+): Promise<Pick<VideoMetadata, 'codec' | 'framerate' | 'bitrate'>> {
+  const metadata = await analyzeVideo(file);
+  return {
+    codec: metadata.codec,
+    framerate: metadata.framerate,
+    bitrate: metadata.bitrate,
+  };
 }
 
 /**

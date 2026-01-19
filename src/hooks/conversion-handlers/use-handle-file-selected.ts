@@ -1,6 +1,10 @@
 import { ffmpegService } from '@services/ffmpeg-service';
 import { checkPerformance, getRecommendedSettings } from '@services/performance-checker-service';
-import { analyzeVideo, analyzeVideoQuick } from '@services/video-analyzer-service';
+import {
+  analyzeVideo,
+  analyzeVideoCodecOnly,
+  analyzeVideoQuick,
+} from '@services/video-analyzer-service';
 import { setAppState, setLoadingProgress, setLoadingStatusMessage } from '@stores/app-store';
 import { setErrorContext, setErrorMessage } from '@stores/conversion-error-store';
 import {
@@ -61,10 +65,15 @@ const shouldRunFullAnalysis = (file: File, metadata: VideoMetadata | null): bool
   return !(isSmallFile && isShort && isLowRes);
 };
 
+let activeSelectionId = 0;
+
 export async function handleFileSelected(
   file: File,
   runtime: ConversionRuntimeController
 ): Promise<void> {
+  const selectionId = (activeSelectionId += 1);
+  const isStale = () => selectionId !== activeSelectionId;
+
   runtime.resetRuntimeState();
   resetErrorState();
   resetAnalysisState();
@@ -79,6 +88,9 @@ export async function handleFileSelected(
   }
 
   await ffmpegService.clearCachedInput();
+  if (isStale()) {
+    return;
+  }
 
   setInputFile(file);
 
@@ -98,20 +110,22 @@ export async function handleFileSelected(
       setAppState('loading-ffmpeg');
     }
 
-    let quickMetadata: VideoMetadata | null = null;
-    const quickAnalysisPromise = analyzeVideoQuick(file)
-      .then((metadata: VideoMetadata | null) => {
-        if (!metadata) {
+    const quickAnalysisPromise: Promise<VideoMetadata | null> = analyzeVideoQuick(file)
+      .then((metadata) => {
+        if (isStale()) {
           return null;
         }
-        quickMetadata = metadata;
         setVideoMetadata(metadata);
         setPerformanceWarnings(checkPerformance(file, metadata));
         return metadata;
       })
       .catch(() => null);
 
-    await Promise.all([initPromise, quickAnalysisPromise]);
+    const quickMetadata = await quickAnalysisPromise;
+    await initPromise;
+    if (isStale()) {
+      return;
+    }
 
     const requiresFullAnalysis = shouldRunFullAnalysis(file, quickMetadata);
     let finalMetadata: VideoMetadata | null = quickMetadata;
@@ -119,9 +133,31 @@ export async function handleFileSelected(
     if (requiresFullAnalysis) {
       setAppState('analyzing');
       const metadata = await analyzeVideo(file);
+      if (isStale()) {
+        return;
+      }
       finalMetadata = metadata;
       setVideoMetadata(metadata);
       setPerformanceWarnings(checkPerformance(file, metadata));
+    } else if (quickMetadata) {
+      try {
+        const codecMetadata = await analyzeVideoCodecOnly(file);
+        if (isStale()) {
+          return;
+        }
+        const mergedMetadata: VideoMetadata = {
+          width: quickMetadata.width,
+          height: quickMetadata.height,
+          duration: quickMetadata.duration,
+          codec: codecMetadata.codec,
+          framerate: codecMetadata.framerate,
+          bitrate: codecMetadata.bitrate,
+        };
+        finalMetadata = mergedMetadata;
+        setVideoMetadata(mergedMetadata);
+      } catch {
+        // Keep quick metadata if codec probe fails.
+      }
     }
 
     if (finalMetadata) {
@@ -133,8 +169,13 @@ export async function handleFileSelected(
       }
     }
 
-    setAppState('idle');
+    if (!isStale()) {
+      setAppState('idle');
+    }
   } catch (error) {
+    if (isStale()) {
+      return;
+    }
     setErrorMessage(getErrorMessage(error));
     setAppState('error');
     focusRetryButton();
