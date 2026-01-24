@@ -16,7 +16,10 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
-    ]
+    ],
+    "overrides": {
+      "seroval": "1.4.1"
+    }
   },
   "scripts": {
     "dev": "vite",
