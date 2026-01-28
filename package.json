@@ -46,7 +46,7 @@
     "comlink": "4.4.2",
     "mediabunny": "1.28.0",
     "modern-gif": "2.0.4",
-    "solid-js": "1.9.10"
+    "solid-js": "1.9.11"
   },
   "cdnDependencies": {
     "@ffmpeg/core-mt": "0.12.10",
