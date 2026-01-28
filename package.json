@@ -44,7 +44,7 @@
     "@ffmpeg/util": "0.12.2",
     "@webav/av-cliper": "1.2.8",
     "comlink": "4.4.2",
-    "mediabunny": "1.28.0",
+    "mediabunny": "1.31.0",
     "modern-gif": "2.0.4",
     "solid-js": "1.9.11"
   },
