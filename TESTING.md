@@ -1,92 +1,48 @@
 # Testing Checklist – dropconvert-wasm
 
-This checklist focuses on the SPA that converts a single video to GIF or WebP using ffmpeg.wasm and WebCodecs API entirely in the browser.
+This checklist covers the SPA that converts a single video to GIF/WebP entirely in the browser.
 
 ## Pre-test setup
 
 - `pnpm dev` → http://localhost:5173
 - `pnpm build && pnpm preview` → http://localhost:4173
-- Clear cache between first-run tests to re-download ffmpeg core (~30MB).
+- Clear cache to re-test first-run FFmpeg download (~30MB)
 
 ## Environment & isolation
 
-- In DevTools console, confirm:
+- DevTools console:
   - `crossOriginIsolated === true`
   - `typeof SharedArrayBuffer !== "undefined"`
-- In the Network tab, response headers include:
+- Network headers:
   - `Cross-Origin-Embedder-Policy: require-corp`
   - `Cross-Origin-Opener-Policy: same-origin`
-- No environment warning banner should appear when isolation is correct.
+- No environment warning banner when isolation is correct
 
-## UI & theme
+## Core flow
 
-- Initial load respects system theme (light/dark) and the toggle switches instantly.
-- Theme preference persists on reload.
-- All text/icons remain legible in both themes.
-
-## Core flow (single video)
-
-### Initial state
-
-- Dropzone visible with video hint.
-- Format, quality, and scale selectors shown but disabled until a video is prepared.
-- Convert button disabled.
-
-### Video selection & preparation
-
-- Drop a supported video (MP4/WebM/MOV with H.264/VP9/AV1 codec).
-- On first use, FFmpeg download progress appears (`Loading FFmpeg (~30MB)...`).
-- After FFmpeg loads, a short preparation/analyze step runs.
-- Once ready:
-  - Metadata or basic info is shown (if available).
-  - Any performance warnings surface for very large videos.
-  - Format/quality/scale controls enable and the Convert button activates.
-
-### Conversion
-
-- Click **Convert**:
-  - Progress bar updates from 0 → 100%.
-  - Elapsed time increments (mm:ss).
-  - Status text updates during work.
-- Small image (<5MB) finishes quickly; larger images still complete within the 5-minute timeout.
-
-### Result preview & download
-
-- Preview shows the generated loop.
-- Download saves with the correct extension (`.gif` or `.webp`) and the file opens/plays correctly.
-- Size stats make sense (output vs. input).
-
-### Reset / convert another
-
-- "Convert Another" resets to the initial state.
-- Dropzone reappears and settings reset to defaults.
+- Dropzone visible; Convert disabled before a video is prepared
+- First use shows FFmpeg download progress
+- After analysis, format/quality/scale controls enable
+- Convert shows progress, elapsed time, and status updates
+- Preview and download work; extension is `.gif` or `.webp`
+- "Convert Another" resets to the initial state
 
 ## Error handling
 
-- Unsupported file (e.g., .txt) → clear validation error, conversion blocked.
-- Oversized image beyond limits → friendly error or warning.
-- Missing isolation (no COOP/COEP) → environment warning banner appears.
-- Network offline during FFmpeg download → init timeout with guidance to retry.
-- If a conversion fails, the error message includes a suggestion to proceed (lower quality/scale, try GIF/WebP alternate).
+- Unsupported file shows validation error
+- Missing isolation shows environment warning
+- Network offline during FFmpeg download shows retry guidance
+- Conversion failure suggests a next action (lower quality/scale or alternate format)
 
-## Accessibility
+## Accessibility & themes
 
-- Keyboard navigation reaches all interactive elements in a logical order.
-- Focus rings are visible; Enter/Space activates buttons and radio inputs.
-- Labels are present for radios (format/quality/scale) and buttons.
-- Contrast is acceptable in light and dark themes.
+- Keyboard navigation reaches all interactive elements
+- Focus rings visible; Enter/Space activates controls
+- Labels present for radios and buttons
+- Light/dark themes are legible and consistent
 
-## Production build verification
+## Production verification
 
-- `pnpm quality` passes (lint, format check, typecheck).
-- `pnpm build` succeeds without errors.
-- `pnpm preview` serves the built app with COOP/COEP headers; `crossOriginIsolated` remains `true`.
-- Conversion succeeds for both GIF and WebP outputs.
-
-## Success criteria
-
-- Cross-origin isolation confirmed.
-- FFmpeg loads and shows progress on first run.
-- Single-video flow completes with working GIF and WebP outputs.
-- Clear progress, error, and warning messages at every stage.
-- Accessible and theme-consistent UI.
+- `pnpm quality` passes
+- `pnpm build` succeeds
+- `pnpm preview` keeps isolation and conversion works for GIF and WebP

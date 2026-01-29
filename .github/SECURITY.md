@@ -1,35 +1,27 @@
 # Security Policy
 
-This document describes how security is handled for **dropconvert-wasm** and how to responsibly report vulnerabilities.
+This document explains how to report security issues for **dropconvert-wasm**.
 
-## Supported Versions
+## Supported versions
 
-Security support is provided for the **latest released version**.
+Security support is provided for the latest released version.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-If you discover a security vulnerability, **do not** disclose it publicly.
+Do not disclose vulnerabilities publicly.
 
-1. Preferred: use **GitHub Security Advisories** for this repository.
-2. If that is not available, open a minimal GitHub issue asking for a private channel **without** sharing technical details.
+1. Preferred: use GitHub Security Advisories for this repository.
+2. If unavailable, open a minimal GitHub issue asking for a private channel without technical details.
 
-Please include, where possible:
+Include, where possible:
 
-- A short description and impact
+- Short description and impact
 - Steps to reproduce
 - Browser and OS
-- Any relevant console logs
+- Relevant console logs
 
-## Security Model & Privacy
+## Security model & privacy
 
-dropconvert-wasm is a **client-side web application**:
-
-- All conversion logic executes locally in the browser.
-- The application is designed to avoid uploading user files to a server.
-- The app downloads ffmpeg core assets from a CDN (unpkg) at runtime.
-
-## Development Notes
-
-- Keep dependencies up to date (Dependabot is enabled).
-- Avoid dynamic code execution (`eval`, `new Function`).
-- Be careful with any future networking features; keep a strict "no upload" default.
+- All conversion runs locally in the browser.
+- No user file uploads by design.
+- FFmpeg core assets are downloaded from a CDN (unpkg) at runtime.

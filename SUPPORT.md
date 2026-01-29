@@ -1,10 +1,10 @@
 # Support
 
-Thanks for using **dropconvert-wasm**! This app converts a single image to a short MP4 or GIF in your browser.
+Thanks for using **dropconvert-wasm**! This app converts a single video to GIF/WebP entirely in the browser.
 
 ## Questions
 
-- If Discussions are enabled, please ask there.
+- If Discussions are enabled, ask there.
 - Otherwise, open a GitHub issue with a clear question and context.
 
 ## Bug reports
@@ -14,8 +14,8 @@ Use the Bug Report template and include:
 - Browser + version, OS + device
 - Steps to reproduce (clicks/inputs)
 - Expected vs. actual result
-- Image details (format, resolution, file size)
-- DevTools info: `typeof SharedArrayBuffer`, `crossOriginIsolated`, and any console errors
+- Video details (format, codec, resolution, file size)
+- DevTools info: `typeof SharedArrayBuffer`, `crossOriginIsolated`, plus console errors
 
 ## Feature requests
 

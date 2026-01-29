@@ -1,32 +1,26 @@
 # Contributing
 
-Thanks for helping improve **dropconvert-wasm**! This is a Cloudflare Pages-ready **Vite + SolidJS + TypeScript** SPA that converts a single video to GIF or WebP entirely **in the browser** with **ffmpeg.wasm** (no uploads).
+Thanks for improving **dropconvert-wasm**. This is a Vite + SolidJS + TypeScript SPA that converts a single video to GIF/WebP entirely in the browser (no uploads).
 
-## Where to communicate
+## Communication
 
-- **Bug reports / feature requests:** GitHub Issues
-- **Security & privacy issues:** follow `.github/SECURITY.md`
-- **Questions/ideas:** GitHub Discussions (if enabled)
+- Bugs/features: GitHub Issues
+- Security/privacy: see `.github/SECURITY.md`
+- Questions: GitHub Discussions (if enabled)
 
 ## Before opening an issue
 
-Please check:
-
-- `README.md` and `SUPPORT.md`
-- Existing issues (avoid duplicates)
+- Read `README.md` and `SUPPORT.md`
+- Check existing issues
 
 ### Bug reports: include diagnostics
 
-To keep reports actionable, include:
-
 - Browser + version
-- OS + device type (desktop / mobile / tablet)
+- OS + device type
 - Expected vs. actual behavior
 - Exact repro steps
 - Input video details (format, codec, resolution, file size)
-- Console/network output, especially:
-  - `typeof SharedArrayBuffer`
-  - `crossOriginIsolated`
+- DevTools values: `typeof SharedArrayBuffer`, `crossOriginIsolated`
 
 DevTools snippet:
 
@@ -37,7 +31,7 @@ DevTools snippet:
 });
 ```
 
-Please avoid attaching sensitive or private files.
+Avoid attaching sensitive or private files.
 
 ## Development setup
 
@@ -58,8 +52,8 @@ pnpm install
 pnpm dev
 ```
 
-- Cross-origin isolation headers are configured in `vite.config.ts` for dev/preview.
-- First run will download ~30MB of ffmpeg core from the CDN.
+- COOP/COEP headers are configured in `vite.config.ts` for dev/preview.
+- First run downloads ~30MB ffmpeg core from the CDN.
 
 ### Quality checks (run before PRs)
 
@@ -67,52 +61,30 @@ pnpm dev
 - `pnpm fmt:check`
 - `pnpm typecheck`
 - `pnpm build`
-- Or run the bundle: `pnpm quality`
+- Or run: `pnpm quality`
 
-## Project constraints (must keep)
+## Project constraints
 
-- **No server upload:** files stay in-browser.
-- **SharedArrayBuffer / COOP+COEP required:**
+- No server upload (files stay in-browser).
+- SharedArrayBuffer requires COOP/COEP headers:
   - Cloudflare Pages: `public/_headers`
-  - Local dev/preview: `vite.config.ts` headers
-- **FFmpeg core from CDN:** loaded at runtime via `toBlobURL` using `@ffmpeg/core-mt` from unpkg (worker file included).
+  - Local dev/preview: `vite.config.ts`
+- FFmpeg core is loaded from CDN at runtime (`@ffmpeg/core-mt` via unpkg).
 
 ## Code style
 
-- Source code, comments, and docs are **English only**.
-- Keep diffs small and focused; preserve clear loading/progress/error states.
-- Prefer explicit, user-visible feedback for long-running actions.
+- Source, comments, and docs are English only.
+- Keep diffs small and focused; keep loading/progress/error states intact.
+- Provide explicit user feedback for long-running actions.
 
-## Code Review Checklist (Enforced)
+## Import rules (enforced)
 
-All pull requests must adhere to the following **import structure rules**. These are verified during code review:
+- Use alias-based, leaf imports for cross-folder modules.
+- No barrel imports.
+- No deep relative imports (`../`) across folders.
+- No `src/` absolute paths.
 
-### ✅ Required (Import Patterns)
-
-- [ ] **Alias imports only:** All internal imports use `@alias/module` (e.g., `@components/Button`, `@services/conversion-service`)
-- [ ] **Leaf module imports:** No barrel imports (e.g., `❌ @components`, `✅ @components/Button`)
-- [ ] **No relative imports:** Deeply nested imports use aliases, not `../` paths
-- [ ] **No absolute `src/` paths:** Never `src/components/Button`; use `@components/Button`
-
-### ❌ Forbidden (Will be requested to fix)
-
-| Pattern          | Example                            | Reason                                      |
-| ---------------- | ---------------------------------- | ------------------------------------------- |
-| Barrel imports   | `import x from "@components"`      | Defeats tree-shaking; obscures dependencies |
-| Relative imports | `import x from "../utils/logger"`  | Fragile during refactoring; unscalable      |
-| Absolute `src/`  | `import x from "src/utils/logger"` | Bypasses alias safety; inconsistent         |
-
-### Example PR Check
-
-**Before (❌ rejected):**
-
-```typescript
-import { Button } from "@components"; // Barrel
-import { logger } from "../utils/logger"; // Relative
-import { Task } from "src/types/task-types"; // Absolute src/
-```
-
-**After (✅ approved):**
+Example:
 
 ```typescript
 import { Button } from "@components/Button";
@@ -120,14 +92,7 @@ import { logger } from "@utils/logger";
 import type { Task } from "@t/task-types";
 ```
 
-**Why this matters:**
-
-- Easier refactoring (move files without breaking imports)
-- Better tree-shaking (dead code elimination)
-- Clearer module boundaries (circular dependency prevention)
-- Consistent IDE navigation across the codebase
-
-For detailed import rules, see [CODE_STANDARDS.md](CODE_STANDARDS.md#1-file-organization).
+See [CODE_STANDARDS.md](CODE_STANDARDS.md#1-file-organization) for details.
 
 ## License
 
