@@ -30,5 +30,6 @@
     "**/*.spec.{ts,tsx}",
     "**/*.d.ts"
   ],
+  "ignoreBinaries": ["fmt:check"],
   "ignoreExportsUsedInFile": true
 }

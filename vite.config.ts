@@ -18,9 +18,12 @@ function readRuntimeDependencies(): Record<string, string> {
   const pkgJsonPath = path.join(process.cwd(), 'package.json');
   const raw = readFileSync(pkgJsonPath, 'utf-8');
 
-  const pkg = JSON.parse(raw) as any;
-  const deps = (pkg?.dependencies ?? {}) as Record<string, string>;
-  const cdnDeps = (pkg?.cdnDependencies ?? {}) as Record<string, string>;
+  const pkg = JSON.parse(raw) as {
+    dependencies?: Record<string, string>;
+    cdnDependencies?: Record<string, string>;
+  };
+  const deps = pkg?.dependencies ?? {};
+  const cdnDeps = pkg?.cdnDependencies ?? {};
 
   const normalizeVersion = (spec: string): string =>
     String(spec)
