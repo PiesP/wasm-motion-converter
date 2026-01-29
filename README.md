@@ -33,7 +33,7 @@ pnpm preview
 pnpm lint
 pnpm lint:fix
 pnpm fmt
-pnpm fmt:check
+pnpm fmt:fix
 pnpm typecheck
 pnpm quality
 ```
