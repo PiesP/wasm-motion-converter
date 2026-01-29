@@ -5,12 +5,12 @@ Thanks for improving **dropconvert-wasm**. This is a Vite + SolidJS + TypeScript
 ## Communication
 
 - Bugs/features: GitHub Issues
-- Security/privacy: see `.github/SECURITY.md`
+- Security/privacy: see [.github/SECURITY.md](./.github/SECURITY.md)
 - Questions: GitHub Discussions (if enabled)
 
 ## Before opening an issue
 
-- Read `README.md` and `SUPPORT.md`
+- Read [README.md](./README.md) and [SUPPORT.md](./SUPPORT.md)
 - Check existing issues
 
 ### Bug reports: include diagnostics
@@ -92,8 +92,8 @@ import { logger } from "@utils/logger";
 import type { Task } from "@t/task-types";
 ```
 
-See [CODE_STANDARDS.md](CODE_STANDARDS.md#1-file-organization) for details.
+See [CODE_STANDARDS.md](./CODE_STANDARDS.md#1-file-organization) for details.
 
 ## License
 
-By contributing, you agree your contributions are licensed under the project license (see `LICENSE` and `public/LICENSES.md`).
+By contributing, you agree your contributions are licensed under the project license (see [LICENSE](./LICENSE) and [public/LICENSES.md](./public/LICENSES.md)).

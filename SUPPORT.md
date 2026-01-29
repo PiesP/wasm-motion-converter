@@ -23,4 +23,4 @@ Open a GitHub issue using the Feature Request template. Describe the workflow an
 
 ## Security or privacy issues
 
-Follow `.github/SECURITY.md`.
+Follow [.github/SECURITY.md](./.github/SECURITY.md).

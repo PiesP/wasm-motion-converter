@@ -16,7 +16,7 @@ All repository spaces: issues, pull requests, discussions, and code review.
 
 ## Reporting
 
-- Security/privacy concerns: use `.github/SECURITY.md`.
+- Security/privacy concerns: use [.github/SECURITY.md](./.github/SECURITY.md).
 - Other concerns: open an issue asking for moderator attention (keep details minimal).
 
 Maintainers may remove content or restrict participation to keep the community safe and productive.

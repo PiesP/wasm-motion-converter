@@ -1,6 +1,6 @@
 # dropconvert-wasm
 
-SolidJS SPA that converts a single video into GIF/WebP entirely in the browser using ffmpeg.wasm. No uploads, no servers.
+SolidJS SPA that converts a single video into GIF/WebP entirely in the browser using FFmpeg (ffmpeg.wasm). No uploads, no servers.
 
 Live demo: https://wasm-motion-converter.pages.dev/
 
@@ -50,28 +50,18 @@ pnpm quality
 
 - `pnpm quality`
 - `pnpm build && pnpm preview`
-- Manual checklist: `TESTING.md`
+- Manual checklist: [TESTING.md](./TESTING.md)
 
 ## Support
 
-- Docs: `README.md` + `SUPPORT.md`
+- Docs: [README.md](./README.md) + [SUPPORT.md](./SUPPORT.md)
 - Bugs/features: GitHub Issues
-- Security: `.github/SECURITY.md`
+- Security: [.github/SECURITY.md](./.github/SECURITY.md)
 
 ## Contributing
 
-See `CONTRIBUTING.md`.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-MIT for app code. FFmpeg core is LGPL 2.1+. See `LICENSE` and `public/LICENSES.md`.
-
----
-
-<div align="center">
-
-**🌟 If you find this project useful, please give it a Star! 🌟**
-
-**Made with ❤️ and GitHub Copilot by [PiesP](https://github.com/PiesP)**
-
-</div>
+MIT for app code. FFmpeg core is LGPL 2.1+. See [LICENSE](./LICENSE) and [public/LICENSES.md](./public/LICENSES.md).
