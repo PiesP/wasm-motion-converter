@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.3.11/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.3.12/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -20,7 +20,6 @@
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    // CODE_STANDARDS § 1: Enforce 100 character line width for readability
     "lineWidth": 100,
     "lineEnding": "lf"
   },
@@ -29,70 +28,47 @@
     "rules": {
       "recommended": true,
       "correctness": {
-        // CODE_STANDARDS § 1: Warn about unused imports to keep code clean
         "noUnusedImports": "warn",
-        // CODE_STANDARDS § 8/9: Warn about unused variables to prevent dead code
         "noUnusedVariables": "warn",
-        // CODE_STANDARDS § 1: Allow unknown media features for Tailwind CSS
         "noUnknownMediaFeatureName": "off"
       },
       "style": {
-        // CODE_STANDARDS § 3: Allow non-null assertions when type safety is guaranteed
         "noNonNullAssertion": "off",
-        // CODE_STANDARDS § 2: Enforce const over let for immutable variables
         "useConst": "error",
-        // CODE_STANDARDS § 2: Warn against parameter reassignment for clarity
         "noParameterAssign": "warn"
       },
       "suspicious": {
-        // CODE_STANDARDS § 3: Enforce explicit typing, avoid 'any'
         "noExplicitAny": "error",
-        // CODE_STANDARDS § 1: Allow void type for flexibility
         "noConfusingVoidType": "off",
-        // CODE_STANDARDS § 1: Allow control characters in regex
         "noControlCharactersInRegex": "off",
-        // CODE_STANDARDS § 1: Allow unknown CSS at-rules for Tailwind
         "noUnknownAtRules": "off",
-        // CODE_STANDARDS § 1: Allow assignments in expressions (common pattern)
         "noAssignInExpressions": "off",
-        // CODE_STANDARDS § 1: Allow document.cookie usage
         "noDocumentCookie": "off",
-        // CODE_STANDARDS § 1: Allow callbacks without explicit return
         "useIterableCallbackReturn": "off",
-        // CODE_STANDARDS § 8: Enforce error classification for handling
         "noImplicitAnyLet": "error"
       },
       "complexity": {
-        // CODE_STANDARDS § 12: Allow forEach for readability in some cases
         "noForEach": "off",
-        // CODE_STANDARDS § 6: Allow static-only classes (singleton pattern)
         "noStaticOnlyClass": "off"
       },
       "performance": {
-        // CODE_STANDARDS § 12: Prevent accidental spread accumulation performance issues
         "noAccumulatingSpread": "warn"
       },
       "a11y": {
-        // CODE_STANDARDS § 11: Manual ARIA attributes are added where needed
         "noStaticElementInteractions": "off",
         "useKeyWithClickEvents": "off",
         "useMediaCaption": "off",
         "noSvgWithoutTitle": "off",
         "useAriaPropsSupportedByRole": "off",
-        // CODE_STANDARDS § 11: Ensure semantic flexibility for custom components
         "useSemanticElements": "off"
       }
     }
   },
   "javascript": {
     "formatter": {
-      // CODE_STANDARDS § 1: Enforce single quotes for consistency
       "quoteStyle": "single",
-      // CODE_STANDARDS § 1: Always use semicolons
       "semicolons": "always",
-      // CODE_STANDARDS § 1: Use ES5 trailing commas for better diffs
       "trailingCommas": "es5",
-      // CODE_STANDARDS § 2: Always use parentheses for arrow functions
       "arrowParentheses": "always"
     }
   },
@@ -104,7 +80,6 @@
   },
   "css": {
     "parser": {
-      // CODE_STANDARDS § 1: Enable Tailwind CSS directive parsing
       "tailwindDirectives": true
     }
   },
@@ -113,7 +88,6 @@
     "enabled": true,
     "actions": {
       "source": {
-        // CODE_STANDARDS § 1: Auto-organize imports on save (external → alias → relative)
         "organizeImports": "on"
       }
     }

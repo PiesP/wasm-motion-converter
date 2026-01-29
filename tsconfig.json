@@ -1,61 +1,34 @@
 {
-  // TypeScript Configuration
-  //
-  // Configures TypeScript compiler for SolidJS + Vite project.
-  // Enforces strict type checking and enables modern ESNext features.
-  //
-  // @see https://www.typescriptlang.org/tsconfig
-  // @see CODE_STANDARDS.md Section 3 (TypeScript Standards)
-
   "compilerOptions": {
-    // Target ESNext for modern browser support
     "target": "ESNext",
-
-    // Use ESNext module system (handled by Vite bundler)
     "module": "ESNext",
-
-    // Enable incremental compilation for faster rebuilds (CODE_STANDARDS § 12)
     "incremental": true,
     "tsBuildInfoFile": ".tsbuildinfo",
-
-    // Type definitions for ESNext, DOM APIs, and Web Workers
     "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
-
-    // SolidJS JSX configuration
-    "jsx": "preserve", // Preserve JSX for Vite plugin transformation
-    "jsxImportSource": "solid-js", // Use SolidJS JSX runtime
-
-    // Module resolution using Vite's bundler strategy
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
     "moduleResolution": "bundler",
-    "resolveJsonModule": true, // Allow importing .json files
-    "allowImportingTsExtensions": true, // Allow .ts/.tsx imports (handled by bundler)
-
-    // Strict type checking (CODE_STANDARDS.md Section 3)
-    "strict": true, // Enable all strict type-checking options
-    "noUnusedLocals": true, // Error on unused local variables
-    "noUnusedParameters": true, // Error on unused function parameters
-    "noFallthroughCasesInSwitch": true, // Require break/return in switch cases
-    "noUncheckedIndexedAccess": true, // Array/object access returns T | undefined
-
-    // Build configuration
-    "skipLibCheck": true, // Skip type checking of declaration files
-    "esModuleInterop": true, // Enable CommonJS/ESM interoperability
-    "isolatedModules": true, // Ensure each file can be transpiled independently
-    "noEmit": true, // Vite handles build output, TypeScript only for type checking
-
-    // Path mapping for cleaner imports (CODE_STANDARDS.md Section 1)
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"], // Root src alias
-      "@components/*": ["src/components/*"], // Component imports
-      "@services/*": ["src/services/*"], // Service layer
-      "@utils/*": ["src/utils/*"], // Utility functions
-      "@stores/*": ["src/stores/*"], // Signal stores
-      "@t/*": ["src/types/*"] // Type definitions (use @t to avoid TypeScript @types confusion)
+      "@/*": ["src/*"],
+      "@components/*": ["src/components/*"],
+      "@services/*": ["src/services/*"],
+      "@utils/*": ["src/utils/*"],
+      "@stores/*": ["src/stores/*"],
+      "@t/*": ["src/types/*"]
     }
   },
-
-  // Files to include in compilation
   "include": [
     "src/**/*",
     "vite.config.ts",
@@ -65,8 +38,6 @@
     "public/service-worker.ts",
     "public/sw-register.ts"
   ],
-
-  // Files to exclude from compilation
   "exclude": [
     "node_modules",
     "dist",
