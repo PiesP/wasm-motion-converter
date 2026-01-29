@@ -65,3 +65,13 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 ## License
 
 MIT for app code. FFmpeg core is LGPL 2.1+. See [LICENSE](./LICENSE) and [public/LICENSES.md](./public/LICENSES.md).
+
+---
+
+<div align="center">
+
+**🌟 If you find this project useful, please give it a Star! 🌟**
+
+**Made with ❤️ and GitHub Copilot by [PiesP](https://github.com/PiesP)**
+
+</div>

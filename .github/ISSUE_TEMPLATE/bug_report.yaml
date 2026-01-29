@@ -8,14 +8,14 @@ body:
         Thank you for taking the time to report a bug.
         Please provide as much detail as possible so we can reproduce and fix it.
 
-        **Privacy note:** Please do not attach sensitive images or private data.
+        **Privacy note:** Please do not attach sensitive videos or private data.
 
   - type: input
     id: summary
     attributes:
       label: "Short summary"
       description: "One sentence describing the problem"
-      placeholder: "Conversion fails when dropping a PNG (SharedArrayBuffer not available)"
+      placeholder: "Conversion fails when dropping an MP4 (SharedArrayBuffer not available)"
     validations:
       required: true
 
@@ -92,14 +92,27 @@ body:
       description: "Exact browser version (if known)"
       placeholder: "Chrome 131.0.x"
 
+  - type: input
+    id: input_video
+    attributes:
+      label: "Input video details"
+      description: "Format, codec, resolution, duration, and file size (approximate is OK)"
+      placeholder: "MP4 (H.264), 1920x1080, 12s, 28MB"
+    validations:
+      required: true
+
   - type: textarea
     id: sab
     attributes:
       label: "SharedArrayBuffer / crossOriginIsolated"
-      description: "Please paste the output from your browser console. This is required for ffmpeg.wasm multi-threading."
+      description: "Paste the output from your browser console. This is required for ffmpeg.wasm multi-threading."
       placeholder: |
-        SharedArrayBuffer: true/false
-        crossOriginIsolated: true/false
+        ({
+          sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
+          crossOriginIsolated,
+        })
+    validations:
+      required: true
 
   - type: textarea
     id: console_logs

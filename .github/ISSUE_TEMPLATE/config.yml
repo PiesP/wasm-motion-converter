@@ -7,5 +7,5 @@ contact_links:
     url: https://github.com/PiesP/dropconvert-wasm/security/advisories
     about: "Please do not open public issues for vulnerabilities. Use GitHub Security Advisories."
   - name: Troubleshooting
-    url: https://github.com/PiesP/dropconvert-wasm#troubleshooting
-    about: "Check common issues like SharedArrayBuffer/crossOriginIsolated before filing a bug."
+    url: https://github.com/PiesP/dropconvert-wasm/blob/main/TESTING.md
+    about: "Check isolation and common issues before filing a bug."

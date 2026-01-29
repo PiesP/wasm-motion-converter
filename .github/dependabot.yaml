@@ -71,6 +71,13 @@ updates:
           - "minor"
           - "patch"
 
+      pnpm:
+        patterns:
+          - "pnpm"
+        update-types:
+          - "minor"
+          - "patch"
+
     # Ignore packages that require manual review for major updates
     ignore:
       # Vite major updates need careful review
