@@ -1,4 +1,4 @@
-# HTML and root - COEP/COOP required for SharedArrayBuffer (ffmpeg.wasm)
+# Root - COEP/COOP required for SharedArrayBuffer
 /*
   Cross-Origin-Embedder-Policy: require-corp
   Cross-Origin-Opener-Policy: same-origin
@@ -10,7 +10,7 @@
   Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdn.skypack.dev; connect-src 'self' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdn.skypack.dev; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
   Cache-Control: public, max-age=300, stale-while-revalidate=60
 
-# Service Worker - short cache for updates (Phase 1)
+# Service Worker - short cache for updates
 /service-worker.js
   Cache-Control: public, max-age=0, must-revalidate
   X-Content-Type-Options: nosniff

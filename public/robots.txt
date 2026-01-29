@@ -1,13 +1,7 @@
-# Motion Converter - Video to GIF/WebP
-# https://wasm-motion-converter.pages.dev/
-# All processing happens client-side, no dynamic content
-
 User-agent: *
 Allow: /
 
-# Block crawling of technical files
 Disallow: /_headers
 Disallow: /LICENSES.md
 
-# Sitemap
 Sitemap: https://wasm-motion-converter.pages.dev/sitemap.xml

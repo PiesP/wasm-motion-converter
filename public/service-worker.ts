@@ -1,42 +1,11 @@
-/**
- * Service Worker for CDN Resource Caching
- *
- * NOTE: This file is compiled to JavaScript during production build.
- * In development mode, Service Worker registration is skipped.
- *
- * Build process:
- * 1. vite.config.ts compiles this file using esbuild
- * 2. Output: dist/service-worker.js (minified JavaScript)
- * 3. Registration code is inlined in HTML <head>
- *
- * Implements intelligent caching strategy for external dependencies:
- * - First visit: Network-first to populate cache
- * - Return visits: Cache-first with background revalidation
- * - Multi-CDN fallback cascade for reliability
- *
- * Caching strategy aligned with AGENTS.md requirements:
- * - English-only comments and logging
- * - Cross-origin isolation preserved for FFmpeg
- * - No server uploads (client-side only)
- */
 
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
 
-/**
- * Service Worker version for cache invalidation
- * Increment when breaking changes require cache reset
- */
 const SW_VERSION = "v1.0.0";
 
-/**
- * Cache name prefix for versioning
- */
 const CACHE_VERSION = "v1";
 
-/**
- * Cache storage names with version identifiers
- */
 const CACHE_NAMES = {
   cdn: `cdn-deps-${CACHE_VERSION}`,
   ffmpeg: `ffmpeg-core-${CACHE_VERSION}`, // Preserve existing FFmpeg cache
@@ -44,14 +13,8 @@ const CACHE_NAMES = {
   fallback: `fallback-${CACHE_VERSION}`,
 } as const;
 
-/**
- * All current cache names for cleanup
- */
 const ALL_CACHE_NAMES = Object.values(CACHE_NAMES);
 
-/**
- * Runtime dependency versions injected at build time from package.json.
- */
 type RuntimeDepVersions = Record<string, string>;
 const RUNTIME_DEP_VERSIONS = JSON.parse(
   "__RUNTIME_DEP_VERSIONS__"
@@ -67,18 +30,8 @@ const getRuntimeDepVersion = (pkg: string): string => {
   return version;
 };
 
-/**
- * Critical assets to pre-cache on install
- * Ensures offline functionality from first visit
- * PRECACHE_MANIFEST will be replaced by build process
- */
 const PRECACHE_URLS: string[] = "PRECACHE_MANIFEST" as unknown as string[];
 
-/**
- * FFmpeg assets to pre-cache for offline conversions
- * Using jsdelivr URLs (same as import map for consistency)
- * Versions are injected from package.json at build time.
- */
 const ffmpegPackageVersion = getRuntimeDepVersion("@ffmpeg/ffmpeg");
 const ffmpegUtilVersion = getRuntimeDepVersion("@ffmpeg/util");
 const ffmpegCoreVersion = getRuntimeDepVersion("@ffmpeg/core-mt");
@@ -91,13 +44,6 @@ const FFMPEG_PRECACHE_URLS = [
   `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${ffmpegCoreVersion}/dist/esm/ffmpeg-core.worker.js`,
 ];
 
-/**
- * Demuxer libraries used for optimized extraction.
- *
- * These are loaded from CDNs and should be cached on install so first-time
- * visitors still benefit (first navigation happens before SW controls page).
- * Versions are injected from package.json at build time.
- */
 const mp4boxVersion = getRuntimeDepVersion("mp4box");
 const webDemuxerVersion = getRuntimeDepVersion("web-demuxer");
 
@@ -106,9 +52,6 @@ const DEMUXER_PRECACHE_URLS = [
   `https://esm.sh/web-demuxer@${webDemuxerVersion}?target=esnext`,
 ];
 
-/**
- * CDN provider configuration aligned with unified system
- */
 interface CDNProvider {
   name: string;
   hostname: string;
@@ -116,10 +59,6 @@ interface CDNProvider {
   healthScore: number;
 }
 
-/**
- * CDN providers with default configuration
- * Health scores are loaded dynamically from localStorage
- */
 const CDN_PROVIDERS: CDNProvider[] = [
   { name: "esm.sh", hostname: "esm.sh", priority: 1, healthScore: 100 },
   {
@@ -137,14 +76,8 @@ const CDN_PROVIDERS: CDNProvider[] = [
   },
 ];
 
-/**
- * CDN domains to intercept and cache
- */
 const CDN_DOMAINS = CDN_PROVIDERS.map((p) => p.hostname);
 
-/**
- * SRI manifest structure matching public/cdn-integrity.json
- */
 interface CDNEntry {
   url: string;
   integrity: string;
@@ -164,18 +97,8 @@ interface SRIManifest {
   entries: Record<string, ManifestEntry>;
 }
 
-/**
- * Global SRI manifest cache
- * Loaded lazily on first CDN request
- */
 let sriManifest: SRIManifest | null = null;
 
-/**
- * Loads the SRI manifest from cdn-integrity.json
- * Caches the manifest in memory for subsequent verifications
- *
- * @returns SRI manifest or null if loading fails
- */
 async function loadSRIManifest(): Promise<SRIManifest | null> {
   if (sriManifest) {
     return sriManifest;
@@ -203,25 +126,15 @@ async function loadSRIManifest(): Promise<SRIManifest | null> {
   }
 }
 
-/**
- * Verifies the integrity of a Response using SHA-384 hash
- *
- * @param response - Response to verify
- * @param expectedIntegrity - Expected SRI hash (e.g., "sha384-...")
- * @returns True if integrity matches, false otherwise
- */
 async function verifyIntegrity(
   response: Response,
   expectedIntegrity: string
 ): Promise<boolean> {
   try {
-    // Clone response to avoid consuming the body
     const buffer = await response.clone().arrayBuffer();
 
-    // Compute SHA-384 hash
     const hashBuffer = await crypto.subtle.digest("SHA-384", buffer);
 
-    // Convert to base64
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hashBase64 = btoa(String.fromCharCode(...hashArray));
     const computedIntegrity = `sha384-${hashBase64}`;
@@ -244,21 +157,12 @@ async function verifyIntegrity(
   }
 }
 
-/**
- * Gets expected integrity hash for a CDN URL from the SRI manifest
- *
- * @param url - CDN URL to look up
- * @param manifest - SRI manifest
- * @returns Expected integrity hash or null if not found
- */
 function getExpectedIntegrity(
   url: string,
   manifest: SRIManifest
 ): string | null {
-  // Parse URL to extract package name
   const urlObj = new URL(url);
 
-  // Determine CDN provider
   let cdnProvider: keyof ManifestEntry | null = null;
   if (urlObj.hostname === "esm.sh") cdnProvider = "esm.sh";
   else if (urlObj.hostname === "cdn.jsdelivr.net") cdnProvider = "jsdelivr";
@@ -269,7 +173,6 @@ function getExpectedIntegrity(
     return null;
   }
 
-  // Search manifest entries for matching URL
   for (const [_pkg, entry] of Object.entries(manifest.entries)) {
     const cdnEntry = entry[cdnProvider];
     if (cdnEntry && cdnEntry.url === url) {
@@ -280,9 +183,6 @@ function getExpectedIntegrity(
   return null;
 }
 
-/**
- * Health tracking data structure (matches cdn-health-tracker.ts)
- */
 interface HealthMetric {
   hostname: string;
   successCount: number;
@@ -298,12 +198,6 @@ interface HealthTrackingData {
   createdAt: number;
 }
 
-/**
- * Loads health tracking data from localStorage
- * Returns health scores for all CDN providers
- *
- * @returns Map of hostname to health score (0-100)
- */
 function loadHealthScores(): Map<string, number> {
   const scores = new Map<string, number>();
 
@@ -313,16 +207,13 @@ function loadHealthScores(): Map<string, number> {
 
     const data = JSON.parse(stored) as HealthTrackingData;
 
-    // Check TTL (7 days)
     const age = Date.now() - data.createdAt;
     const TTL_MS = 7 * 24 * 60 * 60 * 1000;
     if (age > TTL_MS) {
-      return scores; // Expired data
+      return scores;
     }
 
-    // Extract health scores from metrics
     for (const [hostname, metric] of Object.entries(data.metrics)) {
-      // Convert success rate to health score (0-100)
       const healthScore = Math.round(metric.successRate * 100);
       scores.set(hostname, healthScore);
     }
@@ -338,13 +229,6 @@ function loadHealthScores(): Map<string, number> {
   return scores;
 }
 
-/**
- * Updates health score for a CDN provider in localStorage
- * This is a simplified version - full tracking is done by cdn-health-tracker.ts
- *
- * @param hostname - CDN hostname
- * @param success - Whether the request succeeded
- */
 function updateHealthScore(hostname: string, success: boolean): void {
   try {
     const stored = localStorage.getItem("cdn_health_tracking");
@@ -360,7 +244,6 @@ function updateHealthScore(hostname: string, success: boolean): void {
       };
     }
 
-    // Get or create metric
     if (!data.metrics[hostname]) {
       data.metrics[hostname] = {
         hostname,
@@ -374,7 +257,6 @@ function updateHealthScore(hostname: string, success: boolean): void {
 
     const metric = data.metrics[hostname];
 
-    // Update counts
     if (success) {
       metric.successCount++;
     } else {
@@ -385,34 +267,25 @@ function updateHealthScore(hostname: string, success: boolean): void {
       metric.totalCount > 0 ? metric.successCount / metric.totalCount : 1.0;
     metric.lastUpdated = Date.now();
 
-    // Save back to localStorage
     localStorage.setItem("cdn_health_tracking", JSON.stringify(data));
   } catch (error) {
     console.warn(`[SW ${SW_VERSION}] Failed to update health score:`, error);
   }
 }
 
-/**
- * Gets optimally ordered CDN providers based on health scores
- * Providers are sorted by health score (descending), then by priority
- *
- * @returns Array of CDN providers sorted by health score
- */
 function getOrderedProviders(): CDNProvider[] {
   const healthScores = loadHealthScores();
 
-  // Clone providers and update health scores
   const providers = CDN_PROVIDERS.map((p) => ({
     ...p,
     healthScore: healthScores.get(p.hostname) ?? p.healthScore,
   }));
 
-  // Sort by health score (descending), then by priority (ascending)
   providers.sort((a, b) => {
     if (a.healthScore !== b.healthScore) {
-      return b.healthScore - a.healthScore; // Higher score first
+      return b.healthScore - a.healthScore;
     }
-    return a.priority - b.priority; // Lower priority number first
+    return a.priority - b.priority;
   });
 
   console.log(
@@ -423,19 +296,9 @@ function getOrderedProviders(): CDNProvider[] {
   return providers;
 }
 
-/**
- * Request type classification for routing strategy
- */
 type RequestType = "cdn" | "ffmpeg" | "app" | "ignore";
 
-/**
- * Classifies request for appropriate caching strategy
- *
- * @param url - Request URL to classify
- * @returns Request type for routing decision
- */
 function classifyRequest(url: URL): RequestType {
-  // CDN resources (dependencies loaded from external CDNs)
   if (
     CDN_DOMAINS.some(
       (domain) => url.hostname === domain || url.hostname.endsWith(`.${domain}`)
@@ -444,28 +307,20 @@ function classifyRequest(url: URL): RequestType {
     return "cdn";
   }
 
-  // FFmpeg core assets (preserve existing caching pattern)
   if (url.pathname.includes("@ffmpeg/core")) {
     return "ffmpeg";
   }
 
-  // App bundles (Vite-generated assets)
   if (url.pathname.startsWith("/assets/")) {
     return "app";
   }
 
-  // Pass through (HTML, other static assets)
   return "ignore";
 }
 
-/**
- * Detect if request is for a worker script
- * FFmpeg internally creates workers that need same-origin headers
- */
 function isWorkerRequest(request: Request): boolean {
   const url = new URL(request.url);
 
-  // FFmpeg worker patterns
   const workerPatterns = [
     "/worker.js",
     "/worker.mjs",
@@ -476,27 +331,18 @@ function isWorkerRequest(request: Request): boolean {
     workerPatterns.some((pattern) => url.pathname.includes(pattern)) ||
     request.destination === "worker" ||
     request.mode === "same-origin"
-  ); // Workers use same-origin mode
+  );
 }
 
-/**
- * Service Worker install event
- * Activates immediately without waiting for existing clients
- * Phase 4: Pre-caches critical assets for offline support
- */
 self.addEventListener("install", (event: ExtendableEvent) => {
   console.log(`[SW ${SW_VERSION}] Installing...`);
 
-  // Skip waiting to activate immediately (aggressive update strategy)
   self.skipWaiting();
 
-  // Phase 4: Pre-cache critical assets
   event.waitUntil(
     (async () => {
-      // Initialize caches
       const fallbackCache = await caches.open(CACHE_NAMES.fallback);
 
-      // Pre-cache app shell
       const appCache = await caches.open(CACHE_NAMES.app);
       try {
         await appCache.addAll(PRECACHE_URLS);
@@ -508,7 +354,6 @@ self.addEventListener("install", (event: ExtendableEvent) => {
         );
       }
 
-      // Pre-cache FFmpeg assets (best effort)
       const ffmpegCache = await caches.open(CACHE_NAMES.ffmpeg);
       try {
         await Promise.allSettled(
@@ -525,11 +370,6 @@ self.addEventListener("install", (event: ExtendableEvent) => {
         console.warn(`[SW ${SW_VERSION}] Failed to pre-cache FFmpeg:`, error);
       }
 
-      // Pre-cache critical CDN ESM dependencies (best effort)
-      // Notes:
-      // - On the first navigation, the SW is not yet controlling the page.
-      // - This step ensures external libraries are stored in CacheStorage
-      //   even for first-time users.
       const cdnCache = await caches.open(CACHE_NAMES.cdn);
       try {
         const manifest = await loadSRIManifest();
@@ -575,16 +415,11 @@ self.addEventListener("install", (event: ExtendableEvent) => {
   );
 });
 
-/**
- * Service Worker activate event
- * Cleans up old caches and takes control immediately
- */
 self.addEventListener("activate", (event: ExtendableEvent) => {
   console.log(`[SW ${SW_VERSION}] Activating...`);
 
   event.waitUntil(
     (async () => {
-      // Clean up old cache versions
       const cacheNames = await caches.keys();
       const validCacheNames = ALL_CACHE_NAMES as readonly string[];
       await Promise.all(
@@ -596,21 +431,12 @@ self.addEventListener("activate", (event: ExtendableEvent) => {
         })
       );
 
-      // Take control of all clients immediately
       await self.clients.claim();
       console.log(`[SW ${SW_VERSION}] Activated and claimed clients`);
     })()
   );
 });
 
-/**
- * Timeout wrapper for fetch requests
- * Rejects if request takes longer than specified timeout
- *
- * @param request - Request to fetch
- * @param timeout - Timeout in milliseconds
- * @returns Response or throws on timeout
- */
 async function fetchWithTimeout(
   request: Request,
   timeout: number
@@ -628,20 +454,7 @@ async function fetchWithTimeout(
   }
 }
 
-/**
- * CDN URL conversion utilities
- * Converts URLs between different CDN providers for fallback
- */
 const CDN_CONVERTERS = {
-  /**
-   * Parses an esm.sh URL into { pkg, version, path }.
-   *
-   * Supported examples:
-   * - https://esm.sh/solid-js@<version>/web?target=esnext
-   * - https://esm.sh/@ffmpeg/ffmpeg@<version>?target=esnext
-   * - https://esm.sh/@jsquash/webp@<version>/encode.js?target=esnext
-   * - https://esm.sh/@jsquash/webp@<version>/codec/enc/webp_enc.wasm
-   */
   parseEsmSh(
     url: string
   ): { pkg: string; version: string; path: string; isAsset: boolean } | null {
@@ -654,7 +467,6 @@ const CDN_CONVERTERS = {
       const pathname = u.pathname.startsWith("/")
         ? u.pathname.slice(1)
         : u.pathname;
-      // Match either scoped (@scope/name) or unscoped (name) package.
       const match = pathname.match(
         /^((?:@[^/]+\/[^@/]+)|(?:[^@/]+))@([^/]+)(\/.*)?$/
       );
@@ -672,7 +484,6 @@ const CDN_CONVERTERS = {
 
       const path = rawPath || "";
 
-      // Avoid applying module transforms to binary/static assets.
       const lower = path.toLowerCase();
       const isAsset =
         lower.endsWith(".wasm") ||
@@ -693,14 +504,10 @@ const CDN_CONVERTERS = {
     }
   },
 
-  /**
-   * Converts esm.sh URL to jsdelivr format
-   */
   esmToJsdelivr(url: string): string | null {
     const parsed = this.parseEsmSh(url);
     if (!parsed) return null;
 
-    // jsDelivr supports +esm for module conversion; do NOT apply it to assets.
     if (parsed.isAsset) {
       return `https://cdn.jsdelivr.net/npm/${parsed.pkg}@${parsed.version}${parsed.path}`;
     }
@@ -708,14 +515,10 @@ const CDN_CONVERTERS = {
     return `https://cdn.jsdelivr.net/npm/${parsed.pkg}@${parsed.version}${parsed.path}/+esm`;
   },
 
-  /**
-   * Converts esm.sh URL to unpkg format
-   */
   esmToUnpkg(url: string): string | null {
     const parsed = this.parseEsmSh(url);
     if (!parsed) return null;
 
-    // unpkg's ?module is for JS modules; avoid it for binary assets.
     if (parsed.isAsset) {
       return `https://unpkg.com/${parsed.pkg}@${parsed.version}${parsed.path}`;
     }
@@ -723,14 +526,10 @@ const CDN_CONVERTERS = {
     return `https://unpkg.com/${parsed.pkg}@${parsed.version}${parsed.path}?module`;
   },
 
-  /**
-   * Converts esm.sh URL to skypack format
-   */
   esmToSkypack(url: string): string | null {
     const parsed = this.parseEsmSh(url);
     if (!parsed) return null;
 
-    // Skypack is primarily for modules; skip assets.
     if (parsed.isAsset) {
       return null;
     }
@@ -739,9 +538,6 @@ const CDN_CONVERTERS = {
   },
 };
 
-/**
- * CDN performance metrics interface
- */
 interface CDNMetrics {
   url: string;
   cdnName: string;
@@ -752,12 +548,6 @@ interface CDNMetrics {
   timestamp: number;
 }
 
-/**
- * Logs CDN performance metrics to console
- * In production, this could be sent to analytics service
- *
- * @param metrics - Performance metrics to log
- */
 function logCDNMetrics(metrics: CDNMetrics): void {
   const emoji = metrics.success ? "✓" : "✗";
   const latencyMs = metrics.latency.toFixed(0);
@@ -772,17 +562,8 @@ function logCDNMetrics(metrics: CDNMetrics): void {
     );
   }
 
-  // Could store to IndexedDB for analytics:
-  // await storeMetrics(metrics);
 }
 
-/**
- * Converts URL to a specific CDN provider
- *
- * @param originalUrl - Original URL (usually esm.sh)
- * @param targetProvider - Target CDN provider name
- * @returns Converted URL or null if conversion not possible
- */
 function convertToCDN(
   originalUrl: string,
   targetProvider: string
@@ -798,12 +579,10 @@ function convertToCDN(
 
     const originalProvider = providerByHostname[parsedUrl.hostname];
 
-    // If the URL is already targeting the requested provider, use it as-is.
     if (originalProvider && originalProvider === targetProvider) {
       return originalUrl;
     }
 
-    // Only esm.sh URLs can be converted to other CDNs by our rules.
     if (originalProvider && originalProvider !== "esm.sh") {
       return null;
     }
@@ -813,7 +592,7 @@ function convertToCDN(
 
   switch (targetProvider) {
     case "esm.sh":
-      return originalUrl; // Already esm.sh format
+      return originalUrl;
     case "jsdelivr":
       return CDN_CONVERTERS.esmToJsdelivr(originalUrl);
     case "unpkg":
@@ -825,15 +604,6 @@ function convertToCDN(
   }
 }
 
-/**
- * Attempts to fetch from a single CDN provider with SRI verification
- *
- * @param url - CDN URL to fetch
- * @param provider - CDN provider info
- * @param timeout - Timeout in milliseconds
- * @param manifest - SRI manifest for integrity verification
- * @returns Response if successful, null if failed
- */
 async function tryFetchFromCDN(
   url: string,
   provider: CDNProvider,
@@ -861,7 +631,6 @@ async function tryFetchFromCDN(
       return null;
     }
 
-    // Verify integrity if manifest is available
     if (manifest) {
       const expectedIntegrity = getExpectedIntegrity(url, manifest);
       if (expectedIntegrity) {
@@ -896,7 +665,6 @@ async function tryFetchFromCDN(
       );
     }
 
-    // Success
     logCDNMetrics({
       url,
       cdnName: provider.name,
@@ -922,14 +690,8 @@ async function tryFetchFromCDN(
   }
 }
 
-/**
- * Connection type detection for adaptive strategy
- */
 type ConnectionType = "fast" | "medium" | "slow" | "unknown";
 
-/**
- * NetworkInformation API types (experimental)
- */
 interface NetworkInformation extends EventTarget {
   effectiveType?: "4g" | "3g" | "2g" | "slow-2g";
   downlink?: number;
@@ -941,11 +703,6 @@ interface NavigatorWithConnection extends Navigator {
   connection?: NetworkInformation;
 }
 
-/**
- * Detects current network connection type
- *
- * @returns Connection type category for strategy selection
- */
 function detectConnectionType(): ConnectionType {
   try {
     const nav = self.navigator as NavigatorWithConnection;
@@ -983,40 +740,22 @@ function detectConnectionType(): ConnectionType {
   }
 }
 
-/**
- * Calculates adaptive timeout based on connection type
- *
- * @param baseTimeout - Base timeout in milliseconds
- * @param connectionType - Connection type
- * @returns Adjusted timeout in milliseconds
- */
 function getAdaptiveTimeout(
   baseTimeout: number,
   connectionType: ConnectionType
 ): number {
   switch (connectionType) {
     case "fast":
-      return baseTimeout; // 15s
+      return baseTimeout;
     case "medium":
-      return Math.round(baseTimeout * 1.5); // 22.5s for 3G
+      return Math.round(baseTimeout * 1.5);
     case "slow":
-      return Math.round(baseTimeout * 2.0); // 30s for 2G
+      return Math.round(baseTimeout * 2.0);
     default:
       return baseTimeout;
   }
 }
 
-/**
- * Fetches from multiple CDNs in parallel (racing)
- * Cancels slower requests when first succeeds
- * Only used on fast connections to avoid bandwidth waste
- *
- * @param originalUrl - Original CDN URL
- * @param providers - CDN providers to race
- * @param timeout - Timeout per CDN attempt
- * @param manifest - SRI manifest for verification
- * @returns Response from fastest successful CDN or null if all fail
- */
 async function fetchWithRacing(
   originalUrl: string,
   providers: CDNProvider[],
@@ -1027,7 +766,6 @@ async function fetchWithRacing(
   const controllers = new Map<string, AbortController>();
 
   try {
-    // Start all CDN fetches in parallel
     const fetchPromises = providers.map(async (provider) => {
       const url = convertToCDN(originalUrl, provider.name);
       if (!url) {
@@ -1041,15 +779,12 @@ async function fetchWithRacing(
       return { provider, response };
     });
 
-    // Race all fetches - first success wins
     const results = await Promise.allSettled(fetchPromises);
 
-    // Find first successful response
     for (const result of results) {
       if (result.status === "fulfilled" && result.value.response) {
         const { provider, response } = result.value;
 
-        // Cancel all other pending requests
         for (const [name, controller] of controllers.entries()) {
           if (name !== provider.name) {
             controller.abort();
@@ -1063,7 +798,6 @@ async function fetchWithRacing(
       }
     }
 
-    // All failed
     return null;
   } catch (error) {
     console.error(`[SW ${SW_VERSION}] Parallel racing error:`, error);
@@ -1071,18 +805,6 @@ async function fetchWithRacing(
   }
 }
 
-/**
- * Fetches from CDN with multi-provider cascade fallback and SRI verification
- * Uses dynamic CDN ordering based on health scores
- * Verifies integrity of each response before returning
- * Logs performance metrics for each attempt
- * Supports both sequential cascade and parallel racing strategies
- *
- * @param originalUrl - Original CDN URL
- * @param baseTimeout - Base timeout per CDN attempt (default: 15s)
- * @param useRacing - Whether to use parallel racing (default: auto-detect)
- * @returns Response from successful CDN with valid integrity or throws if all fail
- */
 async function fetchWithCascade(
   originalUrl: string,
   baseTimeout = 15000,
@@ -1090,11 +812,9 @@ async function fetchWithCascade(
 ): Promise<Response> {
   const errors: Array<{ cdn: string; error: string }> = [];
 
-  // Detect connection type for adaptive strategy
   const connectionType = detectConnectionType();
   const adaptiveTimeout = getAdaptiveTimeout(baseTimeout, connectionType);
 
-  // Determine strategy: parallel racing on fast connections, sequential otherwise
   const shouldRace =
     useRacing !== undefined ? useRacing : connectionType === "fast";
 
@@ -1104,13 +824,10 @@ async function fetchWithCascade(
     } ` + `(connection: ${connectionType}, timeout: ${adaptiveTimeout}ms)`
   );
 
-  // Load SRI manifest for integrity verification
   const manifest = await loadSRIManifest();
 
-  // Get dynamically ordered providers based on health scores
   const orderedProviders = getOrderedProviders();
 
-  // Try parallel racing on fast connections
   if (shouldRace && orderedProviders.length >= 2) {
     console.log(
       `[SW ${SW_VERSION}] Racing ${orderedProviders.length} CDNs in parallel...`
@@ -1126,13 +843,11 @@ async function fetchWithCascade(
       return racingResponse;
     }
 
-    // Racing failed, fall back to sequential cascade
     console.warn(
       `[SW ${SW_VERSION}] Parallel racing failed, falling back to sequential cascade`
     );
   }
 
-  // Sequential cascade fallback (or primary strategy on slow connections)
   for (const provider of orderedProviders) {
     const url = convertToCDN(originalUrl, provider.name);
     if (!url) {
@@ -1152,14 +867,12 @@ async function fetchWithCascade(
       return response; // Success!
     }
 
-    // Track failure for error summary
     errors.push({
       cdn: provider.name,
       error: "Failed (see metrics above)",
     });
   }
 
-  // All CDNs failed
   console.error(
     `[SW ${SW_VERSION}] All CDNs failed for ${originalUrl}:`,
     errors
@@ -1169,15 +882,6 @@ async function fetchWithCascade(
   );
 }
 
-/**
- * Network-first caching strategy for CDN resources
- * Tries network, falls back to cache on failure
- * Phase 4: Also stores successful responses in fallback cache
- *
- * @param request - Request to handle
- * @param cacheName - Cache storage name
- * @returns Response from network or cache
- */
 async function networkFirstStrategy(
   request: Request,
   cacheName: string
@@ -1186,17 +890,13 @@ async function networkFirstStrategy(
   const fallbackCache = await caches.open(CACHE_NAMES.fallback);
 
   try {
-    // Try network with multi-CDN cascade
     const response = await fetchWithCascade(request.url);
 
-    // Cache successful response in both main and fallback caches
     if (response.ok) {
-      // Store in main CDN cache
       cache.put(request, response.clone()).catch((err) => {
         console.warn(`[SW ${SW_VERSION}] Main cache put failed:`, err);
       });
 
-      // Also store in fallback cache for offline support
       fallbackCache.put(request, response.clone()).catch((err) => {
         console.warn(`[SW ${SW_VERSION}] Fallback cache put failed:`, err);
       });
@@ -1206,14 +906,12 @@ async function networkFirstStrategy(
   } catch (error) {
     console.warn(`[SW ${SW_VERSION}] Network failed, trying caches:`, error);
 
-    // Try main cache first
     const cachedResponse = await cache.match(request);
     if (cachedResponse) {
       console.log(`[SW ${SW_VERSION}] Serving from main cache: ${request.url}`);
       return cachedResponse;
     }
 
-    // Try fallback cache as last resort
     const fallbackResponse = await fallbackCache.match(request);
     if (fallbackResponse) {
       console.log(
@@ -1222,20 +920,10 @@ async function networkFirstStrategy(
       return fallbackResponse;
     }
 
-    // No cache available, throw original error
     throw error;
   }
 }
 
-/**
- * Cache-first strategy for returning users
- * Checks cache first, updates in background
- * Phase 4: Also uses fallback cache if main cache misses
- *
- * @param request - Request to handle
- * @param cacheName - Cache storage name
- * @returns Response from cache or network
- */
 async function cacheFirstStrategy(
   request: Request,
   cacheName: string
@@ -1243,12 +931,10 @@ async function cacheFirstStrategy(
   const cache = await caches.open(cacheName);
   const fallbackCache = await caches.open(CACHE_NAMES.fallback);
 
-  // Try main cache first
   const cachedResponse = await cache.match(request);
   if (cachedResponse) {
     console.log(`[SW ${SW_VERSION}] Cache hit: ${request.url}`);
 
-    // Background revalidation (stale-while-revalidate)
     fetchWithCascade(request.url)
       .then((response) => {
         if (response.ok) {
@@ -1258,18 +944,15 @@ async function cacheFirstStrategy(
         }
       })
       .catch(() => {
-        // Ignore background update failures
       });
 
     return cachedResponse;
   }
 
-  // Try fallback cache
   const fallbackResponse = await fallbackCache.match(request);
   if (fallbackResponse) {
     console.log(`[SW ${SW_VERSION}] Fallback cache hit: ${request.url}`);
 
-    // Still do background revalidation
     fetchWithCascade(request.url)
       .then((response) => {
         if (response.ok) {
@@ -1282,7 +965,6 @@ async function cacheFirstStrategy(
     return fallbackResponse;
   }
 
-  // Cache miss - fetch from network
   console.log(`[SW ${SW_VERSION}] Cache miss: ${request.url}`);
   const response = await fetchWithCascade(request.url);
 
@@ -1294,13 +976,6 @@ async function cacheFirstStrategy(
   return response;
 }
 
-/**
- * Cache-first strategy for app assets
- * Ensures app shell is available offline
- *
- * @param request - Request to handle
- * @returns Response from cache or network
- */
 async function cacheFirstAppAsset(request: Request): Promise<Response> {
   const cache = await caches.open(CACHE_NAMES.app);
 
@@ -1317,13 +992,6 @@ async function cacheFirstAppAsset(request: Request): Promise<Response> {
   return response;
 }
 
-/**
- * Network-first strategy for app navigations
- * Falls back to cached app shell when offline
- *
- * @param request - Navigation request
- * @returns Response for navigation
- */
 async function networkFirstNavigation(request: Request): Promise<Response> {
   const cache = await caches.open(CACHE_NAMES.app);
 
@@ -1342,22 +1010,16 @@ async function networkFirstNavigation(request: Request): Promise<Response> {
   }
 }
 
-/**
- * Handle worker requests by proxying from cache
- * This solves CORS issues when FFmpeg creates workers from CDN URLs
- */
 async function handleWorkerRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
 
   console.log(`[SW ${SW_VERSION}] Worker request intercepted:`, url.href);
 
-  // Try to get from cache
   const cache = await caches.open(CACHE_NAMES.cdn);
   let cached = await cache.match(request);
 
   if (cached) {
     console.log(`[SW ${SW_VERSION}] Serving worker from cache`);
-    // Return with same-origin headers
     return new Response(cached.body, {
       status: cached.status,
       statusText: cached.statusText,
@@ -1369,15 +1031,12 @@ async function handleWorkerRequest(request: Request): Promise<Response> {
     });
   }
 
-  // Fetch from network and cache
   try {
     const response = await fetch(request);
 
     if (response.ok) {
-      // Clone and cache
       await cache.put(request, response.clone());
 
-      // Return with CORS headers
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -1392,35 +1051,19 @@ async function handleWorkerRequest(request: Request): Promise<Response> {
     console.error(`[SW ${SW_VERSION}] Worker fetch failed:`, error);
   }
 
-  // Fallback to original request
   return fetch(request);
 }
 
-/**
- * Checks if this is a returning user (has cache entries)
- * Used to determine whether to use cache-first or network-first
- *
- * @returns True if cache exists (returning user)
- */
 async function isReturningUser(): Promise<boolean> {
   const cache = await caches.open(CACHE_NAMES.cdn);
   const keys = await cache.keys();
   return keys.length > 0;
 }
 
-/**
- * Service Worker fetch event
- * Routes requests to appropriate caching strategy
- *
- * Phase 2: Network-first for CDN resources with multi-CDN fallback
- * Phase 2.3: Cache-first for returning users
- * Phase 2: Worker proxy pattern for FFmpeg CORS handling
- */
 self.addEventListener("fetch", (event: FetchEvent) => {
   const request = event.request;
   const url = new URL(request.url);
 
-  // CRITICAL: Handle worker requests via proxy
   if (isWorkerRequest(request)) {
     event.respondWith(handleWorkerRequest(request));
     return;
@@ -1438,38 +1081,29 @@ self.addEventListener("fetch", (event: FetchEvent) => {
     return;
   }
 
-  // Only intercept CDN requests
   if (requestType === "cdn") {
     event.respondWith(
       (async () => {
         const returning = await isReturningUser();
 
         if (returning) {
-          // Returning user: cache-first with background revalidation
-          console.log(
-            `[SW ${SW_VERSION}] CDN request (cache-first): ${url.href}`
-          );
-          return cacheFirstStrategy(event.request, CACHE_NAMES.cdn);
-        }
-
-        // First-time user: network-first
         console.log(
-          `[SW ${SW_VERSION}] CDN request (network-first): ${url.href}`
+          `[SW ${SW_VERSION}] CDN request (cache-first): ${url.href}`
         );
-        return networkFirstStrategy(event.request, CACHE_NAMES.cdn);
-      })()
-    );
-    return;
+        return cacheFirstStrategy(event.request, CACHE_NAMES.cdn);
+      }
+
+      console.log(
+        `[SW ${SW_VERSION}] CDN request (network-first): ${url.href}`
+      );
+      return networkFirstStrategy(event.request, CACHE_NAMES.cdn);
+    })()
+  );
+  return;
   }
 
-  // Pass through non-CDN requests
-  // FFmpeg and app assets are handled by browser cache
 });
 
-/**
- * Service Worker message event
- * Handles commands from main thread (e.g., skip waiting, clear cache)
- */
 self.addEventListener("message", (event: ExtendableMessageEvent) => {
   console.log(`[SW ${SW_VERSION}] Message received:`, event.data);
 

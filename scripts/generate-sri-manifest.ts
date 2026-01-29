@@ -1,15 +1,3 @@
-/**
- * SRI Manifest Generator
- *
- * Generates a Subresource Integrity (SRI) manifest for all CDN dependencies.
- * Fetches each dependency from multiple CDN providers, computes SHA-384 hashes,
- * and writes the manifest to public/cdn-integrity.json.
- *
- * The manifest is used by the service worker to verify the integrity of CDN resources
- * before caching, protecting against compromised or tampered CDN content.
- *
- * @see https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity
- */
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -34,9 +22,6 @@ interface SRIManifest {
   entries: Record<string, ManifestEntry>;
 }
 
-/**
- * CDN provider configurations
- */
 const CDN_PROVIDERS = {
   "esm.sh": {
     name: "esm.sh",
@@ -57,7 +42,6 @@ const CDN_PROVIDERS = {
           ? subpath
           : `/${subpath}`
         : "";
-      // jsdelivr expects /npm/ prefix and /+esm suffix for ESM modules
       return `https://cdn.jsdelivr.net/npm/${pkg}@${version}${cleanSubpath}/+esm`;
     },
   },
@@ -69,7 +53,6 @@ const CDN_PROVIDERS = {
           ? subpath
           : `/${subpath}`
         : "";
-      // unpkg serves ESM from ?module query parameter
       return `https://unpkg.com/${pkg}@${version}${cleanSubpath}?module`;
     },
   },
@@ -86,10 +69,6 @@ const CDN_PROVIDERS = {
   },
 } as const;
 
-/**
- * Solid.js subpath exports that need separate SRI entries
- * These are commonly used and should be preloaded
- */
 const SOLID_JS_SUBPATHS = ["", "/web", "/store", "/h", "/html"];
 
 const getProvidersForDependency = (
@@ -108,18 +87,16 @@ const getProvidersForDependency = (
   return providers;
 };
 
-/**
- * Reads runtime dependencies from package.json
- * (dependencies + cdnDependencies).
- */
 function readRuntimeDependencies(): Record<string, string> {
   const pkgJsonPath = path.join(process.cwd(), "package.json");
   const raw = readFileSync(pkgJsonPath, "utf-8");
 
-  // biome-ignore lint/suspicious/noExplicitAny: package.json is untyped external input
-  const pkg = JSON.parse(raw) as any;
-  const deps = (pkg?.dependencies ?? {}) as Record<string, string>;
-  const cdnDeps = (pkg?.cdnDependencies ?? {}) as Record<string, string>;
+  const pkg = JSON.parse(raw) as {
+    dependencies?: Record<string, string>;
+    cdnDependencies?: Record<string, string>;
+  };
+  const deps = pkg?.dependencies ?? {};
+  const cdnDeps = pkg?.cdnDependencies ?? {};
 
   const normalizeVersion = (spec: string): string =>
     String(spec)
@@ -146,9 +123,6 @@ function readRuntimeDependencies(): Record<string, string> {
   return normalized;
 }
 
-/**
- * Fetches a URL and computes its SHA-384 integrity hash
- */
 async function fetchAndHash(
   url: string,
   timeout = 30000
@@ -191,9 +165,6 @@ async function fetchAndHash(
   }
 }
 
-/**
- * Generates SRI entries for a single dependency across all CDN providers
- */
 async function generateEntryForDependency(
   pkg: string,
   version: string,
@@ -204,7 +175,6 @@ async function generateEntryForDependency(
 
   const entry: Partial<ManifestEntry> = {};
 
-  // Fetch from all CDN providers
   const providerKeys = getProvidersForDependency(pkg, subpath);
 
   for (const providerKey of providerKeys) {
@@ -225,7 +195,6 @@ async function generateEntryForDependency(
     }
   }
 
-  // Require at least primary CDN (esm.sh) to succeed
   if (!entry["esm.sh"]) {
     console.error(
       `  ✗ Failed to fetch from primary CDN (esm.sh), skipping ${fullPkg}`
@@ -236,9 +205,6 @@ async function generateEntryForDependency(
   return entry as ManifestEntry;
 }
 
-/**
- * Main generator function
- */
 async function generateSRIManifest() {
   console.log("=== SRI Manifest Generator ===\n");
 
@@ -253,9 +219,7 @@ async function generateSRIManifest() {
     entries: {},
   };
 
-  // Process each dependency
   for (const [pkg, version] of Object.entries(runtimeDeps)) {
-    // Special handling for solid-js subpaths
     if (pkg === "solid-js") {
       for (const subpath of SOLID_JS_SUBPATHS) {
         const key = subpath ? `${pkg}${subpath}` : pkg;
@@ -265,7 +229,6 @@ async function generateSRIManifest() {
         }
       }
     } else {
-      // Regular dependency
       const entry = await generateEntryForDependency(pkg, version);
       if (entry) {
         manifest.entries[pkg] = entry;
@@ -273,7 +236,6 @@ async function generateSRIManifest() {
     }
   }
 
-  // Write manifest to public/cdn-integrity.json
   const publicDir = path.join(process.cwd(), "public");
   mkdirSync(publicDir, { recursive: true });
 
