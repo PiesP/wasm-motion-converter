@@ -71,7 +71,7 @@ jobs:
         run: pnpm lint
 
       - name: Format check
-        run: pnpm fmt:check
+        run: pnpm fmt
 
       - name: Typecheck
         run: pnpm typecheck
