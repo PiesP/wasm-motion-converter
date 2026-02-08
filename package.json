@@ -18,6 +18,7 @@
       "esbuild"
     ],
     "overrides": {
+      "@isaacs/brace-expansion": "5.0.1",
       "seroval": "1.4.1"
     }
   },
@@ -44,7 +45,7 @@
     "@ffmpeg/util": "0.12.2",
     "@webav/av-cliper": "1.2.8",
     "comlink": "4.4.2",
-    "mediabunny": "1.31.0",
+    "mediabunny": "1.32.0",
     "modern-gif": "2.0.4",
     "solid-js": "1.9.11"
   },
@@ -54,11 +55,11 @@
     "web-demuxer": "4.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.3.13",
+    "@biomejs/biome": "2.3.14",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^25.2.0",
     "esbuild": "0.27.2",
-    "knip": "^5.82.1",
+    "knip": "^5.83.0",
     "postcss": "^8.5.6",
     "rimraf": "^6.1.2",
     "rollup-plugin-visualizer": "^6.0.5",
