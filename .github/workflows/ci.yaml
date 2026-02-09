@@ -33,10 +33,6 @@ on:
     types: [checks_requested]
   workflow_dispatch:
 
-env:
-  NODE_VERSION: "24.13.0"
-  PNPM_VERSION: "10.28.0"
-
 permissions:
   contents: read
 
@@ -55,13 +51,10 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
       - name: Install
