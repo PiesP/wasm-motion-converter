@@ -4,7 +4,7 @@
     "enabled": true,
     "clientKind": "git",
     "useIgnoreFile": true,
-    "defaultBranch": "master",
+    "defaultBranch": "master"
   },
   "files": {
     "includes": [
@@ -12,16 +12,16 @@
       "vite.config.ts",
       "tailwind.config.ts",
       "postcss.config.ts",
-      "index.html",
+      "index.html"
     ],
-    "ignoreUnknown": true,
+    "ignoreUnknown": true
   },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
     "lineWidth": 100,
-    "lineEnding": "lf",
+    "lineEnding": "lf"
   },
   "linter": {
     "enabled": true,
@@ -30,12 +30,12 @@
       "correctness": {
         "noUnusedImports": "warn",
         "noUnusedVariables": "warn",
-        "noUnknownMediaFeatureName": "off",
+        "noUnknownMediaFeatureName": "off"
       },
       "style": {
         "noNonNullAssertion": "off",
         "useConst": "error",
-        "noParameterAssign": "warn",
+        "noParameterAssign": "warn"
       },
       "suspicious": {
         "noExplicitAny": "error",
@@ -45,14 +45,14 @@
         "noAssignInExpressions": "off",
         "noDocumentCookie": "off",
         "useIterableCallbackReturn": "off",
-        "noImplicitAnyLet": "error",
+        "noImplicitAnyLet": "error"
       },
       "complexity": {
         "noForEach": "off",
-        "noStaticOnlyClass": "off",
+        "noStaticOnlyClass": "off"
       },
       "performance": {
-        "noAccumulatingSpread": "warn",
+        "noAccumulatingSpread": "warn"
       },
       "a11y": {
         "noStaticElementInteractions": "off",
@@ -60,36 +60,36 @@
         "useMediaCaption": "off",
         "noSvgWithoutTitle": "off",
         "useAriaPropsSupportedByRole": "off",
-        "useSemanticElements": "off",
-      },
-    },
+        "useSemanticElements": "off"
+      }
+    }
   },
   "javascript": {
     "formatter": {
       "quoteStyle": "single",
       "semicolons": "always",
       "trailingCommas": "es5",
-      "arrowParentheses": "always",
-    },
+      "arrowParentheses": "always"
+    }
   },
   "json": {
     "formatter": {
       "indentStyle": "space",
-      "indentWidth": 2,
-    },
+      "indentWidth": 2
+    }
   },
   "css": {
     "parser": {
-      "tailwindDirectives": true,
-    },
+      "tailwindDirectives": true
+    }
   },
 
   "assist": {
     "enabled": true,
     "actions": {
       "source": {
-        "organizeImports": "on",
-      },
-    },
-  },
+        "organizeImports": "on"
+      }
+    }
+  }
 }
