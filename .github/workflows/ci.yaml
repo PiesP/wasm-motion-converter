@@ -55,22 +55,21 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
+          node-version-file: '.node-version'
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --prefer-offline
 
-      - name: Lint
-        run: pnpm lint
+      - name: Quality checks
+        run: pnpm -s knip && pnpm -s fmt && pnpm -s lint && pnpm -s typecheck
 
-      - name: Format check
-        run: pnpm fmt
-
-      - name: Typecheck
-        run: pnpm typecheck
+      - name: Generate build metadata
+        run: pnpm -s sri:generate && pnpm -s licenses:generate
 
       - name: Build
-        run: pnpm build
+        run: pnpm exec vite build
 
       - name: Upload dist (push only)
         uses: actions/upload-artifact@v6
