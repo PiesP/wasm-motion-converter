@@ -7,11 +7,7 @@
     "scripts/**/*.ts",
     "src/workers/**/*.ts"
   ],
-  "project": [
-    "src/**/*.{ts,tsx}",
-    "public/*.ts",
-    "scripts/**/*.ts"
-  ],
+  "project": ["src/**/*.{ts,tsx}", "public/*.ts", "scripts/**/*.ts"],
   "paths": {
     "@": ["src"],
     "@components": ["src/components"],
