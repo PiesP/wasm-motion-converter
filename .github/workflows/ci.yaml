@@ -63,14 +63,7 @@ jobs:
         run: pnpm install --frozen-lockfile --prefer-offline
 
       - name: Quality checks
-        run: |
-          pnpm -s quality
-          if ! git diff --quiet; then
-            echo "::error::Code quality normalization changed files. Run 'pnpm quality' locally and commit the result."
-            git --no-pager diff --stat
-            git --no-pager diff
-            exit 1
-          fi
+        run: pnpm -s quality:ci
 
       - name: Generate build metadata
         run: pnpm -s sri:generate && pnpm -s licenses:generate
