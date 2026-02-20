@@ -62,8 +62,17 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile --prefer-offline
 
-      - name: Quality checks
-        run: pnpm -s knip && pnpm -s fmt && pnpm -s lint && pnpm -s typecheck
+      - name: Format check
+        run: pnpm -s fmt
+
+      - name: Lint
+        run: pnpm -s lint
+
+      - name: Typecheck
+        run: pnpm -s typecheck
+
+      - name: Dependency hygiene (Knip)
+        run: pnpm -s knip
 
       - name: Generate build metadata
         run: pnpm -s sri:generate && pnpm -s licenses:generate
