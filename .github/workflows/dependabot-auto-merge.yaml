@@ -1,0 +1,110 @@
+name: 🤖 Dependabot Auto-Merge
+
+# Responsibility: Auto-merge safe dependabot PRs
+# - GitHub Actions: patch/minor updates
+# - npm: patch/minor updates for specific safe packages
+# - Requires CI to pass first (via GitHub branch protection)
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dependabot:
+    name: 🤖 Auto-Merge Dependabot
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: 📥 Fetch Dependabot metadata
+        id: dependabot-metadata
+        uses: dependabot/fetch-metadata@v2.5.0
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: 🔍 Decide merge eligibility
+        id: decide
+        run: |
+          set -euo pipefail
+
+          ECOSYSTEM="${{ steps.dependabot-metadata.outputs.package-ecosystem }}"
+          UPDATE_TYPE="${{ steps.dependabot-metadata.outputs.update-type }}"
+          DEPENDENCIES="${{ steps.dependabot-metadata.outputs.dependency-names }}"
+          ALERT_STATE="${{ steps.dependabot-metadata.outputs.alert-state }}"
+          SHOULD_MERGE="false"
+          REASON="manual review required"
+
+          if [[ -n "$ALERT_STATE" ]]; then
+            SHOULD_MERGE="true"
+            REASON="security advisory update"
+          elif [[ "$ECOSYSTEM" == "github-actions" && ("$UPDATE_TYPE" == "version-update:semver-patch" || "$UPDATE_TYPE" == "version-update:semver-minor") ]]; then
+            SHOULD_MERGE="true"
+            REASON="safe github-actions patch/minor"
+          elif [[ "$ECOSYSTEM" == "npm" && ("$UPDATE_TYPE" == "version-update:semver-patch" || "$UPDATE_TYPE" == "version-update:semver-minor") ]]; then
+            SAFE="true"
+            IFS=',' read -ra DEPS <<< "$DEPENDENCIES"
+            for dep in "${DEPS[@]}"; do
+              dep=$(echo "$dep" | xargs)
+              case "$dep" in
+                typescript|knip|vite|@types/*|@biomejs/*)
+                  ;;
+                *)
+                  SAFE="false"
+                  ;;
+              esac
+            done
+
+            if [[ "$SAFE" == "true" ]]; then
+              SHOULD_MERGE="true"
+              REASON="safe npm patch/minor set"
+            fi
+          fi
+
+          echo "should_merge=$SHOULD_MERGE" >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+
+      - name: 🔄 Queue auto-merge
+        if: steps.decide.outputs.should_merge == 'true'
+        run: |
+          set -euo pipefail
+          gh pr comment "$PR_NUMBER" --body "🤖 Auto-merge queued: ${{ steps.decide.outputs.reason }}"
+          gh pr merge --auto --squash "$PR_URL"
+          echo "✅ Auto-merge queued"
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ⏭️ Keep for manual review
+        if: steps.decide.outputs.should_merge != 'true'
+        run: |
+          echo "⏭️ Manual review required"
+          echo "Reason: ${{ steps.decide.outputs.reason }}"
+
+  workflow-bot:
+    name: ⚙️ Auto-Merge Workflow PRs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.event.pull_request.user.login == 'github-actions[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'automerge')
+    steps:
+      - name: 🔄 Queue auto-merge for workflow PR
+        run: |
+          set -euo pipefail
+          gh pr merge --auto --squash "$PR_URL"
+          echo "✅ Auto-merge queued for workflow PR"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
