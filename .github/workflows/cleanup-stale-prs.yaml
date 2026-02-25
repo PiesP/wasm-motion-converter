@@ -67,14 +67,14 @@ jobs:
 
                 gh pr comment "$PR_NUMBER" --body "🧹 **Auto-closing stale PR**
 
-This Dependabot PR has been open for ${AGE_DAYS} days and has merge conflicts.
+          This Dependabot PR has been open for ${AGE_DAYS} days and has merge conflicts.
 
-**Reason:** Likely superseded by a newer PR or requires manual intervention.
+          **Reason:** Likely superseded by a newer PR or requires manual intervention.
 
-**To re-enable this update:**
-1. Close this PR
-2. Run \`@dependabot recreate\` to create a fresh PR
-3. Or wait for the next scheduled Dependabot run (every Monday at 09:00 KST)"
+          **To re-enable this update:**
+          1. Close this PR
+          2. Run \`@dependabot recreate\` to create a fresh PR
+          3. Or wait for the next scheduled Dependabot run (every Monday at 09:00 KST)"
 
                 gh pr close "$PR_NUMBER"
                 echo "✅ Closed stale PR #$PR_NUMBER"
