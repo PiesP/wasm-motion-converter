@@ -27,8 +27,8 @@ importers:
         specifier: 4.4.2
         version: 4.4.2
       mediabunny:
-        specifier: 1.38.0
-        version: 1.38.0
+        specifier: 1.38.1
+        version: 1.38.1
       modern-gif:
         specifier: 2.0.4
         version: 2.0.4
@@ -1126,8 +1126,8 @@ packages:
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
-  mediabunny@1.38.0:
-    resolution: {integrity: sha512-FiZtTWLY4rmEw4jBx8r5Tk+sE+PcBb03UYUZNv9DujEy9wdmX7JaQOvHNUZLVTxPWT0h+LYmWFnWKRkl4KmzyA==}
+  mediabunny@1.38.1:
+    resolution: {integrity: sha512-iqZjL21WG32qpdlONAyBBnmhLo4EvF+v4wnfe1rXEKT/7ogiYOZnQGL8TZi7QIFV71DSg7a64egFWUgf3oeSYA==}
 
   merge-anything@5.1.7:
     resolution: {integrity: sha512-eRtbOb1N5iyH0tkQDAoQ4Ipsp/5qSR79Dzrz8hEPxRX10RWWR/iQXdoKmBSRCThY1Fh5EhISDtpSc93fpxUniQ==}
@@ -2252,7 +2252,7 @@ snapshots:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  mediabunny@1.38.0:
+  mediabunny@1.38.1:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.11
       '@types/dom-webcodecs': 0.1.13
