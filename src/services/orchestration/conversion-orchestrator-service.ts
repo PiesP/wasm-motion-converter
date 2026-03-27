@@ -918,8 +918,7 @@ class ConversionOrchestrator {
     const codecForStrategyBase = plannedMetadata?.codec ?? plan.track?.codec ?? 'unknown';
     const codecForStrategy =
       import.meta.env.DEV &&
-      devOverrides &&
-      devOverrides.forcedStrategyCodec &&
+      devOverrides?.forcedStrategyCodec &&
       devOverrides.forcedStrategyCodec !== 'auto'
         ? devOverrides.forcedStrategyCodec
         : codecForStrategyBase;
