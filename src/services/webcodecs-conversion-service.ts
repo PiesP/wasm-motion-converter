@@ -1037,7 +1037,7 @@ class WebCodecsConversionService {
         }
       }
 
-      if (!decodeResult || !decodeResult.frameCount) {
+      if (!decodeResult?.frameCount) {
         throw new Error('WebCodecs decode produced no frames.');
       }
 

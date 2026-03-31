@@ -84,7 +84,7 @@ const api = {
   ): Promise<ArrayBuffer> {
     try {
       // Validate input
-      if (!imageData || !imageData.data || imageData.width <= 0 || imageData.height <= 0) {
+      if (!imageData?.data || imageData.width <= 0 || imageData.height <= 0) {
         throw new Error('Invalid image data for WebP encoding');
       }
 

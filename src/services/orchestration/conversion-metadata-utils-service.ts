@@ -52,7 +52,7 @@ export const resolveMetadata = async (
 
     const codec = probed?.codec?.toLowerCase();
     if (codec === 'av1' || codec === 'vp9' || codec === 'hevc') {
-      if (!probed || !probed.duration || probed.duration === 0) {
+      if (!probed?.duration || probed.duration === 0) {
         throw new Error(
           `Failed to extract metadata for ${codec.toUpperCase()} codec. ` +
             'This codec requires complete metadata for processing. ' +
