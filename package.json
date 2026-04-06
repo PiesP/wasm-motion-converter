@@ -75,7 +75,7 @@
     "tailwindcss": "^4.2.2",
     "tsx": "^4.21.0",
     "typescript": "6.0.2",
-    "vite": "^8.0.5",
-    "vite-plugin-solid": "^2.11.12"
+    "vite": "^8.0.3",
+    "vite-plugin-solid": "^2.11.11"
   }
 }
