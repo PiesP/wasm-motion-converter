@@ -28,7 +28,8 @@
       "brace-expansion": "5.0.5",
       "picomatch": "4.0.4",
       "seroval": "1.5.1"
-    }
+    },
+    "minimumReleaseAgeExclude": ["vite"]
   },
   "scripts": {
     "dev": "vite",
@@ -75,7 +76,7 @@
     "tailwindcss": "^4.2.2",
     "tsx": "^4.21.0",
     "typescript": "6.0.2",
-    "vite": "^8.0.3",
+    "vite": "^8.0.5",
     "vite-plugin-solid": "^2.11.12"
   }
 }
