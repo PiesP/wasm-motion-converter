@@ -52,3 +52,4 @@ docs/
 test/
 *.backup
 CODE_STANDARDS.md
+.editorconfig
