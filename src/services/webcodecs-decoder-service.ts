@@ -24,12 +24,10 @@ import {
   seekTo,
 } from '@services/webcodecs/decoder/video-element-service';
 import { waitForEvent } from '@services/webcodecs/decoder/wait-for-event-service';
-import {
-  canUseDemuxer,
-  detectContainer,
-} from '@services/webcodecs/demuxer/demuxer-factory-service';
+import { canUseDemuxer } from '@services/webcodecs/demuxer/demuxer-factory-service';
 // Type imports
 import type { VideoMetadata } from '@t/conversion-types';
+import { detectContainerFormat } from '@utils/container-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
@@ -192,7 +190,7 @@ export class WebCodecsDecoderService {
       try {
         logger.info('conversion', 'Attempting demuxer-based frame capture', {
           fileName: file.name,
-          container: detectContainer(file),
+          container: detectContainerFormat(file),
           codec: codec ?? 'unknown',
         });
 

@@ -1,4 +1,5 @@
 // External dependencies
+import { getCodecCandidates } from '@utils/codec-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
@@ -137,48 +138,6 @@ export const isWebCodecsDecodeSupported = (): boolean => {
  * @param codec - Raw codec string (e.g., 'H264', 'AV1')
  * @returns Normalized codec string (e.g., 'h264', 'av1')
  */
-const normalizeCodec = (codec: string): string => codec.trim().toLowerCase();
-
-/**
- * Get codec string candidates for testing
- *
- * Maps generic codec names to specific codec strings with profiles/levels.
- * Returns multiple candidates for fallback testing.
- *
- * @param codec - Generic codec name (e.g., 'h264', 'av1', 'vp9')
- * @returns Array of specific codec strings to test
- *
- * @example
- * getCodecCandidates('av1') // ['av01.0.05M.08', 'av01.0.08M.08', 'av01.0.08M.10']
- * getCodecCandidates('h264') // ['avc1.42E01E', 'avc1.4D401E']
- */
-const getCodecCandidates = (codec: string): string[] => {
-  const normalized = normalizeCodec(codec);
-  switch (normalized) {
-    case 'av1':
-    case 'av01':
-      return ['av01.0.05M.08', 'av01.0.08M.08', 'av01.0.08M.10'];
-    case 'vp9':
-    case 'vp09':
-      return ['vp09.00.10.08', 'vp9'];
-    case 'vp8':
-    case 'vp08':
-      return ['vp8', 'vp08.00.10.08'];
-    case 'hevc':
-    case 'h265':
-    case 'hvc1':
-    case 'hev1':
-      return ['hvc1.1.6.L93.B0', 'hev1.1.6.L93.B0'];
-    case 'h264':
-    case 'avc':
-    case 'avc1':
-    case 'avc3':
-      return ['avc1.42E01E', 'avc1.4D401E'];
-    default:
-      return [];
-  }
-};
-
 /**
  * Check if specific codec is supported for WebCodecs decoding
  *

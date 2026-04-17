@@ -3,12 +3,10 @@ import type {
   WebCodecsCaptureMode,
   WebCodecsFrameFormat,
 } from '@services/webcodecs/decoder/types-service';
-import {
-  canUseDemuxer,
-  detectContainer,
-} from '@services/webcodecs/demuxer/demuxer-factory-service';
+import { canUseDemuxer } from '@services/webcodecs/demuxer/demuxer-factory-service';
 import type { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
 import type { ConversionOptions, VideoMetadata } from '@t/conversion-types';
+import { detectContainerFormat } from '@utils/container-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { logger } from '@utils/logger';
@@ -101,7 +99,7 @@ export async function captureComplexCodecFramesForWebP(params: {
   if (demuxerEligible) {
     logger.info('conversion', 'Demuxer path eligible for complex codec extraction', {
       codec: metadata?.codec ?? 'unknown',
-      container: detectContainer(file),
+      container: detectContainerFormat(file),
     });
   }
 
@@ -226,7 +224,7 @@ export async function captureComplexCodecFramesForWebP(params: {
     initialCaptureMode = 'demuxer';
     logger.info('conversion', 'Starting complex codec capture with demuxer mode', {
       codec: metadata?.codec ?? 'unknown',
-      container: detectContainer(file),
+      container: detectContainerFormat(file),
     });
   } else if (cachedPerf && isHardwareCacheValid()) {
     // Use cached fastest mode (performance-based selection)
@@ -290,7 +288,7 @@ export async function captureComplexCodecFramesForWebP(params: {
 
     logger.warn('conversion', 'Demuxer capture failed; falling back to playback capture modes', {
       codec: metadata?.codec ?? 'unknown',
-      container: detectContainer(file),
+      container: detectContainerFormat(file),
       error: getErrorMessage(error),
     });
 

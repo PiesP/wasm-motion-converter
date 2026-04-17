@@ -1,5 +1,13 @@
 import type { VideoMetadata } from '@t/conversion-types';
-import { isAv1Codec, isH264Codec, isHevcCodec, normalizeCodecString } from '@utils/codec-utils';
+import type { ContainerFormat } from '@t/video-pipeline-types';
+import {
+  getCodecCandidates,
+  isAv1Codec,
+  isH264Codec,
+  isHevcCodec,
+  normalizeCodecString,
+} from '@utils/codec-utils';
+import { detectContainerFormat } from '@utils/container-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import type { DemuxerAdapter } from './demuxer-adapter-service';
@@ -35,42 +43,6 @@ const shouldLogDemuxerEligibility = (params: {
   }
 
   return false;
-};
-
-const buildVideoDecoderCodecCandidates = (codec: string): string[] => {
-  const raw = codec.trim();
-  const normalized = raw.toLowerCase();
-
-  const candidates: string[] = [];
-
-  // If the input is already a RFC 6381-ish codec string (e.g. avc1.4D401F),
-  // try it first as-is.
-  if (/^(av01|vp09|vp08|avc1|avc3|hvc1|hev1)(\.|$)/.test(normalized)) {
-    candidates.push(raw);
-  }
-
-  if (isAv1Codec(normalized)) {
-    candidates.push('av01.0.05M.08', 'av01.0.08M.08', 'av01.0.08M.10');
-  }
-
-  if (isHevcCodec(normalized)) {
-    candidates.push('hvc1.1.6.L93.B0', 'hev1.1.6.L93.B0');
-  }
-
-  if (isH264Codec(normalized)) {
-    candidates.push('avc1.42E01E', 'avc1.4D401E', 'avc1.640028');
-  }
-
-  if (normalized.includes('vp09') || normalized.includes('vp9')) {
-    candidates.push('vp09.00.10.08', 'vp9');
-  }
-
-  if (normalized.includes('vp08') || normalized.includes('vp8')) {
-    candidates.push('vp8', 'vp08.00.10.08');
-  }
-
-  // Deduplicate while preserving order.
-  return [...new Set(candidates)];
 };
 
 const isAnyVideoDecoderConfigSupported = async (params: {
@@ -110,32 +82,11 @@ const isAnyVideoDecoderConfigSupported = async (params: {
 
 /**
  * Container format types
- */
-export type ContainerFormat = 'mp4' | 'mov' | 'webm' | 'mkv' | 'unknown';
-
-/**
- * Detect container format from file extension
  *
- * @param file - Video file to analyze
- * @returns Detected container format
+ * Re-exported for callers that import `ContainerFormat` from this module.
+ * Canonical definition lives in `@t/video-pipeline-types`.
  */
-export function detectContainer(file: File): ContainerFormat {
-  const extension = file.name.split('.').pop()?.toLowerCase();
-
-  switch (extension) {
-    case 'mp4':
-    case 'm4v':
-      return 'mp4';
-    case 'mov':
-      return 'mov';
-    case 'webm':
-      return 'webm';
-    case 'mkv':
-      return 'mkv';
-    default:
-      return 'unknown';
-  }
-}
+export type { ContainerFormat } from '@t/video-pipeline-types';
 
 /**
  * Check if demuxer path can be used for this file
@@ -151,8 +102,8 @@ export function detectContainer(file: File): ContainerFormat {
  */
 export function canUseDemuxer(file: File, metadata?: VideoMetadata): boolean {
   // 1. Container must be supported
-  const container = detectContainer(file);
-  if (container === 'unknown') {
+  const container = detectContainerFormat(file);
+  if (container === 'unknown' || container === 'avi' || container === 'wmv') {
     logger.info('demuxer', 'Container format not supported for demuxer', {
       fileName: file.name,
       container,
@@ -223,7 +174,7 @@ export async function createDemuxer(
     return null;
   }
 
-  const container = detectContainer(file);
+  const container = detectContainerFormat(file);
 
   // Optional: additional (more accurate) gating based on VideoDecoder.isConfigSupported.
   // This reduces unnecessary demuxer attempts and avoids confusing logs when the codec
@@ -231,7 +182,7 @@ export async function createDemuxer(
   if (metadata?.codec && metadata.codec !== 'unknown' && typeof VideoDecoder !== 'undefined') {
     const codedWidth = metadata.width || 640;
     const codedHeight = metadata.height || 360;
-    const codecCandidates = buildVideoDecoderCodecCandidates(metadata.codec);
+    const codecCandidates = getCodecCandidates(metadata.codec);
 
     if (codecCandidates.length > 0) {
       const supported = await isAnyVideoDecoderConfigSupported({
@@ -256,6 +207,7 @@ export async function createDemuxer(
   try {
     switch (container) {
       case 'mp4':
+      case 'm4v':
       case 'mov':
         logger.info('demuxer', 'Creating MP4Box demuxer', {
           container,
