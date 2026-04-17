@@ -4,7 +4,7 @@ import { EncoderFactory } from '@services/encoders/encoder-factory-service';
 import type { EncoderFrame } from '@services/encoders/encoder-interface-service';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import { getDevConversionOverrides } from '@services/orchestration/dev-conversion-overrides-service';
-import { isComplexCodec } from '@services/webcodecs/codec-utils-service';
+import { isComplexCodec } from '@utils/codec-utils';
 import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support-service';
 import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture-service';
 import { encodeWithFFmpegFallback as encodeWithFFmpegFallbackUtil } from '@services/webcodecs/conversion/ffmpeg-fallback-encode-service';
@@ -90,7 +90,7 @@ class WebCodecsConversionService {
    * Calculate maximum WebP frame count
    *
    * Limits frame count based on duration and FPS to prevent memory issues.
-   * Caps at WEBP_ANIMATION_MAX_FRAMES (240) and WEBP_ANIMATION_MAX_DURATION_SECONDS (10s).
+   * Caps at WEBP_MAX_FRAMES (240) and WEBP_ANIMATION_MAX_DURATION_SECONDS (10s).
    *
    * @param targetFps - Target frames per second
    * @param durationSeconds - Optional video duration in seconds

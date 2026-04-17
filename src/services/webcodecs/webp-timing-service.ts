@@ -1,19 +1,19 @@
 import type { VideoMetadata } from '@t/conversion-types';
-import { logger } from '@utils/logger';
-import { isComplexCodec } from './codec-utils-service';
+import { isComplexCodec } from '@utils/codec-utils';
 import {
   FPS_DOWNSAMPLING_THRESHOLD,
   MAX_WEBP_DURATION_24BIT,
   MIN_WEBP_FRAME_DURATION_MS,
   WEBP_ANIMATION_MAX_DURATION_SECONDS,
-  WEBP_ANIMATION_MAX_FRAMES,
-} from './webp-constants-service';
+  WEBP_MAX_FRAMES,
+} from '@utils/constants';
+import { logger } from '@utils/logger';
 
 /**
  * Calculate maximum WebP frame count.
  *
  * Limits frame count based on duration and FPS to prevent memory issues.
- * Caps at WEBP_ANIMATION_MAX_FRAMES and WEBP_ANIMATION_MAX_DURATION_SECONDS.
+ * Caps at WEBP_MAX_FRAMES and WEBP_ANIMATION_MAX_DURATION_SECONDS.
  */
 export function getMaxWebPFrames(targetFps: number, durationSeconds?: number): number {
   // NOTE: FFmpeg metadata probing can return duration=0 for some containers/codecs.
@@ -54,7 +54,7 @@ export function getMaxWebPFrames(targetFps: number, durationSeconds?: number): n
     )
   );
   const estimatedFrames = Math.ceil(cappedDuration * Math.max(1, targetFps));
-  const maxFrames = Math.max(1, Math.min(estimatedFrames, WEBP_ANIMATION_MAX_FRAMES));
+  const maxFrames = Math.max(1, Math.min(estimatedFrames, WEBP_MAX_FRAMES));
 
   logger.debug(
     'conversion',

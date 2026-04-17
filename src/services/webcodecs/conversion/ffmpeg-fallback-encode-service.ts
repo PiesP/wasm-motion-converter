@@ -1,5 +1,5 @@
 import { ffmpegService } from '@services/ffmpeg-service';
-import { isComplexCodec } from '@services/webcodecs/codec-utils-service';
+import { isComplexCodec } from '@utils/codec-utils';
 import { computeExpectedFramesFromDuration } from '@services/webcodecs/conversion/frame-requirements-service';
 import { computeRawvideoEligibility } from '@services/webcodecs/conversion/rawvideo-eligibility-service';
 import type { WebCodecsFrameFormat } from '@services/webcodecs/decoder/types-service';

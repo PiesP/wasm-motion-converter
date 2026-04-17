@@ -263,6 +263,25 @@ export const WEBP_MAX_DURATION_MS = 10_000;
 /** Maximum frame count per WebP spec: 240 frames */
 export const WEBP_MAX_FRAMES = 240;
 
+/** Maximum duration in seconds for WebP animation. */
+export const WEBP_ANIMATION_MAX_DURATION_SECONDS = WEBP_MAX_DURATION_MS / 1000;
+
+/** Minimum frame duration in milliseconds for WebP (spec floor). */
+export const MIN_WEBP_FRAME_DURATION_MS = 8;
+
+/** Maximum frame duration value (24-bit ceiling): 0xFFFFFF ms. */
+export const MAX_WEBP_DURATION_24BIT = 0xffffff;
+
+/** Transparent black background for WebP animations (RGBA). */
+export const WEBP_BACKGROUND_COLOR = { r: 0, g: 0, b: 0, a: 0 } as const;
+
+/**
+ * Threshold for detecting significant FPS downsampling.
+ * If source FPS exceeds target FPS by more than this ratio, use uniform frame durations
+ * to avoid stuttering from uneven timestamp capture.
+ */
+export const FPS_DOWNSAMPLING_THRESHOLD = 1.05;
+
 // ============================================================================
 // DURATION WARNING THRESHOLDS (milliseconds)
 // ============================================================================
