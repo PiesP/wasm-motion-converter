@@ -10,21 +10,19 @@ import {
   setLoadingStatusMessage,
 } from '@stores/app-store';
 import { showConfirmation } from '@stores/confirmation-store';
-import { setErrorContext, setErrorMessage } from '@stores/conversion-error-store';
 import {
+  MAX_RESULTS,
   inputFile,
+  setConversionResults,
+  setConversionStatusMessage,
+  setErrorContext,
+  setErrorMessage,
   setInputFile,
   setVideoMetadata,
   setVideoPreviewUrl,
   videoMetadata,
   videoPreviewUrl,
-} from '@stores/conversion-media-store';
-import {
-  setAutoAppliedRecommendation,
-  setPerformanceWarnings,
-} from '@stores/conversion-performance-store';
-import { setConversionStatusMessage } from '@stores/conversion-progress-store';
-import { MAX_RESULTS, setConversionResults } from '@stores/conversion-result-store';
+} from '@stores/conversion-store';
 import {
   conversionSettings,
   DEFAULT_CONVERSION_SETTINGS,
@@ -278,8 +276,6 @@ export function handleReset(runtime: ConversionRuntimeController): void {
 
   batch(() => {
     setVideoMetadata(null);
-    setPerformanceWarnings([]);
-    setAutoAppliedRecommendation(false);
 
     setLoadingProgress(0);
     setLoadingStatusMessage('');

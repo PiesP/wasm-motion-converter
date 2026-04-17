@@ -1,22 +1,19 @@
 import { ffmpegService } from '@services/ffmpeg-service';
-import { checkPerformance, getRecommendedSettings } from '@services/performance-checker-service';
+import { getRecommendedSettings } from '@services/performance-checker-service';
 import {
   analyzeVideo,
   analyzeVideoCodecOnly,
   analyzeVideoQuick,
 } from '@services/video-analyzer-service';
 import { setAppState, setLoadingProgress, setLoadingStatusMessage } from '@stores/app-store';
-import { setErrorContext, setErrorMessage } from '@stores/conversion-error-store';
 import {
+  setErrorContext,
+  setErrorMessage,
   setInputFile,
   setVideoMetadata,
   setVideoPreviewUrl,
   videoPreviewUrl,
-} from '@stores/conversion-media-store';
-import {
-  setAutoAppliedRecommendation,
-  setPerformanceWarnings,
-} from '@stores/conversion-performance-store';
+} from '@stores/conversion-store';
 import { conversionSettings, setConversionSettings } from '@stores/conversion-settings-store';
 import type { VideoMetadata } from '@t/conversion-types';
 import { WARN_RESOLUTION_PIXELS } from '@utils/constants';
@@ -41,8 +38,6 @@ const resetErrorState = (): void => {
 
 const resetAnalysisState = (): void => {
   setVideoMetadata(null);
-  setPerformanceWarnings([]);
-  setAutoAppliedRecommendation(false);
 };
 
 const resetOutputState = (): void => {
@@ -116,7 +111,6 @@ export async function handleFileSelected(
           return null;
         }
         setVideoMetadata(metadata);
-        setPerformanceWarnings(checkPerformance(file, metadata));
         return metadata;
       })
       .catch(() => null);
@@ -138,7 +132,6 @@ export async function handleFileSelected(
       }
       finalMetadata = metadata;
       setVideoMetadata(metadata);
-      setPerformanceWarnings(checkPerformance(file, metadata));
     } else if (quickMetadata) {
       try {
         const codecMetadata = await analyzeVideoCodecOnly(file);
@@ -162,8 +155,6 @@ export async function handleFileSelected(
 
     if (finalMetadata) {
       const recommendation = getRecommendedSettings(file, finalMetadata, conversionSettings());
-      const applied = Boolean(recommendation);
-      setAutoAppliedRecommendation(applied);
       if (recommendation) {
         setConversionSettings(recommendation);
       }

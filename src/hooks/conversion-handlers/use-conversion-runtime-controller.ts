@@ -1,7 +1,4 @@
-import {
-  setConversionProgress,
-  setConversionStatusMessage,
-} from '@stores/conversion-progress-store';
+import { setConversionProgress, setConversionStatusMessage } from '@stores/conversion-store';
 import { ETACalculator } from '@utils/eta-calculator';
 import { formatDuration } from '@utils/format-duration';
 import { logger } from '@utils/logger';
