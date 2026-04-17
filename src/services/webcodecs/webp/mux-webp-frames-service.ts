@@ -9,14 +9,11 @@
  */
 
 import {
-  MIN_WEBP_FRAME_DURATION_MS,
-  WEBP_BACKGROUND_COLOR,
-} from '@services/webcodecs/webp-constants-service';
-import {
   buildWebPFrameDurations,
   resolveAnimationDurationSeconds,
 } from '@services/webcodecs/webp-timing-service';
 import type { VideoMetadata } from '@t/conversion-types';
+import { MIN_WEBP_FRAME_DURATION_MS, WEBP_BACKGROUND_COLOR } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { muxAnimatedWebP } from '@utils/webp-muxer';
 

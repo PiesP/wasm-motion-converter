@@ -3,12 +3,13 @@ import {
   runConversionMatrixTestWithReport,
 } from '@services/dev/conversion-matrix-test-service';
 import { appState, setAppState } from '@stores/app-store';
-import { inputFile, videoMetadata } from '@stores/conversion-media-store';
 import {
   conversionStatusMessage,
+  inputFile,
   setConversionProgress,
   setConversionStatusMessage,
-} from '@stores/conversion-progress-store';
+  videoMetadata,
+} from '@stores/conversion-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
 import {
   devMatrixTestCancelRequested,

@@ -42,10 +42,16 @@ import {
   setEnvironmentSupported,
 } from '@stores/app-store';
 import { showConfirmation } from '@stores/confirmation-store';
-import { errorContext, errorMessage } from '@stores/conversion-error-store';
-import { inputFile, videoMetadata, videoPreviewUrl } from '@stores/conversion-media-store';
-import { conversionProgress, conversionStatusMessage } from '@stores/conversion-progress-store';
-import { conversionResults } from '@stores/conversion-result-store';
+import {
+  conversionProgress,
+  conversionResults,
+  conversionStatusMessage,
+  errorContext,
+  errorMessage,
+  inputFile,
+  videoMetadata,
+  videoPreviewUrl,
+} from '@stores/conversion-store';
 import {
   conversionSettings,
   saveConversionSettings,

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-03-31T02:27:24.013Z",
+  "generated": "2026-04-17T05:05:04.427Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -108,8 +108,8 @@
       },
       "skypack": {
         "url": "https://cdn.skypack.dev/mediabunny@1.40.1",
-        "integrity": "sha384-oGiaLYkmAhrH5gF2/KSm5b+YpKEW0mfLv0Eb6RYrRMtTngKTmlfyQBDdcKPtLKh7",
-        "size": 1384641
+        "integrity": "sha384-YOB6XXdHzQ9hrcon51bxTPD/clBu1y6LSYMLVnfQuqv9smXGsVi+TNSc8l3X4FP1",
+        "size": 812
       }
     },
     "modern-gif": {

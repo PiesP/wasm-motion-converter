@@ -15,10 +15,7 @@
 
 import type { EncoderAdapter, EncoderRequest } from '@services/encoders/encoder-interface-service';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
-import {
-  WEBP_ANIMATION_MAX_FRAMES,
-  WEBP_BACKGROUND_COLOR,
-} from '@services/webcodecs/webp-constants-service';
+import { WEBP_MAX_FRAMES, WEBP_BACKGROUND_COLOR } from '@utils/constants';
 import { buildWebPFrameDurations, resolveWebPFps } from '@services/webcodecs/webp-timing-service';
 import { logger } from '@utils/logger';
 import type { AnimatedWebPOptions, WebPFrame } from '@utils/webp-muxer';
@@ -41,7 +38,7 @@ export class WebPCanvasEncoderAdapter implements EncoderAdapter {
     formats: ['webp' as const],
     supportsWorkers: false,
     requiresSharedArrayBuffer: false,
-    maxFrames: WEBP_ANIMATION_MAX_FRAMES,
+    maxFrames: WEBP_MAX_FRAMES,
     maxDimension: undefined,
     /**
      * Performance score: 9/10 (Very fast)
