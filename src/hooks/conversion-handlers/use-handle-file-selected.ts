@@ -1,10 +1,5 @@
 import { ffmpegService } from '@services/ffmpeg-service';
-import { getRecommendedSettings } from '@services/performance-checker-service';
-import {
-  analyzeVideo,
-  analyzeVideoCodecOnly,
-  analyzeVideoQuick,
-} from '@services/video-analyzer-service';
+import { analyzeVideo } from '@services/video-analyzer-service';
 import { setAppState, setLoadingProgress, setLoadingStatusMessage } from '@stores/app-store';
 import {
   setErrorContext,
@@ -14,16 +9,10 @@ import {
   setVideoPreviewUrl,
   videoPreviewUrl,
 } from '@stores/conversion-store';
-import { conversionSettings, setConversionSettings } from '@stores/conversion-settings-store';
-import type { VideoMetadata } from '@t/conversion-types';
-import { WARN_RESOLUTION_PIXELS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoFile } from '@utils/file-validation';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
-
-const SMALL_FILE_SIZE_THRESHOLD = 50 * 1024 * 1024;
-const SHORT_VIDEO_DURATION = 15;
 
 const focusRetryButton = () => {
   queueMicrotask(() => {
@@ -38,26 +27,8 @@ const resetErrorState = (): void => {
 
 const resetAnalysisState = (): void => {
   setVideoMetadata(null);
-};
-
-const resetOutputState = (): void => {
   setLoadingProgress(0);
   setLoadingStatusMessage('');
-};
-
-const shouldRunFullAnalysis = (file: File, metadata: VideoMetadata | null): boolean => {
-  if (!metadata) {
-    return true;
-  }
-
-  if (metadata.width <= 0 || metadata.height <= 0 || metadata.duration <= 0) {
-    return true;
-  }
-
-  const isSmallFile = file.size <= SMALL_FILE_SIZE_THRESHOLD;
-  const isShort = metadata.duration > 0 ? metadata.duration <= SHORT_VIDEO_DURATION : false;
-  const isLowRes = metadata.width * metadata.height <= WARN_RESOLUTION_PIXELS;
-  return !(isSmallFile && isShort && isLowRes);
 };
 
 let activeSelectionId = 0;
@@ -72,7 +43,6 @@ export async function handleFileSelected(
   runtime.resetRuntimeState();
   resetErrorState();
   resetAnalysisState();
-  resetOutputState();
 
   const validation = validateVideoFile(file);
   if (!validation.valid) {
@@ -96,77 +66,32 @@ export async function handleFileSelected(
   setVideoPreviewUrl(URL.createObjectURL(file));
 
   try {
-    const needsInit = !ffmpegService.isLoaded();
-    const initPromise = needsInit
-      ? ffmpegService.initialize(setLoadingProgress, setLoadingStatusMessage)
-      : Promise.resolve();
-
-    if (needsInit) {
+    if (!ffmpegService.isLoaded()) {
       setAppState('loading-ffmpeg');
+      await ffmpegService.initialize(setLoadingProgress, setLoadingStatusMessage);
+      if (isStale()) {
+        return;
+      }
     }
 
-    const quickAnalysisPromise: Promise<VideoMetadata | null> = analyzeVideoQuick(file)
-      .then((metadata) => {
-        if (isStale()) {
-          return null;
-        }
-        setVideoMetadata(metadata);
-        return metadata;
-      })
-      .catch(() => null);
+    setAppState('analyzing');
 
-    const quickMetadata = await quickAnalysisPromise;
-    await initPromise;
+    const metadata = await analyzeVideo(file);
     if (isStale()) {
       return;
     }
 
-    const requiresFullAnalysis = shouldRunFullAnalysis(file, quickMetadata);
-    let finalMetadata: VideoMetadata | null = quickMetadata;
-
-    if (requiresFullAnalysis) {
-      setAppState('analyzing');
-      const metadata = await analyzeVideo(file);
-      if (isStale()) {
-        return;
-      }
-      finalMetadata = metadata;
-      setVideoMetadata(metadata);
-    } else if (quickMetadata) {
-      try {
-        const codecMetadata = await analyzeVideoCodecOnly(file);
-        if (isStale()) {
-          return;
-        }
-        const mergedMetadata: VideoMetadata = {
-          width: quickMetadata.width,
-          height: quickMetadata.height,
-          duration: quickMetadata.duration,
-          codec: codecMetadata.codec,
-          framerate: codecMetadata.framerate,
-          bitrate: codecMetadata.bitrate,
-        };
-        finalMetadata = mergedMetadata;
-        setVideoMetadata(mergedMetadata);
-      } catch {
-        // Keep quick metadata if codec probe fails.
-      }
-    }
-
-    if (finalMetadata) {
-      const recommendation = getRecommendedSettings(file, finalMetadata, conversionSettings());
-      if (recommendation) {
-        setConversionSettings(recommendation);
-      }
-    }
-
-    if (!isStale()) {
-      setAppState('idle');
-    }
+    setVideoMetadata(metadata);
+    setLoadingProgress(0);
+    setLoadingStatusMessage('');
+    setAppState('idle');
   } catch (error) {
     if (isStale()) {
       return;
     }
+
+    setLoadingProgress(0);
+    setLoadingStatusMessage('');
     setErrorMessage(getErrorMessage(error));
     setAppState('error');
     focusRetryButton();
