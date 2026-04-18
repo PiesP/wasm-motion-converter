@@ -16,10 +16,6 @@ import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { updateHealthScore } from './cdn-config-service';
 
-const SUCCESS_RATE_EXCELLENT = 0.95;
-const SUCCESS_RATE_GOOD = 0.8;
-const SUCCESS_RATE_DEGRADED = 0.5;
-
 /**
  * CDN health metric entry
  */
@@ -229,40 +225,4 @@ export function getAllHealthMetrics(): Record<string, HealthMetric> {
   }
 
   return data.metrics;
-}
-
-/**
- * Gets a health status summary for all CDN providers
- *
- * @returns Array of health summaries sorted by success rate
- */
-export function getHealthSummary(): Array<{
-  hostname: string;
-  successRate: number;
-  totalRequests: number;
-  status: 'excellent' | 'good' | 'degraded' | 'poor';
-}> {
-  const metrics = getAllHealthMetrics();
-
-  return Object.values(metrics)
-    .map((metric) => {
-      let status: 'excellent' | 'good' | 'degraded' | 'poor';
-      if (metric.successRate >= SUCCESS_RATE_EXCELLENT) {
-        status = 'excellent';
-      } else if (metric.successRate >= SUCCESS_RATE_GOOD) {
-        status = 'good';
-      } else if (metric.successRate >= SUCCESS_RATE_DEGRADED) {
-        status = 'degraded';
-      } else {
-        status = 'poor';
-      }
-
-      return {
-        hostname: metric.hostname,
-        successRate: metric.successRate,
-        totalRequests: metric.totalCount,
-        status,
-      };
-    })
-    .sort((a, b) => b.successRate - a.successRate);
 }

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-04-18T11:29:35.698Z",
+  "generated": "2026-04-18T11:48:54.915Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -66,28 +66,6 @@
         "url": "https://cdn.skypack.dev/comlink@4.4.2",
         "integrity": "sha384-bvR/EVd4Jw9aSxbKTshv+MWc+QSLTYVxq1NpUtrmN7ThYUkZeX4VCoVnRkIaLICn",
         "size": 777
-      }
-    },
-    "mediabunny": {
-      "esm.sh": {
-        "url": "https://esm.sh/mediabunny@1.40.1?target=esnext",
-        "integrity": "sha384-6FHXYF3MSlAucbxpiFKAB68j7v7yCUifcbt0V3xNlrYYzV2OBS3ELi/1ir3oMXLm",
-        "size": 91
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/mediabunny@1.40.1/+esm",
-        "integrity": "sha384-SNACIPS+tycfeTb4aLe0vNTXDNPeTMIKQr5DN35toyscvUpcHHRBfzEBRP/I06KX",
-        "size": 507467
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/mediabunny@1.40.1?module",
-        "integrity": "sha384-AVAPjULX3mAsuxDafNEuoKDqVGu3dIghduJJWULRiL/qehcloolK04VbjgiMjMW6",
-        "size": 3346
-      },
-      "skypack": {
-        "url": "https://cdn.skypack.dev/mediabunny@1.40.1",
-        "integrity": "sha384-YOB6XXdHzQ9hrcon51bxTPD/clBu1y6LSYMLVnfQuqv9smXGsVi+TNSc8l3X4FP1",
-        "size": 812
       }
     },
     "modern-gif": {

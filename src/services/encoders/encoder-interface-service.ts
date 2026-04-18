@@ -1,9 +1,9 @@
 /**
  * Encoder Interface
  *
- * Defines the common interface for all encoder implementations (GIF, WebP, MP4).
+ * Defines the common interface for encoder implementations used by the app.
  * This pluggable architecture allows:
- * - Easy addition of new output formats
+ * - Easy addition of output formats
  * - Multiple encoder implementations per format
  * - Capability-based encoder selection
  * - Worker vs main-thread encoding strategies
@@ -214,7 +214,7 @@ export interface EncoderAdapter {
    * Encode frames to target format
    *
    * Core encoding method. Takes array of ImageData frames and produces
-   * encoded blob in target format (GIF, WebP, MP4). Must be stateless -
+   * encoded blob in target format (GIF or WebP). Must be stateless -
    * each call is independent.
    *
    * @param request - Encoding parameters (frames, dimensions, fps, quality)

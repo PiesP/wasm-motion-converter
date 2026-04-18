@@ -86,20 +86,6 @@ export const CDN_PROVIDERS: CDNProvider[] = [
 ];
 
 /**
- * Timeout configurations for different scenarios
- */
-export const CDN_TIMEOUTS = {
-  /** Default timeout per CDN attempt */
-  default: 15000,
-  /** Timeout for FFmpeg core assets (larger files) */
-  ffmpegCore: 90000,
-  /** Timeout for critical resources */
-  critical: 20000,
-  /** Timeout for non-critical resources */
-  nonCritical: 10000,
-} as const;
-
-/**
  * Gets enabled CDN providers sorted by priority
  *
  * @returns Array of enabled CDN providers sorted by priority (ascending)

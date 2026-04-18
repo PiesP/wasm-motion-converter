@@ -171,7 +171,7 @@ class EncoderFactoryClass {
    * 4. Apply user preferences (worker support overrides if specified)
    * 5. Return best available encoder
    *
-   * @param format - Target format (gif, webp, mp4)
+   * @param format - Target format (gif or webp)
    * @param preferences - Optional encoder preferences
    * @returns Promise resolving to encoder or null if none available
    *

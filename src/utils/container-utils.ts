@@ -44,12 +44,3 @@ export function detectContainerFormat(file: File): ContainerFormat {
 /**
  * Whether this container is eligible for the WebCodecs demuxer path.
  */
-export function isDemuxableContainer(container: ContainerFormat): boolean {
-  return (
-    container === 'mp4' ||
-    container === 'mov' ||
-    container === 'm4v' ||
-    container === 'webm' ||
-    container === 'mkv'
-  );
-}

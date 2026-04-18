@@ -2,7 +2,7 @@
  * Conversion Types
  *
  * Type definitions for video conversion operations, including formats, quality
- * settings, conversion results, error handling, and performance warnings.
+ * settings, conversion results, and error handling.
  * These types are used throughout the conversion pipeline to ensure type safety.
  */
 
@@ -11,13 +11,10 @@
  *
  * - `gif`: Animated GIF format (widely supported, larger file sizes)
  * - `webp`: Animated WebP format (better compression, modern browsers)
- * - `mp4`: MP4 video format (experimental/internal; not exposed in the UI yet).
- *   Current implementation requires WebAV/WebCodecs availability.
- *
  * @example
  * const format: ConversionFormat = 'gif';
  */
-export type ConversionFormat = 'gif' | 'webp' | 'mp4';
+export type ConversionFormat = 'gif' | 'webp';
 
 /**
  * Conversion quality levels
@@ -246,57 +243,4 @@ export interface VideoMetadata {
   framerate: number;
   /** Video bitrate (bits per second) */
   bitrate: number;
-}
-
-/**
- * Performance warning types
- *
- * Categories of potential performance issues detected during video analysis.
- *
- * - `fileSize`: File size exceeds recommended limits
- * - `resolution`: Resolution too high for efficient conversion
- * - `duration`: Video duration too long
- * - `codec`: Codec requires expensive transcoding
- *
- * @example
- * const type: PerformanceWarningType = 'resolution';
- */
-type PerformanceWarningType = 'fileSize' | 'resolution' | 'duration' | 'codec';
-
-/**
- * Performance warning severity levels
- *
- * - `critical`: Conversion likely to fail or take very long (>10min)
- * - `high`: Significant performance impact (>5min estimated)
- * - `warning`: Noticeable slowdown (>2min estimated)
- *
- * @example
- * const severity: PerformanceWarningSeverity = 'high';
- */
-type PerformanceWarningSeverity = 'critical' | 'high' | 'warning';
-
-/**
- * Performance warning with recommendation
- *
- * Alert about potential performance issues with suggested mitigation.
- * Displayed to the user before conversion starts to manage expectations
- * and suggest optimizations.
- *
- * @example
- * const warning: PerformanceWarning = {
- *   type: 'resolution',
- *   severity: 'high',
- *   message: 'High resolution (4K) will take longer to convert',
- *   recommendation: 'Consider using 0.5 or 0.75 scale to speed up conversion'
- * };
- */
-export interface PerformanceWarning {
-  /** Warning category */
-  type: PerformanceWarningType;
-  /** Severity level */
-  severity: PerformanceWarningSeverity;
-  /** User-friendly warning message */
-  message: string;
-  /** Suggested action to improve performance */
-  recommendation: string;
 }

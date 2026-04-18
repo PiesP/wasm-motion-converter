@@ -15,32 +15,6 @@ import { getRuntimeDepVersion } from '@utils/runtime-deps';
 /** Maximum file size allowed for upload (500 MB) */
 export const MAX_FILE_SIZE = 500 * 1024 * 1024;
 
-/** Warn if file size exceeds this threshold (100 MB) */
-export const WARN_FILE_SIZE = 100 * 1024 * 1024;
-
-/** Warn if file size exceeds this threshold; suggest low quality preset (200 MB) */
-export const WARN_FILE_SIZE_HIGH = 200 * 1024 * 1024;
-
-/** Warn if file size exceeds this threshold; suggest scale reduction (300 MB) */
-export const WARN_FILE_SIZE_CRITICAL = 300 * 1024 * 1024;
-
-/** Estimated first-load download size for runtime dependencies (35 MB). */
-export const INITIAL_DOWNLOAD_ESTIMATE_BYTES = 35 * 1024 * 1024;
-
-// ============================================================================
-// VIDEO RESOLUTION & DURATION THRESHOLDS
-// ============================================================================
-
-/** Warn if resolution exceeds this threshold (1920 × 1080 pixels, 2.07M pixels) */
-export const WARN_RESOLUTION_PIXELS = 1920 * 1080;
-
-/** Warn if duration exceeds this threshold (30 seconds) */
-export const WARN_DURATION_SECONDS = 30;
-
-// ============================================================================
-// CODEC SUPPORT
-// ============================================================================
-
 /**
  * Codecs requiring advanced hardware acceleration or special handling.
  * These codecs benefit significantly from GPU decoding via WebCodecs.
@@ -217,9 +191,6 @@ export const TIMEOUT_VIDEO_ANALYSIS = 30_000;
  * - Base: 90s, per-second: 2s, max: 360s (6 minutes)
  * - A 60s video gets 90 + 120 = 210s timeout
  *
- * **MP4 (medium speed):**
- * - Base: 60s, per-second: 2s, max: 180s (3 minutes)
- * - A 30s video gets 60 + 60 = 120s timeout
  */
 interface TimeoutConfig {
   /** Base timeout in milliseconds */
@@ -245,11 +216,6 @@ export const TIMEOUT_CONFIG: Record<string, TimeoutConfig> = {
     baseTimeout: 90_000,
     perSecondMultiplier: 2_000,
     maxTimeout: 360_000,
-  },
-  mp4: {
-    baseTimeout: 60_000,
-    perSecondMultiplier: 2_000,
-    maxTimeout: 180_000,
   },
 };
 

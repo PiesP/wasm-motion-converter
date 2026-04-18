@@ -5,8 +5,6 @@
  * WebCodecsDecoderService API.
  */
 
-import type { VideoMetadata } from '@t/conversion-types';
-
 /**
  * Frame format type for WebCodecs output
  * - png: PNG format (lossless, larger file size)
@@ -112,11 +110,3 @@ export interface WebCodecsDecodeResult {
   /** Video duration in seconds */
   duration: number;
 }
-
-/**
- * Lightweight metadata adapter for demuxer eligibility checks.
- *
- * The decoder service passes a minimal metadata shape so canUseDemuxer() can
- * apply its heuristic codec filter without requiring a full analyzer run.
- */
-export type DemuxerEligibilityMetadata = VideoMetadata;

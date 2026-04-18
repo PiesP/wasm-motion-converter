@@ -419,14 +419,6 @@ export async function loadFFmpegCoreAsset(
   });
 }
 
-export async function loadFFmpegAsset(
-  assetPath: string,
-  mimeType: string,
-  label: string
-): Promise<string> {
-  return loadFFmpegCoreAsset(assetPath, mimeType, label, 'mt');
-}
-
 /**
  * Load the FFmpeg class worker (bridge worker) as a blob URL.
  * Required to avoid cross-origin worker restrictions in production.

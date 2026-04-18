@@ -13,7 +13,6 @@
 
 import { EncoderFactory } from '@services/encoders/encoder-factory-service';
 import { GIFEncoderAdapter } from '@services/encoders/gif/gif-encoder-adapter-service';
-import { MP4EncoderAdapter } from '@services/encoders/mp4/mp4-encoder-adapter-service';
 import { WebPCanvasEncoderAdapter } from '@services/encoders/webp/webp-canvas-encoder-adapter-service';
 import { WebPEncoderAdapter } from '@services/encoders/webp/webp-encoder-adapter-service';
 import { logger } from '@utils/logger';
@@ -35,9 +34,6 @@ function initializeEncoders(): void {
   // - webp-canvas: main-thread HTMLCanvasElement.toBlob fallback
   EncoderFactory.register(new WebPEncoderAdapter());
   EncoderFactory.register(new WebPCanvasEncoderAdapter());
-
-  // Register MP4 encoder (WebCodecs H.264 + MP4 container muxing)
-  EncoderFactory.register(new MP4EncoderAdapter());
 
   const stats = EncoderFactory.getStats();
   logger.info('encoders', ENCODER_REGISTRATION_COMPLETE, {

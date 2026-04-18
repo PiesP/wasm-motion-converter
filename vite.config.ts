@@ -638,7 +638,6 @@ export default defineConfig(({ mode }) => {
           assetFileNames: 'assets/[name].[hash].[ext]',
           preserveModules: false,
           exports: 'auto',
-          compact: true,
           manualChunks(id) {
             if (
               id.includes('src/utils/') ||

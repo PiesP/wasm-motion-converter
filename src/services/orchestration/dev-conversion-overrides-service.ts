@@ -11,7 +11,7 @@ import type { ConversionPath } from './types-service';
  * - Stored in sessionStorage to avoid long-lived sticky overrides.
  */
 
-export type DevForcedPath = 'auto' | Exclude<ConversionPath, 'webav'>;
+export type DevForcedPath = 'auto' | ConversionPath;
 
 export type DevForcedGifEncoder =
   | 'auto'
@@ -135,45 +135,7 @@ function readOverridesFromStorage(): DevConversionOverrides | null {
   }
 }
 
-function writeOverridesToStorage(overrides: DevConversionOverrides): void {
-  if (!canUseStorage()) return;
-
-  try {
-    const storage: DevConversionOverridesStorage = {
-      version: DEV_STORAGE_VERSION,
-      updatedAt: Date.now(),
-      overrides,
-    };
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
-  } catch {
-    // ignore
-  }
-}
-
 export function getDevConversionOverrides(): DevConversionOverrides {
   if (!isDevMode()) return DEFAULT_OVERRIDES;
   return readOverridesFromStorage() ?? DEFAULT_OVERRIDES;
-}
-
-export function setDevConversionOverrides(
-  patch: Partial<DevConversionOverrides>
-): DevConversionOverrides {
-  if (!isDevMode()) return DEFAULT_OVERRIDES;
-
-  const current = getDevConversionOverrides();
-  const next = sanitizeOverrides({ ...current, ...patch });
-
-  writeOverridesToStorage(next);
-  return next;
-}
-
-export function clearDevConversionOverrides(): void {
-  if (!isDevMode()) return;
-  if (!canUseStorage()) return;
-
-  try {
-    window.sessionStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // ignore
-  }
 }
