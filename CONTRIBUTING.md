@@ -37,8 +37,8 @@ Avoid attaching sensitive or private files.
 
 ### Prerequisites
 
-- Node.js 24.12+ (Volta) / engines `>=22.16.0`
-- pnpm 10.26+
+- Volta Node.js `24.15.0` (project default) or engines-compatible Node.js `>=22.16.0`
+- pnpm `>=10.29.2`
 
 ### Install
 
@@ -57,11 +57,9 @@ pnpm dev
 
 ### Quality checks (run before PRs)
 
-- `pnpm lint`
-- `pnpm fmt:check`
-- `pnpm typecheck`
+- `pnpm quality`
 - `pnpm build`
-- Or run: `pnpm quality`
+- Optional focused checks: `pnpm lint`, `pnpm fmt`, `pnpm typecheck`, `pnpm knip`
 
 ## Project constraints
 
@@ -69,13 +67,15 @@ pnpm dev
 - SharedArrayBuffer requires COOP/COEP headers:
   - Cloudflare Pages: `public/_headers`
   - Local dev/preview: `vite.config.ts`
-- FFmpeg core is loaded from CDN at runtime (`@ffmpeg/core-mt` via unpkg).
+- FFmpeg core assets are loaded at runtime with `toBlobURL()` from blob-compatible CDN providers.
+- WebCodecs is the preferred path; FFmpeg remains the fallback path.
 
 ## Code style
 
 - Source, comments, and docs are English only.
 - Keep diffs small and focused; keep loading/progress/error states intact.
 - Provide explicit user feedback for long-running actions.
+- Use alias-based, leaf imports for cross-folder modules.
 
 ## Import rules (enforced)
 
@@ -89,7 +89,7 @@ Example:
 ```typescript
 import { Button } from "@components/Button";
 import { logger } from "@utils/logger";
-import type { Task } from "@t/task-types";
+import type { ConversionSettings } from "@t/conversion-types";
 ```
 
 See [CODE_STANDARDS.md](./CODE_STANDARDS.md#1-file-organization) for details.

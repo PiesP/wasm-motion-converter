@@ -1,6 +1,6 @@
 # dropconvert-wasm
 
-SolidJS SPA that converts a single video into GIF/WebP entirely in the browser using FFmpeg (ffmpeg.wasm). No uploads, no servers.
+SolidJS SPA that converts a single video into GIF or animated WebP entirely in the browser. It prefers WebCodecs when available and falls back to FFmpeg (ffmpeg.wasm) when needed. No uploads, no servers.
 
 Live demo: https://wasm-motion-converter.pages.dev/
 
@@ -8,14 +8,17 @@ Live demo: https://wasm-motion-converter.pages.dev/
 
 - Single-video dropzone with video-only validation
 - GIF/WebP output with quality + scale presets
+- WebCodecs-first conversion with FFmpeg fallback
 - Fully client-side conversion (SharedArrayBuffer required)
 - Clear progress, elapsed time, and preview/download flow
-- Environment checks for crossOriginIsolated / SharedArrayBuffer
+- Environment checks for `crossOriginIsolated` / `SharedArrayBuffer`
+- Offline/network warning banner and downloadable diagnostics logs
+- Runtime dependency loading with CDN fallback and generated integrity metadata
 - Light/dark theme
 
 ## Quick start (dev)
 
-Prerequisites: Node.js 24.12+ (Volta) / engines `>=22.16.0`, pnpm 10.26+
+Prerequisites: Volta Node.js `24.15.0` (project default) or engines-compatible Node.js `>=22.16.0`, pnpm `>=10.29.2`
 
 ```bash
 pnpm install
@@ -28,6 +31,7 @@ Local: http://localhost:5173
 
 ```bash
 pnpm dev
+pnpm quality
 pnpm build
 pnpm preview
 pnpm lint
@@ -43,13 +47,16 @@ pnpm quality
 - COOP/COEP headers are required for SharedArrayBuffer:
   - Cloudflare Pages: `public/_headers`
   - Local dev/preview: `vite.config.ts`
-- FFmpeg core is loaded from CDN at runtime (`@ffmpeg/core-mt` via unpkg)
+- FFmpeg core assets are loaded at runtime with `toBlobURL()` from blob-compatible CDN providers (`jsdelivr`, `unpkg`)
+- Runtime ESM dependencies use the generated import map and CDN fallback configuration from `vite.config.ts`
+- `pnpm build` runs `prebuild`, which generates `public/cdn-integrity.json` and `public/LICENSES.md`
 - Build output: `dist/`
 
 ## Testing
 
 - `pnpm quality`
-- `pnpm build && pnpm preview`
+- `pnpm build`
+- `pnpm preview`
 - Manual checklist: [TESTING.md](./TESTING.md)
 
 ## Support

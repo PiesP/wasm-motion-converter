@@ -14,16 +14,16 @@ Explain what changed and why.
 Include commands or steps (or explain why testing is not needed).
 
 ```bash
-pnpm lint
-pnpm typecheck
+pnpm quality
 pnpm build
 ```
 
 ## Checklist
 
-- [ ] Code and comments are in English
+- [ ] Code, comments, and docs are in English
 - [ ] App remains fully in-browser (no server upload)
 - [ ] COOP/COEP headers intact when SharedArrayBuffer is required
-- [ ] I ran relevant checks (lint/typecheck/build)
+- [ ] I used alias-based imports for cross-folder modules
+- [ ] I ran relevant checks (`pnpm quality`, `pnpm build`, or explained why not)
 - [ ] Docs updated if user-visible behavior changed
 - [ ] `.github/SECURITY.md` reviewed if security/privacy behavior changed

@@ -39,12 +39,5 @@
     "public/service-worker.ts",
     "public/sw-register.ts"
   ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "tmp/**",
-    ".vite-sw-temp/**",
-    "**/*.test.ts",
-    "**/*.spec.ts"
-  ]
+  "exclude": ["node_modules", "dist", "tmp/**", ".vite-sw-temp/**", "**/*.test.ts", "**/*.spec.ts"]
 }

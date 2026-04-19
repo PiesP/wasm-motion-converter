@@ -9,9 +9,16 @@
   "files": {
     "includes": [
       "src/**",
+      "scripts/**",
+      "public/service-worker.ts",
+      "public/sw-register.ts",
       "vite.config.ts",
       "tailwind.config.ts",
       "postcss.config.ts",
+      "package.json",
+      "tsconfig.json",
+      "knip.json",
+      "biome.jsonc",
       "index.html"
     ],
     "ignoreUnknown": true

@@ -1,4 +1,3 @@
-
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +7,7 @@ const LICENSE_FILE_NAMES = [
   'LICENSE.md',
   'LICENSE.txt',
   'license',
-  'license.md'
+  'license.md',
 ] as const;
 
 const LICENSE_NOT_AVAILABLE =
@@ -49,7 +48,7 @@ function loadLicenseText(depPath: string): string {
     if (fs.existsSync(licensePath)) {
       try {
         return fs.readFileSync(licensePath, 'utf-8');
-      } catch (error) {
+      } catch (_error) {
         console.warn(`Warning: Could not read license file ${fileName} in ${depPath}`);
       }
     }
@@ -58,9 +57,7 @@ function loadLicenseText(depPath: string): string {
   return LICENSE_NOT_AVAILABLE;
 }
 
-function extractRepositoryUrl(
-  repoField: string | { url?: string } | undefined
-): string {
+function extractRepositoryUrl(repoField: string | { url?: string } | undefined): string {
   if (!repoField) {
     return '';
   }
