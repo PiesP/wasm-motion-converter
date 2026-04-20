@@ -59,7 +59,8 @@ pnpm dev
 
 - `pnpm quality`
 - `pnpm build`
-- Optional focused checks: `pnpm lint`, `pnpm fmt`, `pnpm typecheck`, `pnpm knip`
+- Optional focused checks: `pnpm lint`, `pnpm fmt`, `pnpm check`, `pnpm knip`
+- Use `pnpm quality:fix` if you want to apply the repository-standard format/lint fixes before rerunning `pnpm quality`.
 
 ## Project constraints
 

@@ -31,15 +31,17 @@ Local: http://localhost:5173
 
 ```bash
 pnpm dev
-pnpm quality
-pnpm build
-pnpm preview
+pnpm check
+pnpm typecheck
 pnpm lint
 pnpm lint:fix
 pnpm fmt
 pnpm fmt:fix
-pnpm typecheck
+pnpm knip
 pnpm quality
+pnpm quality:fix
+pnpm build
+pnpm preview
 ```
 
 ## Technical notes
