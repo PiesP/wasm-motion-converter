@@ -18,6 +18,7 @@ on:
 
 env:
   NODE_VERSION: "24"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 permissions:
   contents: read
@@ -35,8 +36,12 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v6
 
+      # pnpm/action-setup@v6 can mis-handle pnpm 10 lockfiles on GitHub Actions
+      # and fail during install with ERR_PNPM_BROKEN_LOCKFILE even when the
+      # repository lockfile is valid. Use v4 and let package.json's
+      # `packageManager` field remain the single source of truth.
       - name: 📦 Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@v4
 
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v6
@@ -48,12 +53,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: ✅ Run quality gate and build
-        run: |
-          set -euo pipefail
-          pnpm quality:ci
-          pnpm -s sri:generate
-          pnpm -s licenses:generate
-          pnpm exec vite build
+        run: pnpm build
 
       - name: 📊 Upload build artifacts
         uses: actions/upload-artifact@v7
