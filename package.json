@@ -47,7 +47,7 @@
     "@ffmpeg/ffmpeg": "0.12.15",
     "@ffmpeg/util": "0.12.2",
     "comlink": "4.4.2",
-    "modern-gif": "2.0.4",
+    "modern-gif": "2.1.0",
     "solid-js": "1.9.12"
   },
   "cdnDependencies": {
@@ -66,7 +66,7 @@
     "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4.2.2",
     "tsx": "^4.21.0",
-    "typescript": "6.0.2",
+    "typescript": "6.0.3",
     "vite": "^8.0.8",
     "vite-plugin-solid": "^2.11.12"
   }
