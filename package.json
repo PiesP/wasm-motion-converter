@@ -47,7 +47,7 @@
     "@ffmpeg/ffmpeg": "0.12.15",
     "@ffmpeg/util": "0.12.2",
     "comlink": "4.4.2",
-    "modern-gif": "2.0.4",
+    "modern-gif": "2.1.0",
     "solid-js": "1.9.12"
   },
   "cdnDependencies": {
