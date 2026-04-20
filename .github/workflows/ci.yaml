@@ -48,7 +48,12 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: ✅ Run quality gate and build
-        run: pnpm build
+        run: |
+          set -euo pipefail
+          pnpm quality:ci
+          pnpm -s sri:generate
+          pnpm -s licenses:generate
+          pnpm exec vite build
 
       - name: 📊 Upload build artifacts
         uses: actions/upload-artifact@v7

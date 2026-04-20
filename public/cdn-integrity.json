@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-04-18T11:48:54.915Z",
+  "generated": "2026-04-20T14:43:27.566Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -70,24 +70,24 @@
     },
     "modern-gif": {
       "esm.sh": {
-        "url": "https://esm.sh/modern-gif@2.0.4?target=esnext",
-        "integrity": "sha384-6Dth+7e8iV7h17aG7m4YCTLqZB8LhtIjTSGunLYX+pp2ULrq10dQt9YeEp6DBf4X",
+        "url": "https://esm.sh/modern-gif@2.1.0?target=esnext",
+        "integrity": "sha384-5A/wr5hhDtbmydUpLyhzMoiLwSx3FbFEdqq+MTiOa4RcG4r1/sj3LFU221wA/HvA",
         "size": 136
       },
       "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/modern-gif@2.0.4/+esm",
-        "integrity": "sha384-WG/Wtoc35AAn6Tyv7Qhdjr0Xx9n7L9KhPuKtDJsC7PYfdAlTgaamf9jZlKGq0XXS",
-        "size": 17457
+        "url": "https://cdn.jsdelivr.net/npm/modern-gif@2.1.0/+esm",
+        "integrity": "sha384-0n2ToXVHou2Juvn2xrNydJVKD1ku4GIOpG6y8gtFq2eQmDvHyTUjqzQIUgFWMW5q",
+        "size": 18660
       },
       "unpkg": {
-        "url": "https://unpkg.com/modern-gif@2.0.4?module",
-        "integrity": "sha384-E/WNyXJmUOQFqWtIHIZn7Az9HVnGKI402Nw23BMB8aUbw3WMt2FxohDIWWYSgoPE",
-        "size": 36636
+        "url": "https://unpkg.com/modern-gif@2.1.0?module",
+        "integrity": "sha384-gtn2+Whfu1InMW6ZXcm2USBK64KqzwrVGQkP9dvO8red0MdjEjb9lqSvia2oMfh3",
+        "size": 39778
       },
       "skypack": {
-        "url": "https://cdn.skypack.dev/modern-gif@2.0.4",
-        "integrity": "sha384-ykrN4/lK7J3dvJN5cmNnNa8LsRyiaVmwHmgZDStR2R1nBV94cy2wNdvaKXo4AEIE",
-        "size": 807
+        "url": "https://cdn.skypack.dev/modern-gif@2.1.0",
+        "integrity": "sha384-ZpdpMEhomkLBH4jdInyunGDuJlXraqR4BjqiqUjdIyQQgnC3nUbaFFRqgUMwPV5/",
+        "size": 41670
       }
     },
     "solid-js": {
