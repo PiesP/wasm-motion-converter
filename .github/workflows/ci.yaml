@@ -41,7 +41,7 @@ jobs:
       # repository lockfile is valid. Use v4 and let package.json's
       # `packageManager` field remain the single source of truth.
       - name: 📦 Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@v4
 
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v6
