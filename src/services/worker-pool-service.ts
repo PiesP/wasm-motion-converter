@@ -249,6 +249,11 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
 
     this.workers[workerId] = worker;
     this.apis[workerId] = Comlink.wrap<T>(worker) as T;
+
+    // Re-add to available pool so future tasks can use the respawned worker.
+    if (!this.availableWorkers.includes(workerId)) {
+      this.availableWorkers.push(workerId);
+    }
   }
 
   private createAbortPromise(signal?: AbortSignal): Promise<never> {

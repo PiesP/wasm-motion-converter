@@ -86,9 +86,22 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   createEffect(() => {
     const url = previewUrl();
     setLoaded(INITIAL_LOADED_STATE);
-    onCleanup(() => {
-      URL.revokeObjectURL(url);
-    });
+  });
+
+  // Revoke the previous blob URL whenever previewUrl changes to prevent memory leaks.
+  let previousUrl: string | null = null;
+  createEffect(() => {
+    const url = previewUrl();
+    if (previousUrl !== null && previousUrl !== url) {
+      URL.revokeObjectURL(previousUrl);
+    }
+    previousUrl = url;
+  });
+
+  onCleanup(() => {
+    if (previousUrl !== null) {
+      URL.revokeObjectURL(previousUrl);
+    }
   });
 
   const handleDownload = () => {
