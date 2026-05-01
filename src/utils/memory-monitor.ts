@@ -2,6 +2,8 @@
  * Memory monitoring utilities for tracking browser memory usage during conversions.
  *
  * Provides basic memory status detection and conservative available-memory estimation.
+ * Uses `performance.memory` (Chrome/Edge) when available, with fallbacks for other
+ * browsers via `navigator.deviceMemory` and conservative defaults.
  */
 
 interface MemoryInfo {
@@ -15,34 +17,61 @@ interface MemoryInfo {
 const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
 
 /**
- * Get current memory usage information (Chrome/Edge only).
- * Returns null if performance.memory is not available.
+ * Get current memory usage information.
  *
- * @returns Memory info object or null for unsupported browsers
+ * Prefers `performance.memory` (Chrome/Edge). When unavailable, estimates from
+ * `navigator.deviceMemory` (Chrome/Edge/Safari) or falls back to a conservative
+ * default so that memory-aware decisions still work on Firefox and other browsers.
+ *
+ * @returns Memory info object or null when no data is available at all
  */
 function getMemoryInfo(): MemoryInfo | null {
+  // Primary: performance.memory (Chrome/Edge)
   // @ts-expect-error - performance.memory is non-standard but available in Chrome/Edge
-  const memory = performance.memory;
+  const memory = performance.memory as
+    | { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number }
+    | undefined;
 
-  if (!memory) {
-    return null;
+  if (memory) {
+    const usedJsHeapSize = memory.usedJSHeapSize;
+    const totalJsHeapSize = memory.totalJSHeapSize;
+    const jsHeapSizeLimit = memory.jsHeapSizeLimit;
+    const usagePercentage = (usedJsHeapSize / jsHeapSizeLimit) * 100;
+
+    return {
+      usedJsHeapSize,
+      totalJsHeapSize,
+      jsHeapSizeLimit,
+      usagePercentage,
+    };
   }
 
-  const usedJsHeapSize = memory.usedJSHeapSize;
-  const totalJsHeapSize = memory.totalJSHeapSize;
-  const jsHeapSizeLimit = memory.jsHeapSizeLimit;
-  const usagePercentage = (usedJsHeapSize / jsHeapSizeLimit) * 100;
+  // Fallback: navigator.deviceMemory (Chrome/Edge/Safari — returns GB)
+  const deviceMemoryGB = (
+    navigator as Navigator & { deviceMemory?: number }
+  ).deviceMemory;
+  if (typeof deviceMemoryGB === 'number' && deviceMemoryGB > 0) {
+    const jsHeapSizeLimit = deviceMemoryGB * 1024 * 1024 * 1024;
+    // Assume ~40% heap usage when we cannot measure it directly
+    const assumedUsage = jsHeapSizeLimit * 0.4;
+    const usagePercentage = 40;
 
-  return {
-    usedJSHeapSize: usedJsHeapSize,
-    totalJSHeapSize: totalJsHeapSize,
-    jsHeapSizeLimit,
-    usagePercentage,
-  };
+    return {
+      usedJSHeapSize: assumedUsage,
+      totalJSHeapSize: assumedUsage,
+      jsHeapSizeLimit,
+      usagePercentage,
+    };
+  }
+
+  return null;
 }
 
 /**
  * Check if memory usage is at a critical level (>80%).
+ *
+ * On browsers without `performance.memory`, uses `navigator.deviceMemory`
+ * as a rough signal. When neither API is available, returns false (unknown).
  *
  * @returns True if heap usage exceeds critical threshold
  *
@@ -61,7 +90,10 @@ export function isMemoryCritical(): boolean {
 
 /**
  * Get available memory in bytes.
- * Returns remaining heap space (limit - used) or conservative estimate.
+ *
+ * Returns remaining heap space (limit - used) when `performance.memory` is
+ * available, an estimate from `navigator.deviceMemory`, or a conservative
+ * default (4GB limit, 40% assumed usage) for browsers with neither API.
  *
  * @returns Available memory in bytes
  *

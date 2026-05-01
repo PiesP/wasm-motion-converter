@@ -394,6 +394,28 @@ function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin
         return;
       }
 
+      // Inject security headers (matching production _headers) into every dev response.
+      server.middlewares.use((_req, res, next) => {
+        res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+        res.setHeader(
+          'Content-Security-Policy',
+          "default-src 'self'; " +
+            "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' " +
+            "https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdn.skypack.dev; " +
+            "connect-src 'self' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdn.skypack.dev; " +
+            "worker-src 'self' blob:; " +
+            "style-src 'self' 'unsafe-inline'; " +
+            "object-src 'none'; " +
+            "base-uri 'self'; " +
+            "frame-ancestors 'none'"
+        );
+        next();
+      });
+
       server.middlewares.use((req, res, next) => {
         const requestPath = req.url?.split('?')[0];
 
