@@ -161,7 +161,37 @@ export class FFmpegEncoder {
   }
 
   /**
-   * Acquire conversion lock to prevent concurrent conversions
+   * Acquire the encoder-level conversion lock.
+   *
+   * Typically called by FFmpegPipeline.acquireConversionLock() which keeps
+   * both pipeline-level and encoder-level locks in sync.
+   */
+  acquireLock(): void {
+    this.conversionLock = true;
+    this.cancellationRequested = false;
+  }
+
+  /**
+   * Release the encoder-level conversion lock.
+   *
+   * Typically called by FFmpegPipeline.releaseConversionLock() which releases
+   * both locks together to prevent deadlocks.
+   */
+  releaseLock(): void {
+    this.conversionLock = false;
+  }
+
+  /**
+   * Check whether the encoder-level conversion lock is currently held.
+   */
+  isLockHeld(): boolean {
+    return this.conversionLock;
+  }
+
+  /**
+   * Acquire conversion lock to prevent concurrent conversions.
+   *
+   * @deprecated Use acquireLock() instead. Kept for backward compatibility.
    */
   private acquireConversionLock(): boolean {
     if (this.conversionLock) {
@@ -170,18 +200,17 @@ export class FFmpegEncoder {
       });
       return false;
     }
-    this.conversionLock = true;
-    // Cancellation is per-operation. Ensure a previous cancel request does not poison
-    // subsequent conversions.
-    this.cancellationRequested = false;
+    this.acquireLock();
     return true;
   }
 
   /**
-   * Release conversion lock
+   * Release conversion lock.
+   *
+   * @deprecated Use releaseLock() instead. Kept for backward compatibility.
    */
   private releaseConversionLock(): void {
-    this.conversionLock = false;
+    this.releaseLock();
   }
 
   /**

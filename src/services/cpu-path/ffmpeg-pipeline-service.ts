@@ -243,6 +243,8 @@ export class FFmpegPipeline {
    * Acquire conversion lock
    *
    * Prevents concurrent conversions which could interfere with each other.
+   * Also acquires the encoder-level lock to keep both locks in sync and
+   * prevent deadlocks from mismatched lock state.
    *
    * @returns True if lock acquired, false if already locked
    */
@@ -251,13 +253,21 @@ export class FFmpegPipeline {
       logger.warn('general', 'Conversion lock already held');
       return false;
     }
+    if (this.encoder.isLockHeld()) {
+      logger.warn('general', 'Encoder conversion lock already held');
+      return false;
+    }
     this.conversionLock = true;
+    this.encoder.acquireLock();
     logger.debug('general', 'Conversion lock acquired');
     return true;
   }
 
   /**
    * Release conversion lock
+   *
+   * Releases both the pipeline-level and encoder-level locks together
+   * to prevent deadlocks from mismatched lock state.
    */
   private releaseConversionLock(): void {
     // Idempotent: termination/cancellation may release the lock early.
@@ -265,6 +275,7 @@ export class FFmpegPipeline {
       return;
     }
     this.conversionLock = false;
+    this.encoder.releaseLock();
     logger.debug('general', 'Conversion lock released');
   }
 

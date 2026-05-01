@@ -95,10 +95,6 @@ export function validateVideoFile(file: File): FileValidationResult {
   // Convert to lowercase for case-insensitive comparison (browser variation)
   const mimeType = file.type.toLowerCase();
   if (mimeType) {
-    // Accept all video/* MIME types as fallback (covers unknown video formats)
-    if (mimeType.startsWith('video/')) {
-      return { valid: true };
-    }
     // Check against explicit supported list (e.g., "video/quicktime" for .mov)
     if (SUPPORTED_VIDEO_MIMES.includes(mimeType)) {
       return { valid: true };
@@ -111,6 +107,16 @@ export function validateVideoFile(file: File): FileValidationResult {
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
   if (extension && SUPPORTED_VIDEO_EXTENSIONS.includes(extension)) {
     return { valid: true };
+  }
+
+  // CHECK 4: Reject files with a video/* MIME type but unsupported extension.
+  // This catches cases where the browser reports a generic video/* type for
+  // formats we cannot handle (e.g., some AVI variants, FLV, WMV).
+  if (mimeType && mimeType.startsWith('video/')) {
+    return {
+      valid: false,
+      error: `Unsupported video format (${mimeType}). Please choose a common video format (MP4, MOV, WebM, MKV, AVI) or convert your file first.`,
+    };
   }
 
   // All validation checks failed - format not supported
