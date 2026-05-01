@@ -37,8 +37,8 @@ const postNotImplemented = (requestId: string): void => {
     warningPosted = true;
     console.warn(
       '[ffmpeg.worker] This worker is a stub and must not be used. ' +
-      'All FFmpeg operations should go through the main-thread FFmpegPipeline. ' +
-      'If you intended to use a worker-based FFmpeg path, implement this worker first.'
+        'All FFmpeg operations should go through the main-thread FFmpegPipeline. ' +
+        'If you intended to use a worker-based FFmpeg path, implement this worker first.'
     );
   }
 

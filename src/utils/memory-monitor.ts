@@ -33,23 +33,21 @@ function getMemoryInfo(): MemoryInfo | null {
     | undefined;
 
   if (memory) {
-    const usedJsHeapSize = memory.usedJSHeapSize;
-    const totalJsHeapSize = memory.totalJSHeapSize;
+    const usedJSHeapSize = memory.usedJSHeapSize;
+    const totalJSHeapSize = memory.totalJSHeapSize;
     const jsHeapSizeLimit = memory.jsHeapSizeLimit;
-    const usagePercentage = (usedJsHeapSize / jsHeapSizeLimit) * 100;
+    const usagePercentage = (usedJSHeapSize / jsHeapSizeLimit) * 100;
 
     return {
-      usedJsHeapSize,
-      totalJsHeapSize,
+      usedJSHeapSize,
+      totalJSHeapSize,
       jsHeapSizeLimit,
       usagePercentage,
     };
   }
 
   // Fallback: navigator.deviceMemory (Chrome/Edge/Safari — returns GB)
-  const deviceMemoryGB = (
-    navigator as Navigator & { deviceMemory?: number }
-  ).deviceMemory;
+  const deviceMemoryGB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
   if (typeof deviceMemoryGB === 'number' && deviceMemoryGB > 0) {
     const jsHeapSizeLimit = deviceMemoryGB * 1024 * 1024 * 1024;
     // Assume ~40% heap usage when we cannot measure it directly

@@ -405,7 +405,7 @@ function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin
           'Content-Security-Policy',
           "default-src 'self'; " +
             "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' " +
-            "https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdn.skypack.dev; " +
+            'https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdn.skypack.dev; ' +
             "connect-src 'self' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdn.skypack.dev; " +
             "worker-src 'self' blob:; " +
             "style-src 'self' 'unsafe-inline'; " +

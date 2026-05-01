@@ -84,7 +84,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   );
 
   createEffect(() => {
-    const url = previewUrl();
     setLoaded(INITIAL_LOADED_STATE);
   });
 

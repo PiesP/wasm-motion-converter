@@ -112,7 +112,7 @@ export function validateVideoFile(file: File): FileValidationResult {
   // CHECK 4: Reject files with a video/* MIME type but unsupported extension.
   // This catches cases where the browser reports a generic video/* type for
   // formats we cannot handle (e.g., some AVI variants, FLV, WMV).
-  if (mimeType && mimeType.startsWith('video/')) {
+  if (mimeType?.startsWith('video/')) {
     return {
       valid: false,
       error: `Unsupported video format (${mimeType}). Please choose a common video format (MP4, MOV, WebM, MKV, AVI) or convert your file first.`,
