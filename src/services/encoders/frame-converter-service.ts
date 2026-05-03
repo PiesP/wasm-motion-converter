@@ -17,7 +17,7 @@
  * const imageDataArray = await convertFramesToImageData(videoFrames, width, height);
  */
 
-import type { EncoderFrame } from '@services/encoders/encoder-interface-service';
+import type { EncoderFrame } from '@t/conversion-types';
 
 const FRAME_CONVERSION_CANCELLED = 'Frame conversion cancelled';
 const FRAME_UNDEFINED_ERROR = 'Frame at index is undefined';

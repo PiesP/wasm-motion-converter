@@ -17,6 +17,16 @@
 export type ConversionFormat = 'gif' | 'webp';
 
 /**
+ * Frame types supported by encoders
+ *
+ * Encoders can accept frames in multiple formats:
+ * - VideoFrame: GPU-resident frame (fastest, no CPU copy)
+ * - ImageBitmap: GPU-resident bitmap (faster than ImageData)
+ * - ImageData: CPU-resident pixel data (slowest, but universal)
+ */
+export type EncoderFrame = VideoFrame | ImageBitmap | ImageData;
+
+/**
  * Conversion quality levels
  *
  * - `low`: Fastest conversion, lower quality (e.g., fewer colors for GIF)

@@ -1,4 +1,4 @@
-import type { EncoderFrame } from '@services/encoders/encoder-interface-service';
+import type { EncoderFrame } from '@t/conversion-types';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import {
   encodeWebPFramesInChunks,

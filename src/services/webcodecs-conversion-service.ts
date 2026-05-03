@@ -1,7 +1,6 @@
 // External dependencies
 
-import { EncoderFactory } from '@services/encoders/encoder-factory-service';
-import type { EncoderFrame } from '@services/encoders/encoder-interface-service';
+import type { EncoderFrame } from '@t/conversion-types';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import { getDevConversionOverrides } from '@services/orchestration/dev-conversion-overrides-service';
 import { isComplexCodec } from '@utils/codec-utils';
@@ -336,9 +335,8 @@ class WebCodecsConversionService {
     // Preflight: allow direct path when an EncoderFactory backend is available
     // even if canvas WebP encoding is unsupported.
     const canEncodeWebPFrames = await this.getCanvasWebPEncodeSupport();
-    const hasFactoryWebPEncoder = canEncodeWebPFrames
-      ? false
-      : await EncoderFactory.hasEncoder('webp');
+    // EncoderFactory was removed; rely solely on canvas WebP encode support.
+    const hasFactoryWebPEncoder = false;
 
     if (!hasFactoryWebPEncoder && !canEncodeWebPFrames) {
       logger.info(

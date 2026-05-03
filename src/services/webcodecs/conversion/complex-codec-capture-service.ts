@@ -1,4 +1,4 @@
-import type { EncoderFrame } from '@services/encoders/encoder-interface-service';
+import type { EncoderFrame } from '@t/conversion-types';
 import type {
   WebCodecsCaptureMode,
   WebCodecsFrameFormat,
