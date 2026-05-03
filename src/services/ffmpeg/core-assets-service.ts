@@ -1,8 +1,14 @@
 // External dependencies
 import { toBlobURL } from '@ffmpeg/util';
-import { getEnabledProviders } from '@services/cdn/cdn-config-service';
-import { recordCdnRequest } from '@services/cdn/cdn-health-tracker-service';
-import { buildAssetUrl } from '@services/cdn/cdn-url-builder-service';
+import { getEnabledProviders } from '@utils/cdn-config';
+// CDN health tracking removed — the service worker handles retry/fallback.
+// CDN URL builder inlined — buildAssetUrl was a trivial switch on provider name.
+const buildAssetUrl = (
+  provider: { name: string; baseUrl: string },
+  pkg: string,
+  version: string,
+  path: string
+): string => `${provider.baseUrl}/${pkg}@${version}${path}`;
 import { FFMPEG_CORE_VERSION } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getRuntimeDepVersion } from '@utils/runtime-deps';
@@ -180,9 +186,6 @@ async function loadPackageAsset({
 
       const elapsed = performance.now() - startTime;
 
-      // Record success
-      recordCdnRequest(provider.hostname, true);
-
       logger.info('ffmpeg', 'FFmpeg asset loaded successfully', {
         label,
         assetPath,
@@ -195,9 +198,6 @@ async function loadPackageAsset({
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       errors.push({ provider: provider.name, error: errorMsg });
-
-      // Record failure
-      recordCdnRequest(provider.hostname, false);
 
       logger.warn('ffmpeg', 'FFmpeg asset download failed; trying next provider', {
         label,
@@ -349,7 +349,6 @@ async function loadPackageWorkerModule({
       const elapsed =
         (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startTime;
 
-      recordCdnRequest(provider.hostname, true);
       logger.info('ffmpeg', 'FFmpeg worker module loaded successfully', {
         label,
         assetPath,
@@ -362,8 +361,6 @@ async function loadPackageWorkerModule({
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       errors.push({ provider: provider.name, error: errorMsg });
-
-      recordCdnRequest(provider.hostname, false);
 
       logger.warn('ffmpeg', 'FFmpeg worker module download failed; trying next provider', {
         label,
