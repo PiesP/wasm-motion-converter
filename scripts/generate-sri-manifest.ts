@@ -12,7 +12,6 @@ interface ManifestEntry {
   'esm.sh': CDNEntry;
   jsdelivr: CDNEntry;
   unpkg: CDNEntry;
-  skypack?: CDNEntry;
 }
 
 interface SRIManifest {
@@ -41,13 +40,6 @@ const CDN_PROVIDERS = {
     buildUrl: (pkg: string, version: string, subpath = '') => {
       const cleanSubpath = subpath ? (subpath.startsWith('/') ? subpath : `/${subpath}`) : '';
       return `https://unpkg.com/${pkg}@${version}${cleanSubpath}?module`;
-    },
-  },
-  skypack: {
-    name: 'skypack',
-    buildUrl: (pkg: string, version: string, subpath = '') => {
-      const cleanSubpath = subpath ? (subpath.startsWith('/') ? subpath : `/${subpath}`) : '';
-      return `https://cdn.skypack.dev/${pkg}@${version}${cleanSubpath}`;
     },
   },
 } as const;

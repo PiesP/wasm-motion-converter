@@ -597,6 +597,7 @@ export class FFmpegPipeline {
    */
   reportProgress(progress: number): void {
     this.monitoring.updateProgress(progress, false);
+    this.persistentProgressCallback?.(progress);
   }
 
   /**
@@ -608,6 +609,7 @@ export class FFmpegPipeline {
    */
   reportStatus(message: string): void {
     this.callbacks.onStatusUpdate?.(message);
+    this.persistentStatusCallback?.(message);
   }
 
   /**
@@ -806,6 +808,26 @@ export class FFmpegPipeline {
         error: message,
       });
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Persistent callback management
+  //
+  // Used by non-FFmpeg conversion paths (e.g., WebCodecs) to report progress and
+  // status through the same shared pipeline callback channel. The callbacks are
+  // overwritten on each runConversion() call, so external paths that need persistent
+  // callbacks must use these setters.
+  // ---------------------------------------------------------------------------
+
+  private persistentProgressCallback: ((progress: number) => void) | null = null;
+  private persistentStatusCallback: ((message: string) => void) | null = null;
+
+  setProgressCallback(callback: ((progress: number) => void) | null): void {
+    this.persistentProgressCallback = callback;
+  }
+
+  setStatusCallback(callback: ((message: string) => void) | null): void {
+    this.persistentStatusCallback = callback;
   }
 }
 // Re-export types from encoder module
