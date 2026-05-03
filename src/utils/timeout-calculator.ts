@@ -4,7 +4,7 @@ import { TIMEOUT_CONFIG } from './constants';
 /**
  * Supported output formats for timeout calculation
  */
-type TimeoutFormat = 'gif' | 'webp' | 'mp4';
+type TimeoutFormat = 'gif' | 'webp';
 
 /**
  * Calculate adaptive timeout based on video duration and format
@@ -15,7 +15,7 @@ type TimeoutFormat = 'gif' | 'webp' | 'mp4';
  * - Maximum timeout: prevents excessively long timeouts for long videos
  * - Formula: min(baseTimeout + durationSeconds × multiplier, maxTimeout)
  *
- * @param format - Output format (gif/webp/mp4)
+ * @param format - Output format (gif/webp)
  * @param durationMs - Video duration in milliseconds (must be >= 0)
  * @returns Calculated timeout in milliseconds (minimum 10 seconds)
  * @throws Error if format is unsupported or durationMs is negative
@@ -23,10 +23,6 @@ type TimeoutFormat = 'gif' | 'webp' | 'mp4';
  * @example
  * // For 30-second GIF conversion with typical config
  * const timeout = calculateTimeout('gif', 30_000); // Returns adaptive timeout
- *
- * @example
- * // For 2-minute MP4 conversion
- * const timeout = calculateTimeout('mp4', 120_000); // Returns timeout capped at max
  */
 export function calculateTimeout(format: TimeoutFormat, durationMs: number): number {
   // Validate inputs
@@ -68,7 +64,7 @@ export function calculateTimeout(format: TimeoutFormat, durationMs: number): num
  * Provides a convenient way to get timeout with optional duration.
  * Falls back to base timeout if duration is unknown or invalid.
  *
- * @param format - Output format (gif/webp/mp4)
+ * @param format - Output format (gif/webp)
  * @param durationMs - Optional video duration in milliseconds
  * @returns Timeout in milliseconds (minimum 10 seconds, maximum per format config)
  * @throws Error if format is unsupported

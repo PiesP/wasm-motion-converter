@@ -146,10 +146,7 @@ type LogCategory =
   | 'worker-pool'
   | 'demuxer'
   | 'encoders'
-  | 'encoder-factory'
-  | 'gif-encoder'
-  | 'mp4-encoder'
-  | 'webp-encoder';
+  | 'gif-encoder';
 
 /**
  * Structured logger for application-wide logging with filtering and categorization
