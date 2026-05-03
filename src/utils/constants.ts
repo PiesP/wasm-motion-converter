@@ -96,7 +96,7 @@ export const FFMPEG_CORE_VERSION = getRuntimeDepVersion('@ffmpeg/core-mt');
  * Uses npm and unpkg mirrors for redundancy and global availability.
  *
  * @deprecated Use the unified CDN system from @services/cdn instead.
- * FFmpeg loading now uses all 4 CDN providers (esm.sh, jsdelivr, unpkg, skypack).
+ * FFmpeg loading now uses all 3 CDN providers (esm.sh, jsdelivr, unpkg).
  * This constant is kept for backward compatibility only.
  */
 export const FFMPEG_CORE_BASE_URLS = [

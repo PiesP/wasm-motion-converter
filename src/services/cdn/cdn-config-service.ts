@@ -74,15 +74,6 @@ export const CDN_PROVIDERS: CDNProvider[] = [
     healthScore: 100,
     enabled: true,
   },
-  {
-    name: 'skypack',
-    hostname: 'cdn.skypack.dev',
-    baseUrl: 'https://cdn.skypack.dev',
-    priority: 4,
-    timeout: 15000,
-    healthScore: 100,
-    enabled: true,
-  },
 ];
 
 /**

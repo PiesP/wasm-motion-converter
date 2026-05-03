@@ -42,10 +42,6 @@ export function buildAssetUrl(
       // unpkg serves assets directly
       return `${provider.baseUrl}/${packageName}@${version}${cleanPath}`;
 
-    case 'skypack':
-      // skypack serves assets directly
-      return `${provider.baseUrl}/${packageName}@${version}${cleanPath}`;
-
     default:
       throw new Error(`Unknown CDN provider: ${provider.name}`);
   }

@@ -8,7 +8,7 @@ import { logger } from '@utils/logger';
 import { getRuntimeDepVersion } from '@utils/runtime-deps';
 import { withTimeout } from '@utils/with-timeout';
 
-const PROVIDER_EXCLUSIONS = ['esm.sh', 'skypack'] as const;
+const PROVIDER_EXCLUSIONS = ['esm.sh'] as const;
 const PROVIDER_EXCLUSION_REASON = 'blob:// incompatibility (shim code with bare imports)';
 const WORKER_IMPORT_REWRITE_SAMPLE_LIMIT = 4;
 const CACHE_CORRUPTION_LENGTH_HEADER = 'content-length';

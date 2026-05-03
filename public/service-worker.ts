@@ -63,12 +63,6 @@ const CDN_PROVIDERS: CDNProvider[] = [
     healthScore: 100,
   },
   { name: 'unpkg', hostname: 'unpkg.com', priority: 3, healthScore: 100 },
-  {
-    name: 'skypack',
-    hostname: 'cdn.skypack.dev',
-    priority: 4,
-    healthScore: 100,
-  },
 ];
 
 const CDN_DOMAINS = CDN_PROVIDERS.map((p) => p.hostname);
@@ -83,7 +77,6 @@ interface ManifestEntry {
   'esm.sh': CDNEntry;
   jsdelivr: CDNEntry;
   unpkg: CDNEntry;
-  skypack?: CDNEntry;
 }
 
 interface SRIManifest {
@@ -152,7 +145,6 @@ function getExpectedIntegrity(url: string, manifest: SRIManifest): string | null
   if (urlObj.hostname === 'esm.sh') cdnProvider = 'esm.sh';
   else if (urlObj.hostname === 'cdn.jsdelivr.net') cdnProvider = 'jsdelivr';
   else if (urlObj.hostname === 'unpkg.com') cdnProvider = 'unpkg';
-  else if (urlObj.hostname === 'cdn.skypack.dev') cdnProvider = 'skypack';
 
   if (!cdnProvider) {
     return null;
@@ -478,17 +470,6 @@ const CDN_CONVERTERS = {
 
     return `https://unpkg.com/${parsed.pkg}@${parsed.version}${parsed.path}?module`;
   },
-
-  esmToSkypack(url: string): string | null {
-    const parsed = this.parseEsmSh(url);
-    if (!parsed) return null;
-
-    if (parsed.isAsset) {
-      return null;
-    }
-
-    return `https://cdn.skypack.dev/${parsed.pkg}@${parsed.version}${parsed.path}`;
-  },
 };
 
 interface CDNMetrics {
@@ -523,7 +504,6 @@ function convertToCDN(originalUrl: string, targetProvider: string): string | nul
       'esm.sh': 'esm.sh',
       'cdn.jsdelivr.net': 'jsdelivr',
       'unpkg.com': 'unpkg',
-      'cdn.skypack.dev': 'skypack',
     };
 
     const originalProvider = providerByHostname[parsedUrl.hostname];
@@ -546,8 +526,6 @@ function convertToCDN(originalUrl: string, targetProvider: string): string | nul
       return CDN_CONVERTERS.esmToJsdelivr(originalUrl);
     case 'unpkg':
       return CDN_CONVERTERS.esmToUnpkg(originalUrl);
-    case 'skypack':
-      return CDN_CONVERTERS.esmToSkypack(originalUrl);
     default:
       return null;
   }

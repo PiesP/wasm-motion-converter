@@ -149,8 +149,7 @@ type LogCategory =
   | 'encoder-factory'
   | 'gif-encoder'
   | 'mp4-encoder'
-  | 'webp-encoder'
-  | 'webav-mp4';
+  | 'webp-encoder';
 
 /**
  * Structured logger for application-wide logging with filtering and categorization
