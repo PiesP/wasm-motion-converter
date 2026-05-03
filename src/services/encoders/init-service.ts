@@ -14,7 +14,6 @@
 import { EncoderFactory } from '@services/encoders/encoder-factory-service';
 import { GIFEncoderAdapter } from '@services/encoders/gif/gif-encoder-adapter-service';
 import { WebPCanvasEncoderAdapter } from '@services/encoders/webp/webp-canvas-encoder-adapter-service';
-import { WebPEncoderAdapter } from '@services/encoders/webp/webp-encoder-adapter-service';
 import { logger } from '@utils/logger';
 
 const ENCODER_REGISTRATION_START = 'Registering encoder adapters';
@@ -29,10 +28,9 @@ function initializeEncoders(): void {
   // Register GIF encoder (fully implemented)
   EncoderFactory.register(new GIFEncoderAdapter());
 
-  // Register WebP encoders
-  // - webp-native: worker-based OffscreenCanvas.convertToBlob
-  // - webp-canvas: main-thread HTMLCanvasElement.toBlob fallback
-  EncoderFactory.register(new WebPEncoderAdapter());
+  // Register WebP canvas encoder (main-thread HTMLCanvasElement.toBlob fallback)
+  // Note: webp-native (worker-based OffscreenCanvas) was removed — it was
+  // ~13x slower than canvas.toBlob and never selected by EncoderFactory.
   EncoderFactory.register(new WebPCanvasEncoderAdapter());
 
   const stats = EncoderFactory.getStats();
