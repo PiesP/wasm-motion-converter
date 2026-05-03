@@ -51,5 +51,8 @@ Thumbs.db
 docs/
 test/
 *.backup
+AGENTS.md
+CLAUDE.md
+GEMINI.md
 CODE_STANDARDS.md
 .editorconfig
