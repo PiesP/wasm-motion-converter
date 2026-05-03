@@ -12,7 +12,7 @@
 
 /// <reference types="vite/client" />
 
-import type { ExtendedCapabilities, VideoCapabilities } from '@t/video-pipeline-types';
+import type { VideoCapabilities } from '@t/video-pipeline-types';
 
 /* ============================================================================
    Vite Environment Variables
@@ -223,7 +223,5 @@ declare global {
   interface Window {
     /** Cached runtime video capabilities (capability-service.ts) */
     __VIDEO_CAPS__?: VideoCapabilities;
-    /** Extended video capabilities with additional codecs and environment info (extended-capability-service.ts) */
-    __EXTENDED_VIDEO_CAPS__?: ExtendedCapabilities;
   }
 }
