@@ -8,9 +8,9 @@ import OfflineBanner from '@components/OfflineBanner';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
 import ThemeToggle from '@components/ThemeToggle';
-import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import Button from '@components/ui/Button';
 import Panel from '@components/ui/Panel';
+import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import {
   appState,
   environmentSupported,
@@ -18,6 +18,11 @@ import {
   loadingStatusMessage,
   setEnvironmentSupported,
 } from '@stores/app-store';
+import {
+  conversionSettings,
+  saveConversionSettings,
+  setConversionSettings,
+} from '@stores/conversion-settings-store';
 import {
   conversionProgress,
   conversionResults,
@@ -28,11 +33,6 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
-import {
-  conversionSettings,
-  saveConversionSettings,
-  setConversionSettings,
-} from '@stores/conversion-settings-store';
 import { useNetworkState } from '@stores/network-store';
 import type {
   ConversionResult,

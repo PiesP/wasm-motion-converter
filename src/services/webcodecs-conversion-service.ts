@@ -1,9 +1,7 @@
 // External dependencies
 
-import type { EncoderFrame } from '@t/conversion-types';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import { getDevConversionOverrides } from '@services/orchestration/dev-conversion-overrides-service';
-import { isComplexCodec } from '@utils/codec-utils';
 import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support-service';
 import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture-service';
 import { encodeWithFFmpegFallback as encodeWithFFmpegFallbackUtil } from '@services/webcodecs/conversion/ffmpeg-fallback-encode-service';
@@ -27,8 +25,14 @@ import {
 } from '@services/webcodecs/webp-timing-service';
 import { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
 // Type imports
-import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
+import type {
+  ConversionOptions,
+  ConversionOutputBlob,
+  EncoderFrame,
+  VideoMetadata,
+} from '@t/conversion-types';
 import type { EncoderWorkerAPI } from '@t/worker-types';
+import { isComplexCodec } from '@utils/codec-utils';
 import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';

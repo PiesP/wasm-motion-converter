@@ -19,6 +19,7 @@
     "esModuleInterop": true,
     "isolatedModules": true,
     "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {

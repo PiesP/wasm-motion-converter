@@ -1,12 +1,12 @@
 // External dependencies
-import * as Comlink from 'comlink';
+
+// Type imports
+import type { EncoderWorkerAPI, WorkerPoolOptions } from '@t/worker-types';
 
 // Internal imports
 import { logger } from '@utils/logger';
 import { getAvailableMemory } from '@utils/memory-monitor';
-
-// Type imports
-import type { EncoderWorkerAPI, WorkerPoolOptions } from '@t/worker-types';
+import * as Comlink from 'comlink';
 
 /**
  * CPU concurrency utilization ratio

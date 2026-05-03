@@ -1,12 +1,12 @@
 {
-  "name": "dropconvert-wasm",
+  "name": "wasm-motion-converter",
   "version": "0.0.0",
   "license": "MIT",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.29.2",
   "engines": {
-    "node": ">=22.16.0",
+    "node": ">=24.0.0",
     "pnpm": ">=10.29.2"
   },
   "volta": {
@@ -28,8 +28,8 @@
     "dev": "vite",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
-    "fmt": "biome format .",
-    "fmt:fix": "biome format --write .",
+    "fmt": "biome check --linter-enabled=false .",
+    "fmt:fix": "biome check --write --linter-enabled=false .",
     "fmt:check": "pnpm -s fmt",
     "check": "tsc -p tsconfig.json --noEmit",
     "typecheck": "pnpm -s check",

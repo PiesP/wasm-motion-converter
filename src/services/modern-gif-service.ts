@@ -1,6 +1,6 @@
 import { esmShModuleUrl } from 'virtual:cdn-deps';
-import type { EncoderFrame } from '@t/conversion-types';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
+import type { EncoderFrame } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 
 type ModernGifModule = typeof import('modern-gif');

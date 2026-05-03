@@ -1,4 +1,3 @@
-import type { EncoderFrame } from '@t/conversion-types';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import {
   encodeWebPFramesInChunks,
@@ -7,7 +6,7 @@ import {
 import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames-service';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
 import { resolveAnimationDurationSeconds } from '@services/webcodecs/webp-timing-service';
-import type { VideoMetadata } from '@t/conversion-types';
+import type { EncoderFrame, VideoMetadata } from '@t/conversion-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 

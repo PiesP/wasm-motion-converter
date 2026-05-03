@@ -1,5 +1,4 @@
 import { ffmpegService } from '@services/ffmpeg-service';
-import { isComplexCodec } from '@utils/codec-utils';
 import { computeExpectedFramesFromDuration } from '@services/webcodecs/conversion/frame-requirements-service';
 import { computeRawvideoEligibility } from '@services/webcodecs/conversion/rawvideo-eligibility-service';
 import type { WebCodecsFrameFormat } from '@services/webcodecs/decoder/types-service';
@@ -9,6 +8,7 @@ import {
 } from '@services/webcodecs/webp-timing-service';
 import type { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
 import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
+import { isComplexCodec } from '@utils/codec-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
 

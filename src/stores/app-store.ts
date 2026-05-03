@@ -5,11 +5,10 @@
  * Tracks high-level application state, FFmpeg loading progress, and environment support.
  */
 
-// External dependencies
-import { createSignal } from 'solid-js';
-
 // Type imports
 import type { AppState } from '@t/app-types';
+// External dependencies
+import { createSignal } from 'solid-js';
 
 /**
  * Current application state

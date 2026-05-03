@@ -1,5 +1,5 @@
-import { logger } from './logger';
 import { TIMEOUT_CONFIG } from './constants';
+import { logger } from './logger';
 
 /**
  * Supported output formats for timeout calculation

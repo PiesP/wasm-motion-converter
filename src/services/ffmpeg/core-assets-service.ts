@@ -1,6 +1,7 @@
 // External dependencies
 import { toBlobURL } from '@ffmpeg/util';
-import { getEnabledProviders, type CDNProvider } from '@utils/cdn-config';
+import { type CDNProvider, getEnabledProviders } from '@utils/cdn-config';
+
 // CDN health tracking removed — the service worker handles retry/fallback.
 // CDN URL builder restored with proper provider-specific path formats.
 const buildAssetUrl = (
@@ -17,6 +18,7 @@ const buildAssetUrl = (
       return `${provider.baseUrl}/${pkg}@${version}${cleanPath}`;
   }
 };
+
 import { FFMPEG_CORE_VERSION } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getRuntimeDepVersion } from '@utils/runtime-deps';

@@ -11,8 +11,13 @@ import {
 } from '@stores/app-store';
 import { showConfirmation } from '@stores/confirmation-store';
 import {
-  MAX_RESULTS,
+  conversionSettings,
+  DEFAULT_CONVERSION_SETTINGS,
+  setConversionSettings,
+} from '@stores/conversion-settings-store';
+import {
   inputFile,
+  MAX_RESULTS,
   setConversionResults,
   setConversionStatusMessage,
   setErrorContext,
@@ -23,11 +28,6 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
-import {
-  conversionSettings,
-  DEFAULT_CONVERSION_SETTINGS,
-  setConversionSettings,
-} from '@stores/conversion-settings-store';
 import type { ConversionResult, ConversionSettings } from '@t/conversion-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { createId } from '@utils/create-id';

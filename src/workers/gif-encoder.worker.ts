@@ -1,8 +1,8 @@
+import { esmShModuleUrl } from 'virtual:cdn-deps';
 import type { ModernGifOptions } from '@services/modern-gif-service';
 import { encodeModernGif } from '@services/modern-gif-service';
 import type { SerializableImageData, WorkerProgressCallback } from '@t/worker-types';
 import { logger } from '@utils/logger';
-import { esmShModuleUrl } from 'virtual:cdn-deps';
 
 type ComlinkModule = typeof import('comlink');
 
