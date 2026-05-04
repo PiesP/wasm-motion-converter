@@ -4,6 +4,7 @@
 import type { EncoderWorkerAPI, WorkerPoolOptions } from '@t/worker-types';
 
 // Internal imports
+import { CANCELLED_MESSAGE, createAbortPromise } from '@utils/cancellation-context';
 import { logger } from '@utils/logger';
 import { getAvailableMemory } from '@utils/memory-monitor';
 import * as Comlink from 'comlink';
@@ -256,26 +257,6 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
     }
   }
 
-  private createAbortPromise(signal?: AbortSignal): Promise<never> {
-    if (!signal) {
-      return new Promise<never>(() => {
-        // Never resolves
-      });
-    }
-
-    if (signal.aborted) {
-      return Promise.reject(new Error('Conversion cancelled by user'));
-    }
-
-    return new Promise<never>((_, reject) => {
-      const onAbort = () => {
-        signal.removeEventListener('abort', onAbort);
-        reject(new Error('Conversion cancelled by user'));
-      };
-      signal.addEventListener('abort', onAbort, { once: true });
-    });
-  }
-
   private createTimeoutPromise(timeoutMs: number, message: string): Promise<never> {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       return new Promise<never>(() => {
@@ -370,7 +351,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
     try {
       await Promise.race([
         this.workerReadyPromise[workerId] as Promise<void>,
-        this.createAbortPromise(signal),
+        createAbortPromise(signal),
       ]);
     } catch (error) {
       // Reset readiness state so future calls retry.
@@ -404,7 +385,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
     }
 
     if (options.signal?.aborted) {
-      throw new Error('Conversion cancelled by user');
+      throw new Error(CANCELLED_MESSAGE);
     }
 
     // Wait for available worker
@@ -412,7 +393,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
 
     while (workerId === undefined) {
       if (options.signal?.aborted) {
-        throw new Error('Conversion cancelled by user');
+        throw new Error(CANCELLED_MESSAGE);
       }
       await new Promise((resolve) => setTimeout(resolve, WORKER_POLL_INTERVAL));
       workerId = this.availableWorkers.shift();
@@ -440,12 +421,12 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
           timeoutMs,
           `Worker task timed out after ${timeoutMs}ms (worker ${workerId})`
         ),
-        this.createAbortPromise(options.signal),
+        createAbortPromise(options.signal),
       ]);
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const isCancellation = message.toLowerCase().includes('cancelled by user');
+      const isCancellation = message.toLowerCase().includes(CANCELLED_MESSAGE.toLowerCase());
       const isTimeout = message.toLowerCase().includes('timed out');
 
       if (isCancellation || isTimeout) {

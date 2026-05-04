@@ -2,6 +2,11 @@ import { ffmpegService } from '@services/ffmpeg-service';
 import { webcodecsConversionService } from '@services/webcodecs-conversion-service';
 import type { ConversionFormat } from '@t/conversion-types';
 import { CONVERSION_FORMATS } from '@t/conversion-types';
+import {
+  CANCELLED_MESSAGE,
+  isCancellationError,
+  throwIfAborted,
+} from '@utils/cancellation-context';
 import { createId } from '@utils/create-id';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -18,23 +23,6 @@ const STATUS_INITIALIZING = 'Initializing conversion...';
 const STATUS_COMPLETE = 'Complete';
 const STATUS_CANCELLED = 'Cancelled by user';
 const STATUS_ERROR = 'Error';
-const ERROR_CONVERSION_CANCELLED = 'Conversion cancelled by user';
-
-function isCancellationError(error: unknown): boolean {
-  const message = getErrorMessage(error).toLowerCase();
-  return (
-    message.includes('cancelled by user') ||
-    message.includes('conversion cancelled') ||
-    message.includes('aborterror') ||
-    message.includes('aborted')
-  );
-}
-
-function throwIfAborted(abortSignal: AbortSignal, operationActive: boolean): void {
-  if (abortSignal.aborted || !operationActive) {
-    throw new Error(ERROR_CONVERSION_CANCELLED);
-  }
-}
 
 function isSupportedFormat(format: string): format is ConversionFormat {
   return (CONVERSION_FORMATS as readonly string[]).includes(format);
@@ -83,14 +71,20 @@ class ConversionOrchestrator {
       });
 
       const operationActive = this.activeOperationId === operationId;
-      throwIfAborted(abortController.signal, operationActive);
+      if (!operationActive) {
+        throw new Error(CANCELLED_MESSAGE);
+      }
+      throwIfAborted(abortController.signal);
 
       const blob =
         selection.path === 'gpu'
           ? await this.convertWithGpuFallback(request, abortController.signal)
           : await this.convertWithCpu(request);
 
-      throwIfAborted(abortController.signal, this.activeOperationId === operationId);
+      if (this.activeOperationId !== operationId) {
+        throw new Error(CANCELLED_MESSAGE);
+      }
+      throwIfAborted(abortController.signal);
 
       const metadata: ConversionMetadata = {
         path: selection.path,
@@ -131,7 +125,7 @@ class ConversionOrchestrator {
         };
 
         request.onStatus?.(STATUS_CANCELLED);
-        throw new Error(ERROR_CONVERSION_CANCELLED);
+        throw new Error(CANCELLED_MESSAGE);
       }
 
       this.status = {

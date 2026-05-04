@@ -24,6 +24,7 @@ import type {
   ConversionQuality,
   VideoMetadata,
 } from '@t/conversion-types';
+import { CANCELLED_MESSAGE } from '@utils/cancellation-context';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
@@ -91,10 +92,9 @@ export class FFmpegEncoder {
   private cancellationRequested = false;
   private dependencies: EncoderDependencies | null = null;
 
-  private static readonly CANCELLED_MESSAGE = 'Conversion cancelled by user';
   private static readonly CANCELLED_TERMINATION_MESSAGE = 'called FFmpeg.terminate()';
   private static readonly CANCELLED_KEYWORDS = [
-    'conversion cancelled by user',
+    CANCELLED_MESSAGE.toLowerCase(),
     'cancelled by user',
     FFmpegEncoder.CANCELLED_TERMINATION_MESSAGE,
   ];
@@ -1017,7 +1017,7 @@ export class FFmpegEncoder {
             logger.info('ffmpeg', 'Palette generation cancelled', {
               reason: 'user-cancel',
             });
-            throw new Error(FFmpegEncoder.CANCELLED_MESSAGE);
+            throw new Error(CANCELLED_MESSAGE);
           }
 
           logger.error('ffmpeg', 'Palette generation failed', {
@@ -1079,7 +1079,7 @@ export class FFmpegEncoder {
       }
 
       if (this.cancellationRequested) {
-        throw new Error(FFmpegEncoder.CANCELLED_MESSAGE);
+        throw new Error(CANCELLED_MESSAGE);
       }
 
       // Convert to GIF using palette
@@ -1272,7 +1272,7 @@ export class FFmpegEncoder {
       const inputArgs = this.buildInputArgs(inputFileName, inputOverride);
 
       if (this.cancellationRequested) {
-        throw new Error(FFmpegEncoder.CANCELLED_MESSAGE);
+        throw new Error(CANCELLED_MESSAGE);
       }
 
       // Try main conversion

@@ -15,14 +15,16 @@ type SimplePathPlanParams = {
   abortSignal?: AbortSignal;
 };
 
-function throwIfAborted(abortSignal?: AbortSignal): void {
-  if (abortSignal?.aborted) {
-    throw new Error('Conversion cancelled by user');
-  }
-}
+import { throwIfAborted } from '@utils/cancellation-context';
 
 function isSupportedFormat(format: string): format is ConversionFormat {
   return (CONVERSION_FORMATS as readonly string[]).includes(format);
+}
+
+function checkAborted(abortSignal?: AbortSignal): void {
+  if (abortSignal) {
+    throwIfAborted(abortSignal);
+  }
 }
 
 function shouldPreferGpuGif(codec: string): boolean {
@@ -51,11 +53,11 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
     };
   }
 
-  throwIfAborted(abortSignal);
+  checkAborted(abortSignal);
 
   const codecSupported = await isWebCodecsCodecSupported(codec, file.type, metadata);
 
-  throwIfAborted(abortSignal);
+  checkAborted(abortSignal);
 
   if (!codecSupported) {
     return {
