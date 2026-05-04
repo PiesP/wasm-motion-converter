@@ -35,6 +35,16 @@ type WebCodecsSupportStatus = {
 let cachedStatus: WebCodecsSupportStatus | null = null;
 
 /**
+ * Reset cached WebCodecs support status.
+ *
+ * Use when browser capabilities may have changed (e.g., after experimental
+ * flag toggle, runtime feature detection retry, or testing).
+ */
+export function resetWebCodecsSupportCache(): void {
+  cachedStatus = null;
+}
+
+/**
  * Get global scope with fallback
  *
  * @returns Global scope object (globalThis or empty object)
@@ -48,6 +58,7 @@ const getGlobal = (): typeof globalThis =>
  * Detects availability of WebCodecs APIs (VideoDecoder, VideoEncoder, ImageDecoder, etc.)
  * and related browser features. Result is cached after first call.
  *
+ * @param forceRefresh - When true, bypasses cache and re-detects from scratch
  * @returns Support status object with flags for each API
  *
  * @example
@@ -56,8 +67,8 @@ const getGlobal = (): typeof globalThis =>
  *   // Use GPU-accelerated video decoding
  * }
  */
-export const getWebCodecsSupportStatus = () => {
-  if (cachedStatus) {
+export const getWebCodecsSupportStatus = (forceRefresh = false) => {
+  if (cachedStatus && !forceRefresh) {
     return cachedStatus;
   }
 
@@ -105,10 +116,11 @@ export const getWebCodecsSupportStatus = () => {
  * - requestVideoFrameCallback (fallback)
  * - Video seeking (universal fallback)
  *
+ * @param forceRefresh - When true, bypasses cache and re-detects from scratch
  * @returns True if WebCodecs decoding is usable
  */
-export const isWebCodecsDecodeSupported = (): boolean => {
-  const status = getWebCodecsSupportStatus();
+export const isWebCodecsDecodeSupported = (forceRefresh = false): boolean => {
+  const status = getWebCodecsSupportStatus(forceRefresh);
   const hasVideoElement =
     typeof HTMLVideoElement !== 'undefined' && typeof HTMLCanvasElement !== 'undefined';
   if (!hasVideoElement) {
@@ -149,6 +161,7 @@ export const isWebCodecsDecodeSupported = (): boolean => {
  * @param codec - Codec name (e.g., 'h264', 'av1', 'vp9')
  * @param fileType - Video MIME type (e.g., 'video/mp4', 'video/webm')
  * @param metadata - Optional video metadata for accurate testing
+ * @param forceRefresh - When true, bypasses cache and re-detects from scratch
  * @returns True if codec is supported
  *
  * @example
@@ -162,14 +175,15 @@ export const isWebCodecsDecodeSupported = (): boolean => {
 export async function isWebCodecsCodecSupported(
   codec: string,
   fileType: string,
-  metadata?: VideoMetadata
+  metadata?: VideoMetadata,
+  forceRefresh = false
 ): Promise<boolean> {
   const candidates = getCodecCandidates(codec);
   if (candidates.length === 0) {
     return false;
   }
 
-  const status = getWebCodecsSupportStatus();
+  const status = getWebCodecsSupportStatus(forceRefresh);
   if (!status.available && typeof HTMLVideoElement === 'undefined') {
     return false;
   }
