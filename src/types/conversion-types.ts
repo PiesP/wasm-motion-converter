@@ -16,6 +16,9 @@
  */
 export type ConversionFormat = 'gif' | 'webp';
 
+/** Runtime-available list of all ConversionFormat values (single source of truth) */
+export const CONVERSION_FORMATS: readonly ConversionFormat[] = ['gif', 'webp'] as const;
+
 /**
  * Frame types supported by encoders
  *
@@ -38,6 +41,13 @@ export type EncoderFrame = VideoFrame | ImageBitmap | ImageData;
  */
 export type ConversionQuality = 'low' | 'medium' | 'high';
 
+/** Runtime-available list of all ConversionQuality values */
+export const CONVERSION_QUALITIES: readonly ConversionQuality[] = [
+  'low',
+  'medium',
+  'high',
+] as const;
+
 /**
  * Video scaling factor
  *
@@ -51,6 +61,9 @@ export type ConversionQuality = 'low' | 'medium' | 'high';
  * const scale: ConversionScale = 0.75;
  */
 export type ConversionScale = 0.5 | 0.75 | 1.0;
+
+/** Runtime-available list of all ConversionScale values */
+export const CONVERSION_SCALES: readonly ConversionScale[] = [0.5, 0.75, 1.0] as const;
 
 /**
  * GIF encoder preference

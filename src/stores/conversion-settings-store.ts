@@ -1,4 +1,5 @@
 import type { ConversionSettings } from '@t/conversion-types';
+import { CONVERSION_FORMATS, CONVERSION_QUALITIES, CONVERSION_SCALES } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { createSignal } from 'solid-js';
 
@@ -10,6 +11,13 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
 
 const SETTINGS_STORAGE_KEY = 'conversion-settings';
 
+/**
+ * Validate a value is a member of a readonly array (type-narrowing guard).
+ */
+function isInTuple<T extends string | number>(value: unknown, allowed: readonly T[]): value is T {
+  return allowed.includes(value as T);
+}
+
 const getInitialConversionSettings = (): ConversionSettings => {
   try {
     const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -17,11 +25,11 @@ const getInitialConversionSettings = (): ConversionSettings => {
       const parsed = JSON.parse(stored) as Partial<ConversionSettings>;
       if (
         parsed.format &&
-        ['gif', 'webp'].includes(parsed.format) &&
+        isInTuple(parsed.format, CONVERSION_FORMATS) &&
         parsed.quality &&
-        ['low', 'medium', 'high'].includes(parsed.quality) &&
+        isInTuple(parsed.quality, CONVERSION_QUALITIES) &&
         typeof parsed.scale === 'number' &&
-        [0.5, 0.75, 1.0].includes(parsed.scale)
+        isInTuple(parsed.scale, CONVERSION_SCALES)
       ) {
         return {
           ...DEFAULT_CONVERSION_SETTINGS,

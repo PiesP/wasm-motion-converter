@@ -3,6 +3,7 @@ import {
   isWebCodecsDecodeSupported,
 } from '@services/webcodecs-support-service';
 import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
+import { CONVERSION_FORMATS } from '@t/conversion-types';
 import { isAv1Codec, isHevcCodec, isVp9Codec } from '@utils/codec-utils';
 
 import type { PathSelection } from './types-service';
@@ -20,6 +21,10 @@ function throwIfAborted(abortSignal?: AbortSignal): void {
   }
 }
 
+function isSupportedFormat(format: string): format is ConversionFormat {
+  return (CONVERSION_FORMATS as readonly string[]).includes(format);
+}
+
 function shouldPreferGpuGif(codec: string): boolean {
   return isAv1Codec(codec) || isHevcCodec(codec) || isVp9Codec(codec);
 }
@@ -27,7 +32,7 @@ function shouldPreferGpuGif(codec: string): boolean {
 export async function selectSimplePath(params: SimplePathPlanParams): Promise<PathSelection> {
   const { file, format, metadata, abortSignal } = params;
 
-  if (format !== 'gif' && format !== 'webp') {
+  if (!isSupportedFormat(format)) {
     throw new Error(`Unsupported format: ${format}`);
   }
 
