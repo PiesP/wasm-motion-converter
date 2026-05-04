@@ -357,7 +357,11 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
         timeoutId = globalThis.setTimeout(() => {
           cleanup();
           reject(
-            new Error(`Worker ${workerId} did not become ready within ${this.readyTimeoutMs}ms`)
+            new Error(
+              `Worker ${workerId} failed to initialise within ${this.readyTimeoutMs}ms. ` +
+                `This usually means the Worker could not load Comlink or the encoder module. ` +
+                `Try reloading the page or using a different browser.`
+            )
           );
         }, this.readyTimeoutMs);
       });

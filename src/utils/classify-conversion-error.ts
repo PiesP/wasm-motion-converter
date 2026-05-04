@@ -170,11 +170,18 @@ export function classifyConversionError(
     message.includes('cross-origin') ||
     message.includes('sharedarraybuffer')
   ) {
+    const isWorkerInit =
+      message.includes('failed to initialise') ||
+      message.includes('did not become ready') ||
+      message.includes('comlink');
+
     return {
       type: 'general',
       ...baseContext,
-      suggestion:
-        'Worker or cross-origin isolation issue. Ensure your server has proper COOP/COEP headers configured. Try refreshing the page or using a different browser.',
+      phase: isWorkerInit ? 'worker_init_failure' : 'worker_error',
+      suggestion: isWorkerInit
+        ? 'A background encoder worker failed to start. Try reloading the page or using a different browser.'
+        : 'Worker or cross-origin isolation issue. Ensure your server has proper COOP/COEP headers configured. Try refreshing the page or using a different browser.',
     };
   }
 
