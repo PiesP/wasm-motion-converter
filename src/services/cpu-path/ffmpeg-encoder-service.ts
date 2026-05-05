@@ -189,31 +189,6 @@ export class FFmpegEncoder {
   }
 
   /**
-   * Acquire conversion lock to prevent concurrent conversions.
-   *
-   * @deprecated Use acquireLock() instead. Kept for backward compatibility.
-   */
-  private acquireConversionLock(): boolean {
-    if (this.conversionLock) {
-      logger.warn('conversion', 'Conversion already in progress, rejecting concurrent request', {
-        locked: this.conversionLock,
-      });
-      return false;
-    }
-    this.acquireLock();
-    return true;
-  }
-
-  /**
-   * Release conversion lock.
-   *
-   * @deprecated Use releaseLock() instead. Kept for backward compatibility.
-   */
-  private releaseConversionLock(): void {
-    this.releaseLock();
-  }
-
-  /**
    * Validate that FFmpeg is properly initialized
    *
    * Checks FFmpeg state and logs diagnostic information.
@@ -499,10 +474,6 @@ export class FFmpegEncoder {
     } = params;
     const { core, vfs } = this.getDeps();
 
-    if (!this.acquireConversionLock()) {
-      throw new Error('Another conversion is already in progress');
-    }
-
     try {
       // Validate FFmpeg state before attempting encoding
       logger.debug('conversion', 'Starting frame sequence encoding', {
@@ -578,8 +549,6 @@ export class FFmpegEncoder {
         format,
         options,
       });
-    } finally {
-      this.releaseConversionLock();
     }
   }
 
@@ -907,10 +876,6 @@ export class FFmpegEncoder {
   ): Promise<ConversionOutputBlob> {
     const { core, vfs, monitoring } = this.getDeps();
 
-    if (!this.acquireConversionLock()) {
-      throw new Error('Another conversion is already in progress');
-    }
-
     performanceTracker.startPhase('conversion');
 
     try {
@@ -1200,7 +1165,6 @@ export class FFmpegEncoder {
         metadata,
       });
     } finally {
-      this.releaseConversionLock();
       performanceTracker.endPhase('conversion');
     }
   }
@@ -1218,10 +1182,6 @@ export class FFmpegEncoder {
     inputOverride?: FFmpegInputOverride
   ): Promise<ConversionOutputBlob> {
     const { core, vfs, monitoring } = this.getDeps();
-
-    if (!this.acquireConversionLock()) {
-      throw new Error('Another conversion is already in progress');
-    }
 
     performanceTracker.startPhase('conversion');
 
@@ -1447,7 +1407,6 @@ export class FFmpegEncoder {
         metadata,
       });
     } finally {
-      this.releaseConversionLock();
       performanceTracker.endPhase('conversion');
     }
   }
