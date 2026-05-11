@@ -95,7 +95,7 @@ const api = {
       // never produces unhandled promise rejections.
       const safeOnProgress: ModernGifOptions['onProgress'] | undefined = onProgress
         ? (current, total) => {
-            const now = Date.now();
+            const now = performance.now();
             const isTerminal = current >= total;
             if (
               current === lastForwardedCurrent ||

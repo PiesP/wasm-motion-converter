@@ -287,7 +287,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
       }
 
       this.workerReadyPromise[workerId] = new Promise<void>((resolve, reject) => {
-        const startAt = Date.now();
+        const startAt = performance.now();
         let intervalId: ReturnType<typeof setInterval> | undefined;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -312,7 +312,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
             cleanup();
             logger.debug('worker-pool', 'Worker is ready', {
               workerId,
-              waitMs: Date.now() - startAt,
+              waitMs: performance.now() - startAt,
             });
             resolve();
           }

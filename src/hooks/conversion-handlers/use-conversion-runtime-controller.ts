@@ -57,7 +57,7 @@ export class ConversionRuntimeController {
 
   startNewRun(): { isActive: () => boolean; runId: string } {
     const seq = (this.activeConversionSeq += 1);
-    const runId = `run-${seq}-${Date.now().toString(36)}`;
+    const runId = `run-${seq}-${performance.now().toString(36)}`;
     this.activeRunId = runId;
 
     return {
@@ -115,7 +115,7 @@ export class ConversionRuntimeController {
       return;
     }
 
-    const now = Date.now();
+    const now = performance.now();
     const elapsedMs = this.currentStartTimeMs > 0 ? Math.max(0, now - this.currentStartTimeMs) : 0;
     const elapsedSeconds = Math.floor(elapsedMs / 1000);
     const elapsed = formatDuration(elapsedSeconds);
@@ -165,7 +165,7 @@ export class ConversionRuntimeController {
 
     this.lastProgressValue = monotonic;
 
-    const now = Date.now();
+    const now = performance.now();
     batch(() => {
       setConversionProgress(monotonic);
       this.etaCalculator.addSample(monotonic);

@@ -32,7 +32,7 @@ export async function captureWithSeeking(options: SeekCaptureOptions): Promise<v
     seekTo,
   } = options;
 
-  const start = Date.now();
+  const start = performance.now();
   video.pause();
 
   const seekTimeout = getSeekTimeoutForCodec(codec);
@@ -79,10 +79,10 @@ export async function captureWithSeeking(options: SeekCaptureOptions): Promise<v
       throw new Error('Conversion cancelled by user');
     }
 
-    const seekStart = Date.now();
+    const seekStart = performance.now();
     const targetTime = Math.min(duration - epsilon, index * frameInterval);
     await seekTo(video, targetTime, seekTimeout);
-    const seekElapsed = Date.now() - seekStart;
+    const seekElapsed = performance.now() - seekStart;
 
     if (index < TIMING_SAMPLE_SIZE) {
       seekTimings.push(seekElapsed);
@@ -120,7 +120,7 @@ export async function captureWithSeeking(options: SeekCaptureOptions): Promise<v
     {
       capturedFrames: totalFrames,
       totalFrames,
-      elapsedMs: Date.now() - start,
+      elapsedMs: performance.now() - start,
     }
   );
 }

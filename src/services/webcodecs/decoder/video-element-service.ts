@@ -115,7 +115,7 @@ export const cleanupVideo = (args: {
   activeUrls: Set<string>;
 }): void => {
   const { video, url, activeUrls } = args;
-  const cleanupStart = Date.now();
+  const cleanupStart = performance.now();
 
   try {
     logger.debug('conversion', 'WebCodecs: Starting video cleanup');
@@ -187,7 +187,7 @@ export const cleanupVideo = (args: {
     });
   }
 
-  const cleanupTime = Date.now() - cleanupStart;
+  const cleanupTime = performance.now() - cleanupStart;
   logger.debug('conversion', 'WebCodecs: Video cleanup complete', {
     elapsedMs: cleanupTime,
   });

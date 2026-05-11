@@ -58,7 +58,7 @@ export async function captureWithTrackProcessor(
   let baseTimestampUs: number | null = null;
   let nextFrameTimeUs = 0;
   let frameIndex = 0;
-  const startDecodeTime = Date.now();
+  const startDecodeTime = performance.now();
 
   const readFrame = async (): Promise<ReadableStreamReadResult<VideoFrame>> => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -84,7 +84,7 @@ export async function captureWithTrackProcessor(
         throw new Error('Conversion cancelled by user');
       }
 
-      const elapsed = Date.now() - startDecodeTime;
+      const elapsed = performance.now() - startDecodeTime;
       if (elapsed > FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS) {
         throw new Error(
           `WebCodecs decode exceeded ${FFMPEG_INTERNALS.WEBCODECS.MAX_TOTAL_DECODE_MS}ms timeout at frame ${frameIndex}. ` +
@@ -131,12 +131,12 @@ export async function captureWithTrackProcessor(
     logger.info(
       'conversion',
       `WebCodecs track capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}, elapsedMs=${
-        Date.now() - startDecodeTime
+        performance.now() - startDecodeTime
       }`,
       {
         capturedFrames: frameIndex,
         totalFrames,
-        elapsedMs: Date.now() - startDecodeTime,
+        elapsedMs: performance.now() - startDecodeTime,
       }
     );
   }

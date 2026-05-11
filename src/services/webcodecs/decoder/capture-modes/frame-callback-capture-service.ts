@@ -56,7 +56,7 @@ export async function captureWithFrameCallback(
     captureWithSeeking,
   } = options;
 
-  const start = Date.now();
+  const start = performance.now();
 
   try {
     await video.play();
@@ -294,7 +294,7 @@ export async function captureWithFrameCallback(
     {
       capturedFrames: frameIndex,
       totalFrames,
-      elapsedMs: Date.now() - start,
+      elapsedMs: performance.now() - start,
     }
   );
 }

@@ -110,7 +110,7 @@ export async function captureComplexCodecFramesForWebP(params: {
     isAv1 && supportsFrameCallback && av1FrameCallbackFailures >= 1;
 
   // Direct WebCodecs → RGBA pipeline for complex codecs.
-  const startTime = Date.now();
+  const startTime = performance.now();
 
   const frameFormat: WebCodecsFrameFormat =
     typeof createImageBitmap === 'function' ? 'bitmap' : 'rgba';
@@ -173,9 +173,9 @@ export async function captureComplexCodecFramesForWebP(params: {
     captureMode: WebCodecsCaptureMode,
     overrideTargetFps: number = effectiveTargetFps
   ) => {
-    const start = Date.now();
+    const start = performance.now();
     const result = await runDecode(captureMode, overrideTargetFps);
-    const elapsedMs = Date.now() - start;
+    const elapsedMs = performance.now() - start;
     const modeUsed = result.captureModeUsed ?? captureMode;
     return { result, elapsedMs, modeUsed };
   };
@@ -558,7 +558,7 @@ export async function captureComplexCodecFramesForWebP(params: {
   const orderedFrames = orderedEntries.map((entry) => entry.frame);
   const timestamps = orderedEntries.map((entry) => entry.timestamp);
 
-  const elapsed = Date.now() - startTime;
+  const elapsed = performance.now() - startTime;
   const estimatedFramesFromCapturedDuration = computeExpectedFramesFromDuration({
     durationSeconds: decodeResult.duration,
     fps: decodeResult.fps,

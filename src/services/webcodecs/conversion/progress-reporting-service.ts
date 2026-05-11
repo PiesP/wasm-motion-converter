@@ -76,7 +76,7 @@ export function createThrottledProgressReporter(params: ProgressReporterParams):
       reportProgress(snapshot.roundedPercent);
     }
 
-    const now = Date.now();
+    const now = performance.now();
     const deltaThreshold = resolveDeltaThreshold(snapshot.safeTotal);
     const shouldUpdateStatus =
       snapshot.safeCurrent !== lastStatusCurrent &&

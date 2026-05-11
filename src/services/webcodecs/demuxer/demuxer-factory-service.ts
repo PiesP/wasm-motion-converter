@@ -28,7 +28,7 @@ const shouldLogDemuxerEligibility = (params: {
   codec: string;
 }): boolean => {
   const { file, container, codec } = params;
-  const now = Date.now();
+  const now = performance.now();
   const key = `${container}|${codec}`;
   const existing = demuxerEligibilityLogStateByFile.get(file);
 

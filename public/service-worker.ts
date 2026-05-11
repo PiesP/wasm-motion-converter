@@ -184,7 +184,7 @@ function loadHealthScores(): Map<string, number> {
 
     const data = JSON.parse(stored) as HealthTrackingData;
 
-    const age = Date.now() - data.createdAt;
+    const age = performance.now() - data.createdAt;
     const TTL_MS = 7 * 24 * 60 * 60 * 1000;
     if (age > TTL_MS) {
       return scores;
@@ -214,7 +214,7 @@ function updateHealthScore(hostname: string, success: boolean): void {
       data = {
         version: 1,
         metrics: {},
-        createdAt: Date.now(),
+        createdAt: performance.now(),
       };
     }
 
@@ -225,7 +225,7 @@ function updateHealthScore(hostname: string, success: boolean): void {
         failureCount: 0,
         totalCount: 0,
         successRate: 1.0,
-        lastUpdated: Date.now(),
+        lastUpdated: performance.now(),
       };
     }
 
@@ -238,7 +238,7 @@ function updateHealthScore(hostname: string, success: boolean): void {
     }
     metric.totalCount = metric.successCount + metric.failureCount;
     metric.successRate = metric.totalCount > 0 ? metric.successCount / metric.totalCount : 1.0;
-    metric.lastUpdated = Date.now();
+    metric.lastUpdated = performance.now();
 
     localStorage.setItem('cdn_health_tracking', JSON.stringify(data));
   } catch (error) {
@@ -552,7 +552,7 @@ async function tryFetchFromCDN(
         success: false,
         status: response.status,
         error: `HTTP ${response.status}`,
-        timestamp: Date.now(),
+        timestamp: performance.now(),
       });
       updateHealthScore(provider.hostname, false);
       return null;
@@ -571,7 +571,7 @@ async function tryFetchFromCDN(
             success: false,
             status: response.status,
             error: 'Integrity verification failed',
-            timestamp: Date.now(),
+            timestamp: performance.now(),
           });
           updateHealthScore(provider.hostname, false);
           return null;
@@ -592,7 +592,7 @@ async function tryFetchFromCDN(
       latency,
       success: true,
       status: response.status,
-      timestamp: Date.now(),
+      timestamp: performance.now(),
     });
     updateHealthScore(provider.hostname, true);
     return response;
@@ -604,7 +604,7 @@ async function tryFetchFromCDN(
       latency,
       success: false,
       error: String(error),
-      timestamp: Date.now(),
+      timestamp: performance.now(),
     });
     updateHealthScore(provider.hostname, false);
     return null;

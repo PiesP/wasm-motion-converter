@@ -208,7 +208,7 @@ export function classifyConversionError(
   ffmpegLogs?: string[]
 ): ErrorContext {
   const msg = errorMessage.toLowerCase();
-  const timestamp = Date.now();
+  const timestamp = performance.now();
   const baseContext = {
     timestamp,
     originalError: errorMessage,

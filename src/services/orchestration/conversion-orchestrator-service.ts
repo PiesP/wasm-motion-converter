@@ -48,7 +48,7 @@ class ConversionOrchestrator {
 
   async convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
     const operationId = createId();
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     const abortController = new AbortController();
 
     this.activeOperationId = operationId;
@@ -90,7 +90,7 @@ class ConversionOrchestrator {
         path: selection.path,
         encoder: blob.encoderBackendUsed ?? (selection.path === 'gpu' ? 'webcodecs' : 'ffmpeg'),
         captureModeUsed: blob.captureModeUsed ?? null,
-        conversionTimeMs: Date.now() - startedAt,
+        conversionTimeMs: performance.now() - startedAt,
         wasTranscoded: blob.wasTranscoded,
         originalCodec: request.metadata?.codec,
       };

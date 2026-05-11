@@ -64,7 +64,7 @@ export async function captureWithDemuxer(
 
     // Dev-only diagnostics (rate-limited) to help debug demuxer decode stalls.
     const isDev = import.meta.env.DEV;
-    const decodeStartedAtMs = Date.now();
+    const decodeStartedAtMs = performance.now();
     let lastOutputAtMs = decodeStartedAtMs;
     let outputFramesTotal = 0;
     let lastDevStatsAtMs = 0;
@@ -131,7 +131,7 @@ export async function captureWithDemuxer(
         return;
       }
 
-      const now = Date.now();
+      const now = performance.now();
       if (now - lastProgressTickAt < ProgressTickIntervalMs) {
         return;
       }
@@ -164,7 +164,7 @@ export async function captureWithDemuxer(
         return;
       }
 
-      const now = Date.now();
+      const now = performance.now();
       if (now - lastDevStatsAtMs < DevStatsIntervalMs) {
         return;
       }
@@ -200,7 +200,7 @@ export async function captureWithDemuxer(
       output: (frame: VideoFrame) => {
         decodedFrames.push(frame);
         outputFramesTotal += 1;
-        lastOutputAtMs = Date.now();
+        lastOutputAtMs = performance.now();
       },
       error: (error: Error) => {
         // Do not throw from this callback. It can surface as an uncaught
@@ -544,7 +544,7 @@ export async function captureWithDemuxer(
       // If we don't actively drain + process those frames, frameIndex can stall and we
       // may incorrectly fall back to a very slow seek-based capture.
       const flushPromise = decoder.flush();
-      const flushStartedAtMs = Date.now();
+      const flushStartedAtMs = performance.now();
       let flushSettled = false;
       let flushError: unknown | null = null;
       flushPromise.then(
@@ -558,12 +558,12 @@ export async function captureWithDemuxer(
       );
 
       const FlushPollIntervalMs = 50;
-      while (!flushSettled && Date.now() - flushStartedAtMs < FlushTimeoutMs) {
+      while (!flushSettled && performance.now() - flushStartedAtMs < FlushTimeoutMs) {
         await new Promise<void>((resolve) => setTimeout(resolve, FlushPollIntervalMs));
         await processDecodedFrames();
         tickProgress();
         maybeLogDevStats('drain-wait', {
-          flushElapsedMs: Date.now() - flushStartedAtMs,
+          flushElapsedMs: performance.now() - flushStartedAtMs,
           baseTimestampMicros,
           lastCapturedTimestampMicros,
         });
@@ -636,7 +636,7 @@ export async function captureWithDemuxer(
       }
 
       maybeLogDevStats('drain-flushed', {
-        flushElapsedMs: Date.now() - flushStartedAtMs,
+        flushElapsedMs: performance.now() - flushStartedAtMs,
       });
 
       if (decoderError) {

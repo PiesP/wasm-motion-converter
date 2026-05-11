@@ -155,7 +155,7 @@ export type ConversionOutputBlob = Blob & ConversionBlobMetadata;
  *   outputBlob: new Blob([...], { type: 'image/gif' }),
  *   originalName: 'video.mp4',
  *   originalSize: 1024000,
- *   createdAt: Date.now(),
+ *   createdAt: performance.now(),
  *   settings: { format: 'gif', quality: 'high', scale: 1.0 },
  *   conversionDurationSeconds: 12.5,
  *   wasTranscoded: true,
@@ -212,7 +212,7 @@ export type ConversionErrorType = 'timeout' | 'memory' | 'format' | 'codec' | 'g
  * const context: ErrorContext = {
  *   type: 'timeout',
  *   originalError: 'Conversion exceeded 60s timeout',
- *   timestamp: Date.now(),
+ *   timestamp: performance.now(),
  *   suggestion: 'Try a shorter video or reduce quality settings',
  *   conversionSettings: { format: 'gif', quality: 'high', scale: 1.0 },
  *   ffmpegLogs: ['[info] Processing...', '[error] Timeout'],

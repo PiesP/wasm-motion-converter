@@ -106,7 +106,7 @@ export class FFmpegMonitoring {
     // Always keep internal progress state updated so manual progress reporting
     // (e.g., WebCodecs pipelines) can be deduped even when watchdog monitoring
     // is not currently active.
-    const now = Date.now();
+    const now = performance.now();
     this.lastProgressTime = now;
     this.lastProgressValue = monotonic;
 
@@ -127,7 +127,7 @@ export class FFmpegMonitoring {
    * Update log timestamp to reset silence detection
    */
   updateLogActivity(): void {
-    this.lastLogTime = Date.now();
+    this.lastLogTime = performance.now();
     this.logSilenceStrikes = 0;
   }
 
@@ -153,8 +153,8 @@ export class FFmpegMonitoring {
 
     const { metadata, quality, format, enableLogSilenceCheck = true } = options;
 
-    this.lastProgressTime = Date.now();
-    this.lastLogTime = Date.now();
+    this.lastProgressTime = performance.now();
+    this.lastLogTime = performance.now();
     this.logSilenceStrikes = 0;
     this.isConverting = true;
     this.lastProgressValue = restartingWithinConversion ? previousProgressValue : -1;
@@ -197,7 +197,7 @@ export class FFmpegMonitoring {
     // Start log silence detection
     if (enableLogSilenceCheck) {
       this.logSilenceInterval = setInterval(() => {
-        const silenceMs = Date.now() - this.lastLogTime;
+        const silenceMs = performance.now() - this.lastLogTime;
         if (silenceMs > FFMPEG_INTERNALS.LOG_SILENCE_TIMEOUT_MS) {
           this.logSilenceStrikes += 1;
           logger.warn('ffmpeg', 'No FFmpeg logs detected for extended period', {
@@ -222,7 +222,7 @@ export class FFmpegMonitoring {
 
     // Start watchdog timer
     this.watchdogTimer = setInterval(() => {
-      const timeSinceProgress = Date.now() - this.lastProgressTime;
+      const timeSinceProgress = performance.now() - this.lastProgressTime;
       // Avoid noisy "Watchdog check" lines when progress is flowing normally.
       // Only emit a debug line once we have gone longer than a full check interval
       // without any progress updates.
@@ -313,7 +313,7 @@ export class FFmpegMonitoring {
     endProgress: number,
     estimatedDurationSeconds: number
   ): ReturnType<typeof setInterval> {
-    const startTime = Date.now();
+    const startTime = performance.now();
     const progressRange = endProgress - startProgress;
 
     logger.debug(
@@ -322,7 +322,7 @@ export class FFmpegMonitoring {
     );
 
     const interval = setInterval(() => {
-      const elapsedSeconds = (Date.now() - startTime) / 1000;
+      const elapsedSeconds = (performance.now() - startTime) / 1000;
       const progressFraction = Math.min(elapsedSeconds / estimatedDurationSeconds, 0.99);
       const currentProgress = startProgress + progressRange * progressFraction;
       const roundedProgress = Math.round(currentProgress);

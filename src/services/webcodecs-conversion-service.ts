@@ -391,7 +391,7 @@ class WebCodecsConversionService {
         const progress = encodeStart + ((encodeEnd - encodeStart) * current) / Math.max(1, total);
         ffmpegService.reportProgress(Math.round(progress));
 
-        const now = Date.now();
+        const now = performance.now();
         const isTerminal = current >= total;
         if (
           current !== lastEncodeStatusCurrent &&

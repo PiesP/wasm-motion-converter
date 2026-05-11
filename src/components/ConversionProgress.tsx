@@ -31,7 +31,7 @@ interface ConversionProgressProps {
  *   status="Converting to GIF..."
  *   statusMessage="Processing frame 450/1000"
  *   showElapsedTime={true}
- *   startTime={Date.now()}
+ *   startTime={performance.now()}
  * />
  * ```
  */

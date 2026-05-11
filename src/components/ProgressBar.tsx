@@ -51,7 +51,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     }
 
     const updateElapsed = () => {
-      const now = Date.now();
+      const now = performance.now();
       setElapsedSeconds(Math.floor((now - (local.startTime || now)) / 1000));
     };
 

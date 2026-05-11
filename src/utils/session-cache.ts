@@ -142,7 +142,7 @@ export function getCachedCapturePerformance(codec: string): CapturePerformance |
     }
 
     // Invalidate if stale (>5 minutes old) or invalid
-    if (Date.now() - perf.timestamp > 300_000 || perf.avgMsPerFrame <= 0) {
+    if (performance.now() - perf.timestamp > 300_000 || perf.avgMsPerFrame <= 0) {
       return null;
     }
 
@@ -169,7 +169,7 @@ export function cacheCapturePerformance(
     mode,
     avgMsPerFrame,
     sampleSize: frameCount,
-    timestamp: Date.now(),
+    timestamp: performance.now(),
   };
 
   const key = `dropconvert:capture:perf:${normalizedCodec}`;

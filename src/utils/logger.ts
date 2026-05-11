@@ -201,7 +201,7 @@ class Logger {
     }
 
     this.conversionProgress = rounded;
-    this.conversionProgressUpdatedAtMs = Date.now();
+    this.conversionProgressUpdatedAtMs = performance.now();
   }
 
   /**
@@ -223,7 +223,7 @@ class Logger {
     }
 
     // Guard against sticky progress if a conversion aborts unexpectedly.
-    const ageMs = Date.now() - this.conversionProgressUpdatedAtMs;
+    const ageMs = performance.now() - this.conversionProgressUpdatedAtMs;
     if (ageMs > Logger.CONVERSION_PROGRESS_STALE_MS) {
       this.clearConversionProgress();
       return null;

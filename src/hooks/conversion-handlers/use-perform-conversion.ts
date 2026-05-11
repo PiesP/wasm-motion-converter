@@ -111,7 +111,7 @@ async function performConversion(
   try {
     setAppState('converting');
     setConversionStatusMessage('');
-    const startTimeMs = Date.now();
+    const startTimeMs = performance.now();
     runtime.prepareForNewConversion(startTimeMs);
     setErrorContext(null);
 
@@ -166,7 +166,7 @@ async function performConversion(
     clearConversionCallbacks();
     runtime.stopMemoryMonitoring();
 
-    const duration = Math.max(0, Date.now() - startTimeMs);
+    const duration = Math.max(0, performance.now() - startTimeMs);
     logger.debug('conversion', 'Conversion result received by UI layer', {
       duration: `${(duration / MS_PER_SECOND).toFixed(2)}s`,
       outputSize: blob.size,
@@ -179,7 +179,7 @@ async function performConversion(
       outputBlob: blob,
       originalName: file.name,
       originalSize: file.size,
-      createdAt: Date.now(),
+      createdAt: performance.now(),
       settings,
       conversionDurationSeconds: durationSeconds,
       wasTranscoded: blob.wasTranscoded,

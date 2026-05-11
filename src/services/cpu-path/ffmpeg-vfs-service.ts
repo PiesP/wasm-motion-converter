@@ -224,10 +224,10 @@ export class FFmpegVFS {
     }
 
     try {
-      const deleteStartTime = Date.now();
+      const deleteStartTime = performance.now();
       await ffmpeg.deleteFile(fileName);
       this.knownFiles.delete(fileName);
-      const deleteTime = Date.now() - deleteStartTime;
+      const deleteTime = performance.now() - deleteStartTime;
       if (shouldLogVfsFileOperation(fileName)) {
         logger.debug('conversion', `Deleted ${fileName}`, {
           timeMs: deleteTime,
@@ -452,7 +452,7 @@ export class FFmpegVFS {
 
     const uniqueFileNames = Array.from(new Set(fileNames));
 
-    const startTime = Date.now();
+    const startTime = performance.now();
     const totalFiles = uniqueFileNames.length;
 
     logger.debug('conversion', 'Starting batch file deletion', {
@@ -468,14 +468,14 @@ export class FFmpegVFS {
       // This reduces ~30s sequential delete time to <2s
       await Promise.all(uniqueFileNames.map((file) => this.deleteFile(ffmpeg, file)));
 
-      const elapsedTime = Date.now() - startTime;
+      const elapsedTime = performance.now() - startTime;
       logger.debug('conversion', 'Batch file deletion complete', {
         fileCount: totalFiles,
         elapsedMs: elapsedTime,
         avgPerFileMs: (elapsedTime / totalFiles).toFixed(2),
       });
     } catch (error) {
-      const elapsedTime = Date.now() - startTime;
+      const elapsedTime = performance.now() - startTime;
       logger.error('conversion', 'Batch file deletion failed', {
         fileCount: totalFiles,
         elapsedMs: elapsedTime,
@@ -502,7 +502,7 @@ export class FFmpegVFS {
     additionalFiles: string[] = [],
     isMemoryCritical: () => boolean
   ): Promise<void> {
-    const cleanupStartTime = Date.now();
+    const cleanupStartTime = performance.now();
 
     logger.debug('conversion', 'Starting conversion cleanup phase', {
       outputFile: outputFileName,
@@ -536,13 +536,13 @@ export class FFmpegVFS {
       // Delete all temporary files (parallel deletion for performance)
       await this.deleteFiles(ffmpeg, files);
 
-      const cleanupTime = Date.now() - cleanupStartTime;
+      const cleanupTime = performance.now() - cleanupStartTime;
       logger.debug('conversion', 'Conversion cleanup complete', {
         files: files.length,
         elapsedMs: cleanupTime,
       });
     } catch (error) {
-      const cleanupTime = Date.now() - cleanupStartTime;
+      const cleanupTime = performance.now() - cleanupStartTime;
       logger.error('conversion', 'Cleanup phase failed', {
         elapsedMs: cleanupTime,
         error: getErrorMessage(error),

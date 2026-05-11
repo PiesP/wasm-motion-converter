@@ -45,7 +45,7 @@ export class ETACalculator {
    * eta.addSample(75);  // 75% - new progress recorded
    */
   addSample(progress: number): void {
-    const now = Date.now();
+    const now = performance.now();
 
     // Deduplication: Only add if progress value changed or it's the first sample
     // (avoids redundant samples during slow progress periods)

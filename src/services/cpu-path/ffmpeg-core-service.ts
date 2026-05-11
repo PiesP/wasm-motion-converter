@@ -181,7 +181,7 @@ export class FFmpegCore {
    * Check if progress should be emitted (throttling)
    */
   private shouldEmitProgress(progress: number): boolean {
-    const now = Date.now();
+    const now = performance.now();
     const timeDelta = now - this.lastProgressEmitTime;
     const progressDelta = Math.abs(progress - this.lastProgressValue);
 
@@ -298,10 +298,10 @@ export class FFmpegCore {
   private async waitForTermination(
     timeoutMs = FFMPEG_INTERNALS.MAX_TERMINATION_WAIT_MS
   ): Promise<void> {
-    const startTime = Date.now();
+    const startTime = performance.now();
 
     while (this.isTerminating) {
-      const elapsed = Date.now() - startTime;
+      const elapsed = performance.now() - startTime;
 
       if (elapsed > timeoutMs) {
         logger.warn('ffmpeg', 'Termination wait timed out, proceeding anyway', {
@@ -359,7 +359,7 @@ export class FFmpegCore {
       rejectInit = reject;
     });
 
-    const initStartTime = Date.now();
+    const initStartTime = performance.now();
 
     const shouldFallbackToSingleThread = (errorMessage: string): boolean => {
       if (this.useSingleThreadCore) {
@@ -488,7 +488,7 @@ export class FFmpegCore {
 
       await initializeWithVariant(this.useSingleThreadCore ? 'st' : 'mt');
 
-      const initTime = Date.now() - initStartTime;
+      const initTime = performance.now() - initStartTime;
       this.loaded = true;
       logger.info('ffmpeg', 'FFmpeg initialization successful', {
         elapsedMs: initTime,
@@ -510,7 +510,7 @@ export class FFmpegCore {
 
         try {
           await initializeWithVariant('st');
-          const initTime = Date.now() - initStartTime;
+          const initTime = performance.now() - initStartTime;
           this.loaded = true;
           logger.info('ffmpeg', 'FFmpeg initialization successful (single-threaded core)', {
             elapsedMs: initTime,
@@ -523,7 +523,7 @@ export class FFmpegCore {
         }
       }
 
-      const initTime = Date.now() - initStartTime;
+      const initTime = performance.now() - initStartTime;
       const recentLogs = this.ffmpegLogBuffer.slice(-12);
       logger.error('ffmpeg', 'FFmpeg initialization failed', {
         elapsedMs: initTime,

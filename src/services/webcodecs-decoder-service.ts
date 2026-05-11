@@ -315,7 +315,7 @@ export class WebCodecsDecoderService {
       );
 
       video.currentTime = 0;
-      const startDecodeTime = Date.now();
+      const startDecodeTime = performance.now();
 
       const captureState: CaptureFrameState = {
         consecutiveEmptyFrames: 0,
@@ -327,7 +327,7 @@ export class WebCodecsDecoderService {
         }
 
         // Fail-fast if decode is taking too long (indicates stall)
-        const elapsed = Date.now() - startDecodeTime;
+        const elapsed = performance.now() - startDecodeTime;
         if (elapsed > maxTotalDecodeMs) {
           throw new Error(
             `WebCodecs decode exceeded ${maxTotalDecodeMs}ms timeout (mode=${effectiveCaptureMode}) at frame ${index}. ` +

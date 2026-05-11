@@ -15,5 +15,5 @@ export function createId(): string {
     // Ignore and fall back below
   }
 
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${performance.now()}-${Math.random().toString(16).slice(2)}`;
 }

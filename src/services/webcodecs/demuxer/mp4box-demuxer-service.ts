@@ -204,7 +204,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
         throw new Error('Demuxer not initialized');
       }
 
-      const extractionStartedAtMs = Date.now();
+      const extractionStartedAtMs = performance.now();
       let firstSamplesAtMs: number | null = null;
 
       const samplePromise = new Promise<void>((resolve, reject) => {
@@ -249,7 +249,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
           });
 
           if (firstSamplesAtMs === null) {
-            firstSamplesAtMs = Date.now();
+            firstSamplesAtMs = performance.now();
             logger.debug('demuxer', 'First MP4Box samples received', {
               trackId,
               firstBatchSamples: samples.length,
@@ -278,7 +278,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
       logger.debug('demuxer', 'MP4Box sample queue ready', {
         queuedSamples: sampleQueue.length,
         expectedSamples: videoTrack.nb_samples,
-        waitMs: Date.now() - extractionStartedAtMs,
+        waitMs: performance.now() - extractionStartedAtMs,
         firstSamplesWaitMs: firstSamplesAtMs ? firstSamplesAtMs - extractionStartedAtMs : null,
       });
 
