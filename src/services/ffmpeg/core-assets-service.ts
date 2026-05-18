@@ -19,16 +19,10 @@ const buildAssetUrl = (
   }
 };
 
-import { RUNTIME_DEP_VERSIONS } from 'virtual:cdn-deps';
+import { getRuntimeDepVersion } from '@utils/cdn-config';
 import { FFMPEG_CORE_VERSION } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { withTimeout } from '@utils/with-timeout';
-
-const getRuntimeDepVersion = (pkg: string): string => {
-  const v = RUNTIME_DEP_VERSIONS[pkg];
-  if (!v) throw new Error(`[runtime-deps] Missing version for ${pkg}`);
-  return v;
-};
 
 const PROVIDER_EXCLUSIONS = ['esm.sh'] as const;
 const PROVIDER_EXCLUSION_REASON = 'blob:// incompatibility (shim code with bare imports)';

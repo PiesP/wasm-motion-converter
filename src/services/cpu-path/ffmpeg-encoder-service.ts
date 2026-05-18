@@ -15,8 +15,6 @@
  */
 
 import type { FFmpeg } from '@ffmpeg/ffmpeg';
-import { getProgressLoggingArgs } from '@services/ffmpeg/args-service';
-import { getScaleFilter } from '@services/ffmpeg/filters-service';
 import { getThreadingArgs } from '@services/ffmpeg/threading-service';
 import type {
   ConversionOptions,
@@ -892,7 +890,8 @@ export class FFmpegEncoder {
       const fps = getOptimalFPS(metadata?.framerate || 30, quality, 'gif');
 
       const qualitySettings = QUALITY_PRESETS.gif[quality];
-      const scaleFilter = getScaleFilter(quality, scale);
+      const scaleFilter =
+        scale === 1.0 ? null : `scale=iw*${scale}:ih*${scale}:flags=${SCALE_FILTERS[quality]}`;
 
       logger.info('conversion', 'Starting GIF conversion', {
         quality,
@@ -1059,7 +1058,7 @@ export class FFmpegEncoder {
         .concat(Array.from(conversionThreadArgs))
         .concat(inputArgs)
         .concat(['-i', paletteFileName, '-lavfi', gifFilterChain])
-        .concat(Array.from(getProgressLoggingArgs()))
+        .concat(Array.from(PROGRESS_LOGGING_ARGS))
         .concat([outputFileName]);
 
       // Log command safely without join() to prevent stack overflow
@@ -1198,7 +1197,8 @@ export class FFmpegEncoder {
       const fps = getOptimalFPS(metadata?.framerate || 30, quality, 'webp');
 
       const qualitySettings = QUALITY_PRESETS.webp[quality];
-      const scaleFilter = getScaleFilter(quality, scale);
+      const scaleFilter =
+        scale === 1.0 ? null : `scale=iw*${scale}:ih*${scale}:flags=${SCALE_FILTERS[quality]}`;
 
       const isValidLibwebpPreset = (preset: string): boolean =>
         preset === 'default' ||
@@ -1282,7 +1282,7 @@ export class FFmpegEncoder {
             '-loop',
             '0',
           ])
-          .concat(Array.from(getProgressLoggingArgs()))
+          .concat(Array.from(PROGRESS_LOGGING_ARGS))
           .concat([outputFileName]);
 
         // Log command safely without join() to prevent stack overflow
@@ -1442,3 +1442,11 @@ export class FFmpegEncoder {
     this.cancellationRequested = false;
   }
 }
+
+const PROGRESS_LOGGING_ARGS = ['-progress', '-', '-loglevel', 'info'] as const;
+
+const SCALE_FILTERS: Record<ConversionQuality, string> = {
+  high: 'lanczos',
+  medium: 'bicubic',
+  low: 'bilinear',
+};

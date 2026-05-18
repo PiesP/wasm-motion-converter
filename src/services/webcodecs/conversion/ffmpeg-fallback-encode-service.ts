@@ -1,6 +1,8 @@
 import { ffmpegService } from '@services/ffmpeg-service';
-import { computeExpectedFramesFromDuration } from '@services/webcodecs/conversion/frame-requirements-service';
-import { computeRawvideoEligibility } from '@services/webcodecs/conversion/rawvideo-eligibility-service';
+import {
+  computeExpectedFramesFromDuration,
+  computeRawvideoEligibility,
+} from '@services/webcodecs/conversion/rawvideo-eligibility-service';
 import type { WebCodecsFrameFormat } from '@services/webcodecs/decoder/types-service';
 import {
   resolveAnimationDurationSeconds as resolveAnimationDurationSecondsUtil,

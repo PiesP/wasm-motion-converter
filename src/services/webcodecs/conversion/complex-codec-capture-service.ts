@@ -26,7 +26,7 @@ import {
 import {
   computeExpectedFramesFromDuration,
   computeRequiredFramesFromExpected,
-} from './frame-requirements-service';
+} from './rawvideo-eligibility-service';
 
 export async function captureComplexCodecFramesForWebP(params: {
   decoder: WebCodecsDecoderService;

@@ -40,6 +40,19 @@ export function getEnabledProviders(): CDNProvider[] {
 
 import { RUNTIME_DEP_VERSIONS } from 'virtual:cdn-deps';
 
+/**
+ * Get the pinned version for a runtime dependency from package.json.
+ *
+ * @param pkg - Package name (e.g., '@ffmpeg/core-mt')
+ * @returns Pinned version string
+ * @throws Error if the package is not listed in dependencies or cdnDependencies
+ */
+export function getRuntimeDepVersion(pkg: string): string {
+  const v = RUNTIME_DEP_VERSIONS[pkg];
+  if (!v) throw new Error(`[runtime-deps] Missing version for ${pkg}`);
+  return v;
+}
+
 function buildModuleUrl(provider: CDNProvider, pkg: string, version: string): string {
   switch (provider.name) {
     case 'esm.sh':

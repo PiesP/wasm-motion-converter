@@ -16,7 +16,6 @@
 
 import type { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
-import { validateOutputBytes } from '@services/ffmpeg/output-validation-service';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
@@ -550,4 +549,46 @@ export class FFmpegVFS {
       // Do not rethrow - cleanup failures should not block conversion completion
     }
   }
+}
+
+type OutputValidationResult = { valid: true } | { valid: false; reason: string };
+
+function validateOutputBytes(
+  data: Uint8Array,
+  expectedFormat: 'gif' | 'webp'
+): OutputValidationResult {
+  const minSize =
+    expectedFormat === 'gif'
+      ? FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_GIF_SIZE_BYTES
+      : FFMPEG_INTERNALS.OUTPUT_VALIDATION.MIN_WEBP_SIZE_BYTES;
+
+  if (data.length < minSize) {
+    return {
+      valid: false,
+      reason: `Output file too small (${data.length} bytes, expected >=${minSize})`,
+    };
+  }
+
+  if (expectedFormat === 'gif') {
+    const gifSignature = String.fromCharCode(...data.slice(0, 6));
+    if (!gifSignature.startsWith('GIF8')) {
+      return {
+        valid: false,
+        reason: `Invalid GIF file signature (${gifSignature})`,
+      };
+    }
+  }
+
+  if (expectedFormat === 'webp') {
+    const riffSignature = String.fromCharCode(...data.slice(0, 4));
+    const webpSignature = String.fromCharCode(...data.slice(8, 12));
+    if (riffSignature !== 'RIFF' || webpSignature !== 'WEBP') {
+      return {
+        valid: false,
+        reason: `Invalid WebP file signature (${riffSignature}/${webpSignature})`,
+      };
+    }
+  }
+
+  return { valid: true };
 }

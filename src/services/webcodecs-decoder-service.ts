@@ -9,7 +9,6 @@ import { captureWithFrameCallback as captureWithFrameCallbackMode } from '@servi
 import { runPlaybackCaptureMode } from '@services/webcodecs/decoder/capture-modes/run-playback-capture-service';
 import { captureWithSeeking as captureWithSeekingMode } from '@services/webcodecs/decoder/capture-modes/seek-capture-service';
 import { captureWithTrackProcessor as captureWithTrackProcessorMode } from '@services/webcodecs/decoder/capture-modes/track-processor-capture-service';
-import { computeMaxTotalDecodeMs } from '@services/webcodecs/decoder/decode-budget-service';
 import { captureWithDemuxer as captureWithDemuxerMode } from '@services/webcodecs/decoder/demuxer-capture-service';
 import type {
   WebCodecsCaptureMode,
@@ -23,7 +22,6 @@ import {
   normalizeDuration,
   seekTo,
 } from '@services/webcodecs/decoder/video-element-service';
-import { waitForEvent } from '@services/webcodecs/decoder/wait-for-event-service';
 import { canUseDemuxer } from '@services/webcodecs/demuxer/demuxer-factory-service';
 // Type imports
 import type { VideoMetadata } from '@t/conversion-types';
@@ -562,4 +560,43 @@ export class WebCodecsDecoderService {
       seekTo: (targetVideo, time, timeoutMs) => seekTo(targetVideo, time, timeoutMs),
     });
   }
+}
+
+function computeMaxTotalDecodeMs(params: {
+  captureMode: string;
+  totalFrames: number;
+  baseMaxTotalDecodeMs: number;
+}): number {
+  const { captureMode, totalFrames, baseMaxTotalDecodeMs } = params;
+
+  if (captureMode !== 'seek') {
+    return baseMaxTotalDecodeMs;
+  }
+
+  const perFrameBudgetMs = 2000;
+  const estimatedMs = totalFrames * perFrameBudgetMs;
+  const upperBoundMs = 240_000;
+
+  return Math.min(upperBoundMs, Math.max(baseMaxTotalDecodeMs, estimatedMs));
+}
+
+function waitForEvent(target: EventTarget, eventName: string, timeoutMs: number): Promise<Event> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for ${eventName}`));
+    }, timeoutMs);
+
+    const onEvent = (event: Event) => {
+      cleanup();
+      resolve(event);
+    };
+
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      target.removeEventListener(eventName, onEvent);
+    };
+
+    target.addEventListener(eventName, onEvent, { once: true });
+  });
 }

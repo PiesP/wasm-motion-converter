@@ -9,9 +9,27 @@
  * - Keep memory safe: raw bytes are held in JS and copied into FFmpeg's WASM VFS
  */
 
-import { computeExpectedFramesFromDuration } from '@services/webcodecs/conversion/frame-requirements-service';
 import type { VideoMetadata } from '@t/conversion-types';
 import { isMemoryCritical } from '@utils/memory-monitor';
+
+export function computeExpectedFramesFromDuration(params: {
+  durationSeconds: number;
+  fps: number;
+  maxFrames?: number;
+}): number {
+  const { durationSeconds, fps, maxFrames } = params;
+  const normalizedDuration = Math.max(0, durationSeconds);
+  const normalizedFps = Math.max(1, fps);
+  const expected = Math.max(1, Math.ceil(normalizedDuration * normalizedFps));
+  if (typeof maxFrames !== 'number' || !Number.isFinite(maxFrames)) {
+    return expected;
+  }
+  return Math.min(maxFrames, expected);
+}
+
+export function computeRequiredFramesFromExpected(expectedFrames: number): number {
+  return Math.max(1, expectedFrames - 1);
+}
 
 export type RawvideoEligibilityIntent = 'preferred' | 'fallback' | 'auto';
 

@@ -4,13 +4,24 @@
 
 import type { CaptureContext } from '@services/webcodecs/decoder/canvas-service';
 import { canvasToBlob } from '@services/webcodecs/decoder/canvas-service';
-import { formatFrameName } from '@services/webcodecs/decoder/frame-naming-service';
 import type {
   WebCodecsFrameFormat,
   WebCodecsFramePayload,
 } from '@services/webcodecs/decoder/types-service';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
+
+export function formatFrameName(
+  framePrefix: string,
+  frameDigits: number,
+  frameIndex: number,
+  frameStartNumber: number,
+  extension: string
+): string {
+  const frameNumber = frameStartNumber + frameIndex;
+  const paddedNumber = frameNumber.toString().padStart(frameDigits, '0');
+  return `${framePrefix}${paddedNumber}.${extension}`;
+}
 
 export type CaptureFrameState = {
   consecutiveEmptyFrames: number;
