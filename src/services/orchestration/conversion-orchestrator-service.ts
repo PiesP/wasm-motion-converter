@@ -6,7 +6,7 @@
  */
 
 import { ffmpegService } from '@services/ffmpeg-service';
-import { webcodecsConversionService } from '@services/webcodecs-conversion-service';
+import { convert as webcodecsConvert } from '@services/webcodecs-conversion-service';
 import type {
   ConversionFormat,
   ConversionMetadata,
@@ -159,7 +159,7 @@ async function convertWithGpuFallback(
   const format = getSupportedFormat(request);
 
   try {
-    return await webcodecsConversionService.convert(
+    return await webcodecsConvert(
       request.file,
       format,
       request.options,
