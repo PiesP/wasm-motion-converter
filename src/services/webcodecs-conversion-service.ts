@@ -135,8 +135,7 @@ export async function convert(
   abortSignal?: AbortSignal
 ): Promise<ConversionOutputBlob> {
   const { quality, scale } = options;
-  const settings =
-    format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
+  const settings = format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
 
   const normalizedCodec = (metadata?.codec ?? 'unknown').toLowerCase();
   const useModernGif = format === 'gif' && isModernGifSupported();
@@ -181,10 +180,18 @@ export async function convert(
   const releaseWebPFrames = (): void => {
     for (const frame of webpCapturedFrames) {
       if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
-        try { frame.close(); } catch { /* ignore */ }
+        try {
+          frame.close();
+        } catch {
+          /* ignore */
+        }
       }
       if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
-        try { frame.close(); } catch { /* ignore */ }
+        try {
+          frame.close();
+        } catch {
+          /* ignore */
+        }
       }
     }
   };
@@ -286,9 +293,13 @@ export async function convert(
           endConversion();
           return webCodecsResult;
         }
-        logger.warn('conversion', 'WebCodecs direct path produced no output; continuing with standard path', {
-          codec: metadata?.codec,
-        });
+        logger.warn(
+          'conversion',
+          'WebCodecs direct path produced no output; continuing with standard path',
+          {
+            codec: metadata?.codec,
+          }
+        );
       } catch (error) {
         const errorMessage = getErrorMessage(error);
         if (
@@ -309,7 +320,13 @@ export async function convert(
     ffmpegService.reportStatus('Decoding with WebCodecs...');
     ffmpegService.reportProgress(decodeStart);
 
-    const captureModes: WebCodecsCaptureMode[] = ['auto', 'demuxer', 'track', 'seek', 'frame-callback'];
+    const captureModes: WebCodecsCaptureMode[] = [
+      'auto',
+      'demuxer',
+      'track',
+      'seek',
+      'frame-callback',
+    ];
     let captureModeUsed: WebCodecsCaptureMode | null = null;
     let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>> | null = null;
 
@@ -326,13 +343,18 @@ export async function convert(
           framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
           frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
           frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-          maxFrames: format === 'webp' ? getMaxWebPFrames(targetFps, metadata?.duration) : undefined,
+          maxFrames:
+            format === 'webp' ? getMaxWebPFrames(targetFps, metadata?.duration) : undefined,
           captureMode,
           codec: metadata?.codec,
           quality: options.quality,
           shouldCancel,
           onProgress: reportDecodeProgress,
-          onFrame: async (frame: { bitmap?: ImageBitmap; imageData?: ImageData; timestamp: number }) => {
+          onFrame: async (frame: {
+            bitmap?: ImageBitmap;
+            imageData?: ImageData;
+            timestamp: number;
+          }) => {
             throwIfCancelled();
             if (format === 'webp') {
               const encoderFrame = frame.bitmap ?? frame.imageData;
@@ -653,7 +675,11 @@ export async function convert(
 
     return outputBlobWithMetadata;
   } finally {
-    try { releaseWebPFrames(); } catch { /* non-fatal */ }
+    try {
+      releaseWebPFrames();
+    } catch {
+      /* non-fatal */
+    }
     webpCapturedFrames.length = 0;
     gifFrameTimestamps.length = 0;
 
@@ -761,10 +787,18 @@ async function convertViaWebCodecsFrames(params: {
     const releaseCapturedFrames = (): void => {
       for (const frame of orderedFrames) {
         if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
-          try { frame.close(); } catch { /* ignore */ }
+          try {
+            frame.close();
+          } catch {
+            /* ignore */
+          }
         }
         if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
-          try { frame.close(); } catch { /* ignore */ }
+          try {
+            frame.close();
+          } catch {
+            /* ignore */
+          }
         }
       }
     };
