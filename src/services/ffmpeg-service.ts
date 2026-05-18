@@ -1,13 +1,13 @@
 /**
  * FFmpeg Service
  *
- * Thin singleton wrapper around FFmpegPipeline for backward compatibility.
- * All substantive logic lives in the pipeline module.
+ * Singleton wrapper around FFmpegPipeline.
+ * Kept for backward compatibility — all callers can also import FFmpegPipeline directly.
  */
 
 import {
-  type FFmpegInputOverride,
   FFmpegPipeline,
+  type FFmpegInputOverride,
   type FrameSequenceParams,
 } from '@services/cpu-path/ffmpeg-pipeline-service';
 import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
@@ -93,9 +93,11 @@ class FFmpegService {
   endExternalConversion(): void {
     this.pipeline.endExternalConversion();
   }
+
   getMonitoring() {
     return this.pipeline.getMonitoring();
   }
+
   getRecentFFmpegLogs(): string[] {
     return this.pipeline.getRecentFFmpegLogs();
   }
@@ -103,12 +105,15 @@ class FFmpegService {
   setProgressCallback(cb: ((p: number) => void) | null): void {
     this.pipeline.setProgressCallback(cb);
   }
+
   setStatusCallback(cb: ((m: string) => void) | null): void {
     this.pipeline.setStatusCallback(cb);
   }
+
   reportProgress(p: number): void {
     this.pipeline.reportProgress(p);
   }
+
   reportStatus(m: string): void {
     this.pipeline.reportStatus(m);
   }
@@ -120,15 +125,19 @@ class FFmpegService {
   async writeVirtualFile(fn: string, data: Uint8Array | string): Promise<void> {
     return this.pipeline.writeVirtualFile(fn, data);
   }
+
   async deleteVirtualFiles(fns: string[]): Promise<void> {
     return this.pipeline.deleteVirtualFiles(fns);
   }
+
   cancelConversion(): void {
     this.pipeline.cancelConversion();
   }
+
   async clearCachedInput(): Promise<void> {
     return this.pipeline.clearCachedInput();
   }
+
   terminate(): void {
     this.pipeline.terminate();
   }
@@ -136,6 +145,7 @@ class FFmpegService {
   startProgressHeartbeat(sp: number, ep: number, eds: number): ReturnType<typeof setInterval> {
     return this.pipeline.startProgressHeartbeat(sp, ep, eds);
   }
+
   stopProgressHeartbeat(id: ReturnType<typeof setInterval> | null): void {
     this.pipeline.stopProgressHeartbeat(id);
   }
@@ -144,6 +154,4 @@ class FFmpegService {
 /**
  * Global FFmpeg service instance
  */
-const ffmpegService = new FFmpegService();
-
-export { ffmpegService };
+export const ffmpegService = new FFmpegService();
