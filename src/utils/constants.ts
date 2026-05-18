@@ -1,4 +1,10 @@
-import { getRuntimeDepVersion } from '@utils/runtime-deps';
+import { RUNTIME_DEP_VERSIONS } from 'virtual:cdn-deps';
+
+const getRuntimeDepVersion = (pkg: string): string => {
+  const v = RUNTIME_DEP_VERSIONS[pkg];
+  if (!v) throw new Error(`[runtime-deps] Missing version for ${pkg}`);
+  return v;
+};
 
 /**
  * Application Configuration Constants

@@ -1,7 +1,6 @@
-import { loadFromCDN } from '@utils/cdn-loader';
+import { buildRuntimeModuleUrls, loadFromCDN } from '@utils/cdn-config';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
-import { buildRuntimeModuleUrls } from '@utils/runtime-dep-urls';
 import type {
   DemuxerAdapter,
   DemuxerMetadata,
