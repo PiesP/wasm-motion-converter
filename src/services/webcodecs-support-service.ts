@@ -35,16 +35,6 @@ type WebCodecsSupportStatus = {
 let cachedStatus: WebCodecsSupportStatus | null = null;
 
 /**
- * Reset cached WebCodecs support status.
- *
- * Use when browser capabilities may have changed (e.g., after experimental
- * flag toggle, runtime feature detection retry, or testing).
- */
-export function resetWebCodecsSupportCache(): void {
-  cachedStatus = null;
-}
-
-/**
  * Get global scope with fallback
  *
  * @returns Global scope object (globalThis or empty object)

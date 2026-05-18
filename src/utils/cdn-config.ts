@@ -34,10 +34,6 @@ export function getEnabledProviders(): CDNProvider[] {
   return CDN_PROVIDERS;
 }
 
-export function getProviderByHostname(hostname: string): CDNProvider | undefined {
-  return CDN_PROVIDERS.find((p) => p.hostname === hostname || hostname.endsWith(`.${p.hostname}`));
-}
-
 // ---------------------------------------------------------------------------
 // Runtime dependency URL builder
 // ---------------------------------------------------------------------------
