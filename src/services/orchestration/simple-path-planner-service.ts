@@ -1,9 +1,16 @@
+/**
+ * Simple Path Planner
+ *
+ * Selects the conversion path (GPU/WebCodecs vs CPU/FFmpeg codec availability and browser capabilities.
+ */
+
 import {
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
 } from '@services/webcodecs-support-service';
 import type { ConversionFormat, PathSelection, VideoMetadata } from '@t/conversion-types';
 import { isAv1Codec, isHevcCodec, isSupportedFormat, isVp9Codec } from '@utils/codec-utils';
+import { throwIfAborted } from '@utils/cancellation-context';
 
 type SimplePathPlanParams = {
   file: File;
@@ -11,14 +18,6 @@ type SimplePathPlanParams = {
   metadata?: VideoMetadata;
   abortSignal?: AbortSignal;
 };
-
-import { throwIfAborted } from '@utils/cancellation-context';
-
-function checkAborted(abortSignal?: AbortSignal): void {
-  if (abortSignal) {
-    throwIfAborted(abortSignal);
-  }
-}
 
 function shouldPreferGpuGif(codec: string): boolean {
   return isAv1Codec(codec) || isHevcCodec(codec) || isVp9Codec(codec);
@@ -46,11 +45,11 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
     };
   }
 
-  checkAborted(abortSignal);
+  if (abortSignal) throwIfAborted(abortSignal);
 
   const codecSupported = await isWebCodecsCodecSupported(codec, file.type, metadata);
 
-  checkAborted(abortSignal);
+  if (abortSignal) throwIfAborted(abortSignal);
 
   if (!codecSupported) {
     return {

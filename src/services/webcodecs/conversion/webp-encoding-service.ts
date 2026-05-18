@@ -1,3 +1,9 @@
+/**
+ * WebP Encoding Service
+ *
+ * Encodes ImageData frames to WebP format using canvas encoding.
+ */
+
 import { createWebPFrameEncoder } from '@services/webcodecs/webp/webp-frame-encoder-service';
 import type { ConversionOptions } from '@t/conversion-types';
 import { QUALITY_PRESETS } from '@utils/constants';
@@ -7,8 +13,7 @@ import { cacheWebPChunkSize, getCachedWebPChunkSize } from '@utils/session-cache
 
 export type WebPFactoryResult = { blob: Blob; encoderBackendUsed: string };
 
-// EncoderFactory removed — tryEncodeWebPWithEncoderFactory always returns null
-// so callers fall through to encodeWebPFramesInChunks + muxWebPFrames.
+// EncoderFactory removed — always returns null so callers fall through to encodeWebPFramesInChunks + muxWebPFrames.
 export const tryEncodeWebPWithEncoderFactory = (
   _params: unknown
 ): Promise<WebPFactoryResult | null> => Promise.resolve(null);
@@ -25,10 +30,6 @@ const resolveChunkSize = (): { chunkSize: number; cached: boolean; cachedChunkSi
       cached && cachedChunkSize ? cachedChunkSize : Math.min(20, Math.max(10, hwConcurrency * 2)),
   };
 };
-
-// EncoderFactory-based encoding removed. The caller (encodeWebPWithMuxFallback)
-// now goes directly to encodeWebPFramesInChunks + muxWebPFrames.
-// This always returns null to trigger the muxer path.
 
 export async function encodeWebPFramesInChunks(params: {
   frames: ImageData[];
