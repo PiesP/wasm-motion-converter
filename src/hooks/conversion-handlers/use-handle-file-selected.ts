@@ -8,16 +8,13 @@ import {
   setVideoPreviewUrl,
   videoPreviewUrl,
 } from '@stores/conversion-store';
+import { focusElement } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoFile } from '@utils/file-validation';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 
-const focusRetryButton = () => {
-  queueMicrotask(() => {
-    document.querySelector<HTMLButtonElement>('[data-error-retry-button]')?.focus();
-  });
-};
+const focusRetryButton = (): void => focusElement('[data-error-retry-button]');
 
 const resetErrorState = (): void => {
   setErrorMessage(null);

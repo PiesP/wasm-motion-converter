@@ -4,10 +4,19 @@
  * Pure helpers for normalizing and classifying codec strings.
  */
 
+import type { ConversionFormat } from '@t/conversion-types';
+import { CONVERSION_FORMATS } from '@t/conversion-types';
 import { COMPLEX_CODECS } from '@utils/constants';
 
 export function normalizeCodecString(codec: string | undefined): string {
   return (codec ?? '').trim().toLowerCase();
+}
+
+/**
+ * Type guard: check whether a string is a supported ConversionFormat.
+ */
+export function isSupportedFormat(format: string): format is ConversionFormat {
+  return (CONVERSION_FORMATS as readonly string[]).includes(format);
 }
 
 export function isAv1Codec(codec: string | undefined): boolean {

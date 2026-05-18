@@ -3,8 +3,7 @@ import {
   isWebCodecsDecodeSupported,
 } from '@services/webcodecs-support-service';
 import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
-import { CONVERSION_FORMATS } from '@t/conversion-types';
-import { isAv1Codec, isHevcCodec, isVp9Codec } from '@utils/codec-utils';
+import { isAv1Codec, isHevcCodec, isSupportedFormat, isVp9Codec } from '@utils/codec-utils';
 
 import type { PathSelection } from './types-service';
 
@@ -16,10 +15,6 @@ type SimplePathPlanParams = {
 };
 
 import { throwIfAborted } from '@utils/cancellation-context';
-
-function isSupportedFormat(format: string): format is ConversionFormat {
-  return (CONVERSION_FORMATS as readonly string[]).includes(format);
-}
 
 function checkAborted(abortSignal?: AbortSignal): void {
   if (abortSignal) {

@@ -1,12 +1,12 @@
 import { ffmpegService } from '@services/ffmpeg-service';
 import { webcodecsConversionService } from '@services/webcodecs-conversion-service';
 import type { ConversionFormat } from '@t/conversion-types';
-import { CONVERSION_FORMATS } from '@t/conversion-types';
 import {
   CANCELLED_MESSAGE,
   isCancellationError,
   throwIfAborted,
 } from '@utils/cancellation-context';
+import { isSupportedFormat } from '@utils/codec-utils';
 import { createId } from '@utils/create-id';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -23,10 +23,6 @@ const STATUS_INITIALIZING = 'Initializing conversion...';
 const STATUS_COMPLETE = 'Complete';
 const STATUS_CANCELLED = 'Cancelled by user';
 const STATUS_ERROR = 'Error';
-
-function isSupportedFormat(format: string): format is ConversionFormat {
-  return (CONVERSION_FORMATS as readonly string[]).includes(format);
-}
 
 function getSupportedFormat(request: ConversionRequest): ConversionFormat {
   if (isSupportedFormat(request.format)) {

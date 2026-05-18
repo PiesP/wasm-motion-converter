@@ -29,8 +29,10 @@ import {
   videoPreviewUrl,
 } from '@stores/conversion-store';
 import type { ConversionResult, ConversionSettings } from '@t/conversion-types';
+import { isCancellationError } from '@utils/cancellation-context';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { createId } from '@utils/create-id';
+import { focusElement } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { logger } from '@utils/logger';
@@ -46,20 +48,8 @@ const clearConversionCallbacks = (): void => {
   ffmpegService.setStatusCallback(null);
 };
 
-const focusDownloadButton = () => {
-  queueMicrotask(() => {
-    document.querySelector<HTMLButtonElement>('[data-download-button]')?.focus();
-  });
-};
-
-const focusRetryButton = () => {
-  queueMicrotask(() => {
-    document.querySelector<HTMLButtonElement>('[data-error-retry-button]')?.focus();
-  });
-};
-
-const isCancellationMessage = (message: string) =>
-  message.includes('cancelled by user') || message.includes('called FFmpeg.terminate()');
+const focusDownloadButton = (): void => focusElement('[data-download-button]');
+const focusRetryButton = (): void => focusElement('[data-error-retry-button]');
 
 export async function handleConvert(runtime: ConversionRuntimeController): Promise<void> {
   const file = inputFile();
@@ -218,7 +208,7 @@ async function performConversion(
 
     const errorMessage_ = getErrorMessage(error) || 'Conversion failed';
 
-    if (isCancellationMessage(errorMessage_)) {
+    if (isCancellationError(error)) {
       batch(() => {
         setConversionStatusMessage('');
         runtime.resetTimingState();
