@@ -1,3 +1,10 @@
+/**
+ * Conversion Orchestrator
+ *
+ * Top-level conversion lifecycle manager.
+ * Coordinates WebCodecs (GPU) and FFmpeg (CPU) conversion paths.
+ */
+
 import { ffmpegService } from '@services/ffmpeg-service';
 import { webcodecsConversionService } from '@services/webcodecs-conversion-service';
 import type {
@@ -27,198 +34,169 @@ function getSupportedFormat(request: ConversionRequest): ConversionFormat {
   if (isSupportedFormat(request.format)) {
     return request.format;
   }
-
   throw new Error(`Unsupported format: ${request.format}`);
 }
 
-class ConversionOrchestrator {
-  private status: ConversionStatus = {
-    isConverting: false,
-    progress: 0,
-    statusMessage: '',
-  };
-
-  private activeOperationId: string | null = null;
-  private abortController: AbortController | null = null;
-
-  async convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
-    const operationId = createId();
-    const startedAt = performance.now();
-    const abortController = new AbortController();
-
-    this.activeOperationId = operationId;
-    this.abortController = abortController;
-    this.status = {
-      isConverting: true,
-      progress: 0,
-      statusMessage: STATUS_INITIALIZING,
-    };
-
-    request.onProgress?.(0);
-    request.onStatus?.(STATUS_INITIALIZING);
-
-    try {
-      const selection = await selectSimplePath({
-        file: request.file,
-        format: request.format,
-        metadata: request.metadata,
-        abortSignal: abortController.signal,
-      });
-
-      const operationActive = this.activeOperationId === operationId;
-      if (!operationActive) {
-        throw new Error(CANCELLED_MESSAGE);
-      }
-      throwIfAborted(abortController.signal);
-
-      const blob =
-        selection.path === 'gpu'
-          ? await this.convertWithGpuFallback(request, abortController.signal)
-          : await this.convertWithCpu(request);
-
-      if (this.activeOperationId !== operationId) {
-        throw new Error(CANCELLED_MESSAGE);
-      }
-      throwIfAborted(abortController.signal);
-
-      const metadata: ConversionMetadata = {
-        path: selection.path,
-        encoder: blob.encoderBackendUsed ?? (selection.path === 'gpu' ? 'webcodecs' : 'ffmpeg'),
-        captureModeUsed: blob.captureModeUsed ?? null,
-        conversionTimeMs: performance.now() - startedAt,
-        wasTranscoded: blob.wasTranscoded,
-        originalCodec: request.metadata?.codec,
-      };
-
-      this.status = {
-        isConverting: false,
-        progress: 100,
-        statusMessage: STATUS_COMPLETE,
-      };
-
-      request.onProgress?.(100);
-      request.onStatus?.(STATUS_COMPLETE);
-
-      logger.info('conversion', 'Conversion completed', {
-        format: request.format,
-        path: selection.path,
-        reason: selection.reason,
-        codec: request.metadata?.codec,
-        encoder: metadata.encoder,
-      });
-
-      return {
-        blob,
-        metadata,
-      };
-    } catch (error) {
-      if (abortController.signal.aborted || isCancellationError(error)) {
-        this.status = {
-          isConverting: false,
-          progress: 0,
-          statusMessage: STATUS_CANCELLED,
-        };
-
-        request.onStatus?.(STATUS_CANCELLED);
-        throw new Error(CANCELLED_MESSAGE);
-      }
-
-      this.status = {
-        isConverting: false,
-        progress: 0,
-        statusMessage: STATUS_ERROR,
-      };
-
-      request.onStatus?.(STATUS_ERROR);
-
-      logger.error('conversion', 'Conversion failed', {
-        format: request.format,
-        codec: request.metadata?.codec,
-        error: getErrorMessage(error),
-      });
-
-      throw error;
-    } finally {
-      if (this.activeOperationId === operationId) {
-        this.activeOperationId = null;
-      }
-
-      if (this.abortController === abortController) {
-        this.abortController = null;
-      }
-    }
-  }
-
-  cancel(): void {
-    this.abortController?.abort();
-    ffmpegService.cancelConversion();
-    this.status = {
-      isConverting: false,
-      progress: 0,
-      statusMessage: STATUS_CANCELLED,
-    };
-  }
-
-  getStatus(): ConversionStatus {
-    return { ...this.status };
-  }
-
-  private async convertWithGpuFallback(
-    request: ConversionRequest,
-    abortSignal: AbortSignal
-  ): Promise<Awaited<ConversionResponse['blob']>> {
-    const format = getSupportedFormat(request);
-
-    try {
-      return await webcodecsConversionService.convert(
-        request.file,
-        format,
-        request.options,
-        request.metadata,
-        abortSignal
-      );
-    } catch (error) {
-      if (abortSignal.aborted || isCancellationError(error)) {
-        throw error;
-      }
-
-      logger.warn('conversion', 'GPU path failed, falling back to FFmpeg', {
-        format: request.format,
-        codec: request.metadata?.codec,
-        error: getErrorMessage(error),
-      });
-
-      return this.convertWithCpu(request);
-    }
-  }
-
-  private async convertWithCpu(
-    request: ConversionRequest
-  ): Promise<Awaited<ConversionResponse['blob']>> {
-    const format = getSupportedFormat(request);
-
-    if (!ffmpegService.isLoaded()) {
-      await ffmpegService.initialize();
-    }
-
-    if (format === 'gif') {
-      return ffmpegService.convertToGIF(request.file, request.options, request.metadata);
-    }
-
-    if (format === 'webp') {
-      return ffmpegService.convertToWebP(request.file, request.options, request.metadata);
-    }
-
-    throw new Error(`Unsupported format: ${format}`);
-  }
+interface ActiveOperation {
+  id: string;
+  abortController: AbortController;
 }
 
-const orchestrator = new ConversionOrchestrator();
+let activeOperation: ActiveOperation | null = null;
+
+const status: ConversionStatus = {
+  isConverting: false,
+  progress: 0,
+  statusMessage: '',
+};
 
 export async function convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
-  return orchestrator.convertVideo(request);
+  const operationId = createId();
+  const startedAt = performance.now();
+  const abortController = new AbortController();
+
+  activeOperation = { id: operationId, abortController };
+
+  status.isConverting = true;
+  status.progress = 0;
+  status.statusMessage = STATUS_INITIALIZING;
+
+  request.onProgress?.(0);
+  request.onStatus?.(STATUS_INITIALIZING);
+
+  try {
+    const selection = await selectSimplePath({
+      file: request.file,
+      format: request.format,
+      metadata: request.metadata,
+      abortSignal: abortController.signal,
+    });
+
+    if (activeOperation?.id !== operationId) {
+      throw new Error(CANCELLED_MESSAGE);
+    }
+    throwIfAborted(abortController.signal);
+
+    const blob =
+      selection.path === 'gpu'
+        ? await convertWithGpuFallback(request, abortController.signal)
+        : await convertWithCpu(request);
+
+    if (activeOperation?.id !== operationId) {
+      throw new Error(CANCELLED_MESSAGE);
+    }
+    throwIfAborted(abortController.signal);
+
+    const metadata: ConversionMetadata = {
+      path: selection.path,
+      encoder: blob.encoderBackendUsed ?? (selection.path === 'gpu' ? 'webcodecs' : 'ffmpeg'),
+      captureModeUsed: blob.captureModeUsed ?? null,
+      conversionTimeMs: performance.now() - startedAt,
+      wasTranscoded: blob.wasTranscoded,
+      originalCodec: request.metadata?.codec,
+    };
+
+    status.isConverting = false;
+    status.progress = 100;
+    status.statusMessage = STATUS_COMPLETE;
+
+    request.onProgress?.(100);
+    request.onStatus?.(STATUS_COMPLETE);
+
+    logger.info('conversion', 'Conversion completed', {
+      format: request.format,
+      path: selection.path,
+      reason: selection.reason,
+      codec: request.metadata?.codec,
+      encoder: metadata.encoder,
+    });
+
+    return { blob, metadata };
+  } catch (error) {
+    if (abortController.signal.aborted || isCancellationError(error)) {
+      status.isConverting = false;
+      status.progress = 0;
+      status.statusMessage = STATUS_CANCELLED;
+      request.onStatus?.(STATUS_CANCELLED);
+      throw new Error(CANCELLED_MESSAGE);
+    }
+
+    status.isConverting = false;
+    status.progress = 0;
+    status.statusMessage = STATUS_ERROR;
+    request.onStatus?.(STATUS_ERROR);
+
+    logger.error('conversion', 'Conversion failed', {
+      format: request.format,
+      codec: request.metadata?.codec,
+      error: getErrorMessage(error),
+    });
+
+    throw error;
+  } finally {
+    if (activeOperation?.id === operationId) {
+      activeOperation = null;
+    }
+  }
 }
 
 export function cancelConversion(): void {
-  orchestrator.cancel();
+  activeOperation?.abortController.abort();
+  ffmpegService.cancelConversion();
+  status.isConverting = false;
+  status.progress = 0;
+  status.statusMessage = STATUS_CANCELLED;
+}
+
+export function getConversionStatus(): ConversionStatus {
+  return { ...status };
+}
+
+async function convertWithGpuFallback(
+  request: ConversionRequest,
+  abortSignal: AbortSignal
+): Promise<Awaited<ConversionResponse['blob']>> {
+  const format = getSupportedFormat(request);
+
+  try {
+    return await webcodecsConversionService.convert(
+      request.file,
+      format,
+      request.options,
+      request.metadata,
+      abortSignal
+    );
+  } catch (error) {
+    if (abortSignal.aborted || isCancellationError(error)) {
+      throw error;
+    }
+
+    logger.warn('conversion', 'GPU path failed, falling back to FFmpeg', {
+      format: request.format,
+      codec: request.metadata?.codec,
+      error: getErrorMessage(error),
+    });
+
+    return convertWithCpu(request);
+  }
+}
+
+async function convertWithCpu(
+  request: ConversionRequest
+): Promise<Awaited<ConversionResponse['blob']>> {
+  const format = getSupportedFormat(request);
+
+  if (!ffmpegService.isLoaded()) {
+    await ffmpegService.initialize();
+  }
+
+  if (format === 'gif') {
+    return ffmpegService.convertToGIF(request.file, request.options, request.metadata);
+  }
+
+  if (format === 'webp') {
+    return ffmpegService.convertToWebP(request.file, request.options, request.metadata);
+  }
+
+  throw new Error(`Unsupported format: ${format}`);
 }
