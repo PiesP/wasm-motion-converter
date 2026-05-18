@@ -119,28 +119,11 @@ export const getWebCodecsSupportStatus = (forceRefresh = false) => {
  * @param forceRefresh - When true, bypasses cache and re-detects from scratch
  * @returns True if WebCodecs decoding is usable
  */
-export const isWebCodecsDecodeSupported = (forceRefresh = false): boolean => {
-  const status = getWebCodecsSupportStatus(forceRefresh);
-  const hasVideoElement =
-    typeof HTMLVideoElement !== 'undefined' && typeof HTMLCanvasElement !== 'undefined';
-  if (!hasVideoElement) {
+export const isWebCodecsDecodeSupported = (): boolean => {
+  if (typeof HTMLVideoElement === 'undefined' || typeof HTMLCanvasElement === 'undefined') {
     return false;
   }
-
-  const supportsFrameCallback =
-    typeof HTMLVideoElement !== 'undefined' &&
-    typeof (HTMLVideoElement.prototype as { requestVideoFrameCallback?: unknown })
-      .requestVideoFrameCallback === 'function';
-
-  // Track processor is preferred, but we can fall back to requestVideoFrameCallback or seek capture.
-  if (status.trackProcessor && status.captureStream) {
-    return true;
-  }
-
-  if (supportsFrameCallback) {
-    return true;
-  }
-
+  // seek capture is always available as a last-resort fallback
   return true;
 };
 
