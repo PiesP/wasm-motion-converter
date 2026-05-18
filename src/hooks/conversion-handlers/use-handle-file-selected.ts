@@ -1,5 +1,4 @@
 import { ffmpegService } from '@services/ffmpeg-service';
-import { analyzeVideo } from '@services/video-analyzer-service';
 import { setAppState, setLoadingProgress, setLoadingStatusMessage } from '@stores/app-store';
 import {
   setErrorContext,
@@ -76,7 +75,7 @@ export async function handleFileSelected(
 
     setAppState('analyzing');
 
-    const metadata = await analyzeVideo(file);
+    const metadata = await ffmpegService.getVideoMetadata(file);
     if (isStale()) {
       return;
     }
