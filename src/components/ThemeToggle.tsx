@@ -1,7 +1,6 @@
 import { theme, toggleTheme } from '@stores/theme-store';
 import { type Component, createEffect, createMemo, Show } from 'solid-js';
 
-const THEME_STORAGE_KEY = 'theme';
 const DARK_MODE_CLASS = 'dark';
 
 const ThemeToggle: Component = () => {
@@ -19,8 +18,6 @@ const ThemeToggle: Component = () => {
       html.classList.remove(DARK_MODE_CLASS);
       html.style.colorScheme = 'light';
     }
-
-    localStorage.setItem(THEME_STORAGE_KEY, currentTheme);
   });
 
   return (

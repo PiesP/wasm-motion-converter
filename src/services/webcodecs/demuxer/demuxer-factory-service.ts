@@ -81,14 +81,6 @@ const isAnyVideoDecoderConfigSupported = async (params: {
 };
 
 /**
- * Container format types
- *
- * Re-exported for callers that import `ContainerFormat` from this module.
- * Canonical definition lives in `@t/video-pipeline-types`.
- */
-export type { ContainerFormat } from '@t/video-pipeline-types';
-
-/**
  * Check if demuxer path can be used for this file
  *
  * Requirements:
