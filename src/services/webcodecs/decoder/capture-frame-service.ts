@@ -4,10 +4,7 @@
 
 import type { CaptureContext } from '@services/webcodecs/decoder/canvas-service';
 import { canvasToBlob } from '@services/webcodecs/decoder/canvas-service';
-import type {
-  WebCodecsFrameFormat,
-  WebCodecsFramePayload,
-} from '@t/video-pipeline-types';
+import type { WebCodecsFrameFormat, WebCodecsFramePayload } from '@t/video-pipeline-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 

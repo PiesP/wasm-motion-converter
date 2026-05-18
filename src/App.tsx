@@ -1,15 +1,11 @@
 import ConfirmationModal from '@components/ConfirmationModal';
-import EnvironmentWarning from '@components/EnvironmentWarning';
 import ExportLogsButton from '@components/ExportLogsButton';
 import FileDropzone from '@components/FileDropzone';
-import FormatSelector from '@components/FormatSelector';
 import LicenseAttribution from '@components/LicenseAttribution';
-import OfflineBanner from '@components/OfflineBanner';
-import QualitySelector from '@components/QualitySelector';
-import ScaleSelector from '@components/ScaleSelector';
+import ResultSection from '@components/ResultSection';
+import SettingsPanel from '@components/SettingsPanel';
+import StatusAlerts from '@components/StatusAlerts';
 import ThemeToggle from '@components/ThemeToggle';
-import Button from '@components/ui/Button';
-import Panel from '@components/ui/Panel';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import {
   appState,
@@ -34,12 +30,6 @@ import {
   videoPreviewUrl,
 } from '@stores/conversion-store';
 import { useNetworkState } from '@stores/network-store';
-import type {
-  ConversionResult,
-  ConversionSettings,
-  ErrorContext,
-  VideoMetadata,
-} from '@t/conversion-types';
 import { debounce } from '@utils/debounce';
 import { isMemoryCritical } from '@utils/memory-monitor';
 import {
@@ -48,7 +38,6 @@ import {
   createMemo,
   createSignal,
   ErrorBoundary,
-  For,
   lazy,
   onCleanup,
   onMount,
@@ -59,140 +48,7 @@ import {
 import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
 
 const ConversionProgress = lazy(() => import('@components/ConversionProgress'));
-const ErrorDisplay = lazy(() => import('@components/ErrorDisplay'));
 const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
-const ResultPreview = lazy(() => import('@components/ResultPreview'));
-
-interface StatusAlertsProps {
-  environmentSupported: boolean;
-  errorMessage: string | null;
-  errorContext: ErrorContext | null;
-  onRetry: () => void;
-  onSelectNewFile: () => void;
-  onDismissError: () => void;
-}
-
-const StatusAlerts: Component<StatusAlertsProps> = (props) => {
-  return (
-    <div class="space-y-6">
-      <OfflineBanner />
-
-      <Show when={!props.environmentSupported}>
-        <EnvironmentWarning />
-      </Show>
-
-      <Show when={props.errorMessage}>
-        <Suspense
-          fallback={<div class="h-32 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />}
-        >
-          <ErrorDisplay
-            message={props.errorMessage!}
-            suggestion={props.errorContext?.suggestion}
-            errorType={props.errorContext?.type}
-            onRetry={props.onRetry}
-            onSelectNewFile={props.onSelectNewFile}
-            onDismiss={props.onDismissError}
-          />
-        </Suspense>
-      </Show>
-    </div>
-  );
-};
-
-interface SettingsPanelProps {
-  isBusy: boolean;
-  isConverting: boolean;
-  settings: ConversionSettings;
-  metadata: VideoMetadata | null;
-  onConvert: () => void;
-  onCancel: () => void;
-  onFormatChange: (format: ConversionSettings['format']) => void;
-  onQualityChange: (quality: ConversionSettings['quality']) => void;
-  onScaleChange: (scale: ConversionSettings['scale']) => void;
-}
-
-const SettingsPanel: Component<SettingsPanelProps> = (props) => {
-  return (
-    <Panel class="p-6">
-      <div class="mb-6 flex gap-3">
-        <Show
-          when={props.isConverting}
-          fallback={
-            <Button
-              ariaLabel="Convert video to animated image"
-              class="flex-1"
-              disabled={!props.metadata || props.isBusy}
-              onClick={props.onConvert}
-            >
-              Convert
-            </Button>
-          }
-        >
-          <Button
-            ariaLabel="Stop video conversion"
-            class="flex-1"
-            onClick={props.onCancel}
-            variant="danger"
-          >
-            Stop Conversion
-          </Button>
-        </Show>
-      </div>
-
-      <FormatSelector
-        disabled={!props.metadata || props.isBusy}
-        onChange={props.onFormatChange}
-        tooltip="GIF works everywhere, WebP is smaller but requires modern browsers"
-        value={props.settings.format}
-      />
-
-      <QualitySelector
-        disabled={!props.metadata || props.isBusy}
-        onChange={props.onQualityChange}
-        tooltip="Higher quality = larger file size and slower conversion"
-        value={props.settings.quality}
-      />
-
-      <ScaleSelector
-        disabled={!props.metadata || props.isBusy}
-        inputMetadata={props.metadata}
-        onChange={props.onScaleChange}
-        tooltip="Reduce dimensions to decrease file size and speed up conversion"
-        value={props.settings.scale}
-      />
-    </Panel>
-  );
-};
-
-interface ResultSectionProps {
-  results: ConversionResult[];
-}
-
-const ResultSection: Component<ResultSectionProps> = (props) => {
-  return (
-    <Show when={props.results.length > 0}>
-      <div class="mt-8 space-y-6">
-        <For each={props.results}>
-          {(result) => (
-            <Suspense
-              fallback={<div class="h-96 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />}
-            >
-              <ResultPreview
-                conversionDurationSeconds={result.conversionDurationSeconds}
-                originalCodec={result.originalCodec}
-                originalName={result.originalName}
-                originalSize={result.originalSize}
-                outputBlob={result.outputBlob}
-                settings={result.settings}
-                wasTranscoded={result.wasTranscoded}
-              />
-            </Suspense>
-          )}
-        </For>
-      </div>
-    </Show>
-  );
-};
 
 const App: Component = () => {
   const [conversionStartTime, setConversionStartTime] = createSignal(0);

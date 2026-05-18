@@ -10,11 +10,6 @@ import { runPlaybackCaptureMode } from '@services/webcodecs/decoder/capture-mode
 import { captureWithSeeking as captureWithSeekingMode } from '@services/webcodecs/decoder/capture-modes/seek-capture-service';
 import { captureWithTrackProcessor as captureWithTrackProcessorMode } from '@services/webcodecs/decoder/capture-modes/track-processor-capture-service';
 import { captureWithDemuxer as captureWithDemuxerMode } from '@services/webcodecs/decoder/demuxer-capture-service';
-import type {
-  WebCodecsCaptureMode,
-  WebCodecsDecodeOptions,
-  WebCodecsDecodeResult,
-} from '@t/video-pipeline-types';
 import {
   attachVideoForDecode,
   cleanupVideo,
@@ -25,6 +20,11 @@ import {
 import { canUseDemuxer } from '@services/webcodecs/demuxer/demuxer-factory-service';
 // Type imports
 import type { VideoMetadata } from '@t/conversion-types';
+import type {
+  WebCodecsCaptureMode,
+  WebCodecsDecodeOptions,
+  WebCodecsDecodeResult,
+} from '@t/video-pipeline-types';
 import { detectContainerFormat } from '@utils/container-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';

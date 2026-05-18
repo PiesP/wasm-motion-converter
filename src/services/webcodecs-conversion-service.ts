@@ -11,10 +11,6 @@ import {
   encodeWebPFramesInChunks,
   tryEncodeWebPWithEncoderFactory,
 } from '@services/webcodecs/conversion/webp-encoding-service';
-import type {
-  WebCodecsCaptureMode,
-  WebCodecsFrameFormat,
-} from '@t/video-pipeline-types';
 import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames-service';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
 import {
@@ -31,6 +27,7 @@ import type {
   EncoderFrame,
   VideoMetadata,
 } from '@t/conversion-types';
+import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from '@t/video-pipeline-types';
 import type { EncoderWorkerAPI } from '@t/worker-types';
 import { isComplexCodec } from '@utils/codec-utils';
 import { QUALITY_PRESETS, WEBCODECS_ACCELERATED } from '@utils/constants';

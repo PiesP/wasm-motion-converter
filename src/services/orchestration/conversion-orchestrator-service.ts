@@ -1,6 +1,12 @@
 import { ffmpegService } from '@services/ffmpeg-service';
 import { webcodecsConversionService } from '@services/webcodecs-conversion-service';
-import type { ConversionFormat } from '@t/conversion-types';
+import type {
+  ConversionFormat,
+  ConversionMetadata,
+  ConversionRequest,
+  ConversionResponse,
+  ConversionStatus,
+} from '@t/conversion-types';
 import {
   CANCELLED_MESSAGE,
   isCancellationError,
@@ -10,14 +16,7 @@ import { isSupportedFormat } from '@utils/codec-utils';
 import { createId } from '@utils/create-id';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
-
 import { selectSimplePath } from './simple-path-planner-service';
-import type {
-  ConversionMetadata,
-  ConversionRequest,
-  ConversionResponse,
-  ConversionStatus,
-} from '@t/conversion-types';
 
 const STATUS_INITIALIZING = 'Initializing conversion...';
 const STATUS_COMPLETE = 'Complete';
