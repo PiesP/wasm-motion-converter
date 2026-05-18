@@ -2,10 +2,8 @@ import {
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
 } from '@services/webcodecs-support-service';
-import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
+import type { ConversionFormat, PathSelection, VideoMetadata } from '@t/conversion-types';
 import { isAv1Codec, isHevcCodec, isSupportedFormat, isVp9Codec } from '@utils/codec-utils';
-
-import type { PathSelection } from './types-service';
 
 type SimplePathPlanParams = {
   file: File;

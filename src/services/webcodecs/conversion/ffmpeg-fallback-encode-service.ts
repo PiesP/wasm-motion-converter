@@ -3,7 +3,7 @@ import {
   computeExpectedFramesFromDuration,
   computeRawvideoEligibility,
 } from '@services/webcodecs/conversion/rawvideo-eligibility-service';
-import type { WebCodecsFrameFormat } from '@services/webcodecs/decoder/types-service';
+import type { WebCodecsFrameFormat } from '@t/video-pipeline-types';
 import {
   resolveAnimationDurationSeconds as resolveAnimationDurationSecondsUtil,
   resolveWebPFps as resolveWebPFpsUtil,

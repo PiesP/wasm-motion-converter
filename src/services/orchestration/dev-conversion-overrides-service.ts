@@ -1,4 +1,4 @@
-import type { ConversionPath } from './types-service';
+import type { ConversionPath } from '@t/conversion-types';
 
 /**
  * Dev Conversion Overrides

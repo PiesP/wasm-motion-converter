@@ -14,7 +14,7 @@ import type {
   WebCodecsCaptureMode,
   WebCodecsDecodeOptions,
   WebCodecsDecodeResult,
-} from '@services/webcodecs/decoder/types-service';
+} from '@t/video-pipeline-types';
 import {
   attachVideoForDecode,
   cleanupVideo,

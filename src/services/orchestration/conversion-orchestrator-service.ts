@@ -17,7 +17,7 @@ import type {
   ConversionRequest,
   ConversionResponse,
   ConversionStatus,
-} from './types-service';
+} from '@t/conversion-types';
 
 const STATUS_INITIALIZING = 'Initializing conversion...';
 const STATUS_COMPLETE = 'Complete';

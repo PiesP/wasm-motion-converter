@@ -10,7 +10,7 @@ import type {
   WebCodecsFrameFormat,
   WebCodecsFramePayload,
   WebCodecsProgressCallback,
-} from './types-service';
+} from '@t/video-pipeline-types';
 
 /**
  * Capture frames using external demuxer + WebCodecs VideoDecoder

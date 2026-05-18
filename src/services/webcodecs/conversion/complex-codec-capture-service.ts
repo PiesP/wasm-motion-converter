@@ -1,7 +1,7 @@
 import type {
   WebCodecsCaptureMode,
   WebCodecsFrameFormat,
-} from '@services/webcodecs/decoder/types-service';
+} from '@t/video-pipeline-types';
 import { canUseDemuxer } from '@services/webcodecs/demuxer/demuxer-factory-service';
 import type { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
 import type { ConversionOptions, EncoderFrame, VideoMetadata } from '@t/conversion-types';

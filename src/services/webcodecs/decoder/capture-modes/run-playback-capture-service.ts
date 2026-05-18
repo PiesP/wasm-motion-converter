@@ -1,4 +1,4 @@
-import type { WebCodecsCaptureMode } from '@services/webcodecs/decoder/types-service';
+import type { WebCodecsCaptureMode } from '@t/video-pipeline-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 

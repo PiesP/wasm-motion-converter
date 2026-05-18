@@ -267,3 +267,48 @@ export interface VideoMetadata {
   /** Video bitrate (bits per second) */
   bitrate: number;
 }
+
+/** Conversion path types */
+export type ConversionPath = 'gpu' | 'cpu';
+
+/** Conversion request */
+export interface ConversionRequest {
+  file: File;
+  format: ConversionFormat;
+  options: ConversionOptions;
+  metadata?: VideoMetadata;
+  onProgress?: (progress: number) => void;
+  onStatus?: (status: string) => void;
+  shouldCancel?: () => boolean;
+}
+
+/** Conversion response */
+export interface ConversionResponse {
+  blob: ConversionOutputBlob;
+  metadata: ConversionMetadata;
+}
+
+/** Conversion metadata */
+export interface ConversionMetadata {
+  path: ConversionPath;
+  encoder: string;
+  captureModeUsed?: string | null;
+  conversionTimeMs: number;
+  frameCount?: number;
+  wasTranscoded?: boolean;
+  originalCodec?: string;
+}
+
+/** Path selection result */
+export interface PathSelection {
+  path: ConversionPath;
+  reason: string;
+}
+
+/** Conversion status */
+export interface ConversionStatus {
+  isConverting: boolean;
+  progress: number;
+  statusMessage: string;
+  phase?: string;
+}

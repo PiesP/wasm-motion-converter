@@ -14,7 +14,7 @@ import {
 import type {
   WebCodecsCaptureMode,
   WebCodecsFrameFormat,
-} from '@services/webcodecs/decoder/types-service';
+} from '@t/video-pipeline-types';
 import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames-service';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
 import {

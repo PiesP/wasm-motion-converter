@@ -7,7 +7,7 @@ import { canvasToBlob } from '@services/webcodecs/decoder/canvas-service';
 import type {
   WebCodecsFrameFormat,
   WebCodecsFramePayload,
-} from '@services/webcodecs/decoder/types-service';
+} from '@t/video-pipeline-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
