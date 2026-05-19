@@ -29,7 +29,7 @@ const INIT_HEARTBEAT_STEP_MS = 4_000;
 const INIT_SLOW_LOAD_TIMEOUT_MS = 15_000;
 const INIT_SLOW_NETWORK_DELAY_MS = 12_000;
 const INIT_STATUS_URL_PREVIEW_LENGTH = 50;
-const INIT_TIME_WARNING_THRESHOLD = 7;
+const INIT_PROGRESS_BOOST_CAP = 7;
 const PROGRESS_MIN = 0;
 const PROGRESS_MAX = 100;
 const DOWNLOAD_STATUS_THRESHOLD = 25;
@@ -306,7 +306,7 @@ export async function initializeFFmpegRuntime(
         const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
         const elapsedMs = now - initStartTime;
         const progressBoost = Math.min(
-          INIT_TIME_WARNING_THRESHOLD,
+          INIT_PROGRESS_BOOST_CAP,
           Math.floor(elapsedMs / INIT_HEARTBEAT_STEP_MS)
         );
         const nextProgress = Math.min(INIT_PROGRESS_END, initBaseProgress + progressBoost);

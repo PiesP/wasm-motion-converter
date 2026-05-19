@@ -91,9 +91,6 @@ export async function canConvert(file: File, metadata?: VideoMetadata): Promise<
   }
 
   const normalizedCodec = metadata.codec.toLowerCase();
-  const isCandidate = QUALITY_PRESETS.webp; // Just check if WebP presets exist
-  void isCandidate; // Used as a feature gate check
-
   return isWebCodecsCodecSupported(normalizedCodec, file.type, metadata);
 }
 

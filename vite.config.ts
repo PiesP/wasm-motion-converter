@@ -601,11 +601,15 @@ export default defineConfig(({ mode }) => {
           }
         },
       },
-      visualizer({
-        filename: 'dist/stats.html',
-        gzipSize: true,
-        brotliSize: true,
-      }) as PluginOption,
+      ...(env.VITE_ANALYZE_BUNDLE === 'true'
+        ? [
+            visualizer({
+              filename: 'dist/stats.html',
+              gzipSize: true,
+              brotliSize: true,
+            }) as PluginOption,
+          ]
+        : []),
     ],
 
     resolve: {

@@ -17,6 +17,7 @@ import App from './App';
 import './index.css';
 
 import { capabilityService } from '@services/video-pipeline/capability-service';
+import { logger } from '@utils/logger';
 
 /**
  * Initialize application by rendering App component
@@ -38,6 +39,6 @@ render(() => <App />, root);
 
 // Fire-and-forget capability probing on first load.
 // Conversions MUST still verify caps before starting; this is a warm-up/caching step.
-capabilityService.detectCapabilities().catch(() => {
-  // Non-critical: conversion flow will re-check and handle unsupported environments.
+capabilityService.detectCapabilities().catch((error) => {
+  logger.debug('general', 'Capability probing failed', { error: String(error) });
 });
