@@ -1,4 +1,4 @@
-import type { ConversionHandlersOptions } from '@/hooks/conversion-handlers/use-conversion-handlers-options';
+import type { Setter } from 'solid-js';
 import { ConversionRuntimeController } from '@/hooks/conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from '@/hooks/conversion-handlers/use-handle-file-selected';
 import {
@@ -8,6 +8,13 @@ import {
   handleReset,
   handleRetry,
 } from '@/hooks/conversion-handlers/use-perform-conversion';
+
+interface ConversionHandlersOptions {
+  conversionStartTime: () => number;
+  setConversionStartTime: Setter<number>;
+  setEstimatedSecondsRemaining: Setter<number | null>;
+  setMemoryWarning: Setter<boolean>;
+}
 
 export function useConversionHandlers(options: ConversionHandlersOptions): {
   handleFileSelected: (file: File) => Promise<void>;

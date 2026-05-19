@@ -46,10 +46,6 @@ const FFMPEG_CACHE_NAME = `ffmpeg-core-${FFMPEG_CORE_VERSION}`;
 
 /**
  * Request idle callback with fallback to setTimeout for browsers that don't support it.
- *
- * @param callback - Function to execute during idle time
- * @param options - Idle callback options including timeout
- * @returns Idle callback ID (or setTimeout ID)
  */
 export const requestIdle = (
   callback: IdleRequestCallback,
@@ -71,11 +67,6 @@ export const supportsCacheStorage = (): boolean => typeof caches !== 'undefined'
 
 /**
  * Load blob URL with cache awareness.
- * Uses Cache Storage API when available for faster repeat loads.
- * Falls back to direct blob URL creation if caching fails.
- *
- * NOTE: This intentionally mirrors the previous in-file implementation to
- * avoid behavior changes during refactoring.
  */
 export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<string> {
   if (!supportsCacheStorage()) {
@@ -88,7 +79,6 @@ export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<
     const contentLength = cachedResponse.headers.get(CACHE_CORRUPTION_LENGTH_HEADER);
     const cachedBlob = await cachedResponse.blob();
 
-    // Validate blob has expected size (not empty/corrupted)
     if (
       cachedBlob.size === 0 ||
       (contentLength && cachedBlob.size < Number.parseInt(contentLength, 10))
@@ -98,7 +88,6 @@ export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<
         expectedSize: contentLength,
         actualSize: cachedBlob.size,
       });
-      // Delete corrupted cache entry and fall through to fetch
       await cache.delete(url);
     } else {
       return URL.createObjectURL(cachedBlob);
@@ -150,16 +139,19 @@ const logProviderExclusions = () => ({
   exclusionReason: PROVIDER_EXCLUSION_REASON,
 });
 
-async function loadPackageAsset({
-  packageName,
-  version,
-  assetPath,
-  mimeType,
-  label,
-}: PackageAssetOptions): Promise<string> {
-  // Get all enabled CDN providers
+/**
+ * Try loading a function from CDN providers in sequence until one succeeds.
+ * Each provider is tried with timeout protection.
+ */
+async function tryLoadFromProviders<T>(params: {
+  label: string;
+  assetPath: string;
+  packageName: string;
+  version: string;
+  load: (url: string, provider: CDNProvider) => Promise<T>;
+}): Promise<T> {
+  const { label, assetPath, packageName, version, load } = params;
   const providers = getBlobCompatibleProviders();
-
   const errors: Array<{ provider: string; error: string }> = [];
 
   logger.info('ffmpeg', 'Loading FFmpeg asset from CDN providers', {
@@ -172,10 +164,8 @@ async function loadPackageAsset({
   });
 
   for (const provider of providers) {
+    const url = buildAssetUrl(provider, packageName, version, normalizeAssetPath(assetPath));
     try {
-      // Build URL for this CDN provider
-      const url = buildAssetUrl(provider, packageName, version, normalizeAssetPath(assetPath));
-
       logger.debug('ffmpeg', 'Trying CDN provider for FFmpeg asset', {
         label,
         assetPath,
@@ -186,14 +176,11 @@ async function loadPackageAsset({
       });
 
       const startTime = performance.now();
-
-      // Load with timeout
-      const blobUrl = await withTimeout(
-        cacheAwareBlobURL(url, mimeType),
+      const result = await withTimeout(
+        load(url, provider),
         provider.timeout,
         `Timeout after ${provider.timeout / 1000}s`
       );
-
       const elapsed = performance.now() - startTime;
 
       logger.info('ffmpeg', 'FFmpeg asset loaded successfully', {
@@ -204,7 +191,7 @@ async function loadPackageAsset({
         elapsedMs: Math.round(elapsed),
       });
 
-      return blobUrl;
+      return result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       errors.push({ provider: provider.name, error: errorMsg });
@@ -216,16 +203,29 @@ async function loadPackageAsset({
         provider: provider.name,
         error: errorMsg,
       });
-
-      // Continue to next CDN
     }
   }
 
-  // All CDNs failed
   const errorSummary = errors.map((e) => `${e.provider} (${e.error})`).join(', ');
   throw new Error(
     `Failed to download ${label} from all CDN providers. Errors: ${errorSummary}. Please check your network connection.`
   );
+}
+
+async function loadPackageAsset({
+  packageName,
+  version,
+  assetPath,
+  mimeType,
+  label,
+}: PackageAssetOptions): Promise<string> {
+  return tryLoadFromProviders({
+    label,
+    assetPath,
+    packageName,
+    version,
+    load: (url) => cacheAwareBlobURL(url, mimeType),
+  });
 }
 
 const resolveWorkerModuleSpecifier = (specifier: string, baseUrl: string): string => {
@@ -298,37 +298,14 @@ async function loadPackageWorkerModule({
   assetPath,
   label,
 }: Omit<PackageAssetOptions, 'mimeType'>): Promise<string> {
-  const providers = getBlobCompatibleProviders();
-  const errors: Array<{ provider: string; error: string }> = [];
-
-  logger.info('ffmpeg', 'Loading FFmpeg worker module from CDN providers', {
+  return tryLoadFromProviders({
     label,
     assetPath,
     packageName,
     version,
-    providerCount: providers.length,
-    ...logProviderExclusions(),
-  });
-
-  for (const provider of providers) {
-    try {
-      const url = buildAssetUrl(provider, packageName, version, normalizeAssetPath(assetPath));
-
-      logger.debug('ffmpeg', 'Trying CDN provider for FFmpeg worker module', {
-        label,
-        assetPath,
-        packageName,
-        provider: provider.name,
-        url,
-        timeoutMs: provider.timeout,
-      });
-
+    load: async (url) => {
       const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      const response = await withTimeout(
-        fetch(url, { cache: 'force-cache', credentials: 'omit' }),
-        provider.timeout,
-        `Timeout after ${provider.timeout / 1000}s`
-      );
+      const response = await fetch(url, { cache: 'force-cache', credentials: 'omit' });
 
       if (!response.ok) {
         throw new Error(`Worker module fetch failed: ${response.status}`);
@@ -363,34 +340,16 @@ async function loadPackageWorkerModule({
         label,
         assetPath,
         packageName,
-        provider: provider.name,
         elapsedMs: Math.round(elapsed),
       });
 
       return blobUrl;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      errors.push({ provider: provider.name, error: errorMsg });
-
-      logger.warn('ffmpeg', 'FFmpeg worker module download failed; trying next provider', {
-        label,
-        assetPath,
-        packageName,
-        provider: provider.name,
-        error: errorMsg,
-      });
-    }
-  }
-
-  const errorSummary = errors.map((e) => `${e.provider} (${e.error})`).join(', ');
-  throw new Error(
-    `Failed to download ${label} from all CDN providers. Errors: ${errorSummary}. Please check your network connection.`
-  );
+    },
+  });
 }
 
 /**
  * Clear FFmpeg cache for recovery from corrupted cache entries.
- * Call this when FFmpeg initialization fails repeatedly.
  */
 export async function clearFFmpegCache(): Promise<void> {
   if (supportsCacheStorage()) {
@@ -401,12 +360,6 @@ export async function clearFFmpegCache(): Promise<void> {
 
 /**
  * Load FFmpeg core asset with CDN fallback and timeout protection.
- * Tries all enabled CDN providers in order until one succeeds.
- *
- * @param assetPath - Path to the asset (e.g., "ffmpeg-core.js")
- * @param mimeType - MIME type for blob creation
- * @param label - Human-readable label for error messages
- * @returns Blob URL that can be used to load the asset
  */
 export async function loadFFmpegCoreAsset(
   assetPath: string,
@@ -428,7 +381,6 @@ export async function loadFFmpegCoreAsset(
 
 /**
  * Load the FFmpeg class worker (bridge worker) as a blob URL.
- * Required to avoid cross-origin worker restrictions in production.
  */
 export async function loadFFmpegClassWorker(): Promise<string> {
   return loadPackageWorkerModule({
