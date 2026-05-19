@@ -18,7 +18,7 @@
       "package.json",
       "tsconfig.json",
       "knip.json",
-      "biome.jsonc",
+      "biome.json",
       "index.html"
     ],
     "ignoreUnknown": true
