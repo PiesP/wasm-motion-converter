@@ -300,6 +300,12 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
             clearTimeout(timeoutId);
           }
           worker.removeEventListener('message', onMessage as EventListener);
+          signal?.removeEventListener('abort', onAbortSignal);
+        };
+
+        const onAbortSignal = () => {
+          cleanup();
+          reject(new DOMException('Worker readiness check aborted', 'AbortError'));
         };
 
         const onMessage = (event: MessageEvent<DropconvertWorkerReadyMessage>) => {
@@ -318,6 +324,13 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
             resolve();
           }
         };
+
+        // Listen for external abort signal to perform cleanup
+        if (signal?.aborted) {
+          reject(new DOMException('Worker readiness check aborted', 'AbortError'));
+          return;
+        }
+        signal?.addEventListener('abort', onAbortSignal, { once: true });
 
         worker.addEventListener('message', onMessage as EventListener);
 

@@ -184,43 +184,51 @@ export const captureFrameAndEmit = async (args: {
     });
 
     const convertBlobWithTimeout = async (): Promise<Blob> => {
-      const timeoutPromise = new Promise<Blob>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(`Canvas encoding timeout (${canvasEncodeTimeoutMs}ms) - GPU stall detected`)
-            ),
-          canvasEncodeTimeoutMs
-        )
+      let timeoutId: ReturnType<typeof setTimeout> = 0 as unknown as ReturnType<typeof setTimeout>;
+      const timeoutPromise = new Promise<Blob>(
+        (_, reject) =>
+          (timeoutId = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Canvas encoding timeout (${canvasEncodeTimeoutMs}ms) - GPU stall detected`
+                )
+              ),
+            canvasEncodeTimeoutMs
+          ))
       );
 
+      let blobPromise: Promise<Blob>;
       if ('convertToBlob' in captureContext.canvas) {
         try {
-          const blobPromise = (captureContext.canvas as OffscreenCanvas).convertToBlob({
+          blobPromise = (captureContext.canvas as OffscreenCanvas).convertToBlob({
             type: decision.encodeMimeType,
             quality: decision.encodeQuality,
           });
-          return Promise.race([blobPromise, timeoutPromise]);
         } catch (offscreenError) {
           logger.debug('conversion', 'OffscreenCanvas.convertToBlob() failed, using fallback', {
             error: getErrorMessage(offscreenError),
           });
 
-          const blobPromise = canvasToBlob(
+          blobPromise = canvasToBlob(
             captureContext.canvas,
             decision.encodeMimeType,
             decision.encodeQuality
           );
-          return Promise.race([blobPromise, timeoutPromise]);
         }
+      } else {
+        blobPromise = canvasToBlob(
+          captureContext.canvas,
+          decision.encodeMimeType,
+          decision.encodeQuality
+        );
       }
 
-      const blobPromise = canvasToBlob(
-        captureContext.canvas,
-        decision.encodeMimeType,
-        decision.encodeQuality
-      );
-      return Promise.race([blobPromise, timeoutPromise]);
+      try {
+        return await Promise.race([blobPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutId);
+      }
     };
 
     let blob: Blob;

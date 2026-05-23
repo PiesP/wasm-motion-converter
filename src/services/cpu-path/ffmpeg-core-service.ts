@@ -71,6 +71,8 @@ export class FFmpegCore {
   // Log buffer for debugging
   private ffmpegLogBuffer: string[] = [];
   private initLogHandler: ((event: { type: string; message: string }) => void) | null = null;
+  private initProgressHandler: ((event: { progress: number }) => void) | null = null;
+  private terminationTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Set global callbacks for progress and status
@@ -385,7 +387,7 @@ export class FFmpegCore {
       ffmpegInstance.on('log', this.initLogHandler);
 
       // Setup progress handler
-      ffmpegInstance.on('progress', ({ progress }) => {
+      this.initProgressHandler = ({ progress }) => {
         const progressPercent = Math.round(progress * 100);
         const normalizedProgress = Number.isFinite(progressPercent)
           ? Math.min(100, Math.max(0, progressPercent))
@@ -436,7 +438,9 @@ export class FFmpegCore {
           logger.debug('progress', `FFmpeg progress: ${normalizedProgress}% (source: ffmpeg)`);
           this.progressCallback?.(normalizedProgress);
         }
-      });
+      };
+
+      ffmpegInstance.on('progress', this.initProgressHandler);
 
       return ffmpegInstance;
     };
@@ -667,6 +671,10 @@ export class FFmpegCore {
           this.ffmpeg.off('log', this.initLogHandler);
           this.initLogHandler = null;
         }
+        if (this.initProgressHandler) {
+          this.ffmpeg.off('progress', this.initProgressHandler);
+          this.initProgressHandler = null;
+        }
         this.ffmpeg.terminate();
       } catch (error) {
         logger.error('ffmpeg', 'Error during termination', {
@@ -681,8 +689,12 @@ export class FFmpegCore {
     this.ffmpegLogBuffer = [];
 
     // Small delay to ensure FFmpeg worker is fully terminated
-    setTimeout(() => {
+    if (this.terminationTimer) {
+      clearTimeout(this.terminationTimer);
+    }
+    this.terminationTimer = setTimeout(() => {
       this.isTerminating = false;
+      this.terminationTimer = null;
     }, FFMPEG_INTERNALS.TERMINATION_SETTLE_MS);
   }
 

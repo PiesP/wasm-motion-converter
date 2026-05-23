@@ -29,6 +29,8 @@ import {
 } from '@stores/conversion-store';
 import { useNetworkState } from '@stores/network-store';
 import { debounce } from '@utils/debounce';
+import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
 import {
   type Component,
@@ -119,7 +121,11 @@ const App: Component = () => {
 
     if (memoryWarning() && appState() !== 'converting') {
       setMemoryWarning(false);
-      void handleConvert();
+      handleConvert().catch((error) => {
+        logger.error('general', 'Conversion failed after memory reduction', {
+          error: getErrorMessage(error),
+        });
+      });
     }
   };
 
@@ -133,7 +139,11 @@ const App: Component = () => {
       return;
     }
 
-    void handleConvert();
+    handleConvert().catch((error) => {
+      logger.error('general', 'Conversion failed', {
+        error: getErrorMessage(error),
+      });
+    });
   };
 
   return (

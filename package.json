@@ -13,17 +13,6 @@
     "node": "24.16.0",
     "pnpm": "10.29.2"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ],
-    "overrides": {
-      "rollup": "4.59.0",
-      "minimatch": "10.2.3",
-      "@isaacs/brace-expansion": "5.0.1",
-      "seroval": "1.4.1"
-    }
-  },
   "scripts": {
     "dev": "vite",
     "lint": "biome lint .",
