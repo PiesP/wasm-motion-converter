@@ -5,7 +5,7 @@ import {
 } from '@services/webcodecs/conversion/webp-encoding-service';
 import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames-service';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
-import { resolveAnimationDurationSeconds } from '@services/webcodecs/webp-timing-service';
+import { resolveAnimationDurationSeconds } from '@services/webcodecs/webp/webp-timing-service';
 import type { EncoderFrame, VideoMetadata } from '@t/conversion-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';

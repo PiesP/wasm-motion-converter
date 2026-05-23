@@ -6,7 +6,7 @@ import {
 import {
   resolveAnimationDurationSeconds as resolveAnimationDurationSecondsUtil,
   resolveWebPFps as resolveWebPFpsUtil,
-} from '@services/webcodecs/webp-timing-service';
+} from '@services/webcodecs/webp/webp-timing-service';
 import type { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
 import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
 import type { WebCodecsFrameFormat } from '@t/video-pipeline-types';

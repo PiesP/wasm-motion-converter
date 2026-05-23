@@ -1,10 +1,6 @@
+import type { ConversionFormat } from '@t/conversion-types';
 import { TIMEOUT_CONFIG } from './constants';
 import { logger } from './logger';
-
-/**
- * Supported output formats for timeout calculation
- */
-type TimeoutFormat = 'gif' | 'webp';
 
 /**
  * Calculate adaptive timeout based on video duration and format
@@ -24,7 +20,7 @@ type TimeoutFormat = 'gif' | 'webp';
  * // For 30-second GIF conversion with typical config
  * const timeout = calculateTimeout('gif', 30_000); // Returns adaptive timeout
  */
-export function calculateTimeout(format: TimeoutFormat, durationMs: number): number {
+export function calculateTimeout(format: ConversionFormat, durationMs: number): number {
   // Validate inputs
   if (!Number.isFinite(durationMs) || durationMs < 0) {
     throw new Error(`Invalid durationMs: ${durationMs}. Must be a non-negative number.`);
@@ -77,7 +73,7 @@ export function calculateTimeout(format: TimeoutFormat, durationMs: number): num
  * // Without duration (uses base timeout)
  * const timeout = getTimeoutForFormat('webp');
  */
-export function getTimeoutForFormat(format: TimeoutFormat, durationMs?: number): number {
+export function getTimeoutForFormat(format: ConversionFormat, durationMs?: number): number {
   // Use adaptive timeout if duration is provided and valid
   if (durationMs !== undefined && Number.isFinite(durationMs) && durationMs > 0) {
     return calculateTimeout(format, durationMs);

@@ -21,7 +21,7 @@ import {
   getMaxWebPFrames,
   resolveAnimationDurationSeconds,
   resolveWebPFps,
-} from '@services/webcodecs/webp-timing-service';
+} from '@services/webcodecs/webp/webp-timing-service';
 import { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
 import type {
   ConversionOptions,

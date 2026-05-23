@@ -1,10 +1,5 @@
-import type { ConversionQuality } from '@t/conversion-types';
+import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
 import { QUALITY_PRESETS } from './constants';
-
-/**
- * Supported output formats for conversion
- */
-type ConversionFormat = 'gif' | 'webp';
 
 /**
  * Calculate optimal FPS based on source video FPS and quality preset
