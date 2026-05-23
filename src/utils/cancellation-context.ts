@@ -16,6 +16,11 @@ export const CANCELLED_MESSAGE = 'Conversion cancelled by user';
  * from AbortController, FFmpeg.terminate(), or worker cancellation.
  */
 export function isCancellationError(error: unknown): boolean {
+  // Check for DOMException with name 'AbortError' (standard from AbortController)
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return true;
+  }
+
   const message =
     typeof error === 'object' && error !== null && 'message' in error
       ? String((error as { message: unknown }).message).toLowerCase()
