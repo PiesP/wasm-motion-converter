@@ -36,12 +36,11 @@ import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
-import { getAvailableMemory, isMemoryCritical } from '@utils/memory-monitor';
+import { getAvailableMemory } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import * as Comlink from 'comlink';
 import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
-import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support-service';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
 
 let gifWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
@@ -80,18 +79,6 @@ async function getCanvasWebPEncodeSupport(): Promise<boolean> {
 
 function shouldUseWebCodecsPath(metadata: VideoMetadata | undefined): boolean {
   return isComplexCodec(metadata?.codec) && typeof VideoFrame !== 'undefined';
-}
-
-export async function canConvert(file: File, metadata?: VideoMetadata): Promise<boolean> {
-  if (!metadata?.codec || metadata.codec === 'unknown') return false;
-  if (!isWebCodecsDecodeSupported()) return false;
-  if (isMemoryCritical()) {
-    logger.warn('conversion', 'Skipping WebCodecs decode due to critical memory usage');
-    return false;
-  }
-
-  const normalizedCodec = metadata.codec.toLowerCase();
-  return isWebCodecsCodecSupported(normalizedCodec, file.type, metadata);
 }
 
 export async function convert(
