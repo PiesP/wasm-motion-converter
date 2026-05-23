@@ -14,9 +14,11 @@ minimumReleaseAgeExclude:
   - comlink
 
 allowBuilds:
-  - esbuild
-  - core-js
+  esbuild: true
+  core-js: true
 
 strictDepBuilds: true
 
 blockExoticSubdeps: true
+engineStrict: true
+lockfileVersion: 3
