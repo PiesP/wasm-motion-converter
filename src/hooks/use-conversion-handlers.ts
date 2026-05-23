@@ -1,13 +1,13 @@
 import type { Setter } from 'solid-js';
-import { ConversionRuntimeController } from '@/hooks/conversion-handlers/use-conversion-runtime-controller';
-import { handleFileSelected } from '@/hooks/conversion-handlers/use-handle-file-selected';
+import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
+import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';
 import {
   handleCancelConversion,
   handleConvert,
   handleDismissError,
   handleReset,
   handleRetry,
-} from '@/hooks/conversion-handlers/use-perform-conversion';
+} from './conversion-handlers/use-perform-conversion';
 
 interface ConversionHandlersOptions {
   conversionStartTime: () => number;

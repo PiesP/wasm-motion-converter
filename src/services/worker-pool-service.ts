@@ -5,6 +5,7 @@ import type { EncoderWorkerAPI, WorkerPoolOptions } from '@t/worker-types';
 
 // Internal imports
 import { CANCELLED_MESSAGE, createAbortPromise } from '@utils/cancellation-context';
+import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { getAvailableMemory } from '@utils/memory-monitor';
 import * as Comlink from 'comlink';
@@ -406,7 +407,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
     try {
       await this.ensureWorkerReady(workerId, options.signal);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       // If readiness failed, respawn the worker to avoid a permanently stuck slot.
       await this.respawnWorker(workerId, `ready-failed: ${message}`);
       throw error;
@@ -425,7 +426,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
       ]);
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       const isCancellation = message.toLowerCase().includes(CANCELLED_MESSAGE.toLowerCase());
       const isTimeout = message.toLowerCase().includes('timed out');
 
