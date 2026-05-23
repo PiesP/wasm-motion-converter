@@ -6,7 +6,10 @@
  */
 
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
-import { convert as webcodecsConvert } from '@services/webcodecs-conversion-service';
+import {
+  cleanup as cleanupWebCodecs,
+  convert as webcodecsConvert,
+} from '@services/webcodecs-conversion-service';
 import type {
   ConversionFormat,
   ConversionMetadata,
@@ -51,6 +54,12 @@ const status: ConversionStatus = {
 };
 
 export async function convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
+  // Cancel any stale operation from a previous call that didn't clean up
+  if (activeOperation) {
+    activeOperation.abortController.abort();
+    activeOperation = null;
+  }
+
   const operationId = createId();
   const startedAt = performance.now();
   const abortController = new AbortController();
@@ -137,12 +146,14 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
     if (activeOperation?.id === operationId) {
       activeOperation = null;
     }
+    cleanupWebCodecs();
   }
 }
 
 export function cancelConversion(): void {
   activeOperation?.abortController.abort();
   ffmpegService.cancelConversion();
+  cleanupWebCodecs();
   status.isConverting = false;
   status.progress = 0;
   status.statusMessage = STATUS_CANCELLED;
@@ -177,13 +188,16 @@ async function convertWithGpuFallback(
       error: getErrorMessage(error),
     });
 
-    return convertWithCpu(request);
+    // Forward the abort signal so cancellation during fallback is honored
+    return convertWithCpu(request, abortSignal);
   }
 }
 
 async function convertWithCpu(
-  request: ConversionRequest
+  request: ConversionRequest,
+  abortSignal?: AbortSignal
 ): Promise<Awaited<ConversionResponse['blob']>> {
+  if (abortSignal) throwIfAborted(abortSignal);
   const format = getSupportedFormat(request);
 
   if (!ffmpegService.isLoaded()) {

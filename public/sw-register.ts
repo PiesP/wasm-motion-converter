@@ -12,6 +12,8 @@ const state: SWRegistrationState = {
   updateAvailable: false,
 };
 
+let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
+
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (!state.isSupported) {
     console.warn('[SW Register] Service Workers not supported in this browser');
@@ -53,11 +55,19 @@ type SWRegisterGlobal = typeof globalThis & {
 function setupUpdateCheck(registration: ServiceWorkerRegistration): void {
   const UPDATE_INTERVAL = 60 * 60 * 1000; // 1 hour
 
-  setInterval(() => {
+  updateCheckInterval = setInterval(() => {
     registration.update().catch((error) => {
       console.warn('[SW Register] Update check failed:', error);
     });
   }, UPDATE_INTERVAL);
+}
+
+/** Clean up the update check interval. Call on page unload to prevent leaks. */
+export function unregisterServiceWorker(): void {
+  if (updateCheckInterval !== null) {
+    clearInterval(updateCheckInterval);
+    updateCheckInterval = null;
+  }
 }
 
 function setupUpdateNotifications(registration: ServiceWorkerRegistration): void {

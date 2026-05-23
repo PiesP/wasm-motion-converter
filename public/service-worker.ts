@@ -175,29 +175,23 @@ interface HealthTrackingData {
   createdAt: number;
 }
 
+// In-memory health scores (localStorage is not available in ServiceWorkerGlobalScope)
+const healthScoresMemory = new Map<string, HealthTrackingData['metrics'][string]>();
+
 function loadHealthScores(): Map<string, number> {
   const scores = new Map<string, number>();
 
-  try {
-    const stored = localStorage.getItem('cdn_health_tracking');
-    if (!stored) return scores;
-
-    const data = JSON.parse(stored) as HealthTrackingData;
-
-    const age = performance.now() - data.createdAt;
+  for (const [hostname, metric] of healthScoresMemory.entries()) {
+    const age = performance.now() - metric.lastUpdated;
     const TTL_MS = 7 * 24 * 60 * 60 * 1000;
-    if (age > TTL_MS) {
-      return scores;
-    }
+    if (age > TTL_MS) continue;
 
-    for (const [hostname, metric] of Object.entries(data.metrics)) {
-      const healthScore = Math.round(metric.successRate * 100);
-      scores.set(hostname, healthScore);
-    }
+    const healthScore = Math.round(metric.successRate * 100);
+    scores.set(hostname, healthScore);
+  }
 
-    console.log(`[SW ${SW_VERSION}] Loaded health scores:`, Object.fromEntries(scores));
-  } catch (error) {
-    console.warn(`[SW ${SW_VERSION}] Failed to load health scores:`, error);
+  if (healthScoresMemory.size > 0) {
+    console.log(`[SW ${SW_VERSION}] Health scores (in-memory):`, Object.fromEntries(scores));
   }
 
   return scores;
@@ -205,21 +199,10 @@ function loadHealthScores(): Map<string, number> {
 
 function updateHealthScore(hostname: string, success: boolean): void {
   try {
-    const stored = localStorage.getItem('cdn_health_tracking');
-    let data: HealthTrackingData;
+    let metric = healthScoresMemory.get(hostname);
 
-    if (stored) {
-      data = JSON.parse(stored) as HealthTrackingData;
-    } else {
-      data = {
-        version: 1,
-        metrics: {},
-        createdAt: performance.now(),
-      };
-    }
-
-    if (!data.metrics[hostname]) {
-      data.metrics[hostname] = {
+    if (!metric) {
+      metric = {
         hostname,
         successCount: 0,
         failureCount: 0,
@@ -227,9 +210,8 @@ function updateHealthScore(hostname: string, success: boolean): void {
         successRate: 1.0,
         lastUpdated: performance.now(),
       };
+      healthScoresMemory.set(hostname, metric);
     }
-
-    const metric = data.metrics[hostname];
 
     if (success) {
       metric.successCount++;
@@ -239,8 +221,6 @@ function updateHealthScore(hostname: string, success: boolean): void {
     metric.totalCount = metric.successCount + metric.failureCount;
     metric.successRate = metric.totalCount > 0 ? metric.successCount / metric.totalCount : 1.0;
     metric.lastUpdated = performance.now();
-
-    localStorage.setItem('cdn_health_tracking', JSON.stringify(data));
   } catch (error) {
     console.warn(`[SW ${SW_VERSION}] Failed to update health score:`, error);
   }
@@ -909,15 +889,19 @@ async function handleWorkerRequest(request: Request): Promise<Response> {
 
   if (cached) {
     console.log(`[SW ${SW_VERSION}] Serving worker from cache`);
-    return new Response(cached.body, {
-      status: cached.status,
-      statusText: cached.statusText,
-      headers: {
-        ...Object.fromEntries(cached.headers.entries()),
-        'Access-Control-Allow-Origin': '*',
-        'Cross-Origin-Resource-Policy': 'cross-origin',
-      },
-    });
+    if (!cached.body) {
+      console.warn(`[SW ${SW_VERSION}] Cached response has null body, fetching from network`);
+    } else {
+      return new Response(cached.body, {
+        status: cached.status,
+        statusText: cached.statusText,
+        headers: {
+          ...Object.fromEntries(cached.headers.entries()),
+          'Access-Control-Allow-Origin': '*',
+          'Cross-Origin-Resource-Policy': 'cross-origin',
+        },
+      });
+    }
   }
 
   try {
