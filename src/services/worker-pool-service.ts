@@ -1,9 +1,5 @@
-// External dependencies
-
-// Type imports
 import type { EncoderWorkerAPI, WorkerPoolOptions } from '@t/worker-types';
 
-// Internal imports
 import { CANCELLED_MESSAGE, createAbortPromise } from '@utils/cancellation-context';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';

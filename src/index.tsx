@@ -17,6 +17,8 @@ import App from './App';
 import './index.css';
 
 import { capabilityService } from '@services/video-pipeline/capability-service';
+import { cleanup as cleanupWebCodecs } from '@services/webcodecs-conversion-service';
+import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
 /**
@@ -40,5 +42,10 @@ render(() => <App />, root);
 // Fire-and-forget capability probing on first load.
 // Conversions MUST still verify caps before starting; this is a warm-up/caching step.
 capabilityService.detectCapabilities().catch((error) => {
-  logger.debug('general', 'Capability probing failed', { error: String(error) });
+  logger.debug('general', 'Capability probing failed', { error: getErrorMessage(error) });
+});
+
+// Terminate worker pool on page unload to prevent dangling Comlink proxies
+globalThis.addEventListener('pagehide', () => {
+  cleanupWebCodecs();
 });

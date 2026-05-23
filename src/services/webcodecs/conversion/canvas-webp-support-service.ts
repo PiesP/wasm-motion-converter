@@ -5,6 +5,7 @@ import { withTimeout } from '@utils/with-timeout';
 const DEFAULT_TIMEOUT_MS = 2_000;
 const CANVAS_SIZE = 2;
 const WEBP_QUALITY = 0.8;
+const PROBE_BG_COLOR = '#000';
 
 const hasDocument = (): boolean => typeof document !== 'undefined';
 
@@ -16,7 +17,7 @@ const createProbeCanvas = (): HTMLCanvasElement => {
 };
 
 const drawProbePixel = (ctx: CanvasRenderingContext2D): void => {
-  ctx.fillStyle = '#000';
+  ctx.fillStyle = PROBE_BG_COLOR;
   ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 };
 

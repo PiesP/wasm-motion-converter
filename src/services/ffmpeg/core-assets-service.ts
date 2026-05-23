@@ -1,4 +1,3 @@
-// External dependencies
 import { toBlobURL } from '@ffmpeg/util';
 import { type CDNProvider, getEnabledProviders } from '@utils/cdn-config';
 

@@ -1,6 +1,3 @@
-// External dependencies
-
-// Type imports
 import type { VideoMetadata } from '@t/conversion-types';
 import { getCodecCandidates } from '@utils/codec-utils';
 import { getErrorMessage } from '@utils/error-utils';

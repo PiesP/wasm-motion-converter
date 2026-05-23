@@ -1,5 +1,3 @@
-// Internal dependencies
-
 import { createCanvas } from '@services/webcodecs/decoder/canvas-service';
 import {
   type CaptureFrameState,
@@ -18,7 +16,6 @@ import {
   seekTo,
 } from '@services/webcodecs/decoder/video-element-service';
 import { canUseDemuxer } from '@services/webcodecs/demuxer/demuxer-factory-service';
-// Type imports
 import type { VideoMetadata } from '@t/conversion-types';
 import type {
   WebCodecsCaptureMode,
