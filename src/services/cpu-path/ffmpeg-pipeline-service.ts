@@ -832,6 +832,3 @@ export class FFmpegPipeline {
 }
 /** Global FFmpeg pipeline singleton */
 export const ffmpegService = new FFmpegPipeline();
-
-// Re-export types from encoder module
-export type { FFmpegInputOverride } from './ffmpeg-encoder-service';

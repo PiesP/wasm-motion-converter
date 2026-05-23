@@ -16,7 +16,7 @@
  * @example
  * const severity: ValidationSeverity = 'warning';
  */
-type ValidationSeverity = 'info' | 'warning' | 'error';
+export type ValidationSeverity = 'info' | 'warning' | 'error';
 
 /**
  * Validation warning with user-facing message

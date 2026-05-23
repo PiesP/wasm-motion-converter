@@ -159,10 +159,6 @@ export function cancelConversion(): void {
   status.statusMessage = STATUS_CANCELLED;
 }
 
-export function getConversionStatus(): ConversionStatus {
-  return { ...status };
-}
-
 async function convertWithGpuFallback(
   request: ConversionRequest,
   abortSignal: AbortSignal

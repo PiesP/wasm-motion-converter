@@ -21,26 +21,6 @@ export const MAX_FILE_SIZE = 500 * 1024 * 1024;
  */
 export const COMPLEX_CODECS = ['hevc', 'h265', 'hvc1', 'hev1', 'vp9', 'vp09', 'av1', 'av01'];
 
-/**
- * Codecs with efficient GPU-accelerated decoding support via WebCodecs API.
- * These are the primary targets for hardware acceleration when available.
- */
-export const WEBCODECS_ACCELERATED = [
-  'av1',
-  'av01',
-  'hevc',
-  'h265',
-  'hvc1',
-  'hev1',
-  'vp9',
-  'vp09',
-  'vp8',
-  'vp08',
-  'h264',
-  'avc1',
-  'avc3',
-];
-
 // ============================================================================
 // SUPPORTED VIDEO FORMATS
 // ============================================================================

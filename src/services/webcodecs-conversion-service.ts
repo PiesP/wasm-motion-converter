@@ -94,36 +94,6 @@ export async function canConvert(file: File, metadata?: VideoMetadata): Promise<
   return isWebCodecsCodecSupported(normalizedCodec, file.type, metadata);
 }
 
-export async function maybeConvert(
-  file: File,
-  format: 'gif' | 'webp',
-  options: ConversionOptions,
-  metadata?: VideoMetadata
-): Promise<ConversionOutputBlob | null> {
-  const useWebCodecs = await canConvert(file, metadata);
-  if (!useWebCodecs) return null;
-
-  try {
-    return await convert(file, format, options, metadata);
-  } catch (error) {
-    const errorMessage = getErrorMessage(error);
-    if (
-      errorMessage.includes('cancelled by user') ||
-      (ffmpegService.isCancellationRequested() &&
-        errorMessage.includes('called FFmpeg.terminate()'))
-    ) {
-      throw error;
-    }
-
-    logger.warn('conversion', 'WebCodecs path failed, falling back to FFmpeg', {
-      error: errorMessage,
-      codec: metadata?.codec,
-      fallbackReason: 'webcodecs_failed',
-    });
-    return null;
-  }
-}
-
 export async function convert(
   file: File,
   format: 'gif' | 'webp',
