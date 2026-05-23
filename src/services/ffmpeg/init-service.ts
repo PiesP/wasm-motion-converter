@@ -402,7 +402,7 @@ export async function initializeFFmpegRuntime(
       error: getErrorMessage(error),
     });
 
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg = getErrorMessage(error);
 
     // Check if offline
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;

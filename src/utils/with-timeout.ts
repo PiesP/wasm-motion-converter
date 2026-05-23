@@ -1,3 +1,4 @@
+import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
 
 /**
@@ -70,7 +71,7 @@ export async function withTimeout<T>(
       } catch (error) {
         // Log callback errors but don't suppress the timeout rejection
         logger.warn('general', 'Error in timeout callback', {
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
           timeoutMs,
         });
       }

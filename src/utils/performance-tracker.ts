@@ -1,3 +1,4 @@
+import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
 
 /**
@@ -177,7 +178,7 @@ class PerformanceTracker {
       });
     } catch (error) {
       logger.error('performance', 'Failed to save performance report', {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }

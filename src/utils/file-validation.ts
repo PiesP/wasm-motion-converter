@@ -29,6 +29,7 @@ import {
   WEBP_MAX_DURATION_MS,
   WEBP_MAX_FRAMES,
 } from './constants';
+import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
 
 /**
@@ -339,7 +340,7 @@ export async function validateVideoDuration(
     // This approach: fail gracefully rather than blocking valid videos
     // (some obscure codecs may work in FFmpeg even if HTML5 Video API fails)
     logger.warn('general', 'Failed to extract duration, proceeding without validation', {
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return {
       valid: true, // Don't block conversion on extraction failure

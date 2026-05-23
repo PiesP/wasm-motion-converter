@@ -21,6 +21,7 @@ const buildAssetUrl = (
 
 import { getRuntimeDepVersion } from '@utils/cdn-config';
 import { FFMPEG_CORE_VERSION } from '@utils/constants';
+import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { withTimeout } from '@utils/with-timeout';
 
@@ -193,7 +194,7 @@ async function tryLoadFromProviders<T>(params: {
 
       return result;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       errors.push({ provider: provider.name, error: errorMsg });
 
       logger.warn('ffmpeg', 'FFmpeg asset download failed; trying next provider', {

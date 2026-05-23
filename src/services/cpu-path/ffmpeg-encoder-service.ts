@@ -1114,7 +1114,7 @@ export class FFmpegEncoder {
         // CRITICAL: Stop heartbeat immediately on error to prevent interval leaks
         monitoring.stopProgressHeartbeat(heartbeat);
 
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         const wasCancelled = this.isCancellationError(errorMessage);
 
         if (!wasCancelled) {
@@ -1368,7 +1368,7 @@ export class FFmpegEncoder {
         performanceTracker.endPhase('webp-encode');
         logger.performance('WebP encoding complete');
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         const wasCancelled = this.isCancellationError(errorMessage);
 
         if (!wasCancelled) {

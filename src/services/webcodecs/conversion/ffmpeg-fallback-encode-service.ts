@@ -11,6 +11,7 @@ import type { WebCodecsDecoderService } from '@services/webcodecs-decoder-servic
 import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
 import type { WebCodecsFrameFormat } from '@t/video-pipeline-types';
 import { isComplexCodec } from '@utils/codec-utils';
+import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
 
@@ -142,7 +143,7 @@ export async function encodeWithFFmpegFallback(params: {
         initialBytes,
         rawvideoMaxBytes: RAWVIDEO_MAX_BYTES,
         estimatedRawBytes,
-        error: String(error),
+        error: getErrorMessage(error),
       });
     }
   }

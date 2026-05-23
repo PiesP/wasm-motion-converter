@@ -39,6 +39,7 @@ export function getEnabledProviders(): CDNProvider[] {
 // ---------------------------------------------------------------------------
 
 import { RUNTIME_DEP_VERSIONS } from 'virtual:cdn-deps';
+import { getErrorMessage } from './error-utils';
 
 /**
  * Get the pinned version for a runtime dependency from package.json.
@@ -93,7 +94,7 @@ export async function loadFromCDN<T>(
       ]);
       return (module as unknown as { default?: T }).default || (module as T);
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = getErrorMessage(error);
       errors.push({ cdn, reason });
     }
   }

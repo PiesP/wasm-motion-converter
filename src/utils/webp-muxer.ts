@@ -1,3 +1,4 @@
+import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
 
 /**
@@ -518,7 +519,7 @@ export async function muxAnimatedWebP(
     // Ensure the returned type is an ArrayBuffer (SharedArrayBuffer is not expected here)
     return result.buffer as ArrayBuffer;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     logger.error('general', 'WebP muxing failed', {
       error: message,
       frameCount: frames.length,
