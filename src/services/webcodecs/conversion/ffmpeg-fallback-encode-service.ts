@@ -1,4 +1,4 @@
-import { ffmpegService } from '@services/ffmpeg-service';
+import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import {
   computeExpectedFramesFromDuration,
   computeRawvideoEligibility,

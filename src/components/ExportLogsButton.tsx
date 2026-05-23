@@ -1,4 +1,4 @@
-import { ffmpegService } from '@services/ffmpeg-service';
+import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import { logger } from '@utils/logger';
 import { type Component, Show, splitProps } from 'solid-js';
 

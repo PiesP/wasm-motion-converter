@@ -1,4 +1,4 @@
-import { formatDuration } from '@utils/format-duration';
+import { formatDuration } from '@utils/format-utils';
 import {
   type Component,
   createEffect,

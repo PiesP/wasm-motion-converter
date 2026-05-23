@@ -1,6 +1,5 @@
 import type { VideoMetadata } from '@t/conversion-types';
-import { formatBytes } from '@utils/format-bytes';
-import { formatDuration } from '@utils/format-duration';
+import { formatBytes, formatDuration } from '@utils/format-utils';
 import { type Component, createMemo, splitProps } from 'solid-js';
 
 const UNKNOWN_CODEC = 'unknown';

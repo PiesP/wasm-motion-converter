@@ -1,9 +1,11 @@
-import { ffmpegService } from '@services/ffmpeg-service';
-import { setAppState, setLoadingProgress, setLoadingStatusMessage } from '@stores/app-store';
+import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import {
+  setAppState,
   setErrorContext,
   setErrorMessage,
   setInputFile,
+  setLoadingProgress,
+  setLoadingStatusMessage,
   setVideoMetadata,
   setVideoPreviewUrl,
   videoPreviewUrl,

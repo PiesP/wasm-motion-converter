@@ -1,14 +1,8 @@
-import { ffmpegService } from '@services/ffmpeg-service';
+import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import {
   cancelConversion,
   convertVideo,
 } from '@services/orchestration/conversion-orchestrator-service';
-import {
-  appState,
-  setAppState,
-  setLoadingProgress,
-  setLoadingStatusMessage,
-} from '@stores/app-store';
 import { showConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -16,13 +10,17 @@ import {
   setConversionSettings,
 } from '@stores/conversion-settings-store';
 import {
+  appState,
   inputFile,
   MAX_RESULTS,
+  setAppState,
   setConversionResults,
   setConversionStatusMessage,
   setErrorContext,
   setErrorMessage,
   setInputFile,
+  setLoadingProgress,
+  setLoadingStatusMessage,
   setVideoMetadata,
   setVideoPreviewUrl,
   videoMetadata,
@@ -31,10 +29,10 @@ import {
 import type { ConversionResult, ConversionSettings } from '@t/conversion-types';
 import { isCancellationError } from '@utils/cancellation-context';
 import { classifyConversionError } from '@utils/classify-conversion-error';
-import { createId } from '@utils/create-id';
 import { focusElement } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoDuration } from '@utils/file-validation';
+import { createId } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { batch } from 'solid-js';
 

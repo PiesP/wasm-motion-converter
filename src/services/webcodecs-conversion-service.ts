@@ -6,6 +6,7 @@
  * Falls back to FFmpeg when WebCodecs is unavailable.
  */
 
+import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support-service';
 import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture-service';
@@ -39,7 +40,6 @@ import { getAvailableMemory, isMemoryCritical } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import * as Comlink from 'comlink';
 import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
-import { ffmpegService } from './ffmpeg-service';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { isWebCodecsCodecSupported, isWebCodecsDecodeSupported } from './webcodecs-support-service';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';

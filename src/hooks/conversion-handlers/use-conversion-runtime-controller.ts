@@ -1,6 +1,6 @@
 import { setConversionProgress, setConversionStatusMessage } from '@stores/conversion-store';
 import { ETACalculator } from '@utils/eta-calculator';
-import { formatDuration } from '@utils/format-duration';
+import { formatDuration } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
 import { batch, type Setter } from 'solid-js';

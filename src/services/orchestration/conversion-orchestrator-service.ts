@@ -5,7 +5,7 @@
  * Coordinates WebCodecs (GPU) and FFmpeg (CPU) conversion paths.
  */
 
-import { ffmpegService } from '@services/ffmpeg-service';
+import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import { convert as webcodecsConvert } from '@services/webcodecs-conversion-service';
 import type {
   ConversionFormat,
@@ -20,8 +20,8 @@ import {
   throwIfAborted,
 } from '@utils/cancellation-context';
 import { isSupportedFormat } from '@utils/codec-utils';
-import { createId } from '@utils/create-id';
 import { getErrorMessage } from '@utils/error-utils';
+import { createId } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { selectSimplePath } from './simple-path-planner-service';
 

@@ -10,8 +10,18 @@
  * persistence, and that concern is orthogonal to transient runtime state.
  */
 
+import type { AppState } from '@t/app-types';
 import type { ConversionResult, ErrorContext, VideoMetadata } from '@t/conversion-types';
 import { createSignal } from 'solid-js';
+
+// ---------------------------------------------------------------------------
+// App-level state
+// ---------------------------------------------------------------------------
+
+export const [appState, setAppState] = createSignal<AppState>('idle');
+export const [loadingProgress, setLoadingProgress] = createSignal<number>(0);
+export const [loadingStatusMessage, setLoadingStatusMessage] = createSignal<string>('');
+export const [environmentSupported, setEnvironmentSupported] = createSignal<boolean>(true);
 
 // ---------------------------------------------------------------------------
 // Errors

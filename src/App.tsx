@@ -8,24 +8,22 @@ import StatusAlerts from '@components/StatusAlerts';
 import ThemeToggle from '@components/ThemeToggle';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import {
-  appState,
-  environmentSupported,
-  loadingProgress,
-  loadingStatusMessage,
-  setEnvironmentSupported,
-} from '@stores/app-store';
-import {
   conversionSettings,
   saveConversionSettings,
   setConversionSettings,
 } from '@stores/conversion-settings-store';
 import {
+  appState,
   conversionProgress,
   conversionResults,
   conversionStatusMessage,
+  environmentSupported,
   errorContext,
   errorMessage,
   inputFile,
+  loadingProgress,
+  loadingStatusMessage,
+  setEnvironmentSupported,
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
