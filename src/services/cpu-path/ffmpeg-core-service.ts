@@ -280,7 +280,7 @@ export class FFmpegCore {
 
       if (lastError) {
         logger.warn('prefetch', 'All CDN mirrors failed for FFmpeg core assets', {
-          error: lastError instanceof Error ? lastError.message : String(lastError),
+          error: getErrorMessage(lastError),
           mirrorsAttempted: FFMPEG_CORE_BASE_URLS.length,
         });
         throw lastError;

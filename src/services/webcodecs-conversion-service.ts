@@ -534,8 +534,7 @@ export async function convert(
               stopEncodeHeartbeat(encodeHeartbeat);
             }
           } catch (fallbackError) {
-            const fallbackMessage =
-              fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+            const fallbackMessage = getErrorMessage(fallbackError);
             outputBlob = await doFFmpegFallback(fallbackMessage);
           }
         }
