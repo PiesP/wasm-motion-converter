@@ -50,3 +50,12 @@ export const cancelDialog = (): void => {
   setConfirmationState({ ...state, isVisible: false });
   state.onCancel?.();
 };
+
+/** Dismiss any visible confirmation dialog without triggering callbacks (cleanup). */
+export const dismissConfirmation = (): void => {
+  const state = confirmationState();
+  if (!state.isVisible) {
+    return;
+  }
+  setConfirmationState({ isVisible: false, warnings: [] });
+};

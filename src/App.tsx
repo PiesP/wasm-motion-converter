@@ -7,6 +7,7 @@ import SettingsPanel from '@components/SettingsPanel';
 import StatusAlerts from '@components/StatusAlerts';
 import ThemeToggle from '@components/ThemeToggle';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
+import { dismissConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
   saveConversionSettings,
@@ -86,6 +87,7 @@ const App: Component = () => {
 
   onCleanup(() => {
     debouncedSaveSettings.cancel();
+    dismissConfirmation();
   });
 
   createEffect(() => {

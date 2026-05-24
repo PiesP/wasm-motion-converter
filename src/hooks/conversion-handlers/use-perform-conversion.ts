@@ -69,7 +69,12 @@ export async function handleConvert(runtime: ConversionRuntimeController): Promi
           durationValidation.warnings,
           () => {
             resolve();
-            void performConversion(file, settings, runtime, durationValidation.duration);
+            void performConversion(file, settings, runtime, durationValidation.duration).catch(
+              (error) =>
+                logger.error('conversion', 'Post-confirmation conversion failed', {
+                  error: getErrorMessage(error),
+                })
+            );
           },
           () => {
             logger.info('conversion', 'User cancelled conversion after duration warning');
@@ -272,13 +277,19 @@ export function handleReset(runtime: ConversionRuntimeController): void {
     setAppState('idle');
   });
 
-  void ffmpegService.clearCachedInput();
+  void ffmpegService.clearCachedInput().catch((error) =>
+    logger.debug('ffmpeg', 'Non-critical: clearCachedInput failed', {
+      error: getErrorMessage(error),
+    })
+  );
 }
 
 export function handleRetry(runtime: ConversionRuntimeController): void {
   const file = inputFile();
   if (file && appState() === 'error') {
-    void handleFileSelected(file, runtime);
+    void handleFileSelected(file, runtime).catch((error) =>
+      logger.error('conversion', 'Retry file selection failed', { error: getErrorMessage(error) })
+    );
   } else {
     handleReset(runtime);
   }

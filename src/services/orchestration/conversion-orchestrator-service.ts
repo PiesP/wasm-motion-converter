@@ -89,7 +89,7 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
     const blob =
       selection.path === 'gpu'
         ? await convertWithGpuFallback(request, abortController.signal)
-        : await convertWithCpu(request);
+        : await convertWithCpu(request, abortController.signal);
 
     if (activeOperation?.id !== operationId) {
       throw new Error(CANCELLED_MESSAGE);

@@ -889,8 +889,15 @@ async function handleWorkerRequest(request: Request): Promise<Response> {
 
   if (cached) {
     console.log(`[SW ${SW_VERSION}] Serving worker from cache`);
-    if (!cached.body) {
-      console.warn(`[SW ${SW_VERSION}] Cached response has null body, fetching from network`);
+    if (!cached.body || cached.type === 'opaque') {
+      console.warn(
+        `[SW ${SW_VERSION}] Cached response is null-body or opaque, fetching from network`,
+        {
+          hasBody: !!cached.body,
+          type: cached.type,
+          status: cached.status,
+        }
+      );
     } else {
       return new Response(cached.body, {
         status: cached.status,

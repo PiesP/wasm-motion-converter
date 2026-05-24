@@ -45,28 +45,39 @@ import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
 
 let gifWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
 let canvasWebPEncodeSupport: boolean | null = null;
+let gifWorkerPoolPromise: Promise<WorkerPool<EncoderWorkerAPI>> | null = null;
 
-function getWorkerPool(): WorkerPool<EncoderWorkerAPI> | null {
-  if (gifWorkerPool || typeof window === 'undefined') {
-    return gifWorkerPool;
+function getWorkerPool(): Promise<WorkerPool<EncoderWorkerAPI> | null> {
+  if (typeof window === 'undefined') {
+    return Promise.resolve(null);
+  }
+  if (gifWorkerPool) {
+    return Promise.resolve(gifWorkerPool);
+  }
+  if (gifWorkerPoolPromise) {
+    return gifWorkerPoolPromise;
   }
 
-  const hwConcurrency = navigator.hardwareConcurrency || 4;
-  const availableMem = getAvailableMemory();
-  const optimalGifWorkers = getOptimalPoolSize('gif', hwConcurrency, availableMem);
+  gifWorkerPoolPromise = (async (): Promise<WorkerPool<EncoderWorkerAPI>> => {
+    const hwConcurrency = navigator.hardwareConcurrency || 4;
+    const availableMem = getAvailableMemory();
+    const optimalGifWorkers = getOptimalPoolSize('gif', hwConcurrency, availableMem);
 
-  logger.info('worker-pool', 'Dynamic worker pool sizing', {
-    hardwareConcurrency: hwConcurrency,
-    availableMemory: `${Math.round(availableMem / 1024 / 1024)}MB`,
-    gifWorkers: optimalGifWorkers,
-  });
+    logger.info('worker-pool', 'Dynamic worker pool sizing', {
+      hardwareConcurrency: hwConcurrency,
+      availableMemory: `${Math.round(availableMem / 1024 / 1024)}MB`,
+      gifWorkers: optimalGifWorkers,
+    });
 
-  gifWorkerPool = new WorkerPool(gifEncoderWorkerUrl, {
-    lazyInit: true,
-    maxWorkers: optimalGifWorkers,
-  });
+    gifWorkerPool = new WorkerPool(gifEncoderWorkerUrl, {
+      lazyInit: true,
+      maxWorkers: optimalGifWorkers,
+    });
 
-  return gifWorkerPool;
+    return gifWorkerPool;
+  })();
+
+  return gifWorkerPoolPromise;
 }
 
 async function getCanvasWebPEncodeSupport(): Promise<boolean> {
@@ -439,7 +450,7 @@ export async function convert(
     let outputBlob: Blob;
 
     if (useModernGif) {
-      const pool = getWorkerPool();
+      const pool = await getWorkerPool();
       if (pool) {
         try {
           const serializableFrames = capturedFrames.map((frame) => ({
