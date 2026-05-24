@@ -1,6 +1,6 @@
 #+#+#+#+#############################################
-# dropconvert-wasm - .gitignore
-# Stack: Vite + React + TypeScript + Tailwind + ffmpeg.wasm
+# wasm-motion-converter - .gitignore
+# Stack: Vite + SolidJS + TypeScript + ffmpeg.wasm
 #+#+#+#+#############################################
 
 # Dependencies
@@ -34,25 +34,41 @@ temp/
 Thumbs.db
 *:Zone.Identifier
 
-.claude
-.github/copilot-instructions.md
-.github/prompts
-.vscode
+# ──────────────────────────────────────────────
+# Local-only (AI instructions, testing, docs)
+# ──────────────────────────────────────────────
+
+# Documentation (keep essential files tracked)
+docs/
 *.md
+!README.md
 !CHANGELOG.md
+!LICENSE
 !CODE_OF_CONDUCT.md
 !CONTRIBUTING.md
-!README.md
 !SUPPORT.md
-!TESTING.md
 !.github/pull_request_template.md
 !.github/SECURITY.md
+!public/LICENSES.md
 
-docs/
-test/
-*.backup
+# AI Instructions (not shared to remote)
 AGENTS.md
 CLAUDE.md
 GEMINI.md
 CODE_STANDARDS.md
+CODING_STANDARDS.md
+TESTING.md
+.claude/
+.github/copilot-instructions.md
+.github/prompts/
+.vscode/
 .editorconfig
+
+# Local agent workspace
+.hermes/
+
+# Local tests
+test/
+
+# Misc
+*.backup
