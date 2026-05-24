@@ -21,6 +21,7 @@
     "tmp/**",
     "docs/**",
     ".vite-sw-temp/**",
+    ".github/**",
     "**/*.test.{ts,tsx}",
     "**/*.spec.{ts,tsx}",
     "**/*.d.ts"

@@ -38,6 +38,7 @@ Thumbs.db
 .github/copilot-instructions.md
 .github/prompts
 .vscode
+*.md
 !CHANGELOG.md
 !CODE_OF_CONDUCT.md
 !CONTRIBUTING.md
@@ -46,7 +47,6 @@ Thumbs.db
 !TESTING.md
 !.github/pull_request_template.md
 !.github/SECURITY.md
-*.md
 
 docs/
 test/
