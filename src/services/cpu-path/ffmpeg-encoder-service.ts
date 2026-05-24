@@ -1048,7 +1048,7 @@ export class FFmpegEncoder {
       const heartbeat = monitoring.startProgressHeartbeat(
         FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START,
         FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END,
-        estimatedDuration
+        conversionTimeout / 1000
       );
 
       try {
@@ -1216,7 +1216,7 @@ export class FFmpegEncoder {
         const heartbeat = monitoring.startProgressHeartbeat(
           FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START,
           FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_END,
-          estimatedDuration
+          conversionTimeout / 1000
         );
 
         const isH264Input = inputOverride?.format === 'h264';
