@@ -40,7 +40,3 @@ export function detectContainerFormat(file: File): ContainerFormat {
       return 'unknown';
   }
 }
-
-/**
- * Whether this container is eligible for the WebCodecs demuxer path.
- */

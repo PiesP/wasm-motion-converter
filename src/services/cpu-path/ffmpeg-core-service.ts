@@ -19,6 +19,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import {
   cacheAwareBlobURL,
   requestIdle,
+  revokeFFmpegBlobURLs,
   supportsCacheStorage,
 } from '@services/ffmpeg/core-assets-service';
 import { initializeFFmpegRuntime } from '@services/ffmpeg/init-service';
@@ -676,6 +677,7 @@ export class FFmpegCore {
           this.initProgressHandler = null;
         }
         this.ffmpeg.terminate();
+        revokeFFmpegBlobURLs();
       } catch (error) {
         logger.error('ffmpeg', 'Error during termination', {
           error: getErrorMessage(error),

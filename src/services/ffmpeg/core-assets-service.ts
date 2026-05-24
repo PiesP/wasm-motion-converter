@@ -35,6 +35,25 @@ const MODULE_IMPORT_REGEXES = [
   /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
 ];
 
+const trackedBlobURLs = new Set<string>();
+
+const createTrackedBlobURL = (blob: Blob): string => {
+  const url = URL.createObjectURL(blob);
+  trackedBlobURLs.add(url);
+  return url;
+};
+
+/**
+ * Revoke all blob URLs created by FFmpeg core asset loading.
+ * Call this when FFmpeg is terminated or re-initialized.
+ */
+export const revokeFFmpegBlobURLs = (): void => {
+  for (const url of trackedBlobURLs) {
+    URL.revokeObjectURL(url);
+  }
+  trackedBlobURLs.clear();
+};
+
 export type FFmpegCoreVariant = 'mt' | 'st';
 
 const FFMPEG_CORE_ST_VERSION = FFMPEG_CORE_VERSION;
@@ -90,7 +109,7 @@ export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<
       });
       await cache.delete(url);
     } else {
-      return URL.createObjectURL(cachedBlob);
+      return createTrackedBlobURL(cachedBlob);
     }
   }
 
@@ -104,7 +123,7 @@ export async function cacheAwareBlobURL(url: string, mimeType: string): Promise<
 
   await cache.put(url, response.clone());
   const blob = await response.blob();
-  return URL.createObjectURL(blob);
+  return createTrackedBlobURL(blob);
 }
 
 type PackageAssetOptions = {
@@ -329,7 +348,7 @@ async function loadPackageWorkerModule({
         });
       }
 
-      const blobUrl = URL.createObjectURL(
+      const blobUrl = createTrackedBlobURL(
         new Blob([rewriteResult.source], { type: WORKER_MODULE_MIME_TYPE })
       );
 
