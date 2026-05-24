@@ -7,6 +7,8 @@ import SettingsPanel from '@components/SettingsPanel';
 import StatusAlerts from '@components/StatusAlerts';
 import ThemeToggle from '@components/ThemeToggle';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
+import { useConversionHandlers } from '@hooks/use-conversion-handlers';
+import { useNetworkState } from '@hooks/use-network-state';
 import { dismissConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -28,7 +30,6 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
-import { useNetworkState } from '@stores/network-store';
 import { debounce } from '@utils/debounce';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -46,7 +47,8 @@ import {
   Suspense,
 } from 'solid-js';
 
-import { useConversionHandlers } from '@/hooks/use-conversion-handlers';
+const SETTINGS_DEBOUNCE_MS = 500;
+const MEMORY_REDUCTION_SCALE = 0.5;
 
 const ConversionProgress = lazy(() => import('@components/ConversionProgress'));
 const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
@@ -83,7 +85,7 @@ const App: Component = () => {
     setEnvironmentSupported(isSupported);
   });
 
-  const debouncedSaveSettings = debounce(saveConversionSettings, 500);
+  const debouncedSaveSettings = debounce(saveConversionSettings, SETTINGS_DEBOUNCE_MS);
 
   onCleanup(() => {
     debouncedSaveSettings.cancel();
@@ -118,7 +120,7 @@ const App: Component = () => {
     setConversionSettings({
       ...conversionSettings(),
       quality: 'low',
-      scale: 0.5,
+      scale: MEMORY_REDUCTION_SCALE,
     });
 
     if (memoryWarning() && appState() !== 'converting') {

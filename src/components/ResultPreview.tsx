@@ -13,7 +13,6 @@ import {
 } from 'solid-js';
 
 const SCALE_PERCENTAGE_MULTIPLIER = 100;
-const INITIAL_LOADED_STATE = false;
 
 interface ResultPreviewProps {
   outputBlob: Blob;
@@ -35,7 +34,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     'wasTranscoded',
     'originalCodec',
   ]);
-  const [loaded, setLoaded] = createSignal(INITIAL_LOADED_STATE);
+  const [loaded, setLoaded] = createSignal(false);
 
   const previewUrl = createMemo(() => URL.createObjectURL(local.outputBlob));
 
@@ -83,7 +82,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   );
 
   createEffect(() => {
-    setLoaded(INITIAL_LOADED_STATE);
+    setLoaded(false);
   });
 
   // Revoke the previous blob URL whenever previewUrl changes to prevent memory leaks.

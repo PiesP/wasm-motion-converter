@@ -1,4 +1,4 @@
-import { networkState } from '@stores/network-store';
+import { networkState } from '@hooks/use-network-state';
 import { type Component, Show } from 'solid-js';
 
 const OFFLINE_MESSAGE = "You're offline. Using cached content. Some features may be limited.";

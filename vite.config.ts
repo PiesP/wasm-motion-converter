@@ -619,6 +619,7 @@ export default defineConfig(({ mode }) => {
         '@services': path.resolve(__dirname, './src/services'),
         '@utils': path.resolve(__dirname, './src/utils'),
         '@stores': path.resolve(__dirname, './src/stores'),
+        '@hooks': path.resolve(__dirname, './src/hooks'),
         '@t': path.resolve(__dirname, './src/types'),
       },
     },
