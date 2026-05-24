@@ -51,8 +51,6 @@ export function checkSWReadiness(): SWReadinessState {
 export async function waitForSWReady(timeout = DEFAULT_WAIT_TIMEOUT_MS): Promise<boolean> {
   const state = checkSWReadiness();
 
-  logger.debug('general', 'Service Worker readiness snapshot', state);
-
   // If not supported, return immediately (will work without SW)
   if (!state.isSupported) {
     logger.warn('general', STATUS_UNSUPPORTED);

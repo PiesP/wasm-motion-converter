@@ -275,7 +275,6 @@ export async function initializeFFmpegRuntime(
     await ensureServiceWorkerControl(callbacks);
 
     callbacks.reportStatus('Checking FFmpeg worker environment...');
-    logger.debug('ffmpeg', 'FFmpeg init environment snapshot', getInitEnvironmentSnapshot());
     reportProgress(INIT_PROGRESS_WORKER_CHECK);
     await verifyWorkerIsolation();
 

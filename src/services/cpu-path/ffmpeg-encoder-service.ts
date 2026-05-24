@@ -229,12 +229,11 @@ export class FFmpegEncoder {
     progressStart?: number,
     progressEnd?: number
   ): (event: { type: string; message: string }) => void {
-    const { core, monitoring } = this.getDeps();
+    const { monitoring } = this.getDeps();
 
     return ({ type, message }: { type: string; message: string }) => {
       const trimmed = message.trim();
       monitoring.updateLogActivity();
-      core.addLogEntry(type, message);
 
       // ffmpeg.wasm may emit a standalone "Aborted()" line on stderr even when the
       // exec call has already completed successfully. This is noisy and misleading
@@ -286,15 +285,6 @@ export class FFmpegEncoder {
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
-      logger.debug('ffmpeg', 'Parsed progress from time', {
-        hours,
-        minutes,
-        seconds,
-        currentTime,
-        totalDuration,
-        progressRatio,
-        calculatedProgress: Math.round(calculatedProgress),
-      });
       return;
     }
 
@@ -309,13 +299,6 @@ export class FFmpegEncoder {
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
-      logger.debug('ffmpeg', 'Parsed progress from out_time_us', {
-        outTimeUs: outTimeUsMatch[1],
-        currentTime,
-        totalDuration,
-        progressRatio,
-        calculatedProgress: Math.round(calculatedProgress),
-      });
       return;
     }
 
@@ -331,15 +314,6 @@ export class FFmpegEncoder {
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
-      logger.debug('ffmpeg', 'Parsed progress from out_time', {
-        hours,
-        minutes,
-        seconds,
-        currentTime,
-        totalDuration,
-        progressRatio,
-        calculatedProgress: Math.round(calculatedProgress),
-      });
       return;
     }
 
@@ -351,13 +325,6 @@ export class FFmpegEncoder {
       const calculatedProgress = progressStart + progressRatio * progressRange;
 
       monitoring.updateProgress(Math.round(calculatedProgress));
-      logger.debug('ffmpeg', 'Parsed progress from out_time_ms (microseconds)', {
-        outTimeMs: outTimeMsMatch[1],
-        currentTime,
-        totalDuration,
-        progressRatio,
-        calculatedProgress: Math.round(calculatedProgress),
-      });
     }
   }
 
@@ -716,7 +683,7 @@ export class FFmpegEncoder {
     const conversionHeartbeat = monitoring.startProgressHeartbeat(
       paletteEnd,
       encodeEnd,
-      Math.max(20, Math.min(durationSeconds * 1.2, 60))
+      gifTimeout / 1000
     );
 
     try {
