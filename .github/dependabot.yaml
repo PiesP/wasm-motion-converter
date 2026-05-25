@@ -1,5 +1,5 @@
 ---
-# Dependabot configuration for dropconvert-wasm
+# Dependabot configuration for wasm-motion-converter
 # Stack: Vite + SolidJS + TypeScript + Tailwind + ffmpeg.wasm
 
 version: 2
