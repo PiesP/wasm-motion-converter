@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import Button from '@components/ui/Button';
 import Panel from '@components/ui/Panel';
 import type { ConversionSettings } from '@t/conversion-types';

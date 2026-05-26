@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import type { VideoMetadata } from '@t/conversion-types';
 import { getCodecCandidates } from '@utils/codec-utils';
 import { getErrorMessage } from '@utils/error-utils';

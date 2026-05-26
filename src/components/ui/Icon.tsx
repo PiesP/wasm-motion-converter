@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { type Component, type JSX, Match, Switch, splitProps } from 'solid-js';
 
 const ICON_SIZES = {

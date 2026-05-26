@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import EnvironmentWarning from '@components/EnvironmentWarning';
 import OfflineBanner from '@components/OfflineBanner';
 import type { ErrorContext } from '@t/conversion-types';

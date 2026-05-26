@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { networkState } from '@hooks/use-network-state';
 import { type Component, Show } from 'solid-js';
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 /**
  * Structured logging utility with environment-aware filtering.
  *

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { toBlobURL } from '@ffmpeg/util';
 import { type CDNProvider, getEnabledProviders } from '@utils/cdn-config';
 

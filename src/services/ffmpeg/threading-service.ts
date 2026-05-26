@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 /**
  * Calculate optimal thread count for FFmpeg operations.
  * Uses 75% of available CPU cores for better performance on modern CPUs.

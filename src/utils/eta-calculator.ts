@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 /**
  * ETA (Estimated Time of Arrival) Calculator for conversion progress tracking
  *

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { cancelDialog, confirmDialog, getConfirmationState } from '@stores/confirmation-store';
 import type { ValidationWarning } from '@t/validation-types';
 import { type Component, createEffect, For, type JSX, onCleanup, onMount, Show } from 'solid-js';

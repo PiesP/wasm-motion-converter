@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { setConversionProgress, setConversionStatusMessage } from '@stores/conversion-store';
 import { ETACalculator } from '@utils/eta-calculator';
 import { formatDuration } from '@utils/format-utils';

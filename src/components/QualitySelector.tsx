@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import type { ConversionQuality } from '@t/conversion-types';
 import { type Component, splitProps } from 'solid-js';
 

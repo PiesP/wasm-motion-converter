@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import type { EncoderWorkerAPI, WorkerPoolOptions } from '@t/worker-types';
 
 import { CANCELLED_MESSAGE, createAbortPromise } from '@utils/cancellation-context';

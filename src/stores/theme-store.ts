@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { logger } from '@utils/logger';
 import { createSignal } from 'solid-js';
 

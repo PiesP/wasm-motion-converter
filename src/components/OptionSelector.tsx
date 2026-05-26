@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { For, type JSX, Show, splitProps } from 'solid-js';
 import Tooltip from './Tooltip';
 import Icon from './ui/Icon';

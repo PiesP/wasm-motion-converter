@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import {
   computeExpectedFramesFromDuration,

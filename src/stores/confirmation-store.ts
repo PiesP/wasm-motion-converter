@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import type { ValidationWarning } from '@t/validation-types';
 import { createSignal } from 'solid-js';
 

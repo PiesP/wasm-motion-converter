@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 /**
  * Common interface for video demuxers
  * Abstracts mp4box, web-demuxer, and future demuxer implementations

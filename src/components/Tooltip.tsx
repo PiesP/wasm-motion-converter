@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { type Component, createSignal, type JSX, Show, splitProps } from 'solid-js';
 
 const TOOLTIP_Z_INDEX = 'z-10';

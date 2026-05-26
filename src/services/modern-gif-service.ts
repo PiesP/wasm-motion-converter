@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { esmShModuleUrl } from 'virtual:cdn-deps';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import type { EncoderFrame } from '@t/conversion-types';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import {
   encodeWebPFramesInChunks,

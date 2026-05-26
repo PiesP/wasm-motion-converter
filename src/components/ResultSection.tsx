@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import type { ConversionResult } from '@t/conversion-types';
 import type { Component } from 'solid-js';
 import { For, lazy, Show, Suspense } from 'solid-js';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 

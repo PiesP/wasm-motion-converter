@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 /**
  * DOM focus helpers for common UI patterns.
  */

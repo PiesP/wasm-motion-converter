@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import FormatSelector from '@components/FormatSelector';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';

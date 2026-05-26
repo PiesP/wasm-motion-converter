@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import Panel from '@components/ui/Panel';
 import { type Component, splitProps } from 'solid-js';
 import ProgressBar from './ProgressBar';

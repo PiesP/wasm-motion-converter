@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { canvasToBlob, createCanvas } from '@services/webcodecs/decoder/canvas-service';
 import { formatFrameName } from '@services/webcodecs/decoder/capture-frame-service';
 import { createDemuxer } from '@services/webcodecs/demuxer/demuxer-factory-service';

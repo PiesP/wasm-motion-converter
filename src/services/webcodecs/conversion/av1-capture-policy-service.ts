@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import type { ConversionOptions } from '@t/conversion-types';
 
 export const AV1_FRAME_CALLBACK_FAILURE_KEY =

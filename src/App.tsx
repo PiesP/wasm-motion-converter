@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import ConfirmationModal from '@components/ConfirmationModal';
 import ExportLogsButton from '@components/ExportLogsButton';
 import FileDropzone from '@components/FileDropzone';

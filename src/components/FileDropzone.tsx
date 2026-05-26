@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { type Component, createMemo, createSignal, Show, splitProps } from 'solid-js';
 
 import ProgressBar from './ProgressBar';

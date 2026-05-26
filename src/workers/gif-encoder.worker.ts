@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { esmShModuleUrl } from 'virtual:cdn-deps';
 import type { ModernGifOptions } from '@services/modern-gif-service';
 import { encodeModernGif } from '@services/modern-gif-service';

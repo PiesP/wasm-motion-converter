@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { canUseDemuxer } from '@services/webcodecs/demuxer/demuxer-factory-service';
 import type { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
 import type { ConversionOptions, EncoderFrame, VideoMetadata } from '@t/conversion-types';

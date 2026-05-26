@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import type { ConversionFormat } from '@t/conversion-types';
 import { TIMEOUT_CONFIG } from './constants';
 import { logger } from './logger';

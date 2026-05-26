@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
 

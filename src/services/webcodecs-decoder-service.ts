@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { createCanvas } from '@services/webcodecs/decoder/canvas-service';
 import {
   type CaptureFrameState,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import type { Setter } from 'solid-js';
 import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';

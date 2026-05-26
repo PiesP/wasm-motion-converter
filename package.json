@@ -2,6 +2,7 @@
   "name": "wasm-motion-converter",
   "version": "0.0.0",
   "license": "MIT",
+  "author": "PiesP",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.2.2",

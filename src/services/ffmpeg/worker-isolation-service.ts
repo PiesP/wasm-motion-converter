@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import { TIMEOUT_FFMPEG_WORKER_CHECK } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { withTimeout } from '@utils/with-timeout';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 PiesP
+
 import Panel from '@components/ui/Panel';
 import type { ConversionErrorType } from '@t/conversion-types';
 import { type Component, createMemo, onMount, Show, splitProps } from 'solid-js';
