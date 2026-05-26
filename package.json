@@ -30,7 +30,7 @@
     "sri:generate": "tsx scripts/generate-sri-manifest.ts",
     "prebuild": "pnpm -s sri:generate && pnpm -s licenses:generate && pnpm -s quality",
     "build": "vite build",
-    "analyze": "vite build && echo '\nBundle analysis generated at dist/stats.html'",
+    "analyze": "vite build && node -e \"console.log('\\nBundle analysis generated at dist/stats.html')\"",
     "preview": "vite preview",
     "clean": "rimraf dist node_modules/.vite",
     "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s knip",
