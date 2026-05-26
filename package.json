@@ -23,6 +23,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "typecheck": "pnpm -s check",
     "knip": "knip --dependencies",
+    "circular": "pnpm dlx madge --ts-config tsconfig.json --circular src/**/*.ts",
     "knip:full": "knip --files --exports --dependencies --reporter compact --max-show-issues 50 --no-exit-code",
     "licenses:generate": "tsx scripts/generate-third-party-licenses.ts",
     "sri:generate": "tsx scripts/generate-sri-manifest.ts",
@@ -31,8 +32,8 @@
     "analyze": "vite build && echo '\nBundle analysis generated at dist/stats.html'",
     "preview": "vite preview",
     "clean": "rimraf dist node_modules/.vite",
-    "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s knip",
-    "quality:fix": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s check && pnpm -s knip",
+    "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s knip",
+    "quality:fix": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s check && pnpm -s circular && pnpm -s knip",
     "quality:ci": "pnpm -s quality"
   },
   "dependencies": {

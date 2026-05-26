@@ -1,112 +1,76 @@
-import fs from 'node:fs';
+import { execFile } from 'node:child_process';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
-const LICENSE_FILE_NAMES = [
-  'LICENSE',
-  'LICENSE.md',
-  'LICENSE.txt',
-  'license',
-  'license.md',
-] as const;
+const execFileAsync = promisify(execFile);
 
-const LICENSE_NOT_AVAILABLE =
-  'License text not available in package. Please refer to the package repository for license details.';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, '..');
+const outputPath = path.join(rootDir, 'public', 'LICENSES.md');
 
-const OUTPUT_RELATIVE_PATH = path.join('public', 'LICENSES.md');
-
-interface LicenseInfo {
+interface LicenseEntry {
   name: string;
+  versions: string[];
   license: string;
-  text: string;
+  homepage?: string;
+  description?: string;
   repository?: string;
 }
 
-interface PackageJsonData {
-  license?: string;
-  dependencies?: Record<string, string>;
-  repository?: string | { url?: string };
+interface FFmpegLicense {
+  name: string;
+  license: string;
+  text: string;
+  repository: string;
 }
 
-const dirname = path.dirname(fileURLToPath(import.meta.url));
-const projectRoot = path.resolve(dirname, '..');
-function loadRootPackageJson(): PackageJsonData {
-  const packageJsonPath = path.join(projectRoot, 'package.json');
-  try {
-    const content = fs.readFileSync(packageJsonPath, 'utf-8');
-    return JSON.parse(content) as PackageJsonData;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`Failed to read package.json: ${errorMessage}`);
-    throw error;
-  }
+function getRepositoryUrl(entry: LicenseEntry): string | undefined {
+  if (entry.repository) return entry.repository;
+  if (entry.homepage) return entry.homepage;
+  if (entry.description?.toLowerCase().includes('github')) return undefined;
+  return undefined;
 }
 
-function loadLicenseText(depPath: string): string {
-  for (const fileName of LICENSE_FILE_NAMES) {
-    const licensePath = path.join(depPath, fileName);
-    if (fs.existsSync(licensePath)) {
-      try {
-        return fs.readFileSync(licensePath, 'utf-8');
-      } catch (_error) {
-        console.warn(`Warning: Could not read license file ${fileName} in ${depPath}`);
-      }
+function flattenPackagesByLicense(raw: unknown): LicenseEntry[] {
+  const packages: LicenseEntry[] = [];
+
+  if (!raw || typeof raw !== 'object') return packages;
+
+  for (const [, entries] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(entries)) continue;
+
+    for (const entry of entries as unknown[]) {
+      if (!entry || typeof entry !== 'object') continue;
+
+      const { name, versions, license, homepage, description, repository } = entry as Record<
+        string,
+        unknown
+      >;
+
+      if (typeof name !== 'string' || !name) continue;
+
+      packages.push({
+        name,
+        versions: Array.isArray(versions) ? versions.map(String) : [],
+        license: typeof license === 'string' ? license : 'UNKNOWN',
+        homepage: typeof homepage === 'string' ? homepage : undefined,
+        description: typeof description === 'string' ? description : undefined,
+        repository: typeof repository === 'string' ? repository : undefined,
+      });
     }
   }
 
-  return LICENSE_NOT_AVAILABLE;
+  // Sort by package name
+  packages.sort((a, b) => a.name.localeCompare(b.name, 'en'));
+
+  return packages;
 }
 
-function extractRepositoryUrl(repoField: string | { url?: string } | undefined): string {
-  if (!repoField) {
-    return '';
-  }
-
-  let repoUrl = '';
-
-  if (typeof repoField === 'string') {
-    repoUrl = repoField;
-  } else if (repoField.url) {
-    repoUrl = repoField.url;
-  }
-
-  return repoUrl.replace(/^git\+/, '').replace(/\.git$/, '');
-}
-
-function readDependencyLicense(depName: string): LicenseInfo | null {
-  const depPath = path.join(projectRoot, 'node_modules', depName);
-
-  if (!fs.existsSync(depPath)) {
-    console.warn(`Warning: ${depName} not found in node_modules`);
-    return null;
-  }
-
-  const depPackageJsonPath = path.join(depPath, 'package.json');
-  let depPackageJson: PackageJsonData = {};
-
-  try {
-    const content = fs.readFileSync(depPackageJsonPath, 'utf-8');
-    depPackageJson = JSON.parse(content) as PackageJsonData;
-  } catch (error) {
-    console.warn(
-      `Warning: Cannot read package.json for ${depName}: ${error instanceof Error ? error.message : String(error)}`
-    );
-    return null;
-  }
-
-  const licenseText = loadLicenseText(depPath);
-
-  const repoUrl = extractRepositoryUrl(depPackageJson.repository);
-
-  return {
-    name: depName,
-    license: depPackageJson.license || 'UNKNOWN',
-    text: licenseText,
-    repository: repoUrl,
-  };
-}
-
-function createFFmpegLicenseEntry(): LicenseInfo {
+function createFFmpegLicenseEntry(): FFmpegLicense {
   return {
     name: 'FFmpeg (WebAssembly Core)',
     license: 'LGPL 2.1+',
@@ -126,21 +90,30 @@ make the source code of your modifications available under the LGPL license.`,
   };
 }
 
-function generateMarkdownOutput(licenses: LicenseInfo[]): string {
-  const licenseEntries = licenses
-    .map(
-      (l) => `
-## ${l.name}
+function generateMarkdownOutput(packages: LicenseEntry[]): string {
+  const entries = packages.map((pkg) => {
+    const version = pkg.versions.length > 0 ? ` v${pkg.versions.join(', v')}` : '';
+    const repoUrl = getRepositoryUrl(pkg);
 
-**License**: ${l.license}
-${l.repository ? `**Repository**: ${l.repository}` : ''}
+    return `
+## ${pkg.name}${version}
+
+**License**: ${pkg.license}
+${repoUrl ? `**Repository**: ${repoUrl}` : ''}
+${pkg.description ? `\n${pkg.description}` : ''}
+`;
+  });
+
+  const ffmpegEntry = `
+## ${createFFmpegLicenseEntry().name}
+
+**License**: ${createFFmpegLicenseEntry().license}
+**Repository**: ${createFFmpegLicenseEntry().repository}
 
 \`\`\`
-${l.text}
+${createFFmpegLicenseEntry().text}
 \`\`\`
-`
-    )
-    .join('\n---\n');
+`;
 
   return `# Third-Party Licenses
 
@@ -155,44 +128,37 @@ for the FFmpeg components.
 
 ---
 
-${licenseEntries}
+${entries.join('---\n')}
+
+---${ffmpegEntry}
 `;
 }
 
-function writeLicensesFile(content: string): void {
-  const outputPath = path.join(projectRoot, OUTPUT_RELATIVE_PATH);
-  const outputDir = path.dirname(outputPath);
+async function runPnpmLicenses(): Promise<unknown> {
+  const args = ['-s', 'licenses', 'list', '--json', '--prod'];
+  const { stdout } = await execFileAsync('pnpm', args, {
+    cwd: rootDir,
+    maxBuffer: 20 * 1024 * 1024,
+    env: process.env,
+  });
 
-  try {
-    fs.mkdirSync(outputDir, { recursive: true });
-    fs.writeFileSync(outputPath, content, 'utf-8');
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`Failed to write licenses file: ${errorMessage}`);
-    throw error;
-  }
+  return JSON.parse(stdout) as unknown;
 }
 
-try {
-  const packageJson = loadRootPackageJson();
-  const dependencies = Object.keys(packageJson.dependencies || {});
+async function main(): Promise<void> {
+  const raw = await runPnpmLicenses();
+  const packages = flattenPackagesByLicense(raw);
 
-  const licenses: LicenseInfo[] = [createFFmpegLicenseEntry()];
+  const markdown = generateMarkdownOutput(packages);
 
-  for (const dep of dependencies) {
-    const licenseInfo = readDependencyLicense(dep);
-    if (licenseInfo) {
-      licenses.push(licenseInfo);
-    }
-  }
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, markdown, 'utf8');
 
-  const output = generateMarkdownOutput(licenses);
-  writeLicensesFile(output);
-
-  console.log(`Generated ${OUTPUT_RELATIVE_PATH}`);
-  console.log(`Found ${licenses.length} dependencies (including FFmpeg core)`);
-} catch (error) {
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  console.error(`License generation failed: ${errorMessage}`);
-  process.exit(1);
+  console.log(`Generated ${path.relative(rootDir, outputPath)}`);
+  console.log(`Found ${packages.length} dependencies (plus FFmpeg core)`);
 }
+
+main().catch((err) => {
+  console.error('Failed to generate third-party licenses:', err);
+  process.exitCode = 1;
+});
