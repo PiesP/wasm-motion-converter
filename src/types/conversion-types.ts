@@ -76,7 +76,7 @@ export const CONVERSION_SCALES: readonly ConversionScale[] = [0.5, 0.75, 1.0] as
  * - `auto`: Use the default strategy selection (typically GPU/WebCodecs + modern-gif when available)
  * - `ffmpeg-palette`: Prefer FFmpeg palettegen/paletteuse pipeline (often higher quality; performance can vary by codec/input)
  */
-export type GifEncoderPreference = 'auto' | 'ffmpeg-palette';
+type GifEncoderPreference = 'auto' | 'ffmpeg-palette';
 
 /**
  * User-selected conversion settings
@@ -272,7 +272,7 @@ export interface VideoMetadata {
 }
 
 /** Conversion path types */
-export type ConversionPath = 'gpu' | 'cpu';
+type ConversionPath = 'gpu' | 'cpu';
 
 /** Conversion request */
 export interface ConversionRequest {

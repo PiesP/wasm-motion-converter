@@ -876,4 +876,6 @@ async function convertViaWebCodecsFrames(params: {
 export function cleanup(): void {
   gifWorkerPool?.terminate();
   gifWorkerPool = null;
+  gifWorkerPoolPromise = null;
+  canvasWebPEncodeSupport = null;
 }

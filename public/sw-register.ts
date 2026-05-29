@@ -51,6 +51,9 @@ type SWRegisterGlobal = typeof globalThis & {
 };
 
 (globalThis as SWRegisterGlobal).registerServiceWorker = registerServiceWorker;
+(
+  globalThis as SWRegisterGlobal & { unregisterServiceWorker?: typeof unregisterServiceWorker }
+).unregisterServiceWorker = unregisterServiceWorker;
 
 function setupUpdateCheck(registration: ServiceWorkerRegistration): void {
   const UPDATE_INTERVAL = 60 * 60 * 1000; // 1 hour
