@@ -28,7 +28,7 @@
     "knip:full": "knip --files --exports --dependencies --reporter compact --max-show-issues 50 --no-exit-code",
     "prebuild": "pnpm -s quality",
     "build": "vite build",
-    "analyze": "vite build && node -e \"console.log('\\nBundle analysis generated at dist/stats.html')\"",
+    "analyze": "VITE_ANALYZE_BUNDLE=true vite build && node -e \"console.log('\\nBundle analysis generated at dist/stats.html')\"",
     "preview": "vite preview",
     "clean": "rm -rf dist node_modules/.vite",
     "test": "cd test && pnpm test",
@@ -41,25 +41,26 @@
     "@ffmpeg/ffmpeg": "0.12.15",
     "@ffmpeg/util": "0.12.2",
     "comlink": "4.4.2",
-    "modern-gif": "2.1.0",
     "solid-js": "1.9.13"
   },
   "cdnDependencies": {
     "@ffmpeg/core-mt": "0.12.10",
+    "modern-gif": "2.1.0",
     "mp4box": "0.5.2",
     "web-demuxer": "4.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.15",
-    "@tailwindcss/postcss": "^4.3.0",
-    "@types/node": "^25.9.1",
-    "esbuild": "^0.28.0",
-    "knip": "^6.14.1",
-    "postcss": "^8.5.15",
-    "rollup-plugin-visualizer": "^7.0.1",
-    "tailwindcss": "^4.3.0",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.14",
-    "vite-plugin-solid": "^2.11.12"
+    "@biomejs/biome": "2.4.15",
+    "@tailwindcss/postcss": "4.3.0",
+    "@types/node": "25.9.1",
+    "esbuild": "0.28.0",
+    "knip": "6.14.1",
+    "modern-gif": "2.1.0",
+    "postcss": "8.5.15",
+    "rollup-plugin-visualizer": "7.0.1",
+    "tailwindcss": "4.3.0",
+    "typescript": "6.0.3",
+    "vite": "8.0.14",
+    "vite-plugin-solid": "2.11.12"
   }
 }

@@ -12,10 +12,6 @@
       "esm.sh": "sha384-CTiqT9gVAR2ZPpLqyPGnScRtdVJVYsnncW6+XkNx/wFNoKi+8adu8sTBGYLkjw2y",
       "jsdelivr": "sha384-6QxmnIUsEiG9W7zHFG6h33+8JksmrZ9MpxGcTnSvrZCrtzaxG6y1sng9ReNZPdJT"
     },
-    "modern-gif": {
-      "esm.sh": "sha384-5A/wr5hhDtbmydUpLyhzMoiLwSx3FbFEdqq+MTiOa4RcG4r1/sj3LFU221wA/HvA",
-      "jsdelivr": "sha384-0n2ToXVHou2Juvn2xrNydJVKD1ku4GIOpG6y8gtFq2eQmDvHyTUjqzQIUgFWMW5q"
-    },
     "solid-js": {
       "esm.sh": "sha384-/K1chA0r9DEbfexR+wceqaDiiguYNj9nMVuE4eiBTFkJkEA1FFXviQGIrZtorTOC",
       "jsdelivr": "sha384-0TSN3+YxtgklfxS9SKX2TPwLES+5ojWD6t8/ERFi4Z7ZT02iY8ywtXIY89v23SOM"
@@ -39,6 +35,10 @@
     "@ffmpeg/core-mt": {
       "esm.sh": "sha384-MI+v8oVLxDwRa/jf5wiyuDi8QBjdRx2uW8/H4gxxIvitd5kshfzgFMjoZV1Enmrx",
       "jsdelivr": "sha384-tw+fRTcThTMz0DLp+w5tuOW4OYXvkza8O3wlxV1k487DUV0eEi2jCN7uYIx6XDgb"
+    },
+    "modern-gif": {
+      "esm.sh": "sha384-5A/wr5hhDtbmydUpLyhzMoiLwSx3FbFEdqq+MTiOa4RcG4r1/sj3LFU221wA/HvA",
+      "jsdelivr": "sha384-0n2ToXVHou2Juvn2xrNydJVKD1ku4GIOpG6y8gtFq2eQmDvHyTUjqzQIUgFWMW5q"
     },
     "mp4box": {
       "esm.sh": "sha384-iPyIT3QWtys6xuC14F9a6hUfA04JE5PKM9tjtUSYc7DWc3Jv1OZIDBgXYtpuezqa",

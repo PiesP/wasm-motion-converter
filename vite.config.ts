@@ -804,7 +804,7 @@ export default defineConfig(({ mode }) => {
 
     optimizeDeps: {
       exclude: ['@ffmpeg/ffmpeg'],
-      include: ['solid-js/web', 'solid-js/store'],
+      include: ['solid-js/web'],
     },
 
     build: {

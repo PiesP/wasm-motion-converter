@@ -34,16 +34,6 @@ is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or 
 **License**: MIT
 **Repository**: https://github.com/frenic/csstype#readme
 ---
-## modern-gif v2.1.0
-
-**License**: MIT
-**Repository**: https://github.com/qq15725/modern-gif
----
-## modern-palette v2.0.0
-
-**License**: MIT
-**Repository**: https://github.com/qq15725/modern-palette
----
 ## seroval v1.5.4
 
 **License**: MIT
