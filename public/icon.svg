@@ -1,13 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <defs>
-    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#3b82f6" />
-      <stop offset="100%" stop-color="#8b5cf6" />
-    </linearGradient>
-  </defs>
-  <circle cx="50" cy="50" r="45" fill="url(#gradient)" />
-  <polygon points="38,30 38,70 72,50" fill="#fff" />
-  <path d="M 15 20 L 25 20" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity="0.7" />
-  <path d="M 15 50 L 30 50" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity="0.7" />
-  <path d="M 15 80 L 25 80" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity="0.7" />
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#3b82f6" /><stop offset="100%" stop-color="#8b5cf6" /></linearGradient></defs><circle cx="50" cy="50" r="45" fill="url(#gradient)" /><polygon points="38,30 38,70 72,50" fill="#fff" /><path d="M 15 20 L 25 20" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity="0.7" /><path d="M 15 50 L 30 50" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity="0.7" /><path d="M 15 80 L 25 80" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity="0.7" /></svg>

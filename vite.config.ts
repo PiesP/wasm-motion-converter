@@ -195,7 +195,7 @@ function importMapPlugin(): Plugin {
       const scriptTag = `<script type="importmap">${JSON.stringify(importMap, null, 2)}</script>`;
 
       let sriManifest: {
-        entries: Record<string, Record<string, { integrity: string }>>;
+        entries: Record<string, Record<string, string>>;
       } | null = null;
       try {
         const manifestPath = path.join(process.cwd(), 'public', 'cdn-integrity.json');
@@ -235,8 +235,8 @@ function importMapPlugin(): Plugin {
             const isFFmpegPackage = dep.startsWith('@ffmpeg/');
             const cdnKey = isFFmpegPackage ? 'jsdelivr' : 'esm.sh';
 
-            if (entry?.[cdnKey]?.integrity) {
-              integrityAttr = ` integrity="${entry[cdnKey].integrity}"`;
+            if (entry?.[cdnKey]) {
+              integrityAttr = ` integrity="${entry[cdnKey]}"`;
             }
           }
 
@@ -409,8 +409,8 @@ function compileServiceWorkerPlugin(options: DevSwOptions = {}): SwCompilePlugin
           'Content-Security-Policy',
           "default-src 'self'; " +
             "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' " +
-            'https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdn.skypack.dev; ' +
-            "connect-src 'self' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdn.skypack.dev; " +
+            'https://esm.sh https://cdn.jsdelivr.net https://unpkg.com ' +
+            "connect-src 'self' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com " +
             "worker-src 'self' blob:; " +
             "style-src 'self' 'unsafe-inline'; " +
             "object-src 'none'; " +
@@ -556,28 +556,22 @@ const CDN_SOURCES = {
     `https://esm.sh/${pkg}@${version}${subpath}?target=esnext`,
   jsdelivr: (pkg: string, version: string, subpath: string) =>
     `https://cdn.jsdelivr.net/npm/${pkg}@${version}${subpath}/+esm`,
-  unpkg: (pkg: string, version: string, subpath: string) =>
-    `https://unpkg.com/${pkg}@${version}${subpath}?module`,
 } as const;
 
 type CdnKey = keyof typeof CDN_SOURCES;
 
-async function fetchAndHash(
-  url: string,
-  timeout = 30_000
-): Promise<{ integrity: string; size: number } | null> {
+async function fetchIntegrity(url: string, timeout = 30_000): Promise<string | null> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    setTimeout(() => controller.abort(), timeout);
     const response = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': 'SRI-Generator/1.0.0' },
     });
-    clearTimeout(timeoutId);
     if (!response.ok) return null;
     const buffer = await response.arrayBuffer();
     const hash = createHash('sha384').update(Buffer.from(buffer)).digest('base64');
-    return { integrity: `sha384-${hash}`, size: buffer.byteLength };
+    return `sha384-${hash}`;
   } catch {
     return null;
   }
@@ -589,25 +583,20 @@ function sriGenerationPlugin(): Plugin {
     apply: 'build',
     async buildStart() {
       const deps = readRuntimeDependencies();
-      const entries: Record<
-        string,
-        Record<string, { url: string; integrity: string; size: number }>
-      > = {};
+      const entries: Record<string, Record<string, string>> = {};
 
       for (const [pkg, version] of Object.entries(deps)) {
         const subpaths = pkg === 'solid-js' ? SOLID_JS_SUBPATHS : [''];
         for (const subpath of subpaths) {
           const key = subpath ? `${pkg}${subpath}` : pkg;
-          const entry: Record<string, { url: string; integrity: string; size: number }> = {};
+          const entry: Record<string, string> = {};
           const providers = Object.keys(CDN_SOURCES) as CdnKey[];
-          const effectiveProviders =
-            pkg === 'solid-js' && subpath ? providers.filter((p) => p !== 'unpkg') : providers;
 
-          for (const provider of effectiveProviders) {
+          for (const provider of providers) {
             const url = CDN_SOURCES[provider](pkg, version, subpath);
-            const result = await fetchAndHash(url);
-            if (result) {
-              entry[provider] = { url, integrity: result.integrity, size: result.size };
+            const integrity = await fetchIntegrity(url);
+            if (integrity) {
+              entry[provider] = integrity;
             }
           }
 
@@ -617,11 +606,10 @@ function sriGenerationPlugin(): Plugin {
         }
       }
 
-      const manifest = { version: '1.0.0', generated: new Date().toISOString(), entries };
       mkdirSync(path.join(process.cwd(), 'public'), { recursive: true });
       writeFileSync(
         path.join(process.cwd(), 'public', 'cdn-integrity.json'),
-        JSON.stringify(manifest, null, 2),
+        JSON.stringify({ entries }, null, 2),
         'utf-8'
       );
       console.log(`✓ SRI manifest generated (${Object.keys(entries).length} entries)`);
@@ -692,7 +680,6 @@ is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or 
 ---
 
 ${pkgEntries}
-
 ## FFmpeg (WebAssembly Core)
 
 **License**: LGPL 2.1+

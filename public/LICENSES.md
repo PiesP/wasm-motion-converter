@@ -59,7 +59,6 @@ is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or 
 **License**: MIT
 **Repository**: https://solidjs.com
 
-
 ## FFmpeg (WebAssembly Core)
 
 **License**: LGPL 2.1+

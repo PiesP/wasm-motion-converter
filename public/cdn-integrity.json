@@ -1,190 +1,52 @@
 {
-  "version": "1.0.0",
-  "generated": "2026-05-29T05:03:52.221Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
-      "esm.sh": {
-        "url": "https://esm.sh/@ffmpeg/ffmpeg@0.12.15?target=esnext",
-        "integrity": "sha384-cFlJq7Bjrsofh2tNxZ6VAkw/eTeVkR1shsqCXrSeeNy7YZLE+DkDlFsPrwC67jXp",
-        "size": 218
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm",
-        "integrity": "sha384-t9ezkbzwJrFIIhQVxXgU9kDQDFOhmmDcloJB8Qu6P6tHccWy6qTXLplWAlht5a/1",
-        "size": 3438
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/@ffmpeg/ffmpeg@0.12.15?module",
-        "integrity": "sha384-6gtICseWoSfROfflbGSkg1kwPTH+2SxMvyn0e3THJbNoyPxx5tzNk4EXfLIHD2iD",
-        "size": 4420
-      }
+      "esm.sh": "sha384-cFlJq7Bjrsofh2tNxZ6VAkw/eTeVkR1shsqCXrSeeNy7YZLE+DkDlFsPrwC67jXp",
+      "jsdelivr": "sha384-t9ezkbzwJrFIIhQVxXgU9kDQDFOhmmDcloJB8Qu6P6tHccWy6qTXLplWAlht5a/1"
     },
     "@ffmpeg/util": {
-      "esm.sh": {
-        "url": "https://esm.sh/@ffmpeg/util@0.12.2?target=esnext",
-        "integrity": "sha384-7Op+HYTiMSDUH6wZEwv+T8U7RZKiyO3mVo1Wx0XFSB8zM+CG+4jR39aDnJS8Velb",
-        "size": 89
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/+esm",
-        "integrity": "sha384-eXElrPbYJXxhUpBNnhEZKuel4U5lZXYtx/1lFr5BICq9Xca+6BRvl6r1qQ02ZSSh",
-        "size": 2165
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/@ffmpeg/util@0.12.2?module",
-        "integrity": "sha384-zjRBlqoNfAZ6rEggc1lKm2IHgZQdEitUd280nmKoIQTpQQuyAVXCdHfUYtT5mTiC",
-        "size": 6197
-      }
+      "esm.sh": "sha384-7Op+HYTiMSDUH6wZEwv+T8U7RZKiyO3mVo1Wx0XFSB8zM+CG+4jR39aDnJS8Velb",
+      "jsdelivr": "sha384-eXElrPbYJXxhUpBNnhEZKuel4U5lZXYtx/1lFr5BICq9Xca+6BRvl6r1qQ02ZSSh"
     },
     "comlink": {
-      "esm.sh": {
-        "url": "https://esm.sh/comlink@4.4.2?target=esnext",
-        "integrity": "sha384-CTiqT9gVAR2ZPpLqyPGnScRtdVJVYsnncW6+XkNx/wFNoKi+8adu8sTBGYLkjw2y",
-        "size": 80
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/comlink@4.4.2/+esm",
-        "integrity": "sha384-6QxmnIUsEiG9W7zHFG6h33+8JksmrZ9MpxGcTnSvrZCrtzaxG6y1sng9ReNZPdJT",
-        "size": 4814
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/comlink@4.4.2?module",
-        "integrity": "sha384-dqOZtJFgK+hN/4whCZru2i0RUuiKbWaO9p/JMfgXH5w5NqgkWrB+PMsY+L1ZjbFJ",
-        "size": 12629
-      }
+      "esm.sh": "sha384-CTiqT9gVAR2ZPpLqyPGnScRtdVJVYsnncW6+XkNx/wFNoKi+8adu8sTBGYLkjw2y",
+      "jsdelivr": "sha384-6QxmnIUsEiG9W7zHFG6h33+8JksmrZ9MpxGcTnSvrZCrtzaxG6y1sng9ReNZPdJT"
     },
     "modern-gif": {
-      "esm.sh": {
-        "url": "https://esm.sh/modern-gif@2.1.0?target=esnext",
-        "integrity": "sha384-5A/wr5hhDtbmydUpLyhzMoiLwSx3FbFEdqq+MTiOa4RcG4r1/sj3LFU221wA/HvA",
-        "size": 136
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/modern-gif@2.1.0/+esm",
-        "integrity": "sha384-0n2ToXVHou2Juvn2xrNydJVKD1ku4GIOpG6y8gtFq2eQmDvHyTUjqzQIUgFWMW5q",
-        "size": 18660
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/modern-gif@2.1.0?module",
-        "integrity": "sha384-gtn2+Whfu1InMW6ZXcm2USBK64KqzwrVGQkP9dvO8red0MdjEjb9lqSvia2oMfh3",
-        "size": 39778
-      }
+      "esm.sh": "sha384-5A/wr5hhDtbmydUpLyhzMoiLwSx3FbFEdqq+MTiOa4RcG4r1/sj3LFU221wA/HvA",
+      "jsdelivr": "sha384-0n2ToXVHou2Juvn2xrNydJVKD1ku4GIOpG6y8gtFq2eQmDvHyTUjqzQIUgFWMW5q"
     },
     "solid-js": {
-      "esm.sh": {
-        "url": "https://esm.sh/solid-js@1.9.13?target=esnext",
-        "integrity": "sha384-/K1chA0r9DEbfexR+wceqaDiiguYNj9nMVuE4eiBTFkJkEA1FFXviQGIrZtorTOC",
-        "size": 85
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/+esm",
-        "integrity": "sha384-0TSN3+YxtgklfxS9SKX2TPwLES+5ojWD6t8/ERFi4Z7ZT02iY8ywtXIY89v23SOM",
-        "size": 22690
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/solid-js@1.9.13?module",
-        "integrity": "sha384-17UvfDSqGPVMWRyDvlugqdo6QjHIzXoS9TS1h+EUaK7ExACxv6mi8anSTCfgJg27",
-        "size": 20611
-      }
+      "esm.sh": "sha384-/K1chA0r9DEbfexR+wceqaDiiguYNj9nMVuE4eiBTFkJkEA1FFXviQGIrZtorTOC",
+      "jsdelivr": "sha384-0TSN3+YxtgklfxS9SKX2TPwLES+5ojWD6t8/ERFi4Z7ZT02iY8ywtXIY89v23SOM"
     },
     "solid-js/web": {
-      "esm.sh": {
-        "url": "https://esm.sh/solid-js@1.9.13/web?target=esnext",
-        "integrity": "sha384-bcpJMTpZcvXPQrB+Uk5jkot9lcMFOlpFK2si3IAeLIa1BPI6RCG6rYXk3A10lg0R",
-        "size": 131
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/web/+esm",
-        "integrity": "sha384-Nk5CjECM79WK+cJBubipDMRJIKCHFZPb32GjrIBZ2POfbHkxh0kY/zR+z2QZBgRA",
-        "size": 17836
-      }
+      "esm.sh": "sha384-bcpJMTpZcvXPQrB+Uk5jkot9lcMFOlpFK2si3IAeLIa1BPI6RCG6rYXk3A10lg0R",
+      "jsdelivr": "sha384-Nk5CjECM79WK+cJBubipDMRJIKCHFZPb32GjrIBZ2POfbHkxh0kY/zR+z2QZBgRA"
     },
     "solid-js/store": {
-      "esm.sh": {
-        "url": "https://esm.sh/solid-js@1.9.13/store?target=esnext",
-        "integrity": "sha384-nXoRXJXRBpGyXksSBzu7juMaYPeLAdKfkwUwCKCQDHUrnzyIbtXT1TOzCWJsJtTt",
-        "size": 135
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/store/+esm",
-        "integrity": "sha384-1VV6IcUhObJlIwpwNOAVU6+5gCnzAzL2Ol8p5JxBpJXn+9kzfFUhx5kmq3Ebgb8W",
-        "size": 7611
-      }
+      "esm.sh": "sha384-nXoRXJXRBpGyXksSBzu7juMaYPeLAdKfkwUwCKCQDHUrnzyIbtXT1TOzCWJsJtTt",
+      "jsdelivr": "sha384-1VV6IcUhObJlIwpwNOAVU6+5gCnzAzL2Ol8p5JxBpJXn+9kzfFUhx5kmq3Ebgb8W"
     },
     "solid-js/h": {
-      "esm.sh": {
-        "url": "https://esm.sh/solid-js@1.9.13/h?target=esnext",
-        "integrity": "sha384-bUDNic6aEyfdzJHYdyV9Grnh3jISWQ+LVW57fNPmDMKyEjoxGgOz0Ha+SHreW/Dg",
-        "size": 179
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/h/+esm",
-        "integrity": "sha384-L0XdzLjXBoRKVKb4YuHKH5lgL0+E78mLyL+I0+vbHJkFMwpOG+hSnltRdd+DTFXW",
-        "size": 2807
-      }
+      "esm.sh": "sha384-bUDNic6aEyfdzJHYdyV9Grnh3jISWQ+LVW57fNPmDMKyEjoxGgOz0Ha+SHreW/Dg",
+      "jsdelivr": "sha384-L0XdzLjXBoRKVKb4YuHKH5lgL0+E78mLyL+I0+vbHJkFMwpOG+hSnltRdd+DTFXW"
     },
     "solid-js/html": {
-      "esm.sh": {
-        "url": "https://esm.sh/solid-js@1.9.13/html?target=esnext",
-        "integrity": "sha384-Ib6rX7zlN97Y7DEwg5S7hRVfByqzj0Su744OYuCrLafk0yvD7jhAhkN/5jeW99Bj",
-        "size": 188
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/html/+esm",
-        "integrity": "sha384-EUJksZDvu+YS8SfLD69zkdWqKDfAFIGhfD3rrSIFy0lLqzlUcTpCatiyk4Y1sMfl",
-        "size": 12037
-      }
+      "esm.sh": "sha384-Ib6rX7zlN97Y7DEwg5S7hRVfByqzj0Su744OYuCrLafk0yvD7jhAhkN/5jeW99Bj",
+      "jsdelivr": "sha384-EUJksZDvu+YS8SfLD69zkdWqKDfAFIGhfD3rrSIFy0lLqzlUcTpCatiyk4Y1sMfl"
     },
     "@ffmpeg/core-mt": {
-      "esm.sh": {
-        "url": "https://esm.sh/@ffmpeg/core-mt@0.12.10?target=esnext",
-        "integrity": "sha384-MI+v8oVLxDwRa/jf5wiyuDi8QBjdRx2uW8/H4gxxIvitd5kshfzgFMjoZV1Enmrx",
-        "size": 171
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/+esm",
-        "integrity": "sha384-tw+fRTcThTMz0DLp+w5tuOW4OYXvkza8O3wlxV1k487DUV0eEi2jCN7uYIx6XDgb",
-        "size": 79321
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/@ffmpeg/core-mt@0.12.10?module",
-        "integrity": "sha384-91GpZ3Ow5AIa5wmICIKrQaOAmJPc0sPFNaeuZKtD1Dx7Xr/F8kfGZHM++VOj308v",
-        "size": 129115
-      }
+      "esm.sh": "sha384-MI+v8oVLxDwRa/jf5wiyuDi8QBjdRx2uW8/H4gxxIvitd5kshfzgFMjoZV1Enmrx",
+      "jsdelivr": "sha384-tw+fRTcThTMz0DLp+w5tuOW4OYXvkza8O3wlxV1k487DUV0eEi2jCN7uYIx6XDgb"
     },
     "mp4box": {
-      "esm.sh": {
-        "url": "https://esm.sh/mp4box@0.5.2?target=esnext",
-        "integrity": "sha384-iPyIT3QWtys6xuC14F9a6hUfA04JE5PKM9tjtUSYc7DWc3Jv1OZIDBgXYtpuezqa",
-        "size": 136
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/mp4box@0.5.2/+esm",
-        "integrity": "sha384-usVTfowp0OTkQDQgsh8JKMCyVLJj4173PGzv37VZqqJEQLT0GpPGJLFymcMN+Qxx",
-        "size": 140288
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/mp4box@0.5.2?module",
-        "integrity": "sha384-A7axPrEke8n1oQHoH4v5+38YQTjRoGkMMn7xxTN/lkGY8uMBVLaFfj+bK+Nh6XnB",
-        "size": 262648
-      }
+      "esm.sh": "sha384-iPyIT3QWtys6xuC14F9a6hUfA04JE5PKM9tjtUSYc7DWc3Jv1OZIDBgXYtpuezqa",
+      "jsdelivr": "sha384-usVTfowp0OTkQDQgsh8JKMCyVLJj4173PGzv37VZqqJEQLT0GpPGJLFymcMN+Qxx"
     },
     "web-demuxer": {
-      "esm.sh": {
-        "url": "https://esm.sh/web-demuxer@4.0.0?target=esnext",
-        "integrity": "sha384-tU5DtY16Gu7lLHE1G44MoGggMPWBqDVqB3DW34eBtsOKmYKKF5zFXjcQmR4Un9Lc",
-        "size": 92
-      },
-      "jsdelivr": {
-        "url": "https://cdn.jsdelivr.net/npm/web-demuxer@4.0.0/+esm",
-        "integrity": "sha384-Sk1+2Tk27gjXf5FnyO6nztdXQ+yWdghhZG7LjIM8Prbtxjf0XWGbSkWFB9ItzZu1",
-        "size": 113327
-      },
-      "unpkg": {
-        "url": "https://unpkg.com/web-demuxer@4.0.0?module",
-        "integrity": "sha384-v5OLeKYvZWcJ73+8XkcQ0EX/FY3yPfPhTe7K3OWrVLGFucCChHX9esCgmO9e3Myf",
-        "size": 118338
-      }
+      "esm.sh": "sha384-tU5DtY16Gu7lLHE1G44MoGggMPWBqDVqB3DW34eBtsOKmYKKF5zFXjcQmR4Un9Lc",
+      "jsdelivr": "sha384-Sk1+2Tk27gjXf5FnyO6nztdXQ+yWdghhZG7LjIM8Prbtxjf0XWGbSkWFB9ItzZu1"
     }
   }
 }
