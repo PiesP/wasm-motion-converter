@@ -233,7 +233,7 @@ export class ConversionRuntimeController {
         elapsedMs,
         etaSeconds,
         etaLabel:
-          etaSeconds != null && etaSeconds > 0 ? `ETA: ${formatDuration(etaSeconds)}` : null,
+          etaSeconds !== null && etaSeconds > 0 ? `ETA: ${formatDuration(etaSeconds)}` : null,
       });
     }
   }

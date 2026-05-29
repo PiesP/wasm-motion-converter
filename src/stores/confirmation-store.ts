@@ -60,5 +60,6 @@ export const dismissConfirmation = (): void => {
   if (!state.isVisible) {
     return;
   }
+  state.onCancel?.();
   setConfirmationState({ isVisible: false, warnings: [] });
 };
