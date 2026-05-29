@@ -11,6 +11,7 @@ import { batch, type Setter } from 'solid-js';
 const MEMORY_CHECK_INTERVAL = 5000;
 const ETA_UPDATE_INTERVAL = 1000;
 const UI_PROGRESS_LOG_INTERVAL_MS = 1000;
+const STALL_DETECTION_MS = 30_000; // warn user if no progress for 30s
 
 type ParsedStatusCounter = {
   prefix: string;
@@ -51,6 +52,7 @@ export class ConversionRuntimeController {
   private lastUiProgressLogAtMs = 0;
   private activeRunId: string | null = null;
   private activeConversionSeq = 0;
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly deps: ConversionRuntimeControllerDeps) {}
 
@@ -87,6 +89,7 @@ export class ConversionRuntimeController {
     this.lastStatusMessage = '';
     this.lastUiProgressLogAtMs = 0;
     this.activeRunId = null;
+    this.clearStallTimer();
   }
 
   prepareForNewConversion(startTimeMs: number): void {
@@ -102,6 +105,7 @@ export class ConversionRuntimeController {
     this.lastProgressValue = 0;
     this.lastStatusMessage = '';
     this.lastUiProgressLogAtMs = 0;
+    this.startStallTimer();
   }
 
   updateStatus(message: string): void {
@@ -154,6 +158,31 @@ export class ConversionRuntimeController {
     }
   }
 
+  private startStallTimer(): void {
+    this.clearStallTimer();
+    this.stallTimer = setTimeout(() => {
+      const elapsedMs =
+        this.currentStartTimeMs > 0 ? Math.max(0, performance.now() - this.currentStartTimeMs) : 0;
+      const elapsedSeconds = Math.floor(elapsedMs / 1000);
+      logger.warn('progress', 'Conversion stalled — no progress update in 30s', {
+        runId: this.activeRunId,
+        lastProgressValue: this.lastProgressValue,
+        elapsedSeconds,
+        elapsed: formatDuration(elapsedSeconds),
+      });
+      setConversionStatusMessage(
+        'Still processing… conversion may be slow for this format. Consider cancelling and reducing quality or scale.'
+      );
+    }, STALL_DETECTION_MS);
+  }
+
+  private clearStallTimer(): void {
+    if (this.stallTimer) {
+      clearTimeout(this.stallTimer);
+      this.stallTimer = null;
+    }
+  }
+
   updateProgress(progress: number): void {
     if (!Number.isFinite(progress)) {
       return;
@@ -167,6 +196,9 @@ export class ConversionRuntimeController {
     }
 
     this.lastProgressValue = monotonic;
+
+    // Reset stall timer whenever progress advances
+    this.startStallTimer();
 
     const now = performance.now();
     batch(() => {
