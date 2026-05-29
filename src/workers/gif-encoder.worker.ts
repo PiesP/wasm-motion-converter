@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { esmShModuleUrl } from 'virtual:cdn-deps';
 import type { ModernGifOptions } from '@services/modern-gif-service';
 import { encodeModernGif } from '@services/modern-gif-service';
 import type { SerializableImageData, WorkerProgressCallback } from '@t/worker-types';
@@ -175,8 +174,7 @@ const api = {
 };
 
 void (async () => {
-  const comlinkUrl = esmShModuleUrl('comlink');
-  const Comlink = (await import(/* @vite-ignore */ comlinkUrl)) as unknown as ComlinkModule;
+  const Comlink = (await import('comlink')) as unknown as ComlinkModule;
   Comlink.expose(api);
 
   dropconvertWorkerReady = true;

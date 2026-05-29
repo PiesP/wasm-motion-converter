@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { esmShModuleUrl } from 'virtual:cdn-deps';
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import type { EncoderFrame } from '@t/conversion-types';
 import { logger } from '@utils/logger';
@@ -21,10 +20,7 @@ async function getModernGifEncode(): Promise<ModernGifModule['encode']> {
   }
 
   loadEncodePromise = (async () => {
-    const url = esmShModuleUrl('modern-gif');
-
-    // Ensure Vite does not try to pre-bundle/rewrite the CDN URL.
-    const mod = (await import(/* @vite-ignore */ url)) as unknown as ModernGifModule;
+    const mod = (await import('modern-gif')) as ModernGifModule;
     if (typeof mod.encode !== 'function') {
       throw new Error('modern-gif module loaded but encode() export is missing');
     }

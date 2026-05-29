@@ -102,7 +102,6 @@ export const CDN_PROVIDERS = [
   { name: 'esm.sh', hostname: 'esm.sh', baseUrl: 'https://esm.sh', priority: 1, timeout: 15000, enabled: true },
   { name: 'jsdelivr', hostname: 'cdn.jsdelivr.net', baseUrl: 'https://cdn.jsdelivr.net', priority: 2, timeout: 15000, enabled: true },
   { name: 'unpkg', hostname: 'unpkg.com', baseUrl: 'https://unpkg.com', priority: 3, timeout: 15000, enabled: true },
-  { name: 'skypack', hostname: 'cdn.skypack.dev', baseUrl: 'https://cdn.skypack.dev', priority: 4, timeout: 15000, enabled: true },
 ];
 
 /**
@@ -161,27 +160,25 @@ function importMapPlugin(): Plugin {
   return {
     name: 'generate-import-map',
     transformIndexHtml(html) {
-      const runtimeDeps = readRuntimeDependencies();
+      // Only CDN-loaded dependencies (not npm deps already bundled by Vite)
+      const pkgJsonPath = path.join(process.cwd(), 'package.json');
+      const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf-8')) as {
+        cdnDependencies?: Record<string, string>;
+      };
+      const cdnDeps = pkg.cdnDependencies ?? {};
+      const normalizedCdnDeps: Record<string, string> = {};
+      for (const [name, spec] of Object.entries(cdnDeps)) {
+        normalizedCdnDeps[name] = String(spec)
+          .trim()
+          .replace(/^[\\^~]/, '');
+      }
+
       const esmShBase = 'https://esm.sh';
       const targetQuery = '?target=esnext';
 
       const imports: Record<string, string> = {};
 
-      const solidVersion = runtimeDeps['solid-js'];
-      if (!solidVersion) {
-        throw new Error('[cdn-deps] solid-js version missing from package.json');
-      }
-      imports['solid-js'] = `${esmShBase}/solid-js@${solidVersion}${targetQuery}`;
-      imports['solid-js/web'] = `${esmShBase}/solid-js@${solidVersion}/web${targetQuery}`;
-      imports['solid-js/store'] = `${esmShBase}/solid-js@${solidVersion}/store${targetQuery}`;
-      imports['solid-js/h'] = `${esmShBase}/solid-js@${solidVersion}/h${targetQuery}`;
-      imports['solid-js/html'] = `${esmShBase}/solid-js@${solidVersion}/html${targetQuery}`;
-
-      for (const [pkg, version] of Object.entries(runtimeDeps)) {
-        if (pkg === 'solid-js') {
-          continue;
-        }
-
+      for (const [pkg, version] of Object.entries(normalizedCdnDeps)) {
         const isFFmpegPackage = pkg.startsWith('@ffmpeg/');
         if (isFFmpegPackage) {
           imports[pkg] = `https://cdn.jsdelivr.net/npm/${pkg}@${version}/+esm`;
@@ -207,17 +204,7 @@ function importMapPlugin(): Plugin {
         );
       }
 
-      const criticalDeps = [
-        'solid-js/web',
-        'solid-js',
-        'solid-js/store',
-        'comlink',
-        '@ffmpeg/ffmpeg',
-        '@ffmpeg/util',
-        'modern-gif',
-        'mp4box',
-        'web-demuxer',
-      ] as const;
+      const criticalDeps = ['mp4box', 'web-demuxer', '@ffmpeg/core-mt'] as const;
 
       const modulePreloadHints = criticalDeps
         .map((dep) => {
