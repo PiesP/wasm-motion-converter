@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -7,7 +9,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { build as esbuild } from 'esbuild';
 import { visualizer } from 'rollup-plugin-visualizer';
 import type { Plugin, PluginOption } from 'vite';
@@ -541,6 +545,173 @@ if ('serviceWorker' in navigator) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Prebuild asset generators (inlined from scripts/)
+// ---------------------------------------------------------------------------
+
+const SOLID_JS_SUBPATHS = ['', '/web', '/store', '/h', '/html'];
+
+const CDN_SOURCES = {
+  'esm.sh': (pkg: string, version: string, subpath: string) =>
+    `https://esm.sh/${pkg}@${version}${subpath}?target=esnext`,
+  jsdelivr: (pkg: string, version: string, subpath: string) =>
+    `https://cdn.jsdelivr.net/npm/${pkg}@${version}${subpath}/+esm`,
+  unpkg: (pkg: string, version: string, subpath: string) =>
+    `https://unpkg.com/${pkg}@${version}${subpath}?module`,
+} as const;
+
+type CdnKey = keyof typeof CDN_SOURCES;
+
+async function fetchAndHash(
+  url: string,
+  timeout = 30_000
+): Promise<{ integrity: string; size: number } | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'SRI-Generator/1.0.0' },
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    const buffer = await response.arrayBuffer();
+    const hash = createHash('sha384').update(Buffer.from(buffer)).digest('base64');
+    return { integrity: `sha384-${hash}`, size: buffer.byteLength };
+  } catch {
+    return null;
+  }
+}
+
+function sriGenerationPlugin(): Plugin {
+  return {
+    name: 'generate-sri-manifest',
+    apply: 'build',
+    async buildStart() {
+      const deps = readRuntimeDependencies();
+      const entries: Record<
+        string,
+        Record<string, { url: string; integrity: string; size: number }>
+      > = {};
+
+      for (const [pkg, version] of Object.entries(deps)) {
+        const subpaths = pkg === 'solid-js' ? SOLID_JS_SUBPATHS : [''];
+        for (const subpath of subpaths) {
+          const key = subpath ? `${pkg}${subpath}` : pkg;
+          const entry: Record<string, { url: string; integrity: string; size: number }> = {};
+          const providers = Object.keys(CDN_SOURCES) as CdnKey[];
+          const effectiveProviders =
+            pkg === 'solid-js' && subpath ? providers.filter((p) => p !== 'unpkg') : providers;
+
+          for (const provider of effectiveProviders) {
+            const url = CDN_SOURCES[provider](pkg, version, subpath);
+            const result = await fetchAndHash(url);
+            if (result) {
+              entry[provider] = { url, integrity: result.integrity, size: result.size };
+            }
+          }
+
+          if (entry['esm.sh']) {
+            entries[key] = entry;
+          }
+        }
+      }
+
+      const manifest = { version: '1.0.0', generated: new Date().toISOString(), entries };
+      mkdirSync(path.join(process.cwd(), 'public'), { recursive: true });
+      writeFileSync(
+        path.join(process.cwd(), 'public', 'cdn-integrity.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
+      console.log(`✓ SRI manifest generated (${Object.keys(entries).length} entries)`);
+    },
+  };
+}
+
+const execFileAsync = promisify(execFile);
+
+function licensesGenerationPlugin(): Plugin {
+  return {
+    name: 'generate-third-party-licenses',
+    apply: 'build',
+    async buildStart() {
+      const { stdout } = await execFileAsync(
+        'pnpm',
+        ['-s', 'licenses', 'list', '--json', '--prod'],
+        {
+          cwd: process.cwd(),
+          maxBuffer: 20 * 1024 * 1024,
+          env: process.env,
+        }
+      );
+
+      // biome-ignore lint/suspicious/noExplicitAny: pnpm licenses output is dynamic JSON
+      const raw = JSON.parse(stdout) as any;
+      const packages: {
+        name: string;
+        versions: string[];
+        license: string;
+        homepage?: string;
+        repository?: string;
+      }[] = [];
+
+      for (const [, group] of Object.entries(raw)) {
+        if (!Array.isArray(group)) continue;
+        // biome-ignore lint/suspicious/noExplicitAny: pnpm licenses output is dynamic JSON
+        for (const entry of group as any[]) {
+          if (!entry?.name) continue;
+          packages.push({
+            name: String(entry.name),
+            versions: Array.isArray(entry.versions) ? entry.versions.map(String) : [],
+            license: typeof entry.license === 'string' ? entry.license : 'UNKNOWN',
+            homepage: typeof entry.homepage === 'string' ? entry.homepage : undefined,
+            repository: typeof entry.repository === 'string' ? entry.repository : undefined,
+          });
+        }
+      }
+      packages.sort((a, b) => a.name.localeCompare(b.name, 'en'));
+
+      const pkgEntries = packages
+        .map((pkg) => {
+          const ver = pkg.versions.length > 0 ? ` v${pkg.versions.join(', v')}` : '';
+          const repo = pkg.repository ?? pkg.homepage;
+          return `## ${pkg.name}${ver}\n\n**License**: ${pkg.license}${repo ? `\n**Repository**: ${repo}` : ''}\n`;
+        })
+        .join('---\n');
+
+      const md = `# Third-Party Licenses
+
+This project uses the following open-source libraries and components.
+
+## Important Notice
+
+This application uses FFmpeg through ffmpeg.wasm. While the JavaScript wrapper (ffmpeg.wasm)
+is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or later.
+
+---
+
+${pkgEntries}
+
+## FFmpeg (WebAssembly Core)
+
+**License**: LGPL 2.1+
+**Repository**: https://github.com/FFmpeg/FFmpeg
+
+\`\`\`
+FFmpeg is licensed under the GNU Lesser General Public License (LGPL) version 2.1 or later.
+This application uses FFmpeg through ffmpeg.wasm, which compiles FFmpeg to WebAssembly.
+Source: https://github.com/ffmpegwasm/ffmpeg.wasm-core
+\`\`\`
+`;
+
+      await mkdir(path.join(process.cwd(), 'public'), { recursive: true });
+      await writeFile(path.join(process.cwd(), 'public', 'LICENSES.md'), md, 'utf8');
+      console.log(`✓ Third-party licenses generated (${packages.length} deps + FFmpeg core)`);
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
@@ -563,6 +734,8 @@ export default defineConfig(({ mode }) => {
     plugins: [
       cdnDepsPlugin,
       solid(),
+      sriGenerationPlugin(),
+      licensesGenerationPlugin(),
       importMapPlugin(),
       swCompilePlugin,
       injectServiceWorkerPlugin(swCompilePlugin, { enableDev: enableSwDev }),

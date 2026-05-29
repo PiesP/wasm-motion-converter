@@ -4,10 +4,9 @@
     "index.html",
     "public/service-worker.ts",
     "public/sw-register.ts",
-    "scripts/**/*.ts",
     "src/workers/**/*.ts"
   ],
-  "project": ["src/**/*.{ts,tsx}", "public/*.ts", "scripts/**/*.ts"],
+  "project": ["src/**/*.{ts,tsx}", "public/*.ts"],
   "paths": {
     "@": ["src"],
     "@components": ["src/components"],

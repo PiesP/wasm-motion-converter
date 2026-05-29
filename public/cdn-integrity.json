@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated": "2026-05-23T12:24:34.248Z",
+  "generated": "2026-05-29T05:03:52.221Z",
   "entries": {
     "@ffmpeg/ffmpeg": {
       "esm.sh": {
@@ -131,8 +131,8 @@
       },
       "jsdelivr": {
         "url": "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/html/+esm",
-        "integrity": "sha384-RFfXf1LHfjf8BGrrb9PFugE1JifT0yysNaY213vniL2Ln/WRs90Hv/BQzzfQui9o",
-        "size": 12059
+        "integrity": "sha384-EUJksZDvu+YS8SfLD69zkdWqKDfAFIGhfD3rrSIFy0lLqzlUcTpCatiyk4Y1sMfl",
+        "size": 12037
       }
     },
     "@ffmpeg/core-mt": {
