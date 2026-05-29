@@ -26,6 +26,27 @@ const FRAME_CONVERSION_CANCELLED = 'Frame conversion cancelled';
 const FRAME_UNDEFINED_ERROR = 'Frame at index is undefined';
 const FRAME_CONVERSION_CONTEXT_ERROR = 'Failed to create 2D canvas context for frame conversion';
 
+// Buffer pool for VideoFrame.copyTo() — avoids per-frame Uint8ClampedArray allocation.
+// Triple-buffering prevents GC in async chains where a previous buffer may still
+// be in use by an in-flight ImageData consumer.
+const BUFFER_POOL_MAX = 3;
+const bufferPool: Uint8ClampedArray[] = [];
+
+function acquireBuffer(sizeBytes: number): Uint8ClampedArray {
+  const idx = bufferPool.findIndex((buf) => buf.length === sizeBytes);
+  if (idx !== -1) {
+    return bufferPool.splice(idx, 1)[0]!;
+  }
+  return new Uint8ClampedArray(sizeBytes);
+}
+
+function releaseBuffer(buf: Uint8ClampedArray): void {
+  if (bufferPool.length < BUFFER_POOL_MAX) {
+    bufferPool.push(buf);
+  }
+  // else: pool full — let GC collect
+}
+
 /**
  * Convert a single frame to ImageData
  *
@@ -65,12 +86,20 @@ export async function frameToImageData(
   // VideoFrame path: try VideoFrame.copyTo() first (fastest)
   if ('format' in frame && 'copyTo' in frame) {
     try {
-      // VideoFrame.copyTo() - direct GPU→CPU transfer
-      const buffer = new Uint8ClampedArray(width * height * 4);
+      // Use pooled buffer to avoid per-frame allocation
+      const sizeBytes = width * height * 4;
+      const buffer = acquireBuffer(sizeBytes);
       await (frame as VideoFrame).copyTo(buffer, {
         rect: { x: 0, y: 0, width, height },
       });
-      return new ImageData(buffer, width, height);
+      // ImageData constructor copies the buffer, safe to release back to pool
+      const imageData = new ImageData(
+        buffer as unknown as Uint8ClampedArray<ArrayBuffer>,
+        width,
+        height
+      );
+      releaseBuffer(buffer);
+      return imageData;
     } catch (_error) {
       // copyTo() not supported or failed - fall through to canvas path
       // (This is expected on some browsers/formats)
