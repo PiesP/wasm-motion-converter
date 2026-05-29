@@ -30,7 +30,7 @@
     "build": "vite build",
     "analyze": "vite build && node -e \"console.log('\\nBundle analysis generated at dist/stats.html')\"",
     "preview": "vite preview",
-    "clean": "rimraf dist node_modules/.vite",
+    "clean": "rm -rf dist node_modules/.vite",
     "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s knip",
     "quality:fix": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s check && pnpm -s circular && pnpm -s knip",
     "quality:ci": "pnpm -s quality"
@@ -54,10 +54,8 @@
     "esbuild": "^0.28.0",
     "knip": "^6.14.1",
     "postcss": "^8.5.15",
-    "rimraf": "^6.1.3",
     "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4.3.0",
-    "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vite": "^8.0.14",
     "vite-plugin-solid": "^2.11.12"
