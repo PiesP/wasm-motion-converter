@@ -2,7 +2,8 @@
 // Copyright (c) 2025 PiesP
 
 import { theme, toggleTheme } from '@stores/theme-store';
-import { type Component, createEffect, createMemo, Show } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createEffect, createMemo, Show } from 'solid-js';
 
 const DARK_MODE_CLASS = 'dark';
 

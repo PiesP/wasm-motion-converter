@@ -24,7 +24,7 @@ export const tryEncodeWebPWithEncoderFactory = (
 const resolveChunkSize = (): { chunkSize: number; cached: boolean; cachedChunkSize?: number } => {
   const hwConcurrency = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
   const cachedChunkSize = getCachedWebPChunkSize();
-  const cached = Boolean(cachedChunkSize && isHardwareCacheValid());
+  const cached = !!(cachedChunkSize && isHardwareCacheValid());
 
   return {
     cached,

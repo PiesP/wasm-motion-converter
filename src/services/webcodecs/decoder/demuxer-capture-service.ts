@@ -254,7 +254,7 @@ export async function captureWithDemuxer(
                 width: candidate.codedWidth,
                 height: candidate.codedHeight,
                 hardwareAcceleration: candidate.hardwareAcceleration ?? null,
-                usedSupportConfig: Boolean(support.config),
+                usedSupportConfig: !!support.config,
               });
             }
             return (support.config ?? candidate) as VideoDecoderConfig;

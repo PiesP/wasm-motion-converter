@@ -2,7 +2,8 @@
 // Copyright (c) 2025 PiesP
 
 import { networkState } from '@hooks/use-network-state';
-import { type Component, Show } from 'solid-js';
+import type { Component } from 'solid-js';
+import { Show } from 'solid-js';
 
 const OFFLINE_MESSAGE = "You're offline. Using cached content. Some features may be limited.";
 

@@ -552,7 +552,7 @@ export async function captureComplexCodecFramesForWebP(params: {
   }
 
   const orderedEntries = framesByIndex.filter(
-    (frame): frame is { frame: EncoderFrame; timestamp: number } => Boolean(frame)
+    (frame): frame is { frame: EncoderFrame; timestamp: number } => !!frame
   );
 
   const orderedFrames = orderedEntries.map((entry) => entry.frame);

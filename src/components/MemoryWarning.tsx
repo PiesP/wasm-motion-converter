@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { type Component, createMemo, Show, splitProps } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createMemo, Show, splitProps } from 'solid-js';
 
 const MEMORY_CRITICAL_THRESHOLD = 80;
 

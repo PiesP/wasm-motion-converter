@@ -98,7 +98,7 @@ export class FFmpegCore {
    * Check if FFmpeg is currently initializing
    */
   isInitializing(): boolean {
-    return Boolean(this.initializePromise) && !this.loaded;
+    return !!this.initializePromise && !this.loaded;
   }
 
   /**
@@ -537,7 +537,7 @@ export class FFmpegCore {
         elapsedMs: initTime,
         error: errorMsg,
         state: {
-          ffmpegExists: Boolean(this.ffmpeg),
+          ffmpegExists: !!this.ffmpeg,
           isLoaded: this.loaded,
         },
         recentLogs: recentLogs.length > 0 ? recentLogs : undefined,

@@ -336,7 +336,7 @@ class CapabilityService {
 
       const canvas = new OffscreenCanvas(1, 1);
       const blob = await canvas.convertToBlob({ type: 'image/webp' });
-      return Boolean(blob && blob.size > 0 && blob.type === 'image/webp');
+      return !!(blob && blob.size > 0 && blob.type === 'image/webp');
     } catch (error) {
       logger.debug('general', 'OffscreenCanvas WebP encoding probe failed', {
         error: getErrorMessage(error),
@@ -373,7 +373,7 @@ class CapabilityService {
         );
       });
 
-      return Boolean(blob && blob.size > 0 && blob.type === 'image/webp');
+      return !!(blob && blob.size > 0 && blob.type === 'image/webp');
     } catch (error) {
       logger.debug('general', 'Canvas WebP encoding probe failed during capability detection', {
         error: getErrorMessage(error),

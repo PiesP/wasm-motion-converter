@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { type Component, type ParentProps, splitProps } from 'solid-js';
+import type { Component, ParentProps } from 'solid-js';
+import { splitProps } from 'solid-js';
 
 interface PanelProps extends ParentProps {
   class?: string;

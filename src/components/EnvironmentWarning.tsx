@@ -2,7 +2,8 @@
 // Copyright (c) 2025 PiesP
 
 import { logger } from '@utils/logger';
-import { type Component, createMemo, createSignal, onMount, Show } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createMemo, createSignal, onMount, Show } from 'solid-js';
 
 const STORAGE_KEY = 'envWarningExpanded';
 

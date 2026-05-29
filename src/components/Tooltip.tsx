@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { type Component, createSignal, type JSX, Show, splitProps } from 'solid-js';
+import type { Component, JSX } from 'solid-js';
+import { createSignal, Show, splitProps } from 'solid-js';
 
 const TOOLTIP_Z_INDEX = 'z-10';
 const TOOLTIP_OFFSET_TOP = '-top-10';

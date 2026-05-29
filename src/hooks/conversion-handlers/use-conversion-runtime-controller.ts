@@ -6,7 +6,8 @@ import { ETACalculator } from '@utils/eta-calculator';
 import { formatDuration } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
-import { batch, type Setter } from 'solid-js';
+import type { Setter } from 'solid-js';
+import { batch } from 'solid-js';
 
 const MEMORY_CHECK_INTERVAL = 5000;
 const ETA_UPDATE_INTERVAL = 1000;

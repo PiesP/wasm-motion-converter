@@ -108,7 +108,7 @@ export async function encodeModernGif(
     height,
     fps,
     maxColors,
-    hasTimestamps: Boolean(timestamps && timestamps.length > 0),
+    hasTimestamps: !!(timestamps && timestamps.length > 0),
     durationSeconds,
   });
 

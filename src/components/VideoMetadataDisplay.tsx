@@ -3,7 +3,8 @@
 
 import type { VideoMetadata } from '@t/conversion-types';
 import { formatBytes, formatDuration } from '@utils/format-utils';
-import { type Component, createMemo, splitProps } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createMemo, splitProps } from 'solid-js';
 
 const UNKNOWN_CODEC = 'unknown';
 const DETECTING_LABEL = 'Detecting...';

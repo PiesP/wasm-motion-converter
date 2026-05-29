@@ -122,7 +122,7 @@ export const captureFrameAndEmit = async (args: {
     captureContext.targetHeight
   );
 
-  const isComplexCodec = Boolean(codec && /vp9|hevc|h\.265|h265|hvc1|hev1/i.test(codec));
+  const isComplexCodec = !!(codec && /vp9|hevc|h\.265|h265|hvc1|hev1/i.test(codec));
 
   let data: Uint8Array | undefined;
   let imageData: ImageData | undefined;

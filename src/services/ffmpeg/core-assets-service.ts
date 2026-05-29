@@ -2,7 +2,8 @@
 // Copyright (c) 2025 PiesP
 
 import { toBlobURL } from '@ffmpeg/util';
-import { type CDNProvider, getEnabledProviders } from '@utils/cdn-config';
+import type { CDNProvider } from '@utils/cdn-config';
+import { getEnabledProviders } from '@utils/cdn-config';
 
 // CDN health tracking removed — the service worker handles retry/fallback.
 // CDN URL builder restored with proper provider-specific path formats.

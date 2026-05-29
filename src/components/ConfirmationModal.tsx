@@ -3,7 +3,8 @@
 
 import { cancelDialog, confirmDialog, getConfirmationState } from '@stores/confirmation-store';
 import type { ValidationWarning } from '@t/validation-types';
-import { type Component, createEffect, For, type JSX, onCleanup, onMount, Show } from 'solid-js';
+import type { Component, JSX } from 'solid-js';
+import { createEffect, For, onCleanup, onMount, Show } from 'solid-js';
 
 const SEVERITY_COLORS: Record<ValidationWarning['severity'], string> = {
   error: 'text-red-600 dark:text-red-400',

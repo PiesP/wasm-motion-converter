@@ -2,7 +2,8 @@
 // Copyright (c) 2025 PiesP
 
 import type { ConversionFormat } from '@t/conversion-types';
-import { type Component, splitProps } from 'solid-js';
+import type { Component } from 'solid-js';
+import { splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 

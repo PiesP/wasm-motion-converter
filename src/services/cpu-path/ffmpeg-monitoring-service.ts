@@ -263,8 +263,8 @@ export class FFmpegMonitoring {
    * After stopping, no watchdog checks will occur until startWatchdog() is called again.
    */
   stopWatchdog(): void {
-    const hadWatchdogTimer = Boolean(this.watchdogTimer);
-    const hadLogSilenceMonitor = Boolean(this.logSilenceInterval);
+    const hadWatchdogTimer = !!this.watchdogTimer;
+    const hadLogSilenceMonitor = !!this.logSilenceInterval;
     const hadActiveHeartbeats = this.activeHeartbeats.size > 0;
     const wasConverting = this.isConverting;
 
@@ -408,8 +408,8 @@ export class FFmpegMonitoring {
    * to guarantee no timers continue running.
    */
   forceCleanupAll(): void {
-    const hadWatchdogTimer = Boolean(this.watchdogTimer);
-    const hadLogSilenceMonitor = Boolean(this.logSilenceInterval);
+    const hadWatchdogTimer = !!this.watchdogTimer;
+    const hadLogSilenceMonitor = !!this.logSilenceInterval;
     const heartbeatCount = this.activeHeartbeats.size;
     const wasConverting = this.isConverting;
 

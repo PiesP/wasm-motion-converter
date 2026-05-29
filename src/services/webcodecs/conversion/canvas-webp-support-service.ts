@@ -45,7 +45,7 @@ const runCanvasProbe = async (): Promise<boolean> => {
 
     drawProbePixel(ctx);
     const blob = await toWebpBlob(canvas);
-    return Boolean(blob && blob.size > 0);
+    return !!(blob && blob.size > 0);
   } catch {
     return false;
   }

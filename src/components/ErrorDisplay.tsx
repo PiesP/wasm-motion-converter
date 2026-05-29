@@ -3,7 +3,8 @@
 
 import Panel from '@components/ui/Panel';
 import type { ConversionErrorType } from '@t/conversion-types';
-import { type Component, createMemo, onMount, Show, splitProps } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createMemo, onMount, Show, splitProps } from 'solid-js';
 
 const ERROR_MESSAGES: Record<ConversionErrorType, string> = {
   format: 'This video format is not supported. Please try a different file.',

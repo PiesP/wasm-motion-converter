@@ -3,7 +3,8 @@
 
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import { logger } from '@utils/logger';
-import { type Component, Show, splitProps } from 'solid-js';
+import type { Component } from 'solid-js';
+import { Show, splitProps } from 'solid-js';
 
 type ExportOptions = {
   includeVerboseFfmpegProgress: boolean;

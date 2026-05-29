@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { type Component, createMemo, createSignal, Show, splitProps } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createMemo, createSignal, Show, splitProps } from 'solid-js';
 
 import ProgressBar from './ProgressBar';
 
@@ -36,7 +37,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [justSelected, setJustSelected] = createSignal(false);
   let fileInputElement: HTMLInputElement | undefined;
 
-  const isBusy = createMemo(() => Boolean(local.status));
+  const isBusy = createMemo(() => !!local.status);
   const isInteractive = createMemo(() => !local.disabled && !isBusy());
   const progressValue = createMemo(() => {
     const raw = local.progress ?? 0;

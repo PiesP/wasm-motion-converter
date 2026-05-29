@@ -2,7 +2,8 @@
 // Copyright (c) 2025 PiesP
 
 import type { ConversionScale, VideoMetadata } from '@t/conversion-types';
-import { type Component, createMemo, splitProps } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createMemo, splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
