@@ -35,6 +35,7 @@ import type {
   ConversionQuality,
   VideoMetadata,
 } from '@t/conversion-types';
+import { throwIfAborted } from '@utils/cancellation-context';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
@@ -357,9 +358,19 @@ export class FFmpegPipeline {
     options: ConversionOptions,
     metadata?: VideoMetadata,
     inputOverride?: FFmpegInputOverride,
-    callbacks?: PipelineCallbacks
+    callbacks?: PipelineCallbacks,
+    abortSignal?: AbortSignal
   ): Promise<ConversionOutputBlob> {
-    return this.runConversion('gif', file, options, metadata, inputOverride, callbacks);
+    if (abortSignal) throwIfAborted(abortSignal);
+    return this.runConversion(
+      'gif',
+      file,
+      options,
+      metadata,
+      inputOverride,
+      callbacks,
+      abortSignal
+    );
   }
 
   /**
@@ -372,6 +383,7 @@ export class FFmpegPipeline {
    * @param metadata Video metadata (optional, will be fetched if not provided)
    * @param inputOverride Input format override for transcoding
    * @param callbacks Progress and status callbacks
+   * @param abortSignal Optional AbortSignal for cancellation
    * @returns WebP blob
    */
   async convertToWebP(
@@ -379,9 +391,19 @@ export class FFmpegPipeline {
     options: ConversionOptions,
     metadata?: VideoMetadata,
     inputOverride?: FFmpegInputOverride,
-    callbacks?: PipelineCallbacks
+    callbacks?: PipelineCallbacks,
+    abortSignal?: AbortSignal
   ): Promise<ConversionOutputBlob> {
-    return this.runConversion('webp', file, options, metadata, inputOverride, callbacks);
+    if (abortSignal) throwIfAborted(abortSignal);
+    return this.runConversion(
+      'webp',
+      file,
+      options,
+      metadata,
+      inputOverride,
+      callbacks,
+      abortSignal
+    );
   }
 
   private async runConversion(
@@ -390,8 +412,12 @@ export class FFmpegPipeline {
     options: ConversionOptions,
     metadata?: VideoMetadata,
     inputOverride?: FFmpegInputOverride,
-    callbacks?: PipelineCallbacks
+    callbacks?: PipelineCallbacks,
+    abortSignal?: AbortSignal
   ): Promise<ConversionOutputBlob> {
+    // Check cancellation before starting
+    if (abortSignal) throwIfAborted(abortSignal);
+
     // Acquire lock
     if (!this.acquireConversionLock()) {
       throw new Error('Another conversion is already in progress. Please wait for it to complete.');
@@ -405,6 +431,9 @@ export class FFmpegPipeline {
         logger.warn('general', 'FFmpeg not initialized, initializing now...');
         await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
       }
+
+      // Check cancellation after init
+      if (abortSignal) throwIfAborted(abortSignal);
 
       // Clear any accumulated event listeners from previous conversions
       this.core.clearAllListeners();
@@ -422,11 +451,19 @@ export class FFmpegPipeline {
       let attempt = 0;
       // Retry exactly once on fatal WASM crashes.
       while (true) {
+        // Check cancellation before each attempt
+        if (abortSignal) throwIfAborted(abortSignal);
         try {
           const result =
             format === 'gif'
-              ? await this.encoder.convertToGIF(file, options, metadata, inputOverride)
-              : await this.encoder.convertToWebP(file, options, metadata, inputOverride);
+              ? await this.encoder.convertToGIF(file, options, metadata, inputOverride, abortSignal)
+              : await this.encoder.convertToWebP(
+                  file,
+                  options,
+                  metadata,
+                  inputOverride,
+                  abortSignal
+                );
           this.monitoring.stopWatchdog();
           return result;
         } catch (error) {

@@ -204,11 +204,25 @@ async function convertWithCpu(
   }
 
   if (format === 'gif') {
-    return ffmpegService.convertToGIF(request.file, request.options, request.metadata);
+    return ffmpegService.convertToGIF(
+      request.file,
+      request.options,
+      request.metadata,
+      undefined,
+      undefined,
+      abortSignal
+    );
   }
 
   if (format === 'webp') {
-    return ffmpegService.convertToWebP(request.file, request.options, request.metadata);
+    return ffmpegService.convertToWebP(
+      request.file,
+      request.options,
+      request.metadata,
+      undefined,
+      undefined,
+      abortSignal
+    );
   }
 
   throw new Error(`Unsupported format: ${format}`);

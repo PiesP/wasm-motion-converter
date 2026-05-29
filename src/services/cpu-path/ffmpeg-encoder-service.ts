@@ -25,7 +25,7 @@ import type {
   ConversionQuality,
   VideoMetadata,
 } from '@t/conversion-types';
-import { CANCELLED_MESSAGE } from '@utils/cancellation-context';
+import { CANCELLED_MESSAGE, throwIfAborted } from '@utils/cancellation-context';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
@@ -840,8 +840,11 @@ export class FFmpegEncoder {
     file: File,
     options: ConversionOptions,
     metadata?: VideoMetadata,
-    inputOverride?: FFmpegInputOverride
+    inputOverride?: FFmpegInputOverride,
+    abortSignal?: AbortSignal
   ): Promise<ConversionOutputBlob> {
+    if (abortSignal) throwIfAborted(abortSignal);
+
     const { core, vfs, monitoring } = this.getDeps();
 
     performanceTracker.startPhase('conversion');
@@ -1148,8 +1151,11 @@ export class FFmpegEncoder {
     file: File,
     options: ConversionOptions,
     metadata?: VideoMetadata,
-    inputOverride?: FFmpegInputOverride
+    inputOverride?: FFmpegInputOverride,
+    abortSignal?: AbortSignal
   ): Promise<ConversionOutputBlob> {
+    if (abortSignal) throwIfAborted(abortSignal);
+
     const { core, vfs, monitoring } = this.getDeps();
 
     performanceTracker.startPhase('conversion');
