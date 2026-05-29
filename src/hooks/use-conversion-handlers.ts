@@ -5,7 +5,9 @@ import type { Setter } from 'solid-js';
 import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';
 import {
+  handleCancelAnalysis,
   handleCancelConversion,
+  handleCancelFFmpegLoad,
   handleConvert,
   handleDismissError,
   handleReset,
@@ -24,6 +26,8 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   handleConvert: () => Promise<void>;
   handleReset: () => void;
   handleCancelConversion: () => void;
+  handleCancelFFmpegLoad: () => void;
+  handleCancelAnalysis: () => void;
   handleRetry: () => void;
   handleDismissError: () => void;
 } {
@@ -38,6 +42,8 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     handleConvert: () => handleConvert(runtime),
     handleReset: () => handleReset(runtime),
     handleCancelConversion: () => handleCancelConversion(runtime),
+    handleCancelFFmpegLoad,
+    handleCancelAnalysis,
     handleRetry: () => handleRetry(runtime),
     handleDismissError,
   };

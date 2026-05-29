@@ -250,10 +250,57 @@ async function performConversion(
 
 export function handleCancelConversion(runtime: ConversionRuntimeController): void {
   runtime.invalidateActiveConversions();
-  cancelConversion();
-  clearConversionCallbacks();
-  runtime.resetRuntimeState();
-  setAppState('idle');
+  setAppState('cancelling');
+
+  // queueMicrotask ensures UI renders the cancelling state before cleanup begins
+  queueMicrotask(() => {
+    cancelConversion();
+    clearConversionCallbacks();
+    runtime.resetRuntimeState();
+    setAppState('idle');
+  });
+}
+
+/**
+ * Cancel during FFmpeg download phase.
+ * Resets input state so the user can start fresh with a different file.
+ */
+export function handleCancelFFmpegLoad(): void {
+  setAppState('cancelling');
+
+  queueMicrotask(() => {
+    cancelConversion();
+    clearConversionCallbacks();
+
+    setInputFile(null);
+    const url = videoPreviewUrl();
+    if (url) URL.revokeObjectURL(url);
+    setVideoPreviewUrl(null);
+    setLoadingProgress(0);
+    setLoadingStatusMessage('');
+    setAppState('idle');
+  });
+}
+
+/**
+ * Cancel during video analysis phase.
+ * Resets input state so the user can start fresh with a different file.
+ */
+export function handleCancelAnalysis(): void {
+  setAppState('cancelling');
+
+  queueMicrotask(() => {
+    cancelConversion();
+
+    setInputFile(null);
+    const url = videoPreviewUrl();
+    if (url) URL.revokeObjectURL(url);
+    setVideoPreviewUrl(null);
+    setVideoMetadata(null);
+    setLoadingProgress(0);
+    setLoadingStatusMessage('');
+    setAppState('idle');
+  });
 }
 
 export function handleReset(runtime: ConversionRuntimeController): void {

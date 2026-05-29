@@ -68,6 +68,8 @@ const App: Component = () => {
     handleConvert,
     handleReset,
     handleCancelConversion,
+    handleCancelFFmpegLoad,
+    handleCancelAnalysis,
     handleRetry,
     handleDismissError,
   } = useConversionHandlers({
@@ -116,7 +118,10 @@ const App: Component = () => {
 
   const isBusy = createMemo(
     () =>
-      appState() === 'loading-ffmpeg' || appState() === 'analyzing' || appState() === 'converting'
+      appState() === 'loading-ffmpeg' ||
+      appState() === 'analyzing' ||
+      appState() === 'converting' ||
+      appState() === 'cancelling'
   );
 
   const handleReduceSettings = (): void => {
@@ -245,11 +250,20 @@ const App: Component = () => {
                     <div class="h-20 animate-pulse rounded-lg bg-blue-50 dark:bg-blue-900/20" />
                   }
                 >
-                  <ConversionProgress
-                    progress={loadingProgress()}
-                    status="Loading FFmpeg (~30MB download)..."
-                    statusMessage={loadingStatusMessage()}
-                  />
+                  <div class="space-y-2">
+                    <ConversionProgress
+                      progress={loadingProgress()}
+                      status="Loading FFmpeg (~30MB download)..."
+                      statusMessage={loadingStatusMessage()}
+                    />
+                    <button
+                      type="button"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900"
+                      onClick={handleCancelFFmpegLoad}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </Suspense>
               </Show>
 
@@ -259,7 +273,30 @@ const App: Component = () => {
                     <div class="h-20 animate-pulse rounded-lg bg-blue-50 dark:bg-blue-900/20" />
                   }
                 >
-                  <ConversionProgress progress={50} status="Analyzing video..." />
+                  <div class="space-y-2">
+                    <ConversionProgress
+                      progress={0}
+                      status="Analyzing video..."
+                      statusMessage="Reading video metadata..."
+                    />
+                    <button
+                      type="button"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900"
+                      onClick={handleCancelAnalysis}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </Suspense>
+              </Show>
+
+              <Show when={appState() === 'cancelling'}>
+                <Suspense
+                  fallback={
+                    <div class="h-20 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
+                  }
+                >
+                  <ConversionProgress progress={0} status="Cancelling..." />
                 </Suspense>
               </Show>
 
