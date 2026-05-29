@@ -31,6 +31,8 @@
     "analyze": "vite build && node -e \"console.log('\\nBundle analysis generated at dist/stats.html')\"",
     "preview": "vite preview",
     "clean": "rm -rf dist node_modules/.vite",
+    "test": "cd test && pnpm test",
+    "test:watch": "cd test && pnpm test:watch",
     "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s knip",
     "quality:fix": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s check && pnpm -s circular && pnpm -s knip",
     "quality:ci": "pnpm -s quality"

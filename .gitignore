@@ -67,8 +67,14 @@ TESTING.md
 # Local agent workspace
 .hermes/
 
-# Local tests
+# Local tests (track config + test files, ignore generated artifacts)
 test/
+!test/package.json
+!test/vitest.config.ts
+!test/tsconfig.json
+!test/setup.ts
+!test/pnpm-workspace.yaml
+!test/unit/
 
 # Misc
 *.backup
