@@ -28,6 +28,7 @@ export interface FrameCallbackCaptureOptions {
   shouldCancel?: () => boolean;
   maxFrames?: number;
   codec?: string;
+  signal?: AbortSignal;
   captureWithSeeking: (
     video: HTMLVideoElement,
     duration: number,
@@ -56,6 +57,7 @@ export async function captureWithFrameCallback(
     shouldCancel,
     maxFrames,
     codec,
+    signal,
     captureWithSeeking,
   } = options;
 
@@ -143,6 +145,9 @@ export async function captureWithFrameCallback(
       video.removeEventListener('error', handleError);
       resolve();
     };
+
+    // Wire AbortSignal for immediate cancellation (faster than shouldCancel polling)
+    signal?.addEventListener('abort', finalize, { once: true });
 
     const scheduleFirstFrameTimer = () => {
       clearFirstFrameTimer();

@@ -12,6 +12,7 @@ export interface SeekCaptureOptions {
   shouldCancel?: () => boolean;
   maxFrames?: number;
   codec?: string;
+  signal?: AbortSignal;
   getSeekTimeoutForCodec: (codec?: string) => number;
   seekTo: (video: HTMLVideoElement, time: number, timeoutMs: number) => Promise<void>;
 }
@@ -31,12 +32,22 @@ export async function captureWithSeeking(options: SeekCaptureOptions): Promise<v
     shouldCancel,
     maxFrames,
     codec,
+    signal,
     getSeekTimeoutForCodec,
     seekTo,
   } = options;
 
   const start = performance.now();
   video.pause();
+
+  // Wire AbortSignal for immediate cancellation
+  signal?.addEventListener(
+    'abort',
+    () => {
+      throw new Error('Conversion cancelled by user');
+    },
+    { once: true }
+  );
 
   const seekTimeout = getSeekTimeoutForCodec(codec);
 

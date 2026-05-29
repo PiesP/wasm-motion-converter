@@ -5,6 +5,7 @@ import { esmShModuleUrl } from 'virtual:cdn-deps';
 import type { ModernGifOptions } from '@services/modern-gif-service';
 import { encodeModernGif } from '@services/modern-gif-service';
 import type { SerializableImageData, WorkerProgressCallback } from '@t/worker-types';
+import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
 type ComlinkModule = typeof import('comlink');
@@ -152,7 +153,7 @@ const api = {
 
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       logger.error('general', 'GIF encoding failed', {
         error: message,
         frameCount: Array.isArray(frames) ? frames.length : 1,

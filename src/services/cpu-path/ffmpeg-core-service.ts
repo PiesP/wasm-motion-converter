@@ -333,6 +333,13 @@ export class FFmpegCore {
    * @throws Error if SharedArrayBuffer or cross-origin isolation is not available
    */
   async initialize(callbacks?: InitializationCallbacks): Promise<void> {
+    // Clear any pending termination timer from a previous terminate() call
+    if (this.terminationTimer) {
+      clearTimeout(this.terminationTimer);
+      this.terminationTimer = null;
+      this.isTerminating = false;
+    }
+
     if (this.loaded) {
       logger.debug('ffmpeg', 'FFmpeg already loaded, skipping reinitialization');
       return;

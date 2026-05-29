@@ -113,8 +113,11 @@ export function getAvailableMemory(): number {
     return memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize;
   }
 
-  // Conservative estimate: assume 4GB limit with 40% already used
-  const conservativeLimit = 4 * 1024 * 1024 * 1024; // 4GB
-  const assumedUsage = conservativeLimit * 0.4; // 40% used
+  // Conservative estimate: use device memory hint or assume 4GB limit with 40% already used
+  const deviceMemoryGB = (navigator as { deviceMemory?: number }).deviceMemory;
+  const conservativeLimit = deviceMemoryGB
+    ? Math.min(4, deviceMemoryGB) * 1024 * 1024 * 1024
+    : 4 * 1024 * 1024 * 1024;
+  const assumedUsage = conservativeLimit * 0.4;
   return conservativeLimit - assumedUsage;
 }
