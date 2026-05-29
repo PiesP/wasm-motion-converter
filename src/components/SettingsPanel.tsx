@@ -13,6 +13,7 @@ import { Show } from 'solid-js';
 interface SettingsPanelProps {
   isBusy: boolean;
   isConverting: boolean;
+  isConversionActive: boolean;
   settings: ConversionSettings;
   metadata: VideoMetadata | null;
   onConvert: () => void;
@@ -51,21 +52,21 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
       </div>
 
       <FormatSelector
-        disabled={!props.metadata || props.isBusy}
+        disabled={props.isConversionActive}
         onChange={props.onFormatChange}
         tooltip="GIF works everywhere, WebP is smaller but requires modern browsers"
         value={props.settings.format}
       />
 
       <QualitySelector
-        disabled={!props.metadata || props.isBusy}
+        disabled={props.isConversionActive}
         onChange={props.onQualityChange}
         tooltip="Higher quality = larger file size and slower conversion"
         value={props.settings.quality}
       />
 
       <ScaleSelector
-        disabled={!props.metadata || props.isBusy}
+        disabled={props.isConversionActive}
         inputMetadata={props.metadata}
         onChange={props.onScaleChange}
         tooltip="Reduce dimensions to decrease file size and speed up conversion"

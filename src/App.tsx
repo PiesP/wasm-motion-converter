@@ -116,6 +116,10 @@ const App: Component = () => {
     };
   });
 
+  const isConversionActive = createMemo(
+    () => appState() === 'converting' || appState() === 'cancelling'
+  );
+
   const isBusy = createMemo(
     () =>
       appState() === 'loading-ffmpeg' ||
@@ -311,6 +315,7 @@ const App: Component = () => {
 
             <SettingsPanel
               isBusy={isBusy()}
+              isConversionActive={isConversionActive()}
               isConverting={appState() === 'converting'}
               metadata={videoMetadata()}
               onCancel={handleCancelConversion}
