@@ -127,7 +127,7 @@ export async function convertFramesToImageData(
   canvas.height = height;
   const context = canvas.getContext('2d', {
     alpha: false,
-    willReadFrequently: false,
+    willReadFrequently: true,
   });
 
   if (!context) {
