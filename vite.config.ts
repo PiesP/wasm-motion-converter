@@ -691,12 +691,24 @@ export default defineConfig(({ mode }) => {
 
   const cdnDepsPlugin = cdnDepsVirtualModulePlugin();
 
-  const runtimeDeps = readRuntimeDependencies();
-  const runtimeDepNames = Object.keys(runtimeDeps);
+  // Only CDN-loaded deps are externalized; npm deps are bundled by Vite
+  const cdnOnlyDepNames: string[] = [];
+  try {
+    const pkgJsonPath = path.join(process.cwd(), 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf-8')) as {
+      cdnDependencies?: Record<string, string>;
+    };
+    const cdnDeps = pkg.cdnDependencies ?? {};
+    for (const dep of Object.keys(cdnDeps)) {
+      cdnOnlyDepNames.push(dep);
+    }
+  } catch {
+    // Fallback: if package.json is unreadable, no CDN deps are externalized
+  }
   const isExternalRuntimeDep = (id: string): boolean => {
-    // All runtime dependencies are externalized to CDN
+    // Only CDN-loaded dependencies are externalized (npm deps are bundled by Vite)
     // Service Worker handles worker CORS via proxy pattern
-    return runtimeDepNames.some((dep) => id === dep || id.startsWith(`${dep}/`));
+    return cdnOnlyDepNames.some((dep) => id === dep || id.startsWith(`${dep}/`));
   };
 
   const enableSwDev = env.VITE_ENABLE_SW_DEV === 'true';
