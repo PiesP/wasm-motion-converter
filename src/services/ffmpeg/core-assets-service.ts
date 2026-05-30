@@ -58,6 +58,16 @@ export const revokeFFmpegBlobURLs = (): void => {
   trackedBlobURLs.clear();
 };
 
+/**
+ * Remove specific blob URLs from the tracked set without revoking them.
+ * Use this when blob URLs are revoked elsewhere (e.g., prefetch cleanup).
+ */
+export const removeTrackedBlobURLs = (urls: string[]): void => {
+  for (const url of urls) {
+    trackedBlobURLs.delete(url);
+  }
+};
+
 export type FFmpegCoreVariant = 'mt' | 'st';
 
 const FFMPEG_CORE_ST_VERSION = FFMPEG_CORE_VERSION;

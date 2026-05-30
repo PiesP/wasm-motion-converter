@@ -21,6 +21,7 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import {
   cacheAwareBlobURL,
+  removeTrackedBlobURLs,
   requestIdle,
   revokeFFmpegBlobURLs,
   supportsCacheStorage,
@@ -271,6 +272,7 @@ export class FFmpegCore {
           const urls = await loadWithRetry(baseUrl);
           // Cleanup blob URLs after caching (they're already cached)
           urls.forEach((url) => URL.revokeObjectURL(url));
+          removeTrackedBlobURLs(urls);
           logger.debug('prefetch', `Successfully cached FFmpeg core assets from ${baseUrl}`);
           return;
         } catch (error) {
