@@ -50,12 +50,6 @@ interface ActiveOperation {
 
 let activeOperation: ActiveOperation | null = null;
 
-const status: ConversionStatus = {
-  isConverting: false,
-  progress: 0,
-  statusMessage: '',
-};
-
 export async function convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
   // Cancel any stale operation from a previous call that didn't clean up
   if (activeOperation) {
@@ -68,6 +62,12 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
   const abortController = new AbortController();
 
   activeOperation = { id: operationId, abortController };
+
+  const status: ConversionStatus = {
+    isConverting: false,
+    progress: 0,
+    statusMessage: '',
+  };
 
   status.isConverting = true;
   status.progress = 0;
@@ -157,9 +157,6 @@ export function cancelConversion(): void {
   activeOperation?.abortController.abort();
   ffmpegService.cancelConversion();
   cleanupWebCodecs();
-  status.isConverting = false;
-  status.progress = 0;
-  status.statusMessage = STATUS_CANCELLED;
 }
 
 async function convertWithGpuFallback(
