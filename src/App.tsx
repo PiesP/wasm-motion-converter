@@ -93,6 +93,8 @@ const App: Component = () => {
   const debouncedSaveSettings = debounce(saveConversionSettings, SETTINGS_DEBOUNCE_MS);
 
   onCleanup(() => {
+    const url = videoPreviewUrl();
+    if (url) URL.revokeObjectURL(url);
     debouncedSaveSettings.cancel();
     dismissConfirmation();
     (
@@ -330,6 +332,9 @@ const App: Component = () => {
                 setConversionSettings({ ...conversionSettings(), quality })
               }
               onScaleChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
+              onTrimChange={(start, end) =>
+                setConversionSettings({ ...conversionSettings(), trimStart: start, trimEnd: end })
+              }
               settings={conversionSettings()}
             />
           </div>
