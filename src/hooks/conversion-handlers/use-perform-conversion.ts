@@ -147,6 +147,8 @@ async function performConversion(
         quality: settings.quality,
         scale: settings.scale,
         duration: videoDurationMs ? videoDurationMs / MS_PER_SECOND : undefined,
+        trimStart: settings.trimStart > 0 ? settings.trimStart : undefined,
+        trimEnd: settings.trimEnd > 0 ? settings.trimEnd : undefined,
       },
       metadata: videoMetadata() ?? undefined,
       onProgress: progressCallback,

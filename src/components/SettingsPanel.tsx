@@ -4,6 +4,7 @@
 import FormatSelector from '@components/FormatSelector';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
+import TrimSelector from '@components/TrimSelector';
 import Button from '@components/ui/Button';
 import Panel from '@components/ui/Panel';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
@@ -21,6 +22,7 @@ interface SettingsPanelProps {
   onFormatChange: (format: ConversionSettings['format']) => void;
   onQualityChange: (quality: ConversionSettings['quality']) => void;
   onScaleChange: (scale: ConversionSettings['scale']) => void;
+  onTrimChange: (start: number, end: number) => void;
 }
 
 const SettingsPanel: Component<SettingsPanelProps> = (props) => {
@@ -50,6 +52,18 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
           </Button>
         </Show>
       </div>
+
+      <Show when={props.metadata}>
+        <div class="mb-6">
+          <TrimSelector
+            duration={props.metadata!.duration}
+            trimStart={props.settings.trimStart}
+            trimEnd={props.settings.trimEnd}
+            disabled={props.isConversionActive}
+            onChange={props.onTrimChange}
+          />
+        </div>
+      </Show>
 
       <FormatSelector
         disabled={props.isConversionActive}

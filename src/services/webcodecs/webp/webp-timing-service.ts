@@ -89,7 +89,9 @@ export function resolveAnimationDurationSeconds(
   frameCount: number,
   targetFps: number,
   metadata?: VideoMetadata,
-  captureDurationSeconds?: number
+  captureDurationSeconds?: number,
+  /** Effective trim duration in seconds (trimEnd - trimStart). Overrides metadata duration when set. */
+  trimDurationSeconds?: number
 ): number | undefined {
   if (frameCount <= 0) {
     return undefined;
@@ -114,7 +116,12 @@ export function resolveAnimationDurationSeconds(
   }
 
   const maxDurationSeconds = Math.max(...durationCandidates);
-  const cappedDurationSeconds = Math.min(maxDurationSeconds, WEBP_ANIMATION_MAX_DURATION_SECONDS);
+  // When trim is active, use the trim duration as the authoritative value
+  const effectiveDuration =
+    trimDurationSeconds && trimDurationSeconds > 0
+      ? Math.min(trimDurationSeconds, maxDurationSeconds)
+      : maxDurationSeconds;
+  const cappedDurationSeconds = Math.min(effectiveDuration, WEBP_ANIMATION_MAX_DURATION_SECONDS);
   const minimumDurationSeconds = Math.max(0.016, 1 / Math.max(targetFps || 1, 60));
 
   return Math.max(minimumDurationSeconds, cappedDurationSeconds);

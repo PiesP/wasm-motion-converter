@@ -99,6 +99,10 @@ export interface ConversionSettings {
   quality: ConversionQuality;
   /** Scaling factor (0.5, 0.75, 1.0) */
   scale: ConversionScale;
+  /** Trim start in seconds (0 = beginning of video) */
+  trimStart: number;
+  /** Trim end in seconds (0 = end of video) */
+  trimEnd: number;
 }
 
 /**
@@ -124,6 +128,10 @@ export interface ConversionOptions {
   duration?: number;
   /** Optional GIF encoder preference (only used when the requested format is 'gif') */
   gifEncoder?: GifEncoderPreference;
+  /** Trim start in seconds (0 = beginning of video) */
+  trimStart?: number;
+  /** Trim end in seconds (0 = end of video) */
+  trimEnd?: number;
 }
 
 /**

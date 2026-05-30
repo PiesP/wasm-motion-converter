@@ -155,6 +155,7 @@ export class WebCodecsDecoderService {
       onFrame,
       onProgress,
       shouldCancel,
+      trimStartSeconds,
     } = options;
 
     // Some demuxer eligibility checks benefit from having a codec value available.
@@ -312,7 +313,7 @@ export class WebCodecsDecoderService {
         }
       );
 
-      video.currentTime = 0;
+      video.currentTime = Math.max(0, Math.min(trimStartSeconds ?? 0, duration - 0.001));
       const startDecodeTime = performance.now();
 
       const captureState: CaptureFrameState = {

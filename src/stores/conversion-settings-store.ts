@@ -10,6 +10,8 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   format: 'gif',
   quality: 'medium',
   scale: 1.0,
+  trimStart: 0,
+  trimEnd: 0,
 };
 
 const SETTINGS_STORAGE_KEY = 'conversion-settings';
@@ -34,11 +36,17 @@ const getInitialConversionSettings = (): ConversionSettings => {
         typeof parsed.scale === 'number' &&
         isInTuple(parsed.scale, CONVERSION_SCALES)
       ) {
+        const trimStart =
+          typeof parsed.trimStart === 'number' && parsed.trimStart >= 0 ? parsed.trimStart : 0;
+        const trimEnd =
+          typeof parsed.trimEnd === 'number' && parsed.trimEnd >= 0 ? parsed.trimEnd : 0;
         return {
           ...DEFAULT_CONVERSION_SETTINGS,
           format: parsed.format,
           quality: parsed.quality,
           scale: parsed.scale,
+          trimStart,
+          trimEnd,
         };
       }
     }
@@ -57,6 +65,8 @@ export const saveConversionSettings = (settings: ConversionSettings): void => {
         format: settings.format,
         quality: settings.quality,
         scale: settings.scale,
+        trimStart: settings.trimStart,
+        trimEnd: settings.trimEnd,
       })
     );
   } catch (error) {

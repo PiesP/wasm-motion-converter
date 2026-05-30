@@ -203,14 +203,14 @@ export const TIMEOUT_CONFIG: Record<string, TimeoutConfig> = {
 };
 
 // ============================================================================
-// WebP FORMAT CONSTRAINTS (from WebP specification)
+// WebP FORMAT CONSTRAINTS (project-defined safety limits, not from WebP spec)
 // ============================================================================
 
-/** Maximum animation duration per WebP spec: 10 seconds (10,000 ms) */
-export const WEBP_MAX_DURATION_MS = 10_000;
+/** Maximum animation duration safety limit: 900 seconds (15 minutes) */
+export const WEBP_MAX_DURATION_MS = 900_000;
 
-/** Maximum frame count per WebP spec: 240 frames */
-export const WEBP_MAX_FRAMES = 240;
+/** Maximum frame count safety limit: 9000 frames */
+export const WEBP_MAX_FRAMES = 9000;
 
 /** Maximum duration in seconds for WebP animation. */
 export const WEBP_ANIMATION_MAX_DURATION_SECONDS = WEBP_MAX_DURATION_MS / 1000;

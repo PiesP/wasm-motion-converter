@@ -383,7 +383,7 @@ export class FFmpegEncoder {
       const context = classifyConversionError(
         message,
         metadata ?? null,
-        { format, quality: options.quality, scale: options.scale },
+        { format, quality: options.quality, scale: options.scale, trimStart: 0, trimEnd: 0 },
         ffmpegLogs
       );
 
@@ -878,7 +878,20 @@ export class FFmpegEncoder {
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
 
       // Build input args
-      const inputArgs = this.buildInputArgs(inputFileName, inputOverride);
+      const baseInputArgs = this.buildInputArgs(inputFileName, inputOverride);
+
+      // Apply trim: -ss (seek) goes BEFORE -i, -t (duration) goes AFTER -i
+      const inputArgs: string[] = [];
+      if (options.trimStart && options.trimStart > 0) {
+        inputArgs.push('-ss', options.trimStart.toFixed(3));
+      }
+      inputArgs.push(...baseInputArgs);
+      if (options.trimEnd && options.trimEnd > 0) {
+        const trimDuration = options.trimEnd - (options.trimStart ?? 0);
+        if (trimDuration > 0) {
+          inputArgs.push('-t', trimDuration.toFixed(3));
+        }
+      }
 
       // Generate palette
       const paletteThreadArgs = getThreadingArgs('filter-complex');
@@ -1205,7 +1218,20 @@ export class FFmpegEncoder {
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START);
 
       // Build input args
-      const inputArgs = this.buildInputArgs(inputFileName, inputOverride);
+      const baseInputArgs = this.buildInputArgs(inputFileName, inputOverride);
+
+      // Apply trim: -ss (seek) goes BEFORE -i, -t (duration) goes AFTER -i
+      const inputArgs: string[] = [];
+      if (options.trimStart && options.trimStart > 0) {
+        inputArgs.push('-ss', options.trimStart.toFixed(3));
+      }
+      inputArgs.push(...baseInputArgs);
+      if (options.trimEnd && options.trimEnd > 0) {
+        const trimDuration = options.trimEnd - (options.trimStart ?? 0);
+        if (trimDuration > 0) {
+          inputArgs.push('-t', trimDuration.toFixed(3));
+        }
+      }
 
       if (this.cancellationRequested) {
         throw new Error(CANCELLED_MESSAGE);

@@ -105,6 +105,12 @@ export async function convert(
   const { quality, scale } = options;
   const settings = format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
 
+  // Compute effective trim duration for WebP timing calculations
+  const trimDurationSeconds =
+    options.trimEnd && options.trimEnd > 0
+      ? Math.max(0.1, options.trimEnd - (options.trimStart ?? 0))
+      : undefined;
+
   const normalizedCodec = (metadata?.codec ?? 'unknown').toLowerCase();
   const useModernGif = format === 'gif' && isModernGifSupported();
   const shouldPreferFfmpegPalette =
@@ -311,8 +317,31 @@ export async function convert(
           framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
           frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
           frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-          maxFrames:
-            format === 'webp' ? getMaxWebPFrames(targetFps, metadata?.duration) : undefined,
+          // Compute effective duration considering trim
+          trimStartSeconds: options.trimStart,
+          maxFrames: (() => {
+            if (format !== 'webp') {
+              // Compute effective duration for non-WebP formats to limit frame capture
+              const trimEffectiveDuration = (() => {
+                if (!metadata?.duration) return undefined;
+                const effectiveStart = options.trimStart ?? 0;
+                const effectiveEnd =
+                  options.trimEnd && options.trimEnd > 0 ? options.trimEnd : metadata.duration;
+                return Math.max(0.1, effectiveEnd - effectiveStart);
+              })();
+              return trimEffectiveDuration
+                ? Math.ceil(trimEffectiveDuration * Math.max(1, targetFps))
+                : undefined;
+            }
+            const trimEffectiveDuration = (() => {
+              if (!metadata?.duration) return undefined;
+              const effectiveStart = options.trimStart ?? 0;
+              const effectiveEnd =
+                options.trimEnd && options.trimEnd > 0 ? options.trimEnd : metadata.duration;
+              return Math.max(0.1, effectiveEnd - effectiveStart);
+            })();
+            return getMaxWebPFrames(targetFps, trimEffectiveDuration);
+          })(),
           captureMode,
           codec: metadata?.codec,
           quality: options.quality,
@@ -582,7 +611,8 @@ export async function convert(
         webpCapturedFrames.length,
         targetFps,
         metadata,
-        decodeResult.duration
+        decodeResult.duration,
+        trimDurationSeconds
       );
 
       const webpFpsForEncoding = resolveWebPFps(
@@ -694,6 +724,12 @@ async function convertViaWebCodecsFrames(params: {
     shouldCancel,
   } = params;
 
+  // Compute effective trim duration for WebP timing calculations
+  const trimDurationSeconds =
+    options.trimEnd && options.trimEnd > 0
+      ? Math.max(0.1, options.trimEnd - (options.trimStart ?? 0))
+      : undefined;
+
   const shouldCancelOrDefault = shouldCancel ?? (() => ffmpegService.isCancellationRequested());
   if (shouldCancelOrDefault()) throw new Error('Conversion cancelled by user');
   if (!shouldUseWebCodecsPath(metadata)) return null;
@@ -775,7 +811,8 @@ async function convertViaWebCodecsFrames(params: {
         orderedFrames.length,
         effectiveTargetFps,
         metadata,
-        decodeResult.duration
+        decodeResult.duration,
+        trimDurationSeconds
       );
 
       const fpsForEncoding = resolveWebPFps(

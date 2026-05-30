@@ -253,8 +253,8 @@ function estimateFrameCount(durationMs: number, fps = 30): number {
  * @example
  * // WebP exceeds maximum duration
  * const result = await validateVideoDuration(file, 'webp');
- * // result.valid = false (duration > 10s)
- * // result.warnings[0].severity = 'error'
+ * // result.valid = true (warnings don't block)
+ * // result.warnings[0].severity = 'warning'
  *
  * @example
  * // GIF with medium length (soft warning)
@@ -272,31 +272,31 @@ export async function validateVideoDuration(
     const estimatedFrames = estimateFrameCount(duration);
     const warnings: ValidationWarning[] = [];
 
-    // STEP 2a: WebP validation (strict constraints; confirmation required)
-    // Animated WebP has constraints that may lead to failures or invalid output.
+    // STEP 2a: WebP validation (soft warnings - user can proceed despite warnings)
+    // Animated WebP conversion is possible for longer videos but may have performance implications.
     if (targetFormat === 'webp') {
-      // Check duration limit: WebP max 10 seconds (WEBP_MAX_DURATION_MS = 10000ms)
+      // Check duration limit: safety limit of 900 seconds (WEBP_MAX_DURATION_MS = 900000ms)
       if (duration > WEBP_MAX_DURATION_MS) {
         warnings.push({
-          severity: 'error', // Hard error - blocks conversion
+          severity: 'warning', // Soft warning - user can override
           message: `Video duration (${(duration / 1000).toFixed(
             1
-          )}s) exceeds WebP maximum (${WEBP_MAX_DURATION_MS / 1000}s)`,
-          details: 'WebP animated format supports maximum 10 seconds of video',
-          suggestedAction: 'Consider trimming the video, using GIF format, or converting to MP4',
-          requiresConfirmation: true, // User must explicitly confirm/override
+          )}s) exceeds WebP safety limit (${WEBP_MAX_DURATION_MS / 1000}s)`,
+          details: 'Very long WebP conversions may experience performance or file size issues',
+          suggestedAction: 'Consider trimming the video for better results',
+          requiresConfirmation: false, // User can proceed without confirmation
         });
       }
 
-      // Check frame count limit: WebP max 240 frames (WEBP_MAX_FRAMES = 240)
+      // Check frame count limit: safety limit of 9000 frames (WEBP_MAX_FRAMES = 9000)
       // Guards against performance/memory issues in encoding
       if (estimatedFrames > WEBP_MAX_FRAMES) {
         warnings.push({
-          severity: 'error', // Hard error
-          message: `Estimated frame count (${estimatedFrames}) may exceed WebP maximum (${WEBP_MAX_FRAMES} frames)`,
-          details: 'Try reducing video duration or framerate',
-          suggestedAction: 'Trim video to under 8 seconds or use GIF format',
-          requiresConfirmation: true,
+          severity: 'warning', // Soft warning
+          message: `Estimated frame count (${estimatedFrames}) exceeds WebP safety limit (${WEBP_MAX_FRAMES} frames)`,
+          details: 'High frame counts may cause performance or memory issues during encoding',
+          suggestedAction: 'Consider reducing video duration or framerate',
+          requiresConfirmation: false,
         });
       }
     }

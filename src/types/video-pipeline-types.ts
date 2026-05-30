@@ -89,6 +89,7 @@ export interface WebCodecsDecodeOptions {
   disableDemuxer?: boolean;
   codec?: string;
   quality?: 'low' | 'medium' | 'high';
+  trimStartSeconds?: number;
   onFrame: (frame: WebCodecsFramePayload) => Promise<void>;
   onProgress?: (current: number, total: number) => void;
   shouldCancel?: () => boolean;
