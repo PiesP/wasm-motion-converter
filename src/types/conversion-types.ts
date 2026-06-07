@@ -146,6 +146,10 @@ interface ConversionBlobMetadata {
   captureModeUsed?: string;
   /** Encoder backend used to produce the output (dev/debug; best-effort) */
   encoderBackendUsed?: string;
+  /** FFmpeg frame input kind used during encoding (dev/debug; best-effort) */
+  ffmpegFrameInputKind?: 'rawvideo' | 'image-sequence';
+  /** Bytes used for rawvideo frame staging when ffmpegFrameInputKind is 'rawvideo' (dev/debug) */
+  ffmpegRawvideoBytesUsed?: number;
 }
 
 /**

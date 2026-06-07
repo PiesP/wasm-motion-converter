@@ -410,14 +410,9 @@ export async function encodeWithFFmpegFallback(params: {
   fallbackBlobWithMetadata.captureModeUsed = 'auto';
 
   // Best-effort metadata for logs/debugging.
-  (fallbackBlobWithMetadata as unknown as { ffmpegFrameInputKind?: string }).ffmpegFrameInputKind =
-    shouldTryRawVideo ? 'rawvideo' : 'image-sequence';
+  fallbackBlobWithMetadata.ffmpegFrameInputKind = shouldTryRawVideo ? 'rawvideo' : 'image-sequence';
   if (rawVideoBytesUsed !== null) {
-    (
-      fallbackBlobWithMetadata as unknown as {
-        ffmpegRawvideoBytesUsed?: number;
-      }
-    ).ffmpegRawvideoBytesUsed = rawVideoBytesUsed;
+    fallbackBlobWithMetadata.ffmpegRawvideoBytesUsed = rawVideoBytesUsed;
   }
   return fallbackBlobWithMetadata;
 }

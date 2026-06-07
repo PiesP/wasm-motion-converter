@@ -27,7 +27,6 @@ import {
 } from '@utils/cancellation-context';
 import { isSupportedFormat } from '@utils/codec-utils';
 import { getErrorMessage } from '@utils/error-utils';
-import { createId } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { selectSimplePath } from './simple-path-planner-service';
 
@@ -49,19 +48,35 @@ interface ActiveOperation {
 }
 
 let activeOperation: ActiveOperation | null = null;
+let operationCounter = 0;
 
-export async function convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
-  // Cancel any stale operation from a previous call that didn't clean up
+function createOperation(): ActiveOperation {
+  const id = `op-${++operationCounter}`;
+  const abortController = new AbortController();
+  const op: ActiveOperation = { id, abortController };
+  activeOperation = op;
+  return op;
+}
+
+function clearOperation(id: string): void {
+  if (activeOperation?.id === id) {
+    activeOperation = null;
+  }
+}
+
+function abortActiveOperation(): void {
   if (activeOperation) {
     activeOperation.abortController.abort();
     activeOperation = null;
   }
+}
 
-  const operationId = createId();
+export async function convertVideo(request: ConversionRequest): Promise<ConversionResponse> {
+  // Cancel any stale operation from a previous call that didn't clean up
+  abortActiveOperation();
+
+  const operation = createOperation();
   const startedAt = performance.now();
-  const abortController = new AbortController();
-
-  activeOperation = { id: operationId, abortController };
 
   const status: ConversionStatus = {
     isConverting: false,
@@ -81,23 +96,23 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
       file: request.file,
       format: request.format,
       metadata: request.metadata,
-      abortSignal: abortController.signal,
+      abortSignal: operation.abortController.signal,
     });
 
-    if (activeOperation?.id !== operationId) {
+    if (activeOperation?.id !== operation.id) {
       throw new Error(CANCELLED_MESSAGE);
     }
-    throwIfAborted(abortController.signal);
+    throwIfAborted(operation.abortController.signal);
 
     const blob =
       selection.path === 'gpu'
-        ? await convertWithGpuFallback(request, abortController.signal)
-        : await convertWithCpu(request, abortController.signal);
+        ? await convertWithGpuFallback(request, operation.abortController.signal)
+        : await convertWithCpu(request, operation.abortController.signal);
 
-    if (activeOperation?.id !== operationId) {
+    if (activeOperation?.id !== operation.id) {
       throw new Error(CANCELLED_MESSAGE);
     }
-    throwIfAborted(abortController.signal);
+    throwIfAborted(operation.abortController.signal);
 
     const metadata: ConversionMetadata = {
       path: selection.path,
@@ -125,7 +140,7 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
 
     return { blob, metadata };
   } catch (error) {
-    if (abortController.signal.aborted || isCancellationError(error)) {
+    if (operation.abortController.signal.aborted || isCancellationError(error)) {
       status.isConverting = false;
       status.progress = 0;
       status.statusMessage = STATUS_CANCELLED;
@@ -146,15 +161,13 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
 
     throw error;
   } finally {
-    if (activeOperation?.id === operationId) {
-      activeOperation = null;
-    }
+    clearOperation(operation.id);
     cleanupWebCodecs();
   }
 }
 
 export function cancelConversion(): void {
-  activeOperation?.abortController.abort();
+  abortActiveOperation();
   ffmpegService.cancelConversion();
   cleanupWebCodecs();
 }

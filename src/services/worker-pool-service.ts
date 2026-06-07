@@ -39,13 +39,6 @@ const MEMORY_PER_GIF_WORKER = 100 * 1024 * 1024; // 100 MB
 const MEMORY_PER_WEBP_WORKER = 50 * 1024 * 1024; // 50 MB
 
 /**
- * Worker availability polling interval (milliseconds)
- *
- * Interval for checking worker availability when all workers are busy.
- */
-const WORKER_POLL_INTERVAL = 50;
-
-/**
  * Worker readiness ping interval (milliseconds)
  *
  * Used to avoid a race where the main thread sends a Comlink RPC message
@@ -135,6 +128,8 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
   private workers: Worker[] = [];
   private apis: T[] = [];
   private availableWorkers: number[] = [];
+  /** Pending waiters for an available worker (FIFO). */
+  private workerWaiters: Array<(workerId: number) => void> = [];
   private workerUrl: URL | string;
   private maxWorkers: number;
   private initialized = false;
@@ -408,8 +403,15 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
       if (options.signal?.aborted) {
         throw new Error(CANCELLED_MESSAGE);
       }
-      await new Promise((resolve) => setTimeout(resolve, WORKER_POLL_INTERVAL));
-      workerId = this.availableWorkers.shift();
+      workerId = await new Promise<number>((resolve, reject) => {
+        this.workerWaiters.push(resolve);
+        const onAbort = () => {
+          const idx = this.workerWaiters.indexOf(resolve);
+          if (idx !== -1) this.workerWaiters.splice(idx, 1);
+          reject(new Error(CANCELLED_MESSAGE));
+        };
+        options.signal?.addEventListener('abort', onAbort, { once: true });
+      });
     }
 
     const api = this.apis[workerId] as T;
@@ -449,8 +451,13 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
 
       throw error;
     } finally {
-      // Return worker to pool
-      this.availableWorkers.push(workerId);
+      // Return worker to pool — wake up a waiting task if any
+      const waiter = this.workerWaiters.shift();
+      if (waiter) {
+        waiter(workerId);
+      } else {
+        this.availableWorkers.push(workerId);
+      }
     }
   }
 
@@ -470,6 +477,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
     this.workers = [];
     this.apis = [];
     this.availableWorkers = [];
+    this.workerWaiters = [];
     this.initialized = false;
 
     this.workerReady = [];

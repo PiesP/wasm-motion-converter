@@ -26,50 +26,34 @@ export function getMaxWebPFrames(targetFps: number, durationSeconds?: number): n
   // Using those values would cap extraction to ~1s (via Math.max(1, ...)), causing too few
   // frames for multi-second sources. It's safe to treat small durations as unknown because
   // the decoder will still stop at the real video duration.
-  if (durationSeconds !== undefined) {
-    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-      logger.warn(
-        'conversion',
-        'Invalid duration provided for WebP frame budget; falling back to default budget window',
-        {
-          durationSeconds,
-          targetFps,
-        }
-      );
-    } else if (durationSeconds < 1) {
-      logger.debug('conversion', 'Short duration provided for WebP frame budget; using default', {
-        durationSeconds,
-        targetFps,
-      });
-    }
-  }
-
   const safeDurationSeconds =
     durationSeconds && Number.isFinite(durationSeconds) && durationSeconds >= 1
       ? durationSeconds
       : undefined;
 
+  // When duration is unknown, use a conservative default (60s) instead of the full
+  // WEBP_ANIMATION_MAX_DURATION_SECONDS (900s). This prevents excessive frame budgets
+  // for short videos where probing failed, while still allowing reasonable extraction.
+  const effectiveDuration = safeDurationSeconds ?? durationSeconds === undefined
+    ? (safeDurationSeconds ?? 60)
+    : (safeDurationSeconds ?? WEBP_ANIMATION_MAX_DURATION_SECONDS);
+
   const cappedDuration = Math.max(
     1,
-    Math.min(
-      safeDurationSeconds ?? WEBP_ANIMATION_MAX_DURATION_SECONDS,
-      WEBP_ANIMATION_MAX_DURATION_SECONDS
-    )
+    Math.min(effectiveDuration, WEBP_ANIMATION_MAX_DURATION_SECONDS)
   );
   const estimatedFrames = Math.ceil(cappedDuration * Math.max(1, targetFps));
   const maxFrames = Math.max(1, Math.min(estimatedFrames, WEBP_MAX_FRAMES));
 
   logger.debug(
     'conversion',
-    `Computed WebP frame extraction budget: targetFps=${targetFps}, durationUsedSeconds=${(
-      safeDurationSeconds ?? WEBP_ANIMATION_MAX_DURATION_SECONDS
-    ).toFixed(
+    `Computed WebP frame extraction budget: targetFps=${targetFps}, durationUsedSeconds=${effectiveDuration.toFixed(
       3
     )}, cappedDurationSeconds=${cappedDuration.toFixed(3)}, estimatedFrames=${estimatedFrames}, maxFrames=${maxFrames}`,
     {
       targetFps,
       durationSeconds: durationSeconds ?? null,
-      durationUsedSeconds: safeDurationSeconds ?? WEBP_ANIMATION_MAX_DURATION_SECONDS,
+      durationUsedSeconds: effectiveDuration,
       cappedDurationSeconds: cappedDuration,
       estimatedFrames,
       maxFrames,

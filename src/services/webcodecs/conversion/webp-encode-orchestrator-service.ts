@@ -4,7 +4,6 @@
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import {
   encodeWebPFramesInChunks,
-  tryEncodeWebPWithEncoderFactory,
 } from '@services/webcodecs/conversion/webp-encoding-service';
 import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames-service';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
@@ -21,12 +20,9 @@ type WebPEncodeParams = {
   requestedTargetFpsForDuration: number;
   captureDurationSeconds: number;
   quality: 'low' | 'medium' | 'high';
-  timestampsForFactory?: number[];
   frameTimestampsForMuxer: number[];
-  durationSecondsForFactory?: number;
   metadata?: VideoMetadata;
   codec?: string;
-  sourceFPS?: number;
   onProgress: (current: number, total: number) => void;
   shouldCancel: () => boolean;
   canEncodeWebPFrames: () => Promise<boolean>;
@@ -75,39 +71,15 @@ export async function encodeWebPWithMuxFallback(
     requestedTargetFpsForDuration,
     captureDurationSeconds,
     quality,
-    timestampsForFactory,
     frameTimestampsForMuxer,
-    durationSecondsForFactory,
     metadata,
     codec,
-    sourceFPS,
     onProgress,
     shouldCancel,
     canEncodeWebPFrames,
     setStatusPrefix,
     encodeWithFFmpegFallback,
   } = params;
-
-  const factoryEncoded = await tryEncodeWebPWithEncoderFactory({
-    frames,
-    width,
-    height,
-    fps,
-    quality,
-    timestamps: timestampsForFactory,
-    durationSeconds: durationSecondsForFactory,
-    codec,
-    sourceFPS,
-    onProgress,
-    shouldCancel,
-  });
-
-  if (factoryEncoded) {
-    return {
-      blob: factoryEncoded.blob,
-      encoderBackendUsed: factoryEncoded.encoderBackendUsed,
-    };
-  }
 
   const canEncode = await canEncodeWebPFrames();
   if (!canEncode) {

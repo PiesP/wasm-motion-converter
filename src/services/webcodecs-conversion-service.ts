@@ -621,11 +621,6 @@ export async function convert(
         webpAnimationDurationSeconds
       );
 
-      const timestampsForEncoding =
-        webpFrameTimestamps.length >= webpCapturedFrames.length
-          ? webpFrameTimestamps.slice(0, webpCapturedFrames.length)
-          : undefined;
-
       const webpEncode = await encodeWebPWithMuxFallback({
         frames: webpCapturedFrames,
         width: decodeResult.width,
@@ -634,12 +629,9 @@ export async function convert(
         requestedTargetFpsForDuration: targetFps,
         captureDurationSeconds: decodeResult.duration,
         quality,
-        timestampsForFactory: timestampsForEncoding,
         frameTimestampsForMuxer: webpFrameTimestamps,
-        durationSecondsForFactory: webpAnimationDurationSeconds,
         metadata,
         codec: metadata?.codec,
-        sourceFPS: metadata?.framerate,
         onProgress: encodeReporter.report,
         shouldCancel,
         canEncodeWebPFrames: () => getCanvasWebPEncodeSupport(),

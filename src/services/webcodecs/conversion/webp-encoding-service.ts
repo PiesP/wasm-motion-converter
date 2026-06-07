@@ -14,13 +14,6 @@ import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { logger } from '@utils/logger';
 import { cacheWebPChunkSize, getCachedWebPChunkSize } from '@utils/session-cache';
 
-export type WebPFactoryResult = { blob: Blob; encoderBackendUsed: string };
-
-// EncoderFactory removed — always returns null so callers fall through to encodeWebPFramesInChunks + muxWebPFrames.
-export const tryEncodeWebPWithEncoderFactory = (
-  _params: unknown
-): Promise<WebPFactoryResult | null> => Promise.resolve(null);
-
 const resolveChunkSize = (): { chunkSize: number; cached: boolean; cachedChunkSize?: number } => {
   const hwConcurrency = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
   const cachedChunkSize = getCachedWebPChunkSize();
