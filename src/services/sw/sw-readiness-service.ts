@@ -70,7 +70,7 @@ export async function waitForSWReady(timeout = DEFAULT_WAIT_TIMEOUT_MS): Promise
   try {
     const registration = await navigator.serviceWorker.getRegistration();
     if (!registration) {
-      logger.warn('general', STATUS_NOT_REGISTERED);
+      logger.debug('general', STATUS_NOT_REGISTERED);
       return false;
     }
   } catch {

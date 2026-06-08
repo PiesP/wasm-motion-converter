@@ -143,7 +143,7 @@ const ensureServiceWorkerControl = async (callbacks: FFmpegInitCallbacks): Promi
   const swReady = await waitForSWReady(SW_CONTROL_TIMEOUT_MS);
 
   if (!swReady) {
-    logger.warn('ffmpeg', 'Service Worker not ready; continuing FFmpeg init without SW control', {
+    logger.debug('ffmpeg', 'Service Worker not ready; continuing FFmpeg init without SW control', {
       timeoutMs: SW_CONTROL_TIMEOUT_MS,
       readiness: checkSWReadiness(),
       initSnapshot: getInitEnvironmentSnapshot(),
