@@ -207,6 +207,7 @@ export class FFmpegPipeline {
         this.callbacks.onProgress?.(progress);
       },
       onStatusUpdate: (message) => {
+        this.persistentStatusCallback?.(message);
         this.callbacks.onStatusUpdate?.(message);
       },
       shouldCancel: () => this.callbacks.shouldCancel?.() || false,

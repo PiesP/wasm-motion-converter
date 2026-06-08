@@ -76,7 +76,7 @@ export async function muxWebPFrames(params: {
       minDuration: `${minDuration}ms`,
       maxDuration: `${maxDuration}ms`,
       variance: `${variance}ms`,
-      isUniform: variance === 0,
+      isUniform: variance <= 1,
     });
   }
 

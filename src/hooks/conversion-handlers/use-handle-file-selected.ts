@@ -53,7 +53,9 @@ export async function handleFileSelected(
     return;
   }
 
-  await ffmpegService.clearCachedInput();
+  if (ffmpegService.isLoaded()) {
+    await ffmpegService.clearCachedInput();
+  }
   if (isStale()) {
     return;
   }

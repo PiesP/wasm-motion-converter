@@ -34,9 +34,10 @@ export function getMaxWebPFrames(targetFps: number, durationSeconds?: number): n
   // When duration is unknown, use a conservative default (60s) instead of the full
   // WEBP_ANIMATION_MAX_DURATION_SECONDS (900s). This prevents excessive frame budgets
   // for short videos where probing failed, while still allowing reasonable extraction.
-  const effectiveDuration = safeDurationSeconds ?? durationSeconds === undefined
-    ? (safeDurationSeconds ?? 60)
-    : (safeDurationSeconds ?? WEBP_ANIMATION_MAX_DURATION_SECONDS);
+  const effectiveDuration =
+    (safeDurationSeconds ?? durationSeconds === undefined)
+      ? (safeDurationSeconds ?? 60)
+      : (safeDurationSeconds ?? WEBP_ANIMATION_MAX_DURATION_SECONDS);
 
   const cappedDuration = Math.max(
     1,

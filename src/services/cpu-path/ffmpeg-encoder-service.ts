@@ -914,7 +914,7 @@ export class FFmpegEncoder {
       const paletteHeartbeat = monitoring.startProgressHeartbeat(
         FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START,
         FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_END,
-        30
+        Math.max(15, Math.min(metadata?.duration ?? 30, 45))
       );
 
       performanceTracker.startPhase('palette-gen');

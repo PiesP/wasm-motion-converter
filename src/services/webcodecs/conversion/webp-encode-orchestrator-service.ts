@@ -2,9 +2,7 @@
 // Copyright (c) 2025 PiesP
 
 import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
-import {
-  encodeWebPFramesInChunks,
-} from '@services/webcodecs/conversion/webp-encoding-service';
+import { encodeWebPFramesInChunks } from '@services/webcodecs/conversion/webp-encoding-service';
 import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames-service';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
 import { resolveAnimationDurationSeconds } from '@services/webcodecs/webp/webp-timing-service';

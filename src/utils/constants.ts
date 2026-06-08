@@ -111,7 +111,7 @@ export const QUALITY_PRESETS = {
   gif: {
     low: { fps: 12, colors: 128 },
     medium: { fps: 20, colors: 256 },
-    high: { fps: 30, colors: 256 },
+    high: { fps: 20, colors: 256 },
   },
   webp: {
     // WASM-optimized settings for libwebp encoding in FFmpeg

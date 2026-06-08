@@ -127,8 +127,8 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
     status.progress = 100;
     status.statusMessage = STATUS_COMPLETE;
 
-    request.onProgress?.(100);
     request.onStatus?.(STATUS_COMPLETE);
+    request.onProgress?.(100);
 
     logger.info('conversion', 'Conversion completed', {
       format: request.format,
