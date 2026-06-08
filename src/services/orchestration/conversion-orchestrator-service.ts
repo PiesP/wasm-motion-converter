@@ -236,14 +236,13 @@ async function convertWithCpu(
   }
 
   if (format === 'avif') {
-    // AVIF encoding via FFmpeg CPU path.
-    // Uses FFmpeg's libaom-av1 encoder if available in the WASM build,
-    // otherwise falls back to WebP with a warning.
-    // TODO: Add dedicated FFmpeg AVIF encoding command (libaom-av1/libsvtav1)
-    throw new Error(
-      'AVIF encoding is not yet available in this build. ' +
-        'The FFmpeg WASM build must include libaom-av1 or libsvtav1 for AV1 encoding. ' +
-        'Please use GIF or WebP format instead.'
+    return ffmpegService.convertToAVIF(
+      request.file,
+      request.options,
+      request.metadata,
+      undefined,
+      undefined,
+      abortSignal
     );
   }
 

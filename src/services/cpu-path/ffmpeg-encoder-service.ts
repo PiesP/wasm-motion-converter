@@ -361,7 +361,7 @@ export class FFmpegEncoder {
    */
   private enrichConversionError(params: {
     error: unknown;
-    format: 'gif' | 'webp';
+    format: 'gif' | 'webp' | 'avif';
     options: ConversionOptions;
     metadata?: VideoMetadata;
   }): Error {
@@ -1405,6 +1405,103 @@ export class FFmpegEncoder {
       throw this.enrichConversionError({
         error,
         format: 'webp',
+        options,
+        metadata,
+      });
+    } finally {
+      performanceTracker.endPhase('conversion');
+    }
+  }
+
+  /**
+   * Convert video to animated AVIF via FFmpeg.
+   *
+   * Attempts AV1 encoding with available encoders in priority order:
+   * libsvtav1 → libaom-av1.
+   * Falls back with a clear error if no AV1 encoder is available
+   * in the current FFmpeg WASM build.
+   */
+  async convertToAVIF(
+    file: File,
+    options: ConversionOptions,
+    metadata?: VideoMetadata,
+    _inputOverride?: FFmpegInputOverride,
+    abortSignal?: AbortSignal
+  ): Promise<ConversionOutputBlob> {
+    if (abortSignal) throwIfAborted(abortSignal);
+
+    const { core, vfs } = this.getDeps();
+
+    performanceTracker.startPhase('conversion');
+
+    try {
+      const ffmpeg = core.getFFmpeg();
+      const inputFileName = FFMPEG_INTERNALS.INPUT_FILE_NAME;
+      const outputFileName = 'output.avif';
+
+      await vfs.ensureInputFile(ffmpeg, file);
+
+      const quality = options.quality || 'medium';
+      const scale = options.scale || 1.0;
+      const fps = getOptimalFPS(metadata?.framerate || 30, quality, 'webp');
+
+      const scaleFilter =
+        scale === 1.0 ? null : `scale=iw*${scale}:ih*${scale}:flags=${SCALE_FILTERS[quality]}`;
+
+      const fpsFilter = `fps=${fps}`;
+      const filterParts = [fpsFilter];
+      if (scaleFilter) filterParts.push(scaleFilter);
+      const videoFilter = filterParts.join(',');
+
+      const encoderCandidates = ['libsvtav1', 'libaom-av1'];
+      const crfValue = quality === 'high' ? 20 : quality === 'medium' ? 30 : 40;
+      const durationMs = (metadata?.duration ?? 10) * 1000;
+
+      for (const encoder of encoderCandidates) {
+        try {
+          const args = [
+            '-i',
+            inputFileName,
+            '-c:v',
+            encoder,
+            '-crf',
+            String(crfValue),
+            '-b:v',
+            '0',
+            '-vf',
+            videoFilter,
+            '-f',
+            'avif',
+            '-y',
+            outputFileName,
+          ];
+
+          const timeout = calculateTimeout('webp', durationMs);
+          await ffmpeg.exec(args, timeout, { signal: abortSignal });
+
+          const data = await vfs.readFile(ffmpeg, outputFileName);
+          const blob = new Blob([data as BlobPart], { type: 'image/avif' });
+          await vfs.handleConversionCleanup(ffmpeg, outputFileName, [], () => false);
+          return blob as ConversionOutputBlob;
+        } catch (_error) {
+          try {
+            await vfs.deleteFiles(ffmpeg, [outputFileName]);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      throw new Error(
+        `AVIF encoding failed: no AV1 encoder available in FFmpeg WASM build. ` +
+          `Tried: ${encoderCandidates.join(', ')}. ` +
+          `The current build includes libvpx/libwebp but not libaom-av1/libsvtav1. ` +
+          `Please use GIF or WebP format instead.`
+      );
+    } catch (error) {
+      throw this.enrichConversionError({
+        error,
+        format: 'avif',
         options,
         metadata,
       });
