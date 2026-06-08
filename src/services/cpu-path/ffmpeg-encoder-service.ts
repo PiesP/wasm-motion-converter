@@ -663,7 +663,7 @@ export class FFmpegEncoder {
 
     // Convert frames to GIF using palette
     const conversionThreadArgs = getThreadingArgs('filter-complex');
-    const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
+    const ditherMode = quality === 'high' ? 'floyd_steinberg' : 'bayer';
     // Use concat instead of spread to prevent stack overflow
     const conversionCmd = ([] as string[])
       .concat(Array.from(conversionThreadArgs))
@@ -1034,7 +1034,7 @@ export class FFmpegEncoder {
 
       // Convert to GIF using palette
       const conversionThreadArgs = getThreadingArgs('filter-complex');
-      const ditherMode = quality === 'high' ? 'sierra2_4a' : 'bayer';
+      const ditherMode = quality === 'high' ? 'floyd_steinberg' : 'bayer';
       const gifFilterChain = scaleFilter
         ? `${scaleFilter},fps=${fps}[v];[v][1:v]paletteuse=dither=${ditherMode}`
         : `fps=${fps}[v];[v][1:v]paletteuse=dither=${ditherMode}`;
