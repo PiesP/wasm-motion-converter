@@ -87,7 +87,10 @@ export async function muxWebPFrames(params: {
       return null;
     }
 
-    const buffer = frame.slice().buffer;
+    const buffer = (frame.buffer as ArrayBuffer).slice(
+      frame.byteOffset,
+      frame.byteOffset + frame.byteLength
+    );
     return new Blob([buffer], { type: 'image/webp' });
   }
 
@@ -102,7 +105,10 @@ export async function muxWebPFrames(params: {
 
     onProgress?.(index + 1, encodedFrames.length);
 
-    const buffer = frame.slice().buffer as ArrayBuffer;
+    const buffer = (frame.buffer as ArrayBuffer).slice(
+      frame.byteOffset,
+      frame.byteOffset + frame.byteLength
+    ) as ArrayBuffer;
     const duration =
       durations[index] ?? durations[durations.length - 1] ?? MIN_WEBP_FRAME_DURATION_MS;
 

@@ -27,7 +27,25 @@ export type CaptureFrameState = {
   consecutiveEmptyFrames: number;
 };
 
-const formatDecision = (args: {
+const formatDecision = (() => {
+  const cache = new Map<string, ReturnType<typeof _formatDecision>>();
+
+  return (args: {
+    frameFormat: WebCodecsFrameFormat;
+    quality?: 'low' | 'medium' | 'high';
+    isComplexCodec: boolean;
+    frameQuality: number;
+  }) => {
+    const key = `${args.frameFormat}:${args.quality ?? ''}:${args.isComplexCodec}:${args.frameQuality}`;
+    const cached = cache.get(key);
+    if (cached) return cached;
+    const result = _formatDecision(args);
+    cache.set(key, result);
+    return result;
+  };
+})();
+
+function _formatDecision(args: {
   frameFormat: WebCodecsFrameFormat;
   quality?: 'low' | 'medium' | 'high';
   isComplexCodec: boolean;
@@ -36,7 +54,7 @@ const formatDecision = (args: {
   actualFormat: WebCodecsFrameFormat;
   encodeMimeType: string;
   encodeQuality?: number;
-} => {
+} {
   const { frameFormat, quality, isComplexCodec, frameQuality } = args;
 
   if (frameFormat === 'rgba') {
@@ -77,7 +95,7 @@ const formatDecision = (args: {
     encodeMimeType,
     encodeQuality,
   };
-};
+}
 
 export const captureFrameAndEmit = async (args: {
   video: HTMLVideoElement;
