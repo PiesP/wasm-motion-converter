@@ -11,6 +11,7 @@
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import {
   cleanup as cleanupWebCodecs,
+  scheduleWorkerPoolIdleCleanup,
   convert as webcodecsConvert,
 } from '@services/webcodecs-conversion-service';
 import type {
@@ -162,7 +163,7 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
     throw error;
   } finally {
     clearOperation(operation.id);
-    cleanupWebCodecs();
+    scheduleWorkerPoolIdleCleanup();
   }
 }
 

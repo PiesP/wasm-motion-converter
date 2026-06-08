@@ -50,6 +50,8 @@ import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
 let gifWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
 let canvasWebPEncodeSupport: boolean | null = null;
 let gifWorkerPoolPromise: Promise<WorkerPool<EncoderWorkerAPI>> | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+const IDLE_TIMEOUT_MS = 60_000; // 1 minute
 
 function getWorkerPool(): Promise<WorkerPool<EncoderWorkerAPI> | null> {
   if (typeof window === 'undefined') {
@@ -894,8 +896,24 @@ async function convertViaWebCodecsFrames(params: {
 }
 
 export function cleanup(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
   gifWorkerPool?.terminate();
   gifWorkerPool = null;
   gifWorkerPoolPromise = null;
   canvasWebPEncodeSupport = null;
+}
+
+/**
+ * Schedule worker pool termination after a period of inactivity.
+ * Cancels any existing timer and starts a new one.
+ */
+export function scheduleWorkerPoolIdleCleanup(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    logger.info('worker-pool', 'Worker pool idle timeout — terminating');
+    cleanup();
+  }, IDLE_TIMEOUT_MS);
 }
