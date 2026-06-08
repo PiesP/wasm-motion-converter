@@ -13,11 +13,16 @@ const state: SWRegistrationState = {
 };
 
 let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
+let notificationsSetup = false;
 
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (!state.isSupported) {
     console.warn('[SW Register] Service Workers not supported in this browser');
     return null;
+  }
+
+  if (state.isRegistered) {
+    return state.registration;
   }
 
   try {
@@ -58,6 +63,8 @@ type SWRegisterGlobal = typeof globalThis & {
 ).cleanupServiceWorkerUpdateCheck = cleanupServiceWorkerUpdateCheck;
 
 function setupUpdateCheck(registration: ServiceWorkerRegistration): void {
+  if (updateCheckInterval !== null) return;
+
   const UPDATE_INTERVAL = 60 * 60 * 1000; // 1 hour
 
   updateCheckInterval = setInterval(() => {
@@ -74,6 +81,8 @@ export function cleanupServiceWorkerUpdateCheck(): void {
     updateCheckInterval = null;
   }
   navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+  notificationsSetup = false;
+  state.isRegistered = false;
 }
 
 function onControllerChange(): void {
@@ -81,6 +90,8 @@ function onControllerChange(): void {
 }
 
 function setupUpdateNotifications(registration: ServiceWorkerRegistration): void {
+  if (notificationsSetup) return;
+  notificationsSetup = true;
   registration.addEventListener('updatefound', () => {
     const newWorker = registration.installing;
 
