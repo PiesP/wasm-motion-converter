@@ -686,7 +686,7 @@ export class FFmpegEncoder {
     const conversionHeartbeat = monitoring.startProgressHeartbeat(
       paletteEnd,
       encodeEnd,
-      gifTimeout / 1000
+      Math.max(10, Math.ceil((durationSeconds ?? 10) * 2.5))
     );
 
     try {
@@ -1067,7 +1067,7 @@ export class FFmpegEncoder {
       const heartbeat = monitoring.startProgressHeartbeat(
         FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START,
         FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_END,
-        conversionTimeout / 1000
+        Math.max(10, Math.ceil((metadata?.duration ?? 10) * 2.5))
       );
 
       try {
