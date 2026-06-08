@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
+import { useExportLogs } from '@hooks/use-export-logs';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
 import { Show, splitProps } from 'solid-js';
@@ -9,6 +9,7 @@ import { Show, splitProps } from 'solid-js';
 type ExportOptions = {
   includeVerboseFfmpegProgress: boolean;
   format: 'text' | 'jsonl';
+  getFfmpegLogs: () => string[];
 };
 
 type ExportLogsButtonProps = {
@@ -145,7 +146,7 @@ const buildExportText = (options: ExportOptions): string => {
   envLines.push(`SharedArrayBuffer: ${typeof SharedArrayBuffer !== 'undefined'}`);
 
   const appLogs = logger.getRecentLogs();
-  const rawFfmpegLogs = ffmpegService.getRecentFFmpegLogs();
+  const rawFfmpegLogs = options.getFfmpegLogs();
   const { logs: ffmpegLogs, removedCount } = filterFfmpegLogsForExport(rawFfmpegLogs, options);
 
   const lines: string[] = [];
@@ -169,7 +170,7 @@ const buildExportText = (options: ExportOptions): string => {
 const buildExportJsonl = (options: ExportOptions): string => {
   const now = new Date();
 
-  const rawFfmpegLogs = ffmpegService.getRecentFFmpegLogs();
+  const rawFfmpegLogs = options.getFfmpegLogs();
   const { logs: ffmpegLogs, removedCount } = filterFfmpegLogsForExport(rawFfmpegLogs, options);
 
   const meta: Record<string, unknown> = {
@@ -229,6 +230,7 @@ const buildExportJsonl = (options: ExportOptions): string => {
 
 const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
   const [local] = splitProps(props, ['class']);
+  const { getFfmpegLogs } = useExportLogs();
 
   const handleExport = (event: MouseEvent): void => {
     try {
@@ -244,7 +246,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
       const filename = buildExportFilename(format, now);
 
       if (format === 'jsonl') {
-        const text = buildExportJsonl({ includeVerboseFfmpegProgress, format });
+        const text = buildExportJsonl({ includeVerboseFfmpegProgress, format, getFfmpegLogs });
         downloadText({
           filename,
           text,
@@ -253,7 +255,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
         return;
       }
 
-      const text = buildExportText({ includeVerboseFfmpegProgress, format });
+      const text = buildExportText({ includeVerboseFfmpegProgress, format, getFfmpegLogs });
       downloadText({ filename, text });
     } catch (error) {
       logger.error('general', 'Failed to export logs', { error });

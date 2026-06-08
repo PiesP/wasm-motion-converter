@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import type { ModernGifOptions } from '@services/modern-gif-service';
-
 /**
  * Progress callback type for worker-to-main-thread progress updates.
  *
@@ -37,13 +35,27 @@ export interface SerializableImageData {
 }
 
 /**
- * Encoder options type alias for worker operations
+ * Encoder options for worker operations.
  *
- * @remarks
- * Extends ModernGifOptions to provide standardized encoding configuration
- * for the worker pool system.
+ * Mirrors the subset of ModernGifOptions relevant to worker encoding.
+ * Defined inline to keep the types layer free of service-layer dependencies.
  */
-type EncoderOptions = ModernGifOptions;
+export interface EncoderOptions {
+  /** Frame width in pixels */
+  width: number;
+  /** Frame height in pixels */
+  height: number;
+  /** Target frames per second */
+  fps: number;
+  /** Quality preset controlling color palette size */
+  quality: 'low' | 'medium' | 'high';
+  /** Per-frame timestamps for variable-delay encoding */
+  timestamps?: number[];
+  /** Total animation duration override (seconds) */
+  durationSeconds?: number;
+  /** Loop count (0 = infinite) */
+  loop?: number;
+}
 
 /**
  * Public API interface for encoder web worker
