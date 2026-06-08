@@ -41,7 +41,7 @@ export interface WatchdogOptions {
   /** Conversion quality for adaptive timeout calculation */
   quality?: ConversionQuality;
   /** Output format (affects base timeout - WebP needs longer timeout) */
-  format?: 'gif' | 'webp' | 'avif' | 'mp4';
+  format?: 'gif' | 'webp' | 'mp4';
   /** Enable log silence detection (default: true) */
   enableLogSilenceCheck?: boolean;
 }

@@ -14,11 +14,11 @@
     },
     "solid-js": {
       "esm.sh": "sha384-/K1chA0r9DEbfexR+wceqaDiiguYNj9nMVuE4eiBTFkJkEA1FFXviQGIrZtorTOC",
-      "jsdelivr": "sha384-0TSN3+YxtgklfxS9SKX2TPwLES+5ojWD6t8/ERFi4Z7ZT02iY8ywtXIY89v23SOM"
+      "jsdelivr": "sha384-w6HY4S0KH1eTyjKkIzLJMQRAWqNLO6eRwcSOKHo+rr3WPDT6+LVvkU9Ubfl8tSji"
     },
     "solid-js/web": {
       "esm.sh": "sha384-bcpJMTpZcvXPQrB+Uk5jkot9lcMFOlpFK2si3IAeLIa1BPI6RCG6rYXk3A10lg0R",
-      "jsdelivr": "sha384-Nk5CjECM79WK+cJBubipDMRJIKCHFZPb32GjrIBZ2POfbHkxh0kY/zR+z2QZBgRA"
+      "jsdelivr": "sha384-C0knFNQdLtI/wL9I+NO2DPm4zHDnmQC/AWUxuvkphMbGPfUutdwnhO5iBFuIJBBn"
     },
     "solid-js/store": {
       "esm.sh": "sha384-nXoRXJXRBpGyXksSBzu7juMaYPeLAdKfkwUwCKCQDHUrnzyIbtXT1TOzCWJsJtTt",

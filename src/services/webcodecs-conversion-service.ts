@@ -27,7 +27,6 @@ import {
 } from '@services/webcodecs/webp/webp-timing-service';
 import { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
 import type {
-  ConversionFormat,
   ConversionOptions,
   ConversionOutputBlob,
   EncoderFrame,
@@ -99,18 +98,12 @@ function shouldUseWebCodecsPath(metadata: VideoMetadata | undefined): boolean {
 
 export async function convert(
   file: File,
-  format: ConversionFormat,
+  format: 'gif' | 'webp',
   options: ConversionOptions,
   metadata?: VideoMetadata,
   abortSignal?: AbortSignal
 ): Promise<ConversionOutputBlob> {
   const { quality, scale } = options;
-
-  // AVIF path: currently delegates to FFmpeg (no direct WebCodecs AV1 encode yet)
-  if (format === 'avif') {
-    throw new Error('AVIF encoding is not yet supported via WebCodecs. Use the FFmpeg path.');
-  }
-
   const settings = format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
 
   // Compute effective trim duration for WebP timing calculations (first occurrence)

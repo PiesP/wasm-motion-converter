@@ -235,16 +235,5 @@ async function convertWithCpu(
     );
   }
 
-  if (format === 'avif') {
-    return ffmpegService.convertToAVIF(
-      request.file,
-      request.options,
-      request.metadata,
-      undefined,
-      undefined,
-      abortSignal
-    );
-  }
-
   throw new Error(`Unsupported format: ${format}`);
 }

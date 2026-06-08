@@ -30,7 +30,6 @@ import { FFmpegEncoder } from '@services/cpu-path/ffmpeg-encoder-service';
 import { FFmpegMonitoring } from '@services/cpu-path/ffmpeg-monitoring-service';
 import { FFmpegVFS } from '@services/cpu-path/ffmpeg-vfs-service';
 import type {
-  ConversionFormat,
   ConversionOptions,
   ConversionOutputBlob,
   ConversionQuality,
@@ -408,28 +407,8 @@ export class FFmpegPipeline {
     );
   }
 
-  async convertToAVIF(
-    file: File,
-    options: ConversionOptions,
-    metadata?: VideoMetadata,
-    inputOverride?: FFmpegInputOverride,
-    callbacks?: PipelineCallbacks,
-    abortSignal?: AbortSignal
-  ): Promise<ConversionOutputBlob> {
-    if (abortSignal) throwIfAborted(abortSignal);
-    return this.runConversion(
-      'avif',
-      file,
-      options,
-      metadata,
-      inputOverride,
-      callbacks,
-      abortSignal
-    );
-  }
-
   private async runConversion(
-    format: ConversionFormat,
+    format: 'gif' | 'webp',
     file: File,
     options: ConversionOptions,
     metadata?: VideoMetadata,
@@ -479,21 +458,13 @@ export class FFmpegPipeline {
           const result =
             format === 'gif'
               ? await this.encoder.convertToGIF(file, options, metadata, inputOverride, abortSignal)
-              : format === 'webp'
-                ? await this.encoder.convertToWebP(
-                    file,
-                    options,
-                    metadata,
-                    inputOverride,
-                    abortSignal
-                  )
-                : await this.encoder.convertToAVIF(
-                    file,
-                    options,
-                    metadata,
-                    inputOverride,
-                    abortSignal
-                  );
+              : await this.encoder.convertToWebP(
+                  file,
+                  options,
+                  metadata,
+                  inputOverride,
+                  abortSignal
+                );
           this.monitoring.stopWatchdog();
           return result;
         } catch (error) {
@@ -502,14 +473,7 @@ export class FFmpegPipeline {
           if (attempt === 0 && this.shouldRetryAfterWasmCrash(error)) {
             attempt += 1;
             this.callbacks.onStatusUpdate?.(WATCHDOG_STALL_MESSAGE);
-            this.hardResetForRetry(
-              format === 'gif'
-                ? 'convertToGIF'
-                : format === 'webp'
-                  ? 'convertToWebP'
-                  : 'convertToAVIF',
-              error
-            );
+            this.hardResetForRetry(format === 'gif' ? 'convertToGIF' : 'convertToWebP', error);
             await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
             this.core.clearAllListeners();
             this.monitoring.startWatchdog(watchdogConfig);
