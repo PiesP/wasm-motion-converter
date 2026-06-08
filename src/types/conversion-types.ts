@@ -17,10 +17,10 @@
  * @example
  * const format: ConversionFormat = 'gif';
  */
-export type ConversionFormat = 'gif' | 'webp';
+export type ConversionFormat = 'gif' | 'webp' | 'avif';
 
 /** Runtime-available list of all ConversionFormat values (single source of truth) */
-export const CONVERSION_FORMATS: readonly ConversionFormat[] = ['gif', 'webp'] as const;
+export const CONVERSION_FORMATS: readonly ConversionFormat[] = ['gif', 'webp', 'avif'] as const;
 
 /**
  * Frame types supported by encoders

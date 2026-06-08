@@ -38,7 +38,9 @@ export function getOptimalFPS(
   }
 
   // Get preset FPS for this quality/format combination
-  const preset = QUALITY_PRESETS[format][quality];
+  // AVIF reuses WebP presets (same encoding characteristics)
+  const presetFormat = format === 'avif' ? 'webp' : format;
+  const preset = QUALITY_PRESETS[presetFormat][quality];
   const presetFps = 'fps' in preset ? preset.fps : 15;
 
   // Don't exceed source FPS (no point in upsampling frames)
