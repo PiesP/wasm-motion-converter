@@ -63,6 +63,28 @@ export async function captureComplexCodecFramesForWebP(params: {
   // Collect frames by index to avoid duplicates and ensure stable ordering.
   const framesByIndex: Array<{ frame: EncoderFrame; timestamp: number } | undefined> = [];
 
+  /** Close VideoFrame/ImageBitmap resources before clearing the array. */
+  const releaseFramesByIndex = (): void => {
+    for (const entry of framesByIndex) {
+      if (!entry) continue;
+      const { frame } = entry;
+      if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
+        try {
+          frame.close();
+        } catch {
+          /* ignore */
+        }
+      } else if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
+        try {
+          frame.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    framesByIndex.length = 0;
+  };
+
   const requestedTargetFps = targetFps;
   const normalizedCodec = metadata?.codec?.toLowerCase() ?? '';
   const isAv1 = normalizedCodec.includes('av1') || normalizedCodec.includes('av01');
@@ -355,7 +377,7 @@ export async function captureComplexCodecFramesForWebP(params: {
     );
 
     // Discard partial results from the first pass before retrying.
-    framesByIndex.length = 0;
+    releaseFramesByIndex();
 
     // If auto selected track mode and it under-captured, try frame-callback first.
     if (supportsFrameCallback && decodeResult.captureModeUsed === 'track') {
@@ -412,7 +434,7 @@ export async function captureComplexCodecFramesForWebP(params: {
             }
           );
 
-          framesByIndex.length = 0;
+          releaseFramesByIndex();
           {
             const attempt = await runDecodeWithTiming('track');
             decodeResult = attempt.result;
@@ -428,13 +450,13 @@ export async function captureComplexCodecFramesForWebP(params: {
           logger.warn('conversion', 'Track probe failed, falling back to seek', {
             error: getErrorMessage(trackError),
           });
-          framesByIndex.length = 0;
+          releaseFramesByIndex();
         }
       }
 
       // If still under-captured, fall back to seek.
       if (decodeResult.frameCount < retryRequiredFrames) {
-        framesByIndex.length = 0;
+        releaseFramesByIndex();
 
         const av1SeekFpsCap = getAv1SeekFpsCap({
           durationSeconds: decodeResult.duration,
