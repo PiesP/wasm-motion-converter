@@ -95,14 +95,14 @@ export const FFMPEG_CORE_BASE_URLS = [
  * Quality presets for GIF and WebP conversions.
  *
  * **GIF Presets:**
- * - `low`: 10 FPS, 128 colors (smallest file, lowest quality)
- * - `medium`: 15 FPS, 256 colors (balanced quality and size)
- * - `high`: 24 FPS, 256 colors (maximum quality and fluidity)
+ * - `low`: 12 FPS, 128 colors (smallest file, lowest quality)
+ * - `medium`: 20 FPS, 256 colors (balanced quality and size)
+ * - `high`: 20 FPS, 256 colors (max quality, FPS capped for WASM performance)
  *
- * **WebP Presets:**
- * - `low`: 10 FPS, 70% quality, compression 3 (fastest, smallest)
- * - `medium`: 15 FPS, 85% quality, compression 4 (balanced)
- * - `high`: 24 FPS, 95% quality, compression 6 (best quality, slowest)
+ * **WebP Presets (WASM-optimized):**
+ * - `low`: 10 FPS, 50% quality, compressionLevel 2 (fastest, smallest)
+ * - `medium`: 15 FPS, 55% quality, compressionLevel 2 (balanced)
+ * - `high`: 20 FPS, 70% quality, compressionLevel 3 (best quality within WASM limits)
  *
  * @note GIF palettegen filter's `stats_mode` parameter is not supported in
  * FFmpeg.wasm 5.1.4. FFmpeg uses its default statistics mode which works correctly.

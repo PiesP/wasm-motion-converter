@@ -32,7 +32,6 @@ export async function captureWithSeeking(options: SeekCaptureOptions): Promise<v
     shouldCancel,
     maxFrames,
     codec,
-    signal,
     getSeekTimeoutForCodec,
     seekTo,
   } = options;
@@ -40,14 +39,8 @@ export async function captureWithSeeking(options: SeekCaptureOptions): Promise<v
   const start = performance.now();
   video.pause();
 
-  // Wire AbortSignal for immediate cancellation
-  signal?.addEventListener(
-    'abort',
-    () => {
-      throw new Error('Conversion cancelled by user');
-    },
-    { once: true }
-  );
+  // AbortSignal is checked via shouldCancel?.() polling in the loop.
+  // signal?.throwIfAborted() before loop entry if signal becomes required later.
 
   const seekTimeout = getSeekTimeoutForCodec(codec);
 

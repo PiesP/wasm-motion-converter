@@ -548,9 +548,9 @@ const CDN_SOURCES = {
 type CdnKey = keyof typeof CDN_SOURCES;
 
 async function fetchIntegrity(url: string, timeout = 30_000): Promise<string | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
   try {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), timeout);
     const response = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': 'SRI-Generator/1.0.0' },
@@ -561,6 +561,8 @@ async function fetchIntegrity(url: string, timeout = 30_000): Promise<string | n
     return `sha384-${hash}`;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

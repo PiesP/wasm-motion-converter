@@ -71,6 +71,11 @@ export function unregisterServiceWorker(): void {
     clearInterval(updateCheckInterval);
     updateCheckInterval = null;
   }
+  navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+}
+
+function onControllerChange(): void {
+  console.log('[SW Register] New Service Worker activated');
 }
 
 function setupUpdateNotifications(registration: ServiceWorkerRegistration): void {
@@ -91,11 +96,9 @@ function setupUpdateNotifications(registration: ServiceWorkerRegistration): void
     });
   });
 
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    console.log('[SW Register] New Service Worker activated');
-  });
+  navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
 }
 
 function notifyUpdateAvailable(): void {
-  console.log('[SW Register] 🔄 App update available - reload to get the latest version');
+  window.dispatchEvent(new CustomEvent('sw-update-available'));
 }
