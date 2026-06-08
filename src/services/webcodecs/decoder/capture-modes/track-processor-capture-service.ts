@@ -131,15 +131,14 @@ export async function captureWithTrackProcessor(
     reader.releaseLock();
     track.stop();
     video.pause();
+    const elapsedMs = performance.now() - startDecodeTime;
     logger.info(
       'conversion',
-      `WebCodecs track capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}, elapsedMs=${
-        performance.now() - startDecodeTime
-      }`,
+      `WebCodecs track capture completed: capturedFrames=${frameIndex}, totalFrames=${totalFrames}, elapsedMs=${elapsedMs}`,
       {
         capturedFrames: frameIndex,
         totalFrames,
-        elapsedMs: performance.now() - startDecodeTime,
+        elapsedMs,
       }
     );
   }

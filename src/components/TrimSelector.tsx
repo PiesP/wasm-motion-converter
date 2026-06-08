@@ -4,6 +4,8 @@
 import type { Component } from 'solid-js';
 import { createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 
+const TRIM_END_FULL_DURATION = 0;
+
 interface TrimSelectorProps {
   duration: number;
   trimStart: number;
@@ -87,7 +89,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   const fps = (): number => props.estimatedFps ?? 15;
 
   const effectiveEnd = createMemo(() => {
-    if (props.trimEnd === 0 || props.trimEnd > props.duration) {
+    if (props.trimEnd === TRIM_END_FULL_DURATION || props.trimEnd > props.duration) {
       return props.duration;
     }
     return props.trimEnd;
@@ -114,7 +116,9 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
 
   const mid = createMemo(() => props.duration / 2);
 
-  const isDefault = createMemo(() => props.trimStart === 0 && props.trimEnd === 0);
+  const isDefault = createMemo(
+    () => props.trimStart === 0 && props.trimEnd === TRIM_END_FULL_DURATION
+  );
 
   const frameCount = createMemo(() => {
     return Math.round(trimDuration() * fps());
@@ -268,7 +272,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     const list: Array<{ label: string; start: number; end: number; hidden: boolean }> = [];
 
     // "Full" — always visible
-    list.push({ label: 'Full', start: 0, end: 0, hidden: false });
+    list.push({ label: 'Full', start: 0, end: TRIM_END_FULL_DURATION, hidden: false });
 
     if (props.duration > 10) {
       list.push({
@@ -280,7 +284,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       list.push({
         label: 'Last 10s',
         start: Math.max(0, props.duration - 10),
-        end: 0,
+        end: TRIM_END_FULL_DURATION,
         hidden: false,
       });
       list.push({
@@ -290,15 +294,15 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         hidden: false,
       });
     } else {
-      list.push({ label: 'First 10s', start: 0, end: 0, hidden: true });
-      list.push({ label: 'Last 10s', start: 0, end: 0, hidden: true });
-      list.push({ label: 'Middle 10s', start: 0, end: 0, hidden: true });
+      list.push({ label: 'First 10s', start: 0, end: TRIM_END_FULL_DURATION, hidden: true });
+      list.push({ label: 'Last 10s', start: 0, end: TRIM_END_FULL_DURATION, hidden: true });
+      list.push({ label: 'Middle 10s', start: 0, end: TRIM_END_FULL_DURATION, hidden: true });
     }
 
     if (props.duration >= 2) {
       list.push({ label: 'First Half', start: 0, end: props.duration / 2, hidden: false });
     } else {
-      list.push({ label: 'First Half', start: 0, end: 0, hidden: true });
+      list.push({ label: 'First Half', start: 0, end: TRIM_END_FULL_DURATION, hidden: true });
     }
 
     return list;

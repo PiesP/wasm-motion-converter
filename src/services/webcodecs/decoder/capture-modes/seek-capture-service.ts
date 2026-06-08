@@ -118,7 +118,7 @@ export async function captureWithSeeking(options: SeekCaptureOptions): Promise<v
       }
     }
 
-    await captureFrame(index, Math.min(duration - epsilon, index * frameInterval));
+    await captureFrame(index, targetTime);
   }
 
   logger.info(

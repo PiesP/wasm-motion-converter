@@ -98,7 +98,9 @@ const App: Component = () => {
     debouncedSaveSettings.cancel();
     dismissConfirmation();
     (
-      (globalThis as Record<string, unknown>).unregisterServiceWorker as (() => void) | undefined
+      (globalThis as Record<string, unknown>).cleanupServiceWorkerUpdateCheck as
+        | (() => void)
+        | undefined
     )?.();
   });
 

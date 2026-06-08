@@ -18,7 +18,7 @@ Live demo: https://wasm-motion-converter.pages.dev/
 
 ## Quick start (dev)
 
-Prerequisites: Volta Node.js `24.15.0` (project default) or engines-compatible Node.js `>=22.16.0`, pnpm `>=10.29.2`
+Prerequisites: Volta Node.js `26.3.0` (project default) or engines-compatible Node.js `>=22.0.0`, pnpm `>=10.29.2`
 
 ```bash
 pnpm install

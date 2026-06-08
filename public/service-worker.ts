@@ -284,10 +284,9 @@ function isWorkerRequest(request: Request): boolean {
 self.addEventListener('install', (event: ExtendableEvent) => {
   console.log(`[SW ${SW_VERSION}] Installing...`);
 
-  self.skipWaiting();
-
   event.waitUntil(
     (async () => {
+      await self.skipWaiting();
       const fallbackCache = await caches.open(CACHE_NAMES.fallback);
 
       const appCache = await caches.open(CACHE_NAMES.app);
