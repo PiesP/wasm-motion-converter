@@ -33,6 +33,14 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
     throw new Error(`Unsupported format: ${format}`);
   }
 
+  // AVIF always goes through FFmpeg CPU path (no WebCodecs AV1 encoder yet)
+  if (format === 'avif') {
+    return {
+      path: 'cpu',
+      reason: 'AVIF encoding requires FFmpeg CPU path (libaom-av1)',
+    };
+  }
+
   const codec = metadata?.codec?.trim();
   if (!codec || codec === 'unknown') {
     return {
