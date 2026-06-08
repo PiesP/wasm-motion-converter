@@ -115,7 +115,7 @@ class CapabilityService {
     }
 
     try {
-      window.__VIDEO_CAPS__ = caps;
+      window.__VIDEO_CAPS__ = Object.freeze(caps);
     } catch (error) {
       logger.warn('general', 'Failed to expose window.__VIDEO_CAPS__ (non-critical)', {
         error: getErrorMessage(error),

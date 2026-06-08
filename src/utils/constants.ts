@@ -78,8 +78,9 @@ export const FFMPEG_CORE_VERSION = getRuntimeDepVersion('@ffmpeg/core-mt');
  * CDN URLs for FFmpeg core files (JavaScript, WebAssembly, workers).
  * Uses npm and unpkg mirrors for redundancy and global availability.
  *
- * @deprecated Use the unified CDN system from @utils/cdn-config instead.
- * FFmpeg loading now uses all 3 CDN providers (esm.sh, jsdelivr, unpkg).
+ * @legacy Use the unified CDN system from @utils/cdn-config for new code.
+ * Still referenced by ffmpeg-core-service.ts for backward-compatible loading.
+ * FFmpeg loading uses all 3 CDN providers (esm.sh, jsdelivr, unpkg).
  * This constant is kept for backward compatibility only.
  */
 export const FFMPEG_CORE_BASE_URLS = [
