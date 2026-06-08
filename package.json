@@ -15,7 +15,7 @@
     "pnpm": "11.2.2"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "NODE_OPTIONS=\"--no-deprecation\" vite",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "fmt": "biome check --linter-enabled=false .",
@@ -27,9 +27,9 @@
     "circular": "pnpm dlx madge --ts-config tsconfig.json --circular src/**/*.ts",
     "knip:full": "knip --files --exports --dependencies --reporter compact --max-show-issues 50 --no-exit-code",
     "prebuild": "pnpm -s quality",
-    "build": "vite build",
-    "analyze": "VITE_ANALYZE_BUNDLE=true vite build && node -e \"console.log('\\nBundle analysis generated at dist/stats.html')\"",
-    "preview": "vite preview",
+    "build": "NODE_OPTIONS=\"--no-deprecation\" vite build",
+    "analyze": "NODE_OPTIONS=\"--no-deprecation\" VITE_ANALYZE_BUNDLE=true vite build && node -e \"console.log('\\\\nBundle analysis generated at dist/stats.html')\"",
+    "preview": "NODE_OPTIONS=\"--no-deprecation\" vite preview",
     "clean": "rm -rf dist node_modules/.vite",
     "test": "cd test && pnpm test",
     "test:watch": "cd test && pnpm test:watch",
