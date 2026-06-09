@@ -432,8 +432,10 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * Attempts to construct detailed codec string with profile/level information.
    * Examples: 'avc1.64001f' (H.264 High@L3.1), 'hvc1.1.6.L93.B0' (HEVC)
    *
-   * Falls back to FourCC code if detailed string unavailable. Some codecs may need
-   * additional parsing of box structures for complete information.
+   * Resolution order:
+   * 1. MP4Box-provided codec_string (most reliable)
+   * 2. MP4Box-provided codec / FourCC (already contains profile/level when numeric)
+   * 3. Parse avcC/hvcC box to extract profile_idc / constraint / level_idc
    *
    * @param track - MP4Box track with codec information
    * @returns Codec string suitable for WebCodecs VideoDecoder
@@ -441,21 +443,106 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @internal Private method
    */
   private buildCodecString(track: Mp4BoxTrack): string {
-    const fourCc = track.codec || track.fourCC;
-
+    // 1. MP4Box codec_string — already a complete RFC 6381 string
     if (track.codec_string) {
       return track.codec_string;
     }
 
-    if (fourCc) {
-      logger.warn('demuxer', 'Using FourCC as codec string', {
-        fourCC: fourCc,
-        message: 'Detailed codec string unavailable - may cause VideoDecoder issues',
+    // 2. MP4Box codec / FourCC — often already contains profile/level info
+    //    e.g., "avc1.640032" is a valid RFC 6381 codec string
+    const mp4boxCodec = track.codec || track.fourCC;
+    if (mp4boxCodec && this.looksLikeRfc6381Codec(mp4boxCodec)) {
+      logger.info('demuxer', 'Using MP4Box codec as RFC 6381 string', {
+        codec: mp4boxCodec,
       });
-      return fourCc;
+      return mp4boxCodec;
+    }
+
+    // 3. Parse avcC / hvcC box to build codec string from binary data
+    const parsed = this.parseCodecFromBox(track);
+    if (parsed) {
+      logger.info('demuxer', 'Built codec string from codec box', {
+        codec: parsed,
+        source: track.avcC ? 'avcC' : 'hvcC',
+      });
+      return parsed;
+    }
+
+    // 4. Raw FourCC fallback (least preferred — may cause VideoDecoder issues)
+    if (mp4boxCodec) {
+      logger.warn('demuxer', 'Using raw FourCC as codec string', {
+        fourCC: mp4boxCodec,
+        message:
+          'Unable to determine detailed codec string from track or codec boxes — may cause VideoDecoder issues',
+      });
+      return mp4boxCodec;
     }
 
     throw new Error('Unable to determine codec string from track');
+  }
+
+  /**
+   * Check whether a codec string already looks like a valid RFC 6381 identifier.
+   *
+   * Valid patterns: avc1.XXYYZZ, avc3.XXYYZZ, av01.X.X.M.X, vp09.XX.XX.XX,
+   *                hvc1.X.XX.XXX.XX, hev1.X.XX.XXX.XX, vp08.XX.XX.XX
+   */
+  private looksLikeRfc6381Codec(codec: string): boolean {
+    return /^(avc1|avc3|av01|vp09|vp08|hvc1|hev1)(\.|$)/.test(codec);
+  }
+
+  /**
+   * Build codec string from raw codec configuration box data.
+   *
+   * - H.264 avcC: [version(1) | profile(1) | constraints(1) | level(1) | ...]
+   *   → avc1.PPCCLL  (hex values, 2 digits each)
+   * - HEVC hvcC:  [version(1) | general_profile_space(2bits) | ...]
+   *   → hvc1.1.6.L93.B0 format
+   *
+   * @param track - MP4Box track with codec box data
+   * @returns Codec string or undefined if parsing failed
+   */
+  private parseCodecFromBox(track: Mp4BoxTrack): string | undefined {
+    // H.264: avcC box
+    // Layout: [version(1) | profile_idc(1) | constraint_flags(1) | level_idc(1) | ...]
+    if (track.avcC) {
+      const avcCData = this.toUint8Array(track.avcC);
+      if (avcCData && avcCData.length >= 4) {
+        const p = avcCData[1]!;
+        const c = avcCData[2]!;
+        const l = avcCData[3]!;
+        return `avc1.${p.toString(16).padStart(2, '0').toLowerCase()}${c.toString(16).padStart(2, '0').toLowerCase()}${l.toString(16).padStart(2, '0').toLowerCase()}`;
+      }
+    }
+
+    // HEVC: hvcC box
+    // Layout: [version(1) | general_profile_space+flags(1) | general_profile_idc(5bits from byte1+3bits from byte2) |
+    //          general_profile_compatibility_flags(4) | general_constraint_indicator_flags(4) |
+    //          general_level_idc(1) | ...]
+    if (track.hvcC) {
+      const hvcCData = this.toUint8Array(track.hvcC);
+      if (hvcCData && hvcCData.length >= 13) {
+        const profileIdc = (hvcCData[1]! & 0x1f) | ((hvcCData[2]! & 0x07) << 3);
+        const constraintFlags =
+          (hvcCData[6]! << 24) | (hvcCData[7]! << 16) | (hvcCData[8]! << 8) | hvcCData[9]!;
+        const levelIdc = hvcCData[12]!;
+        const constraintHex = constraintFlags.toString(16).padStart(8, '0').toLowerCase();
+        return `hvc1.${profileIdc}.${constraintHex.slice(0, 2)}.L${levelIdc}.${constraintHex.slice(4).toUpperCase()}0`;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Normalize codec box data to Uint8Array.
+   */
+  private toUint8Array(data: Uint8Array | ArrayBuffer | number[]): Uint8Array | undefined {
+    if (!data) return undefined;
+    if (data instanceof Uint8Array) return data;
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (Array.isArray(data)) return new Uint8Array(data);
+    return undefined;
   }
 
   /**
