@@ -19,6 +19,7 @@ logs/
 *.log
 tmp/
 temp/
+*.mp4
 
 # Environment
 .env
