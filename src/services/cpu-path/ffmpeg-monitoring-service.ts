@@ -192,6 +192,7 @@ export class FFmpegMonitoring {
       resolution: metadata ? `${metadata.width}x${metadata.height}` : 'unknown',
       duration: metadata?.duration ? `${metadata.duration.toFixed(1)}s` : 'unknown',
       quality: quality || 'unknown',
+      targetFps: metadata?.framerate ?? FFMPEG_INTERNALS.DEFAULT_FPS,
     });
 
     // Clear existing timers (defensive; stopWatchdog() already cleared these)

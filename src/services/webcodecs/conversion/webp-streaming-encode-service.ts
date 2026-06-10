@@ -102,6 +102,14 @@ export async function encodeFramesToANMFChunks(params: {
   let hasAlpha = false;
   const totalFrames = frames.length;
 
+  logger.performance('Starting WebP streaming encode', {
+    totalFrames,
+    resolution: `${width}x${height}`,
+    codec: codec ?? 'unknown',
+  });
+
+  const encodeStartTime = performance.now();
+
   // Reusable canvas for frame conversion (avoids per-frame allocation)
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -176,6 +184,12 @@ export async function encodeFramesToANMFChunks(params: {
     }
 
     onProgress?.(i + 1, totalFrames);
+
+    // Emit performance progress every ~10 frames for user-visible feedback
+    if (i === 0 || (i + 1) % 10 === 0 || i === totalFrames - 1) {
+      const elapsedS = ((performance.now() - encodeStartTime) / 1000).toFixed(1);
+      logger.performance(`Encoding WebP... (${i + 1}/${totalFrames}) [${elapsedS}s]`);
+    }
   }
 
   if (!cachedChunkSize && anmfChunks.length > 0) {

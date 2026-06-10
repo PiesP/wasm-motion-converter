@@ -250,11 +250,15 @@ export class FFmpegEncoder {
       if (type === 'stdout' && this.isFFmpegProgressKeyValueLine(trimmed)) {
         // Still allow progress parsing below.
       } else {
-        logger.debug('ffmpeg', `[${type}] ${message}`);
+        // Route raw FFmpeg stderr/stdout to the separate FFmpeg log buffer
+        // to prevent verbose output from evicting important application logs.
+        logger.addFfmpegLog('DEBUG', message, type);
       }
 
       if (type === 'fferr' || message.includes('Error') || message.includes('failed')) {
+        // Warnings/errors go to BOTH buffers: main (for visibility) and FFmpeg (for diagnostics)
         logger.warn('ffmpeg', `FFmpeg warning/error: ${message}`);
+        logger.addFfmpegLog('WARN', `FFmpeg warning/error: ${message}`);
       }
 
       // Parse progress from FFmpeg logs when native progress events don't fire
