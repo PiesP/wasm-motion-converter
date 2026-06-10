@@ -12,6 +12,8 @@ import ThemeToggle from '@components/ThemeToggle';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@hooks/use-conversion-handlers';
 import { useNetworkState } from '@hooks/use-network-state';
+import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
+import { requestIdle } from '@services/ffmpeg/core-assets-service';
 import { dismissConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -98,6 +100,19 @@ const App: Component = () => {
       crossOriginIsolated === true;
 
     setEnvironmentSupported(isSupported);
+
+    // Prefetch FFmpeg core assets in idle time to reduce first-conversion latency
+    if (isSupported) {
+      requestIdle(
+        () => {
+          ffmpegService.prefetchCoreAssets().catch(() => {
+            // Non-fatal: prefetch failure will be handled on first conversion
+            logger.debug('general', 'FFmpeg core prefetch failed (will retry on demand)');
+          });
+        },
+        { timeout: 5000 }
+      );
+    }
 
     // Attach test helpers in dev mode (AI-driven browser testing)
     if (attachTestHelpers) {

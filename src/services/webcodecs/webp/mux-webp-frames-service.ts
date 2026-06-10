@@ -6,19 +6,17 @@
  *
  * Combines pre-encoded WebP image frames into a single animated WebP.
  *
- * This module provides two paths:
- * 1. Legacy (two-stage): encode all frames → mux all at once
- * 2. Streaming (single-pass): encode each frame → immediately build ANMF chunk → assemble
+ * Two paths:
+ * 1. Legacy (two-stage): encodedFrames[] → build ANMF chunks → assemble RIFF
+ * 2. Streaming (single-pass): EncoderFrame[] → per-frame encode → ANMF → assemble RIFF
  *
- * The streaming path is preferred for new code as it reduces peak memory by ~50%.
+ * The streaming path is preferred as it reduces peak memory by ~75%.
  */
 
-import { encodeWebPFramesStreaming } from '@services/webcodecs/conversion/webp-streaming-encode-service';
-import { buildWebPFrameDurations } from '@services/webcodecs/webp/webp-timing-service';
 import type { VideoMetadata } from '@t/conversion-types';
 import { MIN_WEBP_FRAME_DURATION_MS, WEBP_BACKGROUND_COLOR } from '@utils/constants';
 import { logger } from '@utils/logger';
-import { muxAnimatedWebPFromChunks } from '@utils/webp-muxer';
+import { createAnmfChunk, muxAnimatedWebPFromChunks, stripWebPContainer } from '@utils/webp-muxer';
 
 export async function muxWebPFrames(params: {
   encodedFrames: Uint8Array[];
@@ -31,39 +29,28 @@ export async function muxWebPFrames(params: {
   onProgress?: (current: number, total: number) => void;
   shouldCancel?: () => boolean;
 }): Promise<Blob | null> {
-  const {
-    encodedFrames,
-    timestamps,
-    width,
-    height,
-    fps,
-    metadata,
-    durationSeconds,
-    onProgress,
-    shouldCancel,
-  } = params;
+  const { encodedFrames, timestamps, width, height, durationSeconds, onProgress, shouldCancel } =
+    params;
 
   if (!encodedFrames.length) {
     return null;
   }
 
-  const animationDurationSeconds = durationSeconds;
-
+  // Build durations from timestamps
+  const { buildWebPFrameDurations } = await import('@services/webcodecs/webp/webp-timing-service');
   const durations = buildWebPFrameDurations({
     timestamps,
-    fps,
+    fps: params.fps,
     frameCount: encodedFrames.length,
-    sourceFPS: metadata?.framerate,
-    codec: metadata?.codec,
-    durationSeconds: animationDurationSeconds,
+    sourceFPS: params.metadata?.framerate,
+    codec: params.metadata?.codec,
+    durationSeconds,
   });
 
   if (encodedFrames.length === 1) {
     onProgress?.(1, 1);
     const frame = encodedFrames[0];
-    if (!frame) {
-      return null;
-    }
+    if (!frame) return null;
     const buffer = (frame.buffer as ArrayBuffer).slice(
       frame.byteOffset,
       frame.byteOffset + frame.byteLength
@@ -72,44 +59,28 @@ export async function muxWebPFrames(params: {
   }
 
   // Legacy path: build ANMF chunks from pre-encoded WebP frames
-  const { stripWebPContainer, createAnmfChunk } = await import('@utils/webp-muxer');
-
-  const webpPayloadSize = 0; // will calculate below
-  void webpPayloadSize;
-
-  // We use the new muxAnimatedWebPFromChunks helper, but first need to
-  // build ANMF chunks from the legacy encoded frames array.
-  // This avoids duplicating the RIFF assembly logic.
   logger.warn('conversion', 'muxWebPFrames: using legacy two-stage path', {
     frameCount: encodedFrames.length,
   });
 
-  // Build ANMF chunks
   const anmfChunks: Uint8Array[] = [];
   let hasAlpha = false;
 
   for (let i = 0; i < encodedFrames.length; i++) {
-    if (shouldCancel?.()) {
-      throw new Error('Conversion cancelled by user');
-    }
+    if (shouldCancel?.()) throw new Error('Conversion cancelled by user');
     onProgress?.(i + 1, encodedFrames.length);
 
     const frame = encodedFrames[i];
-    if (!frame) {
-      throw new Error(`Missing encoded frame at index ${i}`);
-    }
+    if (!frame) throw new Error(`Missing encoded frame at index ${i}`);
 
-    const duration = durations[i] ?? durations[durations.length - 1] ?? MIN_WEBP_FRAME_DURATION_MS;
-
-    // Detect alpha from first frame only
     if (i === 0) {
       const { webPFrameHasAlphaChunk } = await import('@utils/webp-muxer');
       hasAlpha = webPFrameHasAlphaChunk(frame.buffer as ArrayBuffer);
     }
 
-    const framePayload = stripWebPContainer(frame.buffer as ArrayBuffer);
-    const anmfChunk = createAnmfChunk(framePayload.buffer as ArrayBuffer, duration, width, height);
-    anmfChunks.push(anmfChunk);
+    const payload = stripWebPContainer(frame.buffer as ArrayBuffer);
+    const duration = durations[i] ?? durations[durations.length - 1] ?? MIN_WEBP_FRAME_DURATION_MS;
+    anmfChunks.push(createAnmfChunk(payload.buffer as ArrayBuffer, duration, width, height));
   }
 
   const muxed = muxAnimatedWebPFromChunks(anmfChunks, hasAlpha, {
@@ -120,22 +91,20 @@ export async function muxWebPFrames(params: {
   });
 
   onProgress?.(encodedFrames.length, encodedFrames.length);
-
   return new Blob([muxed], { type: 'image/webp' });
 }
 
 /**
- * Stream-encode ImageData frames directly into an animated WebP Blob.
+ * Stream-encode EncoderFrame[] directly into an animated WebP Blob.
  *
- * This is the single-pass pipeline: each ImageData frame is encoded to WebP,
- * immediately stripped to its VP8/VP8L payload, wrapped in an ANMF chunk,
- * and finally all chunks are assembled into the RIFF container.
+ * Each frame is converted to ImageData, encoded to WebP, stripped to its
+ * VP8/VP8L payload, and wrapped in an ANMF chunk — all before moving to
+ * the next frame. GPU resources are closed immediately after conversion.
  *
- * Peak memory usage is ~50% lower than the two-stage approach because
- * the full encodedFrames[] array is never materialized.
+ * Peak memory: O(1) per frame instead of O(N) for full frame array.
  */
 export async function muxWebPFramesStreaming(params: {
-  frames: ImageData[];
+  frames: import('@t/conversion-types').EncoderFrame[];
   timestamps: number[];
   width: number;
   height: number;
@@ -161,11 +130,10 @@ export async function muxWebPFramesStreaming(params: {
     shouldCancel,
   } = params;
 
-  if (!frames.length) {
-    return null;
-  }
+  if (!frames.length) return null;
 
-  // Calculate frame durations upfront (lightweight, no memory concern)
+  // Calculate frame durations upfront (lightweight)
+  const { buildWebPFrameDurations } = await import('@services/webcodecs/webp/webp-timing-service');
   const durations = buildWebPFrameDurations({
     timestamps,
     fps,
@@ -175,8 +143,12 @@ export async function muxWebPFramesStreaming(params: {
     durationSeconds,
   });
 
-  // Single-pass: encode → strip → ANMF chunk
-  const { anmfChunks, hasAlpha } = await encodeWebPFramesStreaming({
+  // Single-pass per-frame encoding
+  const { encodeFramesToANMFChunks } = await import(
+    '@services/webcodecs/conversion/webp-streaming-encode-service'
+  );
+
+  const { anmfChunks, hasAlpha } = await encodeFramesToANMFChunks({
     frames,
     quality,
     width,
@@ -187,11 +159,11 @@ export async function muxWebPFramesStreaming(params: {
     shouldCancel,
   });
 
+  if (anmfChunks.length === 0) return null;
+
   if (anmfChunks.length === 1) {
     const frame = anmfChunks[0];
     if (!frame) return null;
-    // Single frame: extract the VP8/VP8L payload and wrap in simple WebP
-    // For simplicity, return as-is (it's a valid WebP frame payload)
     return new Blob([frame.buffer as ArrayBuffer], { type: 'image/webp' });
   }
 

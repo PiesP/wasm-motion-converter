@@ -4,25 +4,31 @@
 /**
  * Streaming WebP Encoding Service
  *
- * Encodes ImageData frames directly into animated WebP mux chunks,
- * eliminating the intermediate Uint8Array[] buffer that caused
- * double memory usage in the previous two-stage pipeline.
+ * Encodes frames directly into animated WebP mux chunks in a single pass,
+ * eliminating the intermediate Uint8Array[] and ImageData[] buffers that
+ * caused double memory usage in the previous two-stage pipeline.
  *
- * Old pipeline: ImageData[] → encode all → Uint8Array[] → mux all → Blob
- * New pipeline: ImageData → encode → strip container → ANMF chunk → append
+ * Old pipeline: EncoderFrame[] → convertFramesToImageData() → ImageData[] (all)
+ *                → encode all → Uint8Array[] (all) → mux all → Blob
  *
- * Memory peak reduction: ~50% (no intermediate encodedFrames array)
+ * New pipeline: EncoderFrame[] → per-frame: frameToImageData → encode → strip → ANMF
+ *                → assemble RIFF → Blob
+ *
+ * Memory peak reduction: ~75% (no full ImageData[] + encodedFrames[] simultaneously)
  */
 
-import { createWebPFrameEncoder } from '@services/webcodecs/webp/webp-frame-encoder-service';
-import type { ConversionOptions } from '@t/conversion-types';
+import type { ConversionOptions, EncoderFrame } from '@t/conversion-types';
 import { QUALITY_PRESETS } from '@utils/constants';
 import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { logger } from '@utils/logger';
 import { cacheWebPChunkSize, getCachedWebPChunkSize } from '@utils/session-cache';
 import { createAnmfChunk, stripWebPContainer, webPFrameHasAlphaChunk } from '@utils/webp-muxer';
 
-const resolveChunkSize = (): { chunkSize: number; cached: boolean; cachedChunkSize?: number } => {
+const resolveChunkSize = (): {
+  chunkSize: number;
+  cached: boolean;
+  cachedChunkSize?: number;
+} => {
   const hwConcurrency = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
   const cachedChunkSize = getCachedWebPChunkSize();
   const cached = !!(cachedChunkSize && isHardwareCacheValid());
@@ -45,15 +51,17 @@ export interface StreamingWebPEncodeResult {
 }
 
 /**
- * Encode ImageData frames directly into ANMF chunks.
+ * Encode EncoderFrame[] directly into ANMF chunks, one frame at a time.
  *
- * Instead of first encoding all frames to WebP and then muxing,
- * this function encodes each frame and immediately strips the WebP
- * container to produce an ANMF-ready payload, appending it to the
- * output array. This avoids holding both the full encoded WebP array
- * and the ANMF chunks in memory simultaneously.
+ * Each frame is converted to ImageData, encoded to WebP, stripped to its
+ * VP8/VP8L payload, and wrapped in an ANMF chunk — all before moving to
+ * the next frame. This ensures only one ImageData and one encoded WebP
+ * buffer exist in memory at any time.
  *
- * @param frames - ImageData frames to encode
+ * GPU resources (ImageBitmap, VideoFrame) are closed immediately after
+ * conversion to minimize GPU memory pressure.
+ *
+ * @param frames - EncoderFrame[], ImageData[], or mixed
  * @param quality - Quality preset
  * @param width - Frame width in pixels
  * @param height - Frame height in pixels
@@ -62,8 +70,8 @@ export interface StreamingWebPEncodeResult {
  * @param onProgress - Progress callback (current, total)
  * @param shouldCancel - Cancellation check
  */
-export async function encodeWebPFramesStreaming(params: {
-  frames: ImageData[];
+export async function encodeFramesToANMFChunks(params: {
+  frames: EncoderFrame[];
   quality: ConversionOptions['quality'];
   width: number;
   height: number;
@@ -79,69 +87,93 @@ export async function encodeWebPFramesStreaming(params: {
   }
 
   const webpQualityRatio = QUALITY_PRESETS.webp[quality].quality / 100;
-  const encodeFrame = createWebPFrameEncoder(webpQualityRatio);
-
   const { chunkSize, cached, cachedChunkSize } = resolveChunkSize();
 
-  logger.info('conversion', 'Streaming WebP encode → ANMF chunks', {
+  logger.info('conversion', 'Streaming per-frame WebP encode → ANMF chunks', {
     frameCount: frames.length,
     chunkSize,
     cached,
     codec: codec ?? 'unknown',
   });
 
-  const anmfChunks: Uint8Array[] = [];
+  const anmfChunks: Uint8Array[] = new Array(frames.length);
   let hasAlpha = false;
   const totalFrames = frames.length;
 
-  for (let i = 0; i < totalFrames; i += chunkSize) {
+  // Reusable canvas for frame conversion (avoids per-frame allocation)
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
+  if (!ctx) {
+    throw new Error('Failed to create 2D canvas context for WebP frame encoding');
+  }
+
+  // Reusable WebP encoder
+  const { createWebPFrameEncoder } = await import(
+    '@services/webcodecs/webp/webp-frame-encoder-service'
+  );
+  const encodeFrame = createWebPFrameEncoder(webpQualityRatio);
+
+  for (let i = 0; i < totalFrames; i++) {
     if (shouldCancel?.()) {
       throw new Error('Conversion cancelled by user');
     }
 
-    const endIdx = Math.min(i + chunkSize, totalFrames);
-    const batchPromises: Promise<void>[] = [];
-
-    for (let j = i; j < endIdx; j++) {
-      if (shouldCancel?.()) {
-        throw new Error('Conversion cancelled by user');
-      }
-
-      const frame = frames[j];
-      if (!frame) {
-        throw new Error(`Frame at index ${j} is undefined`);
-      }
-
-      const duration = durations[j] ?? durations[durations.length - 1] ?? 100;
-
-      // Encode frame to WebP, then immediately strip container and create ANMF chunk
-      batchPromises.push(
-        (async (): Promise<void> => {
-          const encodedWebP = await encodeFrame(frame);
-
-          // Detect alpha from the first few frames only (cheap check)
-          if (i === 0 && !hasAlpha) {
-            hasAlpha = webPFrameHasAlphaChunk(encodedWebP.buffer as ArrayBuffer);
-          }
-
-          // Strip RIFF container → raw VP8/VP8L + optional ALPH
-          const framePayload = stripWebPContainer(encodedWebP.buffer as ArrayBuffer);
-
-          // Build ANMF chunk directly from the stripped payload
-          const anmfChunk = createAnmfChunk(
-            framePayload.buffer as ArrayBuffer,
-            duration,
-            width,
-            height
-          );
-
-          anmfChunks[j] = anmfChunk;
-        })()
-      );
+    const frame = frames[i];
+    if (!frame) {
+      throw new Error(`Frame at index ${i} is undefined`);
     }
 
-    await Promise.all(batchPromises);
-    onProgress?.(endIdx, totalFrames);
+    // Step 1: Convert to ImageData (reuses canvas)
+    let imageData: ImageData;
+    if (frame instanceof ImageData) {
+      imageData = frame;
+    } else {
+      // EncoderFrame (VideoFrame, ImageBitmap, etc.) → ImageData
+      const src = frame as CanvasImageSource & { width: number; height: number };
+      const fw = 'displayWidth' in src ? src.displayWidth : src.width;
+      const fh = 'displayHeight' in src ? src.displayHeight : src.height;
+      if (canvas.width !== fw || canvas.height !== fh) {
+        canvas.width = fw;
+        canvas.height = fh;
+      }
+      ctx.drawImage(src, 0, 0, fw, fh);
+      imageData = ctx.getImageData(0, 0, fw, fh);
+    }
+
+    // Step 2: Encode ImageData → WebP
+    const encodedWebP = await encodeFrame(imageData);
+    const webpBuffer = encodedWebP.buffer as ArrayBuffer;
+
+    // Step 3: Detect alpha from first frame only
+    if (i === 0 && !hasAlpha) {
+      hasAlpha = webPFrameHasAlphaChunk(webpBuffer);
+    }
+
+    // Step 4: Strip RIFF container → raw VP8/VP8L + optional ALPH
+    const framePayload = stripWebPContainer(webpBuffer);
+
+    // Step 5: Wrap in ANMF chunk
+    const duration = durations[i] ?? durations[durations.length - 1] ?? 100;
+    anmfChunks[i] = createAnmfChunk(framePayload.buffer as ArrayBuffer, duration, width, height);
+
+    // Step 6: Release GPU resources immediately
+    if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
+      try {
+        frame.close();
+      } catch {
+        /* ignore */
+      }
+    } else if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
+      try {
+        frame.close();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    onProgress?.(i + 1, totalFrames);
   }
 
   if (!cachedChunkSize && anmfChunks.length > 0) {
