@@ -225,9 +225,13 @@ export async function encodeFramesToANMFChunks(params: {
     // Step 4: Strip RIFF container → raw VP8/VP8L + optional ALPH
     const framePayload = stripWebPContainer(webpBuffer);
 
-    // Step 5: Wrap in ANMF chunk (use stripped variant — already stripped at Step 4)
-    const duration = durations[i] ?? durations[durations.length - 1] ?? 100;
-    anmfChunks[i] = createAnmfChunkFromStripped(framePayload, duration, width, height);
+    // Step 5: Wrap in ANMF chunk (use stripped variant)
+    // Apply accumulated duration from skipped duplicate frames to this frame,
+    // so the total animation time stays correct.
+    const baseDuration = durations[i] ?? durations[durations.length - 1] ?? 100;
+    const frameDuration = baseDuration + accumulatedDuration;
+    accumulatedDuration = 0;
+    anmfChunks[i] = createAnmfChunkFromStripped(framePayload, frameDuration, width, height);
 
     // Step 6: Release GPU resources immediately
     if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
