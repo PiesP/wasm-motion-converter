@@ -156,6 +156,32 @@ type DevSwOptions = {
   enableDev?: boolean;
 };
 
+function stripDataTestIdPlugin(): Plugin {
+  return {
+    name: 'strip-data-testid',
+    apply: 'build',
+    enforce: 'post',
+    transform(code, id) {
+      if (!id.endsWith('.js') && !id.endsWith('.mjs')) return null;
+      // Remove data-testid attributes from production JS bundles
+      const stripped = code.replace(/\s+data-testid="[^"]*"/g, '');
+      if (stripped === code) return null;
+      return { code: stripped, map: null };
+    },
+    generateBundle(_options, bundle) {
+      for (const [fileName, chunk] of Object.entries(bundle)) {
+        if (chunk.type === 'asset' && fileName.endsWith('.html')) {
+          const html = chunk.source as string;
+          const cleaned = html.replace(/\s+data-testid="[^"]*"/g, '');
+          if (cleaned !== html) {
+            chunk.source = cleaned;
+          }
+        }
+      }
+    },
+  };
+}
+
 function importMapPlugin(): Plugin {
   return {
     name: 'generate-import-map',
@@ -771,6 +797,7 @@ export default defineConfig(({ mode }) => {
             }) as PluginOption,
           ]
         : []),
+      stripDataTestIdPlugin(),
     ],
 
     resolve: {

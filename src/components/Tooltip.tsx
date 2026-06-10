@@ -16,6 +16,7 @@ interface TooltipProps {
 const Tooltip: Component<TooltipProps> = (props) => {
   const [local] = splitProps(props, ['content', 'children']);
   const [isVisible, setIsVisible] = createSignal(false);
+  const tooltipId = `tooltip-${Math.random().toString(36).slice(2, 10)}`;
 
   const showTooltip = () => setIsVisible(true);
   const hideTooltip = () => setIsVisible(false);
@@ -27,11 +28,13 @@ const Tooltip: Component<TooltipProps> = (props) => {
         onMouseLeave={hideTooltip}
         onFocus={showTooltip}
         onBlur={hideTooltip}
+        aria-describedby={tooltipId}
       >
         {local.children}
       </div>
       <Show when={isVisible()}>
         <div
+          id={tooltipId}
           class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-white bg-gray-900 dark:bg-gray-700 rounded-lg shadow-lg ${TOOLTIP_OFFSET_TOP} left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none`}
           role="tooltip"
         >

@@ -42,6 +42,24 @@ const Icon: Component<IconProps> = (props) => {
   const combinedClasses = () => [sizeClass(), local.class].filter(Boolean).join(' ');
   const ariaHidden = () => local['aria-hidden'] ?? true;
 
+  const ariaLabel = () => {
+    const labels: Record<IconName, string> = {
+      info: 'Information',
+      warning: 'Warning',
+      error: 'Error',
+      success: 'Success',
+      download: 'Download',
+      upload: 'Upload',
+      spinner: 'Loading',
+      check: 'Check',
+      x: 'Close',
+      'chevron-down': 'Expand',
+      moon: 'Dark mode',
+      sun: 'Light mode',
+    };
+    return labels[local.name] ?? local.name;
+  };
+
   return (
     <svg
       {...others}
@@ -50,8 +68,11 @@ const Icon: Component<IconProps> = (props) => {
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
-      aria-hidden={ariaHidden()}
+      role="img"
+      aria-label={ariaHidden() ? undefined : ariaLabel()}
+      aria-hidden={ariaHidden() ? true : undefined}
     >
+      <title>{ariaLabel()}</title>
       <Switch>
         <Match when={local.name === 'info'}>
           <path

@@ -113,7 +113,7 @@ const ConfirmationModal: Component = () => {
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            handleBackdropClick(e as unknown as MouseEvent);
+            cancelDialog();
           }
         }}
         tabIndex={-1}
