@@ -203,7 +203,7 @@ const waitFor = (
 // ─── Black-box verification helpers ──
 
 const isConvertButtonEnabled = (): boolean => {
-  const btn = document.querySelector('[data-testid="convert-button"]') as HTMLButtonElement | null;
+  const btn = document.querySelector('[data-testid="convert-action-button"]') as HTMLButtonElement | null;
   return btn !== null && !btn.disabled;
 };
 

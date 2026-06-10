@@ -446,12 +446,16 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
 
       throw error;
     } finally {
-      // Return worker to pool — wake up a waiting task if any
+      // Return worker to pool — wake up a waiting task if any.
+      // Use a guard to prevent duplicate pushes when respawnWorker +
+      // finally both try to return the same workerId.
       const waiter = this.workerWaiters.shift();
       if (waiter) {
         waiter(workerId);
       } else {
-        this.availableWorkers.push(workerId);
+        if (!this.availableWorkers.includes(workerId)) {
+          this.availableWorkers.push(workerId);
+        }
       }
     }
   }

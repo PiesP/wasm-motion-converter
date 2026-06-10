@@ -16,7 +16,7 @@
  */
 
 import type { ConversionOptions, EncoderFrame } from '@t/conversion-types';
-import { QUALITY_PRESETS } from '@utils/constants';
+import { MIN_FRAME_INTERVAL_MS, QUALITY_PRESETS } from '@utils/constants';
 import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { logger } from '@utils/logger';
 import { cacheWebPChunkSize, getCachedWebPChunkSize } from '@utils/session-cache';
@@ -222,19 +222,35 @@ export async function encodeFramesToANMFChunks(params: {
     }
 
     // ── Similarity detection: skip near-duplicate frames ────────────
+    // Enforce a minimum frame interval: at least 1 frame every MIN_FRAME_INTERVAL_MS
+    // of source content. This prevents aggressive dedup from dropping all frames
+    // in high-FPS sources (e.g. 60fps → 15fps target with static scenes).
     const frameHash = computeAverageHash(imageData);
+    const baseDurationMs = durations[i] ?? durations[durations.length - 1] ?? 100;
+    const accumulatedWithCurrent = accumulatedDuration + baseDurationMs;
+    const shouldForceKeyframe =
+      accumulatedWithCurrent >= MIN_FRAME_INTERVAL_MS && skippedFrameCount > 0;
+
     if (
+      !shouldForceKeyframe &&
       lastHash !== undefined &&
       hammingDistance(lastHash, frameHash) <= getSimilarityThreshold(quality)
     ) {
-      accumulatedDuration += durations[i] ?? durations[durations.length - 1] ?? 100;
+      accumulatedDuration += baseDurationMs;
       skippedFrameCount++;
       // Mark as undefined — filtered out before return
       anmfChunks[i] = undefined as unknown as Uint8Array;
       onProgress?.(i + 1, totalFrames);
       continue;
     }
-    lastHash = frameHash;
+
+    // Force a keyframe if we've accumulated too much duration without one.
+    // Reset similarity tracking so the forced frame becomes the new reference.
+    if (shouldForceKeyframe) {
+      lastHash = undefined;
+    } else {
+      lastHash = frameHash;
+    }
 
     // Step 2: Encode ImageData → WebP
     const encodedWebP = await encodeFrame(imageData);

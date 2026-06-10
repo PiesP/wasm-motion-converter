@@ -222,6 +222,11 @@ export const MIN_WEBP_FRAME_DURATION_MS = 8;
 /** Maximum frame duration value (24-bit ceiling): 0xFFFFFF ms. */
 export const MAX_WEBP_DURATION_24BIT = 0xffffff;
 
+/** Minimum interval (ms) between forced keyframes during similarity-based dedup.
+ * Prevents aggressive dedup from dropping all frames in high-FPS sources.
+ * E.g. 60fps source at 15fps target with static scenes: at least 1 frame every 500ms. */
+export const MIN_FRAME_INTERVAL_MS = 500;
+
 /** Transparent black background for WebP animations (RGBA). */
 export const WEBP_BACKGROUND_COLOR = { r: 0, g: 0, b: 0, a: 0 } as const;
 
