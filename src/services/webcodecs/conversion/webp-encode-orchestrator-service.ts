@@ -76,37 +76,6 @@ export async function encodeWebPWithMuxFallback(
 
   logger.info('conversion', 'Using streaming WebP encode → mux pipeline');
 
-  // Convert EncoderFrame[] to ImageData[] first (required for streaming encoder)
-  // This is the GPU→CPU readback step that was always needed
-  const { convertFramesToImageData } = await import('@services/encoders/frame-converter-service');
-
-  setStatusPrefix('Preparing frames...');
-  const imageDataFrames = await convertFramesToImageData(
-    frames,
-    width,
-    height,
-    undefined,
-    shouldCancel
-  );
-
-  // Release GPU resources immediately after conversion
-  for (const frame of frames) {
-    if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
-      try {
-        frame.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
-      try {
-        frame.close();
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-
   let fallbackReason = 'WebP streaming encode failed';
 
   try {
@@ -114,8 +83,8 @@ export async function encodeWebPWithMuxFallback(
 
     // Single-pass: encode → strip container → ANMF chunk → assemble RIFF
     const blob = await muxWebPFramesStreaming({
-      frames: imageDataFrames,
-      timestamps: frameTimestampsForMuxer.slice(0, imageDataFrames.length),
+      frames: frames,
+      timestamps: frameTimestampsForMuxer.slice(0, frames.length),
       width,
       height,
       fps,
@@ -130,7 +99,7 @@ export async function encodeWebPWithMuxFallback(
     if (!blob) {
       fallbackReason = 'WebP streaming encode produced no output';
       logger.warn('conversion', fallbackReason, {
-        frameCount: imageDataFrames.length,
+        frameCount: frames.length,
       });
       const fallbackBlob = await encodeWithFFmpegFallback(fallbackReason);
       return { blob: fallbackBlob, encoderBackendUsed: 'ffmpeg' };
@@ -147,7 +116,7 @@ export async function encodeWebPWithMuxFallback(
     fallbackReason = errorMessage;
     logger.warn('conversion', 'WebP streaming encode failed, using FFmpeg fallback', {
       error: errorMessage,
-      frameCount: imageDataFrames.length,
+      frameCount: frames.length,
     });
 
     const fallbackBlob = await encodeWithFFmpegFallback(fallbackReason);

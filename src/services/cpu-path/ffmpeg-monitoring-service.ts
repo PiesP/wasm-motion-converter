@@ -179,6 +179,7 @@ export class FFmpegMonitoring {
       resolution: metadata ? { width: metadata.width, height: metadata.height } : undefined,
       duration: metadata?.duration,
       quality,
+      targetFps: metadata?.framerate,
     });
 
     logger.debug('watchdog', 'Watchdog started', {

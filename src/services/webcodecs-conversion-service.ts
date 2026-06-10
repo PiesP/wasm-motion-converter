@@ -10,7 +10,6 @@
  */
 
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
-import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
 import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support-service';
 import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture-service';
 import { encodeWithFFmpegFallback } from '@services/webcodecs/conversion/ffmpeg-fallback-encode-service';
@@ -820,13 +819,7 @@ async function convertViaWebCodecsFrames(params: {
       ffmpegService.reportStatus(encodeStatusPrefix);
 
       outputBlob = await streamingResult.muxWebPFramesStreaming({
-        frames: await convertFramesToImageData(
-          orderedFrames,
-          decodeResult.width,
-          decodeResult.height,
-          undefined,
-          shouldCancelOrDefault
-        ),
+        frames: orderedFrames,
         timestamps: timestampsForEncoding,
         width: decodeResult.width,
         height: decodeResult.height,

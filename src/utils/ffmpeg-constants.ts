@@ -140,6 +140,10 @@ export const FFMPEG_INTERNALS = {
     HIGH_QUALITY: 1.5, // 1.5x timeout for high quality settings
   },
 
+  // FPS scaling for adaptive watchdog timeout (higher FPS = more frames to encode = longer timeout needed)
+  /** Default FPS used as baseline for FPS-based watchdog scaling. Set to 30 (common video standard). */
+  DEFAULT_FPS: 30,
+
   // WebCodecs frame extraction configuration (GPU video decoding and frame capture)
   WEBCODECS: {
     /** Image format for extracted video frames. Set to PNG for lossless quality. */
@@ -192,40 +196,45 @@ export const FFMPEG_INTERNALS = {
  * Scales the base watchdog timeout by multiplying it with factors based on video complexity.
  * This prevents false positives (premature timeout) for demanding conversions like 4K videos
  * or high-quality encoding. Multipliers are applied cumulatively for resolution, duration,
- * and quality settings.
+ * quality settings, and FPS.
  *
  * **Multiplier logic**:
  * - 4K+ resolution (3840×2160): 5.0× timeout (most demanding)
  * - FHD+ resolution (1920×1080): 2.0× timeout
  * - Long duration (>5 min): 2.0× timeout
  * - High quality: 1.5× timeout (slower encoding preset)
+ * - FPS scaling: `targetFps / DEFAULT_FPS` (higher FPS → longer timeout)
  *
  * @param baseTimeoutMs - Base timeout in milliseconds (default: WATCHDOG_STALL_TIMEOUT_MS = 90000ms)
  * @param options - Video and conversion characteristics for calculating multipliers
  * @param options.resolution - Video resolution {width, height}. Affects multiplier for 4K/FHD detection
  * @param options.duration - Video duration in seconds. Duration >300s (5 min) applies 2.0× multiplier
  * @param options.quality - Conversion quality ('low', 'medium', 'high'). High quality applies 1.5× multiplier
+ * @param options.targetFps - Target frames per second for the conversion. Scales timeout proportionally.
+ *   Default: DEFAULT_FPS (30). Higher FPS → longer timeout, lower FPS → shorter timeout.
  * @returns Adaptive timeout in milliseconds (rounded to nearest integer)
  *
  * @example
- * // 4K video at high quality
+ * // 4K video at high quality, 60fps
  * const timeout1 = calculateAdaptiveWatchdogTimeout(90000, {
  *   resolution: { width: 3840, height: 2160 },
- *   quality: 'high'
+ *   quality: 'high',
+ *   targetFps: 60
  * });
- * // Result: 90000 × 5.0 × 1.5 = 675000ms (11.25 minutes)
+ * // Result: 90000 × 5.0 × 1.5 × 2.0 = 1350000ms (22.5 minutes)
  *
  * @example
- * // FHD video, 10 minute duration, medium quality
+ * // FHD video, 10 minute duration, medium quality, 15fps
  * const timeout2 = calculateAdaptiveWatchdogTimeout(90000, {
  *   resolution: { width: 1920, height: 1080 },
  *   duration: 600,
- *   quality: 'medium'
+ *   quality: 'medium',
+ *   targetFps: 15
  * });
- * // Result: 90000 × 2.0 × 2.0 = 360000ms (6 minutes)
+ * // Result: 90000 × 2.0 × 2.0 × 0.5 = 180000ms (3 minutes)
  *
  * @example
- * // Simple low-resolution video (no multipliers)
+ * // Simple low-resolution video (no multipliers, default FPS)
  * const timeout3 = calculateAdaptiveWatchdogTimeout(90000, {
  *   resolution: { width: 640, height: 480 },
  *   duration: 30,
@@ -239,6 +248,8 @@ export function calculateAdaptiveWatchdogTimeout(
     resolution?: { width: number; height: number };
     duration?: number; // in seconds
     quality?: 'low' | 'medium' | 'high';
+    /** Target frames per second. Scales timeout proportionally (higher FPS → longer timeout). Default: 30. */
+    targetFps?: number;
   } = {}
 ): number {
   let multiplier = 1.0;
@@ -269,8 +280,14 @@ export function calculateAdaptiveWatchdogTimeout(
     multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.HIGH_QUALITY;
   }
 
+  // FPS-based scaling: higher FPS means more frames to encode → longer timeout needed
+  // A 10fps video has 1/3 the frames of a 30fps video, so it gets 1/3 the timeout
+  const fps = options.targetFps ?? FFMPEG_INTERNALS.DEFAULT_FPS;
+  const fpsMultiplier = fps / FFMPEG_INTERNALS.DEFAULT_FPS;
+  multiplier *= fpsMultiplier;
+
   // Calculate final adaptive timeout with cumulative multiplier
-  // Example: 4K @ high quality: 90000 × 5.0 × 1.5 = 675000ms (11.25 min)
+  // Example: 4K @ high quality @ 60fps: 90000 × 5.0 × 1.5 × 2.0 = 1350000ms (22.5 min)
   const adaptiveTimeout = Math.round(baseTimeoutMs * multiplier);
 
   return adaptiveTimeout;

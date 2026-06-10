@@ -8,13 +8,11 @@
  * eliminating the intermediate Uint8Array[] and ImageData[] buffers that
  * caused double memory usage in the previous two-stage pipeline.
  *
- * Old pipeline: EncoderFrame[] → convertFramesToImageData() → ImageData[] (all)
- *                → encode all → Uint8Array[] (all) → mux all → Blob
- *
- * New pipeline: EncoderFrame[] → per-frame: frameToImageData → encode → strip → ANMF
+ * Pipeline: EncoderFrame[] → per-frame: frameToImageData → encode → strip → ANMF
  *                → assemble RIFF → Blob
  *
- * Memory peak reduction: ~75% (no full ImageData[] + encodedFrames[] simultaneously)
+ * Each frame is converted, encoded, and packaged before the next frame begins,
+ * so only one frame's worth of data exists in memory at any time.
  */
 
 import type { ConversionOptions, EncoderFrame } from '@t/conversion-types';
