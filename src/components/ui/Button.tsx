@@ -14,7 +14,7 @@ interface ButtonProps {
   ariaLabel?: string;
   onClick?: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent>;
   children: JSX.Element;
-  'data-download-button'?: boolean;
+  'data-testid'?: string;
 }
 
 const BASE_CLASS =
@@ -38,7 +38,7 @@ const Button: Component<ButtonProps> = (props) => {
     'ariaLabel',
     'onClick',
     'children',
-    'data-download-button',
+    'data-testid',
   ]);
 
   const variant = () => local.variant ?? 'primary';
@@ -52,7 +52,7 @@ const Button: Component<ButtonProps> = (props) => {
       disabled={local.disabled}
       aria-label={local.ariaLabel}
       onClick={local.onClick}
-      data-download-button={local['data-download-button']}
+      data-testid={local['data-testid']}
     >
       {local.children}
     </button>
