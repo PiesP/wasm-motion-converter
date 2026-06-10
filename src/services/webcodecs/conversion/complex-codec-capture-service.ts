@@ -376,8 +376,10 @@ export async function captureComplexCodecFramesForWebP(params: {
       }
     );
 
-    // Discard partial results from the first pass before retrying.
-    releaseFramesByIndex();
+    // Retry with fallback capture modes, but keep partial results as a safety net.
+    // If retries also fail, we'll use whatever frames we collected.
+    let bestDecodeResult = decodeResult;
+    let bestFrameCount = decodeResult.frameCount;
 
     // If auto selected track mode and it under-captured, try frame-callback first.
     if (supportsFrameCallback && decodeResult.captureModeUsed === 'track') {
@@ -402,6 +404,11 @@ export async function captureComplexCodecFramesForWebP(params: {
           const attempt = await runDecodeWithTiming('frame-callback');
           decodeResult = attempt.result;
           perfElapsed = attempt.elapsedMs;
+        }
+
+        if (decodeResult.frameCount > bestFrameCount) {
+          bestDecodeResult = decodeResult;
+          bestFrameCount = decodeResult.frameCount;
         }
       } catch (frameCallbackError) {
         logger.warn('conversion', 'WebCodecs frame-callback retry failed; falling back to seek', {
@@ -439,6 +446,11 @@ export async function captureComplexCodecFramesForWebP(params: {
             const attempt = await runDecodeWithTiming('track');
             decodeResult = attempt.result;
             perfElapsed = attempt.elapsedMs;
+          }
+
+          if (decodeResult.frameCount > bestFrameCount) {
+            bestDecodeResult = decodeResult;
+            bestFrameCount = decodeResult.frameCount;
           }
 
           if (decodeResult.frameCount >= retryRequiredFrames) {
@@ -483,6 +495,11 @@ export async function captureComplexCodecFramesForWebP(params: {
           decodeResult = attempt.result;
           perfElapsed = attempt.elapsedMs;
         }
+
+        if (decodeResult.frameCount > bestFrameCount) {
+          bestDecodeResult = decodeResult;
+          bestFrameCount = decodeResult.frameCount;
+        }
       }
     }
 
@@ -493,10 +510,25 @@ export async function captureComplexCodecFramesForWebP(params: {
     });
     const finalRequiredFrames = computeRequiredFramesFromExpected(finalExpectedFramesFromDuration);
 
-    if (decodeResult.frameCount < finalRequiredFrames) {
-      throw new Error(
-        `WebCodecs frame extraction under-sampled after fallbacks: captured=${decodeResult.frameCount}, expected≈${finalExpectedFramesFromDuration} (required>=${finalRequiredFrames}).`
-      );
+    if (bestFrameCount < finalRequiredFrames) {
+      // All retries exhausted. Use the best result we have if it's reasonable (>50% of required).
+      if (bestFrameCount >= finalRequiredFrames * 0.5) {
+        logger.warn(
+          'conversion',
+          `Using best partial result after all retries: ${bestFrameCount}/${finalRequiredFrames} frames`,
+          {
+            codec: metadata?.codec ?? 'unknown',
+            bestFrameCount,
+            finalRequiredFrames,
+            bestMode: bestDecodeResult.captureModeUsed ?? 'unknown',
+          }
+        );
+        decodeResult = bestDecodeResult;
+      } else {
+        throw new Error(
+          `WebCodecs frame extraction under-sampled after fallbacks: captured=${bestFrameCount}, expected≈${finalExpectedFramesFromDuration} (required>=${finalRequiredFrames}).`
+        );
+      }
     }
   }
 

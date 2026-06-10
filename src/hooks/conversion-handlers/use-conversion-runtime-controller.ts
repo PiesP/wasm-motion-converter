@@ -12,7 +12,8 @@ import { batch } from 'solid-js';
 const MEMORY_CHECK_INTERVAL = 5000;
 const ETA_UPDATE_INTERVAL = 1000;
 const UI_PROGRESS_LOG_INTERVAL_MS = 1000;
-const STALL_DETECTION_MS = 30_000; // warn user if no progress for 30s
+const STALL_DETECTION_MS = 60_000; // warn user if no progress for 60s (FFmpeg encoding can be slow)
+const STALL_DETECTION_ACTIVE_THRESHOLD = 10; // only trigger stall warning if progress > 10% (not during init)
 
 type ParsedStatusCounter = {
   prefix: string;
@@ -161,11 +162,16 @@ export class ConversionRuntimeController {
 
   private startStallTimer(): void {
     this.clearStallTimer();
+    // Only start stall timer if we've made meaningful progress (>10%).
+    // During initialization (0-10%), progress events may be sparse.
+    if (this.lastProgressValue < STALL_DETECTION_ACTIVE_THRESHOLD) {
+      return;
+    }
     this.stallTimer = setTimeout(() => {
       const elapsedMs =
         this.currentStartTimeMs > 0 ? Math.max(0, performance.now() - this.currentStartTimeMs) : 0;
       const elapsedSeconds = Math.floor(elapsedMs / 1000);
-      logger.warn('progress', 'Conversion stalled — no progress update in 30s', {
+      logger.warn('progress', 'Conversion stalled — no progress update in 60s', {
         runId: this.activeRunId,
         lastProgressValue: this.lastProgressValue,
         elapsedSeconds,
