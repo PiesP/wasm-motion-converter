@@ -319,15 +319,12 @@ export async function convert(
           trimStartSeconds: options.trimStart,
           maxFrames: (() => {
             if (format !== 'webp') {
-              // Compute effective duration for non-WebP formats to limit frame capture
-              const trimEffectiveDuration = computeTrimDuration(
-                options.trimStart,
-                options.trimEnd,
-                metadata?.duration
-              );
-              return trimEffectiveDuration
-                ? Math.ceil(trimEffectiveDuration * Math.max(1, targetFps))
-                : undefined;
+              // Compute effective duration for non-WebP formats to limit frame capture.
+              // Use the demuxer's own container-metadata duration, not the FFmpeg-probed
+              // metadata.duration which can differ, causing frame count mismatches.
+              // When the demuxer is used, it determines its own budget from container metadata.
+              // When a non-demuxer mode falls back, video.duration is used.
+              return undefined;
             }
             const trimEffectiveDuration = computeTrimDuration(
               options.trimStart,

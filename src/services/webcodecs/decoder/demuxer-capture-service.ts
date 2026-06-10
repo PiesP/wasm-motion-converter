@@ -15,6 +15,22 @@ import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
 /**
+ * Watchdog for the entire demuxer decode loop.
+ *
+ * VideoDecoder.decode() can hang indefinitely on some codec/stream combinations
+ * (especially AV1). The flush path already has a 12s timeout, but if decode()
+ * itself never returns, there's no external safety net. This watchdog provides a
+ * hard upper bound on total decode time.
+ *
+ * Formula: max(120 s, 2× media duration). For a 10 s video this is 120 s; for a
+ * 5 min video this is 600 s (10 min). The 2× multiplier gives the decoder room
+ * for slower-than-real-time software decode while still enforcing a limit.
+ */
+function computeWatchdogTimeoutMs(durationSeconds: number): number {
+  return Math.max(120_000, Math.ceil(durationSeconds * 1000 * 2));
+}
+
+/**
  * Capture frames using external demuxer + WebCodecs VideoDecoder
  *
  * This method bypasses HTMLVideoElement entirely, extracting encoded samples
@@ -44,6 +60,7 @@ export async function captureWithDemuxer(
 
   let decoder: VideoDecoder | null = null;
   let decoderError: Error | null = null;
+  let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   const decodedFrames: VideoFrame[] = [];
   const frameFiles: string[] = [];
   let frameIndex = 0;
@@ -59,9 +76,12 @@ export async function captureWithDemuxer(
     // maxFrames is a budget cap, not a promise that we can extract frames beyond the
     // media duration. Always bound the expected frame count to the demuxer-reported duration.
     const estimatedTotalFrames = Math.max(1, Math.ceil(demuxerMetadata.duration * targetFps));
-    const totalFrames = maxFrames
-      ? Math.min(maxFrames, estimatedTotalFrames)
-      : estimatedTotalFrames;
+    // Use the demuxer's own duration-based estimate for frame budgeting.
+    // The orchestrator's maxFrames is based on FFmpeg-probed duration which may
+    // differ from the container metadata duration, causing frame count mismatches.
+    // The demuxer knows the actual container duration and should not be constrained
+    // by a potentially-incorrect external budget.
+    const totalFrames = estimatedTotalFrames;
     const requiredFramesForSuccess = Math.max(1, totalFrames - 1);
 
     // Dev-only diagnostics (rate-limited) to help debug demuxer decode stalls.
@@ -426,6 +446,32 @@ export async function captureWithDemuxer(
     let needsKeyFrame = true;
     let skippedUntilKey = 0;
 
+    // Watchdog: if VideoDecoder.decode() hangs (e.g. on problematic AV1
+    // streams) the entire decode loop can stall indefinitely. The flush path
+    // already has a 12s timeout, but that only fires *after* all samples are
+    // fed. This watchdog provides a hard upper bound on total decode time.
+    const watchdogTimeoutMs = computeWatchdogTimeoutMs(demuxerMetadata.duration);
+    watchdogTimer = setTimeout(() => {
+      if (shouldCancel?.()) {
+        return; // Don't override user cancellation with a timeout message
+      }
+      if (decoderError) {
+        return; // Already failing from another error
+      }
+      logger.warn('conversion', 'Demuxer decode watchdog triggered', {
+        timeoutS: Math.round(watchdogTimeoutMs / 1000),
+        duration: demuxerMetadata.duration,
+        frameIndex,
+        totalFrames,
+        processedSamples,
+        estimatedSamplesTotal,
+      });
+      onProgress?.(totalFrames, totalFrames);
+      decoderError = new Error(
+        `Demuxer decode watchdog timed out after ${Math.round(watchdogTimeoutMs / 1000)}s`
+      );
+    }, watchdogTimeoutMs);
+
     // 4. Extract and decode samples
     for await (const sample of demuxer.extractSamples(targetFps, maxFrames)) {
       if (shouldCancel?.()) {
@@ -714,6 +760,12 @@ export async function captureWithDemuxer(
       duration: demuxerMetadata.duration,
     };
   } finally {
+    // Clear watchdog timer
+    if (watchdogTimer !== null) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = null;
+    }
+
     // Cleanup resources
     for (const frame of decodedFrames) {
       try {

@@ -14,6 +14,8 @@ interface MemoryInfo {
   totalJSHeapSize: number;
   jsHeapSizeLimit: number;
   usagePercentage: number;
+  /** Device memory hint from navigator.deviceMemory (GB), if available */
+  deviceMemoryGB?: number;
 }
 
 // Thresholds for memory warning levels
@@ -40,28 +42,31 @@ function getMemoryInfo(): MemoryInfo | null {
     const totalJSHeapSize = memory.totalJSHeapSize;
     const jsHeapSizeLimit = memory.jsHeapSizeLimit;
     const usagePercentage = (usedJSHeapSize / jsHeapSizeLimit) * 100;
+    const deviceMemoryGB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
 
     return {
       usedJSHeapSize,
       totalJSHeapSize,
       jsHeapSizeLimit,
       usagePercentage,
+      deviceMemoryGB: typeof deviceMemoryGB === 'number' ? deviceMemoryGB : undefined,
     };
   }
 
-  // Fallback: navigator.deviceMemory (Chrome/Edge/Safari — returns GB)
+  // Fallback: navigator.deviceMemory (Chrome/Edge/Safari/Firefox — returns GB)
   const deviceMemoryGB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
   if (typeof deviceMemoryGB === 'number' && deviceMemoryGB > 0) {
     const jsHeapSizeLimit = deviceMemoryGB * 1024 * 1024 * 1024;
-    // Assume ~40% heap usage when we cannot measure it directly
-    const assumedUsage = jsHeapSizeLimit * 0.4;
-    const usagePercentage = 40;
+    // Conservative: assume 50% heap usage when we cannot measure it directly
+    const assumedUsage = jsHeapSizeLimit * 0.5;
+    const usagePercentage = 50;
 
     return {
       usedJSHeapSize: assumedUsage,
       totalJSHeapSize: assumedUsage,
       jsHeapSizeLimit,
       usagePercentage,
+      deviceMemoryGB,
     };
   }
 
@@ -113,11 +118,13 @@ export function getAvailableMemory(): number {
     return memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize;
   }
 
-  // Conservative estimate: use device memory hint or assume 4GB limit with 40% already used
+  // When neither performance.memory nor navigator.deviceMemory is available,
+  // fall back to a conservative 4GB limit with 40% assumed usage (→ 2.4GB available).
   const deviceMemoryGB = (navigator as { deviceMemory?: number }).deviceMemory;
-  const conservativeLimit = deviceMemoryGB
-    ? Math.min(4, deviceMemoryGB) * 1024 * 1024 * 1024
-    : 4 * 1024 * 1024 * 1024;
-  const assumedUsage = conservativeLimit * 0.4;
-  return conservativeLimit - assumedUsage;
+  const fallbackLimit =
+    typeof deviceMemoryGB === 'number' && deviceMemoryGB > 0
+      ? deviceMemoryGB * 1024 * 1024 * 1024
+      : 4 * 1024 * 1024 * 1024;
+  const assumedUsage = fallbackLimit * 0.4;
+  return fallbackLimit - assumedUsage;
 }
