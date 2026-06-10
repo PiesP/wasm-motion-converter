@@ -28,7 +28,30 @@ import {
 
 // ── aHash frame similarity detection ──────────────────────────────────
 
-const HAMMING_SIMILARITY_THRESHOLD = 2;
+import type { ConversionQuality } from '@t/conversion-types';
+
+/**
+ * Get the quality-dependent Hamming distance threshold for frame similarity.
+ *
+ * Lower quality = higher threshold = more aggressive deduplication (max compression).
+ * Higher quality = lower threshold = more conservative (only skip near-identical frames).
+ *
+ * | Quality | Threshold | Hamming bits | Similarity | Behavior                       |
+ * |---------|-----------|-------------|------------|--------------------------------|
+ * | low     | 6         | 58/64 match | ~90.6%     | Aggressive dedup, max compression |
+ * | medium  | 3         | 61/64 match | ~95.3%     | Balanced                       |
+ * | high    | 1         | 63/64 match | ~98.4%     | Conservative, skip near-identical only |
+ */
+function getSimilarityThreshold(quality: ConversionQuality): number {
+  switch (quality) {
+    case 'low':
+      return 6;
+    case 'medium':
+      return 3;
+    case 'high':
+      return 1;
+  }
+}
 
 /**
  * Compute 64-bit average hash (aHash) from ImageData.
@@ -202,7 +225,7 @@ export async function encodeFramesToANMFChunks(params: {
     const frameHash = computeAverageHash(imageData);
     if (
       lastHash !== undefined &&
-      hammingDistance(lastHash, frameHash) <= HAMMING_SIMILARITY_THRESHOLD
+      hammingDistance(lastHash, frameHash) <= getSimilarityThreshold(quality)
     ) {
       accumulatedDuration += durations[i] ?? durations[durations.length - 1] ?? 100;
       skippedFrameCount++;
@@ -285,7 +308,7 @@ export async function encodeFramesToANMFChunks(params: {
   if (skippedFrameCount > 0) {
     logger.info(
       'conversion',
-      `Skipped ${skippedFrameCount} near-duplicate frames (aHash Hamming ≤ ${HAMMING_SIMILARITY_THRESHOLD})`,
+      `Skipped ${skippedFrameCount} near-duplicate frames (aHash Hamming ≤ ${getSimilarityThreshold(quality)})`,
       {
         skippedFrames: skippedFrameCount,
         totalFrames,
