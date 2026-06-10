@@ -125,7 +125,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           ariaLabel="Download converted file"
           class="flex-1"
           onClick={handleDownload}
-          data-download-button
+          data-testid="download-result-button"
         >
           Download
         </Button>
@@ -141,6 +141,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           class={imageClass()}
           onLoad={handlePreviewLoad}
           loading="lazy"
+          data-testid="result-image"
         />
       </div>
 

@@ -30,7 +30,7 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
 };
 
 const Button: Component<ButtonProps> = (props) => {
-  const [local] = splitProps(props, [
+  const [local, others] = splitProps(props, [
     'variant',
     'type',
     'class',
@@ -46,6 +46,7 @@ const Button: Component<ButtonProps> = (props) => {
 
   return (
     <button
+      {...others}
       type={local.type ?? 'button'}
       class={className()}
       disabled={local.disabled}

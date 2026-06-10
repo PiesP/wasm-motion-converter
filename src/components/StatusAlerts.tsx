@@ -20,7 +20,7 @@ interface StatusAlertsProps {
 
 const StatusAlerts: Component<StatusAlertsProps> = (props) => {
   return (
-    <div class="space-y-6">
+    <div class="space-y-6" data-testid="status-alerts">
       <OfflineBanner />
 
       <Show when={!props.environmentSupported}>

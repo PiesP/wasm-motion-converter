@@ -411,7 +411,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   // ── Render ──
 
   return (
-    <div class="space-y-3">
+    <div class="space-y-3" data-testid="trim-selector">
       {/* 1. Header row: title + Reset button */}
       <div class="flex items-center justify-between">
         <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Trim Range</span>
@@ -420,6 +420,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             type="button"
             onClick={handleReset}
             disabled={props.disabled}
+            data-testid="trim-reset-button"
             class={`text-xs px-2 py-1 rounded border transition-colors ${
               props.disabled
                 ? 'opacity-50 cursor-not-allowed border-gray-300 dark:border-gray-700'

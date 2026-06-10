@@ -37,6 +37,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
               class="flex-1"
               disabled={!props.metadata || props.isBusy}
               onClick={props.onConvert}
+              data-testid="convert-button"
             >
               Convert
             </Button>
@@ -47,6 +48,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
             class="flex-1"
             onClick={props.onCancel}
             variant="danger"
+            data-testid="stop-conversion-button"
           >
             Stop Conversion
           </Button>

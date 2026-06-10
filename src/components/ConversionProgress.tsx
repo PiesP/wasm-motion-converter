@@ -57,6 +57,7 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
       ariaLabel="Video conversion progress"
       ariaLive="polite"
       ariaBusy={ariaBusy()}
+      data-testid="conversion-progress"
     >
       <ProgressBar
         progress={local.progress}

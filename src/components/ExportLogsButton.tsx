@@ -272,6 +272,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
         class={buttonClass()}
         aria-label="Export logs"
         title="Export logs (Shift: verbose FFmpeg progress, Alt: JSONL for AI analysis)"
+        data-testid="export-logs-button"
       >
         <svg
           class="w-5 h-5"

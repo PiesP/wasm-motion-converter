@@ -66,7 +66,10 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
     const ariaLabel = option.description ? `${option.label}: ${option.description}` : option.label;
 
     return (
-      <label class={optionClass(option.value === local.value)}>
+      <label
+        class={optionClass(option.value === local.value)}
+        data-testid={`option-${local.name}-${String(option.value)}`}
+      >
         <input
           type="radio"
           name={local.name}
@@ -102,6 +105,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
       class={`mb-6 ${local.disabled ? 'opacity-50 pointer-events-none' : ''}`}
       disabled={local.disabled}
       aria-label={local.title}
+      data-testid={`option-group-${local.name}`}
     >
       <legend
         id={legendId()}

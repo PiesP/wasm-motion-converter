@@ -41,6 +41,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
       role="alert"
       aria-live="assertive"
       aria-atomic="true"
+      data-testid="memory-warning"
     >
       <div class="flex items-start">
         <div class="flex-shrink-0">
@@ -80,6 +81,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                       onClick={handleDismiss}
                       class="inline-flex items-center px-3 py-2 border border-red-300 dark:border-red-700 text-sm leading-4 font-medium rounded-md text-red-700 dark:text-red-300 bg-white dark:bg-red-950 hover:bg-red-50 dark:hover:bg-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                       aria-label="Close memory warning and try again"
+                      data-testid="memory-warning-dismiss"
                     >
                       Close Tabs & Try Again
                     </button>
@@ -90,6 +92,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                       onClick={handleReduceSettings}
                       class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                       aria-label="Reduce quality settings and start conversion"
+                      data-testid="memory-warning-reduce"
                     >
                       Use Low Quality & Convert
                     </button>
@@ -103,6 +106,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                   onClick={handleCancel}
                   class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                   aria-label="Cancel ongoing conversion"
+                  data-testid="memory-warning-cancel"
                 >
                   Cancel Conversion
                 </button>
@@ -113,6 +117,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                   onClick={handleDismiss}
                   class="inline-flex items-center px-3 py-2 border border-red-300 dark:border-red-700 text-sm leading-4 font-medium rounded-md text-red-700 dark:text-red-300 bg-white dark:bg-red-950 hover:bg-red-50 dark:hover:bg-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                   aria-label="Dismiss warning and continue conversion"
+                  data-testid="memory-warning-continue"
                 >
                   Continue Anyway
                 </button>

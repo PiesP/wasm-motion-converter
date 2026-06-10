@@ -103,6 +103,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={local.status}
+        data-progress={progressValue()}
       >
         <div
           class="bg-blue-600 dark:bg-blue-500 h-2.5 rounded-full transition-all duration-300"

@@ -13,6 +13,7 @@ const OfflineBanner: Component = () => (
       class="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-black px-4 py-2 text-center font-medium"
       role="status"
       aria-live="polite"
+      data-testid="offline-banner"
     >
       <svg
         class="inline-block w-5 h-5 mr-2"

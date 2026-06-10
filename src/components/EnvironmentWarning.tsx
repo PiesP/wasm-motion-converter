@@ -57,6 +57,7 @@ const EnvironmentWarning: Component = () => {
       class="bg-yellow-50 dark:bg-yellow-950 border-l-4 border-yellow-400 dark:border-yellow-500 p-4"
       role="alert"
       aria-live="polite"
+      data-testid="environment-warning"
     >
       <div class="flex">
         <div class="flex-shrink-0">

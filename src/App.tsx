@@ -50,6 +50,16 @@ import {
   Suspense,
 } from 'solid-js';
 
+// Lazy import for test helpers (dev only)
+let attachTestHelpers: (() => void) | null = null;
+if (import.meta.env.DEV) {
+  import('./test-helpers')
+    .then((mod) => {
+      attachTestHelpers = mod.attachTestHelpers;
+    })
+    .catch(() => {});
+}
+
 const SETTINGS_DEBOUNCE_MS = 500;
 const MEMORY_REDUCTION_SCALE = 0.5;
 
@@ -88,6 +98,12 @@ const App: Component = () => {
       crossOriginIsolated === true;
 
     setEnvironmentSupported(isSupported);
+
+    // Attach test helpers in dev mode (AI-driven browser testing)
+    if (attachTestHelpers) {
+      attachTestHelpers();
+      logger.debug('general', 'Test helpers attached via App onMount');
+    }
   });
 
   const debouncedSaveSettings = debounce(saveConversionSettings, SETTINGS_DEBOUNCE_MS);
@@ -216,7 +232,7 @@ const App: Component = () => {
           </div>
         </header>
 
-        <main id="main-content" class="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
+        <main id="main-content" class="mx-auto w-full max-w-6xl flex-1 px-4 py-8" data-testid="app">
           <StatusAlerts
             environmentSupported={environmentSupported()}
             errorContext={errorContext()}

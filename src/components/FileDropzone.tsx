@@ -135,6 +135,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       aria-label="Video file dropzone - Press Enter or Space to select a file"
       aria-busy={isBusy()}
       tabIndex={isInteractive() ? 0 : -1}
+      data-testid="dropzone"
     >
       <Show
         when={isBusy()}
@@ -174,6 +175,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 onClick={openFilePicker}
                 class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900"
                 disabled={!isInteractive()}
+                data-testid="choose-file-button"
               >
                 Choose a video file
               </button>
@@ -189,6 +191,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 disabled={local.disabled}
                 tabIndex={-1}
                 aria-label="Select video file for conversion"
+                data-testid="file-input"
                 required
               />
             </div>
