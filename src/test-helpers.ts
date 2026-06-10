@@ -8,20 +8,22 @@
  * Provides programmatic access to app state and file injection,
  * avoiding OS file-dialog barriers in automated testing.
  *
- * Usage (in browser console or browser_console tool):
+ * ## Quick start (in browser_console eval):
  * ```js
- * // Read current app state
- * __TEST_HELPERS__.getAppState() // → 'idle'
- *
- * // Inject a video file (bypasses file dialog)
- * await __TEST_HELPERS__.injectFile(new File([buf], 'test.mp4', { type: 'video/mp4' }))
- *
- * // Read conversion progress
- * __TEST_HELPERS__.getProgress() // → 45
- *
- * // Reset app
- * __TEST_HELPERS__.resetApp()
+ * import('./src/test-helpers').then(m => m.attachTestHelpers())
+ * __TEST_HELPERS__.injectFile(new File(['x'], 't.mp4', {type:'video/mp4'}), {w:640,h:480,d:5,c:'h264',f:30})
  * ```
+ *
+ * ## AI agent workflow:
+ * 1. `browser_navigate('http://127.0.0.1:5173/')` — load app
+ * 2. eval `import('./src/test-helpers').then(m => m.attachTestHelpers())`
+ * 3. eval `__TEST_HELPERS__.getAppState()` → assert `'idle'`
+ * 4. eval `__TEST_HELPERS__.injectFile(...)` — inject test video
+ * 5. `browser_snapshot` — verify `video-metadata` visible
+ * 6. `browser_click` on settings → eval `__TEST_HELPERS__.getSettings()` → assert
+ * 7. `browser_click` convert → poll `__TEST_HELPERS__.getProgress()` or `waitFor('done')`
+ * 8. `browser_snapshot` — verify `download-result-button`, `result-image`
+ * 9. eval `__TEST_HELPERS__.resetApp()` — clean up, repeat
  */
 
 import {
@@ -50,6 +52,8 @@ import type { VideoMetadata } from '@t/conversion-types';
 // ─── Type for the exposed API ──────────────────────────────────────────────
 
 export interface TestHelpers {
+  // ── White-box: direct state access (for setup / injection) ──
+
   /** Current app state ('idle' | 'loading-ffmpeg' | 'analyzing' | 'converting' | 'done' | 'error') */
   getAppState(): AppState;
 
@@ -73,6 +77,34 @@ export interface TestHelpers {
 
   /** Reset the entire app to idle state */
   resetApp(): void;
+
+  // ── Black-box: DOM-based assertions (user-perspective verification) ──
+
+  /** Whether the convert button is enabled (file loaded & not busy) */
+  isConvertButtonEnabled(): boolean;
+
+  /** Whether the result section is visible (conversion complete) */
+  isResultVisible(): boolean;
+
+  /** Whether the error display is visible */
+  isErrorVisible(): boolean;
+
+  /** Whether the memory warning banner is visible */
+  isMemoryWarningVisible(): boolean;
+
+  /** Text content of the visible status/progress region, or null */
+  getVisibleStatusText(): string | null;
+
+  /** Result stats visible in the UI, or null if not in done state */
+  getVisibleResultStats(): {
+    originalSize: string;
+    outputSize: string;
+    format: string;
+    quality: string;
+    scale: string;
+  } | null;
+
+  // ── DOM query helpers ──
 
   /** Query DOM element by data-testid attribute */
   queryTestId(testId: string): Element | null;
@@ -168,9 +200,59 @@ const waitFor = (
   });
 };
 
+// ─── Black-box verification helpers ──
+
+const isConvertButtonEnabled = (): boolean => {
+  const btn = document.querySelector('[data-testid="convert-button"]') as HTMLButtonElement | null;
+  return btn !== null && !btn.disabled;
+};
+
+const isResultVisible = (): boolean => {
+  return document.querySelector('[data-testid="result-section"]') !== null;
+};
+
+const isErrorVisible = (): boolean => {
+  return document.querySelector('[data-testid="error-display"]') !== null;
+};
+
+const isMemoryWarningVisible = (): boolean => {
+  return document.querySelector('[data-testid="memory-warning"]') !== null;
+};
+
+const getVisibleStatusText = (): string | null => {
+  const el = document.querySelector('[data-testid="conversion-progress"]');
+  if (!el) return null;
+  return el.textContent?.trim() ?? null;
+};
+
+const getVisibleResultStats = (): {
+  originalSize: string;
+  outputSize: string;
+  format: string;
+  quality: string;
+  scale: string;
+} | null => {
+  const section = document.querySelector('[data-testid="result-section"]');
+  if (!section) return null;
+  const originalEl = section.querySelector('[data-result-original-size]');
+  const outputEl = section.querySelector('[data-result-output-size]');
+  const formatEl = section.querySelector('[data-result-format]');
+  const qualityEl = section.querySelector('[data-result-quality]');
+  const scaleEl = section.querySelector('[data-result-scale]');
+  if (!originalEl || !outputEl || !formatEl || !qualityEl || !scaleEl) return null;
+  return {
+    originalSize: originalEl.textContent?.trim() ?? '',
+    outputSize: outputEl.textContent?.trim() ?? '',
+    format: formatEl.textContent?.trim() ?? '',
+    quality: qualityEl.textContent?.trim() ?? '',
+    scale: scaleEl.textContent?.trim() ?? '',
+  };
+};
+
 // ─── Create and attach ──────────────────────────────────────────────────────
 
 const testHelpers: TestHelpers = {
+  // White-box
   getAppState: () => appState(),
   getProgress: () => conversionProgress(),
   getSettings: () => ({ ...conversionSettings() }),
@@ -179,6 +261,14 @@ const testHelpers: TestHelpers = {
   getError: () => errorMessage(),
   injectFile,
   resetApp,
+  // Black-box
+  isConvertButtonEnabled,
+  isResultVisible,
+  isErrorVisible,
+  isMemoryWarningVisible,
+  getVisibleStatusText,
+  getVisibleResultStats,
+  // DOM queries
   queryTestId,
   queryAllTestIds,
   readProgressFromDOM,

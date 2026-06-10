@@ -110,6 +110,13 @@ const ConfirmationModal: Component = () => {
         aria-labelledby="modal-title"
         aria-describedby="modal-description"
         onClick={handleBackdropClick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleBackdropClick(e as unknown as MouseEvent);
+          }
+        }}
+        tabIndex={-1}
       >
         <div
           ref={modalRef}

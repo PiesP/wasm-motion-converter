@@ -440,6 +440,19 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           'opacity-50 pointer-events-none': !!props.disabled,
         }}
         onClick={handleTrackClick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleTrackClick(e as unknown as MouseEvent);
+          }
+        }}
+        tabIndex={props.disabled ? -1 : 0}
+        role="slider"
+        aria-label="Trim range"
+        aria-valuemin={0}
+        aria-valuemax={props.duration}
+        aria-valuenow={effectiveEnd() - props.trimStart}
+        aria-disabled={!!props.disabled}
       >
         {/* Selected range fill */}
         <div
