@@ -48,6 +48,7 @@ export async function captureWithDemuxer(
   frameStartNumber: number,
   maxFrames: number | undefined,
   quality: 'low' | 'medium' | 'high' | undefined,
+  keyframeOnly: boolean | undefined,
   onFrame: (frame: WebCodecsFramePayload) => Promise<void>,
   onProgress?: WebCodecsProgressCallback,
   shouldCancel?: () => boolean,
@@ -489,7 +490,7 @@ export async function captureWithDemuxer(
     }, watchdogTimeoutMs);
 
     // 4. Extract and decode samples
-    for await (const sample of demuxer.extractSamples(targetFps, maxFrames)) {
+    for await (const sample of demuxer.extractSamples(targetFps, maxFrames, { keyframeOnly })) {
       if (shouldCancel?.()) {
         throw new Error('Conversion cancelled by user');
       }
@@ -499,7 +500,8 @@ export async function captureWithDemuxer(
       }
 
       // Ensure the first decoded chunk after configure() is a keyframe.
-      if (needsKeyFrame) {
+      // In keyframe-only mode, every sample is already a keyframe; skip this check.
+      if (!keyframeOnly && needsKeyFrame) {
         if (sample.type !== 'key') {
           skippedUntilKey += 1;
           processedSamples += 1;
@@ -577,7 +579,8 @@ export async function captureWithDemuxer(
       }
 
       // Backpressure: yield control to allow decoder output callbacks to run.
-      if (decoder.decodeQueueSize > MaxDecodeQueueSize) {
+      // In keyframe-only mode, samples are sparse enough that backpressure is unnecessary.
+      if (!keyframeOnly && decoder.decodeQueueSize > MaxDecodeQueueSize) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         await processDecodedFrames();
         tickProgress();

@@ -26,6 +26,47 @@ import {
   webPFrameHasAlphaChunk,
 } from '@utils/webp-muxer';
 
+// ── aHash frame similarity detection ──────────────────────────────────
+
+const HAMMING_SIMILARITY_THRESHOLD = 2;
+
+/**
+ * Compute 64-bit average hash (aHash) from ImageData.
+ * Downsamples to 8×8 grayscale, computes mean luminance, and builds a
+ * BigInt hash where each bit indicates whether the pixel is above the mean.
+ */
+function computeAverageHash(imageData: ImageData): bigint {
+  const { data, width, height } = imageData;
+  const pixels = new Array<number>(64);
+  const stepX = width / 8;
+  const stepY = height / 8;
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      const sx = Math.floor(x * stepX);
+      const sy = Math.floor(y * stepY);
+      const idx = (sy * width + sx) * 4;
+      // Luminance: 0.299R + 0.587G + 0.114B
+      pixels[y * 8 + x] = data[idx]! * 0.299 + data[idx + 1]! * 0.587 + data[idx + 2]! * 0.114;
+    }
+  }
+  const mean = pixels.reduce((sum, v) => sum + v, 0) / 64;
+  let hash = 0n;
+  for (let i = 0; i < 64; i++) {
+    if (pixels[i]! > mean) {
+      hash |= 1n << BigInt(63 - i);
+    }
+  }
+  return hash;
+}
+
+/** Popcount on BigInt via XOR → binary string character count. */
+function hammingDistance(a: bigint, b: bigint): number {
+  const xor = a ^ b;
+  return xor.toString(2).replace(/0/g, '').length;
+}
+
+// ── Chunk size resolution ─────────────────────────────────────────────
+
 const resolveChunkSize = (): {
   chunkSize: number;
   cached: boolean;
@@ -102,6 +143,11 @@ export async function encodeFramesToANMFChunks(params: {
   let hasAlpha = false;
   const totalFrames = frames.length;
 
+  // ── Frame similarity tracking ───────────────────────────────────────
+  let lastHash: bigint | undefined;
+  let accumulatedDuration = 0;
+  let skippedFrameCount = 0;
+
   logger.performance('Starting WebP streaming encode', {
     totalFrames,
     resolution: `${width}x${height}`,
@@ -152,6 +198,21 @@ export async function encodeFramesToANMFChunks(params: {
       imageData = ctx.getImageData(0, 0, fw, fh);
     }
 
+    // ── Similarity detection: skip near-duplicate frames ────────────
+    const frameHash = computeAverageHash(imageData);
+    if (
+      lastHash !== undefined &&
+      hammingDistance(lastHash, frameHash) <= HAMMING_SIMILARITY_THRESHOLD
+    ) {
+      accumulatedDuration += durations[i] ?? durations[durations.length - 1] ?? 100;
+      skippedFrameCount++;
+      // Mark as undefined — filtered out before return
+      anmfChunks[i] = undefined as unknown as Uint8Array;
+      onProgress?.(i + 1, totalFrames);
+      continue;
+    }
+    lastHash = frameHash;
+
     // Step 2: Encode ImageData → WebP
     const encodedWebP = await encodeFrame(imageData);
     const webpBuffer = encodedWebP.buffer as ArrayBuffer;
@@ -192,12 +253,50 @@ export async function encodeFramesToANMFChunks(params: {
     }
   }
 
-  if (!cachedChunkSize && anmfChunks.length > 0) {
+  // ── Drain accumulated duration into last valid ANMF ──────────────
+  if (accumulatedDuration > 0 && lastHash !== undefined) {
+    // Find last valid (non-skipped) ANMF chunk
+    let lastValidIdx = -1;
+    for (let i = anmfChunks.length - 1; i >= 0; i--) {
+      if (anmfChunks[i] !== undefined) {
+        lastValidIdx = i;
+        break;
+      }
+    }
+    if (lastValidIdx >= 0) {
+      const chunk = anmfChunks[lastValidIdx]!;
+      const existingDuration =
+        (chunk[20] ?? 0) | ((chunk[21] ?? 0) << 8) | ((chunk[22] ?? 0) << 16);
+      const newDuration = Math.min(existingDuration + accumulatedDuration, 0xffffff);
+      chunk[20] = newDuration & 0xff;
+      chunk[21] = (newDuration >> 8) & 0xff;
+      chunk[22] = (newDuration >> 16) & 0xff;
+    }
+  }
+
+  // ── Filter skipped (undefined) entries ────────────────────────────
+  const validAnmfChunks = anmfChunks.filter((c): c is Uint8Array => c !== undefined);
+
+  // ── Dedup stats ───────────────────────────────────────────────────
+  if (skippedFrameCount > 0) {
+    logger.info(
+      'conversion',
+      `Skipped ${skippedFrameCount} near-duplicate frames (aHash Hamming ≤ ${HAMMING_SIMILARITY_THRESHOLD})`,
+      {
+        skippedFrames: skippedFrameCount,
+        totalFrames,
+        dedupRatio: `${((skippedFrameCount / totalFrames) * 100).toFixed(1)}%`,
+        accumulatedDuration: `${accumulatedDuration}ms`,
+      }
+    );
+  }
+
+  if (!cachedChunkSize && validAnmfChunks.length > 0) {
     cacheWebPChunkSize(chunkSize);
     logger.info('conversion', 'Cached WebP chunk size for future conversions', {
       chunkSize,
     });
   }
 
-  return { anmfChunks, hasAlpha, chunkSizeUsed: chunkSize };
+  return { anmfChunks: validAnmfChunks, hasAlpha, chunkSizeUsed: chunkSize };
 }

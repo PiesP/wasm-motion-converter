@@ -106,6 +106,7 @@ export const captureFrameAndEmit = async (args: {
   frameFormat: WebCodecsFrameFormat;
   frameQuality: number;
   quality?: 'low' | 'medium' | 'high';
+  scale?: number;
   codec?: string;
   framePrefix: string;
   frameDigits: number;
@@ -132,6 +133,13 @@ export const captureFrameAndEmit = async (args: {
     canvasEncodeTimeoutMs,
     maxConsecutiveEmptyFrames,
   } = args;
+
+  // When downscaling (scale < 1.0), use quality-appropriate smoothing.
+  // 'medium' for low-quality conversions trades some sharpness for speed;
+  // 'high' preserves fine details for medium/high quality output.
+  if (args.scale !== undefined && args.scale < 1.0) {
+    captureContext.context.imageSmoothingQuality = args.quality === 'low' ? 'medium' : 'high';
+  }
 
   captureContext.context.drawImage(
     video,

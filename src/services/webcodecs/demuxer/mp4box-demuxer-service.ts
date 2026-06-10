@@ -180,7 +180,8 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    */
   async *extractSamples(
     targetFps: number,
-    maxFrames?: number
+    maxFrames?: number,
+    options?: { keyframeOnly?: boolean }
   ): AsyncGenerator<EncodedVideoChunk, void, unknown> {
     if (!this.initialized || !this.videoTrack) {
       throw new Error('Demuxer not initialized');
@@ -311,6 +312,11 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
         const timestampMicros = Math.round((sample.cts / videoTrack.timescale) * 1_000_000);
         const durationMicros = Math.round((sample.duration / videoTrack.timescale) * 1_000_000);
         lastTimestampMicros = timestampMicros;
+
+        // Keyframe-only mode: skip delta frames
+        if (options?.keyframeOnly && !sample.is_sync) {
+          continue;
+        }
 
         if (
           maxDurationMicros !== undefined &&

@@ -167,6 +167,12 @@ export async function convert(
     }
   };
 
+  const keyframeOnly = format === 'gif' && quality === 'low';
+
+  if (keyframeOnly) {
+    logger.info('conversion', 'Using keyframe-only fast path', { format, quality });
+  }
+
   const presetFps = 'fps' in settings ? settings.fps : 15;
   const targetFps =
     metadata?.framerate && metadata.framerate > 0
@@ -335,6 +341,7 @@ export async function convert(
           captureMode,
           codec: metadata?.codec,
           quality: options.quality,
+          keyframeOnly,
           shouldCancel,
           onProgress: reportDecodeProgress,
           onFrame: async (frame: {

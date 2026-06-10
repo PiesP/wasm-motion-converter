@@ -17,17 +17,26 @@ export type CaptureContext = {
 export const createCanvas = (
   width: number,
   height: number,
-  willReadFrequently: boolean = false
+  willReadFrequently: boolean = false,
+  desynchronized: boolean = false
 ): CaptureContext => {
   // Prefer OffscreenCanvas when available.
   // In Chrome/Edge, OffscreenCanvas.convertToBlob() is typically faster and can reduce
   // main-thread blocking during PNG/JPEG encoding.
   if (typeof OffscreenCanvas !== 'undefined') {
     const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext('2d', {
-      alpha: false,
-      willReadFrequently,
-    });
+    const contextAttrs: CanvasRenderingContext2DSettings = { alpha: false };
+
+    // desynchronized and willReadFrequently are incompatible — when
+    // desynchronized is true, getImageData is unavailable, so we skip
+    // willReadFrequently entirely.
+    if (desynchronized) {
+      contextAttrs.desynchronized = true;
+    } else if (willReadFrequently) {
+      contextAttrs.willReadFrequently = true;
+    }
+
+    const context = canvas.getContext('2d', contextAttrs);
     if (!context) {
       throw new Error('Canvas 2D context not available');
     }
@@ -51,6 +60,23 @@ export const createCanvas = (
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
   return { canvas, context, targetWidth: width, targetHeight: height };
+};
+
+/**
+ * Create a desynchronized canvas context for frame capture.
+ *
+ * Uses `desynchronized: true` on the 2D context which allows the browser to
+ * paint the canvas independently of the event loop, reducing latency for
+ * GPU-backed operations like drawImage + convertToBlob.
+ *
+ * **Important:** `getImageData()` is NOT available on a desynchronized
+ * context. Only use this when the canvas is used for drawImage followed by
+ * convertToBlob (or toBlob) — never for RGBA/pixel-readback paths.
+ *
+ * Supported in Chrome 80+, Firefox 113+, Safari 16.4+.
+ */
+export const createDesynchronizedCanvas = (width: number, height: number): CaptureContext => {
+  return createCanvas(width, height, false, true);
 };
 
 /**

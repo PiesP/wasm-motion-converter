@@ -118,7 +118,8 @@ export class WebMDemuxer implements DemuxerAdapter {
    */
   async *extractSamples(
     targetFps: number,
-    maxFrames?: number
+    maxFrames?: number,
+    _options?: { keyframeOnly?: boolean }
   ): AsyncGenerator<EncodedVideoChunk, void, unknown> {
     if (!this.initialized || !this.demuxer || !this.metadata) {
       throw new Error('Demuxer not initialized');

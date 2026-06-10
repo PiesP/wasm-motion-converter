@@ -113,7 +113,8 @@ export interface DemuxerAdapter {
    */
   extractSamples(
     targetFps: number,
-    maxFrames?: number
+    maxFrames?: number,
+    options?: { keyframeOnly?: boolean }
   ): AsyncGenerator<EncodedVideoChunk, void, unknown>;
 
   /**
