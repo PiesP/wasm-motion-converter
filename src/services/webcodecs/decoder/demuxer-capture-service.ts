@@ -83,12 +83,20 @@ export async function captureWithDemuxer(
     let nextCaptureTimestampMicros: number | null = null;
     let lastCapturedTimestampMicros: number | null = null;
 
-    // If flush() hangs, prefer a partial demuxer result over a slow seek fallback,
-    // but only when we captured enough frames and covered (most of) the time window.
+    // If flush() hangs, prefer a partial demuxer result over a slow seek fallback.
+    // Two thresholds:
+    // - Normal completion: require 75% of total frames for high-quality output
+    // - Flush timeout: accept 40%+ since we already spent time decoding and fallback
+    //   via playback/seek would take even longer
     const PartialAcceptRatio = 0.75;
+    const PartialAcceptRatioTimeout = 0.4;
     const partialAcceptFrames = Math.max(
       2,
       Math.min(totalFrames, Math.max(8, Math.floor(totalFrames * PartialAcceptRatio)))
+    );
+    const partialAcceptFramesTimeout = Math.max(
+      2,
+      Math.min(totalFrames, Math.max(8, Math.floor(totalFrames * PartialAcceptRatioTimeout)))
     );
 
     const hasCoveredTimeWindow = (): boolean => {
@@ -101,7 +109,10 @@ export async function captureWithDemuxer(
       return lastCapturedTimestampMicros >= targetEndMicros - toleranceMicros;
     };
 
-    const canAcceptPartial = (): boolean => frameIndex >= partialAcceptFrames;
+    const canAcceptPartial = (useTimeoutThreshold = false): boolean => {
+      const threshold = useTimeoutThreshold ? partialAcceptFramesTimeout : partialAcceptFrames;
+      return frameIndex >= threshold;
+    };
 
     // Progress keepalive: demuxer decoding can continue long after we stop incrementing
     // frameIndex (once the output budget is reached). Without periodic progress reports,
@@ -594,9 +605,15 @@ export async function captureWithDemuxer(
         // If we made substantial progress, prefer a partial demuxer result over a slow
         // seek-based fallback. If all samples were already fed, there's little value in
         // redoing extraction via playback.
+        // On flush timeout, use a lower threshold (40% vs 75%) since we already spent
+        // time decoding and fallback via playback/seek would take even longer.
         const acceptPartial =
           frameIndex >= requiredFramesForSuccess ||
-          ((hasCoveredTimeWindow() || hasProcessedAllSamples()) && canAcceptPartial());
+          ((hasCoveredTimeWindow() || hasProcessedAllSamples()) && canAcceptPartial(true)) ||
+          // Timeout with meaningful progress: accept if we have 40%+ frames even without
+          // full time window coverage, to avoid wasteful fallback
+          (frameIndex >= partialAcceptFramesTimeout &&
+            processedSamples >= estimatedSamplesTotal * 0.5);
 
         if (acceptPartial) {
           tickProgress(true);
