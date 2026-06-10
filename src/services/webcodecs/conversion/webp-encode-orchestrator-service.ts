@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { convertFramesToImageData } from '@services/encoders/frame-converter-service';
-import { encodeWebPFramesInChunks } from '@services/webcodecs/conversion/webp-encoding-service';
-import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames-service';
-import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
-import { resolveAnimationDurationSeconds } from '@services/webcodecs/webp/webp-timing-service';
+import { muxWebPFramesStreaming } from '@services/webcodecs/webp/mux-webp-frames-service';
 import type { EncoderFrame, VideoMetadata } from '@t/conversion-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -39,15 +35,6 @@ const logMuxerSkip = (reason: string): void => {
   });
 };
 
-const logMuxerDurationAdjustment = (params: {
-  metadataDuration: number;
-  resolvedDuration: number;
-  frameCount: number;
-  fps: number;
-}): void => {
-  logger.info('conversion', 'Adjusted WebP animation duration to align with frame budget', params);
-};
-
 const shouldPropagateMuxerError = (message: string, shouldCancel: () => boolean): boolean => {
   if (message.includes('cancelled by user')) {
     return true;
@@ -66,7 +53,6 @@ export async function encodeWebPWithMuxFallback(
     width,
     height,
     fps,
-    requestedTargetFpsForDuration,
     captureDurationSeconds,
     quality,
     frameTimestampsForMuxer,
@@ -88,10 +74,13 @@ export async function encodeWebPWithMuxFallback(
     return { blob, encoderBackendUsed: 'ffmpeg' };
   }
 
-  logger.info('conversion', 'Using WebP muxer path with parallel frame encoding');
+  logger.info('conversion', 'Using streaming WebP encode → mux pipeline');
 
-  // Muxer path expects ImageData frames. Only pay the GPU→CPU readback cost when
-  // we actually need to fall back to the canvas encoder.
+  // Convert EncoderFrame[] to ImageData[] first (required for streaming encoder)
+  // This is the GPU→CPU readback step that was always needed
+  const { convertFramesToImageData } = await import('@services/encoders/frame-converter-service');
+
+  setStatusPrefix('Preparing frames...');
   const imageDataFrames = await convertFramesToImageData(
     frames,
     width,
@@ -100,87 +89,68 @@ export async function encodeWebPWithMuxFallback(
     shouldCancel
   );
 
-  const { encodedFrames } = await encodeWebPFramesInChunks({
-    frames: imageDataFrames,
-    quality,
-    codec,
-    onProgress,
-    shouldCancel,
-  });
-
-  let fallbackReason = 'WebP muxer output failed';
-
-  const muxDurationSeconds = resolveAnimationDurationSeconds(
-    encodedFrames.length,
-    requestedTargetFpsForDuration,
-    metadata,
-    captureDurationSeconds
-  );
-
-  if (muxDurationSeconds && metadata?.duration && muxDurationSeconds !== metadata.duration) {
-    logMuxerDurationAdjustment({
-      metadataDuration: metadata.duration,
-      resolvedDuration: muxDurationSeconds,
-      frameCount: encodedFrames.length,
-      fps: requestedTargetFpsForDuration,
-    });
-  }
-
-  const muxedWebP = await (async (): Promise<Blob | null> => {
-    try {
-      setStatusPrefix('Muxing WebP frames...');
-
-      const result = await muxWebPFrames({
-        encodedFrames,
-        timestamps: frameTimestampsForMuxer.slice(0, encodedFrames.length),
-        width,
-        height,
-        fps,
-        metadata,
-        durationSeconds: muxDurationSeconds,
-        onProgress,
-        shouldCancel,
-      });
-
-      if (!result) {
-        fallbackReason = 'WebP muxer produced no output';
-        logger.warn('conversion', 'WebP muxer produced no output, using FFmpeg fallback', {
-          frameCount: encodedFrames.length,
-        });
-        return null;
+  // Release GPU resources immediately after conversion
+  for (const frame of frames) {
+    if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
+      try {
+        frame.close();
+      } catch {
+        /* ignore */
       }
-
-      const validation = await validateWebPBlob(result);
-      if (!validation.valid) {
-        fallbackReason = validation.reason ?? 'WebP muxer output failed validation';
-        logger.warn('conversion', 'WebP muxer output failed validation, using fallback', {
-          reason: validation.reason,
-          frameCount: encodedFrames.length,
-        });
-        return null;
-      }
-
-      return result;
-    } catch (error) {
-      const errorMessage = getErrorMessage(error);
-
-      if (shouldPropagateMuxerError(errorMessage, shouldCancel)) {
-        throw error;
-      }
-
-      fallbackReason = errorMessage;
-      logger.warn('conversion', 'WebP muxer path failed, using FFmpeg fallback', {
-        error: errorMessage,
-        frameCount: encodedFrames.length,
-      });
-      return null;
     }
-  })();
-
-  if (muxedWebP) {
-    return { blob: muxedWebP, encoderBackendUsed: 'webp-muxer' };
+    if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
+      try {
+        frame.close();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
-  const blob = await encodeWithFFmpegFallback(fallbackReason);
-  return { blob, encoderBackendUsed: 'ffmpeg' };
+  let fallbackReason = 'WebP streaming encode failed';
+
+  try {
+    setStatusPrefix('Encoding WebP...');
+
+    // Single-pass: encode → strip container → ANMF chunk → assemble RIFF
+    const blob = await muxWebPFramesStreaming({
+      frames: imageDataFrames,
+      timestamps: frameTimestampsForMuxer.slice(0, imageDataFrames.length),
+      width,
+      height,
+      fps,
+      quality,
+      metadata,
+      durationSeconds: captureDurationSeconds,
+      codec,
+      onProgress,
+      shouldCancel,
+    });
+
+    if (!blob) {
+      fallbackReason = 'WebP streaming encode produced no output';
+      logger.warn('conversion', fallbackReason, {
+        frameCount: imageDataFrames.length,
+      });
+      const fallbackBlob = await encodeWithFFmpegFallback(fallbackReason);
+      return { blob: fallbackBlob, encoderBackendUsed: 'ffmpeg' };
+    }
+
+    return { blob, encoderBackendUsed: 'webp-muxer-streaming' };
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+
+    if (shouldPropagateMuxerError(errorMessage, shouldCancel)) {
+      throw error;
+    }
+
+    fallbackReason = errorMessage;
+    logger.warn('conversion', 'WebP streaming encode failed, using FFmpeg fallback', {
+      error: errorMessage,
+      frameCount: imageDataFrames.length,
+    });
+
+    const fallbackBlob = await encodeWithFFmpegFallback(fallbackReason);
+    return { blob: fallbackBlob, encoderBackendUsed: 'ffmpeg' };
+  }
 }

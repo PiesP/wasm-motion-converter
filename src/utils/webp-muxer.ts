@@ -137,7 +137,7 @@ const concatChunks = (chunks: Uint8Array[], totalLength: number): Uint8Array => 
  * @param data - WebP frame data (RIFF container or raw chunk stream)
  * @returns Frame-legal WebP chunk stream suitable for embedding in ANMF
  */
-const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
+export const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
   const bytes = new Uint8Array(data);
   if (bytes.length < 8) {
     return bytes;
@@ -230,7 +230,7 @@ const stripWebPContainer = (data: ArrayBuffer): Uint8Array => {
  * frames (fully opaque), forcing the ALPHA flag can lead to decode failures
  * in some environments.
  */
-const webPFrameHasAlphaChunk = (data: ArrayBuffer): boolean => {
+export const webPFrameHasAlphaChunk = (data: ArrayBuffer): boolean => {
   const bytes = new Uint8Array(data);
   if (bytes.length < 16) {
     return false;
@@ -340,7 +340,7 @@ function writeFourCc(fourcc: string): Uint8Array {
  * @param hasAlpha - Whether frames contain alpha channel
  * @returns Complete VP8X chunk (FourCC + size + payload)
  */
-function createVp8xChunk(width: number, height: number, hasAlpha: boolean): Uint8Array {
+export function createVp8xChunk(width: number, height: number, hasAlpha: boolean): Uint8Array {
   const chunkSize = 10;
   // IMPORTANT: These values must match the WebP spec / libwebp feature flags.
   // Incorrect flags can produce WebP files that are syntactically RIFF/WEBP,
@@ -370,7 +370,7 @@ function createVp8xChunk(width: number, height: number, hasAlpha: boolean): Uint
  * @param loopCount - Number of loops (0 = infinite, max 65535)
  * @returns Complete ANIM chunk (FourCC + size + payload)
  */
-function createAnimChunk(
+export function createAnimChunk(
   backgroundColor: { r: number; g: number; b: number; a: number },
   loopCount: number
 ): Uint8Array {
@@ -398,7 +398,7 @@ function createAnimChunk(
  * @param height - Canvas height in pixels
  * @returns Complete ANMF chunk (FourCC + size + header + payload + padding if needed)
  */
-function createAnmfChunk(
+export function createAnmfChunk(
   frameData: ArrayBuffer,
   duration: number,
   width: number,
@@ -458,6 +458,85 @@ function createAnmfChunk(
  * };
  * const animatedWebP = await muxAnimatedWebP(frames, options);
  */
+/**
+ * Mux pre-built ANMF chunks into an animated WebP file.
+ *
+ * This is the streaming entry point: when frames are encoded and converted
+ * to ANMF chunks one-by-one (via encodeWebPFramesStreaming), use this
+ * function to assemble the final RIFF container without holding both the
+ * raw encoded WebP array and the ANMF chunks in memory.
+ *
+ * @param anmfChunks - Pre-built ANMF chunk data (one per frame, sparse-array safe)
+ * @param hasAlpha - Whether any frame carries alpha data
+ * @param options - Canvas dimensions, background color, loop count
+ * @returns Complete animated WebP file as ArrayBuffer
+ */
+export function muxAnimatedWebPFromChunks(
+  anmfChunks: Uint8Array[],
+  hasAlpha: boolean,
+  options: AnimatedWebPOptions
+): ArrayBuffer {
+  const frameCount = anmfChunks.length;
+  if (frameCount === 0) {
+    const error = 'No ANMF chunks provided for animated WebP';
+    logger.error('general', error);
+    throw new Error(error);
+  }
+
+  try {
+    const width = normalizeDimension(options.width, 'width');
+    const height = normalizeDimension(options.height, 'height');
+    const loopCount = Math.max(0, Math.min(0xffff, Math.round(options.loopCount)));
+    const backgroundColor = {
+      r: clampColorChannel(options.backgroundColor?.r ?? 0),
+      g: clampColorChannel(options.backgroundColor?.g ?? 0),
+      b: clampColorChannel(options.backgroundColor?.b ?? 0),
+      a: clampColorChannel(options.backgroundColor?.a ?? 0),
+    };
+
+    logger.info('performance', 'Muxing WebP from pre-built ANMF chunks', {
+      frameCount,
+      width,
+      height,
+      loopCount,
+      hasAlpha,
+    });
+
+    const vp8xChunk = createVp8xChunk(width, height, hasAlpha);
+    const animChunk = createAnimChunk(backgroundColor, loopCount);
+
+    // Filter out any sparse-array holes (shouldn't happen, but be safe)
+    const validChunks = anmfChunks.filter((c): c is Uint8Array => c != null);
+
+    const webpPayloadSize =
+      vp8xChunk.length +
+      animChunk.length +
+      validChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+
+    const riffHeader = new Uint8Array(12);
+    riffHeader.set(writeFourCc('RIFF'), 0);
+    riffHeader.set(writeUint32le(4 + webpPayloadSize), 4);
+    riffHeader.set(writeFourCc('WEBP'), 8);
+
+    const totalSize = riffHeader.length + webpPayloadSize;
+    const result = concatChunks([riffHeader, vp8xChunk, animChunk, ...validChunks], totalSize);
+
+    logger.info('performance', 'WebP muxing from chunks completed', {
+      frameCount: validChunks.length,
+      outputSize: result.byteLength,
+    });
+
+    return result.buffer as ArrayBuffer;
+  } catch (error) {
+    const message = getErrorMessage(error);
+    logger.error('general', 'WebP muxing from chunks failed', {
+      error: message,
+      frameCount,
+    });
+    throw error;
+  }
+}
+
 export async function muxAnimatedWebP(
   frames: WebPFrame[],
   options: AnimatedWebPOptions

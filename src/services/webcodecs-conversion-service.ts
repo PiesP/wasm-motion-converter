@@ -16,8 +16,6 @@ import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion
 import { encodeWithFFmpegFallback } from '@services/webcodecs/conversion/ffmpeg-fallback-encode-service';
 import { createThrottledProgressReporter } from '@services/webcodecs/conversion/progress-reporting-service';
 import { encodeWebPWithMuxFallback } from '@services/webcodecs/conversion/webp-encode-orchestrator-service';
-import { encodeWebPFramesInChunks } from '@services/webcodecs/conversion/webp-encoding-service';
-import { muxWebPFrames } from '@services/webcodecs/webp/mux-webp-frames-service';
 import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
 import {
   buildDurationAlignedTimestamps,
@@ -818,39 +816,34 @@ async function convertViaWebCodecsFrames(params: {
       let outputBlob: Blob | null = null;
       let encoderBackendUsed: string | null = null;
 
-      const imageDataFrames = await convertFramesToImageData(
-        orderedFrames,
-        decodeResult.width,
-        decodeResult.height,
-        undefined,
-        shouldCancelOrDefault
-      );
+      // Single-pass: convert → encode → ANMF chunk → assemble RIFF
+      const streamingResult = await import('@services/webcodecs/webp/mux-webp-frames-service');
 
-      const { encodedFrames: webpEncodedFrames } = await encodeWebPFramesInChunks({
-        frames: imageDataFrames,
+      encodeStatusPrefix = 'Encoding WebP frames...';
+      ffmpegService.reportStatus(encodeStatusPrefix);
+
+      outputBlob = await streamingResult.muxWebPFramesStreaming({
+        frames: await convertFramesToImageData(
+          orderedFrames,
+          decodeResult.width,
+          decodeResult.height,
+          undefined,
+          shouldCancelOrDefault
+        ),
+        timestamps: timestampsForEncoding,
+        width: decodeResult.width,
+        height: decodeResult.height,
+        fps: fpsForEncoding,
         quality: options.quality,
+        metadata,
+        durationSeconds: animationDurationSeconds,
         codec: metadata?.codec,
         onProgress: reportEncodeProgress,
         shouldCancel: shouldCancelOrDefault,
       });
 
-      encodeStatusPrefix = 'Muxing WebP frames...';
-      ffmpegService.reportStatus(encodeStatusPrefix);
-
-      const outputBlobResult = await muxWebPFrames({
-        encodedFrames: webpEncodedFrames,
-        timestamps: timestampsForEncoding.slice(0, webpEncodedFrames.length),
-        width: decodeResult.width,
-        height: decodeResult.height,
-        fps: fpsForEncoding,
-        metadata,
-        durationSeconds: animationDurationSeconds,
-        onProgress: reportEncodeProgress,
-        shouldCancel: shouldCancelOrDefault,
-      });
-
-      outputBlob = outputBlobResult;
-      encoderBackendUsed = 'webp-muxer';
+      encoderBackendUsed = 'webp-muxer-streaming';
+      releaseCapturedFrames();
 
       if (!outputBlob) return null;
 
