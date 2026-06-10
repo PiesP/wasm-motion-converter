@@ -3,7 +3,7 @@
     "target": "ESNext",
     "module": "ESNext",
     "incremental": true,
-    "tsBuildInfoFile": ".tsbuildinfo",
+    "tsBuildInfoFile": ".vscode/.tsbuildinfo",
     "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
@@ -41,5 +41,13 @@
     "public/service-worker.ts",
     "public/sw-register.ts"
   ],
-  "exclude": ["node_modules", "dist", "tmp/**", ".vite-sw-temp/**", "**/*.test.ts", "**/*.spec.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tmp/**",
+    ".vite-sw-temp/**",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    ".vscode"
+  ]
 }
