@@ -145,50 +145,50 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         />
       </div>
 
-      <div class="mt-4">
+      <div class="mt-4" role="region" aria-label="Conversion results">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white">Conversion Complete</h3>
 
-        <div class={sizeGridClass()}>
+        <dl class={sizeGridClass()}>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <div class="text-gray-600 dark:text-gray-400">Original Size</div>
-            <div class="font-medium text-gray-900 dark:text-white">
+            <dt class="text-gray-600 dark:text-gray-400">Original Size</dt>
+            <dd class="font-medium text-gray-900 dark:text-white" data-result-original-size>
               {formatBytes(local.originalSize)}
-            </div>
+            </dd>
           </div>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <div class="text-gray-600 dark:text-gray-400">Output Size</div>
-            <div class="font-medium text-gray-900 dark:text-white">
+            <dt class="text-gray-600 dark:text-gray-400">Output Size</dt>
+            <dd class="font-medium text-gray-900 dark:text-white" data-result-output-size>
               {formatBytes(local.outputBlob.size)}
-            </div>
+            </dd>
           </div>
           <Show when={conversionTimeLabel()}>
             {(label) => (
               <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-                <div class="text-gray-600 dark:text-gray-400">Conversion Time</div>
-                <div class="font-medium text-gray-900 dark:text-white">{label()}</div>
+                <dt class="text-gray-600 dark:text-gray-400">Conversion Time</dt>
+                <dd class="font-medium text-gray-900 dark:text-white">{label()}</dd>
               </div>
             )}
           </Show>
-        </div>
+        </dl>
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3">
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <div class="text-gray-600 dark:text-gray-400">Format</div>
-            <div class="font-medium text-gray-900 dark:text-white uppercase">
+            <dt class="text-gray-600 dark:text-gray-400">Format</dt>
+            <dd class="font-medium text-gray-900 dark:text-white uppercase" data-result-format>
               {local.settings.format}
-            </div>
+            </dd>
           </div>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <div class="text-gray-600 dark:text-gray-400">Quality</div>
-            <div class="font-medium text-gray-900 dark:text-white capitalize">
+            <dt class="text-gray-600 dark:text-gray-400">Quality</dt>
+            <dd class="font-medium text-gray-900 dark:text-white capitalize" data-result-quality>
               {local.settings.quality}
-            </div>
+            </dd>
           </div>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <div class="text-gray-600 dark:text-gray-400">Scale</div>
-            <div class="font-medium text-gray-900 dark:text-white">
+            <dt class="text-gray-600 dark:text-gray-400">Scale</dt>
+            <dd class="font-medium text-gray-900 dark:text-white" data-result-scale>
               {(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%
-            </div>
+            </dd>
           </div>
         </div>
       </div>
