@@ -114,6 +114,10 @@ export interface StreamingWebPEncodeResult {
   hasAlpha: boolean;
   /** Chunk size used for encoding batches */
   chunkSizeUsed: number;
+  /** Number of frames skipped by aHash similarity detection */
+  skippedFrames: number;
+  /** Total frames evaluated (skipped + encoded) */
+  totalFrames: number;
 }
 
 /**
@@ -149,7 +153,7 @@ export async function encodeFramesToANMFChunks(params: {
   const { frames, quality, width, height, durations, codec, onProgress, shouldCancel } = params;
 
   if (frames.length === 0) {
-    return { anmfChunks: [], hasAlpha: false, chunkSizeUsed: 0 };
+    return { anmfChunks: [], hasAlpha: false, chunkSizeUsed: 0, skippedFrames: 0, totalFrames: 0 };
   }
 
   const webpQualityRatio = QUALITY_PRESETS.webp[quality].quality / 100;
@@ -370,5 +374,5 @@ export async function encodeFramesToANMFChunks(params: {
     });
   }
 
-  return { anmfChunks: validAnmfChunks, hasAlpha, chunkSizeUsed: chunkSize };
+  return { anmfChunks: validAnmfChunks, hasAlpha, chunkSizeUsed: chunkSize, skippedFrames: skippedFrameCount, totalFrames: totalFrames };
 }

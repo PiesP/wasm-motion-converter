@@ -107,6 +107,14 @@ export async function muxWebPFrames(params: {
  *
  * Peak memory: O(1) per frame instead of O(N) for full frame array.
  */
+export interface MuxWebPStreamingResult {
+  blob: Blob | null;
+  /** aHash dedup stats: frames skipped */
+  skippedFrames: number;
+  /** aHash dedup stats: total frames evaluated */
+  totalFrames: number;
+}
+
 export async function muxWebPFramesStreaming(params: {
   frames: import('@t/conversion-types').EncoderFrame[];
   timestamps: number[];
@@ -119,7 +127,7 @@ export async function muxWebPFramesStreaming(params: {
   codec?: string;
   onProgress?: (current: number, total: number) => void;
   shouldCancel?: () => boolean;
-}): Promise<Blob | null> {
+}): Promise<MuxWebPStreamingResult> {
   const {
     frames,
     timestamps,
@@ -134,7 +142,7 @@ export async function muxWebPFramesStreaming(params: {
     shouldCancel,
   } = params;
 
-  if (!frames.length) return null;
+  if (!frames.length) return { blob: null, skippedFrames: 0, totalFrames: 0 };
 
   // Calculate frame durations upfront (lightweight)
   const { buildWebPFrameDurations } = await import('@services/webcodecs/webp/webp-timing-service');
@@ -152,7 +160,7 @@ export async function muxWebPFramesStreaming(params: {
     '@services/webcodecs/conversion/webp-streaming-encode-service'
   );
 
-  const { anmfChunks, hasAlpha } = await encodeFramesToANMFChunks({
+  const { anmfChunks, hasAlpha, skippedFrames, totalFrames } = await encodeFramesToANMFChunks({
     frames,
     quality,
     width,
@@ -163,12 +171,12 @@ export async function muxWebPFramesStreaming(params: {
     shouldCancel,
   });
 
-  if (anmfChunks.length === 0) return null;
+  if (anmfChunks.length === 0) return { blob: null, skippedFrames, totalFrames };
 
   if (anmfChunks.length === 1) {
     const frame = anmfChunks[0];
-    if (!frame) return null;
-    return new Blob([frame.buffer as ArrayBuffer], { type: 'image/webp' });
+    if (!frame) return { blob: null, skippedFrames, totalFrames };
+    return { blob: new Blob([frame.buffer as ArrayBuffer], { type: 'image/webp' }), skippedFrames, totalFrames };
   }
 
   // Assemble final RIFF container from ANMF chunks
@@ -179,5 +187,5 @@ export async function muxWebPFramesStreaming(params: {
     backgroundColor: WEBP_BACKGROUND_COLOR,
   });
 
-  return new Blob([muxed], { type: 'image/webp' });
+  return { blob: new Blob([muxed], { type: 'image/webp' }), skippedFrames, totalFrames };
 }

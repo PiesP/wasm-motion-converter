@@ -381,12 +381,60 @@ export async function convert(
         logger.warn('conversion', 'WebCodecs frame capture failed', {
           error: errorMessage,
           mode: captureMode,
+          partialWebpFrames: webpCapturedFrames.length,
+          partialGifFrames: capturedFrames.length,
         });
-        capturedFrames.length = 0;
-        gifFrameTimestamps.length = 0;
-        releaseWebPFrames();
-        webpCapturedFrames.length = 0;
-        webpFrameTimestamps.length = 0;
+
+        // Partial frame reuse: if demuxer captured some frames before failing,
+        // keep them and let the next capture mode resume from where we left off.
+        // Only clear frames if the failure was a hard error (not a partial result).
+        const hasPartialFrames =
+          captureMode === 'demuxer' &&
+          (webpCapturedFrames.length > 0 || capturedFrames.length > 0);
+
+        if (!hasPartialFrames) {
+          // Hard failure: clear all and retry with next mode
+          capturedFrames.length = 0;
+          gifFrameTimestamps.length = 0;
+          releaseWebPFrames();
+          webpCapturedFrames.length = 0;
+          webpFrameTimestamps.length = 0;
+        } else {
+          // Partial success: if we captured a reasonable number of frames,
+          // use them as-is and skip further capture modes.
+          const capturedCount = format === 'webp' ? webpCapturedFrames.length : capturedFrames.length;
+          // Heuristic: if we got at least 30 frames or 1 second of content, use partial result
+          const isAcceptable = capturedCount >= 30 || capturedCount >= targetFps;
+
+          logger.info('conversion', 'Demuxer partial success — reusing captured frames', {
+            capturedFrames: capturedCount,
+            targetFps,
+            acceptable: isAcceptable,
+          });
+
+          if (isAcceptable) {
+            // Use partial result as final — synthesize a decodeResult so downstream
+            // encoding can proceed without a full playback fallback re-extract.
+            const partialFrameCount = format === 'webp' ? webpCapturedFrames.length : capturedFrames.length;
+            decodeResult = {
+              frameFiles: [],
+              frameCount: partialFrameCount,
+              captureModeUsed: captureMode,
+              width: metadata?.width ?? 0,
+              height: metadata?.height ?? 0,
+              fps: targetFps,
+              duration: metadata?.duration ?? 0,
+            };
+            captureModeUsed = captureMode;
+            break;
+          }
+          // Otherwise clear and try next mode (will re-extract from start)
+          capturedFrames.length = 0;
+          gifFrameTimestamps.length = 0;
+          releaseWebPFrames();
+          webpCapturedFrames.length = 0;
+          webpFrameTimestamps.length = 0;
+        }
 
         if (captureMode === 'seek') throw error;
       }
@@ -638,6 +686,13 @@ export async function convert(
 
       outputBlob = webpEncode.blob;
       encoderBackendUsed = webpEncode.encoderBackendUsed;
+      // Store aHash dedup stats on the blob for UI display
+      if (webpEncode.dedupSkippedFrames !== undefined) {
+        (outputBlob as ConversionOutputBlob).dedupSkippedFrames = webpEncode.dedupSkippedFrames;
+      }
+      if (webpEncode.dedupTotalFrames !== undefined) {
+        (outputBlob as ConversionOutputBlob).dedupTotalFrames = webpEncode.dedupTotalFrames;
+      }
       releaseWebPFrames();
       webpCapturedFrames.length = 0;
       webpFrameTimestamps.length = 0;
@@ -825,7 +880,7 @@ async function convertViaWebCodecsFrames(params: {
       encodeStatusPrefix = 'Encoding WebP frames...';
       ffmpegService.reportStatus(encodeStatusPrefix);
 
-      outputBlob = await streamingResult.muxWebPFramesStreaming({
+      const streamingWebPResult = await streamingResult.muxWebPFramesStreaming({
         frames: orderedFrames,
         timestamps: timestampsForEncoding,
         width: decodeResult.width,
@@ -839,6 +894,7 @@ async function convertViaWebCodecsFrames(params: {
         shouldCancel: shouldCancelOrDefault,
       });
 
+      outputBlob = streamingWebPResult.blob;
       encoderBackendUsed = 'webp-muxer-streaming';
       releaseCapturedFrames();
 

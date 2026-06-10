@@ -150,6 +150,10 @@ interface ConversionBlobMetadata {
   ffmpegFrameInputKind?: 'rawvideo' | 'image-sequence';
   /** Bytes used for rawvideo frame staging when ffmpegFrameInputKind is 'rawvideo' (dev/debug) */
   ffmpegRawvideoBytesUsed?: number;
+  /** aHash dedup: frames skipped (WebP streaming path) */
+  dedupSkippedFrames?: number;
+  /** aHash dedup: total frames evaluated (WebP streaming path) */
+  dedupTotalFrames?: number;
 }
 
 /**
@@ -196,6 +200,10 @@ export interface ConversionResult {
   wasTranscoded?: boolean;
   /** Original video codec */
   originalCodec?: string;
+  /** aHash dedup stats: number of frames skipped (WebP streaming path only) */
+  dedupSkippedFrames?: number;
+  /** aHash dedup stats: total frames evaluated (WebP streaming path only) */
+  dedupTotalFrames?: number;
 }
 
 /**

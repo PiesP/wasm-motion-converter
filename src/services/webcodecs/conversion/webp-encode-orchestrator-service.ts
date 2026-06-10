@@ -27,6 +27,10 @@ type WebPEncodeParams = {
 type WebPEncodeResult = {
   blob: Blob;
   encoderBackendUsed: string;
+  /** aHash dedup stats: frames skipped (0 if FFmpeg fallback was used) */
+  dedupSkippedFrames?: number;
+  /** aHash dedup stats: total frames evaluated (0 if FFmpeg fallback was used) */
+  dedupTotalFrames?: number;
 };
 
 const logMuxerSkip = (reason: string): void => {
@@ -82,7 +86,7 @@ export async function encodeWebPWithMuxFallback(
     setStatusPrefix('Encoding WebP...');
 
     // Single-pass: encode → strip container → ANMF chunk → assemble RIFF
-    const blob = await muxWebPFramesStreaming({
+    const streamingResult = await muxWebPFramesStreaming({
       frames: frames,
       timestamps: frameTimestampsForMuxer.slice(0, frames.length),
       width,
@@ -96,16 +100,16 @@ export async function encodeWebPWithMuxFallback(
       shouldCancel,
     });
 
-    if (!blob) {
+    if (!streamingResult.blob) {
       fallbackReason = 'WebP streaming encode produced no output';
       logger.warn('conversion', fallbackReason, {
         frameCount: frames.length,
       });
       const fallbackBlob = await encodeWithFFmpegFallback(fallbackReason);
-      return { blob: fallbackBlob, encoderBackendUsed: 'ffmpeg' };
+      return { blob: fallbackBlob, encoderBackendUsed: 'ffmpeg', dedupSkippedFrames: streamingResult.skippedFrames, dedupTotalFrames: streamingResult.totalFrames };
     }
 
-    return { blob, encoderBackendUsed: 'webp-muxer-streaming' };
+    return { blob: streamingResult.blob, encoderBackendUsed: 'webp-muxer-streaming', dedupSkippedFrames: streamingResult.skippedFrames, dedupTotalFrames: streamingResult.totalFrames };
   } catch (error) {
     const errorMessage = getErrorMessage(error);
 

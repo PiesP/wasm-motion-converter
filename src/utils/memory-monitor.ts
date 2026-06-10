@@ -7,6 +7,11 @@
  * Provides basic memory status detection and conservative available-memory estimation.
  * Uses `performance.memory` (Chrome/Edge) when available, with fallbacks for other
  * browsers via `navigator.deviceMemory` and conservative defaults.
+ *
+ * Firefox notes:
+ * - `performance.memory` is not available → falls back to `navigator.deviceMemory`
+ * - `navigator.deviceMemory` may return 0 or be unavailable → falls back to 4GB default
+ * - Decoded frame memory is tracked separately via trackDecodedFrame() / releaseDecodedFrame()
  */
 
 interface MemoryInfo {
@@ -16,10 +21,38 @@ interface MemoryInfo {
   usagePercentage: number;
   /** Device memory hint from navigator.deviceMemory (GB), if available */
   deviceMemoryGB?: number;
+  /** Estimated decoded frame memory (bytes), tracked separately */
+  decodedFrameBytes?: number;
 }
 
 // Thresholds for memory warning levels
 const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
+
+// Decoded frame memory tracking (for browsers without performance.memory)
+let trackedDecodedFrameBytes = 0;
+
+/**
+ * Track memory used by a decoded frame.
+ * Call this when a VideoFrame or ImageData is created during decode.
+ */
+export function trackDecodedFrame(width: number, height: number, bytesPerPixel = 4): void {
+  trackedDecodedFrameBytes += width * height * bytesPerPixel;
+}
+
+/**
+ * Release tracked memory for a decoded frame.
+ * Call this when a VideoFrame is closed or ImageData is no longer needed.
+ */
+export function releaseDecodedFrame(width: number, height: number, bytesPerPixel = 4): void {
+  trackedDecodedFrameBytes = Math.max(0, trackedDecodedFrameBytes - width * height * bytesPerPixel);
+}
+
+/**
+ * Get current decoded frame memory estimate (bytes).
+ */
+export function getDecodedFrameMemoryBytes(): number {
+  return trackedDecodedFrameBytes;
+}
 
 /**
  * Get current memory usage information.
@@ -50,6 +83,7 @@ function getMemoryInfo(): MemoryInfo | null {
       jsHeapSizeLimit,
       usagePercentage,
       deviceMemoryGB: typeof deviceMemoryGB === 'number' ? deviceMemoryGB : undefined,
+      decodedFrameBytes: trackedDecodedFrameBytes,
     };
   }
 
@@ -67,9 +101,11 @@ function getMemoryInfo(): MemoryInfo | null {
       jsHeapSizeLimit,
       usagePercentage,
       deviceMemoryGB,
+      decodedFrameBytes: trackedDecodedFrameBytes,
     };
   }
 
+  // No APIs available: return null so callers can use conservative defaults
   return null;
 }
 
@@ -89,9 +125,15 @@ function getMemoryInfo(): MemoryInfo | null {
 export function isMemoryCritical(): boolean {
   const memInfo = getMemoryInfo();
   if (!memInfo) {
-    return false;
+    // No data available: use decoded frame tracking as a soft signal
+    // If tracked frames exceed 2GB, consider it critical
+    return trackedDecodedFrameBytes > 2 * 1024 * 1024 * 1024;
   }
-  return memInfo.usagePercentage > MEMORY_CRITICAL_THRESHOLD;
+
+  // Include decoded frame memory in the critical check
+  const totalUsed = memInfo.usedJSHeapSize + (memInfo.decodedFrameBytes ?? 0);
+  const effectivePercentage = (totalUsed / memInfo.jsHeapSizeLimit) * 100;
+  return effectivePercentage > MEMORY_CRITICAL_THRESHOLD;
 }
 
 /**
@@ -114,8 +156,10 @@ export function getAvailableMemory(): number {
   const memInfo = getMemoryInfo();
 
   if (memInfo) {
-    // Return actual available memory
-    return memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize;
+    // Return actual available memory minus decoded frame estimate
+    const heapAvailable = memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize;
+    const decodedFrames = memInfo.decodedFrameBytes ?? 0;
+    return Math.max(0, heapAvailable - decodedFrames);
   }
 
   // When neither performance.memory nor navigator.deviceMemory is available,
@@ -126,5 +170,5 @@ export function getAvailableMemory(): number {
       ? deviceMemoryGB * 1024 * 1024 * 1024
       : 4 * 1024 * 1024 * 1024;
   const assumedUsage = fallbackLimit * 0.4;
-  return fallbackLimit - assumedUsage;
+  return Math.max(0, fallbackLimit - assumedUsage - trackedDecodedFrameBytes);
 }
