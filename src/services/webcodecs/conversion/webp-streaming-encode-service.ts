@@ -304,6 +304,35 @@ export async function encodeFramesToANMFChunks(params: {
   // ── Filter skipped (undefined) entries ────────────────────────────
   const validAnmfChunks = anmfChunks.filter((c): c is Uint8Array => c !== undefined);
 
+  // ── Balance short first-frame durations ────────────────────────────
+  // When similarity detection skips a run of duplicate frames, the
+  // accumulated duration is added to the NEXT non-duplicate frame.
+  // This can leave the first frame in the run with a very short
+  // duration while the frame after the run plays for seconds.
+  // Redistribute half of any large duration gap backward to the
+  // preceding frame so the animation feels balanced.
+  if (validAnmfChunks.length >= 2) {
+    const MIN_VISIBLE_DURATION_MS = 200;
+    for (let j = 0; j < validAnmfChunks.length - 1; j++) {
+      const chunkA = validAnmfChunks[j]!;
+      const chunkB = validAnmfChunks[j + 1]!;
+      const durA = (chunkA[20] ?? 0) | ((chunkA[21] ?? 0) << 8) | ((chunkA[22] ?? 0) << 16);
+      const durB = (chunkB[20] ?? 0) | ((chunkB[21] ?? 0) << 8) | ((chunkB[22] ?? 0) << 16);
+
+      if (durA < MIN_VISIBLE_DURATION_MS && durB > durA * 5) {
+        const transfer = Math.floor((durB - durA) / 2);
+        const newDurA = Math.min(0xffffff, durA + transfer);
+        const newDurB = Math.min(0xffffff, durB - transfer);
+        chunkA[20] = newDurA & 0xff;
+        chunkA[21] = (newDurA >> 8) & 0xff;
+        chunkA[22] = (newDurA >> 16) & 0xff;
+        chunkB[20] = newDurB & 0xff;
+        chunkB[21] = (newDurB >> 8) & 0xff;
+        chunkB[22] = (newDurB >> 16) & 0xff;
+      }
+    }
+  }
+
   // ── Dedup stats ───────────────────────────────────────────────────
   if (skippedFrameCount > 0) {
     logger.info(
