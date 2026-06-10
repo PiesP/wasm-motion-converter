@@ -390,9 +390,10 @@ export function createAnimChunk(
 /**
  * Create ANMF (Animation Frame) chunk
  *
- * Encodes a single frame with display duration and positioning
+ * Encodes a single frame with display duration and positioning.
+ * Strips the RIFF/WEBP container from `frameData` before embedding.
  *
- * @param frameData - Encoded WebP frame data
+ * @param frameData - Encoded WebP frame data (full RIFF container or raw chunk stream)
  * @param duration - Frame display duration in milliseconds
  * @param width - Canvas width in pixels
  * @param height - Canvas height in pixels
@@ -405,6 +406,38 @@ export function createAnmfChunk(
   height: number
 ): Uint8Array {
   const frameBytes = stripWebPContainer(frameData);
+  return buildAnmfChunk(frameBytes, duration, width, height);
+}
+
+/**
+ * Create ANMF chunk from pre-stripped WebP payload.
+ *
+ * Streaming callers (encodeFramesToANMFChunks, muxWebPFrames) pre-strip the
+ * RIFF container before passing data to avoid redundant re‑parsing. Use this
+ * variant when the input is already a raw chunk stream (VP8/VP8L ± ALPH).
+ *
+ * @param strippedPayload - Pre-stripped WebP chunk stream
+ * @param duration - Frame display duration in milliseconds
+ * @param width - Canvas width in pixels
+ * @param height - Canvas height in pixels
+ * @returns Complete ANMF chunk
+ */
+export function createAnmfChunkFromStripped(
+  strippedPayload: Uint8Array,
+  duration: number,
+  width: number,
+  height: number
+): Uint8Array {
+  return buildAnmfChunk(strippedPayload, duration, width, height);
+}
+
+/** Shared ANMF chunk builder (avoids duplicating the chunk assembly logic). */
+function buildAnmfChunk(
+  frameBytes: Uint8Array,
+  duration: number,
+  width: number,
+  height: number
+): Uint8Array {
   const frameSize = frameBytes.length;
   const chunkHeaderSize = 16; // ANMF header without frame data
   const chunkSize = chunkHeaderSize + frameSize;

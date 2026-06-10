@@ -171,8 +171,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * Note: Do not stride-skip encoded samples for inter-frame codecs (AV1/VP9/H.264/HEVC).
    * Downsample after decode by selecting decoded frames based on timestamps.
    *
-   * Uses AsyncGenerator to stream samples incrementally instead of buffering
-   * in memory, preventing exhaustion on large video files.
+   * Uses AsyncGenerator to collect all samples into a buffer before yielding them\n   * one at a time. This allows the generator to provide consistent, ordered output\n   * while still exposing an AsyncGenerator interface. Note: buffering all samples\n   * in memory may exhaust resources on very large files; consider chunked extraction\n   * for files with high sample counts.
    *
    * @param targetFps - Target frames per second for sampling
    * @param maxFrames - Optional maximum frame count to extract

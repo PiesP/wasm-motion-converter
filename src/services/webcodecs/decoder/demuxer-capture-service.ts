@@ -154,6 +154,11 @@ export async function captureWithDemuxer(
     let lastProgressTickAt = 0;
     const ProgressTickIntervalMs = 400;
 
+    // Sample-extraction phase accounts for a fixed base portion of progress.
+    // Frame capture then fills the remainder, so progress is never conflated
+    // with skipped/non-extracted samples.
+    const SampleExtractionProgressRatio = 0.2;
+
     const tickProgress = (forceComplete = false) => {
       if (!onProgress) {
         return;
@@ -170,13 +175,16 @@ export async function captureWithDemuxer(
       }
       lastProgressTickAt = now;
 
-      // Map sample progress into the expected frame-progress shape.
-      const ratio = processedSamples / estimatedSamplesTotal;
+      // Weighted progress: base portion for sample extraction + frame portion
+      // for actual captured frames, so skipped samples do not inflate progress.
+      const frameRatio = totalFrames > 0 ? Math.min(1, frameIndex / totalFrames) : 0;
+      const weightedRatio =
+        SampleExtractionProgressRatio + frameRatio * (1 - SampleExtractionProgressRatio);
       const pseudoCurrent = Math.max(
         0,
         Math.min(
           Math.max(0, totalFrames - 1),
-          Math.floor(Math.min(1, Math.max(0, ratio)) * Math.max(1, totalFrames))
+          Math.floor(Math.min(1, Math.max(0, weightedRatio)) * Math.max(1, totalFrames))
         )
       );
       onProgress(pseudoCurrent, totalFrames);
@@ -443,8 +451,16 @@ export async function captureWithDemuxer(
     // and apply backpressure via decodeQueueSize + cooperative yielding.
     const MaxDecodeQueueSize = 16;
     const MaxPendingOutputFrames = 6;
+    // needsKeyFrame is only set to true once at startup and after consecutive
+    // decode errors. It is NOT reset to true after the first keyframe is found,
+    // which is correct for single-track files. For concatenated or edited files
+    // where keyframe cadence changes mid-stream, the decoder may silently fail
+    // if it loses reference-frame sync. The consecutiveDecodeErrors counter
+    // below provides a limited recovery mechanism for such cases.
     let needsKeyFrame = true;
     let skippedUntilKey = 0;
+    let consecutiveDecodeErrors = 0;
+    const MaxConsecutiveDecodeErrors = 5;
 
     // Watchdog: if VideoDecoder.decode() hangs (e.g. on problematic AV1
     // streams) the entire decode loop can stall indefinitely. The flush path
@@ -520,8 +536,28 @@ export async function captureWithDemuxer(
       }
 
       if (decoderError) {
-        throw decoderError;
+        consecutiveDecodeErrors += 1;
+        const errorToLog = decoderError;
+        decoderError = null; // Clear so we can keep trying
+
+        if (consecutiveDecodeErrors >= MaxConsecutiveDecodeErrors) {
+          throw errorToLog;
+        }
+
+        logger.warn('conversion', 'Decoder error, resetting keyframe requirement', {
+          consecutiveDecodeErrors,
+          maxConsecutive: MaxConsecutiveDecodeErrors,
+          error: getErrorMessage(errorToLog),
+        });
+
+        // Reset keyframe requirement to find the next sync point.
+        // This helps recover from reference-frame desync in concatenated/edited files.
+        needsKeyFrame = true;
+        continue;
       }
+
+      // Successful decode resets the consecutive error counter.
+      consecutiveDecodeErrors = 0;
 
       // Opportunistically process output frames without flushing.
       if (decodedFrames.length >= MaxPendingOutputFrames) {

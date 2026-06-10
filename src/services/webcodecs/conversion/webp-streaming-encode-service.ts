@@ -20,7 +20,11 @@ import { QUALITY_PRESETS } from '@utils/constants';
 import { isHardwareCacheValid } from '@utils/hardware-profile';
 import { logger } from '@utils/logger';
 import { cacheWebPChunkSize, getCachedWebPChunkSize } from '@utils/session-cache';
-import { createAnmfChunk, stripWebPContainer, webPFrameHasAlphaChunk } from '@utils/webp-muxer';
+import {
+  createAnmfChunkFromStripped,
+  stripWebPContainer,
+  webPFrameHasAlphaChunk,
+} from '@utils/webp-muxer';
 
 const resolveChunkSize = (): {
   chunkSize: number;
@@ -152,9 +156,9 @@ export async function encodeFramesToANMFChunks(params: {
     // Step 4: Strip RIFF container → raw VP8/VP8L + optional ALPH
     const framePayload = stripWebPContainer(webpBuffer);
 
-    // Step 5: Wrap in ANMF chunk
+    // Step 5: Wrap in ANMF chunk (use stripped variant — already stripped at Step 4)
     const duration = durations[i] ?? durations[durations.length - 1] ?? 100;
-    anmfChunks[i] = createAnmfChunk(framePayload.buffer as ArrayBuffer, duration, width, height);
+    anmfChunks[i] = createAnmfChunkFromStripped(framePayload, duration, width, height);
 
     // Step 6: Release GPU resources immediately
     if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {

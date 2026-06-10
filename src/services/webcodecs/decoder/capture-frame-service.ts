@@ -28,6 +28,7 @@ export type CaptureFrameState = {
 };
 
 const formatDecision = (() => {
+  // Intentional: cache is bounded to 2-6 entries in practice, no eviction needed
   const cache = new Map<string, ReturnType<typeof _formatDecision>>();
 
   return (args: {

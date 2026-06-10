@@ -128,7 +128,14 @@ export async function captureWithTrackProcessor(
       }
     }
   } finally {
-    reader.releaseLock();
+    // Cancel any pending read before releasing the lock to avoid
+    // "reader.releaseLock() while read is pending" race conditions.
+    await reader.cancel().catch(() => {});
+    try {
+      reader.releaseLock();
+    } catch {
+      // reader may already be released
+    }
     track.stop();
     video.pause();
     const elapsedMs = performance.now() - startDecodeTime;

@@ -16,7 +16,11 @@
 import type { VideoMetadata } from '@t/conversion-types';
 import { MIN_WEBP_FRAME_DURATION_MS, WEBP_BACKGROUND_COLOR } from '@utils/constants';
 import { logger } from '@utils/logger';
-import { createAnmfChunk, muxAnimatedWebPFromChunks, stripWebPContainer } from '@utils/webp-muxer';
+import {
+  createAnmfChunkFromStripped,
+  muxAnimatedWebPFromChunks,
+  stripWebPContainer,
+} from '@utils/webp-muxer';
 
 export async function muxWebPFrames(params: {
   encodedFrames: Uint8Array[];
@@ -80,7 +84,7 @@ export async function muxWebPFrames(params: {
 
     const payload = stripWebPContainer(frame.buffer as ArrayBuffer);
     const duration = durations[i] ?? durations[durations.length - 1] ?? MIN_WEBP_FRAME_DURATION_MS;
-    anmfChunks.push(createAnmfChunk(payload.buffer as ArrayBuffer, duration, width, height));
+    anmfChunks.push(createAnmfChunkFromStripped(payload, duration, width, height));
   }
 
   const muxed = muxAnimatedWebPFromChunks(anmfChunks, hasAlpha, {
