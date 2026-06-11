@@ -7,7 +7,7 @@ import { CANCELLED_MESSAGE, createAbortPromise } from '@utils/cancellation-conte
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { getAvailableMemory } from '@utils/memory-monitor';
-import * as Comlink from 'comlink';
+import { wrap } from '@utils/worker-rpc';
 
 /**
  * CPU concurrency utilization ratio
@@ -41,8 +41,8 @@ const MEMORY_PER_WEBP_WORKER = 50 * 1024 * 1024; // 50 MB
 /**
  * Worker readiness ping interval (milliseconds)
  *
- * Used to avoid a race where the main thread sends a Comlink RPC message
- * before the worker has finished loading Comlink and attaching its message
+ * Used to avoid a race where the main thread sends a Worker RPC message
+ * before the worker has finished loading Worker RPC and attaching its message
  * handler. The first message can be dropped and the call can hang forever.
  */
 const WORKER_READY_PING_INTERVAL = 50;
@@ -200,7 +200,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
     });
 
     this.workers[workerId] = worker;
-    this.apis[workerId] = Comlink.wrap<T>(worker) as T;
+    this.apis[workerId] = wrap<T>(worker) as T;
     this.workerReady[workerId] = false;
     this.workerReadyPromise[workerId] = null;
 
@@ -244,7 +244,7 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
     });
 
     this.workers[workerId] = worker;
-    this.apis[workerId] = Comlink.wrap<T>(worker) as T;
+    this.apis[workerId] = wrap<T>(worker) as T;
   }
 
   private createTimeoutPromise(timeoutMs: number, message: string): Promise<never> {
@@ -411,8 +411,8 @@ export class WorkerPool<T extends EncoderWorkerAPI> {
 
     const api = this.apis[workerId] as T;
 
-    // Ensure we do not call into the Comlink proxy before the worker has
-    // finished loading Comlink and installed its message handler.
+    // Ensure we do not call into the Worker RPC proxy before the worker has
+    // finished loading Worker RPC and installed its message handler.
     try {
       await this.ensureWorkerReady(workerId, options.signal);
     } catch (error) {

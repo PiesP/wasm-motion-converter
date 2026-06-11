@@ -5,7 +5,7 @@
  * Progress callback type for worker-to-main-thread progress updates.
  *
  * @remarks
- * When passed via Comlink, callbacks are typically async (return Promise).
+ * When passed via Worker RPC, callbacks are typically async (return Promise).
  */
 export type WorkerProgressCallback = (current: number, total: number) => void | Promise<void>;
 
@@ -61,7 +61,7 @@ export interface EncoderOptions {
  * Public API interface for encoder web worker
  *
  * @remarks
- * Exposed via Comlink for main thread communication.
+ * Exposed via Worker RPC for main thread communication.
  * The worker processes frames asynchronously and must be terminated
  * to clean up resources properly.
  *
@@ -126,7 +126,7 @@ export interface WorkerPoolOptions {
    *
    * @remarks
    * This protects against a subtle race where the main thread calls into a
-   * Comlink-wrapped worker before the worker finishes loading Comlink and
+   * Worker RPC-wrapped worker before the worker finishes loading Worker RPC and
    * attaching its message handler. In that case, the first RPC message can be
    * dropped, causing the call to hang indefinitely.
    */

@@ -39,7 +39,8 @@ import { logger } from '@utils/logger';
 import { getAvailableMemory } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import { computeTrimDuration } from '@utils/video-math';
-import * as Comlink from 'comlink';
+import { proxyFn } from '@utils/worker-rpc';
+import type { WorkerProgressCallback } from '@t/worker-types';
 import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
@@ -506,9 +507,9 @@ export async function convert(
           }));
 
           const progressProxy = reportEncodeProgress
-            ? Comlink.proxy((current: number, total: number) => {
+            ? (proxyFn((current: number, total: number) => {
                 reportEncodeProgress(current, total);
-              })
+              }) as unknown as WorkerProgressCallback)
             : undefined;
 
           try {

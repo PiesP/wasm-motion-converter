@@ -7,12 +7,12 @@ import type { SerializableImageData, WorkerProgressCallback } from '@t/worker-ty
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
-type ComlinkModule = typeof import('comlink');
+import { expose } from '@utils/worker-rpc';
 
 // Readiness handshake
 //
-// The main thread may create a worker and immediately call into a Comlink-wrapped
-// API proxy. If the worker is still loading Comlink (dynamic import), it may not
+// The main thread may create a worker and immediately call into a Worker RPC-wrapped
+// API proxy. If the worker is still loading Worker RPC (dynamic import), it may not
 // have attached its message handler yet. In that case, the first RPC message can
 // be dropped and the call can hang indefinitely.
 //
@@ -34,7 +34,7 @@ self.addEventListener('message', (event: MessageEvent) => {
 });
 
 /**
- * GIF encoder worker API exposed via Comlink
+ * GIF encoder worker API exposed via Worker RPC
  *
  * Encodes image frames into an animated GIF in a worker thread.
  * Offloads encoding to avoid blocking the main thread.
@@ -93,7 +93,7 @@ const api = {
       let lastForwardedAt = 0;
       let lastForwardedCurrent = -1;
 
-      // Comlink callbacks are typically async (Promise-returning), while modern-gif
+      // Worker RPC callbacks are typically async (Promise-returning), while modern-gif
       // expects a sync callback. Provide a safe adapter that never throws and
       // never produces unhandled promise rejections.
       const safeOnProgress: ModernGifOptions['onProgress'] | undefined = onProgress
@@ -174,8 +174,7 @@ const api = {
 };
 
 void (async () => {
-  const Comlink = (await import('comlink')) as unknown as ComlinkModule;
-  Comlink.expose(api);
+  expose(api);
 
   dropconvertWorkerReady = true;
   self.postMessage({ __dropconvertWorkerReady: true });
