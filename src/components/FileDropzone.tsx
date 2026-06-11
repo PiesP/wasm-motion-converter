@@ -121,7 +121,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
 
   const dropzoneClass = createMemo(
     () =>
-      `border-2 border-dashed rounded-lg p-4 sm:p-6 md:p-8 lg:p-12 text-center transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900 ${dropzoneStateClass()} ${opacityClass()}`
+      `border-2 border-dashed rounded-lg p-4 sm:p-5 md:p-6 text-center transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900 ${dropzoneStateClass()} ${opacityClass()}`
   );
 
   return (
@@ -162,7 +162,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
             >
               <video
                 src={local.previewUrl!}
-                class="mx-auto w-full max-w-md rounded-lg shadow-md bg-black"
+                class="w-full rounded-lg shadow-md bg-black aspect-video"
                 controls
                 playsinline
                 preload="metadata"
@@ -202,17 +202,30 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           </>
         }
       >
-        <div class="max-w-md mx-auto">
-          <ProgressBar
-            progress={progressValue()}
-            status={local.status || DEFAULT_STATUS}
-            statusMessage={local.statusMessage}
-            showSpinner={true}
-            showElapsedTime={local.showElapsedTime}
-            startTime={local.startTime}
-            estimatedSecondsRemaining={local.estimatedSecondsRemaining}
-            layout="vertical"
-          />
+        <div class="space-y-4">
+          {/* Keep video preview visible during conversion */}
+          <Show when={local.previewUrl}>
+            <video
+              src={local.previewUrl!}
+              class="w-full rounded-lg shadow-md bg-black aspect-video opacity-60"
+              muted
+              playsinline
+              preload="metadata"
+              aria-label="Video being converted"
+            />
+          </Show>
+          <div class="max-w-md mx-auto">
+            <ProgressBar
+              progress={progressValue()}
+              status={local.status || DEFAULT_STATUS}
+              statusMessage={local.statusMessage}
+              showSpinner={true}
+              showElapsedTime={local.showElapsedTime}
+              startTime={local.startTime}
+              estimatedSecondsRemaining={local.estimatedSecondsRemaining}
+              layout="vertical"
+            />
+          </div>
         </div>
       </Show>
     </div>

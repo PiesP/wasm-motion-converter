@@ -258,7 +258,7 @@ const App: Component = () => {
           />
 
           <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-8">
-            <div class="space-y-6">
+            <div class="space-y-6 order-2 lg:order-1">
               <Show when={memoryWarning()}>
                 <Suspense
                   fallback={
@@ -351,25 +351,27 @@ const App: Component = () => {
               </Show>
             </div>
 
-            <SettingsPanel
-              isBusy={isBusy()}
-              isConversionActive={isConversionActive()}
-              isConverting={appState() === 'converting'}
-              metadata={videoMetadata()}
-              onCancel={handleCancelConversion}
-              onConvert={handleConvertWithMemoryCheck}
-              onFormatChange={(format) =>
-                setConversionSettings({ ...conversionSettings(), format })
-              }
-              onQualityChange={(quality) =>
-                setConversionSettings({ ...conversionSettings(), quality })
-              }
-              onScaleChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
-              onTrimChange={(start, end) =>
-                setConversionSettings({ ...conversionSettings(), trimStart: start, trimEnd: end })
-              }
-              settings={conversionSettings()}
-            />
+            <div class="lg:sticky lg:top-8 order-1 lg:order-2">
+              <SettingsPanel
+                isBusy={isBusy()}
+                isConversionActive={isConversionActive()}
+                isConverting={appState() === 'converting'}
+                metadata={videoMetadata()}
+                onCancel={handleCancelConversion}
+                onConvert={handleConvertWithMemoryCheck}
+                onFormatChange={(format) =>
+                  setConversionSettings({ ...conversionSettings(), format })
+                }
+                onQualityChange={(quality) =>
+                  setConversionSettings({ ...conversionSettings(), quality })
+                }
+                onScaleChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
+                onTrimChange={(start, end) =>
+                  setConversionSettings({ ...conversionSettings(), trimStart: start, trimEnd: end })
+                }
+                settings={conversionSettings()}
+              />
+            </div>
           </div>
 
           <ResultSection results={conversionResults()} />

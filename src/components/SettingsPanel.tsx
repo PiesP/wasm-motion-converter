@@ -28,31 +28,38 @@ interface SettingsPanelProps {
 const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   return (
     <Panel class="p-6">
-      <div class="mb-6 flex gap-3">
-        <Show
-          when={props.isConverting}
-          fallback={
-            <Button
-              ariaLabel="Convert video to animated image"
-              class="flex-1"
-              disabled={!props.metadata || props.isBusy}
-              onClick={props.onConvert}
-              data-testid="convert-button"
-            >
-              Convert
-            </Button>
-          }
-        >
-          <Button
-            ariaLabel="Stop video conversion"
-            class="flex-1"
-            onClick={props.onCancel}
-            variant="danger"
-            data-testid="stop-conversion-button"
+      <div class="mb-6">
+        <div class="flex gap-3">
+          <Show
+            when={props.isConverting}
+            fallback={
+              <Button
+                ariaLabel="Convert video to animated image"
+                class="flex-1"
+                disabled={!props.metadata || props.isBusy}
+                onClick={props.onConvert}
+                data-testid="convert-button"
+              >
+                Convert
+              </Button>
+            }
           >
-            Stop Conversion
-          </Button>
-        </Show>
+            <Button
+              ariaLabel="Stop video conversion"
+              class="flex-1"
+              onClick={props.onCancel}
+              variant="danger"
+              data-testid="stop-conversion-button"
+            >
+              Stop Conversion
+            </Button>
+          </Show>
+        </div>
+        {!props.metadata && !props.isBusy && (
+          <p class="mt-2 text-xs text-gray-400 dark:text-gray-500 text-center">
+            Select a video to start
+          </p>
+        )}
       </div>
 
       <Show when={props.metadata}>
