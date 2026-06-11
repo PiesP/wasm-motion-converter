@@ -28,31 +28,8 @@ interface MemoryInfo {
 // Thresholds for memory warning levels
 const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
 
-// Decoded frame memory tracking (for browsers without performance.memory)
+// Decoded frame memory tracking (module-internal, for Firefox fallback)
 let trackedDecodedFrameBytes = 0;
-
-/**
- * Track memory used by a decoded frame.
- * Call this when a VideoFrame or ImageData is created during decode.
- */
-export function trackDecodedFrame(width: number, height: number, bytesPerPixel = 4): void {
-  trackedDecodedFrameBytes += width * height * bytesPerPixel;
-}
-
-/**
- * Release tracked memory for a decoded frame.
- * Call this when a VideoFrame is closed or ImageData is no longer needed.
- */
-export function releaseDecodedFrame(width: number, height: number, bytesPerPixel = 4): void {
-  trackedDecodedFrameBytes = Math.max(0, trackedDecodedFrameBytes - width * height * bytesPerPixel);
-}
-
-/**
- * Get current decoded frame memory estimate (bytes).
- */
-export function getDecodedFrameMemoryBytes(): number {
-  return trackedDecodedFrameBytes;
-}
 
 /**
  * Get current memory usage information.
