@@ -30,7 +30,7 @@ import type {
   VideoMetadata,
 } from '@t/conversion-types';
 import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from '@t/video-pipeline-types';
-import type { EncoderWorkerAPI } from '@t/worker-types';
+import type { EncoderWorkerAPI, WorkerProgressCallback } from '@t/worker-types';
 import { isComplexCodec } from '@utils/codec-utils';
 import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
@@ -40,7 +40,6 @@ import { getAvailableMemory } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import { computeTrimDuration } from '@utils/video-math';
 import { proxyFn } from '@utils/worker-rpc';
-import type { WorkerProgressCallback } from '@t/worker-types';
 import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';

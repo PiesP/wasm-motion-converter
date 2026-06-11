@@ -59,7 +59,12 @@ export function expose(api: Record<string, unknown>): void {
 
     const handler = api[msg.method];
     if (typeof handler !== 'function') {
-      self.postMessage({ __rpc: true, id: msg.id, kind: 'error', error: `Unknown method: ${msg.method}` } satisfies RpcError);
+      self.postMessage({
+        __rpc: true,
+        id: msg.id,
+        kind: 'error',
+        error: `Unknown method: ${msg.method}`,
+      } satisfies RpcError);
       return;
     }
 
@@ -68,16 +73,36 @@ export function expose(api: Record<string, unknown>): void {
       if (result instanceof Promise) {
         result
           .then((value: unknown) => {
-            self.postMessage({ __rpc: true, id: msg.id, kind: 'response', value } satisfies RpcResponse);
+            self.postMessage({
+              __rpc: true,
+              id: msg.id,
+              kind: 'response',
+              value,
+            } satisfies RpcResponse);
           })
           .catch((err: unknown) => {
-            self.postMessage({ __rpc: true, id: msg.id, kind: 'error', error: String(err) } satisfies RpcError);
+            self.postMessage({
+              __rpc: true,
+              id: msg.id,
+              kind: 'error',
+              error: String(err),
+            } satisfies RpcError);
           });
       } else {
-        self.postMessage({ __rpc: true, id: msg.id, kind: 'response', value: result } satisfies RpcResponse);
+        self.postMessage({
+          __rpc: true,
+          id: msg.id,
+          kind: 'response',
+          value: result,
+        } satisfies RpcResponse);
       }
     } catch (err: unknown) {
-      self.postMessage({ __rpc: true, id: msg.id, kind: 'error', error: String(err) } satisfies RpcError);
+      self.postMessage({
+        __rpc: true,
+        id: msg.id,
+        kind: 'error',
+        error: String(err),
+      } satisfies RpcError);
     }
   });
 }
@@ -135,7 +160,7 @@ export function wrap<T extends object>(worker: Worker): T {
 // ── Main side: proxy (callbacks passed into worker calls) ────────────────────
 
 let proxyHandlerId = 0;
-const proxyHandlers = new Map<number, Function>();
+const proxyHandlers = new Map<number, (...args: never[]) => unknown>();
 let proxyListenerAttached = false;
 let proxyCallId = 0;
 const pendingProxyCalls = new Map<number, PendingCall>();
@@ -168,20 +193,40 @@ function ensureProxyListener(): void {
       if (!fn) return;
 
       try {
-        const result = fn(...msg.args);
+        const result = (fn as (...args: unknown[]) => unknown)(...msg.args);
         if (result instanceof Promise) {
           result
             .then((value: unknown) => {
-              self.postMessage({ __rpc: true, id: msg.id, kind: 'response', value } satisfies RpcResponse);
+              self.postMessage({
+                __rpc: true,
+                id: msg.id,
+                kind: 'response',
+                value,
+              } satisfies RpcResponse);
             })
             .catch((err: unknown) => {
-              self.postMessage({ __rpc: true, id: msg.id, kind: 'error', error: String(err) } satisfies RpcError);
+              self.postMessage({
+                __rpc: true,
+                id: msg.id,
+                kind: 'error',
+                error: String(err),
+              } satisfies RpcError);
             });
         } else {
-          self.postMessage({ __rpc: true, id: msg.id, kind: 'response', value: result } satisfies RpcResponse);
+          self.postMessage({
+            __rpc: true,
+            id: msg.id,
+            kind: 'response',
+            value: result,
+          } satisfies RpcResponse);
         }
       } catch (err: unknown) {
-        self.postMessage({ __rpc: true, id: msg.id, kind: 'error', error: String(err) } satisfies RpcError);
+        self.postMessage({
+          __rpc: true,
+          id: msg.id,
+          kind: 'error',
+          error: String(err),
+        } satisfies RpcError);
       }
       return;
     }
@@ -197,16 +242,24 @@ function ensureProxyListener(): void {
  * Wrap a callback so it can be called across the worker boundary.
  * Replaces `Comlink.proxy(callback)`.
  */
-export function proxyFn<T extends (...args: never[]) => unknown>(callback: T): (...args: Parameters<T>) => Promise<unknown> {
+export function proxyFn<T extends (...args: never[]) => unknown>(
+  callback: T
+): (...args: Parameters<T>) => Promise<unknown> {
   ensureProxyListener();
   const handlerId = ++proxyHandlerId;
-  proxyHandlers.set(handlerId, callback);
+  proxyHandlers.set(handlerId, callback as (...args: never[]) => unknown);
 
   return (...args: unknown[]) => {
     return new Promise<unknown>((resolve, reject) => {
       const callId = ++proxyCallId;
       pendingProxyCalls.set(callId, new PendingCall(resolve, reject));
-      const msg: RpcCall = { __rpc: true, id: callId, kind: 'call', method: String(handlerId), args };
+      const msg: RpcCall = {
+        __rpc: true,
+        id: callId,
+        kind: 'call',
+        method: String(handlerId),
+        args,
+      };
       self.postMessage(msg);
     });
   };
