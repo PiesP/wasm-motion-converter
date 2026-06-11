@@ -109,6 +109,7 @@ async function performConversion(
     setConversionStatusMessage('');
     const startTimeMs = performance.now();
     runtime.prepareForNewConversion(startTimeMs);
+    runtime.setFormat(settings.format.toUpperCase() as 'GIF' | 'WEBP');
     setErrorContext(null);
 
     logger.info('conversion', 'UI conversion started', {

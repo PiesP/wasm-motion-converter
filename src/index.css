@@ -113,3 +113,34 @@ html.dark body {
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
+
+/* ============================================================================
+   Progress Bar Animations
+   ============================================================================ */
+
+/**
+ * Shimmer animation for active progress bars
+ *
+ * Creates a subtle moving gradient effect that indicates the conversion
+ * is actively running. Only applied when progress is between 0-100% and
+ * the bar is not stalled.
+ */
+@keyframes progress-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.progress-bar-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.25) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: progress-shimmer 2s infinite linear;
+}

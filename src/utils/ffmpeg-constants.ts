@@ -84,30 +84,60 @@ export const FFMPEG_INTERNALS = {
   PROGRESS: {
     GIF: {
       START: 0,
+      INIT: 5, // FFmpeg init + input probe complete
       PALETTE_START: 10,
+      PALETTE_MID: 25, // Palette generation halfway
       PALETTE_END: 40,
       CONVERSION_START: 40,
+      CONVERSION_MID: 65, // Encoding halfway
       CONVERSION_END: 90,
+      FINALIZE: 95, // Output file writing
       COMPLETE: 100,
     },
     WEBP: {
       START: 0,
+      INIT: 5, // FFmpeg init + input probe complete
       CONVERSION_START: 10,
+      CONVERSION_MID: 50, // Encoding halfway
       CONVERSION_END: 90,
+      FINALIZE: 95, // Output file writing
       COMPLETE: 100,
     },
     WEBCODECS: {
       DECODE_START: 10,
       DECODE_END: 50,
       ENCODE_START: 50,
+      ENCODE_MID: 70, // Encoding halfway
       ENCODE_END: 90,
+      FINALIZE: 95,
     },
     AV1_TRANSCODE: {
       DECODE_START: 20, // AV1→H.264 decode phase
       DECODE_END: 60,
       ENCODE_START: 60, // H.264→output encode phase
       ENCODE_END: 90,
+      FINALIZE: 95,
     },
+  },
+
+  // Human-readable status messages mapped to progress ranges.
+  // ConversionRuntimeController uses these to show contextual phase descriptions.
+  STATUS_MESSAGES: {
+    GIF: [
+      { max: 5, message: 'Loading conversion engine…' },
+      { max: 10, message: 'Analyzing video…' },
+      { max: 40, message: 'Generating color palette…' },
+      { max: 90, message: 'Encoding frames…' },
+      { max: 95, message: 'Writing output file…' },
+      { max: 100, message: 'Finalizing…' },
+    ],
+    WEBP: [
+      { max: 5, message: 'Loading conversion engine…' },
+      { max: 10, message: 'Analyzing video…' },
+      { max: 90, message: 'Encoding frames…' },
+      { max: 95, message: 'Writing output file…' },
+      { max: 100, message: 'Finalizing…' },
+    ],
   },
 
   // Heartbeat estimation parameters (for progress updates when no frame progress detected)

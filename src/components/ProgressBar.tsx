@@ -13,6 +13,7 @@ import {
 } from 'solid-js';
 
 const ELAPSED_TIME_UPDATE_INTERVAL = 1000;
+const STALL_VISUAL_THRESHOLD_MS = 5000; // show stall indicator after 5s without progress
 
 interface ProgressBarProps {
   progress: number;
@@ -37,6 +38,8 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     'layout',
   ]);
   const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
+  const [lastProgressChangeAt, setLastProgressChangeAt] = createSignal(performance.now());
+  const [isStalled, setIsStalled] = createSignal(false);
 
   const progressValue = createMemo(() => {
     const rawValue = Number(local.progress);
@@ -47,6 +50,22 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
   });
 
   const isHorizontal = createMemo(() => local.layout === 'horizontal');
+
+  // Track when progress last changed for stall detection
+  createEffect(() => {
+    progressValue(); // subscribe to changes
+    setLastProgressChangeAt(performance.now());
+    setIsStalled(false);
+  });
+
+  // Stall detection: check every second if progress hasn't moved
+  createEffect(() => {
+    const interval = setInterval(() => {
+      const elapsed = performance.now() - lastProgressChangeAt();
+      setIsStalled(elapsed >= STALL_VISUAL_THRESHOLD_MS && progressValue() < 100);
+    }, 1000);
+    onCleanup(() => clearInterval(interval));
+  });
 
   createEffect(() => {
     if (!local.showElapsedTime || !local.startTime) {
@@ -66,6 +85,22 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     });
   });
 
+  // Dynamic bar color: blue when progressing, yellow when stalled
+  const barColorClass = createMemo(() => {
+    if (isStalled()) {
+      return 'bg-yellow-500 dark:bg-yellow-400';
+    }
+    return 'bg-blue-600 dark:bg-blue-500';
+  });
+
+  // Spinner: only show when actively progressing (not stalled, not complete)
+  const shouldShowSpinner = createMemo(() => {
+    if (!local.showSpinner) return false;
+    if (progressValue() >= 100) return false;
+    if (isStalled()) return false;
+    return true;
+  });
+
   return (
     <div class="flex flex-col gap-2">
       <div
@@ -73,7 +108,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           isHorizontal() ? 'justify-between' : 'justify-center'
         } text-sm font-medium text-gray-700 dark:text-gray-300`}
       >
-        <Show when={local.showSpinner}>
+        <Show when={shouldShowSpinner()}>
           <svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" aria-hidden="true">
             <circle
               class="opacity-25"
@@ -97,7 +132,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       </div>
 
       <div
-        class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5"
+        class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden"
         role="progressbar"
         aria-valuenow={progressValue()}
         aria-valuemin={0}
@@ -106,7 +141,11 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         data-progress={progressValue()}
       >
         <div
-          class="bg-blue-600 dark:bg-blue-500 h-2.5 rounded-full transition-all duration-300"
+          class={`h-2.5 rounded-full transition-all duration-150 ${barColorClass()} ${
+            !isStalled() && progressValue() > 0 && progressValue() < 100
+              ? 'progress-bar-shimmer'
+              : ''
+          }`}
           style={{ width: `${progressValue()}%` }}
         />
       </div>

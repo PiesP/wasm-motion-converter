@@ -882,7 +882,7 @@ export class FFmpegEncoder {
 
       const conversionTimeout = getTimeoutForFormat('gif', this.getDurationMs(metadata, options));
 
-      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
+      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.INIT);
 
       // Build input args
       const baseInputArgs = this.buildInputArgs(inputFileName, inputOverride);
@@ -1140,6 +1140,7 @@ export class FFmpegEncoder {
         type: 'image/gif',
       }) as ConversionOutputBlob;
 
+      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.FINALIZE);
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE);
       logger.info('conversion', 'GIF conversion completed successfully', {
         outputSize: blob.size,
@@ -1219,6 +1220,7 @@ export class FFmpegEncoder {
 
       const conversionTimeout = getTimeoutForFormat('webp', this.getDurationMs(metadata, options));
 
+      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.INIT);
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.CONVERSION_START);
 
       // Build input args
@@ -1396,6 +1398,7 @@ export class FFmpegEncoder {
         type: 'image/webp',
       }) as ConversionOutputBlob;
 
+      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.FINALIZE);
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE);
       logger.info('conversion', 'WebP conversion completed successfully', {
         outputSize: blob.size,

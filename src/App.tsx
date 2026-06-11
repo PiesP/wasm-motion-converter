@@ -140,18 +140,31 @@ const App: Component = () => {
   });
 
   const dropzoneStatus = createMemo(() => {
-    if (appState() !== 'converting') {
-      return null;
+    const state = appState();
+
+    if (state === 'loading-ffmpeg') {
+      return {
+        label: 'Loading conversion engine…',
+        progress: loadingProgress(),
+        message: loadingStatusMessage(),
+        showElapsedTime: false,
+        startTime: 0,
+        estimatedSecondsRemaining: null,
+      };
     }
 
-    return {
-      label: 'Converting video...',
-      progress: conversionProgress(),
-      message: conversionStatusMessage(),
-      showElapsedTime: true,
-      startTime: conversionStartTime(),
-      estimatedSecondsRemaining: estimatedSecondsRemaining(),
-    };
+    if (state === 'converting') {
+      return {
+        label: 'Converting video…',
+        progress: conversionProgress(),
+        message: conversionStatusMessage(),
+        showElapsedTime: true,
+        startTime: conversionStartTime(),
+        estimatedSecondsRemaining: estimatedSecondsRemaining(),
+      };
+    }
+
+    return null;
   });
 
   const isConversionActive = createMemo(
@@ -287,26 +300,13 @@ const App: Component = () => {
               />
 
               <Show when={appState() === 'loading-ffmpeg'}>
-                <Suspense
-                  fallback={
-                    <div class="h-20 animate-pulse rounded-lg bg-blue-50 dark:bg-blue-900/20" />
-                  }
+                <button
+                  type="button"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900"
+                  onClick={handleCancelFFmpegLoad}
                 >
-                  <div class="space-y-2">
-                    <ConversionProgress
-                      progress={loadingProgress()}
-                      status="Loading FFmpeg (~30MB download)..."
-                      statusMessage={loadingStatusMessage()}
-                    />
-                    <button
-                      type="button"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900"
-                      onClick={handleCancelFFmpegLoad}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </Suspense>
+                  Cancel
+                </button>
               </Show>
 
               <Show when={appState() === 'analyzing'}>

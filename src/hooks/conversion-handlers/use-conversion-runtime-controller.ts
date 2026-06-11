@@ -3,6 +3,7 @@
 
 import { setConversionProgress, setConversionStatusMessage } from '@stores/conversion-store';
 import { ETACalculator } from '@utils/eta-calculator';
+import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { formatDuration } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
@@ -14,6 +15,33 @@ const ETA_UPDATE_INTERVAL = 1000;
 const UI_PROGRESS_LOG_INTERVAL_MS = 1000;
 const STALL_DETECTION_MS = 60_000; // warn user if no progress for 60s (FFmpeg encoding can be slow)
 const STALL_DETECTION_ACTIVE_THRESHOLD = 10; // only trigger stall warning if progress > 10% (not during init)
+
+// ---------------------------------------------------------------------------
+// Phase-based status message resolution
+// ---------------------------------------------------------------------------
+
+export type ConversionFormat = 'GIF' | 'WEBP';
+
+/**
+ * Resolve a human-readable phase message for the given format + progress.
+ *
+ * The encoder signals the current format via `beginExternalConversion(format)`.
+ * Once the format is known we pick the first STATUS_MESSAGES entry whose
+ * `max` threshold the current progress has not yet exceeded, so the message
+ * always reflects the *active* phase rather than a past one.
+ */
+const resolvePhaseMessage = (format: ConversionFormat, progress: number): string | null => {
+  const entries = FFMPEG_INTERNALS.STATUS_MESSAGES[format];
+
+  for (const entry of entries) {
+    if (progress < entry.max) {
+      return entry.message;
+    }
+  }
+
+  // At 100% the last entry's message applies.
+  return entries[entries.length - 1]!.message;
+};
 
 type ParsedStatusCounter = {
   prefix: string;
@@ -55,6 +83,8 @@ export class ConversionRuntimeController {
   private activeRunId: string | null = null;
   private activeConversionSeq = 0;
   private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  private currentFormat: ConversionFormat | null = null;
+  private lastPhaseMessage: string | null = null;
 
   constructor(private readonly deps: ConversionRuntimeControllerDeps) {}
 
@@ -91,6 +121,8 @@ export class ConversionRuntimeController {
     this.lastStatusMessage = '';
     this.lastUiProgressLogAtMs = 0;
     this.activeRunId = null;
+    this.currentFormat = null;
+    this.lastPhaseMessage = null;
     this.clearStallTimer();
   }
 
@@ -107,7 +139,13 @@ export class ConversionRuntimeController {
     this.lastProgressValue = 0;
     this.lastStatusMessage = '';
     this.lastUiProgressLogAtMs = 0;
+    this.lastPhaseMessage = null;
     this.startStallTimer();
+  }
+
+  /** Called by the encoder/orchestrator to tell us the target format. */
+  setFormat(format: ConversionFormat): void {
+    this.currentFormat = format;
   }
 
   updateStatus(message: string): void {
@@ -206,6 +244,15 @@ export class ConversionRuntimeController {
 
     // Reset stall timer whenever progress advances
     this.startStallTimer();
+
+    // Auto-resolve phase message from progress + format
+    if (this.currentFormat) {
+      const phaseMsg = resolvePhaseMessage(this.currentFormat, monotonic);
+      if (phaseMsg && phaseMsg !== this.lastPhaseMessage) {
+        this.lastPhaseMessage = phaseMsg;
+        setConversionStatusMessage(phaseMsg);
+      }
+    }
 
     const now = performance.now();
     batch(() => {
