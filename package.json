@@ -45,7 +45,6 @@
   },
   "cdnDependencies": {
     "@ffmpeg/core-mt": "0.12.10",
-    "modern-gif": "2.1.0",
     "mp4box": "0.5.2",
     "web-demuxer": "4.0.0"
   },

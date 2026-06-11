@@ -87,7 +87,7 @@ export async function waitForSWReady(timeout = DEFAULT_WAIT_TIMEOUT_MS): Promise
       logger.warn('general', STATUS_TIMEOUT, {
         timeoutMs: timeout,
       });
-
+      clearInterval(checkInterval);
       resolve(false);
     }, timeout);
 
