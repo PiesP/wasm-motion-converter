@@ -24,11 +24,6 @@ is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or 
 **License**: MIT
 **Repository**: https://github.com/ffmpegwasm/ffmpeg.wasm#readme
 ---
-## comlink v4.4.2
-
-**License**: Apache-2.0
-**Repository**: https://github.com/GoogleChromeLabs/comlink#readme
----
 ## csstype v3.2.3
 
 **License**: MIT
