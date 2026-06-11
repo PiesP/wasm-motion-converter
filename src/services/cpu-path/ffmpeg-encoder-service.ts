@@ -90,6 +90,17 @@ export interface EncoderDependencies {
  */
 export class FFmpegEncoder {
   private conversionLock = false;
+
+  private static isValidLibwebpPreset(preset: string): boolean {
+    return (
+      preset === 'default' ||
+      preset === 'picture' ||
+      preset === 'photo' ||
+      preset === 'drawing' ||
+      preset === 'icon' ||
+      preset === 'text'
+    );
+  }
   private cancellationRequested = false;
   private dependencies: EncoderDependencies | null = null;
 
@@ -725,15 +736,7 @@ export class FFmpegEncoder {
     const { fps, frameCount, quality } = settings;
     const qualitySettings = QUALITY_PRESETS.webp[quality];
 
-    const isValidLibwebpPreset = (preset: string): boolean =>
-      preset === 'default' ||
-      preset === 'picture' ||
-      preset === 'photo' ||
-      preset === 'drawing' ||
-      preset === 'icon' ||
-      preset === 'text';
-
-    const presetArgs = isValidLibwebpPreset(qualitySettings.preset)
+    const presetArgs = FFmpegEncoder.isValidLibwebpPreset(qualitySettings.preset)
       ? (['-preset', qualitySettings.preset] as const)
       : null;
 
@@ -1198,15 +1201,7 @@ export class FFmpegEncoder {
       const scaleFilter =
         scale === 1.0 ? null : `scale=iw*${scale}:ih*${scale}:flags=${SCALE_FILTERS[quality]}`;
 
-      const isValidLibwebpPreset = (preset: string): boolean =>
-        preset === 'default' ||
-        preset === 'picture' ||
-        preset === 'photo' ||
-        preset === 'drawing' ||
-        preset === 'icon' ||
-        preset === 'text';
-
-      const presetArgs = isValidLibwebpPreset(qualitySettings.preset)
+      const presetArgs = FFmpegEncoder.isValidLibwebpPreset(qualitySettings.preset)
         ? (['-preset', qualitySettings.preset] as const)
         : null;
 
