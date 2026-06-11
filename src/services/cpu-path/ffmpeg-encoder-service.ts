@@ -915,6 +915,11 @@ export class FFmpegEncoder {
         cmdPreview: paletteCmd.slice(0, 5),
       });
 
+      // Palette generation is a single-pass operation with no meaningful per-frame
+      // progress from FFmpeg logs.  Jump straight to PALETTE_END so the UI does not
+      // appear stuck at a low percentage while the palette is being generated.
+      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_END);
+
       const paletteHeartbeat = monitoring.startProgressHeartbeat(
         FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START,
         FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_END,

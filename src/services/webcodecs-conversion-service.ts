@@ -451,48 +451,15 @@ export async function convert(
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
     const initialEncodeStatusPrefix = `Encoding ${format.toUpperCase()}...`;
 
-    const shouldUseIndeterminateEncodeHeartbeat = format === 'gif' && useModernGif;
-
-    const estimateModernGifEncodeSeconds = (params: {
-      frameCount: number;
-      width: number;
-      height: number;
-      quality: ConversionOptions['quality'];
-    }): number => {
-      const { frameCount, width, height, quality } = params;
-      const megapixelFrames = (width * height * Math.max(1, frameCount)) / 1_000_000;
-      const mpFramesPerSecond = quality === 'high' ? 5 : quality === 'medium' ? 6.5 : 8;
-      const seconds = Math.round(megapixelFrames / mpFramesPerSecond);
-      return Math.min(120, Math.max(5, seconds));
-    };
-
-    const startEncodeHeartbeat = (params: {
-      frameCount: number;
-      width: number;
-      height: number;
-      quality: ConversionOptions['quality'];
-    }): ReturnType<typeof setInterval> => {
-      ffmpegService.reportStatus(initialEncodeStatusPrefix);
-      ffmpegService.reportProgress(encodeStart);
-      const estimatedSeconds = estimateModernGifEncodeSeconds(params);
-      return ffmpegService.startProgressHeartbeat(encodeStart, encodeEnd, estimatedSeconds);
-    };
-
-    const stopEncodeHeartbeat = (intervalId: ReturnType<typeof setInterval> | null): void => {
-      if (intervalId) ffmpegService.stopProgressHeartbeat(intervalId);
-    };
-
-    const encodeReporter = shouldUseIndeterminateEncodeHeartbeat
-      ? null
-      : createThrottledProgressReporter({
-          startPercent: encodeStart,
-          endPercent: encodeEnd,
-          tickIntervalMs: StatusTickIntervalMs,
-          initialStatusPrefix: initialEncodeStatusPrefix,
-          throwIfCancelled,
-          reportProgress: (percent) => ffmpegService.reportProgress(percent),
-          reportStatus: (status) => ffmpegService.reportStatus(status),
-        });
+    const encodeReporter = createThrottledProgressReporter({
+      startPercent: encodeStart,
+      endPercent: encodeEnd,
+      tickIntervalMs: StatusTickIntervalMs,
+      initialStatusPrefix: initialEncodeStatusPrefix,
+      throwIfCancelled,
+      reportProgress: (percent) => ffmpegService.reportProgress(percent),
+      reportStatus: (status) => ffmpegService.reportStatus(status),
+    });
 
     if (encodeReporter) {
       encodeReporter.setStatusPrefix(initialEncodeStatusPrefix);
@@ -538,15 +505,6 @@ export async function convert(
             colorSpace: frame.colorSpace,
           }));
 
-          const encodeHeartbeat = shouldUseIndeterminateEncodeHeartbeat
-            ? startEncodeHeartbeat({
-                frameCount: serializableFrames.length,
-                width: decodeResult.width,
-                height: decodeResult.height,
-                quality,
-              })
-            : null;
-
           const progressProxy = reportEncodeProgress
             ? Comlink.proxy((current: number, total: number) => {
                 reportEncodeProgress(current, total);
@@ -577,57 +535,12 @@ export async function convert(
               { signal: abortSignal, timeoutMs: workerEncodeTimeoutMs }
             );
             ffmpegService.reportProgress(encodeEnd);
-          } finally {
-            stopEncodeHeartbeat(encodeHeartbeat);
-          }
-          encoderBackendUsed = 'modern-gif-worker';
-        } catch (error) {
-          const errorMessage = getErrorMessage(error);
-          logger.warn('conversion', 'GIF worker encoding failed, retrying on main thread', {
-            error: errorMessage,
-          });
-          try {
-            const encodeHeartbeat = shouldUseIndeterminateEncodeHeartbeat
-              ? startEncodeHeartbeat({
-                  frameCount: capturedFrames.length,
-                  width: decodeResult.width,
-                  height: decodeResult.height,
-                  quality,
-                })
-              : null;
-            try {
-              outputBlob = await encodeModernGif(capturedFrames, {
-                width: decodeResult.width,
-                height: decodeResult.height,
-                fps: targetFps,
-                quality,
-                timestamps: gifFrameTimestamps,
-                durationSeconds: decodeResult.duration,
-                onProgress: reportEncodeProgress,
-                shouldCancel,
-              });
-              ffmpegService.reportProgress(encodeEnd);
-              encoderBackendUsed = 'modern-gif-main';
-            } finally {
-              stopEncodeHeartbeat(encodeHeartbeat);
-            }
-          } catch (fallbackError) {
-            const fallbackMessage = getErrorMessage(fallbackError);
-            outputBlob = await doFFmpegFallback(fallbackMessage);
-          }
-        }
-      } else {
-        // No worker pool: main thread only
-        try {
-          const encodeHeartbeat = shouldUseIndeterminateEncodeHeartbeat
-            ? startEncodeHeartbeat({
-                frameCount: capturedFrames.length,
-                width: decodeResult.width,
-                height: decodeResult.height,
-                quality,
-              })
-            : null;
-          try {
+            encoderBackendUsed = 'modern-gif-worker';
+          } catch (workerError) {
+            const workerErrorMessage = getErrorMessage(workerError);
+            logger.warn('conversion', 'GIF worker encoding failed, retrying on main thread', {
+              error: workerErrorMessage,
+            });
             outputBlob = await encodeModernGif(capturedFrames, {
               width: decodeResult.width,
               height: decodeResult.height,
@@ -640,9 +553,26 @@ export async function convert(
             });
             ffmpegService.reportProgress(encodeEnd);
             encoderBackendUsed = 'modern-gif-main';
-          } finally {
-            stopEncodeHeartbeat(encodeHeartbeat);
           }
+        } catch (error) {
+          const errorMessage = getErrorMessage(error);
+          outputBlob = await doFFmpegFallback(errorMessage);
+        }
+      } else {
+        // No worker pool: main thread only
+        try {
+          outputBlob = await encodeModernGif(capturedFrames, {
+            width: decodeResult.width,
+            height: decodeResult.height,
+            fps: targetFps,
+            quality,
+            timestamps: gifFrameTimestamps,
+            durationSeconds: decodeResult.duration,
+            onProgress: reportEncodeProgress,
+            shouldCancel,
+          });
+          ffmpegService.reportProgress(encodeEnd);
+          encoderBackendUsed = 'modern-gif-main';
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           outputBlob = await doFFmpegFallback(errorMessage);
