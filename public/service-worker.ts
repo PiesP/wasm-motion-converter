@@ -966,6 +966,7 @@ self.addEventListener('fetch', (event: FetchEvent) => {
     event.respondWith(
       (async () => {
         const returning = await isReturningUser();
+        const url = new URL(event.request.url);
 
         if (returning) {
           console.log(`[SW ${SW_VERSION}] CDN request (cache-first): ${url.href}`);
@@ -973,6 +974,23 @@ self.addEventListener('fetch', (event: FetchEvent) => {
         }
 
         console.log(`[SW ${SW_VERSION}] CDN request (network-first): ${url.href}`);
+
+        const isCore =
+          url.hostname.includes('jsdelivr') &&
+          url.pathname.includes('@ffmpeg/core-mt') &&
+          url.pathname.includes('.wasm');
+
+        if (isCore) {
+          const clients = await self.clients.matchAll({ type: 'window' });
+          for (const client of clients) {
+            client.postMessage({
+              type: 'CDN_LOADING',
+              url: url.href,
+              size: 'large',
+            });
+          }
+        }
+
         return networkFirstStrategy(event.request, CACHE_NAMES.cdn);
       })()
     );
