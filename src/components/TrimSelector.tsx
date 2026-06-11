@@ -109,13 +109,6 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     return (effectiveEnd() / props.duration) * 100;
   });
 
-  /** Hide end label when handles are too close (< 8% apart) */
-  const showEndLabel = createMemo(() => {
-    return startPct() <= endPct() - 8;
-  });
-
-  const mid = createMemo(() => props.duration / 2);
-
   const isDefault = createMemo(
     () => props.trimStart === 0 && props.trimEnd === TRIM_END_FULL_DURATION
   );
@@ -269,40 +262,30 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   // ── Presets ──
 
   const presets = createMemo(() => {
-    const list: Array<{ label: string; start: number; end: number; hidden: boolean }> = [];
+    const d = props.duration;
+    const list: Array<{ label: string; start: number; end: number }> = [];
 
-    // "Full" — always visible
-    list.push({ label: 'Full', start: 0, end: TRIM_END_FULL_DURATION, hidden: false });
+    // "Full" — always first
+    list.push({ label: 'Full', start: 0, end: TRIM_END_FULL_DURATION });
 
-    if (props.duration > 10) {
-      list.push({
-        label: 'First 10s',
-        start: 0,
-        end: Math.min(10, props.duration),
-        hidden: false,
-      });
-      list.push({
-        label: 'Last 10s',
-        start: Math.max(0, props.duration - 10),
-        end: TRIM_END_FULL_DURATION,
-        hidden: false,
-      });
-      list.push({
-        label: 'Middle 10s',
-        start: Math.max(0, mid() - 5),
-        end: Math.min(props.duration, mid() + 5),
-        hidden: false,
-      });
-    } else {
-      list.push({ label: 'First 10s', start: 0, end: TRIM_END_FULL_DURATION, hidden: true });
-      list.push({ label: 'Last 10s', start: 0, end: TRIM_END_FULL_DURATION, hidden: true });
-      list.push({ label: 'Middle 10s', start: 0, end: TRIM_END_FULL_DURATION, hidden: true });
+    // Duration-based presets
+    if (d > 5) {
+      list.push({ label: 'First 5s', start: 0, end: Math.min(5, d) });
+      list.push({ label: 'Last 5s', start: Math.max(0, d - 5), end: TRIM_END_FULL_DURATION });
+    }
+    if (d > 15) {
+      list.push({ label: 'First 15s', start: 0, end: Math.min(15, d) });
+      list.push({ label: 'Last 15s', start: Math.max(0, d - 15), end: TRIM_END_FULL_DURATION });
+    }
+    if (d > 30) {
+      list.push({ label: 'First 30s', start: 0, end: Math.min(30, d) });
+      list.push({ label: 'Last 30s', start: Math.max(0, d - 30), end: TRIM_END_FULL_DURATION });
     }
 
-    if (props.duration >= 2) {
-      list.push({ label: 'First Half', start: 0, end: props.duration / 2, hidden: false });
-    } else {
-      list.push({ label: 'First Half', start: 0, end: TRIM_END_FULL_DURATION, hidden: true });
+    // Halves — always available for videos >= 2s
+    if (d >= 2) {
+      list.push({ label: 'First Half', start: 0, end: d / 2 });
+      list.push({ label: 'Second Half', start: d / 2, end: TRIM_END_FULL_DURATION });
     }
 
     return list;
@@ -312,13 +295,12 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     return props.trimStart === start && props.trimEnd === end;
   };
 
-  const presetBtnClass = (active: boolean, label?: string): string => {
-    const isFull = label === 'Full';
+  const presetBtnClass = (active: boolean): string => {
     return [
-      'text-xs px-2 py-0.5 rounded border transition-colors',
+      'text-xs px-2.5 py-1 rounded-md border transition-colors font-medium',
       active
-        ? `bg-blue-100 dark:bg-blue-900 border-blue-400${isFull ? ' font-medium' : ''}`
-        : 'border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700',
+        ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
+        : 'border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300',
       props.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
     ].join(' ');
   };
@@ -380,17 +362,21 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   // ── Dragged handle style ──
 
   const handleClass = (which: 'start' | 'end'): string => {
+    const isDragging = dragging() === which;
     const base = [
-      'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6',
-      'rounded-full bg-white dark:bg-gray-200 border-2',
-      'border-blue-500 dark:border-blue-400 ring-1 ring-gray-300 dark:ring-gray-600',
-      'cursor-col-resize hover:scale-110 transition-transform transition-shadow duration-150',
-      'focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1 focus-visible:outline-none',
+      'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-8 h-8',
+      'rounded-full bg-white/90 dark:bg-gray-200/90 border-2',
+      'border-blue-500 dark:border-blue-400 shadow-md',
+      'cursor-col-resize hover:scale-110 hover:shadow-lg hover:border-blue-600',
+      'transition-all duration-150 ease-out',
+      'focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:outline-none',
+      'after:absolute after:-bottom-2 after:left-1/2 after:-translate-x-1/2',
+      'after:w-1 after:h-2 after:bg-blue-500/40 after:rounded-b-sm after:pointer-events-none',
+      isDragging
+        ? 'scale-115 shadow-xl ring-2 ring-blue-400 bg-blue-50 dark:bg-blue-900/30 border-blue-600'
+        : '',
       props.disabled ? 'cursor-not-allowed opacity-50' : '',
     ];
-    if (dragging() === which) {
-      base.push('scale-125 shadow-lg ring-2 ring-blue-400');
-    }
     return base.filter(Boolean).join(' ');
   };
 
@@ -432,10 +418,10 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         )}
       </div>
 
-      {/* 2. Range Bar (custom pointer-event drag) */}
+      {/* 2. Range Bar */}
       <div
         ref={trackRef}
-        class="relative h-8 rounded-lg bg-gray-200 dark:bg-gray-700 select-none touch-none cursor-pointer mb-5"
+        class="relative h-10 rounded-lg bg-gray-200 dark:bg-gray-700 select-none touch-none cursor-pointer"
         classList={{
           'opacity-50 pointer-events-none': !!props.disabled,
         }}
@@ -452,6 +438,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         aria-valuemin={0}
         aria-valuemax={props.duration}
         aria-valuenow={effectiveEnd() - props.trimStart}
+        aria-valuetext={`${formatTime(props.trimStart)} to ${formatTime(effectiveEnd())}, ${trimDuration().toFixed(1)}s selected`}
         aria-disabled={!!props.disabled}
       >
         {/* Selected range fill */}
@@ -478,9 +465,19 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           aria-valuemin={0}
           aria-valuemax={props.duration}
           aria-valuenow={props.trimStart}
+          aria-valuetext={formatTime(props.trimStart)}
           aria-disabled={!!props.disabled}
           onKeyDown={handleStartKeyDown}
-        />
+        >
+          {/* Grip dots */}
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div class="flex flex-col gap-0.5">
+              <div class="w-0.5 h-0.5 rounded-full bg-blue-400/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-blue-400/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-blue-400/60" />
+            </div>
+          </div>
+        </div>
 
         {/* Right handle */}
         <div
@@ -494,79 +491,89 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           aria-valuemin={0}
           aria-valuemax={props.duration}
           aria-valuenow={effectiveEnd()}
+          aria-valuetext={formatTime(effectiveEnd())}
           aria-disabled={!!props.disabled}
           onKeyDown={handleEndKeyDown}
-        />
+        >
+          {/* Grip dots */}
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div class="flex flex-col gap-0.5">
+              <div class="w-0.5 h-0.5 rounded-full bg-blue-400/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-blue-400/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-blue-400/60" />
+            </div>
+          </div>
+        </div>
 
-        {/* Handle time labels */}
-        <div
-          class="absolute top-full mt-1 -translate-x-1/2 text-xs text-blue-700/80 dark:text-blue-300/80 font-medium pointer-events-none select-none transition-[left] duration-75"
-          style={{ left: `${startPct()}%` }}
-        >
-          {formatTime(props.trimStart)}
-        </div>
-        <div
-          class="absolute top-full mt-1 -translate-x-1/2 text-xs text-blue-700/80 dark:text-blue-300/80 font-medium pointer-events-none select-none transition-[left] duration-75"
-          classList={{ hidden: !showEndLabel() }}
-          style={{ left: `${endPct()}%` }}
-        >
-          {formatTime(effectiveEnd())}
-        </div>
+        {/* Dragging tooltip — only visible while dragging */}
+        {dragging() && (
+          <div
+            class="absolute -top-8 -translate-x-1/2 px-1.5 py-0.5 rounded bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-[10px] font-medium pointer-events-none whitespace-nowrap shadow-lg z-10"
+            style={{
+              left: `${dragging() === 'start' ? startPct() : endPct()}%`,
+            }}
+          >
+            {formatTime(dragging() === 'start' ? props.trimStart : effectiveEnd())}
+          </div>
+        )}
       </div>
 
-      {/* 3. Track labels */}
-      <div class="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 px-0.5 pt-1 border-t border-gray-200 dark:border-gray-700 mt-5">
+      {/* 3. Track boundary labels — above the bar, integrated */}
+      <div class="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 px-0.5 pt-1">
         <span>{formatTime(0)}</span>
         <span>{formatTime(props.duration)}</span>
       </div>
 
       {/* 4. Preset buttons row */}
       <div class="flex gap-1.5 flex-wrap">
-        {presets().map(
-          (preset) =>
-            !preset.hidden && (
-              <button
-                type="button"
-                onClick={() => handlePreset(preset.start, preset.end)}
-                disabled={props.disabled}
-                class={presetBtnClass(isPresetActive(preset.start, preset.end), preset.label)}
-              >
-                {preset.label}
-              </button>
-            )
-        )}
+        {presets().map((preset) => (
+          <button
+            type="button"
+            onClick={() => handlePreset(preset.start, preset.end)}
+            disabled={props.disabled}
+            aria-pressed={isPresetActive(preset.start, preset.end)}
+            class={presetBtnClass(isPresetActive(preset.start, preset.end))}
+          >
+            {preset.label}
+          </button>
+        ))}
       </div>
 
-      {/* 5. Precision text inputs (single row) */}
-      <div class="flex items-center gap-2 justify-center">
-        <span class="text-xs text-gray-600 dark:text-gray-400">Start</span>
-        <input
-          type="text"
-          value={startText()}
-          disabled={props.disabled}
-          onInput={(e) => setStartText((e.target as HTMLInputElement).value)}
-          onFocus={() => setStartFocused(true)}
-          onBlur={commitStartText}
-          onKeyDown={handleStartTextKeyDown}
-          class={textClass}
-        />
-        <span class="text-gray-400 dark:text-gray-500 mx-1">&times;</span>
-        <span class="text-xs text-gray-600 dark:text-gray-400">End</span>
-        <input
-          type="text"
-          value={endText()}
-          disabled={props.disabled}
-          onInput={(e) => setEndText((e.target as HTMLInputElement).value)}
-          onFocus={() => setEndFocused(true)}
-          onBlur={commitEndText}
-          onKeyDown={handleEndTextKeyDown}
-          class={textClass}
-        />
+      {/* 5. Precision text inputs + Summary (single row) */}
+      <div class="flex items-center gap-2 justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-gray-600 dark:text-gray-400">Start</span>
+          <input
+            type="text"
+            value={startText()}
+            disabled={props.disabled}
+            onInput={(e) => setStartText((e.target as HTMLInputElement).value)}
+            onFocus={() => setStartFocused(true)}
+            onBlur={commitStartText}
+            onKeyDown={handleStartTextKeyDown}
+            class={textClass}
+          />
+          <span class="text-xs text-gray-400 dark:text-gray-500">to</span>
+          <span class="text-xs text-gray-600 dark:text-gray-400">End</span>
+          <input
+            type="text"
+            value={endText()}
+            disabled={props.disabled}
+            onInput={(e) => setEndText((e.target as HTMLInputElement).value)}
+            onFocus={() => setEndFocused(true)}
+            onBlur={commitEndText}
+            onKeyDown={handleEndTextKeyDown}
+            class={textClass}
+          />
+        </div>
+        <span class="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+          {trimDuration().toFixed(1)}s ({Math.round((trimDuration() / props.duration) * 100)}%)
+        </span>
       </div>
 
-      {/* 6. Summary row */}
-      <div class="text-xs text-gray-500 dark:text-gray-400 text-center pt-1 border-t border-gray-100 dark:border-gray-800">
-        {trimDuration().toFixed(1)}s · ~{frameCount()} frames · {fps()} fps
+      {/* 6. Frame estimate */}
+      <div class="text-[10px] text-gray-400 dark:text-gray-500 text-center">
+        ~{frameCount()} frames · {fps()} fps
       </div>
     </div>
   );
