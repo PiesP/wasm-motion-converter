@@ -429,7 +429,10 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            handleTrackClick(e as unknown as MouseEvent);
+            // Keyboard activation: snap both handles to start (reset to full range)
+            if (props.trimStart !== 0 || props.trimEnd !== 0) {
+              props.onChange(0, 0);
+            }
           }
         }}
         tabIndex={props.disabled ? -1 : 0}
