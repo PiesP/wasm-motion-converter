@@ -19,11 +19,11 @@ updates:
     labels:
       - "dependencies"
       - "automated"
+    reviewers:
+      - "PiesP"
 
-    # pnpm cannot apply direct transitive bump jobs from Dependabot.
-    # Keep transitive packages fresh via lockfile maintenance instead.
-    lockfile-maintenance:
-      enabled: true
+    # Auto-rebase to reduce merge conflicts
+    rebase-strategy: "auto"
 
     # Restrict normal version updates to direct dependencies.
     allow:
@@ -95,10 +95,12 @@ updates:
       # ffmpeg.wasm major updates need careful review
       - dependency-name: "@ffmpeg/ffmpeg"
         update-types: ["version-update:semver-major"]
-      # pnpm transitive security update jobs can fail with tool_feature_not_supported.
-      # These are handled by lockfile maintenance + manual review.
+      # pnpm transitive bump jobs can fail with tool_feature_not_supported.
+      # Minor/patch handled automatically; major requires manual review.
       - dependency-name: "@isaacs/brace-expansion"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "minimatch"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions updates
   - package-ecosystem: "github-actions"
