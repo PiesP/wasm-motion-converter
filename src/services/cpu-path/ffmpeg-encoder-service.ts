@@ -257,9 +257,16 @@ export class FFmpegEncoder {
       }
 
       // Suppress ultra-noisy stdout key/value lines from FFmpeg progress output.
-      // These are still stored in the rolling log buffer for diagnostics.
+      // Parse them for progress tracking instead of logging to console.
       if (type === 'stdout' && this.isFFmpegProgressKeyValueLine(trimmed)) {
-        // Still allow progress parsing below.
+        // Parse structured progress from -progress pipe:1 output.
+        // These key=value lines are more reliable than stderr time= regex.
+        if (totalDuration && progressStart !== undefined && progressEnd !== undefined) {
+          this.parseProgressFromLog(trimmed, totalDuration, progressStart, progressEnd);
+        }
+        // Still store in FFmpeg log buffer for diagnostics, but don't spam main log.
+        logger.addFfmpegLog('DEBUG', message, type);
+        return;
       } else {
         // Route raw FFmpeg stderr/stdout to the separate FFmpeg log buffer
         // to prevent verbose output from evicting important application logs.
@@ -280,7 +287,14 @@ export class FFmpegEncoder {
   }
 
   /**
-   * Parse progress information from FFmpeg log messages
+   * Parse progress information from FFmpeg log messages.
+   *
+   * Handles two formats:
+   * 1. Stderr log lines: "time=00:01:23.45" (from FFmpeg's default progress output)
+   * 2. Stdout key=value lines: "out_time_ms=1234567" (from `-progress pipe:1`)
+   *
+   * The stdout key=value format is more reliable because it's structured and
+   * emitted consistently by FFmpeg's progress reporting.
    */
   private parseProgressFromLog(
     message: string,
@@ -290,7 +304,29 @@ export class FFmpegEncoder {
   ): void {
     const { monitoring } = this.getDeps();
 
-    // Parse time information: "time=00:01:23.45"
+    // Parse structured -progress output first (most reliable).
+    // out_time_ms is in microseconds in ffmpeg.wasm.
+    const outTimeMsMatch = message.match(/^out_time_ms=(\d+)$/);
+    if (outTimeMsMatch) {
+      const currentTime = Number.parseInt(outTimeMsMatch[1] ?? '0', 10) / 1_000_000;
+      const progressRatio = Math.min(currentTime / totalDuration, 1.0);
+      const progressRange = progressEnd - progressStart;
+      const calculatedProgress = progressStart + progressRatio * progressRange;
+      monitoring.updateProgress(Math.round(calculatedProgress));
+      return;
+    }
+
+    const outTimeUsMatch = message.match(/^out_time_us=(\d+)$/);
+    if (outTimeUsMatch) {
+      const currentTime = Number.parseInt(outTimeUsMatch[1] ?? '0', 10) / 1_000_000;
+      const progressRatio = Math.min(currentTime / totalDuration, 1.0);
+      const progressRange = progressEnd - progressStart;
+      const calculatedProgress = progressStart + progressRatio * progressRange;
+      monitoring.updateProgress(Math.round(calculatedProgress));
+      return;
+    }
+
+    // Parse time information from stderr: "time=00:01:23.45"
     const timeMatch = message.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
     if (timeMatch) {
       const hours = Number.parseInt(timeMatch[1] ?? '0', 10);
@@ -306,20 +342,6 @@ export class FFmpegEncoder {
       return;
     }
 
-    // Parse progress-format output from `-progress`.
-    // Important: despite the name, FFmpeg's `out_time_ms` is historically reported in
-    // microseconds (observed in ffmpeg.wasm logs: out_time_ms=1910000 for time=1.91s).
-    const outTimeUsMatch = message.match(/out_time_us=(\d+)/);
-    if (outTimeUsMatch) {
-      const currentTime = Number.parseInt(outTimeUsMatch[1] ?? '0', 10) / 1_000_000;
-      const progressRatio = Math.min(currentTime / totalDuration, 1.0);
-      const progressRange = progressEnd - progressStart;
-      const calculatedProgress = progressStart + progressRatio * progressRange;
-
-      monitoring.updateProgress(Math.round(calculatedProgress));
-      return;
-    }
-
     const outTimeMatch = message.match(/out_time=(\d{2}):(\d{2}):(\d{2}\.\d{2,6})/);
     if (outTimeMatch) {
       const hours = Number.parseInt(outTimeMatch[1] ?? '0', 10);
@@ -327,17 +349,6 @@ export class FFmpegEncoder {
       const seconds = Number.parseFloat(outTimeMatch[3] ?? '0');
       const currentTime = hours * 3600 + minutes * 60 + seconds;
 
-      const progressRatio = Math.min(currentTime / totalDuration, 1.0);
-      const progressRange = progressEnd - progressStart;
-      const calculatedProgress = progressStart + progressRatio * progressRange;
-
-      monitoring.updateProgress(Math.round(calculatedProgress));
-      return;
-    }
-
-    const outTimeMsMatch = message.match(/out_time_ms=(\d+)/);
-    if (outTimeMsMatch) {
-      const currentTime = Number.parseInt(outTimeMsMatch[1] ?? '0', 10) / 1_000_000;
       const progressRatio = Math.min(currentTime / totalDuration, 1.0);
       const progressRange = progressEnd - progressStart;
       const calculatedProgress = progressStart + progressRatio * progressRange;
