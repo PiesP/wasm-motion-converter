@@ -10,7 +10,6 @@ import {
   createEffect,
   createMemo,
   createSignal,
-  onCleanup,
   Show,
   splitProps,
 } from 'solid-js';
@@ -38,8 +37,15 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     'originalCodec',
   ]);
   const [loaded, setLoaded] = createSignal(false);
+  const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
 
-  const previewUrl = createMemo(() => URL.createObjectURL(local.outputBlob));
+  // Create blob URL only when outputBlob reference changes
+  createEffect(() => {
+    const blob = local.outputBlob;
+    const url = URL.createObjectURL(blob);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  });
 
   const conversionTimeLabel = createMemo(() => {
     if (typeof local.conversionDurationSeconds !== 'number') {
@@ -88,24 +94,9 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     setLoaded(false);
   });
 
-  // Revoke the previous blob URL whenever previewUrl changes to prevent memory leaks.
-  let previousUrl: string | null = null;
-  createEffect(() => {
-    const url = previewUrl();
-    if (previousUrl !== null && previousUrl !== url) {
-      URL.revokeObjectURL(previousUrl);
-    }
-    previousUrl = url;
-  });
-
-  onCleanup(() => {
-    if (previousUrl !== null) {
-      URL.revokeObjectURL(previousUrl);
-    }
-  });
-
   const handleDownload = () => {
     const url = previewUrl();
+    if (!url) return;
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = downloadFileName();
@@ -135,14 +126,16 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         <div class={skeletonClass()}>
           <div class="w-full h-full bg-gray-200 dark:bg-gray-800 animate-pulse rounded" />
         </div>
-        <img
-          src={previewUrl()}
-          alt="Converted animation"
-          class={imageClass()}
-          onLoad={handlePreviewLoad}
-          loading="lazy"
-          data-testid="result-image"
-        />
+        <Show when={previewUrl()}>
+          <img
+            src={previewUrl()!}
+            alt="Converted animation"
+            class={imageClass()}
+            onLoad={handlePreviewLoad}
+            loading="lazy"
+            data-testid="result-image"
+          />
+        </Show>
       </div>
 
       <div class="mt-4" role="region" aria-label="Conversion results">
