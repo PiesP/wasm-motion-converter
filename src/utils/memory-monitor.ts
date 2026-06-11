@@ -28,9 +28,6 @@ interface MemoryInfo {
 // Thresholds for memory warning levels
 const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
 
-// Decoded frame memory tracking (module-internal, for Firefox fallback)
-let trackedDecodedFrameBytes = 0;
-
 /**
  * Get current memory usage information.
  *
@@ -60,7 +57,7 @@ function getMemoryInfo(): MemoryInfo | null {
       jsHeapSizeLimit,
       usagePercentage,
       deviceMemoryGB: typeof deviceMemoryGB === 'number' ? deviceMemoryGB : undefined,
-      decodedFrameBytes: trackedDecodedFrameBytes,
+      decodedFrameBytes: 0,
     };
   }
 
@@ -78,7 +75,7 @@ function getMemoryInfo(): MemoryInfo | null {
       jsHeapSizeLimit,
       usagePercentage,
       deviceMemoryGB,
-      decodedFrameBytes: trackedDecodedFrameBytes,
+      decodedFrameBytes: 0,
     };
   }
 
@@ -104,7 +101,7 @@ export function isMemoryCritical(): boolean {
   if (!memInfo) {
     // No data available: use decoded frame tracking as a soft signal
     // If tracked frames exceed 2GB, consider it critical
-    return trackedDecodedFrameBytes > 2 * 1024 * 1024 * 1024;
+    return false;
   }
 
   // Include decoded frame memory in the critical check
@@ -147,5 +144,5 @@ export function getAvailableMemory(): number {
       ? deviceMemoryGB * 1024 * 1024 * 1024
       : 4 * 1024 * 1024 * 1024;
   const assumedUsage = fallbackLimit * 0.4;
-  return Math.max(0, fallbackLimit - assumedUsage - trackedDecodedFrameBytes);
+  return Math.max(0, fallbackLimit - assumedUsage);
 }

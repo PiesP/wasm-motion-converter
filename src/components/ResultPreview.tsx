@@ -5,14 +5,7 @@ import Button from '@components/ui/Button';
 import Panel from '@components/ui/Panel';
 import type { ConversionSettings } from '@t/conversion-types';
 import { formatBytes, formatDuration } from '@utils/format-utils';
-import {
-  type Component,
-  createEffect,
-  createMemo,
-  createSignal,
-  Show,
-  splitProps,
-} from 'solid-js';
+import { type Component, createEffect, createMemo, createSignal, Show, splitProps } from 'solid-js';
 
 const SCALE_PERCENTAGE_MULTIPLIER = 100;
 
