@@ -176,7 +176,11 @@ export async function muxWebPFramesStreaming(params: {
   if (anmfChunks.length === 1) {
     const frame = anmfChunks[0];
     if (!frame) return { blob: null, skippedFrames, totalFrames };
-    return { blob: new Blob([frame.buffer as ArrayBuffer], { type: 'image/webp' }), skippedFrames, totalFrames };
+    return {
+      blob: new Blob([frame.buffer as ArrayBuffer], { type: 'image/webp' }),
+      skippedFrames,
+      totalFrames,
+    };
   }
 
   // Assemble final RIFF container from ANMF chunks

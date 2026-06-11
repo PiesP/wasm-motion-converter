@@ -195,10 +195,18 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         {/* aHash dedup stats for WebP streaming path */}
         <Show when={local.outputBlob.dedupTotalFrames && local.outputBlob.dedupTotalFrames > 0}>
           <div class="mt-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg p-3 text-sm">
-            <dt class="text-blue-700 dark:text-blue-300 font-medium">Frame Similarity Optimization</dt>
+            <dt class="text-blue-700 dark:text-blue-300 font-medium">
+              Frame Similarity Optimization
+            </dt>
             <dd class="text-blue-600 dark:text-blue-400 mt-1">
-              Skipped {local.outputBlob.dedupSkippedFrames ?? 0} of {local.outputBlob.dedupTotalFrames} frames
-              ({(((local.outputBlob.dedupSkippedFrames ?? 0) / (local.outputBlob.dedupTotalFrames ?? 1)) * 100).toFixed(0)}% dedup)
+              Skipped {local.outputBlob.dedupSkippedFrames ?? 0} of{' '}
+              {local.outputBlob.dedupTotalFrames} frames (
+              {(
+                ((local.outputBlob.dedupSkippedFrames ?? 0) /
+                  (local.outputBlob.dedupTotalFrames ?? 1)) *
+                100
+              ).toFixed(0)}
+              % dedup)
             </dd>
           </div>
         </Show>

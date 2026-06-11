@@ -106,10 +106,20 @@ export async function encodeWebPWithMuxFallback(
         frameCount: frames.length,
       });
       const fallbackBlob = await encodeWithFFmpegFallback(fallbackReason);
-      return { blob: fallbackBlob, encoderBackendUsed: 'ffmpeg', dedupSkippedFrames: streamingResult.skippedFrames, dedupTotalFrames: streamingResult.totalFrames };
+      return {
+        blob: fallbackBlob,
+        encoderBackendUsed: 'ffmpeg',
+        dedupSkippedFrames: streamingResult.skippedFrames,
+        dedupTotalFrames: streamingResult.totalFrames,
+      };
     }
 
-    return { blob: streamingResult.blob, encoderBackendUsed: 'webp-muxer-streaming', dedupSkippedFrames: streamingResult.skippedFrames, dedupTotalFrames: streamingResult.totalFrames };
+    return {
+      blob: streamingResult.blob,
+      encoderBackendUsed: 'webp-muxer-streaming',
+      dedupSkippedFrames: streamingResult.skippedFrames,
+      dedupTotalFrames: streamingResult.totalFrames,
+    };
   } catch (error) {
     const errorMessage = getErrorMessage(error);
 

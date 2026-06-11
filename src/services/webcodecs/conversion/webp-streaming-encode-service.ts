@@ -374,5 +374,11 @@ export async function encodeFramesToANMFChunks(params: {
     });
   }
 
-  return { anmfChunks: validAnmfChunks, hasAlpha, chunkSizeUsed: chunkSize, skippedFrames: skippedFrameCount, totalFrames: totalFrames };
+  return {
+    anmfChunks: validAnmfChunks,
+    hasAlpha,
+    chunkSizeUsed: chunkSize,
+    skippedFrames: skippedFrameCount,
+    totalFrames: totalFrames,
+  };
 }

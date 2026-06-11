@@ -389,8 +389,7 @@ export async function convert(
         // keep them and let the next capture mode resume from where we left off.
         // Only clear frames if the failure was a hard error (not a partial result).
         const hasPartialFrames =
-          captureMode === 'demuxer' &&
-          (webpCapturedFrames.length > 0 || capturedFrames.length > 0);
+          captureMode === 'demuxer' && (webpCapturedFrames.length > 0 || capturedFrames.length > 0);
 
         if (!hasPartialFrames) {
           // Hard failure: clear all and retry with next mode
@@ -402,7 +401,8 @@ export async function convert(
         } else {
           // Partial success: if we captured a reasonable number of frames,
           // use them as-is and skip further capture modes.
-          const capturedCount = format === 'webp' ? webpCapturedFrames.length : capturedFrames.length;
+          const capturedCount =
+            format === 'webp' ? webpCapturedFrames.length : capturedFrames.length;
           // Heuristic: if we got at least 30 frames or 1 second of content, use partial result
           const isAcceptable = capturedCount >= 30 || capturedCount >= targetFps;
 
@@ -415,7 +415,8 @@ export async function convert(
           if (isAcceptable) {
             // Use partial result as final — synthesize a decodeResult so downstream
             // encoding can proceed without a full playback fallback re-extract.
-            const partialFrameCount = format === 'webp' ? webpCapturedFrames.length : capturedFrames.length;
+            const partialFrameCount =
+              format === 'webp' ? webpCapturedFrames.length : capturedFrames.length;
             decodeResult = {
               frameFiles: [],
               frameCount: partialFrameCount,
