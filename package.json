@@ -1,14 +1,13 @@
 {
   "name": "wasm-motion-converter",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "MIT",
   "author": "PiesP",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.2.2",
   "engines": {
-    "node": ">=22.0.0",
-    "pnpm": ">=11.2.2"
+    "node": ">=26.0.0"
   },
   "volta": {
     "node": "26.3.0",
