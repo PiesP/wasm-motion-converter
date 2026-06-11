@@ -116,7 +116,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   });
 
   const opacityClass = createMemo(() =>
-    local.disabled && !isBusy() ? 'opacity-60 cursor-not-allowed' : ''
+    local.disabled && !isBusy() ? 'opacity-50 cursor-not-allowed' : ''
   );
 
   const dropzoneClass = createMemo(
