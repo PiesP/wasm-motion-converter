@@ -886,6 +886,7 @@ export default defineConfig(({ mode }) => {
             ) {
               return 'components-ui';
             }
+            return undefined;
           },
         },
       },

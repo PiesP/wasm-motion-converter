@@ -303,6 +303,7 @@ self.addEventListener('install', (event: ExtendableEvent) => {
           FFMPEG_PRECACHE_URLS.map((url) =>
             fetch(url).then((res) => {
               if (res.ok) return ffmpegCache.put(url, res);
+              return undefined;
             })
           )
         );
@@ -361,6 +362,7 @@ self.addEventListener('activate', (event: ExtendableEvent) => {
             console.log(`[SW ${SW_VERSION}] Deleting old cache: ${cacheName}`);
             return caches.delete(cacheName);
           }
+          return undefined;
         })
       );
 
