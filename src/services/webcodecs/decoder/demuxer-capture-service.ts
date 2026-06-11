@@ -155,9 +155,9 @@ export async function captureWithDemuxer(
     let lastProgressTickAt = 0;
     const ProgressTickIntervalMs = 400;
 
-    // Sample-extraction phase accounts for a fixed base portion of progress.
-    // Frame capture then fills the remainder, so progress is never conflated
-    // with skipped/non-extracted samples.
+    // Progress: weight sample extraction and frame capture separately.
+    // Sample extraction uses actual processedSamples/estimatedSamplesTotal ratio
+    // instead of a fixed weight, giving more accurate progress during demuxing.
     const SampleExtractionProgressRatio = 0.2;
 
     const tickProgress = (forceComplete = false) => {
@@ -176,11 +176,17 @@ export async function captureWithDemuxer(
       }
       lastProgressTickAt = now;
 
-      // Weighted progress: base portion for sample extraction + frame portion
-      // for actual captured frames, so skipped samples do not inflate progress.
+      // Sample extraction progress: actual ratio of processed samples
+      const sampleRatio =
+        estimatedSamplesTotal > 0 ? Math.min(1, processedSamples / estimatedSamplesTotal) : 0;
+
+      // Frame capture progress: ratio of captured frames
       const frameRatio = totalFrames > 0 ? Math.min(1, frameIndex / totalFrames) : 0;
+
+      // Weighted: sample extraction fills the base portion, frames fill the rest
       const weightedRatio =
-        SampleExtractionProgressRatio + frameRatio * (1 - SampleExtractionProgressRatio);
+        SampleExtractionProgressRatio * sampleRatio +
+        frameRatio * (1 - SampleExtractionProgressRatio);
       const pseudoCurrent = Math.max(
         0,
         Math.min(
