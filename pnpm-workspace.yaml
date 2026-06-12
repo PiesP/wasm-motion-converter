@@ -20,5 +20,5 @@ allowBuilds:
 strictDepBuilds: true
 
 blockExoticSubdeps: true
+
 engineStrict: true
-lockfileVersion: 3
