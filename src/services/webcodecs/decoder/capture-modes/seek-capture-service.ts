@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
+import { createUserCancelledAbortError } from '@utils/cancellation-context';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
 
@@ -47,7 +48,7 @@ export async function captureWithSeeking(options: SeekCaptureOptions): Promise<v
   // Fast extraction for single-frame formats (WebP)
   if (maxFrames === 1) {
     if (shouldCancel?.()) {
-      throw new Error('Conversion cancelled by user');
+      throw createUserCancelledAbortError();
     }
 
     const epsilon = 0.001;
@@ -83,7 +84,7 @@ export async function captureWithSeeking(options: SeekCaptureOptions): Promise<v
 
   for (let index = 0; index < totalFrames; index += 1) {
     if (shouldCancel?.()) {
-      throw new Error('Conversion cancelled by user');
+      throw createUserCancelledAbortError();
     }
 
     const seekStart = performance.now();

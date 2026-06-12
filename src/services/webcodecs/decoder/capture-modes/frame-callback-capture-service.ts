@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
+import { createUserCancelledAbortError } from '@utils/cancellation-context';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
@@ -256,7 +257,7 @@ export async function captureWithFrameCallback(
           finished = true;
           clearFirstFrameTimer();
           clearLagMonitor();
-          reject(new Error('Conversion cancelled by user'));
+          reject(createUserCancelledAbortError());
           return;
         }
 

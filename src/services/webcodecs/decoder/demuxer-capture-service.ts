@@ -11,6 +11,7 @@ import type {
   WebCodecsFramePayload,
   WebCodecsProgressCallback,
 } from '@t/video-pipeline-types';
+import { createUserCancelledAbortError } from '@utils/cancellation-context';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
@@ -337,7 +338,7 @@ export async function captureWithDemuxer(
       for (const videoFrame of framesToProcess) {
         try {
           if (shouldCancel?.()) {
-            throw new Error('Conversion cancelled by user');
+            throw createUserCancelledAbortError();
           }
 
           if (decoderError) {
@@ -498,7 +499,7 @@ export async function captureWithDemuxer(
     // 4. Extract and decode samples
     for await (const sample of demuxer.extractSamples(targetFps, maxFrames, { keyframeOnly })) {
       if (shouldCancel?.()) {
-        throw new Error('Conversion cancelled by user');
+        throw createUserCancelledAbortError();
       }
 
       if (decoderError) {

@@ -26,7 +26,7 @@ interface MemoryInfo {
 }
 
 // Thresholds for memory warning levels
-const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
+export const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
 
 /**
  * Get current memory usage information.
@@ -37,12 +37,33 @@ const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
  *
  * @returns Memory info object or null when no data is available at all
  */
+interface PerformanceMemory {
+  usedJSHeapSize: number;
+  totalJSHeapSize: number;
+  jsHeapSizeLimit: number;
+}
+
+function getPerformanceMemory(): PerformanceMemory | undefined {
+  if (typeof performance === 'undefined' || !('memory' in performance)) {
+    return undefined;
+  }
+  const mem = (performance as unknown as { memory: PerformanceMemory }).memory;
+  if (
+    typeof mem.jsHeapSizeLimit !== 'number' ||
+    mem.jsHeapSizeLimit <= 0 ||
+    typeof mem.usedJSHeapSize !== 'number' ||
+    mem.usedJSHeapSize < 0 ||
+    typeof mem.totalJSHeapSize !== 'number' ||
+    mem.totalJSHeapSize < 0
+  ) {
+    return undefined;
+  }
+  return mem;
+}
+
 function getMemoryInfo(): MemoryInfo | null {
   // Primary: performance.memory (Chrome/Edge)
-  // @ts-expect-error - performance.memory is non-standard but available in Chrome/Edge
-  const memory = performance.memory as
-    | { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number }
-    | undefined;
+  const memory = getPerformanceMemory();
 
   if (memory) {
     const usedJSHeapSize = memory.usedJSHeapSize;

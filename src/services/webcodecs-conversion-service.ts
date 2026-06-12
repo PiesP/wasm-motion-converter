@@ -31,6 +31,7 @@ import type {
 } from '@t/conversion-types';
 import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from '@t/video-pipeline-types';
 import type { EncoderWorkerAPI, WorkerProgressCallback } from '@t/worker-types';
+import { createUserCancelledAbortError, isCancellationError } from '@utils/cancellation-context';
 import { isComplexCodec } from '@utils/codec-utils';
 import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
@@ -121,7 +122,7 @@ export async function convert(
     : () => ffmpegService.isCancellationRequested();
 
   const throwIfCancelled = (): void => {
-    if (shouldCancel()) throw new Error('Conversion cancelled by user');
+    if (shouldCancel()) throw createUserCancelledAbortError();
   };
 
   // GIF without modern-gif: use FFmpeg directly
@@ -235,18 +236,13 @@ export async function convert(
         endConversion();
         return hybridResult;
       } catch (error) {
-        const errorMessage = getErrorMessage(error);
-        if (
-          errorMessage.includes('cancelled by user') ||
-          (ffmpegService.isCancellationRequested() &&
-            errorMessage.includes('called FFmpeg.terminate()'))
-        ) {
+        if (isCancellationError(error)) {
           throw error;
         }
         if (!useModernGif) throw error;
         logger.warn('conversion', 'FFmpeg palette path failed; falling back to modern-gif', {
           codec: metadata?.codec,
-          error: errorMessage,
+          error: getErrorMessage(error),
         });
       }
     }
@@ -278,16 +274,11 @@ export async function convert(
           }
         );
       } catch (error) {
-        const errorMessage = getErrorMessage(error);
-        if (
-          errorMessage.includes('cancelled by user') ||
-          (ffmpegService.isCancellationRequested() &&
-            errorMessage.includes('called FFmpeg.terminate()'))
-        ) {
+        if (isCancellationError(error)) {
           throw error;
         }
         logger.warn('conversion', 'WebCodecs direct path errored; continuing with standard path', {
-          error: errorMessage,
+          error: getErrorMessage(error),
           codec: metadata?.codec,
         });
       }
@@ -370,16 +361,11 @@ export async function convert(
         captureModeUsed = captureMode;
         break;
       } catch (error) {
-        const errorMessage = getErrorMessage(error);
-        if (
-          errorMessage.includes('cancelled by user') ||
-          (ffmpegService.isCancellationRequested() &&
-            errorMessage.includes('called FFmpeg.terminate()'))
-        ) {
+        if (isCancellationError(error)) {
           throw error;
         }
         logger.warn('conversion', 'WebCodecs frame capture failed', {
-          error: errorMessage,
+          error: getErrorMessage(error),
           mode: captureMode,
           partialWebpFrames: webpCapturedFrames.length,
           partialGifFrames: capturedFrames.length,

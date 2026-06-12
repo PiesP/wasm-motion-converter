@@ -53,6 +53,16 @@ export function throwIfAborted(signal: AbortSignal, guard?: boolean): void {
 }
 
 /**
+ * Create an AbortError for user-initiated cancellation.
+ *
+ * Returns a DOMException with name 'AbortError' so that it is correctly
+ * identified by isCancellationError() and standard AbortSignal handlers.
+ */
+export function createUserCancelledAbortError(): DOMException {
+  return new DOMException(CANCELLED_MESSAGE, 'AbortError');
+}
+
+/**
  * Convenience: create a rejected promise when the signal fires.
  */
 export function createAbortPromise(signal?: AbortSignal): Promise<never> {
