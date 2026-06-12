@@ -18,6 +18,12 @@ import type { Plugin, PluginOption } from 'vite';
 import { defineConfig, loadEnv } from 'vite';
 import solid from 'vite-plugin-solid';
 
+function getVersion(): string {
+  const pkgJsonPath = path.join(process.cwd(), 'package.json');
+  const raw = readFileSync(pkgJsonPath, 'utf-8');
+  return (JSON.parse(raw) as { version: string }).version;
+}
+
 function readRuntimeDependencies(): Record<string, string> {
   const pkgJsonPath = path.join(process.cwd(), 'package.json');
   const raw = readFileSync(pkgJsonPath, 'utf-8');
@@ -842,6 +848,10 @@ export default defineConfig(({ mode }) => {
       cssCodeSplit: true,
       sourcemap: false,
       minify: 'esbuild',
+
+      define: {
+        __VERSION__: JSON.stringify(getVersion()),
+      },
 
       rollupOptions: {
         external: (id) => isExternalRuntimeDep(id),
