@@ -118,16 +118,21 @@ export class FFmpegCore {
    * Remove all event listeners from FFmpeg instance
    * Prevents handler accumulation that can cause stack overflow
    *
-   * Note: FFmpeg.wasm doesn't expose removeAllListeners, so we track
-   * active listeners and remove them individually.
+   * Note: FFmpeg.wasm's EventEmitter doesn't expose a way to remove all listeners.
+   * This method is intentionally a no-op — individual conversion methods are responsible
+   * for their own listener cleanup via off() calls in finally blocks.
+   * The init log/progress handlers (initLogHandler, initProgressHandler) persist for
+   * the lifetime of the FFmpeg instance and are set once during initialize().
    */
   clearAllListeners(): void {
-    if (!this.ffmpeg) return;
-
-    // FFmpeg.wasm's EventEmitter doesn't expose a way to remove all listeners,
-    // but we can at least log this for debugging and rely on proper cleanup
-    // in individual conversion methods (off() calls in finally blocks)
-    logger.debug('ffmpeg', 'Clearing FFmpeg event listeners (log handlers managed by encoder)');
+    // Intentionally empty: FFmpeg.wasm does not expose removeEventListener for
+    // its internal EventEmitter. Listeners are managed per-operation in encoder
+    // finally blocks. See initLogHandler / initProgressHandler for init-time
+    // handlers that live for the instance lifetime.
+    logger.debug(
+      'ffmpeg',
+      'clearAllListeners called (no-op: FFmpeg.wasm has no global listener removal)'
+    );
   }
 
   /**

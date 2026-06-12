@@ -140,6 +140,24 @@ export function wrap<T extends object>(worker: Worker): T {
     }
   });
 
+  worker.addEventListener('error', () => {
+    const calls = [...pending.values()];
+    pending.clear();
+    const error = new Error('Worker error');
+    for (const call of calls) {
+      call.reject(error);
+    }
+  });
+
+  worker.addEventListener('messageerror', () => {
+    const calls = [...pending.values()];
+    pending.clear();
+    const error = new Error('Worker message error');
+    for (const call of calls) {
+      call.reject(error);
+    }
+  });
+
   const proxy = new Proxy({} as T, {
     get(_target, prop: string) {
       if (prop === 'then') return undefined; // prevent Promise-like coercion

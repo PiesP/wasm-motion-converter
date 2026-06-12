@@ -119,11 +119,13 @@ export class WebMDemuxer implements DemuxerAdapter {
   async *extractSamples(
     targetFps: number,
     maxFrames?: number,
-    _options?: { keyframeOnly?: boolean }
+    options?: { keyframeOnly?: boolean }
   ): AsyncGenerator<EncodedVideoChunk, void, unknown> {
     if (!this.initialized || !this.demuxer || !this.metadata) {
       throw new Error('Demuxer not initialized');
     }
+
+    const keyframeOnly = options?.keyframeOnly === true;
 
     try {
       const sourceFps = this.metadata.framerate ?? targetFps;
@@ -165,6 +167,12 @@ export class WebMDemuxer implements DemuxerAdapter {
           break;
         }
 
+        // When keyframeOnly is requested, skip delta frames (matches mp4box-demuxer behavior)
+        if (keyframeOnly && sample.type !== 'key') {
+          sampleIndex++;
+          continue;
+        }
+
         yield {
           type: sample.type === 'key' ? 'key' : 'delta',
           timestamp,
@@ -179,6 +187,7 @@ export class WebMDemuxer implements DemuxerAdapter {
 
       logger.info('demuxer', 'WebM sample extraction completed', {
         yieldedSamples,
+        keyframeOnly,
       });
     } catch (error) {
       logger.error('demuxer', 'WebM sample extraction failed', {

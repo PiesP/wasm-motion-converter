@@ -9,6 +9,7 @@ export type CaptureContext = {
   context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
   targetWidth: number;
   targetHeight: number;
+  dispose: () => void;
 };
 
 /**
@@ -42,7 +43,18 @@ export const createCanvas = (
     }
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
-    return { canvas, context, targetWidth: width, targetHeight: height };
+    return {
+      canvas,
+      context,
+      targetWidth: width,
+      targetHeight: height,
+      dispose() {
+        // Release canvas references to allow GC of potentially large GPU/backing resources.
+        // The context is invalidated once the canvas is dereferenced.
+        canvas.width = 0;
+        canvas.height = 0;
+      },
+    };
   }
 
   const hasDocument = typeof document !== 'undefined';
@@ -59,7 +71,16 @@ export const createCanvas = (
   }
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
-  return { canvas, context, targetWidth: width, targetHeight: height };
+  return {
+    canvas,
+    context,
+    targetWidth: width,
+    targetHeight: height,
+    dispose() {
+      canvas.width = 0;
+      canvas.height = 0;
+    },
+  };
 };
 
 /**

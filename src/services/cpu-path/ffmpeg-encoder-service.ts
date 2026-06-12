@@ -84,6 +84,25 @@ export interface EncoderDependencies {
 }
 
 /**
+ * Create an enriched error with classification context attached.
+ *
+ * Returns a new Error whose message includes the original message and
+ * a JSON-serialized context snippet. The original error's stack is
+ * preserved when available.
+ */
+function createEnrichedError(
+  message: string,
+  context: unknown,
+  originalError: Error | undefined
+): Error {
+  const enriched = new Error(`${message} | context: ${JSON.stringify(context)}`);
+  if (originalError?.stack) {
+    enriched.stack = originalError.stack;
+  }
+  return enriched;
+}
+
+/**
  * FFmpeg encoder
  *
  * Manages direct encoding operations for GIF and WebP formats.
@@ -414,13 +433,10 @@ export class FFmpegEncoder {
       );
 
       if (error instanceof Error) {
-        (error as unknown as { errorContext?: unknown }).errorContext ??= context;
-        return error;
+        return createEnrichedError(message, context, error);
       }
 
-      const enriched = new Error(message);
-      (enriched as unknown as { errorContext?: unknown }).errorContext = context;
-      return enriched;
+      return createEnrichedError(message, context, undefined);
     } catch (enrichError) {
       // If error enrichment fails, return original error
       logger.warn('conversion', 'Failed to enrich error context', {
