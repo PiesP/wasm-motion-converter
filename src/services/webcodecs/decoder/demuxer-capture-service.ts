@@ -709,14 +709,18 @@ export async function captureWithDemuxer(
         if (acceptPartial) {
           tickProgress(true);
 
-          logger.info('conversion', 'Accepting demuxer result after flush timeout (partial progress)', {
-            frameCount: frameIndex,
-            totalFrames,
-            partialAcceptFrames,
-            processedSamples,
-            coveredTimeWindow: hasCoveredTimeWindow(),
-            processedAllSamples: hasProcessedAllSamples(),
-          });
+          logger.info(
+            'conversion',
+            'Accepting demuxer result after flush timeout (partial progress)',
+            {
+              frameCount: frameIndex,
+              totalFrames,
+              partialAcceptFrames,
+              processedSamples,
+              coveredTimeWindow: hasCoveredTimeWindow(),
+              processedAllSamples: hasProcessedAllSamples(),
+            }
+          );
 
           logger.info('conversion', 'Demuxer capture completed (partial)', {
             frameCount: frameIndex,
