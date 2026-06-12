@@ -2,7 +2,7 @@
 // Copyright (c) 2025 PiesP
 
 import type { Component } from 'solid-js';
-import { createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
+import { createEffect, createMemo, createSignal, onCleanup, splitProps } from 'solid-js';
 
 const TRIM_END_FULL_DURATION = 0;
 
@@ -86,31 +86,39 @@ const clampToStep = (value: number): number => {
 };
 
 const TrimSelector: Component<TrimSelectorProps> = (props) => {
-  const fps = (): number => props.estimatedFps ?? 15;
+  const [local] = splitProps(props, [
+    'estimatedFps',
+    'disabled',
+    'duration',
+    'trimStart',
+    'trimEnd',
+    'onChange',
+  ]);
+  const fps = (): number => local.estimatedFps ?? 15;
 
   const effectiveEnd = createMemo(() => {
-    if (props.trimEnd === TRIM_END_FULL_DURATION || props.trimEnd > props.duration) {
-      return props.duration;
+    if (local.trimEnd === TRIM_END_FULL_DURATION || local.trimEnd > local.duration) {
+      return local.duration;
     }
-    return props.trimEnd;
+    return local.trimEnd;
   });
 
   const trimDuration = createMemo(() => {
-    return effectiveEnd() - props.trimStart;
+    return effectiveEnd() - local.trimStart;
   });
 
   const startPct = createMemo(() => {
-    if (props.duration <= 0) return 0;
-    return (props.trimStart / props.duration) * 100;
+    if (local.duration <= 0) return 0;
+    return (local.trimStart / local.duration) * 100;
   });
 
   const endPct = createMemo(() => {
-    if (props.duration <= 0) return 100;
-    return (effectiveEnd() / props.duration) * 100;
+    if (local.duration <= 0) return 100;
+    return (effectiveEnd() / local.duration) * 100;
   });
 
   const isDefault = createMemo(
-    () => props.trimStart === 0 && props.trimEnd === TRIM_END_FULL_DURATION
+    () => local.trimStart === 0 && local.trimEnd === TRIM_END_FULL_DURATION
   );
 
   const frameCount = createMemo(() => {
@@ -123,7 +131,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   let trackRef: HTMLDivElement | undefined;
 
   const startDrag = (e: PointerEvent, handle: 'start' | 'end') => {
-    if (props.disabled) return;
+    if (local.disabled) return;
     e.preventDefault();
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -134,7 +142,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     if (!trackRef) return 0;
     const rect = trackRef.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return ratio * props.duration;
+    return ratio * local.duration;
   };
 
   const onPointerMove = (e: PointerEvent) => {
@@ -146,14 +154,14 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     if (handle === 'start') {
       const maxStart = Math.max(0, effectiveEnd() - 0.1);
       seconds = Math.max(0, Math.min(seconds, maxStart));
-      if (seconds !== props.trimStart) {
-        props.onChange(seconds, props.trimEnd);
+      if (seconds !== local.trimStart) {
+        local.onChange(seconds, local.trimEnd);
       }
     } else {
-      const minEnd = Math.min(props.duration, props.trimStart + 0.1);
-      seconds = Math.max(minEnd, Math.min(seconds, props.duration));
+      const minEnd = Math.min(local.duration, local.trimStart + 0.1);
+      seconds = Math.max(minEnd, Math.min(seconds, local.duration));
       if (seconds !== effectiveEnd()) {
-        props.onChange(props.trimStart, seconds);
+        local.onChange(local.trimStart, seconds);
       }
     }
   };
@@ -180,7 +188,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   // ── Track click (snap nearest handle) ──
 
   const handleTrackClick = (e: MouseEvent) => {
-    if (props.disabled) return;
+    if (local.disabled) return;
     // Ignore if the click came from a handle
     const target = e.target as HTMLElement;
     if (target.closest('[data-handle]')) return;
@@ -188,19 +196,19 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     const seconds = clampToStep(clientXToSeconds(e.clientX));
 
     if (
-      seconds <= props.trimStart ||
-      (seconds < effectiveEnd() && seconds - props.trimStart < effectiveEnd() - seconds)
+      seconds <= local.trimStart ||
+      (seconds < effectiveEnd() && seconds - local.trimStart < effectiveEnd() - seconds)
     ) {
       // Snap to start handle
       const clamped = Math.min(seconds, Math.max(0, effectiveEnd() - 0.1));
-      if (clamped !== props.trimStart) {
-        props.onChange(clamped, props.trimEnd);
+      if (clamped !== local.trimStart) {
+        local.onChange(clamped, local.trimEnd);
       }
     } else {
       // Snap to end handle
-      const clamped = Math.max(seconds, Math.min(props.duration, props.trimStart + 0.1));
+      const clamped = Math.max(seconds, Math.min(local.duration, local.trimStart + 0.1));
       if (clamped !== effectiveEnd()) {
-        props.onChange(props.trimStart, clamped);
+        local.onChange(local.trimStart, clamped);
       }
     }
   };
@@ -208,61 +216,61 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   // ── Keyboard handlers for handles ──
 
   const handleStartKeyDown = (e: KeyboardEvent) => {
-    if (props.disabled) return;
-    let newStart = props.trimStart;
+    if (local.disabled) return;
+    let newStart = local.trimStart;
     const shift = e.shiftKey ? 1 : 0.1;
     if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
       e.preventDefault();
-      newStart = Math.min(props.trimStart + shift, Math.max(0, effectiveEnd() - 0.1));
+      newStart = Math.min(local.trimStart + shift, Math.max(0, effectiveEnd() - 0.1));
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
       e.preventDefault();
-      newStart = Math.max(0, props.trimStart - shift);
+      newStart = Math.max(0, local.trimStart - shift);
     } else {
       return;
     }
     newStart = clampToStep(newStart);
-    if (newStart !== props.trimStart) {
-      props.onChange(newStart, props.trimEnd);
+    if (newStart !== local.trimStart) {
+      local.onChange(newStart, local.trimEnd);
     }
   };
 
   const handleEndKeyDown = (e: KeyboardEvent) => {
-    if (props.disabled) return;
+    if (local.disabled) return;
     let newEnd = effectiveEnd();
     const shift = e.shiftKey ? 1 : 0.1;
     if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
       e.preventDefault();
-      newEnd = Math.min(props.duration, effectiveEnd() + shift);
+      newEnd = Math.min(local.duration, effectiveEnd() + shift);
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
       e.preventDefault();
-      newEnd = Math.max(props.trimStart + 0.1, effectiveEnd() - shift);
+      newEnd = Math.max(local.trimStart + 0.1, effectiveEnd() - shift);
     } else {
       return;
     }
     newEnd = clampToStep(newEnd);
     if (newEnd !== effectiveEnd()) {
-      props.onChange(props.trimStart, newEnd);
+      local.onChange(local.trimStart, newEnd);
     }
   };
 
   // ── Handlers ──
 
   const handleReset = () => {
-    if (!props.disabled) {
-      props.onChange(0, 0);
+    if (!local.disabled) {
+      local.onChange(0, 0);
     }
   };
 
   const handlePreset = (start: number, end: number) => {
-    if (!props.disabled) {
-      props.onChange(start, end);
+    if (!local.disabled) {
+      local.onChange(start, end);
     }
   };
 
   // ── Presets ──
 
   const presets = createMemo(() => {
-    const d = props.duration;
+    const d = local.duration;
     const list: Array<{ label: string; start: number; end: number }> = [];
 
     // "Full" — always first
@@ -292,7 +300,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   });
 
   const isPresetActive = (start: number, end: number): boolean => {
-    return props.trimStart === start && props.trimEnd === end;
+    return local.trimStart === start && local.trimEnd === end;
   };
 
   const presetBtnClass = (active: boolean): string => {
@@ -301,7 +309,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       active
         ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
         : 'border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300',
-      props.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+      local.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
     ].join(' ');
   };
 
@@ -309,13 +317,13 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
 
   const [startFocused, setStartFocused] = createSignal(false);
   const [endFocused, setEndFocused] = createSignal(false);
-  const [startText, setStartText] = createSignal(formatTimePrecise(props.trimStart));
+  const [startText, setStartText] = createSignal(formatTimePrecise(local.trimStart));
   const [endText, setEndText] = createSignal(formatTimePrecise(effectiveEnd()));
 
   // Sync from props when not editing
   createEffect(() => {
     if (!startFocused()) {
-      setStartText(formatTimePrecise(props.trimStart));
+      setStartText(formatTimePrecise(local.trimStart));
     }
   });
 
@@ -329,17 +337,17 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     const parsed = parseTimeInput(startText());
     if (parsed !== null) {
       const clamped = Math.max(0, Math.min(parsed, effectiveEnd() - 0.1));
-      props.onChange(clampToStep(clamped), props.trimEnd);
+      local.onChange(clampToStep(clamped), local.trimEnd);
     }
-    setStartText(formatTimePrecise(props.trimStart));
+    setStartText(formatTimePrecise(local.trimStart));
     setStartFocused(false);
   };
 
   const commitEndText = () => {
     const parsed = parseTimeInput(endText());
     if (parsed !== null) {
-      const clamped = Math.max(props.trimStart + 0.1, Math.min(parsed, props.duration));
-      props.onChange(props.trimStart, clampToStep(clamped));
+      const clamped = Math.max(local.trimStart + 0.1, Math.min(parsed, local.duration));
+      local.onChange(local.trimStart, clampToStep(clamped));
     }
     setEndText(formatTimePrecise(effectiveEnd()));
     setEndFocused(false);
@@ -375,7 +383,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       isDragging
         ? 'scale-115 shadow-xl ring-2 ring-blue-400 bg-blue-50 dark:bg-blue-900/30 border-blue-600'
         : '',
-      props.disabled ? 'cursor-not-allowed opacity-50' : '',
+      local.disabled ? 'cursor-not-allowed opacity-50' : '',
     ];
     return base.filter(Boolean).join(' ');
   };
@@ -385,12 +393,12 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   const textClass = [
     'text-xs border border-gray-300 dark:border-gray-700 rounded px-1 py-0.5',
     'bg-white dark:bg-gray-800 text-right font-mono w-[5.5rem]',
-    props.disabled ? 'opacity-50 cursor-not-allowed' : '',
+    local.disabled ? 'opacity-50 cursor-not-allowed' : '',
   ].join(' ');
 
   // ── Early return for too-short video ──
 
-  if (props.duration < MIN_DURATION) {
+  if (local.duration < MIN_DURATION) {
     return <p class="text-xs text-gray-500 dark:text-gray-400">Video too short for trimming</p>;
   }
 
@@ -405,10 +413,10 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           <button
             type="button"
             onClick={handleReset}
-            disabled={props.disabled}
+            disabled={local.disabled}
             data-testid="trim-reset-button"
             class={`text-xs px-2 py-1 rounded border transition-colors ${
-              props.disabled
+              local.disabled
                 ? 'opacity-50 cursor-not-allowed border-gray-300 dark:border-gray-700'
                 : 'border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer'
             }`}
@@ -423,26 +431,26 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         ref={trackRef}
         class="relative h-10 rounded-lg bg-gray-200 dark:bg-gray-700 select-none touch-none cursor-pointer"
         classList={{
-          'opacity-50 pointer-events-none': !!props.disabled,
+          'opacity-50 pointer-events-none': !!local.disabled,
         }}
         onClick={handleTrackClick}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             // Keyboard activation: snap both handles to start (reset to full range)
-            if (props.trimStart !== 0 || props.trimEnd !== 0) {
-              props.onChange(0, 0);
+            if (local.trimStart !== 0 || local.trimEnd !== 0) {
+              local.onChange(0, 0);
             }
           }
         }}
-        tabIndex={props.disabled ? -1 : 0}
+        tabIndex={local.disabled ? -1 : 0}
         role="slider"
         aria-label="Trim range"
         aria-valuemin={0}
-        aria-valuemax={props.duration}
-        aria-valuenow={effectiveEnd() - props.trimStart}
-        aria-valuetext={`${formatTime(props.trimStart)} to ${formatTime(effectiveEnd())}, ${trimDuration().toFixed(1)}s selected`}
-        aria-disabled={!!props.disabled}
+        aria-valuemax={local.duration}
+        aria-valuenow={effectiveEnd() - local.trimStart}
+        aria-valuetext={`${formatTime(local.trimStart)} to ${formatTime(effectiveEnd())}, ${trimDuration().toFixed(1)}s selected`}
+        aria-disabled={!!local.disabled}
       >
         {/* Selected range fill */}
         <div
@@ -463,13 +471,13 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           style={{ left: `${startPct()}%` }}
           onPointerDown={(e) => startDrag(e, 'start')}
           role="slider"
-          tabIndex={props.disabled ? -1 : 0}
+          tabIndex={local.disabled ? -1 : 0}
           aria-label="Trim start"
           aria-valuemin={0}
-          aria-valuemax={props.duration}
-          aria-valuenow={props.trimStart}
-          aria-valuetext={formatTime(props.trimStart)}
-          aria-disabled={!!props.disabled}
+          aria-valuemax={local.duration}
+          aria-valuenow={local.trimStart}
+          aria-valuetext={formatTime(local.trimStart)}
+          aria-disabled={!!local.disabled}
           onKeyDown={handleStartKeyDown}
         >
           {/* Grip dots */}
@@ -489,13 +497,13 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           style={{ left: `${endPct()}%` }}
           onPointerDown={(e) => startDrag(e, 'end')}
           role="slider"
-          tabIndex={props.disabled ? -1 : 0}
+          tabIndex={local.disabled ? -1 : 0}
           aria-label="Trim end"
           aria-valuemin={0}
-          aria-valuemax={props.duration}
+          aria-valuemax={local.duration}
           aria-valuenow={effectiveEnd()}
           aria-valuetext={formatTime(effectiveEnd())}
-          aria-disabled={!!props.disabled}
+          aria-disabled={!!local.disabled}
           onKeyDown={handleEndKeyDown}
         >
           {/* Grip dots */}
@@ -516,7 +524,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
               left: `${dragging() === 'start' ? startPct() : endPct()}%`,
             }}
           >
-            {formatTime(dragging() === 'start' ? props.trimStart : effectiveEnd())}
+            {formatTime(dragging() === 'start' ? local.trimStart : effectiveEnd())}
           </div>
         )}
       </div>
@@ -524,7 +532,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       {/* 3. Track boundary labels — above the bar, integrated */}
       <div class="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 px-0.5 pt-1">
         <span>{formatTime(0)}</span>
-        <span>{formatTime(props.duration)}</span>
+        <span>{formatTime(local.duration)}</span>
       </div>
 
       {/* 4. Preset buttons row */}
@@ -533,7 +541,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           <button
             type="button"
             onClick={() => handlePreset(preset.start, preset.end)}
-            disabled={props.disabled}
+            disabled={local.disabled}
             aria-pressed={isPresetActive(preset.start, preset.end)}
             class={presetBtnClass(isPresetActive(preset.start, preset.end))}
           >
@@ -549,7 +557,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           <input
             type="text"
             value={startText()}
-            disabled={props.disabled}
+            disabled={local.disabled}
             onInput={(e) => setStartText((e.target as HTMLInputElement).value)}
             onFocus={() => setStartFocused(true)}
             onBlur={commitStartText}
@@ -561,7 +569,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           <input
             type="text"
             value={endText()}
-            disabled={props.disabled}
+            disabled={local.disabled}
             onInput={(e) => setEndText((e.target as HTMLInputElement).value)}
             onFocus={() => setEndFocused(true)}
             onBlur={commitEndText}
@@ -570,7 +578,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           />
         </div>
         <span class="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-          {trimDuration().toFixed(1)}s ({Math.round((trimDuration() / props.duration) * 100)}%)
+          {trimDuration().toFixed(1)}s ({Math.round((trimDuration() / local.duration) * 100)}%)
         </span>
       </div>
 

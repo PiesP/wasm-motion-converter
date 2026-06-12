@@ -2,6 +2,7 @@
 // Copyright (c) 2025 PiesP
 
 import { useExportLogs } from '@hooks/use-export-logs';
+import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
 import { Show, splitProps } from 'solid-js';
@@ -258,7 +259,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
       const text = buildExportText({ includeVerboseFfmpegProgress, format, getFfmpegLogs });
       downloadText({ filename, text });
     } catch (error) {
-      logger.error('general', 'Failed to export logs', { error });
+      logger.error('general', 'Failed to export logs', { error: getErrorMessage(error) });
     }
   };
 

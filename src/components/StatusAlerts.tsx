@@ -5,7 +5,7 @@ import EnvironmentWarning from '@components/EnvironmentWarning';
 import OfflineBanner from '@components/OfflineBanner';
 import type { ErrorContext } from '@t/conversion-types';
 import type { Component } from 'solid-js';
-import { lazy, Show, Suspense } from 'solid-js';
+import { lazy, Show, Suspense, splitProps } from 'solid-js';
 
 const ErrorDisplay = lazy(() => import('@components/ErrorDisplay'));
 
@@ -19,25 +19,33 @@ interface StatusAlertsProps {
 }
 
 const StatusAlerts: Component<StatusAlertsProps> = (props) => {
+  const [local] = splitProps(props, [
+    'environmentSupported',
+    'errorMessage',
+    'errorContext',
+    'onRetry',
+    'onSelectNewFile',
+    'onDismissError',
+  ]);
   return (
     <div class="space-y-6" data-testid="status-alerts">
       <OfflineBanner />
 
-      <Show when={!props.environmentSupported}>
+      <Show when={!local.environmentSupported}>
         <EnvironmentWarning />
       </Show>
 
-      <Show when={props.errorMessage}>
+      <Show when={local.errorMessage}>
         <Suspense
           fallback={<div class="h-32 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />}
         >
           <ErrorDisplay
-            message={props.errorMessage!}
-            suggestion={props.errorContext?.suggestion}
-            errorType={props.errorContext?.type}
-            onRetry={props.onRetry}
-            onSelectNewFile={props.onSelectNewFile}
-            onDismiss={props.onDismissError}
+            message={local.errorMessage!}
+            suggestion={local.errorContext?.suggestion}
+            errorType={local.errorContext?.type}
+            onRetry={local.onRetry}
+            onSelectNewFile={local.onSelectNewFile}
+            onDismiss={local.onDismissError}
           />
         </Suspense>
       </Show>

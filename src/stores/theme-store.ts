@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
+import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { createSignal } from 'solid-js';
 
@@ -15,7 +16,9 @@ const getInitialTheme = (): Theme => {
       return stored;
     }
   } catch (error) {
-    logger.warn('general', 'Failed to read theme from localStorage', { error });
+    logger.warn('general', 'Failed to read theme from localStorage', {
+      error: getErrorMessage(error),
+    });
   }
 
   try {
@@ -23,7 +26,9 @@ const getInitialTheme = (): Theme => {
       return 'dark';
     }
   } catch (error) {
-    logger.warn('general', 'Failed to detect system theme preference', { error });
+    logger.warn('general', 'Failed to detect system theme preference', {
+      error: getErrorMessage(error),
+    });
   }
 
   return 'light';

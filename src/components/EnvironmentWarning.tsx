@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
+import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
 import { createMemo, createSignal, onMount, Show } from 'solid-js';
@@ -20,7 +21,9 @@ const EnvironmentWarning: Component = () => {
         setIsExpanded(saved === 'true');
       }
     } catch (error) {
-      logger.warn('general', 'Failed to load environment warning state', { error });
+      logger.warn('general', 'Failed to load environment warning state', {
+        error: getErrorMessage(error),
+      });
     }
   });
 
@@ -28,7 +31,9 @@ const EnvironmentWarning: Component = () => {
     try {
       localStorage.setItem(STORAGE_KEY, String(nextValue));
     } catch (error) {
-      logger.warn('general', 'Failed to save environment warning state', { error });
+      logger.warn('general', 'Failed to save environment warning state', {
+        error: getErrorMessage(error),
+      });
     }
   };
 

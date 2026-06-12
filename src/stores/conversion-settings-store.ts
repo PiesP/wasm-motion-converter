@@ -3,6 +3,7 @@
 
 import type { ConversionSettings } from '@t/conversion-types';
 import { CONVERSION_FORMATS, CONVERSION_QUALITIES, CONVERSION_SCALES } from '@t/conversion-types';
+import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { createSignal } from 'solid-js';
 
@@ -51,7 +52,9 @@ const getInitialConversionSettings = (): ConversionSettings => {
       }
     }
   } catch (error) {
-    logger.warn('general', 'Failed to load conversion settings from localStorage', { error });
+    logger.warn('general', 'Failed to load conversion settings from localStorage', {
+      error: getErrorMessage(error),
+    });
   }
 
   return DEFAULT_CONVERSION_SETTINGS;
@@ -70,7 +73,9 @@ export const saveConversionSettings = (settings: ConversionSettings): void => {
       })
     );
   } catch (error) {
-    logger.warn('general', 'Failed to save conversion settings to localStorage', { error });
+    logger.warn('general', 'Failed to save conversion settings to localStorage', {
+      error: getErrorMessage(error),
+    });
   }
 };
 
