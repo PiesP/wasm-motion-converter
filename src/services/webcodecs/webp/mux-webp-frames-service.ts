@@ -191,5 +191,20 @@ export async function muxWebPFramesStreaming(params: {
     backgroundColor: WEBP_BACKGROUND_COLOR,
   });
 
+  if (skippedFrames > 0) {
+    logger.info('conversion', 'WebP muxing complete with dedup stats', {
+      inputFrames: frames.length,
+      outputFrames: anmfChunks.length,
+      skippedFrames: skippedFrames,
+      dedupRatio: `${((skippedFrames / totalFrames) * 100).toFixed(1)}%`,
+      outputSize: muxed.byteLength,
+    });
+  } else {
+    logger.info('conversion', 'WebP muxing complete', {
+      outputFrames: anmfChunks.length,
+      outputSize: muxed.byteLength,
+    });
+  }
+
   return { blob: new Blob([muxed], { type: 'image/webp' }), skippedFrames, totalFrames };
 }

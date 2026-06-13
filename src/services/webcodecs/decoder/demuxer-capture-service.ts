@@ -614,7 +614,7 @@ export async function captureWithDemuxer(
 
     if (skipFlush) {
       if (!hasEnoughFramesForFullResult && acceptPartialByTimeWindow) {
-        logger.warn('conversion', 'Accepting partial demuxer result (time window covered)', {
+        logger.info('conversion', 'Accepting partial demuxer result (time window covered)', {
           frameCount: frameIndex,
           totalFrames,
           requiredFrames: requiredFramesForSuccess,

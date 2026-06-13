@@ -19,7 +19,6 @@ const STATUS_UNSUPPORTED = 'Service Workers not supported; proceeding without ca
 const STATUS_NOT_REGISTERED = 'Service Worker not registered; skipping readiness wait';
 const STATUS_REGISTRATION_FAILED =
   'Failed to read Service Worker registration; skipping readiness wait';
-const STATUS_TIMEOUT = 'Timeout waiting for Service Worker';
 
 export interface SWReadinessState {
   isSupported: boolean;
@@ -83,9 +82,11 @@ export async function waitForSWReady(timeout = DEFAULT_WAIT_TIMEOUT_MS): Promise
 
   return new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
-      logger.warn('general', 'Service Worker readiness snapshot at timeout', checkSWReadiness());
-      logger.warn('general', STATUS_TIMEOUT, {
+      // SW not activating is normal (e.g., first visit, update pending).
+      // Log at debug level to avoid noise in production.
+      logger.debug('general', 'Service Worker readiness timeout — proceeding without SW', {
         timeoutMs: timeout,
+        readiness: checkSWReadiness(),
       });
       clearInterval(checkInterval);
       resolve(false);
