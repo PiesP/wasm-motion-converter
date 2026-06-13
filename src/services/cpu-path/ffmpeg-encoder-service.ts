@@ -642,7 +642,7 @@ export class FFmpegEncoder {
       .concat(inputArgs)
       .concat([
         '-vf',
-        `palettegen=max_colors=${qualitySettings.colors}:reserve_transparent=1:transparency_color=0x000000`,
+        `palettegen=max_colors=${qualitySettings.colors}:reserve_transparent=0`,
         '-update',
         '1',
         paletteFileName,
@@ -687,7 +687,7 @@ export class FFmpegEncoder {
         '-i',
         paletteFileName,
         '-filter_complex',
-        `paletteuse=dither=${ditherMode}:alpha_threshold=128`,
+        `paletteuse=dither=${ditherMode}`,
         outputFileName,
       ]);
 
