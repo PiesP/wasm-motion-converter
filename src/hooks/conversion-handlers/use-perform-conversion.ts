@@ -107,6 +107,8 @@ async function performConversion(
   try {
     setAppState('converting');
     setConversionStatusMessage('');
+    // Clear previous results to free DOM and blob URL memory
+    setConversionResults([]);
     const startTimeMs = performance.now();
     runtime.prepareForNewConversion(startTimeMs);
     setErrorContext(null);
