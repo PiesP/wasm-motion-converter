@@ -53,7 +53,7 @@ export async function captureWithDemuxer(
   onProgress?: WebCodecsProgressCallback,
   shouldCancel?: () => boolean,
   metadata?: VideoMetadata,
-  format: ConversionFormat = 'gif',
+  format: ConversionFormat = 'gif'
 ): Promise<WebCodecsDecodeResult | null> {
   const demuxer = await createDemuxer(file, metadata);
   if (!demuxer) {
@@ -233,7 +233,13 @@ export async function captureWithDemuxer(
     // GIF requires alpha channel to preserve transparency.
     // WebP uses alpha: false for opaque output (smaller files).
     const isGif = format === 'gif';
-    const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba', false, isGif);
+    const captureContext = createCanvas(
+      targetWidth,
+      targetHeight,
+      frameFormat === 'rgba',
+      false,
+      isGif
+    );
     const shouldUseJpeg =
       frameFormat !== 'rgba' &&
       frameFormat !== 'bitmap' &&

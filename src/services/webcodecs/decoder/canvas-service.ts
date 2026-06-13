@@ -76,7 +76,11 @@ export const createCanvas = (
  *
  * Supported in Chrome 80+, Firefox 113+, Safari 16.4+.
  */
-export const createDesynchronizedCanvas = (width: number, height: number, alpha: boolean = false): CaptureContext => {
+export const createDesynchronizedCanvas = (
+  width: number,
+  height: number,
+  alpha: boolean = false
+): CaptureContext => {
   return createCanvas(width, height, false, true, alpha);
 };
 
