@@ -22,11 +22,33 @@ export async function detectWasmSimd(): Promise<boolean> {
     // SIMD proposal: v128 type + i8x16.shuffle instruction
     // This is a minimal SIMD-enabled module (empty function with v128 param)
     const simdTest = new Uint8Array([
-      0x00, 0x61, 0x73, 0x6d, // magic "\0asm"
-      0x01, 0x00, 0x00, 0x00, // version 1
-      0x01, 0x05, 0x01, 0x60, 0x01, 0x7b, 0x00, // type section: (func (param v128))
-      0x03, 0x02, 0x01, 0x00, // func section: 1 func, type 0
-      0x0a, 0x07, 0x01, 0x05, 0x00, 0xfd, 0x0f, 0x0b, // code section: nop + i8x16.shuffle + end
+      0x00,
+      0x61,
+      0x73,
+      0x6d, // magic "\0asm"
+      0x01,
+      0x00,
+      0x00,
+      0x00, // version 1
+      0x01,
+      0x05,
+      0x01,
+      0x60,
+      0x01,
+      0x7b,
+      0x00, // type section: (func (param v128))
+      0x03,
+      0x02,
+      0x01,
+      0x00, // func section: 1 func, type 0
+      0x0a,
+      0x07,
+      0x01,
+      0x05,
+      0x00,
+      0xfd,
+      0x0f,
+      0x0b, // code section: nop + i8x16.shuffle + end
     ]);
     try {
       return WebAssembly.validate(simdTest);

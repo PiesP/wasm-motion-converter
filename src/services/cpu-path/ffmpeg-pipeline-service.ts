@@ -29,6 +29,7 @@ import type { FFmpegInputOverride } from '@services/cpu-path/ffmpeg-encoder-serv
 import { FFmpegEncoder } from '@services/cpu-path/ffmpeg-encoder-service';
 import { FFmpegMonitoring } from '@services/cpu-path/ffmpeg-monitoring-service';
 import { FFmpegVFS } from '@services/cpu-path/ffmpeg-vfs-service';
+import { revokeFFmpegBlobURLs } from '@services/ffmpeg/core-assets-service';
 import type {
   ConversionOptions,
   ConversionOutputBlob,
@@ -39,7 +40,6 @@ import { throwIfAborted } from '@utils/cancellation-context';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
-import { revokeFFmpegBlobURLs } from '@services/ffmpeg/core-assets-service';
 
 const WATCHDOG_STALL_MESSAGE =
   'FFmpeg crashed (WASM out-of-bounds). Resetting and retrying once...';

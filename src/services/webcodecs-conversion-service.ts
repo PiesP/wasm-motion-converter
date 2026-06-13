@@ -36,7 +36,12 @@ import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
-import { getAvailableMemory, trackDecodedFrame, releaseDecodedFrame, resetTrackedFrames } from '@utils/memory-monitor';
+import {
+  getAvailableMemory,
+  releaseDecodedFrame,
+  resetTrackedFrames,
+  trackDecodedFrame,
+} from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import { computeTrimDuration } from '@utils/video-math';
 import { proxyFn } from '@utils/worker-rpc';
