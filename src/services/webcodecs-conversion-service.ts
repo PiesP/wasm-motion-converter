@@ -117,8 +117,11 @@ export async function convert(
 
   const normalizedCodec = (metadata?.codec ?? 'unknown').toLowerCase();
   const useModernGif = format === 'gif' && isModernGifSupported();
+  // When modern-gif is available, skip FFmpeg palette path entirely.
+  // modern-gif uses its own palette optimization and is significantly faster.
   const shouldPreferFfmpegPalette =
     format === 'gif' &&
+    !useModernGif &&
     (options.gifEncoder === 'ffmpeg-palette' ||
       (options.gifEncoder === 'auto' &&
         (normalizedCodec === 'unknown' || isComplexCodec(normalizedCodec))));
