@@ -21,8 +21,43 @@ export const MAX_FILE_SIZE = 500 * 1024 * 1024;
 /**
  * Codecs requiring advanced hardware acceleration or special handling.
  * These codecs benefit significantly from GPU decoding via WebCodecs.
+ * Used by isComplexCodec() to determine if WebCodecs decode path is preferred.
  */
 export const COMPLEX_CODECS = ['hevc', 'h265', 'hvc1', 'hev1', 'vp9', 'vp09', 'av1', 'av01'];
+
+/**
+ * Codecs with reliable WebCodecs hardware decode support across modern browsers.
+ * These codecs can use the GPU path (WebCodecs decode) for better performance.
+ *
+ * 2026 browser support data:
+ * - H.264 (AVC): ~99% decode, ~95% encode — universal support
+ * - VP9: ~97% decode, ~90% encode — all major browsers
+ * - AV1: ~91.5% decode, ~88% encode — Chrome/Firefox/Safari 14+
+ * - HEVC: ~85% decode (hardware dependent) — Safari/Edge/Chrome (no Firefox)
+ *
+ * Source: webcodecsfundamentals.org codec-analysis-2026 (1M+ devices)
+ */
+export const WEBCODECS_NATIVE_CODECS = [
+  'h264', 'h.264', 'avc', 'avc1', 'avc3',
+  'vp8', 'vp08',
+  'vp9', 'vp09',
+  'av1', 'av01',
+  'hevc', 'h265', 'hvc1', 'hev1',
+];
+
+/**
+ * Codecs where FFmpeg WASM path is preferred over WebCodecs.
+ * These codecs have poor or inconsistent WebCodecs browser support.
+ */
+export const FFMPEG_PREFERRED_CODECS = [
+  'theora', 'vp6', 'vp7',
+  'mpeg4', 'mp4v',
+  'h263',
+  'prores',
+  'dnxhd',
+  'cinepak',
+  'sorenson',
+];
 
 // ============================================================================
 // SUPPORTED VIDEO FORMATS
