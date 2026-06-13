@@ -82,8 +82,7 @@ export interface EncoderWorkerAPI {
    */
   encode(
     frames: SerializableImageData | SerializableImageData[],
-    options: EncoderOptions,
-    onProgress?: WorkerProgressCallback
+    options: EncoderOptions
   ): Promise<Blob>;
 
   /**

@@ -3,7 +3,7 @@
 
 import type { ModernGifOptions } from '@services/modern-gif-service';
 import { encodeModernGif } from '@services/modern-gif-service';
-import type { SerializableImageData, WorkerProgressCallback } from '@t/worker-types';
+import type { SerializableImageData } from '@t/worker-types';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 
@@ -63,8 +63,7 @@ const api = {
    */
   async encode(
     frames: SerializableImageData | SerializableImageData[],
-    options: ModernGifOptions,
-    onProgress?: WorkerProgressCallback
+    options: ModernGifOptions
   ): Promise<Blob> {
     try {
       // Validate input
@@ -93,38 +92,25 @@ const api = {
       let lastForwardedAt = 0;
       let lastForwardedCurrent = -1;
 
-      // Worker RPC callbacks are typically async (Promise-returning), while modern-gif
-      // expects a sync callback. Provide a safe adapter that never throws and
-      // never produces unhandled promise rejections.
-      const safeOnProgress: ModernGifOptions['onProgress'] | undefined = onProgress
-        ? (current, total) => {
-            const now = performance.now();
-            const isTerminal = current >= total;
-            if (
-              current === lastForwardedCurrent ||
-              (!isTerminal && now - lastForwardedAt < ProgressThrottleMs)
-            ) {
-              return;
-            }
-
-            lastForwardedAt = now;
-            lastForwardedCurrent = current;
-
-            try {
-              const maybePromise = onProgress(current, total);
-              if (
-                maybePromise &&
-                typeof (maybePromise as unknown as { catch?: unknown }).catch === 'function'
-              ) {
-                void (maybePromise as Promise<void>).catch(() => {
-                  // Non-fatal: progress reporting should never crash encoding.
-                });
-              }
-            } catch {
-              // Non-fatal: progress reporting should never crash encoding.
-            }
-          }
-        : undefined;
+      // Report progress directly via self.postMessage.
+      // The main thread can optionally listen for these messages.
+      const reportProgress = (current: number, total: number) => {
+        const now = performance.now();
+        const isTerminal = current >= total;
+        if (
+          current === lastForwardedCurrent ||
+          (!isTerminal && now - lastForwardedAt < ProgressThrottleMs)
+        ) {
+          return;
+        }
+        lastForwardedAt = now;
+        lastForwardedCurrent = current;
+        try {
+          self.postMessage({ __gifProgress: true, current, total });
+        } catch {
+          // Non-fatal: progress reporting should never crash encoding.
+        }
+      };
 
       // Convert serializable frames to ImageData
       const imageDataFrames = frameArray.map((frame, index) => {
@@ -141,8 +127,7 @@ const api = {
 
       const result = await encodeModernGif(imageDataFrames, {
         ...options,
-        // Prefer the explicit worker progress callback (if provided).
-        onProgress: safeOnProgress,
+        onProgress: reportProgress,
       });
 
       logger.info('general', 'GIF encoding completed', {

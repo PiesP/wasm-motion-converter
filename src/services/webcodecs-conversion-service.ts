@@ -30,7 +30,7 @@ import type {
   VideoMetadata,
 } from '@t/conversion-types';
 import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from '@t/video-pipeline-types';
-import type { EncoderWorkerAPI, WorkerProgressCallback } from '@t/worker-types';
+import type { EncoderWorkerAPI } from '@t/worker-types';
 import { isComplexCodec } from '@utils/codec-utils';
 import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
@@ -44,7 +44,6 @@ import {
 } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import { computeTrimDuration } from '@utils/video-math';
-import { proxyFn } from '@utils/worker-rpc';
 import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
 import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
@@ -539,11 +538,9 @@ export async function convert(
             colorSpace: frame.colorSpace,
           }));
 
-          const progressProxy = reportEncodeProgress
-            ? (proxyFn((current: number, total: number) => {
-                reportEncodeProgress(current, total);
-              }) as unknown as WorkerProgressCallback)
-            : undefined;
+          // Note: onProgress callback is NOT passed to the worker.
+          // The worker sends __gifProgress messages directly via self.postMessage.
+          // Progress is reported through the fallback main-thread path only.
 
           try {
             const workerEncodeTimeoutMs = Math.min(
@@ -562,8 +559,7 @@ export async function convert(
                     quality,
                     timestamps: gifFrameTimestamps,
                     durationSeconds: decodeResult.duration,
-                  },
-                  progressProxy
+                  }
                 );
               },
               { signal: abortSignal, timeoutMs: workerEncodeTimeoutMs }
