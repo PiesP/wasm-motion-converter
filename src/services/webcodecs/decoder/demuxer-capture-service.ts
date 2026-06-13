@@ -4,7 +4,7 @@
 import { canvasToBlob, createCanvas } from '@services/webcodecs/decoder/canvas-service';
 import { formatFrameName } from '@services/webcodecs/decoder/capture-frame-service';
 import { createDemuxer } from '@services/webcodecs/demuxer/demuxer-factory-service';
-import type { VideoMetadata } from '@t/conversion-types';
+import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
 import type {
   WebCodecsDecodeResult,
   WebCodecsFrameFormat,
@@ -52,7 +52,8 @@ export async function captureWithDemuxer(
   onFrame: (frame: WebCodecsFramePayload) => Promise<void>,
   onProgress?: WebCodecsProgressCallback,
   shouldCancel?: () => boolean,
-  metadata?: VideoMetadata
+  metadata?: VideoMetadata,
+  format: ConversionFormat = 'gif',
 ): Promise<WebCodecsDecodeResult | null> {
   const demuxer = await createDemuxer(file, metadata);
   if (!demuxer) {
@@ -229,7 +230,10 @@ export async function captureWithDemuxer(
     };
 
     // 2. Create canvas for frame capture
-    const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba');
+    // GIF requires alpha channel to preserve transparency.
+    // WebP uses alpha: false for opaque output (smaller files).
+    const isGif = format === 'gif';
+    const captureContext = createCanvas(targetWidth, targetHeight, frameFormat === 'rgba', false, isGif);
     const shouldUseJpeg =
       frameFormat !== 'rgba' &&
       frameFormat !== 'bitmap' &&

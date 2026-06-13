@@ -634,7 +634,7 @@ export class FFmpegEncoder {
       frameFormat: frameFormatForLog,
     });
 
-    // Generate palette
+    // Generate palette with transparency support for GIF
     const paletteThreadArgs = getThreadingArgs('filter-complex');
     // Use concat instead of spread to prevent stack overflow
     const paletteCmd = ([] as string[])
@@ -642,7 +642,7 @@ export class FFmpegEncoder {
       .concat(inputArgs)
       .concat([
         '-vf',
-        `palettegen=max_colors=${qualitySettings.colors}`,
+        `palettegen=max_colors=${qualitySettings.colors}:reserve_transparent=1:transparency_color=0x000000`,
         '-update',
         '1',
         paletteFileName,
@@ -676,7 +676,7 @@ export class FFmpegEncoder {
       monitoring.stopProgressHeartbeat(paletteHeartbeat);
     }
 
-    // Convert frames to GIF using palette
+    // Convert frames to GIF using palette with transparency support
     const conversionThreadArgs = getThreadingArgs('filter-complex');
     const ditherMode = quality === 'high' ? 'floyd_steinberg' : 'bayer';
     // Use concat instead of spread to prevent stack overflow
@@ -687,7 +687,7 @@ export class FFmpegEncoder {
         '-i',
         paletteFileName,
         '-filter_complex',
-        `paletteuse=dither=${ditherMode}`,
+        `paletteuse=dither=${ditherMode}:alpha_threshold=128`,
         outputFileName,
       ]);
 

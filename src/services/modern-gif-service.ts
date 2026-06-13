@@ -248,6 +248,7 @@ export async function encodeModernGif(
       frames: gifFrames,
       maxColors,
       format: 'blob',
+      ditherTransparency: 'floyd-steinberg',
     });
 
     if (cancelledDuringEncode || shouldCancel?.()) {

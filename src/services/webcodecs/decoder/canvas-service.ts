@@ -18,14 +18,15 @@ export const createCanvas = (
   width: number,
   height: number,
   willReadFrequently: boolean = false,
-  desynchronized: boolean = false
+  desynchronized: boolean = false,
+  alpha: boolean = false
 ): CaptureContext => {
   // Prefer OffscreenCanvas when available.
   // In Chrome/Edge, OffscreenCanvas.convertToBlob() is typically faster and can reduce
   // main-thread blocking during PNG/JPEG encoding.
   if (typeof OffscreenCanvas !== 'undefined') {
     const canvas = new OffscreenCanvas(width, height);
-    const contextAttrs: CanvasRenderingContext2DSettings = { alpha: false };
+    const contextAttrs: CanvasRenderingContext2DSettings = { alpha };
 
     // desynchronized and willReadFrequently are incompatible — when
     // desynchronized is true, getImageData is unavailable, so we skip
@@ -53,7 +54,7 @@ export const createCanvas = (
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  const context = canvas.getContext('2d', { alpha: false, willReadFrequently });
+  const context = canvas.getContext('2d', { alpha, willReadFrequently });
   if (!context) {
     throw new Error('Canvas 2D context not available');
   }
@@ -75,8 +76,8 @@ export const createCanvas = (
  *
  * Supported in Chrome 80+, Firefox 113+, Safari 16.4+.
  */
-export const createDesynchronizedCanvas = (width: number, height: number): CaptureContext => {
-  return createCanvas(width, height, false, true);
+export const createDesynchronizedCanvas = (width: number, height: number, alpha: boolean = false): CaptureContext => {
+  return createCanvas(width, height, false, true, alpha);
 };
 
 /**
