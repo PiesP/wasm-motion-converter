@@ -14,6 +14,7 @@ import {
 import type { ConversionFormat, PathSelection, VideoMetadata } from '@t/conversion-types';
 import { throwIfAborted } from '@utils/cancellation-context';
 import { isAv1Codec, isHevcCodec, isSupportedFormat, isVp9Codec } from '@utils/codec-utils';
+import { isModernGifSupported } from '@services/modern-gif-service';
 
 type SimplePathPlanParams = {
   file: File;
@@ -35,6 +36,13 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
 
   const codec = metadata?.codec?.trim();
   if (!codec || codec === 'unknown') {
+    // For GIF with modern-gif support, still use GPU path even without codec info
+    if (format === 'gif' && isModernGifSupported()) {
+      return {
+        path: 'gpu',
+        reason: 'GIF with modern-gif: WebCodecs decode + modern-gif encode',
+      };
+    }
     return {
       path: 'cpu',
       reason: 'Codec metadata is unavailable, using FFmpeg CPU path',
@@ -61,22 +69,32 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
     };
   }
 
+  // Both WebP and GIF use WebCodecs decode path when codec is supported
   if (format === 'webp') {
     return {
       path: 'gpu',
-      reason: 'WebP uses WebCodecs when codec support is available',
+      reason: 'WebP uses WebCodecs decode → WebP muxer',
     };
   }
 
+  // GIF: prefer GPU path (WebCodecs decode → modern-gif or FFmpeg palette)
   if (shouldPreferGpuGif(codec)) {
     return {
       path: 'gpu',
-      reason: 'Complex GIF input uses WebCodecs decode before FFmpeg fallback',
+      reason: 'Complex GIF codec: WebCodecs decode → modern-gif encode',
+    };
+  }
+
+  // Simple codec GIF with WebCodecs support: use GPU path with modern-gif
+  if (isModernGifSupported()) {
+    return {
+      path: 'gpu',
+      reason: 'GIF with modern-gif: WebCodecs decode → modern-gif encode',
     };
   }
 
   return {
     path: 'cpu',
-    reason: 'GIF defaults to the FFmpeg CPU path',
+    reason: 'GIF defaults to FFmpeg CPU path',
   };
 }
