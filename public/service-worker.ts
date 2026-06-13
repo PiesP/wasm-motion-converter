@@ -62,26 +62,16 @@ const CDN_PROVIDERS: CDNProvider[] = [
     priority: 2,
     healthScore: 100,
   },
-  { name: 'unpkg', hostname: 'unpkg.com', priority: 3, healthScore: 100 },
 ];
 
 const CDN_DOMAINS = CDN_PROVIDERS.map((p) => p.hostname);
 
-interface CDNEntry {
-  url: string;
-  integrity: string;
-  size: number;
-}
-
 interface ManifestEntry {
-  'esm.sh': CDNEntry;
-  jsdelivr: CDNEntry;
-  unpkg: CDNEntry;
+  'esm.sh': string;
+  jsdelivr: string;
 }
 
 interface SRIManifest {
-  version: string;
-  generated: string;
   entries: Record<string, ManifestEntry>;
 }
 
@@ -144,16 +134,35 @@ function getExpectedIntegrity(url: string, manifest: SRIManifest): string | null
   let cdnProvider: keyof ManifestEntry | null = null;
   if (urlObj.hostname === 'esm.sh') cdnProvider = 'esm.sh';
   else if (urlObj.hostname === 'cdn.jsdelivr.net') cdnProvider = 'jsdelivr';
-  else if (urlObj.hostname === 'unpkg.com') cdnProvider = 'unpkg';
 
   if (!cdnProvider) {
     return null;
   }
 
-  for (const [_pkg, entry] of Object.entries(manifest.entries)) {
-    const cdnEntry = entry[cdnProvider];
-    if (cdnEntry && cdnEntry.url === url) {
-      return cdnEntry.integrity;
+  // Strategy 1: Package-name-based lookup via esm.sh URL parser
+  // Extract package name from URL and match against manifest entry keys.
+  // This handles runtime subpath URLs (e.g., esm.sh/pkg@ver/esnext/file.mjs)
+  // that differ from the top-level pre-cache URL.
+  const parsed = CDN_CONVERTERS.parseEsmSh(url);
+  if (parsed) {
+    const entry = manifest.entries[parsed.pkg];
+    if (entry) {
+      const hash = entry[cdnProvider] as string | undefined;
+      if (hash) {
+        return hash;
+      }
+    }
+  }
+
+  // Strategy 2: jsdelivr URL → match by package name in URL path
+  // For non-esm.sh URLs, try to find the package by scanning entry keys
+  for (const pkgKey of Object.keys(manifest.entries)) {
+    const entry = manifest.entries[pkgKey];
+    if (entry && (url.includes(`/${pkgKey}@`) || url.includes(`/${pkgKey}/`))) {
+      const hash = entry[cdnProvider] as string | undefined;
+      if (hash) {
+        return hash;
+      }
     }
   }
 
@@ -314,15 +323,8 @@ self.addEventListener('install', (event: ExtendableEvent) => {
 
       const cdnCache = await caches.open(CACHE_NAMES.cdn);
       try {
-        const manifest = await loadSRIManifest();
-
-        const sriUrls: string[] = manifest
-          ? Object.values(manifest.entries)
-              .map((entry) => entry['esm.sh']?.url)
-              .filter((url): url is string => typeof url === 'string' && url.length > 0)
-          : [];
-
-        const urls = Array.from(new Set([...DEMUXER_PRECACHE_URLS, ...sriUrls]));
+        // Pre-cache URLs from explicit lists (manifest entries don't contain URLs)
+        const urls = Array.from(new Set([...DEMUXER_PRECACHE_URLS, ...FFMPEG_PRECACHE_URLS]));
 
         await Promise.allSettled(
           urls.map(async (url) => {
@@ -434,11 +436,15 @@ const CDN_CONVERTERS = {
     const parsed = this.parseEsmSh(url);
     if (!parsed) return null;
 
-    if (parsed.isAsset) {
+    // jsdelivr doesn't support /+esm suffix on subpath URLs.
+    // For asset files (.wasm, .data, etc.), use the raw path.
+    // For module files without subpath, /+esm works.
+    // For module files with subpath, jsdelivr serves ESM natively without /+esm.
+    if (parsed.isAsset || parsed.path) {
       return `https://cdn.jsdelivr.net/npm/${parsed.pkg}@${parsed.version}${parsed.path}`;
     }
 
-    return `https://cdn.jsdelivr.net/npm/${parsed.pkg}@${parsed.version}${parsed.path}/+esm`;
+    return `https://cdn.jsdelivr.net/npm/${parsed.pkg}@${parsed.version}/+esm`;
   },
 
   esmToUnpkg(url: string): string | null {

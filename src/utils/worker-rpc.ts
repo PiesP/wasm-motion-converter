@@ -126,7 +126,7 @@ export function wrap<T extends object>(worker: Worker): T {
 
   worker.addEventListener('message', (event: MessageEvent) => {
     const msg = event.data as RpcMessage | null;
-    if (!msg || !msg.__rpc) return;
+    if (!msg?.__rpc) return;
     if (msg.kind === 'call' || msg.kind === 'release') return;
 
     const entry = pending.get(msg.id);
@@ -171,7 +171,7 @@ function ensureProxyListener(): void {
 
   self.addEventListener('message', (event: MessageEvent) => {
     const msg = event.data as RpcMessage | null;
-    if (!msg || !msg.__rpc) return;
+    if (!msg?.__rpc) return;
 
     // Response to one of our proxy calls
     if (msg.kind === 'response' || msg.kind === 'error') {
