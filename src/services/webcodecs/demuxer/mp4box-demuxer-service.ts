@@ -419,7 +419,10 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @returns VideoDecoderConfig with codec, dimensions, and optional description
    * @internal Private method, use initialize() instead
    */
-  private extractDecoderConfig(track: Mp4BoxTrack, fileBytes?: ArrayBuffer): DemuxerVideoDecoderConfig {
+  private extractDecoderConfig(
+    track: Mp4BoxTrack,
+    fileBytes?: ArrayBuffer
+  ): DemuxerVideoDecoderConfig {
     const codec = this.buildCodecString(track);
     const description = this.extractCodecDescription(track, fileBytes);
 

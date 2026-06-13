@@ -97,11 +97,12 @@ export class WebMDemuxer implements DemuxerAdapter {
         codec: config.codec,
         codedWidth: config.codedWidth,
         codedHeight: config.codedHeight,
-        description: config.description instanceof ArrayBuffer
-          ? config.description
-          : config.description instanceof Uint8Array
+        description:
+          config.description instanceof ArrayBuffer
             ? config.description
-            : undefined,
+            : config.description instanceof Uint8Array
+              ? config.description
+              : undefined,
       };
     } catch (error) {
       logger.error('demuxer', 'Failed to initialize WebMDemuxer', {
