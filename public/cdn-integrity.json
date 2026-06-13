@@ -63,11 +63,17 @@
     "https://cdn.jsdelivr.net/npm/mp4box@0.5.2/+esm": {
       "jsdelivr": "sha384-usVTfowp0OTkQDQgsh8JKMCyVLJj4173PGzv37VZqqJEQLT0GpPGJLFymcMN+Qxx"
     },
+    "https://esm.sh/mp4box@0.5.2/esnext/mp4box.mjs": {
+      "esm.sh": "sha384-1ZjyRl+RQB9dLbXg8rxxe/OxZJ82EPGAMALa6AcwhFu3xUXD/XLt1iWXLwaEOZ1u"
+    },
     "https://esm.sh/web-demuxer@4.0.0?target=esnext": {
       "esm.sh": "sha384-tU5DtY16Gu7lLHE1G44MoGggMPWBqDVqB3DW34eBtsOKmYKKF5zFXjcQmR4Un9Lc"
     },
     "https://cdn.jsdelivr.net/npm/web-demuxer@4.0.0/+esm": {
       "jsdelivr": "sha384-Sk1+2Tk27gjXf5FnyO6nztdXQ+yWdghhZG7LjIM8Prbtxjf0XWGbSkWFB9ItzZu1"
+    },
+    "https://esm.sh/web-demuxer@4.0.0/esnext/web-demuxer.mjs": {
+      "esm.sh": "sha384-4GMVg2O14B1E9Zc1ADiz9vuz9N6zYEvJ7lyBA07iBZuga8EDPbglsUm3nW/bjl/P"
     }
   }
 }

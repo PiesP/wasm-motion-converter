@@ -620,6 +620,13 @@ function sriGenerationPlugin(): Plugin {
           }
         }
 
+        // esm.sh redirects ?target=esnext to /esnext/{pkg}.mjs for non-solid-js packages.
+        // Register the post-redirect URL so SRI verification succeeds at runtime.
+        if (pkg === 'mp4box' || pkg === 'web-demuxer') {
+          const esmShEntry = `https://esm.sh/${pkg}@${version}/esnext/${pkg}.mjs`;
+          extraUrls.push({ url: esmShEntry, provider: 'esm.sh' });
+        }
+
         for (const subpath of subpaths) {
           const providers = Object.keys(CDN_SOURCES) as CdnKey[];
 
