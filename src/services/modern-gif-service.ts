@@ -222,6 +222,7 @@ export async function encodeModernGif(
     return {
       data: imageData.data,
       delay: delays[index] ?? baseDelayMs,
+      disposal: 2 as const,
     };
   });
 
@@ -248,7 +249,6 @@ export async function encodeModernGif(
       frames: gifFrames,
       maxColors,
       format: 'blob',
-      ditherTransparency: 'floyd-steinberg',
     });
 
     if (cancelledDuringEncode || shouldCancel?.()) {
