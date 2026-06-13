@@ -550,17 +550,14 @@ export async function convert(
 
             outputBlob = await pool.execute(
               async (worker) => {
-                return worker.encode(
-                  serializableFrames,
-                  {
-                    width: decodeResult.width,
-                    height: decodeResult.height,
-                    fps: targetFps,
-                    quality,
-                    timestamps: gifFrameTimestamps,
-                    durationSeconds: decodeResult.duration,
-                  }
-                );
+                return worker.encode(serializableFrames, {
+                  width: decodeResult.width,
+                  height: decodeResult.height,
+                  fps: targetFps,
+                  quality,
+                  timestamps: gifFrameTimestamps,
+                  durationSeconds: decodeResult.duration,
+                });
               },
               { signal: abortSignal, timeoutMs: workerEncodeTimeoutMs }
             );
