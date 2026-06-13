@@ -353,6 +353,9 @@ export class FFmpegMonitoring {
       }
 
       this.updateProgress(monotonicProgress, true);
+      // Also reset log silence detection: heartbeat means the operation is still progressing
+      // even if FFmpeg hasn't emitted any log lines (e.g. palettegen single-pass filter).
+      this.updateLogActivity();
     }, FFMPEG_INTERNALS.HEARTBEAT_INTERVAL_MS);
 
     // Track the interval for cleanup
