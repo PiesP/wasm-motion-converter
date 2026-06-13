@@ -573,18 +573,23 @@ const CDN_SOURCES = {
 
 type CdnKey = keyof typeof CDN_SOURCES;
 
-async function fetchIntegrity(url: string, timeout = 30_000): Promise<string | null> {
+async function fetchIntegrity(
+  url: string,
+  timeout = 30_000
+): Promise<{ url: string; hash: string } | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
   try {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': 'SRI-Generator/1.0.0' },
+      // Follow redirects to get the final URL
+      redirect: 'follow',
     });
     if (!response.ok) return null;
     const buffer = await response.arrayBuffer();
     const hash = createHash('sha384').update(Buffer.from(buffer)).digest('base64');
-    return `sha384-${hash}`;
+    return { url: response.url, hash: `sha384-${hash}` };
   } catch {
     return null;
   } finally {
@@ -598,25 +603,26 @@ function sriGenerationPlugin(): Plugin {
     apply: 'build',
     async buildStart() {
       const deps = readRuntimeDependencies();
+
+      // URL-based integrity map: { [finalUrl]: { [cdn]: hash } }
+      // Using final URL (after redirect) as key for exact matching in SW
       const entries: Record<string, Record<string, string>> = {};
 
       for (const [pkg, version] of Object.entries(deps)) {
         const subpaths = pkg === 'solid-js' ? SOLID_JS_SUBPATHS : [''];
         for (const subpath of subpaths) {
-          const key = subpath ? `${pkg}${subpath}` : pkg;
-          const entry: Record<string, string> = {};
           const providers = Object.keys(CDN_SOURCES) as CdnKey[];
 
           for (const provider of providers) {
             const url = CDN_SOURCES[provider](pkg, version, subpath);
-            const integrity = await fetchIntegrity(url);
-            if (integrity) {
-              entry[provider] = integrity;
+            const result = await fetchIntegrity(url);
+            if (result) {
+              // Use final URL (after redirect) as key
+              if (!entries[result.url]) {
+                entries[result.url] = {};
+              }
+              entries[result.url]![provider] = result.hash;
             }
-          }
-
-          if (entry['esm.sh']) {
-            entries[key] = entry;
           }
         }
       }

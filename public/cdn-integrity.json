@@ -1,43 +1,63 @@
 {
   "entries": {
-    "@ffmpeg/ffmpeg": {
-      "esm.sh": "sha384-cFlJq7Bjrsofh2tNxZ6VAkw/eTeVkR1shsqCXrSeeNy7YZLE+DkDlFsPrwC67jXp",
+    "https://esm.sh/@ffmpeg/ffmpeg@0.12.15?target=esnext": {
+      "esm.sh": "sha384-cFlJq7Bjrsofh2tNxZ6VAkw/eTeVkR1shsqCXrSeeNy7YZLE+DkDlFsPrwC67jXp"
+    },
+    "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm": {
       "jsdelivr": "sha384-t9ezkbzwJrFIIhQVxXgU9kDQDFOhmmDcloJB8Qu6P6tHccWy6qTXLplWAlht5a/1"
     },
-    "@ffmpeg/util": {
-      "esm.sh": "sha384-7Op+HYTiMSDUH6wZEwv+T8U7RZKiyO3mVo1Wx0XFSB8zM+CG+4jR39aDnJS8Velb",
+    "https://esm.sh/@ffmpeg/util@0.12.2?target=esnext": {
+      "esm.sh": "sha384-7Op+HYTiMSDUH6wZEwv+T8U7RZKiyO3mVo1Wx0XFSB8zM+CG+4jR39aDnJS8Velb"
+    },
+    "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/+esm": {
       "jsdelivr": "sha384-eXElrPbYJXxhUpBNnhEZKuel4U5lZXYtx/1lFr5BICq9Xca+6BRvl6r1qQ02ZSSh"
     },
-    "solid-js": {
-      "esm.sh": "sha384-/K1chA0r9DEbfexR+wceqaDiiguYNj9nMVuE4eiBTFkJkEA1FFXviQGIrZtorTOC",
+    "https://esm.sh/solid-js@1.9.13?target=esnext": {
+      "esm.sh": "sha384-/K1chA0r9DEbfexR+wceqaDiiguYNj9nMVuE4eiBTFkJkEA1FFXviQGIrZtorTOC"
+    },
+    "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/+esm": {
       "jsdelivr": "sha384-w6HY4S0KH1eTyjKkIzLJMQRAWqNLO6eRwcSOKHo+rr3WPDT6+LVvkU9Ubfl8tSji"
     },
-    "solid-js/web": {
-      "esm.sh": "sha384-bcpJMTpZcvXPQrB+Uk5jkot9lcMFOlpFK2si3IAeLIa1BPI6RCG6rYXk3A10lg0R",
+    "https://esm.sh/solid-js@1.9.13/web?target=esnext": {
+      "esm.sh": "sha384-bcpJMTpZcvXPQrB+Uk5jkot9lcMFOlpFK2si3IAeLIa1BPI6RCG6rYXk3A10lg0R"
+    },
+    "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/web/+esm": {
       "jsdelivr": "sha384-C0knFNQdLtI/wL9I+NO2DPm4zHDnmQC/AWUxuvkphMbGPfUutdwnhO5iBFuIJBBn"
     },
-    "solid-js/store": {
-      "esm.sh": "sha384-nXoRXJXRBpGyXksSBzu7juMaYPeLAdKfkwUwCKCQDHUrnzyIbtXT1TOzCWJsJtTt",
+    "https://esm.sh/solid-js@1.9.13/store?target=esnext": {
+      "esm.sh": "sha384-nXoRXJXRBpGyXksSBzu7juMaYPeLAdKfkwUwCKCQDHUrnzyIbtXT1TOzCWJsJtTt"
+    },
+    "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/store/+esm": {
       "jsdelivr": "sha384-1VV6IcUhObJlIwpwNOAVU6+5gCnzAzL2Ol8p5JxBpJXn+9kzfFUhx5kmq3Ebgb8W"
     },
-    "solid-js/h": {
-      "esm.sh": "sha384-bUDNic6aEyfdzJHYdyV9Grnh3jISWQ+LVW57fNPmDMKyEjoxGgOz0Ha+SHreW/Dg",
+    "https://esm.sh/solid-js@1.9.13/h?target=esnext": {
+      "esm.sh": "sha384-bUDNic6aEyfdzJHYdyV9Grnh3jISWQ+LVW57fNPmDMKyEjoxGgOz0Ha+SHreW/Dg"
+    },
+    "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/h/+esm": {
       "jsdelivr": "sha384-tvrrwqmeRlByHUmLZ3x5T3RhJkkkMNIS174aZ9ahtagUrotsfnCkdZrghNXHYLHF"
     },
-    "solid-js/html": {
-      "esm.sh": "sha384-Ib6rX7zlN97Y7DEwg5S7hRVfByqzj0Su744OYuCrLafk0yvD7jhAhkN/5jeW99Bj",
+    "https://esm.sh/solid-js@1.9.13/html?target=esnext": {
+      "esm.sh": "sha384-Ib6rX7zlN97Y7DEwg5S7hRVfByqzj0Su744OYuCrLafk0yvD7jhAhkN/5jeW99Bj"
+    },
+    "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/html/+esm": {
       "jsdelivr": "sha384-EUJksZDvu+YS8SfLD69zkdWqKDfAFIGhfD3rrSIFy0lLqzlUcTpCatiyk4Y1sMfl"
     },
-    "@ffmpeg/core-mt": {
-      "esm.sh": "sha384-MI+v8oVLxDwRa/jf5wiyuDi8QBjdRx2uW8/H4gxxIvitd5kshfzgFMjoZV1Enmrx",
+    "https://esm.sh/@ffmpeg/core-mt@0.12.10?target=esnext": {
+      "esm.sh": "sha384-MI+v8oVLxDwRa/jf5wiyuDi8QBjdRx2uW8/H4gxxIvitd5kshfzgFMjoZV1Enmrx"
+    },
+    "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/+esm": {
       "jsdelivr": "sha384-tw+fRTcThTMz0DLp+w5tuOW4OYXvkza8O3wlxV1k487DUV0eEi2jCN7uYIx6XDgb"
     },
-    "mp4box": {
-      "esm.sh": "sha384-iPyIT3QWtys6xuC14F9a6hUfA04JE5PKM9tjtUSYc7DWc3Jv1OZIDBgXYtpuezqa",
+    "https://esm.sh/mp4box@0.5.2?target=esnext": {
+      "esm.sh": "sha384-iPyIT3QWtys6xuC14F9a6hUfA04JE5PKM9tjtUSYc7DWc3Jv1OZIDBgXYtpuezqa"
+    },
+    "https://cdn.jsdelivr.net/npm/mp4box@0.5.2/+esm": {
       "jsdelivr": "sha384-usVTfowp0OTkQDQgsh8JKMCyVLJj4173PGzv37VZqqJEQLT0GpPGJLFymcMN+Qxx"
     },
-    "web-demuxer": {
-      "esm.sh": "sha384-tU5DtY16Gu7lLHE1G44MoGggMPWBqDVqB3DW34eBtsOKmYKKF5zFXjcQmR4Un9Lc",
+    "https://esm.sh/web-demuxer@4.0.0?target=esnext": {
+      "esm.sh": "sha384-tU5DtY16Gu7lLHE1G44MoGggMPWBqDVqB3DW34eBtsOKmYKKF5zFXjcQmR4Un9Lc"
+    },
+    "https://cdn.jsdelivr.net/npm/web-demuxer@4.0.0/+esm": {
       "jsdelivr": "sha384-Sk1+2Tk27gjXf5FnyO6nztdXQ+yWdghhZG7LjIM8Prbtxjf0XWGbSkWFB9ItzZu1"
     }
   }

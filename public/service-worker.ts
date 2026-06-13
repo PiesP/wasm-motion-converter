@@ -129,40 +129,23 @@ async function verifyIntegrity(response: Response, expectedIntegrity: string): P
 }
 
 function getExpectedIntegrity(url: string, manifest: SRIManifest): string | null {
-  const urlObj = new URL(url);
+  // Direct URL lookup — manifest keys are final URLs (after redirect)
+  const entry = manifest.entries[url];
+  if (entry) {
+    // Try to determine CDN provider from URL
+    const urlObj = new URL(url);
+    let cdnKey: keyof ManifestEntry | null = null;
+    if (urlObj.hostname === 'esm.sh') cdnKey = 'esm.sh';
+    else if (urlObj.hostname === 'cdn.jsdelivr.net') cdnKey = 'jsdelivr';
 
-  let cdnProvider: keyof ManifestEntry | null = null;
-  if (urlObj.hostname === 'esm.sh') cdnProvider = 'esm.sh';
-  else if (urlObj.hostname === 'cdn.jsdelivr.net') cdnProvider = 'jsdelivr';
-
-  if (!cdnProvider) {
-    return null;
-  }
-
-  // Strategy 1: Package-name-based lookup via esm.sh URL parser
-  // Extract package name from URL and match against manifest entry keys.
-  // This handles runtime subpath URLs (e.g., esm.sh/pkg@ver/esnext/file.mjs)
-  // that differ from the top-level pre-cache URL.
-  const parsed = CDN_CONVERTERS.parseEsmSh(url);
-  if (parsed) {
-    const entry = manifest.entries[parsed.pkg];
-    if (entry) {
-      const hash = entry[cdnProvider] as string | undefined;
-      if (hash) {
-        return hash;
-      }
+    if (cdnKey && entry[cdnKey]) {
+      return entry[cdnKey];
     }
-  }
 
-  // Strategy 2: jsdelivr URL → match by package name in URL path
-  // For non-esm.sh URLs, try to find the package by scanning entry keys
-  for (const pkgKey of Object.keys(manifest.entries)) {
-    const entry = manifest.entries[pkgKey];
-    if (entry && (url.includes(`/${pkgKey}@`) || url.includes(`/${pkgKey}/`))) {
-      const hash = entry[cdnProvider] as string | undefined;
-      if (hash) {
-        return hash;
-      }
+    // Fallback: return any available hash
+    const hashes = Object.values(entry);
+    if (hashes.length > 0 && typeof hashes[0] === 'string') {
+      return hashes[0];
     }
   }
 

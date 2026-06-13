@@ -55,7 +55,7 @@ export type RpcMessage = RpcCall | RpcResponse | RpcError | RpcRelease;
 export function expose(api: Record<string, unknown>): void {
   self.addEventListener('message', (event: MessageEvent) => {
     const msg = event.data as RpcMessage | null;
-    if (!msg || !msg.__rpc || msg.kind !== 'call') return;
+    if (!msg?.__rpc || msg.kind !== 'call') return;
 
     const handler = api[msg.method];
     if (typeof handler !== 'function') {
