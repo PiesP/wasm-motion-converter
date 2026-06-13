@@ -7,6 +7,7 @@
  * Selects the conversion path (GPU/WebCodecs vs CPU/FFmpeg codec availability and browser capabilities.
  */
 
+import { isModernGifSupported } from '@services/modern-gif-service';
 import {
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
@@ -15,13 +16,12 @@ import type { ConversionFormat, PathSelection, VideoMetadata } from '@t/conversi
 import { throwIfAborted } from '@utils/cancellation-context';
 import {
   isAv1Codec,
+  isFFmpegPreferredCodec,
   isHevcCodec,
   isSupportedFormat,
   isVp9Codec,
   isWebCodecsNativeCodec,
-  isFFmpegPreferredCodec,
 } from '@utils/codec-utils';
-import { isModernGifSupported } from '@services/modern-gif-service';
 
 type SimplePathPlanParams = {
   file: File;

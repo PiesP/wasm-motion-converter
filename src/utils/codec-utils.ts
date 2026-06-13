@@ -9,7 +9,7 @@
 
 import type { ConversionFormat } from '@t/conversion-types';
 import { CONVERSION_FORMATS } from '@t/conversion-types';
-import { COMPLEX_CODECS, WEBCODECS_NATIVE_CODECS, FFMPEG_PREFERRED_CODECS } from '@utils/constants';
+import { COMPLEX_CODECS, FFMPEG_PREFERRED_CODECS, WEBCODECS_NATIVE_CODECS } from '@utils/constants';
 
 export function normalizeCodecString(codec: string | undefined): string {
   return (codec ?? '').trim().toLowerCase();
@@ -163,7 +163,10 @@ export function isFFmpegPreferredCodec(codec: string | undefined): boolean {
  * @param format - Output format (gif or webp)
  * @returns Recommended path: 'gpu' | 'cpu' | 'auto'
  */
-export function getOptimalPath(codec: string | undefined, _format?: ConversionFormat): 'gpu' | 'cpu' | 'auto' {
+export function getOptimalPath(
+  codec: string | undefined,
+  _format?: ConversionFormat
+): 'gpu' | 'cpu' | 'auto' {
   if (!codec || codec === 'unknown') {
     return 'auto';
   }

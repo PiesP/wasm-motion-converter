@@ -38,11 +38,21 @@ export const COMPLEX_CODECS = ['hevc', 'h265', 'hvc1', 'hev1', 'vp9', 'vp09', 'a
  * Source: webcodecsfundamentals.org codec-analysis-2026 (1M+ devices)
  */
 export const WEBCODECS_NATIVE_CODECS = [
-  'h264', 'h.264', 'avc', 'avc1', 'avc3',
-  'vp8', 'vp08',
-  'vp9', 'vp09',
-  'av1', 'av01',
-  'hevc', 'h265', 'hvc1', 'hev1',
+  'h264',
+  'h.264',
+  'avc',
+  'avc1',
+  'avc3',
+  'vp8',
+  'vp08',
+  'vp9',
+  'vp09',
+  'av1',
+  'av01',
+  'hevc',
+  'h265',
+  'hvc1',
+  'hev1',
 ];
 
 /**
@@ -50,8 +60,11 @@ export const WEBCODECS_NATIVE_CODECS = [
  * These codecs have poor or inconsistent WebCodecs browser support.
  */
 export const FFMPEG_PREFERRED_CODECS = [
-  'theora', 'vp6', 'vp7',
-  'mpeg4', 'mp4v',
+  'theora',
+  'vp6',
+  'vp7',
+  'mpeg4',
+  'mp4v',
   'h263',
   'prores',
   'dnxhd',
