@@ -306,13 +306,14 @@ self.addEventListener('install', (event: ExtendableEvent) => {
 
       const cdnCache = await caches.open(CACHE_NAMES.cdn);
       try {
-        // Pre-cache URLs from explicit lists (manifest entries don't contain URLs)
+        // Pre-cache URLs from explicit lists
         const urls = Array.from(new Set([...DEMUXER_PRECACHE_URLS, ...FFMPEG_PRECACHE_URLS]));
+        const manifest = await loadSRIManifest();
 
         await Promise.allSettled(
           urls.map(async (url) => {
             try {
-              const response = await fetchWithCascade(url, 15000, false);
+              const response = await fetchWithCascade(url, 15000, false, manifest);
               if (!response.ok) {
                 return;
               }
@@ -694,7 +695,8 @@ async function fetchWithRacing(
 async function fetchWithCascade(
   originalUrl: string,
   baseTimeout = 15000,
-  useRacing?: boolean
+  useRacing?: boolean,
+  manifest?: SRIManifest | null
 ): Promise<Response> {
   const errors: Array<{ cdn: string; error: string }> = [];
 
@@ -708,7 +710,8 @@ async function fetchWithCascade(
       `(connection: ${connectionType}, timeout: ${adaptiveTimeout}ms)`
   );
 
-  const manifest = await loadSRIManifest();
+  const sriManifest: SRIManifest | null =
+    manifest !== undefined && manifest !== null ? manifest : await loadSRIManifest();
 
   const orderedProviders = getOrderedProviders();
 
@@ -718,7 +721,7 @@ async function fetchWithCascade(
       originalUrl,
       orderedProviders,
       adaptiveTimeout,
-      manifest
+      sriManifest
     );
 
     if (racingResponse) {
@@ -731,11 +734,10 @@ async function fetchWithCascade(
   for (const provider of orderedProviders) {
     const url = convertToCDN(originalUrl, provider.name);
     if (!url) {
-      console.warn(`[SW ${SW_VERSION}] Cannot convert to ${provider.name}, skipping`);
       continue;
     }
 
-    const response = await tryFetchFromCDN(url, provider, adaptiveTimeout, manifest);
+    const response = await tryFetchFromCDN(url, provider, adaptiveTimeout, sriManifest);
     if (response) {
       return response; // Success!
     }

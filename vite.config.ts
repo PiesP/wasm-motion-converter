@@ -610,6 +610,16 @@ function sriGenerationPlugin(): Plugin {
 
       for (const [pkg, version] of Object.entries(deps)) {
         const subpaths = pkg === 'solid-js' ? SOLID_JS_SUBPATHS : [''];
+
+        // @ffmpeg/core-mt has individual files under dist/esm/
+        const extraUrls: Array<{ url: string; provider: string }> = [];
+        if (pkg === '@ffmpeg/core-mt') {
+          const jsdelivrBase = `https://cdn.jsdelivr.net/npm/${pkg}@${version}/dist/esm`;
+          for (const file of ['ffmpeg-core.js', 'ffmpeg-core.wasm', 'ffmpeg-core.worker.js']) {
+            extraUrls.push({ url: `${jsdelivrBase}/${file}`, provider: 'jsdelivr' });
+          }
+        }
+
         for (const subpath of subpaths) {
           const providers = Object.keys(CDN_SOURCES) as CdnKey[];
 
@@ -623,6 +633,17 @@ function sriGenerationPlugin(): Plugin {
               }
               entries[result.url]![provider] = result.hash;
             }
+          }
+        }
+
+        // Fetch extra URLs (jsdelivr individual files for @ffmpeg/core-mt)
+        for (const { url, provider } of extraUrls) {
+          const result = await fetchIntegrity(url);
+          if (result) {
+            if (!entries[result.url]) {
+              entries[result.url] = {};
+            }
+            entries[result.url]![provider] = result.hash;
           }
         }
       }
