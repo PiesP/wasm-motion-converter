@@ -19,7 +19,16 @@ logs/
 *.log
 tmp/
 temp/
+# Video files (test assets, large binaries)
 *.mp4
+*.webm
+*.avi
+*.mov
+*.mkv
+*.ogv
+*.webp
+*.gif
+!public/test-video.mp4
 
 # Environment
 .env
