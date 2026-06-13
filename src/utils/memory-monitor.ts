@@ -28,6 +28,48 @@ interface MemoryInfo {
 // Thresholds for memory warning levels
 const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
 
+// Tracked decoded frame memory (bytes) — updated by WebCodecs decoder
+let trackedDecodedFrameBytes = 0;
+
+/**
+ * Track decoded frame memory for accurate memory pressure estimation.
+ * Called by WebCodecs decoder when a frame is decoded.
+ *
+ * @param bytes - Frame memory size in bytes (width × height × 4 for RGBA)
+ */
+export function trackDecodedFrame(bytes: number): void {
+  if (bytes > 0) {
+    trackedDecodedFrameBytes += bytes;
+  }
+}
+
+/**
+ * Release tracked decoded frame memory.
+ * Called by WebCodecs decoder when a frame is closed/released.
+ *
+ * @param bytes - Frame memory size in bytes to release
+ */
+export function releaseDecodedFrame(bytes: number): void {
+  trackedDecodedFrameBytes = Math.max(0, trackedDecodedFrameBytes - bytes);
+}
+
+/**
+ * Reset all tracked decoded frame memory.
+ * Called when conversion is cancelled or completed.
+ */
+export function resetTrackedFrames(): void {
+  trackedDecodedFrameBytes = 0;
+}
+
+/**
+ * Get current tracked decoded frame memory.
+ *
+ * @returns Tracked frame memory in bytes
+ */
+export function getTrackedFrameBytes(): number {
+  return trackedDecodedFrameBytes;
+}
+
 /**
  * Get current memory usage information.
  *
@@ -57,7 +99,7 @@ function getMemoryInfo(): MemoryInfo | null {
       jsHeapSizeLimit,
       usagePercentage,
       deviceMemoryGB: typeof deviceMemoryGB === 'number' ? deviceMemoryGB : undefined,
-      decodedFrameBytes: 0,
+      decodedFrameBytes: trackedDecodedFrameBytes,
     };
   }
 
@@ -75,7 +117,7 @@ function getMemoryInfo(): MemoryInfo | null {
       jsHeapSizeLimit,
       usagePercentage,
       deviceMemoryGB,
-      decodedFrameBytes: 0,
+      decodedFrameBytes: trackedDecodedFrameBytes,
     };
   }
 

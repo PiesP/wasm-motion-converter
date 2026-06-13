@@ -410,7 +410,7 @@ export class FFmpegVFS {
    *
    * @param ffmpeg - FFmpeg instance
    */
-  async cleanupTempFiles(ffmpeg: FFmpeg | null): Promise<void> {
+  async cleanupTempFiles(ffmpeg: FFmpeg | null, extraFiles: string[] = []): Promise<void> {
     if (!ffmpeg) {
       return;
     }
@@ -421,21 +421,13 @@ export class FFmpegVFS {
       OUTPUT_GIF_NAME, // GIF output
       OUTPUT_WEBP_NAME, // WebP output
       FFMPEG_INTERNALS.AV1_TRANSCODE.TEMP_H264_FILE, // H.264 intermediate
+      ...extraFiles,
     ];
 
-    logger.debug('conversion', 'Cleaning up temp files', { files: tempFiles });
+    logger.debug('conversion', 'Cleaning up temp files', { fileCount: tempFiles.length });
 
-    // Attempt to delete each temp file, ignoring errors
-    for (const file of tempFiles) {
-      try {
-        await this.deleteFile(ffmpeg, file);
-      } catch (error) {
-        // Ignore errors during cleanup - file may not exist
-        logger.debug('conversion', `Failed to delete temp file: ${file}`, {
-          error,
-        });
-      }
-    }
+    // Use parallel batch deletion for consistent performance
+    await this.deleteFiles(ffmpeg, tempFiles);
   }
 
   /**

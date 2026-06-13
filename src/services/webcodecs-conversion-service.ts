@@ -36,7 +36,7 @@ import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
-import { getAvailableMemory } from '@utils/memory-monitor';
+import { getAvailableMemory, trackDecodedFrame, releaseDecodedFrame, resetTrackedFrames } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import { computeTrimDuration } from '@utils/video-math';
 import { proxyFn } from '@utils/worker-rpc';
@@ -54,6 +54,8 @@ function getWorkerPool(): Promise<WorkerPool<EncoderWorkerAPI> | null> {
   if (typeof window === 'undefined') {
     return Promise.resolve(null);
   }
+  // Initialize visibility-based cleanup on first pool access
+  initVisibilityCleanup();
   if (gifWorkerPool) {
     return Promise.resolve(gifWorkerPool);
   }
@@ -152,6 +154,7 @@ export async function convert(
     for (const frame of webpCapturedFrames) {
       if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
         try {
+          releaseDecodedFrame(frame.width * frame.height * 4);
           frame.close();
         } catch {
           /* ignore */
@@ -159,6 +162,7 @@ export async function convert(
       }
       if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
         try {
+          releaseDecodedFrame(frame.displayWidth * frame.displayHeight * 4);
           frame.close();
         } catch {
           /* ignore */
@@ -223,6 +227,10 @@ export async function convert(
           shouldCancel,
           throwIfCancelled,
           resetCaptureCollections: () => {
+            // Release tracked GIF frame memory
+            for (const frame of capturedFrames) {
+              releaseDecodedFrame(frame.width * frame.height * 4);
+            }
             capturedFrames.length = 0;
             gifFrameTimestamps.length = 0;
             releaseWebPFrames();
@@ -357,6 +365,12 @@ export async function convert(
               }
               webpCapturedFrames.push(encoderFrame);
               webpFrameTimestamps.push(frame.timestamp);
+              // Track frame memory: ImageBitmap uses GPU memory, estimate via width×height×4
+              const frameWidth = frame.bitmap?.width ?? frame.imageData?.width ?? 0;
+              const frameHeight = frame.bitmap?.height ?? frame.imageData?.height ?? 0;
+              if (frameWidth > 0 && frameHeight > 0) {
+                trackDecodedFrame(frameWidth * frameHeight * 4);
+              }
               return;
             }
             if (!frame.imageData) {
@@ -364,6 +378,8 @@ export async function convert(
             }
             capturedFrames.push(frame.imageData);
             gifFrameTimestamps.push(frame.timestamp);
+            // Track frame memory: ImageData.data is RGBA (4 bytes per pixel)
+            trackDecodedFrame(frame.imageData.width * frame.imageData.height * 4);
           },
         });
 
@@ -393,6 +409,9 @@ export async function convert(
 
         if (!hasPartialFrames) {
           // Hard failure: clear all and retry with next mode
+          for (const frame of capturedFrames) {
+            releaseDecodedFrame(frame.width * frame.height * 4);
+          }
           capturedFrames.length = 0;
           gifFrameTimestamps.length = 0;
           releaseWebPFrames();
@@ -430,6 +449,9 @@ export async function convert(
             break;
           }
           // Otherwise clear and try next mode (will re-extract from start)
+          for (const frame of capturedFrames) {
+            releaseDecodedFrame(frame.width * frame.height * 4);
+          }
           capturedFrames.length = 0;
           gifFrameTimestamps.length = 0;
           releaseWebPFrames();
@@ -483,6 +505,10 @@ export async function convert(
         shouldCancel,
         throwIfCancelled,
         resetCaptureCollections: () => {
+          // Release tracked GIF frame memory
+          for (const frame of capturedFrames) {
+            releaseDecodedFrame(frame.width * frame.height * 4);
+          }
           capturedFrames.length = 0;
           gifFrameTimestamps.length = 0;
           releaseWebPFrames();
@@ -881,6 +907,25 @@ export function cleanup(): void {
   gifWorkerPool = null;
   gifWorkerPoolPromise = null;
   canvasWebPEncodeSupport = null;
+  // Reset tracked frame memory on full cleanup
+  resetTrackedFrames();
+}
+
+let visibilityCleanupInitialized = false;
+
+function initVisibilityCleanup(): void {
+  if (visibilityCleanupInitialized || typeof document === 'undefined') {
+    return;
+  }
+  visibilityCleanupInitialized = true;
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      // Page hidden: terminate worker pool immediately to free resources
+      logger.info('worker-pool', 'Page hidden — terminating worker pool');
+      cleanup();
+    }
+  });
 }
 
 /**

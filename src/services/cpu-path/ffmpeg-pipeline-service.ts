@@ -39,6 +39,7 @@ import { throwIfAborted } from '@utils/cancellation-context';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
+import { revokeFFmpegBlobURLs } from '@services/ffmpeg/core-assets-service';
 
 const WATCHDOG_STALL_MESSAGE =
   'FFmpeg crashed (WASM out-of-bounds). Resetting and retrying once...';
@@ -146,6 +147,8 @@ export class FFmpegPipeline {
     try {
       // Terminate FFmpeg runtime (worker + wasm instance)
       this.core.terminate();
+      // Revoke all blob URLs created for FFmpeg core assets to free memory
+      revokeFFmpegBlobURLs();
     } catch {
       // Best-effort cleanup.
     }

@@ -32,6 +32,7 @@ import { FFMPEG_CORE_BASE_URLS, TIMEOUT_VIDEO_ANALYSIS } from '@utils/constants'
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
+import { getWasmCapabilities } from '@utils/wasm-feature-detect';
 import { withTimeout } from '@utils/with-timeout';
 
 const MIN_MEANINGFUL_NON_TERMINAL_PROGRESS_FOR_TERMINAL = 5;
@@ -481,10 +482,14 @@ export class FFmpegCore {
       const isCrossOriginIsolated =
         typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
 
+      // Detect WASM capabilities for performance diagnostics
+      const wasmCaps = await getWasmCapabilities();
+
       logger.info('ffmpeg', 'FFmpeg initialization starting', {
         hasSharedArrayBuffer,
         isCrossOriginIsolated,
         canUseMultithreading: hasSharedArrayBuffer && isCrossOriginIsolated,
+        wasmSimd: wasmCaps.simd,
       });
 
       if (!hasSharedArrayBuffer || !isCrossOriginIsolated) {

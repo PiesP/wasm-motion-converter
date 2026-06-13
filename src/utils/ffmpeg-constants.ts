@@ -221,7 +221,7 @@ export const FFMPEG_INTERNALS = {
  *   quality: 'high',
  *   targetFps: 60
  * });
- * // Result: 90000 × 5.0 × 1.5 × 2.0 = 1350000ms (22.5 minutes)
+ * // Result: 90000 + 360000 + 45000 + 13500 + 54000 = 562500ms (9.4 min, capped at 600s)
  *
  * @example
  * // FHD video, 10 minute duration, medium quality, 15fps
@@ -231,16 +231,16 @@ export const FFMPEG_INTERNALS = {
  *   quality: 'medium',
  *   targetFps: 15
  * });
- * // Result: 90000 × 2.0 × 2.0 × 0.5 = 180000ms (3 minutes)
+ * // Result: 90000 + 90000 + 90000 = 270000ms (4.5 minutes)
  *
  * @example
- * // Simple low-resolution video (no multipliers, default FPS)
+ * // Simple low-resolution video (no additions, default FPS)
  * const timeout3 = calculateAdaptiveWatchdogTimeout(90000, {
  *   resolution: { width: 640, height: 480 },
  *   duration: 30,
  *   quality: 'low'
  * });
- * // Result: 90000 × 1.0 = 90000ms (base timeout)
+ * // Result: 90000ms (base timeout)
  */
 export function calculateAdaptiveWatchdogTimeout(
   baseTimeoutMs: number = FFMPEG_INTERNALS.WATCHDOG_STALL_TIMEOUT_MS,
@@ -252,7 +252,9 @@ export function calculateAdaptiveWatchdogTimeout(
     targetFps?: number;
   } = {}
 ): number {
-  let multiplier = 1.0;
+  // Use additive scaling instead of multiplicative to prevent extreme timeouts.
+  // Each factor adds a fraction of the base timeout, keeping the result bounded.
+  let additionalMs = 0;
 
   // Resolution-based scaling: 4K conversions are significantly more demanding
   if (options.resolution) {
@@ -260,35 +262,42 @@ export function calculateAdaptiveWatchdogTimeout(
     const totalPixels = width * height;
 
     if (totalPixels >= 3840 * 2160) {
-      // 4K or higher (>=3840×2160): 5.0× timeout (handles extreme processing load)
-      multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.RESOLUTION_4K;
+      // 4K or higher (>=3840×2160): +4× base timeout (handles extreme processing load)
+      additionalMs += baseTimeoutMs * (FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.RESOLUTION_4K - 1);
     } else if (totalPixels >= 1920 * 1080) {
-      // Full HD or above (>=1920×1080): 2.0× timeout
-      multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.RESOLUTION_FHD;
+      // Full HD or above (>=1920×1080): +1× base timeout
+      additionalMs += baseTimeoutMs * (FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.RESOLUTION_FHD - 1);
     }
   }
 
   // Duration-based scaling: longer videos encode slower (>5 minutes)
   if (options.duration && options.duration > 300) {
-    // Videos >300s (5 minutes): 2.0× timeout (accounts for longer processing)
-    multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.LONG_DURATION;
+    // Videos >300s (5 minutes): +1× base timeout
+    additionalMs += baseTimeoutMs * (FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.LONG_DURATION - 1);
   }
 
   // Quality-based scaling: higher quality settings use slower encoding presets
   if (options.quality === 'high') {
-    // High quality: 1.5× timeout (slower preset = longer encoding time)
-    multiplier *= FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.HIGH_QUALITY;
+    // High quality: +0.5× base timeout
+    additionalMs += baseTimeoutMs * (FFMPEG_INTERNALS.WATCHDOG_MULTIPLIERS.HIGH_QUALITY - 1);
   }
 
   // FPS-based scaling: higher FPS means more frames to encode → longer timeout needed
-  // A 10fps video has 1/3 the frames of a 30fps video, so it gets 1/3 the timeout
+  // Applied additively: proportional to base timeout scaled by FPS ratio
   const fps = options.targetFps ?? FFMPEG_INTERNALS.DEFAULT_FPS;
-  const fpsMultiplier = fps / FFMPEG_INTERNALS.DEFAULT_FPS;
-  multiplier *= fpsMultiplier;
+  const fpsDelta = Math.max(0, fps - FFMPEG_INTERNALS.DEFAULT_FPS);
+  if (fpsDelta > 0) {
+    // For every 10 FPS above default, add 30% of base timeout
+    additionalMs += baseTimeoutMs * (fpsDelta / 10) * 0.3;
+  }
 
-  // Calculate final adaptive timeout with cumulative multiplier
-  // Example: 4K @ high quality @ 60fps: 90000 × 5.0 × 1.5 × 2.0 = 1350000ms (22.5 min)
-  const adaptiveTimeout = Math.round(baseTimeoutMs * multiplier);
+  // Calculate final adaptive timeout (base + additions)
+  // Hard cap at 600 seconds (10 minutes) to ensure stalls are always detected
+  const MAX_WATCHDOG_TIMEOUT_MS = 600_000;
+  const adaptiveTimeout = Math.min(
+    MAX_WATCHDOG_TIMEOUT_MS,
+    Math.round(baseTimeoutMs + additionalMs)
+  );
 
   return adaptiveTimeout;
 }
