@@ -71,8 +71,8 @@ export async function captureWithDemuxer(
     const decoderConfig = await demuxer.initialize(file);
     const demuxerMetadata = demuxer.getMetadata();
 
-    const targetWidth = Math.max(1, Math.round(decoderConfig.codedWidth * scale));
-    const targetHeight = Math.max(1, Math.round(decoderConfig.codedHeight * scale));
+    const targetWidth = Math.max(1, Math.round((decoderConfig.codedWidth ?? 0) * scale));
+    const targetHeight = Math.max(1, Math.round((decoderConfig.codedHeight ?? 0) * scale));
 
     // maxFrames is a budget cap, not a promise that we can extract frames beyond the
     // media duration. Always bound the expected frame count to the demuxer-reported duration.

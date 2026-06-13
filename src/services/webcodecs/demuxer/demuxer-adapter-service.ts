@@ -10,7 +10,7 @@
  * VideoDecoder configuration extracted from container
  * Contains codec information needed to initialize WebCodecs VideoDecoder
  */
-export interface VideoDecoderConfig {
+export interface DemuxerVideoDecoderConfig {
   /**
    * Full codec string with profile/level information
    * Examples:
@@ -22,10 +22,10 @@ export interface VideoDecoderConfig {
   codec: string;
 
   /** Video width in pixels */
-  codedWidth: number;
+  codedWidth?: number;
 
   /** Video height in pixels */
-  codedHeight: number;
+  codedHeight?: number;
 
   /**
    * Codec-specific initialization data (extradata)
@@ -35,7 +35,7 @@ export interface VideoDecoderConfig {
    * - AV1: av1C box
    * - VP9: Optional CodecPrivate
    */
-  description?: Uint8Array;
+  description?: Uint8Array | ArrayBuffer;
 }
 
 /**
@@ -56,7 +56,7 @@ export interface DemuxerMetadata {
  * Encoded video sample/chunk extracted from container
  * Compatible with WebCodecs EncodedVideoChunk constructor
  */
-export interface EncodedVideoChunk {
+export interface DemuxerEncodedVideoChunk {
   /** Sample type: 'key' for keyframes, 'delta' for non-keyframes */
   type: 'key' | 'delta';
 
@@ -92,7 +92,7 @@ export interface DemuxerAdapter {
    * @returns VideoDecoder configuration for WebCodecs
    * @throws Error if container is invalid or unsupported
    */
-  initialize(file: File): Promise<VideoDecoderConfig>;
+  initialize(file: File): Promise<DemuxerVideoDecoderConfig>;
 
   /**
    * Extract encoded video samples for frame extraction
@@ -115,7 +115,7 @@ export interface DemuxerAdapter {
     targetFps: number,
     maxFrames?: number,
     options?: { keyframeOnly?: boolean }
-  ): AsyncGenerator<EncodedVideoChunk, void, unknown>;
+  ): AsyncGenerator<DemuxerEncodedVideoChunk, void, unknown>;
 
   /**
    * Get video metadata (duration, FPS, sample count)

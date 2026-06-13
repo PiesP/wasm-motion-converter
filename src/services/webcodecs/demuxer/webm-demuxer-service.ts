@@ -6,9 +6,9 @@ import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import type {
   DemuxerAdapter,
+  DemuxerEncodedVideoChunk,
   DemuxerMetadata,
-  EncodedVideoChunk,
-  VideoDecoderConfig,
+  DemuxerVideoDecoderConfig,
 } from './demuxer-adapter-service';
 
 /**
@@ -57,7 +57,7 @@ export class WebMDemuxer implements DemuxerAdapter {
    * @returns VideoDecoderConfig with codec, dimensions, and optional description
    * @throws Error if file is invalid, no video track found, or decoder config unavailable
    */
-  async initialize(file: File): Promise<VideoDecoderConfig> {
+  async initialize(file: File): Promise<DemuxerVideoDecoderConfig> {
     try {
       const WebDemuxer = await this.loadWebDemuxer();
       const arrayBuffer = await file.arrayBuffer();
@@ -92,7 +92,17 @@ export class WebMDemuxer implements DemuxerAdapter {
         sampleCount,
       });
 
-      return config;
+      // Convert browser VideoDecoderConfig to DemuxerVideoDecoderConfig
+      return {
+        codec: config.codec,
+        codedWidth: config.codedWidth,
+        codedHeight: config.codedHeight,
+        description: config.description instanceof ArrayBuffer
+          ? config.description
+          : config.description instanceof Uint8Array
+            ? config.description
+            : undefined,
+      };
     } catch (error) {
       logger.error('demuxer', 'Failed to initialize WebMDemuxer', {
         error: getErrorMessage(error),
@@ -120,7 +130,7 @@ export class WebMDemuxer implements DemuxerAdapter {
     targetFps: number,
     maxFrames?: number,
     _options?: { keyframeOnly?: boolean }
-  ): AsyncGenerator<EncodedVideoChunk, void, unknown> {
+  ): AsyncGenerator<DemuxerEncodedVideoChunk, void, unknown> {
     if (!this.initialized || !this.demuxer || !this.metadata) {
       throw new Error('Demuxer not initialized');
     }

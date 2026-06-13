@@ -6,9 +6,9 @@ import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import type {
   DemuxerAdapter,
+  DemuxerEncodedVideoChunk,
   DemuxerMetadata,
-  EncodedVideoChunk,
-  VideoDecoderConfig,
+  DemuxerVideoDecoderConfig,
 } from './demuxer-adapter-service';
 
 /**
@@ -85,7 +85,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @returns VideoDecoderConfig with codec, dimensions, and optional description
    * @throws Error if file is invalid, no video track found, or parser timeout
    */
-  async initialize(file: File): Promise<VideoDecoderConfig> {
+  async initialize(file: File): Promise<DemuxerVideoDecoderConfig> {
     try {
       const Mp4Box = await this.loadMP4Box();
       this.mp4boxFile = (Mp4Box as Mp4BoxModule).createFile();
@@ -182,7 +182,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
     targetFps: number,
     maxFrames?: number,
     options?: { keyframeOnly?: boolean }
-  ): AsyncGenerator<EncodedVideoChunk, void, unknown> {
+  ): AsyncGenerator<DemuxerEncodedVideoChunk, void, unknown> {
     if (!this.initialized || !this.videoTrack) {
       throw new Error('Demuxer not initialized');
     }
@@ -419,7 +419,7 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    * @returns VideoDecoderConfig with codec, dimensions, and optional description
    * @internal Private method, use initialize() instead
    */
-  private extractDecoderConfig(track: Mp4BoxTrack, fileBytes?: ArrayBuffer): VideoDecoderConfig {
+  private extractDecoderConfig(track: Mp4BoxTrack, fileBytes?: ArrayBuffer): DemuxerVideoDecoderConfig {
     const codec = this.buildCodecString(track);
     const description = this.extractCodecDescription(track, fileBytes);
 
