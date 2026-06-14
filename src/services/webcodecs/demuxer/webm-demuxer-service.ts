@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
+import { buildRuntimeModuleUrls, loadFromCDN } from '@utils/cdn-config';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import type {
@@ -250,17 +251,6 @@ export class WebMDemuxer implements DemuxerAdapter {
    * @internal Private method, called during initialize()
    */
   private async loadWebDemuxer(): Promise<WebDemuxerModule> {
-    const mod = await import('web-demuxer');
-    const Ctor = (mod.WebDemuxer ?? mod.default) as
-      | (new (
-          buffer: ArrayBuffer
-        ) => WebDemuxerInstance)
-      | undefined;
-    if (!Ctor) {
-      throw new Error('web-demuxer loaded but WebDemuxer export not found');
-    }
-    return Ctor as new (
-      buffer: ArrayBuffer
-    ) => WebDemuxerInstance;
+    return loadFromCDN<WebDemuxerModule>('web-demuxer', buildRuntimeModuleUrls('web-demuxer'));
   }
 }
