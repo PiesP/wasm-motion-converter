@@ -38,7 +38,7 @@ import { logger } from '@utils/logger';
 import { releaseDecodedFrame, resetTrackedFrames, trackDecodedFrame } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import { computeTrimDuration } from '@utils/video-math';
-import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
+import { isModernGifSupported } from './modern-gif-service';
 
 let canvasWebPEncodeSupport: boolean | null = null;
 
@@ -106,6 +106,19 @@ export async function convert(
   const gifFrameTimestamps: number[] = [];
   const webpCapturedFrames: EncoderFrame[] = [];
   const webpFrameTimestamps: number[] = [];
+
+  // ── Memory profiling ──────────────────────────────────────────
+  const memProfile: { phase: string; frames: number; jsHeapMB: number; timestamp: number }[] = [];
+  const logMem = (phase: string) => {
+    const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+    memProfile.push({
+      phase,
+      frames: capturedFrames.length,
+      jsHeapMB: mem ? Math.round(mem.usedJSHeapSize / 1024 / 1024) : -1,
+      timestamp: performance.now(),
+    });
+  };
+  logMem('start');
 
   const frameFormat: WebCodecsFrameFormat =
     format === 'webp' && typeof createImageBitmap === 'function' ? 'bitmap' : 'rgba';
@@ -332,7 +345,6 @@ export async function convert(
               }
               webpCapturedFrames.push(encoderFrame);
               webpFrameTimestamps.push(frame.timestamp);
-              // Track frame memory: ImageBitmap uses GPU memory, estimate via width×height×4
               const frameWidth = frame.bitmap?.width ?? frame.imageData?.width ?? 0;
               const frameHeight = frame.bitmap?.height ?? frame.imageData?.height ?? 0;
               if (frameWidth > 0 && frameHeight > 0) {
@@ -340,13 +352,20 @@ export async function convert(
               }
               return;
             }
+            // GIF streaming: write frame to FFmpeg VFS immediately, no in-memory accumulation
             if (!frame.imageData) {
               throw new Error('WebCodecs did not provide raw frame data.');
             }
-            capturedFrames.push(frame.imageData);
             gifFrameTimestamps.push(frame.timestamp);
-            // Track frame memory: ImageData.data is RGBA (4 bytes per pixel)
+            // Write raw RGBA data to FFmpeg VFS as rawvideo frame
+            const frameIndex = gifFrameTimestamps.length;
+            const rawFileName = `frame_${String(frameIndex).padStart(6, '0')}.rgba`;
+            await ffmpegService.writeVirtualFile(
+              rawFileName,
+              new Uint8Array(frame.imageData.data.buffer)
+            );
             trackDecodedFrame(frame.imageData.width * frame.imageData.height * 4);
+            if (frameIndex % 10 === 0) logMem('frame-' + frameIndex);
           },
         });
 
@@ -454,8 +473,6 @@ export async function convert(
       encodeReporter.setStatusPrefix(initialEncodeStatusPrefix);
     }
 
-    const reportEncodeProgress = encodeReporter?.report;
-
     const doFFmpegFallback = async (errorMessage: string): Promise<Blob> => {
       throwIfCancelled();
       encoderBackendUsed = 'ffmpeg';
@@ -487,24 +504,44 @@ export async function convert(
 
     let outputBlob: Blob;
 
-    if (useModernGif) {
-      // NOTE: Skip worker pool for modern-gif encoding.
-      // The gif-encoder worker fails in Chrome 148+ due to ImageData constructor
-      // restrictions in worker context ("Cannot assign to read only property 'data'").
-      // Modern-gif encoding is fast enough on main thread for typical GIF sizes.
+    if (useModernGif && gifFrameTimestamps.length > 0) {
+      // Streaming GIF: frames written to VFS as individual raw files during decode
       try {
-        outputBlob = await encodeModernGif(capturedFrames, {
-          width: decodeResult.width,
-          height: decodeResult.height,
+        logMem('encode-start');
+        ffmpegService.reportStatus('Encoding GIF with FFmpeg...');
+        const frameCount = gifFrameTimestamps.length;
+        const width = decodeResult.width;
+        const height = decodeResult.height;
+
+        // Build frame file list for FFmpeg rawvideo concat
+        const rawFrameFiles: string[] = [];
+        for (let i = 1; i <= frameCount; i++) {
+          rawFrameFiles.push(`frame_${String(i).padStart(6, '0')}.rgba`);
+        }
+
+        // Encode via FFmpeg rawvideo → GIF using frameInput
+        const blob = await ffmpegService.encodeFrameSequence({
+          format: 'gif',
+          options: { quality, scale },
+          frameCount,
           fps: targetFps,
-          quality,
-          timestamps: gifFrameTimestamps,
           durationSeconds: decodeResult.duration,
-          onProgress: reportEncodeProgress,
-          shouldCancel,
+          frameFiles: rawFrameFiles,
+          frameInput: {
+            kind: 'rawvideo',
+            fileName: rawFrameFiles[0]!,
+            width,
+            height,
+            pixelFormat: 'rgba',
+          },
         });
+
+        outputBlob = blob as Blob;
         ffmpegService.reportProgress(encodeEnd);
-        encoderBackendUsed = 'modern-gif-main';
+        encoderBackendUsed = 'ffmpeg-rawvideo-streaming';
+        logMem('encode-done');
+        logger.info('conversion', 'GIF memory profile', { profile: memProfile });
+        (window as unknown as Record<string, unknown>).__gifMemProfile = memProfile;
         releaseGifFrames();
       } catch (error) {
         const errorMessage = getErrorMessage(error);
