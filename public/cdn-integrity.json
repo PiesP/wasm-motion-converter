@@ -12,12 +12,6 @@
     "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/+esm": {
       "jsdelivr": "sha384-eXElrPbYJXxhUpBNnhEZKuel4U5lZXYtx/1lFr5BICq9Xca+6BRvl6r1qQ02ZSSh"
     },
-    "https://esm.sh/modern-gif@2.1.0?target=esnext": {
-      "esm.sh": "sha384-5A/wr5hhDtbmydUpLyhzMoiLwSx3FbFEdqq+MTiOa4RcG4r1/sj3LFU221wA/HvA"
-    },
-    "https://cdn.jsdelivr.net/npm/modern-gif@2.1.0/+esm": {
-      "jsdelivr": "sha384-0n2ToXVHou2Juvn2xrNydJVKD1ku4GIOpG6y8gtFq2eQmDvHyTUjqzQIUgFWMW5q"
-    },
     "https://esm.sh/solid-js@1.9.13?target=esnext": {
       "esm.sh": "sha384-/K1chA0r9DEbfexR+wceqaDiiguYNj9nMVuE4eiBTFkJkEA1FFXviQGIrZtorTOC"
     },
