@@ -16,8 +16,11 @@ import {
 import type {
   ConversionFormat,
   ConversionMetadata,
+  ConversionOutputBlob,
+  ConversionQuality,
   ConversionRequest,
   ConversionResponse,
+  VideoMetadata,
 } from '@t/conversion-types';
 import {
   CANCELLED_MESSAGE,
@@ -163,10 +166,18 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
     }
     throwIfAborted(operation.abortController.signal);
 
-    const blob =
-      selection.path === 'gpu'
-        ? await convertWithGpuFallback(request, operation.abortController.signal)
-        : await convertWithCpu(request, operation.abortController.signal);
+    let blob: Awaited<ConversionResponse['blob']>;
+    switch (selection.path) {
+      case 'software':
+        blob = await convertWithSoftwareDecode(request, operation.abortController.signal);
+        break;
+      case 'gpu':
+        blob = await convertWithGpuFallback(request, operation.abortController.signal);
+        break;
+      default:
+        blob = await convertWithCpu(request, operation.abortController.signal);
+        break;
+    }
 
     if (activeOperation?.id !== operation.id) {
       throw new Error(CANCELLED_MESSAGE);
@@ -285,4 +296,179 @@ async function convertWithCpu(
   }
 
   throw new Error(`Unsupported format: ${format}`);
+}
+
+async function convertWithSoftwareDecode(
+  request: ConversionRequest,
+  abortSignal: AbortSignal
+): Promise<Awaited<ConversionResponse['blob']>> {
+  if (abortSignal) throwIfAborted(abortSignal);
+  const format = getSupportedFormat(request);
+
+  logger.info('conversion', 'Software decode path: browser decode → FFmpeg encode', {
+    codec: request.metadata?.codec,
+    format,
+  });
+
+  if (!ffmpegService.isLoaded()) {
+    await ffmpegService.initialize();
+  }
+
+  // Use <video> + Canvas to decode frames, then encode via FFmpeg
+  const frameFiles = await decodeFramesToVFS(
+    request.file,
+    request.metadata,
+    request.options.quality,
+    request.format,
+    abortSignal
+  );
+
+  if (abortSignal) throwIfAborted(abortSignal);
+
+  const blob = await ffmpegService.encodeFrameSequence(
+    {
+      format,
+      options: request.options,
+      frameCount: frameFiles.length,
+      fps: Math.min(
+        request.metadata?.framerate ?? 30,
+        request.options.quality === 'low' ? 10 : request.options.quality === 'medium' ? 15 : 20
+      ),
+      durationSeconds: request.metadata?.duration ?? 10,
+      frameFiles,
+      frameInput: { kind: 'image-sequence', frameFiles },
+    },
+    {
+      onProgress: request.onProgress,
+      onStatusUpdate: request.onStatus,
+      shouldCancel: () => abortSignal.aborted,
+    }
+  );
+
+  const typed = blob as ConversionOutputBlob;
+  typed.encoderBackendUsed = 'software-decode+ffmpeg';
+  typed.wasTranscoded = true;
+  typed.originalCodec = request.metadata?.codec;
+
+  return typed;
+}
+
+/**
+ * Decode video frames using <video> + Canvas pipeline.
+ * Works for any codec the browser can decode (including AV1).
+ */
+async function decodeFramesToVFS(
+  file: File,
+  metadata: VideoMetadata | undefined,
+  quality: ConversionQuality,
+  format: ConversionFormat,
+  abortSignal: AbortSignal
+): Promise<string[]> {
+  // Create hidden video element
+  const video = document.createElement('video');
+  video.src = URL.createObjectURL(file);
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) {
+    throw new Error('Could not get canvas 2D context');
+  }
+
+  const width = metadata?.width ?? 1920;
+  const height = metadata?.height ?? 1080;
+  canvas.width = width;
+  canvas.height = height;
+
+  // Wait for video metadata and first frame
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (!settled) {
+        settled = true;
+        fn();
+      }
+    };
+    video.onloadeddata = () => settle(resolve);
+    video.onerror = () =>
+      settle(() => reject(new Error('Failed to load video for software decode')));
+    setTimeout(
+      () => settle(() => reject(new Error('Video load timeout (software decode)'))),
+      10_000
+    );
+    video.load();
+  });
+
+  const fps = Math.min(
+    metadata?.framerate ?? 30,
+    quality === 'low' ? 10 : quality === 'medium' ? 15 : 20
+  );
+  const duration = metadata?.duration ?? (video.duration || 10);
+  const frameCount = Math.ceil(duration * fps);
+  const frameFiles: string[] = [];
+
+  ffmpegService.beginExternalConversion(metadata, quality, format, {
+    enableLogSilenceCheck: false,
+  });
+
+  try {
+    for (let i = 0; i < frameCount; i++) {
+      if (abortSignal.aborted) {
+        throw new Error('Conversion cancelled by user');
+      }
+
+      const time = i / fps;
+      if (time >= video.duration) break;
+
+      // Seek to frame time
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const settle = (fn: () => void) => {
+          if (!settled) {
+            settled = true;
+            fn();
+          }
+        };
+        video.onseeked = () => settle(resolve);
+        video.onerror = () => settle(() => reject(new Error(`Seek failed at ${time.toFixed(2)}s`)));
+        setTimeout(
+          () => settle(() => reject(new Error(`Seek timeout at ${time.toFixed(2)}s`))),
+          5_000
+        );
+        video.currentTime = time;
+      });
+
+      // Draw frame to canvas
+      ctx.drawImage(video, 0, 0, width, height);
+
+      // Get PNG data
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (b) => {
+            if (b) resolve(b);
+            else reject(new Error('Canvas toBlob failed'));
+          },
+          'image/png',
+          0.92
+        );
+      });
+
+      const arrayBuffer = await blob.arrayBuffer();
+      const fileName = `frame_${i.toString().padStart(6, '0')}.png`;
+
+      await ffmpegService.writeVirtualFile(fileName, new Uint8Array(arrayBuffer));
+      frameFiles.push(fileName);
+
+      // Report progress (decode phase = 0-50%)
+      const progress = Math.round((i / frameCount) * 50);
+      ffmpegService.reportProgress(progress);
+    }
+  } finally {
+    ffmpegService.endExternalConversion();
+    URL.revokeObjectURL(video.src);
+  }
+
+  return frameFiles;
 }

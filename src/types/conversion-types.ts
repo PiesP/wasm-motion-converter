@@ -270,7 +270,7 @@ export interface VideoMetadata {
 }
 
 /** Conversion path types */
-export type ConversionPath = 'gpu' | 'cpu';
+export type ConversionPath = 'gpu' | 'cpu' | 'software';
 
 /** Conversion request */
 export interface ConversionRequest {

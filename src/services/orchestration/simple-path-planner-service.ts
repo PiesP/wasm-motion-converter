@@ -18,6 +18,7 @@ import {
 import type { ConversionFormat, PathSelection, VideoMetadata } from '@t/conversion-types';
 import { throwIfAborted } from '@utils/cancellation-context';
 import {
+  isFFmpegDecodeUnsupportedCodec,
   isFFmpegPreferredCodec,
   isSupportedFormat,
   isWebCodecsNativeCodec,
@@ -75,8 +76,15 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
     };
   }
 
-  // WebCodecs-native codecs: use GPU path (WebCodecs decode → FFmpeg VFS → encode)
+  // WebCodecs-native codecs: check if FFmpeg WASM can decode them
   if (isWebCodecsNativeCodec(codec)) {
+    // FFmpeg WASM can't decode AV1/AV01 — need software decode via <video>
+    if (isFFmpegDecodeUnsupportedCodec(codec)) {
+      return {
+        path: 'software',
+        reason: `${format.toUpperCase()} + ${codec}: browser software decode → FFmpeg VFS encode`,
+      };
+    }
     return {
       path: 'gpu',
       reason: `${format.toUpperCase()} + ${codec}: WebCodecs decode → FFmpeg VFS encode`,

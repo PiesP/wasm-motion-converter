@@ -72,6 +72,14 @@ export const FFMPEG_PREFERRED_CODECS = [
   'sorenson',
 ];
 
+/**
+ * Codecs that FFmpeg WASM (@ffmpeg/core-mt 0.12.10) cannot decode.
+ * These codecs require browser software decode (<video> + Canvas).
+ *
+ * AV1: ffmpeg-core-mt doesn't include libdav1d/libaom decoder.
+ */
+export const FFMPEG_DECODE_UNSUPPORTED_CODECS = ['av1', 'av01'];
+
 // ============================================================================
 // SUPPORTED VIDEO FORMATS
 // ============================================================================
