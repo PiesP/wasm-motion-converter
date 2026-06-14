@@ -100,6 +100,8 @@ export interface FrameSequenceParams {
         pixelFormat: 'rgba';
       };
   frameTimestamps?: number[]; // Optional array of frame timestamps in seconds
+  /** Progress offset for multi-phase pipelines (e.g., software decode = 50%) */
+  progressOffset?: number;
 }
 
 /**

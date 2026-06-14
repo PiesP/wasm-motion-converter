@@ -529,6 +529,8 @@ export class FFmpegEncoder {
           pixelFormat: 'rgba';
         };
     frameTimestamps?: number[];
+    /** Progress offset for multi-phase pipelines (e.g., software decode = 50%) */
+    progressOffset?: number;
   }): Promise<ConversionOutputBlob> {
     const {
       format,
@@ -538,6 +540,7 @@ export class FFmpegEncoder {
       durationSeconds,
       frameFiles: providedFrameFiles,
       frameInput,
+      progressOffset = 0,
     } = params;
     const { core, vfs } = this.getDeps();
 
@@ -565,7 +568,8 @@ export class FFmpegEncoder {
           { fps, frameCount, quality: options.quality },
           durationSeconds,
           providedFrameFiles,
-          frameInput
+          frameInput,
+          progressOffset
         );
       } else {
         await this.encodeFramesToWebP(
@@ -573,7 +577,8 @@ export class FFmpegEncoder {
           outputFileName,
           { fps, frameCount, quality: options.quality },
           durationSeconds,
-          providedFrameFiles
+          providedFrameFiles,
+          progressOffset
         );
       }
 
@@ -658,15 +663,17 @@ export class FFmpegEncoder {
           width: number;
           height: number;
           pixelFormat: 'rgba';
-        }
+        },
+    progressOffset = 0
   ): Promise<void> {
     const paletteFileName = FFMPEG_INTERNALS.PALETTE_FILE_NAME;
     const { fps, frameCount, quality } = settings;
 
     const qualitySettings = QUALITY_PRESETS.gif[quality];
-    const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
-    const paletteEnd = 70;
-    const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
+    // Progress ranges shifted by offset for multi-phase pipelines
+    const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START + progressOffset;
+    const paletteEnd = 70 + progressOffset;
+    const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END + progressOffset;
 
     const effectiveFrameInput =
       frameInput ??
@@ -779,7 +786,8 @@ export class FFmpegEncoder {
     outputFileName: string,
     settings: { fps: number; frameCount: number; quality: ConversionQuality },
     durationSeconds: number,
-    frameFiles?: string[]
+    frameFiles?: string[],
+    progressOffset = 0
   ): Promise<void> {
     const { fps, frameCount, quality } = settings;
     const qualitySettings = QUALITY_PRESETS.webp[quality];
@@ -794,8 +802,9 @@ export class FFmpegEncoder {
       });
     }
 
-    const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
-    const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
+    // Progress ranges shifted by offset for multi-phase pipelines
+    const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START + progressOffset;
+    const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END + progressOffset;
 
     // Detect frame file extension (PNG or JPEG) for correct FFmpeg input pattern
     const frameExtension = detectFrameExtension(frameFiles);
@@ -942,9 +951,9 @@ export class FFmpegEncoder {
       });
 
       // Palette generation is a single-pass operation with no meaningful per-frame
-      // progress from FFmpeg logs.  Jump straight to PALETTE_END so the UI does not
-      // appear stuck at a low percentage while the palette is being generated.
-      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_END);
+      // progress from FFmpeg logs. Start from PALETTE_START so the heartbeat
+      // smoothly advances the progress bar during this phase.
+      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.PALETTE_START);
 
       performanceTracker.startPhase('palette-gen');
       logger.performance('Starting GIF palette generation');
@@ -1022,7 +1031,8 @@ export class FFmpegEncoder {
 
       performanceTracker.endPhase('palette-gen');
       logger.performance('GIF palette generation complete');
-      monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.CONVERSION_START);
+      // Conversion starts at CONVERSION_START — heartbeat already advances
+      // from the palette phase, so no explicit jump needed here.
 
       // Validate palette output before starting the main GIF encode.
       // This avoids confusing secondary errors like "palette.png: No such file or directory".

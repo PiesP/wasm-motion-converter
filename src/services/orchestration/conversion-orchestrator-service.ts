@@ -337,6 +337,7 @@ async function convertWithSoftwareDecode(
       durationSeconds: request.metadata?.duration ?? 10,
       frameFiles,
       frameInput: { kind: 'image-sequence', frameFiles },
+      progressOffset: 50, // software decode occupies 0-50%, encode occupies 50-100%
     },
     {
       onProgress: request.onProgress,
