@@ -28,8 +28,7 @@ import { logger } from '@utils/logger';
 import { releaseDecodedFrame, resetTrackedFrames } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 
-// ── Streaming VFS frame writer ──────────────────────────────────────────
-// ── Streaming VFS frame writer ──────────────────────────────────────────
+// ── Streaming frame writer ───────────────────────────────────────────────
 
 interface StreamingDecodeResult {
   frameCount: number;
@@ -37,16 +36,16 @@ interface StreamingDecodeResult {
   height: number;
   fps: number;
   duration: number;
-  /** Concatenated raw RGBA frames — single buffer, no intermediate VFS files */
+  /** Concatenated raw RGBA frames — single buffer */
   rawBuffer: Uint8Array;
 }
 
 /**
  * Decode video frames via WebCodecs and write each frame's raw RGBA data
- * directly into a pre-allocated buffer.
+ * directly into a pre-allocated buffer in a single pass.
  *
- * This is the core streaming primitive: no intermediate VFS files,
- * no frame array. Each frame is decoded → written to buffer → GPU released.
+ * First frame triggers buffer allocation (we need dimensions).
+ * Each subsequent frame is written immediately and GPU resources released.
  */
 async function decodeToRawBuffer(params: {
   file: File;
@@ -61,10 +60,12 @@ async function decodeToRawBuffer(params: {
 
   const decoder = new WebCodecsDecoderService();
   let frameIndex = 0;
+  let rawBuffer: Uint8Array | null = null;
+  let writeOffset = 0;
+  let width = 0;
+  let height = 0;
 
-  // First pass: decode to count frames and get dimensions
-  // We need dimensions to allocate the buffer, so do a lightweight probe
-  const probeResult = await decoder.decodeToFrames({
+  const decodeResult = await decoder.decodeToFrames({
     file,
     targetFps,
     scale,
@@ -84,8 +85,34 @@ async function decodeToRawBuffer(params: {
     onFrame: async (frame) => {
       if (abortSignal?.aborted) throw new Error('Conversion cancelled by user');
       if (!frame.imageData) throw new Error('WebCodecs did not provide raw frame data.');
+
+      const w = frame.imageData.width;
+      const h = frame.imageData.height;
+      const frameBytes = w * h * 4;
+
+      // First frame: allocate buffer for all frames
+      if (rawBuffer === null) {
+        width = w;
+        height = h;
+        // Estimate total frames from duration and fps
+        const estimatedFrames = Math.max(10, Math.ceil((metadata?.duration ?? 10) * targetFps));
+        rawBuffer = new Uint8Array(frameBytes * estimatedFrames);
+      }
+
+      // Grow buffer if estimate was too low
+      if (writeOffset + frameBytes > rawBuffer.length) {
+        const grown = new Uint8Array(rawBuffer.length * 2);
+        grown.set(rawBuffer);
+        rawBuffer = grown;
+      }
+
+      // Copy frame data and release GPU resource immediately
+      const rgba = new Uint8Array(frame.imageData.data.buffer);
+      rawBuffer.set(rgba, writeOffset);
+      writeOffset += frameBytes;
       frameIndex++;
-      releaseDecodedFrame(frame.imageData.width * frame.imageData.height * 4);
+
+      releaseDecodedFrame(frameBytes);
     },
   });
 
@@ -93,56 +120,16 @@ async function decodeToRawBuffer(params: {
     throw new Error('WebCodecs decode produced no frames.');
   }
 
-  const width = probeResult.width;
-  const height = probeResult.height;
-  const frameSizeBytes = width * height * 4;
-  const totalBytes = frameSizeBytes * frameIndex;
-
-  // Allocate single buffer for all frames
-  const rawBuffer = new Uint8Array(totalBytes);
-  let writeOffset = 0;
-  let writeFrameIndex = 0;
-
-  // Second pass: decode again and write directly to buffer
-  // This is necessary because WebCodecs doesn't support seeking back
-  const decoder2 = new WebCodecsDecoderService();
-  await decoder2.decodeToFrames({
-    file,
-    targetFps,
-    scale,
-    frameFormat: 'rgba',
-    frameQuality: FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY,
-    framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
-    frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
-    frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-    trimStartSeconds: options.trimStart,
-    captureMode: 'auto',
-    codec: metadata?.codec,
-    quality: options.quality,
-    shouldCancel: abortSignal
-      ? () => abortSignal.aborted
-      : () => ffmpegService.isCancellationRequested(),
-    onProgress,
-    onFrame: async (frame) => {
-      if (abortSignal?.aborted) throw new Error('Conversion cancelled by user');
-      if (!frame.imageData) throw new Error('WebCodecs did not provide raw frame data.');
-
-      const rgba = new Uint8Array(frame.imageData.data.buffer);
-      rawBuffer.set(rgba, writeOffset);
-      writeOffset += frameSizeBytes;
-      writeFrameIndex++;
-
-      releaseDecodedFrame(frame.imageData.width * frame.imageData.height * 4);
-    },
-  });
+  // Trim buffer to actual size
+  const finalBuffer = rawBuffer!.slice(0, writeOffset);
 
   return {
-    frameCount: writeFrameIndex,
+    frameCount: frameIndex,
     width,
     height,
     fps: targetFps,
-    duration: probeResult.duration,
-    rawBuffer,
+    duration: decodeResult.duration,
+    rawBuffer: finalBuffer,
   };
 }
 

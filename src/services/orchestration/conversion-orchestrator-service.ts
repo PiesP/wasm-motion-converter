@@ -52,7 +52,7 @@ const STATUS_ERROR = 'Error';
  */
 function estimateRequiredMemory(
   metadata: { width?: number; height?: number; duration?: number; framerate?: number } | undefined,
-  format: ConversionFormat,
+  _format: ConversionFormat,
   quality: 'low' | 'medium' | 'high'
 ): number {
   const width = metadata?.width ?? 1920;
@@ -65,16 +65,13 @@ function estimateRequiredMemory(
   const frameCount = Math.ceil(duration * fps);
   const frameBytes = width * height * 4;
 
-  // Frame storage: all frames held simultaneously during decode
-  const frameStorage = frameCount * frameBytes;
+  // Single raw buffer for all frames (streaming, no intermediate files)
+  const rawBuffer = frameCount * frameBytes;
 
-  // Encoding overhead: palette generation + output assembly
-  const encodingOverhead = frameStorage * 0.5;
+  // FFmpeg encoding overhead: ~1x for palette/output assembly
+  const encodingOverhead = rawBuffer;
 
-  // VFS overhead (FFmpeg path): input + palette + output coexist briefly
-  const vfsOverhead = format === 'gif' ? frameCount * frameBytes * 0.3 : 0;
-
-  return Math.ceil(frameStorage + encodingOverhead + vfsOverhead);
+  return Math.ceil(rawBuffer + encodingOverhead);
 }
 
 function getSupportedFormat(request: ConversionRequest): ConversionFormat {
