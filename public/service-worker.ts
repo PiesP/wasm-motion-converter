@@ -268,8 +268,7 @@ function isWorkerRequest(request: Request): boolean {
 
   return (
     workerPatterns.some((pattern) => url.pathname.includes(pattern)) ||
-    request.destination === 'worker' ||
-    request.mode === 'same-origin'
+    request.destination === 'worker'
   );
 }
 
