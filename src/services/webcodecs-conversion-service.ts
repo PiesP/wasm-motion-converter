@@ -13,7 +13,9 @@
 
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
+import { isCancellationError } from '@utils/cancellation-context';
 import { getErrorMessage } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 import { resetTrackedFrames } from '@utils/memory-monitor';
 
 /**
@@ -95,17 +97,6 @@ export async function convert(
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-import { logger } from '@utils/logger';
-
-function isCancellationError(error: unknown): boolean {
-  const msg = getErrorMessage(error).toLowerCase();
-  return msg.includes('cancelled by user') || msg.includes('called ffmpeg.terminate()');
-}
-
 export function cleanup(): void {
   resetTrackedFrames();
-}
-
-export function scheduleWorkerPoolIdleCleanup(): void {
-  // No-op: worker pool removed
 }

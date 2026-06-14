@@ -66,6 +66,11 @@ export async function captureWithFrameCallback(
   try {
     await video.play();
   } catch (error) {
+    // Check for user cancellation — don't fall back to seek if aborted
+    const errorMsg = getErrorMessage(error).toLowerCase();
+    if (signal?.aborted || errorMsg.includes('abort') || errorMsg.includes('cancelled')) {
+      throw new Error('Conversion cancelled by user');
+    }
     logger.warn('conversion', 'Autoplay blocked, falling back to seek capture', {
       error: getErrorMessage(error),
     });
@@ -147,7 +152,11 @@ export async function captureWithFrameCallback(
     };
 
     // Wire AbortSignal for immediate cancellation (faster than shouldCancel polling)
-    signal?.addEventListener('abort', finalize, { once: true });
+    // Reject on abort so the caller knows the capture was cancelled, not completed
+    const onAbort = () => {
+      reject(new Error('Conversion cancelled by user'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
 
     const scheduleFirstFrameTimer = () => {
       clearFirstFrameTimer();

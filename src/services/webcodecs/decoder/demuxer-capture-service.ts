@@ -434,6 +434,16 @@ export async function captureWithDemuxer(
             timestamp: timestampSeconds,
           });
 
+          // Close bitmap to free GPU memory after consumer has processed it
+          if (bitmap) {
+            try {
+              bitmap.close();
+            } catch {
+              /* non-fatal */
+            }
+            bitmap = undefined;
+          }
+
           frameFiles.push(frameName);
           lastCapturedTimestampMicros = timestampMicros;
           frameIndex++;
@@ -469,6 +479,7 @@ export async function captureWithDemuxer(
     let skippedUntilKey = 0;
     let consecutiveDecodeErrors = 0;
     const MaxConsecutiveDecodeErrors = 5;
+    let decodeCompleted = false;
 
     // Watchdog: if VideoDecoder.decode() hangs (e.g. on problematic AV1
     // streams) the entire decode loop can stall indefinitely. The flush path
@@ -476,6 +487,7 @@ export async function captureWithDemuxer(
     // fed. This watchdog provides a hard upper bound on total decode time.
     const watchdogTimeoutMs = computeWatchdogTimeoutMs(demuxerMetadata.duration);
     watchdogTimer = setTimeout(() => {
+      if (decodeCompleted) return;
       if (shouldCancel?.()) {
         return; // Don't override user cancellation with a timeout message
       }
@@ -581,6 +593,7 @@ export async function captureWithDemuxer(
             totalFrames,
             processedSamples,
           });
+          decodeCompleted = true;
           break;
         }
       }
@@ -605,6 +618,7 @@ export async function captureWithDemuxer(
         }
       }
     }
+    decodeCompleted = true;
 
     // Final drain
     // Always process any frames already emitted.

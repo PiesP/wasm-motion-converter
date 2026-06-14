@@ -176,6 +176,12 @@ export const captureFrameAndEmit = async (args: {
       index,
       timestamp,
     });
+    // Close bitmap to free GPU memory after consumer has processed it
+    try {
+      bitmap?.close();
+    } catch {
+      /* non-fatal */
+    }
     return frameName;
   }
 
