@@ -178,7 +178,9 @@ export async function convert(
     }
   };
 
-  const keyframeOnly = format === 'gif' && quality === 'low';
+  // GIF does not benefit from keyframe-only extraction — it produces choppy output
+  // since GIF frames are independent (no inter-frame delta like video codecs).
+  const keyframeOnly = false;
 
   if (keyframeOnly) {
     logger.info('conversion', 'Using keyframe-only fast path', { format, quality });

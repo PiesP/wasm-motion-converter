@@ -143,24 +143,26 @@ export const FFMPEG_CORE_BASE_URLS = [
 /**
  * Quality presets for GIF and WebP conversions.
  *
- * **GIF Presets:**
- * - `low`: 12 FPS, 128 colors (smallest file, lowest quality)
- * - `medium`: 20 FPS, 256 colors (balanced quality and size)
- * - `high`: 20 FPS, 256 colors (max quality, FPS capped for WASM performance)
+ * **GIF Presets (modern-gif + FFmpeg unified):**
+ * Color counts are unified between modern-gif and FFmpeg paths.
+ * - `low`: 10 FPS, 64 colors (smallest file, lowest quality)
+ * - `medium`: 15 FPS, 128 colors (balanced quality and size)
+ * - `high`: 20 FPS, 255 colors (max quality, capped at 255 for modern-gif compat)
+ *
+ * Dithering modes and palette stats are applied per-path:
+ * - modern-gif: dither via `DITTER_QUALITY_MAP`
+ * - FFmpeg: dither + stats_mode + diff_mode via per-quality config
  *
  * **WebP Presets (WASM-optimized):**
  * - `low`: 10 FPS, 50% quality, compressionLevel 2 (fastest, smallest)
  * - `medium`: 15 FPS, 55% quality, compressionLevel 2 (balanced)
  * - `high`: 20 FPS, 70% quality, compressionLevel 3 (best quality within WASM limits)
- *
- * @note GIF palettegen filter's `stats_mode` parameter is not supported in
- * FFmpeg.wasm 5.1.4. FFmpeg uses its default statistics mode which works correctly.
  */
 export const QUALITY_PRESETS = {
   gif: {
-    low: { fps: 12, colors: 128 },
-    medium: { fps: 20, colors: 256 },
-    high: { fps: 20, colors: 256 },
+    low: { fps: 10, colors: 64 },
+    medium: { fps: 15, colors: 128 },
+    high: { fps: 20, colors: 255 },
   },
   webp: {
     // WASM-optimized settings for libwebp encoding in FFmpeg

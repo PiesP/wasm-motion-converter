@@ -634,7 +634,8 @@ export class FFmpegEncoder {
       frameFormat: frameFormatForLog,
     });
 
-    // Generate palette with transparency support for GIF
+    // Generate palette — stats_mode=diff for low quality (focus palette on changed pixels)
+    const statsMode = quality === 'low' ? ':stats_mode=diff' : '';
     const paletteThreadArgs = getThreadingArgs('filter-complex');
     // Use concat instead of spread to prevent stack overflow
     const paletteCmd = ([] as string[])
@@ -642,7 +643,7 @@ export class FFmpegEncoder {
       .concat(inputArgs)
       .concat([
         '-vf',
-        `palettegen=max_colors=${qualitySettings.colors}:reserve_transparent=0`,
+        `palettegen=max_colors=${qualitySettings.colors}${statsMode}`,
         '-update',
         '1',
         paletteFileName,
@@ -676,9 +677,13 @@ export class FFmpegEncoder {
       monitoring.stopProgressHeartbeat(paletteHeartbeat);
     }
 
-    // Convert frames to GIF using palette with transparency support
+    // Convert frames to GIF using palette
     const conversionThreadArgs = getThreadingArgs('filter-complex');
-    const ditherMode = quality === 'high' ? 'floyd_steinberg' : 'bayer';
+    const ditherMode = quality === 'high' ? 'sierra2' : 'bayer';
+    const bayerScale = quality === 'low' ? 3 : 2;
+    const ditherConfig = ditherMode === 'bayer'
+      ? `dither=${ditherMode}:bayer_scale=${bayerScale}:diff_mode=rectangle`
+      : `dither=${ditherMode}:diff_mode=rectangle`;
     // Use concat instead of spread to prevent stack overflow
     const conversionCmd = ([] as string[])
       .concat(Array.from(conversionThreadArgs))
@@ -687,7 +692,7 @@ export class FFmpegEncoder {
         '-i',
         paletteFileName,
         '-filter_complex',
-        `paletteuse=dither=${ditherMode}`,
+        `paletteuse=${ditherConfig}`,
         outputFileName,
       ]);
 
@@ -900,11 +905,12 @@ export class FFmpegEncoder {
         }
       }
 
-      // Generate palette
+      // Generate palette — stats_mode=diff for low quality (focus palette on changed pixels)
+      const statsMode = quality === 'low' ? ':stats_mode=diff' : '';
       const paletteThreadArgs = getThreadingArgs('filter-complex');
       const paletteFilterChain = scaleFilter
-        ? `${scaleFilter},fps=${fps},palettegen=max_colors=${qualitySettings.colors}`
-        : `fps=${fps},palettegen=max_colors=${qualitySettings.colors}`;
+        ? `${scaleFilter},fps=${fps},palettegen=max_colors=${qualitySettings.colors}${statsMode}`
+        : `fps=${fps},palettegen=max_colors=${qualitySettings.colors}${statsMode}`;
 
       // Use concat instead of spread to prevent stack overflow
       const paletteCmd = ([] as string[])
@@ -1046,10 +1052,14 @@ export class FFmpegEncoder {
 
       // Convert to GIF using palette
       const conversionThreadArgs = getThreadingArgs('filter-complex');
-      const ditherMode = quality === 'high' ? 'floyd_steinberg' : 'bayer';
+      const ditherMode = quality === 'high' ? 'sierra2' : 'bayer';
+      const bayerScale = quality === 'low' ? 3 : 2;
+      const ditherConfig = ditherMode === 'bayer'
+        ? `dither=${ditherMode}:bayer_scale=${bayerScale}:diff_mode=rectangle`
+        : `dither=${ditherMode}:diff_mode=rectangle`;
       const gifFilterChain = scaleFilter
-        ? `${scaleFilter},fps=${fps}[v];[v][1:v]paletteuse=dither=${ditherMode}`
-        : `fps=${fps}[v];[v][1:v]paletteuse=dither=${ditherMode}`;
+        ? `${scaleFilter},fps=${fps}[v];[v][1:v]paletteuse=${ditherConfig}`
+        : `fps=${fps}[v];[v][1:v]paletteuse=${ditherConfig}`;
 
       // Use concat instead of spread to prevent stack overflow
       const gifCmd = ([] as string[])

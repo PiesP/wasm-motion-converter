@@ -48,12 +48,25 @@ export interface ModernGifOptions {
 }
 
 /**
- * Quality to max colors mapping for GIF palette optimization
- * - high: 256 colors (full palette, best quality)
+ * Quality to max colors mapping for GIF palette optimization.
+ * Unified with QUALITY_PRESETS.gif — both modern-gif and FFmpeg use the same values.
+ * - high: 255 colors (modern-gif max is colorTableSize-1=255)
  * - medium: 128 colors (balanced)
  * - low: 64 colors (smallest file size)
  */
-const QUALITY_TO_MAX_COLORS = { high: 256, medium: 128, low: 64 } as const;
+const QUALITY_TO_MAX_COLORS = { high: 255, medium: 128, low: 64 } as const;
+
+/**
+ * Dithering mode per quality level for modern-gif encoder.
+ * - low: stucki (fast, minimal noise → best LZW compression)
+ * - medium: atkinson (balanced quality, clean edges)
+ * - high: floyd-steinberg (best quality, more noise)
+ */
+const DITTER_QUALITY_MAP: Record<'low' | 'medium' | 'high', 'stucki' | 'atkinson' | 'floyd-steinberg'> = {
+  low: 'stucki',
+  medium: 'atkinson',
+  high: 'floyd-steinberg',
+};
 
 /**
  * Check if modern-gif library is available and supported.
@@ -95,6 +108,7 @@ export async function encodeModernGif(
 
   // Use quality mapping constant for palette optimization
   const maxColors = QUALITY_TO_MAX_COLORS[quality];
+  const dither = DITTER_QUALITY_MAP[quality];
 
   const startTime = performance.now();
 
@@ -104,6 +118,7 @@ export async function encodeModernGif(
     height,
     fps,
     maxColors,
+    dither,
     hasTimestamps: !!(timestamps && timestamps.length > 0),
     durationSeconds,
   });
@@ -222,7 +237,7 @@ export async function encodeModernGif(
     return {
       data: imageData.data,
       delay: delays[index] ?? baseDelayMs,
-      disposal: 2 as const,
+      disposal: 1 as const,
     };
   });
 
@@ -248,7 +263,9 @@ export async function encodeModernGif(
       height,
       frames: gifFrames,
       maxColors,
+      dither,
       format: 'blob',
+      looped: true,
     });
 
     if (cancelledDuringEncode || shouldCancel?.()) {
