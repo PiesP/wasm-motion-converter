@@ -120,9 +120,11 @@ const api = {
 
         // Create a copy of the data to ensure it's a regular ArrayBuffer, not SharedArrayBuffer
         const data = new Uint8ClampedArray(frame.data);
-        return new ImageData(data, frame.width, frame.height, {
-          colorSpace: frame.colorSpace,
-        });
+        // NOTE: Do not pass colorSpace option — some Chrome versions throw
+        // "Cannot assign to read only property 'data'" when colorSpace is provided
+        // because the ImageData constructor internally tries to assign to the
+        // read-only data property.
+        return new ImageData(data, frame.width, frame.height);
       });
 
       const result = await encodeModernGif(imageDataFrames, {
