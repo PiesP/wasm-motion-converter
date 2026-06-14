@@ -43,10 +43,12 @@ export const FFMPEG_INTERNALS = {
   // Watchdog configuration (detects stalled/hung conversions)
   /** Interval for checking conversion progress (stall detection). Set to 10 seconds. */
   WATCHDOG_CHECK_INTERVAL_MS: 10_000, // How often to check for stalls
-  /** Base timeout for detecting stalled conversions. Adaptive multipliers may increase this. Set to 90 seconds. */
-  WATCHDOG_STALL_TIMEOUT_MS: 90_000, // Timeout for detecting stalled conversions
-  /** Extended base timeout for WebP format conversions (VP9/complex codec support). Set to 360 seconds (6 minutes). */
-  WATCHDOG_WEBP_BASE_TIMEOUT_MS: 360_000, // WebP needs longer timeout due to slow libwebp encoder
+  /** Base timeout for detecting stalled conversions. Adaptive multipliers may increase this. Set to 120 seconds.
+   *  Increased from 90s to handle slow WASM loading on CDN deployments where FFmpeg core
+   *  may take 30-60s to initialize before producing any progress. */
+  WATCHDOG_STALL_TIMEOUT_MS: 120_000, // Timeout for detecting stalled conversions (was 90s)
+  /** Extended base timeout for WebP format conversions (VP9/complex codec support). Set to 600 seconds (10 minutes). */
+  WATCHDOG_WEBP_BASE_TIMEOUT_MS: 600_000, // WebP needs longer timeout due to slow libwebp encoder (was 360s)
 
   // Termination configuration (cleanup and shutdown)
   /** Grace period after termination signal before force-kill. Set to 200ms. */
@@ -117,10 +119,12 @@ export const FFMPEG_INTERNALS = {
   HEARTBEAT_MAX_COMPLETION: 0.99, // Cap heartbeat progress at 99% of estimate (reduce visible stall)
 
   // FFmpeg log silence monitoring (detects stalled conversions by checking log activity)
-  /** Timeout threshold for FFmpeg log silence. Warn after 20 seconds without log activity. */
-  LOG_SILENCE_TIMEOUT_MS: 20_000, // Warn if no FFmpeg logs for 20s
-  /** Interval for checking FFmpeg log activity. Set to 5 seconds. */
-  LOG_SILENCE_CHECK_INTERVAL_MS: 5_000,
+  /** Timeout threshold for FFmpeg log silence. Warn after 60 seconds without log activity.
+   *  Set to 60s because palettegen filter produces no log output during its single-pass
+   *  computation, which can take 30+ seconds on high-resolution videos. */
+  LOG_SILENCE_TIMEOUT_MS: 60_000, // Warn if no FFmpeg logs for 60s (was 20s)
+  /** Interval for checking FFmpeg log activity. Set to 10 seconds (silence is measured over a minute). */
+  LOG_SILENCE_CHECK_INTERVAL_MS: 10_000,
   /** Strike threshold for log silence. After 3 silence checks in a row, abort as stalled. */
   LOG_SILENCE_MAX_STRIKES: 3, // After 3 silence intervals, abort as stalled
 

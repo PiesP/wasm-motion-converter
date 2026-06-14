@@ -101,7 +101,10 @@ const App: Component = () => {
 
     setEnvironmentSupported(isSupported);
 
-    // Prefetch FFmpeg core assets in idle time to reduce first-conversion latency
+    // Prefetch FFmpeg core assets in idle time to reduce first-conversion latency.
+    // On CDN deployments (Cloudflare Pages), WASM loading from jsdelivr can take 30-60s.
+    // Starting prefetch early with a long timeout ensures FFmpeg is ready when the user
+    // clicks Convert, preventing the 50% stall where decoding is done but FFmpeg isn't loaded.
     if (isSupported) {
       requestIdle(
         () => {
@@ -110,7 +113,7 @@ const App: Component = () => {
             logger.debug('general', 'FFmpeg core prefetch failed (will retry on demand)');
           });
         },
-        { timeout: 5000 }
+        { timeout: 30_000 }
       );
     }
 
