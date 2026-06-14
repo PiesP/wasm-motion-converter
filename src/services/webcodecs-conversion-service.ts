@@ -184,8 +184,8 @@ export async function convert(
       const frame = capturedFrames[i];
       if (frame) {
         releaseDecodedFrame(frame.width * frame.height * 4);
-        // @ts-expect-error — null out the pixel buffer to allow GC
-        frame.data = null;
+        // NOTE: frame.data (ImageData.data) is read-only per WebIDL spec.
+        // Do not attempt to null it — just drop the reference via splice below.
       }
     }
     capturedFrames.length = 0;
