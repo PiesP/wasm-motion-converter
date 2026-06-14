@@ -73,8 +73,33 @@ function buildModuleUrl(provider: CDNProvider, pkg: string, version: string): st
 export function buildRuntimeModuleUrls(packageName: string): string[] {
   const version = RUNTIME_DEP_VERSIONS[packageName];
   if (!version) throw new Error(`[runtime-deps] Missing version for ${packageName}`);
+  // Only use CDN for packages not installed in dependencies
+  if (LOCAL_MODULES.includes(packageName)) {
+    return [`/assets/${packageName}.js`];
+  }
   return CDN_PROVIDERS.map((p) => buildModuleUrl(p, packageName, version));
 }
+
+/** Packages installed as direct dependencies (bundled, not CDN-loaded). */
+const LOCAL_MODULES: string[] = (() => {
+  // Generated at build time from dependencies ∩ cdnDependencies keys
+  // Since mp4box and web-demuxer moved to dependencies only (not in cdnDependencies),
+  // they won't have CDN URLs generated for them at all.
+  // This array is a safety net for the runtime loader.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pkg = require('../../package.json') as {
+      dependencies?: Record<string, string>;
+      cdnDependencies?: Record<string, string>;
+    };
+    const cdnDeps = Object.keys(pkg.cdnDependencies ?? {});
+    const allDeps = Object.keys(pkg.dependencies ?? {});
+    // Local modules = in dependencies but NOT in cdnDependencies
+    return allDeps.filter((d) => !cdnDeps.includes(d));
+  } catch {
+    return [];
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // CDN loader with fallback

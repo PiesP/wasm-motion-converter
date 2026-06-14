@@ -40,12 +40,12 @@
     "@ffmpeg/ffmpeg": "0.12.15",
     "@ffmpeg/util": "0.12.2",
     "modern-gif": "2.1.0",
-    "solid-js": "1.9.13"
+    "mp4box": "0.5.2",
+    "solid-js": "1.9.13",
+    "web-demuxer": "4.0.0"
   },
   "cdnDependencies": {
-    "@ffmpeg/core-mt": "0.12.10",
-    "mp4box": "0.5.2",
-    "web-demuxer": "4.0.0"
+    "@ffmpeg/core-mt": "0.12.10"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",

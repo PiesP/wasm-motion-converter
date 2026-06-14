@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { buildRuntimeModuleUrls, loadFromCDN } from '@utils/cdn-config';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import type {
@@ -733,14 +732,21 @@ export class MP4BoxDemuxer implements DemuxerAdapter {
    */
   private async loadMP4Box(): Promise<Mp4BoxModule> {
     if (!mp4boxModulePromise) {
-      mp4boxModulePromise = loadFromCDN<Mp4BoxModule>(
-        'mp4box.js',
-        buildRuntimeModuleUrls('mp4box')
-      );
+      mp4boxModulePromise = import('mp4box').then((mod) => {
+        // mp4box is UMD; extract ISOFile class with createFile static method
+        const mp4boxNs = (mod.default || mod) as unknown as {
+          ISOFile: { createFile: () => unknown };
+        };
+        if (!mp4boxNs.ISOFile?.createFile) {
+          throw new Error('mp4box loaded but ISOFile.createFile not found');
+        }
+        return {
+          createFile: mp4boxNs.ISOFile.createFile.bind(mp4boxNs.ISOFile),
+        } as unknown as Mp4BoxModule;
+      });
     }
 
     return mp4boxModulePromise.catch((error) => {
-      // Allow retry on subsequent attempts if CDN loading failed.
       mp4boxModulePromise = null;
       throw error;
     });
