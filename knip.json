@@ -26,5 +26,6 @@
     "**/*.spec.{ts,tsx}",
     "**/*.d.ts"
   ],
-  "ignoreExportsUsedInFile": true
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": ["mp4box", "web-demuxer"]
 }
