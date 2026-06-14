@@ -1,11 +1,6 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  "entry": [
-    "index.html",
-    "public/service-worker.ts",
-    "public/sw-register.ts",
-    "src/workers/**/*.ts"
-  ],
+  "entry": ["index.html", "public/service-worker.ts", "public/sw-register.ts"],
   "project": ["src/**/*.{ts,tsx}", "public/*.ts"],
   "paths": {
     "@": ["src"],

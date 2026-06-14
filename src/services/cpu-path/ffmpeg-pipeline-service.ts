@@ -606,6 +606,19 @@ export class FFmpegPipeline {
   }
 
   /**
+   * Read file from FFmpeg VFS
+   *
+   * @param fileName File name in VFS
+   * @returns File data as Uint8Array
+   */
+  async readVirtualFile(fileName: string): Promise<Uint8Array<ArrayBuffer>> {
+    if (!this.isLoaded()) {
+      throw new Error('FFmpeg not initialized. Call initialize() first.');
+    }
+    return this.vfs.readFile(this.getFFmpeg(), fileName) as Promise<Uint8Array<ArrayBuffer>>;
+  }
+
+  /**
    * Delete files from FFmpeg VFS
    *
    * @param fileNames Array of file names to delete

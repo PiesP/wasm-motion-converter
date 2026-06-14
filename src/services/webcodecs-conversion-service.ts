@@ -2,57 +2,114 @@
 // Copyright (c) 2025 PiesP
 
 /**
- * WebCodecs Conversion Service
+ * WebCodecs Conversion Service — Streaming Unified
  *
- * GPU-accelerated video conversion using WebCodecs API.
- * Extracts frames via WebCodecs decode, encodes to GIF/WebP.
- * Falls back to FFmpeg when WebCodecs is unavailable.
+ * All GPU conversion paths use a unified streaming pipeline:
+ *
+ *   WebCodecs decode → onFrame writes raw RGBA to FFmpeg VFS
+ *     → FFmpeg encodes from VFS (GIF palette or WebP libwebp)
+ *
+ * No intermediate frame arrays are held in memory.
+ * Each frame is decoded, written to VFS, and its GPU resources released
+ * before the next frame begins.
+ *
+ * Supported formats: GIF, WebP
+ * Fallback: If WebCodecs is unavailable, falls back to FFmpeg direct (CPU path).
  */
 
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
-import { probeCanvasWebPEncodeSupport } from '@services/webcodecs/conversion/canvas-webp-support-service';
-import { captureComplexCodecFramesForWebP } from '@services/webcodecs/conversion/complex-codec-capture-service';
-import { encodeWithFFmpegFallback } from '@services/webcodecs/conversion/ffmpeg-fallback-encode-service';
 import { createThrottledProgressReporter } from '@services/webcodecs/conversion/progress-reporting-service';
-import { encodeWebPWithMuxFallback } from '@services/webcodecs/conversion/webp-encode-orchestrator-service';
-import { validateWebPBlob } from '@services/webcodecs/webp/validate-webp-blob-service';
-import {
-  buildDurationAlignedTimestamps,
-  getMaxWebPFrames,
-  resolveAnimationDurationSeconds,
-  resolveWebPFps,
-} from '@services/webcodecs/webp/webp-timing-service';
 import { WebCodecsDecoderService } from '@services/webcodecs-decoder-service';
-import type {
-  ConversionOptions,
-  ConversionOutputBlob,
-  EncoderFrame,
-  VideoMetadata,
-} from '@t/conversion-types';
-import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from '@t/video-pipeline-types';
-import { isComplexCodec } from '@utils/codec-utils';
+import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
 import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
-import { releaseDecodedFrame, resetTrackedFrames, trackDecodedFrame } from '@utils/memory-monitor';
+import { releaseDecodedFrame, resetTrackedFrames } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
-import { computeTrimDuration } from '@utils/video-math';
-import { isModernGifSupported } from './modern-gif-service';
 
-let canvasWebPEncodeSupport: boolean | null = null;
+// ── Streaming VFS frame writer ──────────────────────────────────────────
 
-async function getCanvasWebPEncodeSupport(): Promise<boolean> {
-  if (canvasWebPEncodeSupport !== null) {
-    return canvasWebPEncodeSupport;
+interface StreamingDecodeResult {
+  frameCount: number;
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+}
+
+/**
+ * Decode video frames via WebCodecs and write each frame's raw RGBA data
+ * directly to FFmpeg VFS as individual .rgba files.
+ *
+ * This is the core streaming primitive: no frame array is accumulated.
+ * Each frame is decoded → written to VFS → GPU resources released.
+ */
+async function decodeToVFSFrames(params: {
+  file: File;
+  targetFps: number;
+  scale: number;
+  metadata?: VideoMetadata;
+  options: ConversionOptions;
+  abortSignal?: AbortSignal;
+  onFrameWritten?: (frameIndex: number, timestamp: number) => void;
+  onProgress?: (current: number, total: number) => void;
+}): Promise<StreamingDecodeResult> {
+  const { file, targetFps, scale, metadata, options, abortSignal, onFrameWritten, onProgress } =
+    params;
+
+  const decoder = new WebCodecsDecoderService();
+  let frameIndex = 0;
+  const frameTimestamps: number[] = [];
+
+  const decodeResult = await decoder.decodeToFrames({
+    file,
+    targetFps,
+    scale,
+    frameFormat: 'rgba',
+    frameQuality: FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY,
+    framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
+    frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
+    frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
+    trimStartSeconds: options.trimStart,
+    captureMode: 'auto',
+    codec: metadata?.codec,
+    quality: options.quality,
+    shouldCancel: abortSignal
+      ? () => abortSignal.aborted
+      : () => ffmpegService.isCancellationRequested(),
+    onProgress,
+    onFrame: async (frame) => {
+      if (abortSignal?.aborted) throw new Error('Conversion cancelled by user');
+      if (!frame.imageData) throw new Error('WebCodecs did not provide raw frame data.');
+
+      frameIndex++;
+      const rawFileName = `frame_${String(frameIndex).padStart(6, '0')}.rgba`;
+      await ffmpegService.writeVirtualFile(
+        rawFileName,
+        new Uint8Array(frame.imageData.data.buffer)
+      );
+      frameTimestamps.push(frame.timestamp);
+      onFrameWritten?.(frameIndex, frame.timestamp);
+
+      releaseDecodedFrame(frame.imageData.width * frame.imageData.height * 4);
+    },
+  });
+
+  if (frameIndex < 1) {
+    throw new Error('WebCodecs decode produced no frames.');
   }
-  canvasWebPEncodeSupport = await probeCanvasWebPEncodeSupport();
-  return canvasWebPEncodeSupport;
+
+  return {
+    frameCount: frameIndex,
+    width: decodeResult.width,
+    height: decodeResult.height,
+    fps: targetFps,
+    duration: decodeResult.duration,
+  };
 }
 
-function shouldUseWebCodecsPath(metadata: VideoMetadata | undefined): boolean {
-  return isComplexCodec(metadata?.codec) && typeof VideoFrame !== 'undefined';
-}
+// ── Main conversion entry point ─────────────────────────────────────────
 
 export async function convert(
   file: File,
@@ -61,22 +118,19 @@ export async function convert(
   metadata?: VideoMetadata,
   abortSignal?: AbortSignal
 ): Promise<ConversionOutputBlob> {
+  if (abortSignal) {
+    const { throwIfAborted } = await import('@utils/cancellation-context');
+    throwIfAborted(abortSignal);
+  }
+
   const { quality, scale } = options;
   const settings = format === 'gif' ? QUALITY_PRESETS.gif[quality] : QUALITY_PRESETS.webp[quality];
-
-  // Compute effective trim duration for WebP timing calculations (first occurrence)
-  const trimDurationSeconds = computeTrimDuration(options.trimStart, options.trimEnd);
-
-  const normalizedCodec = (metadata?.codec ?? 'unknown').toLowerCase();
-  const useModernGif = format === 'gif' && isModernGifSupported();
-  // When modern-gif is available, skip FFmpeg palette path entirely.
-  // modern-gif uses its own palette optimization and is significantly faster.
-  const shouldPreferFfmpegPalette =
-    format === 'gif' &&
-    !useModernGif &&
-    (options.gifEncoder === 'ffmpeg-palette' ||
-      (options.gifEncoder === 'auto' &&
-        (normalizedCodec === 'unknown' || isComplexCodec(normalizedCodec))));
+  const targetFps =
+    metadata?.framerate && metadata.framerate > 0
+      ? getOptimalFPS(metadata.framerate, quality, format)
+      : 'fps' in settings
+        ? settings.fps
+        : 15;
 
   const shouldCancel = abortSignal
     ? () => abortSignal.aborted
@@ -86,99 +140,26 @@ export async function convert(
     if (shouldCancel()) throw new Error('Conversion cancelled by user');
   };
 
-  // GIF without modern-gif: use FFmpeg directly
-  if (format === 'gif' && !useModernGif && !shouldPreferFfmpegPalette) {
-    logger.info('conversion', 'GIF format: using direct FFmpeg path', {
-      fileSize: file.size,
-      format,
-    });
+  // Ensure FFmpeg is initialized
+  if (!ffmpegService.isLoaded()) {
     await ffmpegService.initialize();
-    const blob = await ffmpegService.convertToGIF(file, options, metadata);
-    (blob as ConversionOutputBlob).encoderBackendUsed = 'ffmpeg';
-    return blob as ConversionOutputBlob;
   }
-
   throwIfCancelled();
 
-  let encoderBackendUsed: string | null = null;
-  const decoder = new WebCodecsDecoderService();
-  const capturedFrames: ImageData[] = [];
-  const gifFrameTimestamps: number[] = [];
-  const webpCapturedFrames: EncoderFrame[] = [];
-  const webpFrameTimestamps: number[] = [];
-
-  // ── Memory profiling ──────────────────────────────────────────
-  const memProfile: { phase: string; frames: number; jsHeapMB: number; timestamp: number }[] = [];
-  const logMem = (phase: string) => {
-    const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
-    memProfile.push({
-      phase,
-      frames: capturedFrames.length,
-      jsHeapMB: mem ? Math.round(mem.usedJSHeapSize / 1024 / 1024) : -1,
-      timestamp: performance.now(),
-    });
-  };
-  logMem('start');
-
-  const frameFormat: WebCodecsFrameFormat =
-    format === 'webp' && typeof createImageBitmap === 'function' ? 'bitmap' : 'rgba';
-
-  const releaseWebPFrames = (): void => {
-    for (const frame of webpCapturedFrames) {
-      if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
-        try {
-          releaseDecodedFrame(frame.width * frame.height * 4);
-          frame.close();
-        } catch {
-          /* ignore */
-        }
-      }
-      if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
-        try {
-          releaseDecodedFrame(frame.displayWidth * frame.displayHeight * 4);
-          frame.close();
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  };
-
-  /** Release GIF ImageData frame memory to reduce heap pressure. */
-  const releaseGifFrames = (): void => {
-    for (let i = 0; i < capturedFrames.length; i++) {
-      const frame = capturedFrames[i];
-      if (frame) {
-        releaseDecodedFrame(frame.width * frame.height * 4);
-        // NOTE: frame.data (ImageData.data) is read-only per WebIDL spec.
-        // Do not attempt to null it — just drop the reference via splice below.
-      }
-    }
-    capturedFrames.length = 0;
-    gifFrameTimestamps.length = 0;
-  };
-
-  const presetFps = 'fps' in settings ? settings.fps : 15;
-  const targetFps =
-    metadata?.framerate && metadata.framerate > 0
-      ? getOptimalFPS(metadata.framerate, quality, format)
-      : presetFps;
-
+  // Setup progress reporting
   const decodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_START;
   const decodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_END;
-  const StatusTickIntervalMs = 400;
+  const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
 
   const decodeReporter = createThrottledProgressReporter({
     startPercent: decodeStart,
     endPercent: decodeEnd,
-    tickIntervalMs: StatusTickIntervalMs,
+    tickIntervalMs: 400,
     initialStatusPrefix: 'Decoding with WebCodecs...',
     throwIfCancelled,
-    reportProgress: (percent) => ffmpegService.reportProgress(percent),
-    reportStatus: (status) => ffmpegService.reportStatus(status),
+    reportProgress: (p: number) => ffmpegService.reportProgress(p),
+    reportStatus: (s: string) => ffmpegService.reportStatus(s),
   });
-
-  const reportDecodeProgress = decodeReporter.report;
 
   ffmpegService.beginExternalConversion(metadata, quality, format, {
     enableLogSilenceCheck: false,
@@ -192,414 +173,117 @@ export async function convert(
   };
 
   try {
-    // Hybrid path: WebCodecs decode → FFmpeg palette encode
-    if (shouldPreferFfmpegPalette) {
-      try {
-        const hybridResult = await encodeWithFFmpegFallback({
-          format: 'gif',
-          file,
-          options,
-          metadata,
-          errorMessage: 'User preference: ffmpeg-palette',
-          decoder,
-          targetFps,
-          scale,
-          reportDecodeProgress,
-          shouldCancel,
-          throwIfCancelled,
-          resetCaptureCollections: () => {
-            // Release tracked GIF frame memory
-            for (const frame of capturedFrames) {
-              releaseDecodedFrame(frame.width * frame.height * 4);
-            }
-            capturedFrames.length = 0;
-            gifFrameTimestamps.length = 0;
-            releaseWebPFrames();
-            webpCapturedFrames.length = 0;
-            webpFrameTimestamps.length = 0;
-          },
-          intent: 'preferred',
-          allowFFmpegDirectFallback: false,
-        });
-        endConversion();
-        return hybridResult;
-      } catch (error) {
-        const errorMessage = getErrorMessage(error);
-        if (
-          errorMessage.includes('cancelled by user') ||
-          (ffmpegService.isCancellationRequested() &&
-            errorMessage.includes('called FFmpeg.terminate()'))
-        ) {
-          throw error;
-        }
-        if (!useModernGif) throw error;
-        logger.warn('conversion', 'FFmpeg palette path failed; falling back to modern-gif', {
-          codec: metadata?.codec,
-          error: errorMessage,
-        });
-      }
-    }
-
-    // Direct WebCodecs path for complex codecs (WebP only)
-    if (format === 'webp' && shouldUseWebCodecsPath(metadata)) {
-      try {
-        const webCodecsResult = await convertViaWebCodecsFrames({
-          decoder,
-          file,
-          format,
-          options,
-          targetFps,
-          scale,
-          metadata,
-          reportDecodeProgress,
-          capturedFrames,
-          shouldCancel,
-        });
-        if (webCodecsResult) {
-          endConversion();
-          return webCodecsResult;
-        }
-        logger.warn(
-          'conversion',
-          'WebCodecs direct path produced no output; continuing with standard path',
-          {
-            codec: metadata?.codec,
-          }
-        );
-      } catch (error) {
-        const errorMessage = getErrorMessage(error);
-        if (
-          errorMessage.includes('cancelled by user') ||
-          (ffmpegService.isCancellationRequested() &&
-            errorMessage.includes('called FFmpeg.terminate()'))
-        ) {
-          throw error;
-        }
-        logger.warn('conversion', 'WebCodecs direct path errored; continuing with standard path', {
-          error: errorMessage,
-          codec: metadata?.codec,
-        });
-      }
-    }
-
-    // Standard WebCodecs decode path
-    ffmpegService.reportStatus('Decoding with WebCodecs...');
+    // ── Streaming decode → VFS ──────────────────────────────────────
+    ffmpegService.reportStatus(`Decoding with WebCodecs...`);
     ffmpegService.reportProgress(decodeStart);
 
-    const captureModes: WebCodecsCaptureMode[] = [
-      'auto',
-      'demuxer',
-      'track',
-      'seek',
-      'frame-callback',
-    ];
-    let captureModeUsed: WebCodecsCaptureMode | null = null;
-    let decodeResult: Awaited<ReturnType<WebCodecsDecoderService['decodeToFrames']>> | null = null;
+    let frameCount = 0;
+    let width = 0;
+    let height = 0;
+    let duration = 0;
 
-    for (const captureMode of captureModes) {
-      try {
-        throwIfCancelled();
+    try {
+      const result = await decodeToVFSFrames({
+        file,
+        targetFps,
+        scale,
+        metadata,
+        options,
+        abortSignal,
+        onProgress: decodeReporter.report,
+      });
+      frameCount = result.frameCount;
+      width = result.width;
+      height = result.height;
+      duration = result.duration;
+    } catch (decodeError) {
+      if (abortSignal?.aborted || isCancellationError(decodeError)) throw decodeError;
 
-        decodeResult = await decoder.decodeToFrames({
-          file,
-          targetFps,
-          scale,
-          frameFormat,
-          frameQuality: FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY,
-          framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
-          frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
-          frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
-          // Compute effective duration considering trim
-          trimStartSeconds: options.trimStart,
-          maxFrames: (() => {
-            if (format !== 'webp') {
-              // Compute effective duration for non-WebP formats to limit frame capture.
-              // Use the demuxer's own container-metadata duration, not the FFmpeg-probed
-              // metadata.duration which can differ, causing frame count mismatches.
-              // When the demuxer is used, it determines its own budget from container metadata.
-              // When a non-demuxer mode falls back, video.duration is used.
-              return undefined;
-            }
-            const trimEffectiveDuration = computeTrimDuration(
-              options.trimStart,
-              options.trimEnd,
-              metadata?.duration
-            );
-            return getMaxWebPFrames(targetFps, trimEffectiveDuration);
-          })(),
-          captureMode,
+      logger.warn(
+        'conversion',
+        'WebCodecs streaming decode failed, falling back to FFmpeg direct',
+        {
+          format,
           codec: metadata?.codec,
-          quality: options.quality,
-          shouldCancel,
-          onProgress: reportDecodeProgress,
-          onFrame: async (frame: {
-            bitmap?: ImageBitmap;
-            imageData?: ImageData;
-            timestamp: number;
-          }) => {
-            throwIfCancelled();
-            if (format === 'webp') {
-              const encoderFrame = frame.bitmap ?? frame.imageData;
-              if (!encoderFrame) {
-                throw new Error('WebCodecs did not provide a usable frame payload for WebP.');
-              }
-              webpCapturedFrames.push(encoderFrame);
-              webpFrameTimestamps.push(frame.timestamp);
-              const frameWidth = frame.bitmap?.width ?? frame.imageData?.width ?? 0;
-              const frameHeight = frame.bitmap?.height ?? frame.imageData?.height ?? 0;
-              if (frameWidth > 0 && frameHeight > 0) {
-                trackDecodedFrame(frameWidth * frameHeight * 4);
-              }
-              return;
-            }
-            // GIF streaming: write frame to FFmpeg VFS immediately, no in-memory accumulation
-            if (!frame.imageData) {
-              throw new Error('WebCodecs did not provide raw frame data.');
-            }
-            gifFrameTimestamps.push(frame.timestamp);
-            // Write raw RGBA data to FFmpeg VFS as rawvideo frame
-            const frameIndex = gifFrameTimestamps.length;
-            const rawFileName = `frame_${String(frameIndex).padStart(6, '0')}.rgba`;
-            await ffmpegService.writeVirtualFile(
-              rawFileName,
-              new Uint8Array(frame.imageData.data.buffer)
+          error: getErrorMessage(decodeError),
+        }
+      );
+
+      // Fallback: FFmpeg direct (CPU path)
+      endConversion();
+      const blob =
+        format === 'gif'
+          ? await ffmpegService.convertToGIF(
+              file,
+              options,
+              metadata,
+              undefined,
+              undefined,
+              abortSignal
+            )
+          : await ffmpegService.convertToWebP(
+              file,
+              options,
+              metadata,
+              undefined,
+              undefined,
+              abortSignal
             );
-            trackDecodedFrame(frame.imageData.width * frame.imageData.height * 4);
-            if (frameIndex % 10 === 0) logMem('frame-' + frameIndex);
-          },
-        });
-
-        captureModeUsed = captureMode;
-        break;
-      } catch (error) {
-        const errorMessage = getErrorMessage(error);
-        if (
-          errorMessage.includes('cancelled by user') ||
-          (ffmpegService.isCancellationRequested() &&
-            errorMessage.includes('called FFmpeg.terminate()'))
-        ) {
-          throw error;
-        }
-        logger.warn('conversion', 'WebCodecs frame capture failed', {
-          error: errorMessage,
-          mode: captureMode,
-          partialWebpFrames: webpCapturedFrames.length,
-          partialGifFrames: capturedFrames.length,
-        });
-
-        // Partial frame reuse: if demuxer captured some frames before failing,
-        // keep them and let the next capture mode resume from where we left off.
-        // Only clear frames if the failure was a hard error (not a partial result).
-        const hasPartialFrames =
-          captureMode === 'demuxer' && (webpCapturedFrames.length > 0 || capturedFrames.length > 0);
-
-        if (!hasPartialFrames) {
-          // Hard failure: clear all and retry with next mode
-          for (const frame of capturedFrames) {
-            releaseDecodedFrame(frame.width * frame.height * 4);
-          }
-          capturedFrames.length = 0;
-          gifFrameTimestamps.length = 0;
-          releaseWebPFrames();
-          webpCapturedFrames.length = 0;
-          webpFrameTimestamps.length = 0;
-        } else {
-          // Partial success: if we captured a reasonable number of frames,
-          // use them as-is and skip further capture modes.
-          const capturedCount =
-            format === 'webp' ? webpCapturedFrames.length : capturedFrames.length;
-          // Heuristic: if we got at least 30 frames or 1 second of content, use partial result
-          const isAcceptable = capturedCount >= 30 || capturedCount >= targetFps;
-
-          logger.info('conversion', 'Demuxer partial success — reusing captured frames', {
-            capturedFrames: capturedCount,
-            targetFps,
-            acceptable: isAcceptable,
-          });
-
-          if (isAcceptable) {
-            // Use partial result as final — synthesize a decodeResult so downstream
-            // encoding can proceed without a full playback fallback re-extract.
-            const partialFrameCount =
-              format === 'webp' ? webpCapturedFrames.length : capturedFrames.length;
-            decodeResult = {
-              frameFiles: [],
-              frameCount: partialFrameCount,
-              captureModeUsed: captureMode,
-              width: metadata?.width ?? 0,
-              height: metadata?.height ?? 0,
-              fps: targetFps,
-              duration: metadata?.duration ?? 0,
-            };
-            captureModeUsed = captureMode;
-            break;
-          }
-          // Otherwise clear and try next mode (will re-extract from start)
-          for (const frame of capturedFrames) {
-            releaseDecodedFrame(frame.width * frame.height * 4);
-          }
-          capturedFrames.length = 0;
-          gifFrameTimestamps.length = 0;
-          releaseWebPFrames();
-          webpCapturedFrames.length = 0;
-          webpFrameTimestamps.length = 0;
-        }
-
-        if (captureMode === 'seek') throw error;
-      }
-    }
-
-    if (!decodeResult?.frameCount) {
-      throw new Error('WebCodecs decode produced no frames.');
+      (blob as ConversionOutputBlob).encoderBackendUsed = 'ffmpeg';
+      return blob as ConversionOutputBlob;
     }
 
     ffmpegService.reportProgress(decodeEnd);
+    throwIfCancelled();
 
-    const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
-    const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
-    const initialEncodeStatusPrefix = `Encoding ${format.toUpperCase()}...`;
+    // ── Encode from VFS frames via FFmpeg ───────────────────────────
+    // WebCodecs already decoded frames to VFS.
+    // Concatenate them into a single rawvideo buffer for FFmpeg.
+    ffmpegService.reportStatus(`Assembling ${format.toUpperCase()} frames...`);
+    ffmpegService.reportProgress(encodeStart);
 
-    const encodeReporter = createThrottledProgressReporter({
-      startPercent: encodeStart,
-      endPercent: encodeEnd,
-      tickIntervalMs: StatusTickIntervalMs,
-      initialStatusPrefix: initialEncodeStatusPrefix,
-      throwIfCancelled,
-      reportProgress: (percent) => ffmpegService.reportProgress(percent),
-      reportStatus: (status) => ffmpegService.reportStatus(status),
+    const frameSizeBytes = width * height * 4;
+    const totalBytes = frameSizeBytes * frameCount;
+    const rawFileName = 'frames.rgba';
+    const rawBuffer = new Uint8Array(totalBytes);
+
+    let offset = 0;
+    for (let i = 1; i <= frameCount; i++) {
+      throwIfCancelled();
+      const frameFileName = `frame_${String(i).padStart(6, '0')}.rgba`;
+      const frameData = await ffmpegService.readVirtualFile(frameFileName);
+      rawBuffer.set(new Uint8Array(frameData as unknown as ArrayBuffer), offset);
+      offset += frameSizeBytes;
+    }
+
+    await ffmpegService.writeVirtualFile(rawFileName, rawBuffer);
+
+    // Clean up individual frame files (already concatenated)
+    const individualFrames: string[] = [];
+    for (let i = 1; i <= frameCount; i++) {
+      individualFrames.push(`frame_${String(i).padStart(6, '0')}.rgba`);
+    }
+    await ffmpegService.deleteVirtualFiles(individualFrames);
+
+    // Encode via FFmpeg rawvideo → GIF/WebP
+    ffmpegService.reportStatus(`Encoding ${format.toUpperCase()} with FFmpeg...`);
+    const outputBlob = await ffmpegService.encodeFrameSequence({
+      format,
+      options: { quality, scale },
+      frameCount,
+      fps: targetFps,
+      durationSeconds: duration,
+      frameFiles: [],
+      frameInput: {
+        kind: 'rawvideo',
+        fileName: rawFileName,
+        width,
+        height,
+        pixelFormat: 'rgba',
+      },
     });
 
-    if (encodeReporter) {
-      encodeReporter.setStatusPrefix(initialEncodeStatusPrefix);
-    }
-
-    const doFFmpegFallback = async (errorMessage: string): Promise<Blob> => {
-      throwIfCancelled();
-      encoderBackendUsed = 'ffmpeg';
-      return encodeWithFFmpegFallback({
-        format,
-        file,
-        options,
-        metadata,
-        errorMessage,
-        decoder,
-        targetFps,
-        scale,
-        reportDecodeProgress,
-        shouldCancel,
-        throwIfCancelled,
-        resetCaptureCollections: () => {
-          // Release tracked GIF frame memory
-          for (const frame of capturedFrames) {
-            releaseDecodedFrame(frame.width * frame.height * 4);
-          }
-          capturedFrames.length = 0;
-          gifFrameTimestamps.length = 0;
-          releaseWebPFrames();
-          webpCapturedFrames.length = 0;
-          webpFrameTimestamps.length = 0;
-        },
-      });
-    };
-
-    let outputBlob: Blob;
-
-    if (useModernGif && gifFrameTimestamps.length > 0) {
-      // Streaming GIF: frames written to VFS as individual raw files during decode
-      try {
-        logMem('encode-start');
-        ffmpegService.reportStatus('Encoding GIF with FFmpeg...');
-        const frameCount = gifFrameTimestamps.length;
-        const width = decodeResult.width;
-        const height = decodeResult.height;
-
-        // Build frame file list for FFmpeg rawvideo concat
-        const rawFrameFiles: string[] = [];
-        for (let i = 1; i <= frameCount; i++) {
-          rawFrameFiles.push(`frame_${String(i).padStart(6, '0')}.rgba`);
-        }
-
-        // Encode via FFmpeg rawvideo → GIF using frameInput
-        const blob = await ffmpegService.encodeFrameSequence({
-          format: 'gif',
-          options: { quality, scale },
-          frameCount,
-          fps: targetFps,
-          durationSeconds: decodeResult.duration,
-          frameFiles: rawFrameFiles,
-          frameInput: {
-            kind: 'rawvideo',
-            fileName: rawFrameFiles[0]!,
-            width,
-            height,
-            pixelFormat: 'rgba',
-          },
-        });
-
-        outputBlob = blob as Blob;
-        ffmpegService.reportProgress(encodeEnd);
-        encoderBackendUsed = 'ffmpeg-rawvideo-streaming';
-        logMem('encode-done');
-        logger.info('conversion', 'GIF memory profile', { profile: memProfile });
-        (window as unknown as Record<string, unknown>).__gifMemProfile = memProfile;
-        releaseGifFrames();
-      } catch (error) {
-        const errorMessage = getErrorMessage(error);
-        outputBlob = await doFFmpegFallback(errorMessage);
-        releaseGifFrames();
-      }
-    } else if (format === 'webp') {
-      if (!encodeReporter) {
-        throw new Error('Encode reporter unavailable for WebP encoding.');
-      }
-
-      const webpAnimationDurationSeconds = resolveAnimationDurationSeconds(
-        webpCapturedFrames.length,
-        targetFps,
-        metadata,
-        decodeResult.duration,
-        trimDurationSeconds
-      );
-
-      const webpFpsForEncoding = resolveWebPFps(
-        webpCapturedFrames.length,
-        targetFps,
-        webpAnimationDurationSeconds
-      );
-
-      const webpEncode = await encodeWebPWithMuxFallback({
-        frames: webpCapturedFrames,
-        width: decodeResult.width,
-        height: decodeResult.height,
-        fps: webpFpsForEncoding,
-        requestedTargetFpsForDuration: targetFps,
-        captureDurationSeconds: decodeResult.duration,
-        quality,
-        frameTimestampsForMuxer: webpFrameTimestamps,
-        metadata,
-        codec: metadata?.codec,
-        onProgress: encodeReporter.report,
-        shouldCancel,
-        canEncodeWebPFrames: () => getCanvasWebPEncodeSupport(),
-        setStatusPrefix: (prefix) => encodeReporter.setStatusPrefix(prefix),
-        encodeWithFFmpegFallback: doFFmpegFallback,
-      });
-
-      outputBlob = webpEncode.blob;
-      encoderBackendUsed = webpEncode.encoderBackendUsed;
-      // Store aHash dedup stats on the blob for UI display
-      if (webpEncode.dedupSkippedFrames !== undefined) {
-        (outputBlob as ConversionOutputBlob).dedupSkippedFrames = webpEncode.dedupSkippedFrames;
-      }
-      if (webpEncode.dedupTotalFrames !== undefined) {
-        (outputBlob as ConversionOutputBlob).dedupTotalFrames = webpEncode.dedupTotalFrames;
-      }
-      releaseWebPFrames();
-      webpCapturedFrames.length = 0;
-      webpFrameTimestamps.length = 0;
-    } else {
-      outputBlob = await doFFmpegFallback('Unexpected encoder path');
-    }
+    if (shouldCancel()) throw new Error('Conversion cancelled by user');
 
     const completionProgress =
       format === 'gif'
@@ -607,29 +291,50 @@ export async function convert(
         : FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE;
     ffmpegService.reportProgress(completionProgress);
 
-    if (capturedFrames.length > 0 && (useModernGif || format === 'webp')) {
-      capturedFrames.length = 0;
-    }
-
     const outputBlobWithMetadata = outputBlob as ConversionOutputBlob;
-    if (captureModeUsed) outputBlobWithMetadata.captureModeUsed = captureModeUsed;
-    if (encoderBackendUsed) outputBlobWithMetadata.encoderBackendUsed = encoderBackendUsed;
+    outputBlobWithMetadata.encoderBackendUsed = 'ffmpeg-vfs-streaming';
+    outputBlobWithMetadata.wasTranscoded = true;
 
+    endConversion();
     return outputBlobWithMetadata;
-  } finally {
-    try {
-      releaseWebPFrames();
-    } catch {
-      /* non-fatal */
+  } catch (error) {
+    if (abortSignal?.aborted || isCancellationError(error)) {
+      throw error;
     }
-    try {
-      releaseGifFrames();
-    } catch {
-      /* non-fatal */
-    }
-    webpCapturedFrames.length = 0;
-    gifFrameTimestamps.length = 0;
 
+    logger.error('conversion', 'Streaming conversion failed', {
+      format,
+      codec: metadata?.codec,
+      error: getErrorMessage(error),
+    });
+
+    // Last-resort fallback: FFmpeg direct
+    try {
+      endConversion();
+      const blob =
+        format === 'gif'
+          ? await ffmpegService.convertToGIF(
+              file,
+              options,
+              metadata,
+              undefined,
+              undefined,
+              abortSignal
+            )
+          : await ffmpegService.convertToWebP(
+              file,
+              options,
+              metadata,
+              undefined,
+              undefined,
+              abortSignal
+            );
+      (blob as ConversionOutputBlob).encoderBackendUsed = 'ffmpeg';
+      return blob as ConversionOutputBlob;
+    } catch (_fallbackError) {
+      throw error; // Throw original error
+    }
+  } finally {
     try {
       endConversion();
     } catch (endError) {
@@ -647,211 +352,22 @@ export async function convert(
         });
       }
     }
+
+    resetTrackedFrames();
   }
 }
 
-async function convertViaWebCodecsFrames(params: {
-  decoder: WebCodecsDecoderService;
-  file: File;
-  format: 'gif' | 'webp';
-  options: ConversionOptions;
-  targetFps: number;
-  scale: number;
-  metadata?: VideoMetadata;
-  reportDecodeProgress: (current: number, total: number) => void;
-  capturedFrames?: ImageData[];
-  shouldCancel?: () => boolean;
-}): Promise<Blob | null> {
-  const {
-    decoder,
-    file,
-    format,
-    options,
-    targetFps,
-    scale,
-    metadata,
-    reportDecodeProgress,
-    shouldCancel,
-  } = params;
+// ── Helpers ─────────────────────────────────────────────────────────────
 
-  // Compute effective trim duration for WebP timing calculations (second occurrence)
-  const trimDurationSeconds = computeTrimDuration(options.trimStart, options.trimEnd);
-
-  const shouldCancelOrDefault = shouldCancel ?? (() => ffmpegService.isCancellationRequested());
-  if (shouldCancelOrDefault()) throw new Error('Conversion cancelled by user');
-  if (!shouldUseWebCodecsPath(metadata)) return null;
-  if (format === 'gif') return null;
-
-  const canEncodeWebPFrames = await getCanvasWebPEncodeSupport();
-  if (!canEncodeWebPFrames) {
-    logger.info('conversion', 'Skipping WebCodecs direct WebP path (canvas WebP unsupported)', {
-      codec: metadata?.codec ?? 'unknown',
-    });
-    return null;
-  }
-
-  try {
-    ffmpegService.reportStatus('Extracting frames via WebCodecs...');
-    const throwIfCancelled = (): void => {
-      if (shouldCancelOrDefault()) throw new Error('Conversion cancelled by user');
-    };
-
-    const { orderedFrames, timestamps, decodeResult, effectiveTargetFps } =
-      await captureComplexCodecFramesForWebP({
-        decoder,
-        file,
-        options,
-        targetFps,
-        scale,
-        metadata,
-        getMaxWebPFrames,
-        reportDecodeProgress,
-        shouldCancel: shouldCancelOrDefault,
-        throwIfCancelled,
-      });
-
-    const StatusTickIntervalMs = 400;
-    let lastEncodeStatusAt = 0;
-    let lastEncodeStatusCurrent = -1;
-    let encodeStatusPrefix = 'Encoding WebP frames...';
-    ffmpegService.reportStatus(encodeStatusPrefix);
-
-    const encStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
-    const encEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END;
-    const reportEncodeProgress = (current: number, total: number) => {
-      if (shouldCancelOrDefault()) throw new Error('Conversion cancelled by user');
-      const progress = encStart + ((encEnd - encStart) * current) / Math.max(1, total);
-      ffmpegService.reportProgress(Math.round(progress));
-      const now = performance.now();
-      const isTerminal = current >= total;
-      if (
-        current !== lastEncodeStatusCurrent &&
-        (isTerminal || now - lastEncodeStatusAt >= StatusTickIntervalMs)
-      ) {
-        lastEncodeStatusAt = now;
-        lastEncodeStatusCurrent = current;
-        ffmpegService.reportStatus(`${encodeStatusPrefix} (${current}/${Math.max(1, total)})`);
-      }
-    };
-
-    const releaseCapturedFrames = (): void => {
-      for (const frame of orderedFrames) {
-        if (typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap) {
-          try {
-            frame.close();
-          } catch {
-            /* ignore */
-          }
-        }
-        if (typeof VideoFrame !== 'undefined' && frame instanceof VideoFrame) {
-          try {
-            frame.close();
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    };
-
-    try {
-      const animationDurationSeconds = resolveAnimationDurationSeconds(
-        orderedFrames.length,
-        effectiveTargetFps,
-        metadata,
-        decodeResult.duration,
-        trimDurationSeconds
-      );
-
-      const fpsForEncoding = resolveWebPFps(
-        orderedFrames.length,
-        effectiveTargetFps,
-        animationDurationSeconds
-      );
-
-      const timestampsForEncoding =
-        timestamps.length >= orderedFrames.length
-          ? timestamps.slice(0, orderedFrames.length)
-          : buildDurationAlignedTimestamps({
-              frameCount: orderedFrames.length,
-              durationSeconds: animationDurationSeconds ?? decodeResult.duration,
-              fallbackFps: fpsForEncoding,
-            });
-
-      let outputBlob: Blob | null = null;
-      let encoderBackendUsed: string | null = null;
-
-      // Single-pass: convert → encode → ANMF chunk → assemble RIFF
-      const streamingResult = await import('@services/webcodecs/webp/mux-webp-frames-service');
-
-      encodeStatusPrefix = 'Encoding WebP frames...';
-      ffmpegService.reportStatus(encodeStatusPrefix);
-
-      const streamingWebPResult = await streamingResult.muxWebPFramesStreaming({
-        frames: orderedFrames,
-        timestamps: timestampsForEncoding,
-        width: decodeResult.width,
-        height: decodeResult.height,
-        fps: fpsForEncoding,
-        quality: options.quality,
-        metadata,
-        durationSeconds: animationDurationSeconds,
-        codec: metadata?.codec,
-        onProgress: reportEncodeProgress,
-        shouldCancel: shouldCancelOrDefault,
-      });
-
-      outputBlob = streamingWebPResult.blob;
-      encoderBackendUsed = 'webp-muxer-streaming';
-      releaseCapturedFrames();
-
-      if (!outputBlob) return null;
-
-      const validation = await validateWebPBlob(outputBlob);
-      if (!validation.valid) {
-        logger.warn('conversion', 'WebCodecs direct WebP output failed validation', {
-          codec: metadata?.codec ?? 'unknown',
-          reason: validation.reason ?? 'validation_failed',
-        });
-        return null;
-      }
-
-      ffmpegService.reportProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE);
-
-      const outputBlobWithMetadata = outputBlob as ConversionOutputBlob;
-      if (decodeResult.captureModeUsed) {
-        outputBlobWithMetadata.captureModeUsed = decodeResult.captureModeUsed;
-      }
-      if (encoderBackendUsed) {
-        outputBlobWithMetadata.encoderBackendUsed = encoderBackendUsed;
-      }
-      outputBlobWithMetadata.wasTranscoded = true;
-      return outputBlobWithMetadata;
-    } finally {
-      releaseCapturedFrames();
-    }
-  } catch (error) {
-    const errorMessage = getErrorMessage(error);
-    if (
-      errorMessage.includes('cancelled by user') ||
-      (ffmpegService.isCancellationRequested() &&
-        errorMessage.includes('called FFmpeg.terminate()'))
-    ) {
-      throw error;
-    }
-    logger.error('conversion', 'WebCodecs direct path failed', {
-      error: errorMessage,
-      codec: metadata?.codec,
-      format,
-    });
-    return null;
-  }
+function isCancellationError(error: unknown): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return msg.includes('cancelled by user') || msg.includes('called ffmpeg.terminate()');
 }
 
 export function cleanup(): void {
-  canvasWebPEncodeSupport = null;
   resetTrackedFrames();
 }
 
 export function scheduleWorkerPoolIdleCleanup(): void {
-  // No-op: worker pool removed, modern-gif encodes on main thread
+  // No-op: worker pool removed, all encoding via FFmpeg VFS
 }

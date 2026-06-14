@@ -20,10 +20,8 @@ type LogCategory =
   | 'performance'
   | 'prefetch'
   | 'cdn'
-  | 'worker-pool'
   | 'demuxer'
-  | 'encoders'
-  | 'gif-encoder';
+  | 'encoders';
 
 type LogEntry = {
   timestampMs: number;

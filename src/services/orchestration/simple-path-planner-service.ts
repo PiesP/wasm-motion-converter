@@ -4,10 +4,13 @@
 /**
  * Simple Path Planner
  *
- * Selects the conversion path (GPU/WebCodecs vs CPU/FFmpeg codec availability and browser capabilities.
+ * Selects the conversion path (GPU/WebCodecs vs CPU/FFmpeg) based on
+ * codec availability and browser capabilities.
+ *
+ * All GPU paths now use a unified streaming pipeline:
+ * WebCodecs decode → FFmpeg VFS → FFmpeg encode
  */
 
-import { isModernGifSupported } from '@services/modern-gif-service';
 import {
   isWebCodecsCodecSupported,
   isWebCodecsDecodeSupported,
@@ -15,11 +18,8 @@ import {
 import type { ConversionFormat, PathSelection, VideoMetadata } from '@t/conversion-types';
 import { throwIfAborted } from '@utils/cancellation-context';
 import {
-  isAv1Codec,
   isFFmpegPreferredCodec,
-  isHevcCodec,
   isSupportedFormat,
-  isVp9Codec,
   isWebCodecsNativeCodec,
 } from '@utils/codec-utils';
 
@@ -29,10 +29,6 @@ type SimplePathPlanParams = {
   metadata?: VideoMetadata;
   abortSignal?: AbortSignal;
 };
-
-function shouldPreferGpuGif(codec: string): boolean {
-  return isAv1Codec(codec) || isHevcCodec(codec) || isVp9Codec(codec);
-}
 
 /**
  * Select optimal conversion path based on codec capabilities and browser support.
@@ -48,10 +44,9 @@ function shouldPreferGpuGif(codec: string): boolean {
  *    AV1:   ~91.5% decode — Chrome/Firefox/Safari 14+
  *    HEVC:  ~85% decode — Safari/Edge/Chrome (no Firefox)
  *
- * 3. Unknown codecs → runtime probe (isWebCodecsCodecSupported)
+ *    All GPU paths: WebCodecs decode → FFmpeg VFS → FFmpeg encode
  *
- * 4. GIF-specific: modern-gif available → always use GPU path
- *    modern-gif avoids 4.4s FFmpeg palette generation
+ * 3. Unknown codecs → runtime probe (isWebCodecsCodecSupported)
  *
  * @returns PathSelection with 'gpu' or 'cpu' path and reason
  */
@@ -64,14 +59,8 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
 
   const codec = metadata?.codec?.trim();
 
-  // No codec info: use heuristics based on format and modern-gif support
+  // No codec info → CPU path (conservative)
   if (!codec || codec === 'unknown') {
-    if (format === 'gif' && isModernGifSupported()) {
-      return {
-        path: 'gpu',
-        reason: 'GIF with modern-gif: WebCodecs decode + modern-gif encode',
-      };
-    }
     return {
       path: 'cpu',
       reason: 'Codec metadata is unavailable, using FFmpeg CPU path',
@@ -86,31 +75,11 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
     };
   }
 
-  // WebCodecs-native codecs: use GPU path
+  // WebCodecs-native codecs: use GPU path (WebCodecs decode → FFmpeg VFS → encode)
   if (isWebCodecsNativeCodec(codec)) {
-    if (format === 'webp') {
-      return {
-        path: 'gpu',
-        reason: `WebP + ${codec}: WebCodecs decode → WebP muxer`,
-      };
-    }
-    // GIF with modern-gif
-    if (isModernGifSupported()) {
-      return {
-        path: 'gpu',
-        reason: `GIF + ${codec}: WebCodecs decode → modern-gif encode`,
-      };
-    }
-    // GIF without modern-gif: use FFmpeg palette for complex codecs
-    if (shouldPreferGpuGif(codec)) {
-      return {
-        path: 'gpu',
-        reason: `GIF + ${codec}: WebCodecs decode → FFmpeg palette encode`,
-      };
-    }
     return {
-      path: 'cpu',
-      reason: `GIF + ${codec}: FFmpeg direct (no modern-gif)`,
+      path: 'gpu',
+      reason: `${format.toUpperCase()} + ${codec}: WebCodecs decode → FFmpeg VFS encode`,
     };
   }
 
@@ -136,22 +105,8 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
   }
 
   // Runtime probe succeeded: use GPU path
-  if (format === 'webp') {
-    return {
-      path: 'gpu',
-      reason: `WebP + ${codec}: WebCodecs decode → WebP muxer (runtime probe)`,
-    };
-  }
-
-  if (isModernGifSupported()) {
-    return {
-      path: 'gpu',
-      reason: `GIF + ${codec}: WebCodecs decode → modern-gif encode (runtime probe)`,
-    };
-  }
-
   return {
-    path: 'cpu',
-    reason: `GIF + ${codec}: FFmpeg direct (runtime probe, no modern-gif)`,
+    path: 'gpu',
+    reason: `${format.toUpperCase()} + ${codec}: WebCodecs decode → FFmpeg VFS encode (runtime probe)`,
   };
 }

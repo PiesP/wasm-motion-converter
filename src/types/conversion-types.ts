@@ -69,16 +69,6 @@ export type ConversionScale = 0.5 | 0.75 | 1.0;
 export const CONVERSION_SCALES: readonly ConversionScale[] = [0.5, 0.75, 1.0] as const;
 
 /**
- * GIF encoder preference
- *
- * Controls which encoder implementation should be preferred when producing GIF output.
- *
- * - `auto`: Use the default strategy selection (typically GPU/WebCodecs + modern-gif when available)
- * - `ffmpeg-palette`: Prefer FFmpeg palettegen/paletteuse pipeline (often higher quality; performance can vary by codec/input)
- */
-type GifEncoderPreference = 'auto' | 'ffmpeg-palette';
-
-/**
  * User-selected conversion settings
  *
  * Complete configuration for video conversion including output format,
@@ -126,8 +116,6 @@ export interface ConversionOptions {
   scale: ConversionScale;
   /** Video duration in seconds (for adaptive timeout calculation) */
   duration?: number;
-  /** Optional GIF encoder preference (only used when the requested format is 'gif') */
-  gifEncoder?: GifEncoderPreference;
   /** Trim start in seconds (0 = beginning of video) */
   trimStart?: number;
   /** Trim end in seconds (0 = end of video) */
