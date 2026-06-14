@@ -3,7 +3,7 @@ declare const self: ServiceWorkerGlobalScope;
 
 const SW_VERSION = 'v1.0.0';
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = '__CACHE_VERSION__';
 
 const CACHE_NAMES = {
   cdn: `cdn-deps-${CACHE_VERSION}`,

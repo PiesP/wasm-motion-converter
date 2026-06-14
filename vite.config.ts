@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -59,11 +59,21 @@ function injectRuntimeDepsIntoServiceWorker(code: string): string {
   const runtimeDeps = readRuntimeDependencies();
   const json = JSON.stringify(runtimeDeps);
   const escaped = json.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const replaced = code.replaceAll('__RUNTIME_DEP_VERSIONS__', escaped);
+  let replaced = code.replaceAll('__RUNTIME_DEP_VERSIONS__', escaped);
 
   if (replaced === code) {
     console.warn('[cdn-deps] Service worker runtime dependency placeholder not replaced');
   }
+
+  // ponytail: build-time cache key per deploy — commit hash prevents stale SW caching
+  const cacheKey = (() => {
+    try {
+      return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
+    } catch {
+      return 'unknown';
+    }
+  })();
+  replaced = replaced.replaceAll('__CACHE_VERSION__', cacheKey);
 
   return replaced;
 }
