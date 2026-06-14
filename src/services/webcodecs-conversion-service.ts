@@ -29,6 +29,7 @@ import { releaseDecodedFrame, resetTrackedFrames } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 
 // ── Streaming VFS frame writer ──────────────────────────────────────────
+// ── Streaming VFS frame writer ──────────────────────────────────────────
 
 interface StreamingDecodeResult {
   frameCount: number;
@@ -36,33 +37,76 @@ interface StreamingDecodeResult {
   height: number;
   fps: number;
   duration: number;
+  /** Concatenated raw RGBA frames — single buffer, no intermediate VFS files */
+  rawBuffer: Uint8Array;
 }
 
 /**
  * Decode video frames via WebCodecs and write each frame's raw RGBA data
- * directly to FFmpeg VFS as individual .rgba files.
+ * directly into a pre-allocated buffer.
  *
- * This is the core streaming primitive: no frame array is accumulated.
- * Each frame is decoded → written to VFS → GPU resources released.
+ * This is the core streaming primitive: no intermediate VFS files,
+ * no frame array. Each frame is decoded → written to buffer → GPU released.
  */
-async function decodeToVFSFrames(params: {
+async function decodeToRawBuffer(params: {
   file: File;
   targetFps: number;
   scale: number;
   metadata?: VideoMetadata;
   options: ConversionOptions;
   abortSignal?: AbortSignal;
-  onFrameWritten?: (frameIndex: number, timestamp: number) => void;
   onProgress?: (current: number, total: number) => void;
 }): Promise<StreamingDecodeResult> {
-  const { file, targetFps, scale, metadata, options, abortSignal, onFrameWritten, onProgress } =
-    params;
+  const { file, targetFps, scale, metadata, options, abortSignal, onProgress } = params;
 
   const decoder = new WebCodecsDecoderService();
   let frameIndex = 0;
-  const frameTimestamps: number[] = [];
 
-  const decodeResult = await decoder.decodeToFrames({
+  // First pass: decode to count frames and get dimensions
+  // We need dimensions to allocate the buffer, so do a lightweight probe
+  const probeResult = await decoder.decodeToFrames({
+    file,
+    targetFps,
+    scale,
+    frameFormat: 'rgba',
+    frameQuality: FFMPEG_INTERNALS.WEBCODECS.FRAME_QUALITY,
+    framePrefix: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_PREFIX,
+    frameDigits: FFMPEG_INTERNALS.WEBCODECS.FRAME_FILE_DIGITS,
+    frameStartNumber: FFMPEG_INTERNALS.WEBCODECS.FRAME_START_NUMBER,
+    trimStartSeconds: options.trimStart,
+    captureMode: 'auto',
+    codec: metadata?.codec,
+    quality: options.quality,
+    shouldCancel: abortSignal
+      ? () => abortSignal.aborted
+      : () => ffmpegService.isCancellationRequested(),
+    onProgress,
+    onFrame: async (frame) => {
+      if (abortSignal?.aborted) throw new Error('Conversion cancelled by user');
+      if (!frame.imageData) throw new Error('WebCodecs did not provide raw frame data.');
+      frameIndex++;
+      releaseDecodedFrame(frame.imageData.width * frame.imageData.height * 4);
+    },
+  });
+
+  if (frameIndex < 1) {
+    throw new Error('WebCodecs decode produced no frames.');
+  }
+
+  const width = probeResult.width;
+  const height = probeResult.height;
+  const frameSizeBytes = width * height * 4;
+  const totalBytes = frameSizeBytes * frameIndex;
+
+  // Allocate single buffer for all frames
+  const rawBuffer = new Uint8Array(totalBytes);
+  let writeOffset = 0;
+  let writeFrameIndex = 0;
+
+  // Second pass: decode again and write directly to buffer
+  // This is necessary because WebCodecs doesn't support seeking back
+  const decoder2 = new WebCodecsDecoderService();
+  await decoder2.decodeToFrames({
     file,
     targetFps,
     scale,
@@ -83,29 +127,22 @@ async function decodeToVFSFrames(params: {
       if (abortSignal?.aborted) throw new Error('Conversion cancelled by user');
       if (!frame.imageData) throw new Error('WebCodecs did not provide raw frame data.');
 
-      frameIndex++;
-      const rawFileName = `frame_${String(frameIndex).padStart(6, '0')}.rgba`;
-      await ffmpegService.writeVirtualFile(
-        rawFileName,
-        new Uint8Array(frame.imageData.data.buffer)
-      );
-      frameTimestamps.push(frame.timestamp);
-      onFrameWritten?.(frameIndex, frame.timestamp);
+      const rgba = new Uint8Array(frame.imageData.data.buffer);
+      rawBuffer.set(rgba, writeOffset);
+      writeOffset += frameSizeBytes;
+      writeFrameIndex++;
 
       releaseDecodedFrame(frame.imageData.width * frame.imageData.height * 4);
     },
   });
 
-  if (frameIndex < 1) {
-    throw new Error('WebCodecs decode produced no frames.');
-  }
-
   return {
-    frameCount: frameIndex,
-    width: decodeResult.width,
-    height: decodeResult.height,
+    frameCount: writeFrameIndex,
+    width,
+    height,
     fps: targetFps,
-    duration: decodeResult.duration,
+    duration: probeResult.duration,
+    rawBuffer,
   };
 }
 
@@ -149,7 +186,6 @@ export async function convert(
   // Setup progress reporting
   const decodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_START;
   const decodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.DECODE_END;
-  const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START;
 
   const decodeReporter = createThrottledProgressReporter({
     startPercent: decodeStart,
@@ -173,17 +209,18 @@ export async function convert(
   };
 
   try {
-    // ── Streaming decode → VFS ──────────────────────────────────────
-    ffmpegService.reportStatus(`Decoding with WebCodecs...`);
+    // ── Streaming decode → raw buffer ────────────────────────────────
+    ffmpegService.reportStatus('Decoding with WebCodecs...');
     ffmpegService.reportProgress(decodeStart);
 
     let frameCount = 0;
     let width = 0;
     let height = 0;
     let duration = 0;
+    let rawBuffer: Uint8Array | null = null;
 
     try {
-      const result = await decodeToVFSFrames({
+      const result = await decodeToRawBuffer({
         file,
         targetFps,
         scale,
@@ -196,6 +233,7 @@ export async function convert(
       width = result.width;
       height = result.height;
       duration = result.duration;
+      rawBuffer = result.rawBuffer;
     } catch (decodeError) {
       if (abortSignal?.aborted || isCancellationError(decodeError)) throw decodeError;
 
@@ -236,36 +274,10 @@ export async function convert(
     ffmpegService.reportProgress(decodeEnd);
     throwIfCancelled();
 
-    // ── Encode from VFS frames via FFmpeg ───────────────────────────
-    // WebCodecs already decoded frames to VFS.
-    // Concatenate them into a single rawvideo buffer for FFmpeg.
-    ffmpegService.reportStatus(`Assembling ${format.toUpperCase()} frames...`);
-    ffmpegService.reportProgress(encodeStart);
-
-    const frameSizeBytes = width * height * 4;
-    const totalBytes = frameSizeBytes * frameCount;
+    // ── Write raw buffer to VFS and encode via FFmpeg ───────────────
     const rawFileName = 'frames.rgba';
-    const rawBuffer = new Uint8Array(totalBytes);
+    await ffmpegService.writeVirtualFile(rawFileName, rawBuffer!);
 
-    let offset = 0;
-    for (let i = 1; i <= frameCount; i++) {
-      throwIfCancelled();
-      const frameFileName = `frame_${String(i).padStart(6, '0')}.rgba`;
-      const frameData = await ffmpegService.readVirtualFile(frameFileName);
-      rawBuffer.set(new Uint8Array(frameData as unknown as ArrayBuffer), offset);
-      offset += frameSizeBytes;
-    }
-
-    await ffmpegService.writeVirtualFile(rawFileName, rawBuffer);
-
-    // Clean up individual frame files (already concatenated)
-    const individualFrames: string[] = [];
-    for (let i = 1; i <= frameCount; i++) {
-      individualFrames.push(`frame_${String(i).padStart(6, '0')}.rgba`);
-    }
-    await ffmpegService.deleteVirtualFiles(individualFrames);
-
-    // Encode via FFmpeg rawvideo → GIF/WebP
     ffmpegService.reportStatus(`Encoding ${format.toUpperCase()} with FFmpeg...`);
     const outputBlob = await ffmpegService.encodeFrameSequence({
       format,
@@ -292,7 +304,7 @@ export async function convert(
     ffmpegService.reportProgress(completionProgress);
 
     const outputBlobWithMetadata = outputBlob as ConversionOutputBlob;
-    outputBlobWithMetadata.encoderBackendUsed = 'ffmpeg-vfs-streaming';
+    outputBlobWithMetadata.encoderBackendUsed = 'ffmpeg-rawvideo-streaming';
     outputBlobWithMetadata.wasTranscoded = true;
 
     endConversion();

@@ -177,8 +177,9 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
 
     const metadata: ConversionMetadata = {
       path: selection.path,
-      encoder: blob.encoderBackendUsed ?? (selection.path === 'gpu' ? 'webcodecs' : 'ffmpeg'),
-      captureModeUsed: blob.captureModeUsed ?? null,
+      encoder:
+        blob.encoderBackendUsed ??
+        (selection.path === 'gpu' ? 'ffmpeg-rawvideo-streaming' : 'ffmpeg'),
       conversionTimeMs: performance.now() - startedAt,
       wasTranscoded: blob.wasTranscoded,
       originalCodec: request.metadata?.codec,

@@ -32,7 +32,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
 
-  // Create blob URL only when outputBlob reference changes
   createEffect(() => {
     const blob = local.outputBlob;
     const url = URL.createObjectURL(blob);
@@ -41,9 +40,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   });
 
   const conversionTimeLabel = createMemo(() => {
-    if (typeof local.conversionDurationSeconds !== 'number') {
-      return null;
-    }
+    if (typeof local.conversionDurationSeconds !== 'number') return null;
     return formatDuration(local.conversionDurationSeconds);
   });
 
@@ -54,12 +51,8 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   );
 
   const outputExtension = createMemo(() => {
-    if (local.outputBlob.type === 'image/gif') {
-      return 'gif';
-    }
-    if (local.outputBlob.type === 'image/webp') {
-      return 'webp';
-    }
+    if (local.outputBlob.type === 'image/gif') return 'gif';
+    if (local.outputBlob.type === 'image/webp') return 'webp';
     return 'webp';
   });
 
@@ -69,7 +62,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     const baseName =
       originalName && lastDotIndex > 0 ? originalName.slice(0, lastDotIndex) : originalName;
     const safeBaseName = baseName.trim() ? baseName : 'converted';
-
     return `${safeBaseName}.${outputExtension()}`;
   });
 
@@ -83,9 +75,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       `max-w-full h-auto rounded transition-opacity duration-300 ${loaded() ? 'opacity-100' : 'opacity-0'}`
   );
 
-  createEffect(() => {
-    setLoaded(false);
-  });
+  createEffect(() => setLoaded(false));
 
   const handleDownload = () => {
     const url = previewUrl();
@@ -98,9 +88,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     document.body.removeChild(anchor);
   };
 
-  const handlePreviewLoad = () => {
-    setLoaded(true);
-  };
+  const handlePreviewLoad = () => setLoaded(true);
 
   return (
     <Panel class="p-6">
@@ -133,7 +121,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
       <div class="mt-4" role="region" aria-label="Conversion results">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white">Conversion Complete</h3>
-
         <dl class={sizeGridClass()}>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <dt class="text-gray-600 dark:text-gray-400">Original Size</dt>
@@ -156,7 +143,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             )}
           </Show>
         </dl>
-
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3">
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <dt class="text-gray-600 dark:text-gray-400">Format</dt>
@@ -177,25 +163,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             </dd>
           </div>
         </div>
-
-        {/* aHash dedup stats for WebP streaming path */}
-        <Show when={local.outputBlob.dedupTotalFrames && local.outputBlob.dedupTotalFrames > 0}>
-          <div class="mt-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg p-3 text-sm">
-            <dt class="text-blue-700 dark:text-blue-300 font-medium">
-              Frame Similarity Optimization
-            </dt>
-            <dd class="text-blue-600 dark:text-blue-400 mt-1">
-              Skipped {local.outputBlob.dedupSkippedFrames ?? 0} of{' '}
-              {local.outputBlob.dedupTotalFrames} frames (
-              {(
-                ((local.outputBlob.dedupSkippedFrames ?? 0) /
-                  (local.outputBlob.dedupTotalFrames ?? 1)) *
-                100
-              ).toFixed(0)}
-              % dedup)
-            </dd>
-          </div>
-        </Show>
       </div>
     </Panel>
   );

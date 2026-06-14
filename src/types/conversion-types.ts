@@ -125,23 +125,13 @@ export interface ConversionOptions {
 /**
  * Optional metadata attached to output blobs for UI display
  */
-interface ConversionBlobMetadata {
+export interface ConversionBlobMetadata {
   /** Whether video was transcoded (re-encoded) */
   wasTranscoded?: boolean;
   /** Original video codec */
   originalCodec?: string;
-  /** WebCodecs capture mode used during decoding (dev/debug; best-effort) */
-  captureModeUsed?: string;
   /** Encoder backend used to produce the output (dev/debug; best-effort) */
   encoderBackendUsed?: string;
-  /** FFmpeg frame input kind used during encoding (dev/debug; best-effort) */
-  ffmpegFrameInputKind?: 'rawvideo' | 'image-sequence';
-  /** Bytes used for rawvideo frame staging when ffmpegFrameInputKind is 'rawvideo' (dev/debug) */
-  ffmpegRawvideoBytesUsed?: number;
-  /** aHash dedup: frames skipped (WebP streaming path) */
-  dedupSkippedFrames?: number;
-  /** aHash dedup: total frames evaluated (WebP streaming path) */
-  dedupTotalFrames?: number;
 }
 
 /**
@@ -188,10 +178,6 @@ export interface ConversionResult {
   wasTranscoded?: boolean;
   /** Original video codec */
   originalCodec?: string;
-  /** aHash dedup stats: number of frames skipped (WebP streaming path only) */
-  dedupSkippedFrames?: number;
-  /** aHash dedup stats: total frames evaluated (WebP streaming path only) */
-  dedupTotalFrames?: number;
 }
 
 /**
@@ -303,7 +289,6 @@ export interface ConversionResponse {
 export interface ConversionMetadata {
   path: ConversionPath;
   encoder: string;
-  captureModeUsed?: string | null;
   conversionTimeMs: number;
   frameCount?: number;
   wasTranscoded?: boolean;

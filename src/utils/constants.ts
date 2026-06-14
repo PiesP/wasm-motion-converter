@@ -143,17 +143,12 @@ export const FFMPEG_CORE_BASE_URLS = [
 /**
  * Quality presets for GIF and WebP conversions.
  *
- * **GIF Presets (modern-gif + FFmpeg unified):**
- * Color counts are unified between modern-gif and FFmpeg paths.
+ * GIF Presets (FFmpeg palettegen/paletteuse):
  * - `low`: 10 FPS, 64 colors (smallest file, lowest quality)
  * - `medium`: 15 FPS, 128 colors (balanced quality and size)
- * - `high`: 20 FPS, 255 colors (max quality, capped at 255 for modern-gif compat)
+ * - `high`: 20 FPS, 255 colors (max quality)
  *
- * Dithering modes and palette stats are applied per-path:
- * - modern-gif: dither via `DITTER_QUALITY_MAP`
- * - FFmpeg: dither + stats_mode + diff_mode via per-quality config
- *
- * **WebP Presets (WASM-optimized):**
+ * WebP Presets (WASM-optimized libwebp):
  * - `low`: 10 FPS, 50% quality, compressionLevel 2 (fastest, smallest)
  * - `medium`: 15 FPS, 55% quality, compressionLevel 2 (balanced)
  * - `high`: 20 FPS, 70% quality, compressionLevel 3 (best quality within WASM limits)
