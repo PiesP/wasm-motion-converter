@@ -21,13 +21,7 @@ import type {
   VideoMetadata,
 } from '@t/conversion-types';
 
-/**
- * Maximum total pixel count threshold for browser conversion
- *
- * Videos exceeding this threshold (width × height × framerate × duration)
- * are likely to cause memory issues in the browser.
- */
-const MAX_TOTAL_PIXEL_COUNT = 500_000_000;
+import { MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
 
 // ---------------------------------------------------------------------------
 // Error classification rule system

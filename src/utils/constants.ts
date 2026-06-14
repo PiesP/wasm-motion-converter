@@ -190,6 +190,18 @@ export const QUALITY_PRESETS = {
 } as const;
 
 // ============================================================================
+// MEMORY / PIXEL THRESHOLDS
+// ============================================================================
+
+/**
+ * Maximum total pixel count threshold for browser conversion.
+ *
+ * Videos exceeding this threshold (width × height × framerate × duration)
+ * are likely to cause memory issues in the browser.
+ */
+export const MAX_TOTAL_PIXEL_COUNT = 500_000_000;
+
+// ============================================================================
 // TIMEOUT CONFIGURATIONS (milliseconds)
 // ============================================================================
 

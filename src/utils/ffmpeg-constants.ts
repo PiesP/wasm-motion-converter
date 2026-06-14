@@ -225,7 +225,7 @@ export const FFMPEG_INTERNALS = {
  *   quality: 'high',
  *   targetFps: 60
  * });
- * // Result: 90000 + 360000 + 45000 + 13500 + 54000 = 562500ms (9.4 min, capped at 600s)
+ * // Result: 90000 + 360000 + 45000 + 81000 = 576000ms (9.6 min, capped at 600s)
  *
  * @example
  * // FHD video, 10 minute duration, medium quality, 15fps

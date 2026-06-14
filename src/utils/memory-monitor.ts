@@ -80,13 +80,14 @@ export function getTrackedFrameBytes(): number {
  * @returns Memory info object or null when no data is available at all
  */
 function getMemoryInfo(): MemoryInfo | null {
-  // Primary: performance.memory (Chrome/Edge)
-  // @ts-expect-error - performance.memory is non-standard but available in Chrome/Edge
-  const memory = performance.memory as
-    | { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number }
-    | undefined;
+  // Primary: performance.memory (Chrome/Edge, non-standard)
+  if ('memory' in performance && performance.memory) {
+    const memory = performance.memory as {
+      usedJSHeapSize: number;
+      totalJSHeapSize: number;
+      jsHeapSizeLimit: number;
+    };
 
-  if (memory) {
     const usedJSHeapSize = memory.usedJSHeapSize;
     const totalJSHeapSize = memory.totalJSHeapSize;
     const jsHeapSizeLimit = memory.jsHeapSizeLimit;
