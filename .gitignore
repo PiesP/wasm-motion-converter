@@ -77,6 +77,9 @@ TESTING.md
 # Local agent workspace
 .hermes/
 
+# Tests — managed as separate repository
+test/
+
 # Local tests (track config + test files, ignore generated artifacts)
 # Unit tests are tracked; e2e tests are tracked; ignore node_modules and results
 test/node_modules/
