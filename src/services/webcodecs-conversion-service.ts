@@ -192,14 +192,6 @@ export async function convert(
     gifFrameTimestamps.length = 0;
   };
 
-  // GIF does not benefit from keyframe-only extraction — it produces choppy output
-  // since GIF frames are independent (no inter-frame delta like video codecs).
-  const keyframeOnly = false;
-
-  if (keyframeOnly) {
-    logger.info('conversion', 'Using keyframe-only fast path', { format, quality });
-  }
-
   const presetFps = 'fps' in settings ? settings.fps : 15;
   const targetFps =
     metadata?.framerate && metadata.framerate > 0
@@ -372,7 +364,6 @@ export async function convert(
           captureMode,
           codec: metadata?.codec,
           quality: options.quality,
-          keyframeOnly,
           shouldCancel,
           onProgress: reportDecodeProgress,
           onFrame: async (frame: {

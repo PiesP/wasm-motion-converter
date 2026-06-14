@@ -19,7 +19,6 @@ import type {
   ConversionMetadata,
   ConversionRequest,
   ConversionResponse,
-  ConversionStatus,
 } from '@t/conversion-types';
 import {
   CANCELLED_MESSAGE,
@@ -30,6 +29,7 @@ import { isSupportedFormat } from '@utils/codec-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { getAvailableMemory } from '@utils/memory-monitor';
+import { performanceTracker } from '@utils/performance-tracker';
 import { selectSimplePath } from './simple-path-planner-service';
 
 const STATUS_INITIALIZING = 'Initializing conversion...';
@@ -120,15 +120,8 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
   const operation = createOperation();
   const startedAt = performance.now();
 
-  const status: ConversionStatus = {
-    isConverting: false,
-    progress: 0,
-    statusMessage: '',
-  };
-
-  status.isConverting = true;
-  status.progress = 0;
-  status.statusMessage = STATUS_INITIALIZING;
+  // Reset performance tracker for this conversion session
+  performanceTracker.reset();
 
   request.onProgress?.(0);
   request.onStatus?.(STATUS_INITIALIZING);
@@ -191,10 +184,6 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
       originalCodec: request.metadata?.codec,
     };
 
-    status.isConverting = false;
-    status.progress = 100;
-    status.statusMessage = STATUS_COMPLETE;
-
     request.onStatus?.(STATUS_COMPLETE);
     request.onProgress?.(100);
 
@@ -209,16 +198,10 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
     return { blob, metadata };
   } catch (error) {
     if (operation.abortController.signal.aborted || isCancellationError(error)) {
-      status.isConverting = false;
-      status.progress = 0;
-      status.statusMessage = STATUS_CANCELLED;
       request.onStatus?.(STATUS_CANCELLED);
       throw new Error(CANCELLED_MESSAGE);
     }
 
-    status.isConverting = false;
-    status.progress = 0;
-    status.statusMessage = STATUS_ERROR;
     request.onStatus?.(STATUS_ERROR);
 
     logger.error('conversion', 'Conversion failed', {

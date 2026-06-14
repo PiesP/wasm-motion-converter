@@ -44,7 +44,10 @@ export const [conversionStatusMessage, setConversionStatusMessage] = createSigna
 // Results
 // ---------------------------------------------------------------------------
 
-export const MAX_RESULTS = 10;
+/** Maximum number of conversion results to retain in memory.
+ *  Each result stores the full output Blob (potentially 10s of MB).
+ *  Keep only recent results to limit heap pressure. */
+export const MAX_RESULTS = 3;
 
 export const [conversionResults, setConversionResults] = createSignal<ConversionResult[]>([]);
 

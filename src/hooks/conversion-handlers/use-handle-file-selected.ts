@@ -19,7 +19,7 @@ import { validateVideoFile } from '@utils/file-validation';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 
-const focusRetryButton = (): void => focusElement('[data-error-retry-button]');
+const focusRetryButton = (): void => focusElement('[data-testid="error-retry-button"]');
 
 const resetErrorState = (): void => {
   setErrorMessage(null);
