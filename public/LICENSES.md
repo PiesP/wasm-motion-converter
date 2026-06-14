@@ -39,11 +39,6 @@ is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or 
 **License**: MIT
 **Repository**: https://github.com/qq15725/modern-palette
 ---
-## mp4box v0.5.2
-
-**License**: BSD-3-Clause
-**Repository**: https://github.com/gpac/mp4box.js
----
 ## seroval v1.5.4
 
 **License**: MIT
@@ -58,11 +53,6 @@ is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or 
 
 **License**: MIT
 **Repository**: https://solidjs.com
----
-## web-demuxer v4.0.0
-
-**License**: MIT
-**Repository**: https://github.com/ForeverSc/web-demuxer#readme
 
 ## FFmpeg (WebAssembly Core)
 

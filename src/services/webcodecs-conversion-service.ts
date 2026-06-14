@@ -30,64 +30,17 @@ import type {
   VideoMetadata,
 } from '@t/conversion-types';
 import type { WebCodecsCaptureMode, WebCodecsFrameFormat } from '@t/video-pipeline-types';
-import type { EncoderWorkerAPI } from '@t/worker-types';
 import { isComplexCodec } from '@utils/codec-utils';
 import { QUALITY_PRESETS } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { FFMPEG_INTERNALS } from '@utils/ffmpeg-constants';
 import { logger } from '@utils/logger';
-import {
-  getAvailableMemory,
-  releaseDecodedFrame,
-  resetTrackedFrames,
-  trackDecodedFrame,
-} from '@utils/memory-monitor';
+import { releaseDecodedFrame, resetTrackedFrames, trackDecodedFrame } from '@utils/memory-monitor';
 import { getOptimalFPS } from '@utils/quality-optimizer';
 import { computeTrimDuration } from '@utils/video-math';
-import gifEncoderWorkerUrl from '@/workers/gif-encoder.worker?worker&url';
 import { encodeModernGif, isModernGifSupported } from './modern-gif-service';
-import { getOptimalPoolSize, WorkerPool } from './worker-pool-service';
 
-let gifWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
 let canvasWebPEncodeSupport: boolean | null = null;
-let gifWorkerPoolPromise: Promise<WorkerPool<EncoderWorkerAPI>> | null = null;
-let idleTimer: ReturnType<typeof setTimeout> | null = null;
-const IDLE_TIMEOUT_MS = 10_000; // 10 seconds — release worker memory quickly after use
-
-function getWorkerPool(): Promise<WorkerPool<EncoderWorkerAPI> | null> {
-  if (typeof window === 'undefined') {
-    return Promise.resolve(null);
-  }
-  // Initialize visibility-based cleanup on first pool access
-  initVisibilityCleanup();
-  if (gifWorkerPool) {
-    return Promise.resolve(gifWorkerPool);
-  }
-  if (gifWorkerPoolPromise) {
-    return gifWorkerPoolPromise;
-  }
-
-  gifWorkerPoolPromise = (async (): Promise<WorkerPool<EncoderWorkerAPI>> => {
-    const hwConcurrency = navigator.hardwareConcurrency || 4;
-    const availableMem = getAvailableMemory();
-    const optimalGifWorkers = getOptimalPoolSize('gif', hwConcurrency, availableMem);
-
-    logger.info('worker-pool', 'Dynamic worker pool sizing', {
-      hardwareConcurrency: hwConcurrency,
-      availableMemory: `${Math.round(availableMem / 1024 / 1024)}MB`,
-      gifWorkers: optimalGifWorkers,
-    });
-
-    gifWorkerPool = new WorkerPool(gifEncoderWorkerUrl, {
-      lazyInit: true,
-      maxWorkers: optimalGifWorkers,
-    });
-
-    return gifWorkerPool;
-  })();
-
-  return gifWorkerPoolPromise;
-}
 
 async function getCanvasWebPEncodeSupport(): Promise<boolean> {
   if (canvasWebPEncodeSupport !== null) {
@@ -535,85 +488,28 @@ export async function convert(
     let outputBlob: Blob;
 
     if (useModernGif) {
-      const pool = await getWorkerPool();
-      if (pool) {
-        try {
-          const serializableFrames = capturedFrames.map((frame) => ({
-            data: frame.data,
-            width: frame.width,
-            height: frame.height,
-            colorSpace: frame.colorSpace,
-          }));
-
-          // Note: onProgress callback is NOT passed to the worker.
-          // The worker sends __gifProgress messages directly via self.postMessage.
-          // Progress is reported through the fallback main-thread path only.
-
-          try {
-            const workerEncodeTimeoutMs = Math.min(
-              10 * 60 * 1000,
-              Math.max(90 * 1000, 20 * 1000 + serializableFrames.length * 500)
-            );
-
-            outputBlob = await pool.execute(
-              async (worker) => {
-                return worker.encode(serializableFrames, {
-                  width: decodeResult.width,
-                  height: decodeResult.height,
-                  fps: targetFps,
-                  quality,
-                  timestamps: gifFrameTimestamps,
-                  durationSeconds: decodeResult.duration,
-                });
-              },
-              { signal: abortSignal, timeoutMs: workerEncodeTimeoutMs }
-            );
-            ffmpegService.reportProgress(encodeEnd);
-            encoderBackendUsed = 'modern-gif-worker';
-            releaseGifFrames();
-          } catch (workerError) {
-            const workerErrorMessage = getErrorMessage(workerError);
-            logger.warn('conversion', 'GIF worker encoding failed, retrying on main thread', {
-              error: workerErrorMessage,
-            });
-            outputBlob = await encodeModernGif(capturedFrames, {
-              width: decodeResult.width,
-              height: decodeResult.height,
-              fps: targetFps,
-              quality,
-              timestamps: gifFrameTimestamps,
-              durationSeconds: decodeResult.duration,
-              onProgress: reportEncodeProgress,
-              shouldCancel,
-            });
-            ffmpegService.reportProgress(encodeEnd);
-            encoderBackendUsed = 'modern-gif-main';
-            releaseGifFrames();
-          }
-        } catch (error) {
-          const errorMessage = getErrorMessage(error);
-          outputBlob = await doFFmpegFallback(errorMessage);
-        }
-      } else {
-        // No worker pool: main thread only
-        try {
-          outputBlob = await encodeModernGif(capturedFrames, {
-            width: decodeResult.width,
-            height: decodeResult.height,
-            fps: targetFps,
-            quality,
-            timestamps: gifFrameTimestamps,
-            durationSeconds: decodeResult.duration,
-            onProgress: reportEncodeProgress,
-            shouldCancel,
-          });
-          ffmpegService.reportProgress(encodeEnd);
-          encoderBackendUsed = 'modern-gif-main';
-          releaseGifFrames();
-        } catch (error) {
-          const errorMessage = getErrorMessage(error);
-          outputBlob = await doFFmpegFallback(errorMessage);
-        }
+      // NOTE: Skip worker pool for modern-gif encoding.
+      // The gif-encoder worker fails in Chrome 148+ due to ImageData constructor
+      // restrictions in worker context ("Cannot assign to read only property 'data'").
+      // Modern-gif encoding is fast enough on main thread for typical GIF sizes.
+      try {
+        outputBlob = await encodeModernGif(capturedFrames, {
+          width: decodeResult.width,
+          height: decodeResult.height,
+          fps: targetFps,
+          quality,
+          timestamps: gifFrameTimestamps,
+          durationSeconds: decodeResult.duration,
+          onProgress: reportEncodeProgress,
+          shouldCancel,
+        });
+        ffmpegService.reportProgress(encodeEnd);
+        encoderBackendUsed = 'modern-gif-main';
+        releaseGifFrames();
+      } catch (error) {
+        const errorMessage = getErrorMessage(error);
+        outputBlob = await doFFmpegFallback(errorMessage);
+        releaseGifFrames();
       }
     } else if (format === 'webp') {
       if (!encodeReporter) {
@@ -915,43 +811,10 @@ async function convertViaWebCodecsFrames(params: {
 }
 
 export function cleanup(): void {
-  if (idleTimer) {
-    clearTimeout(idleTimer);
-    idleTimer = null;
-  }
-  gifWorkerPool?.terminate();
-  gifWorkerPool = null;
-  gifWorkerPoolPromise = null;
   canvasWebPEncodeSupport = null;
-  // Reset tracked frame memory on full cleanup
   resetTrackedFrames();
 }
 
-let visibilityCleanupInitialized = false;
-
-function initVisibilityCleanup(): void {
-  if (visibilityCleanupInitialized || typeof document === 'undefined') {
-    return;
-  }
-  visibilityCleanupInitialized = true;
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      // Page hidden: terminate worker pool immediately to free resources
-      logger.info('worker-pool', 'Page hidden — terminating worker pool');
-      cleanup();
-    }
-  });
-}
-
-/**
- * Schedule worker pool termination after a period of inactivity.
- * Cancels any existing timer and starts a new one.
- */
 export function scheduleWorkerPoolIdleCleanup(): void {
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    logger.info('worker-pool', 'Worker pool idle timeout — terminating');
-    cleanup();
-  }, IDLE_TIMEOUT_MS);
+  // No-op: worker pool removed, modern-gif encodes on main thread
 }
