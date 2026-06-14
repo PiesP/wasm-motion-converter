@@ -141,8 +141,9 @@ function getMemoryInfo(): MemoryInfo | null {
 export function isMemoryCritical(): boolean {
   const memInfo = getMemoryInfo();
   if (!memInfo) {
-    // No data available: use decoded frame tracking as a soft signal
-    // If tracked frames exceed 2GB, consider it critical
+    // ponytail: Firefox — no performance.memory or navigator.deviceMemory available.
+    // Use tracked decoded frame bytes as a soft signal with a 2 GB soft limit.
+    if (trackedDecodedFrameBytes > 2_147_483_648) return true; // 2 GB soft limit
     return false;
   }
 

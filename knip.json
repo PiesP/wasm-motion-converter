@@ -22,5 +22,5 @@
     "**/*.d.ts"
   ],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["mp4box", "web-demuxer"]
+  "ignoreDependencies": []
 }
