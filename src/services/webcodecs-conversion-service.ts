@@ -52,7 +52,7 @@ let gifWorkerPool: WorkerPool<EncoderWorkerAPI> | null = null;
 let canvasWebPEncodeSupport: boolean | null = null;
 let gifWorkerPoolPromise: Promise<WorkerPool<EncoderWorkerAPI>> | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
-const IDLE_TIMEOUT_MS = 60_000; // 1 minute
+const IDLE_TIMEOUT_MS = 10_000; // 10 seconds — release worker memory quickly after use
 
 function getWorkerPool(): Promise<WorkerPool<EncoderWorkerAPI> | null> {
   if (typeof window === 'undefined') {
@@ -176,6 +176,20 @@ export async function convert(
         }
       }
     }
+  };
+
+  /** Release GIF ImageData frame memory to reduce heap pressure. */
+  const releaseGifFrames = (): void => {
+    for (let i = 0; i < capturedFrames.length; i++) {
+      const frame = capturedFrames[i];
+      if (frame) {
+        releaseDecodedFrame(frame.width * frame.height * 4);
+        // @ts-expect-error — null out the pixel buffer to allow GC
+        frame.data = null;
+      }
+    }
+    capturedFrames.length = 0;
+    gifFrameTimestamps.length = 0;
   };
 
   // GIF does not benefit from keyframe-only extraction — it produces choppy output
@@ -565,6 +579,7 @@ export async function convert(
             );
             ffmpegService.reportProgress(encodeEnd);
             encoderBackendUsed = 'modern-gif-worker';
+            releaseGifFrames();
           } catch (workerError) {
             const workerErrorMessage = getErrorMessage(workerError);
             logger.warn('conversion', 'GIF worker encoding failed, retrying on main thread', {
@@ -582,6 +597,7 @@ export async function convert(
             });
             ffmpegService.reportProgress(encodeEnd);
             encoderBackendUsed = 'modern-gif-main';
+            releaseGifFrames();
           }
         } catch (error) {
           const errorMessage = getErrorMessage(error);
@@ -602,6 +618,7 @@ export async function convert(
           });
           ffmpegService.reportProgress(encodeEnd);
           encoderBackendUsed = 'modern-gif-main';
+          releaseGifFrames();
         } catch (error) {
           const errorMessage = getErrorMessage(error);
           outputBlob = await doFFmpegFallback(errorMessage);
@@ -678,6 +695,11 @@ export async function convert(
   } finally {
     try {
       releaseWebPFrames();
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      releaseGifFrames();
     } catch {
       /* non-fatal */
     }

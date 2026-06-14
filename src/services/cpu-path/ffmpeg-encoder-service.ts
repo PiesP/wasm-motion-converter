@@ -1140,12 +1140,30 @@ export class FFmpegEncoder {
       }
 
       // Read + validate output (single pass to avoid double-reading the same file)
+      //
+      // Surgical memory management: delete VFS input + palette files BEFORE
+      // reading output into JS heap. This prevents the dangerous overlap where
+      // WASM holds input+output simultaneously AND JS tries to allocate the
+      // output blob (~2× peak memory). Deleting first frees VFS heap space.
+      try {
+        await vfs.deleteFiles(ffmpeg, [inputFileName, paletteFileName]);
+      } catch {
+        // Non-fatal: deletion failure shouldn't block output retrieval
+      }
+
       const outputData = await vfs.readValidatedOutputFile(
         ffmpeg,
         outputFileName,
         'gif',
         'GIF output validation failed'
       );
+
+      // Immediately delete output from VFS — it's now in JS heap
+      try {
+        await vfs.deleteFiles(ffmpeg, [outputFileName]);
+      } catch {
+        // Non-fatal
+      }
 
       logger.performance('GIF encoding complete');
       const blob = new Blob([new Uint8Array(outputData)], {
@@ -1157,13 +1175,8 @@ export class FFmpegEncoder {
         outputSize: blob.size,
       });
 
-      // Cleanup
-      await vfs.handleConversionCleanup(
-        ffmpeg,
-        outputFileName,
-        [paletteFileName],
-        isMemoryCritical
-      );
+      // Cleanup remaining VFS temp files (AV1 transcode intermediates, etc.)
+      await vfs.handleConversionCleanup(ffmpeg, outputFileName, [], isMemoryCritical);
 
       return blob;
     } catch (error) {
@@ -1398,12 +1411,28 @@ export class FFmpegEncoder {
       }
 
       // Read + validate output (single pass to avoid double-reading the same file)
+      //
+      // Surgical memory management: delete VFS input BEFORE reading output.
+      try {
+        await vfs.deleteFiles(ffmpeg, [inputFileName]);
+      } catch {
+        // Non-fatal
+      }
+
       const outputData = await vfs.readValidatedOutputFile(
         ffmpeg,
         outputFileName,
         'webp',
         'WebP output validation failed'
       );
+
+      // Immediately delete output from VFS — it's now in JS heap
+      try {
+        await vfs.deleteFiles(ffmpeg, [outputFileName]);
+      } catch {
+        // Non-fatal
+      }
+
       const blob = new Blob([new Uint8Array(outputData)], {
         type: 'image/webp',
       }) as ConversionOutputBlob;
@@ -1413,7 +1442,7 @@ export class FFmpegEncoder {
         outputSize: blob.size,
       });
 
-      // Cleanup
+      // Cleanup remaining VFS temp files
       await vfs.handleConversionCleanup(ffmpeg, outputFileName, [], isMemoryCritical);
 
       return blob;

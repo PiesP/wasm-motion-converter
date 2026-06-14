@@ -29,12 +29,53 @@ import {
 import { isSupportedFormat } from '@utils/codec-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
+import { getAvailableMemory } from '@utils/memory-monitor';
 import { selectSimplePath } from './simple-path-planner-service';
 
 const STATUS_INITIALIZING = 'Initializing conversion...';
 const STATUS_COMPLETE = 'Complete';
 const STATUS_CANCELLED = 'Cancelled by user';
 const STATUS_ERROR = 'Error';
+
+/**
+ * Estimate peak memory needed for a conversion.
+ *
+ * Accounts for:
+ * - Frame storage: width × height × 4 bytes × estimated frame count
+ * - Encoding overhead: ~1.5× frame data for palette + output assembly
+ * - VFS overhead (FFmpeg path): input file + output file in WASM heap
+ *
+ * @param metadata - Video metadata (width, height, duration, framerate)
+ * @param format - Output format
+ * @param quality - Quality preset
+ * @returns Estimated peak memory in bytes
+ */
+function estimateRequiredMemory(
+  metadata: { width?: number; height?: number; duration?: number; framerate?: number } | undefined,
+  format: ConversionFormat,
+  quality: 'low' | 'medium' | 'high'
+): number {
+  const width = metadata?.width ?? 1920;
+  const height = metadata?.height ?? 1080;
+  const duration = metadata?.duration ?? 10;
+  const fps = Math.min(
+    metadata?.framerate ?? 30,
+    quality === 'low' ? 10 : quality === 'medium' ? 15 : 20
+  );
+  const frameCount = Math.ceil(duration * fps);
+  const frameBytes = width * height * 4;
+
+  // Frame storage: all frames held simultaneously during decode
+  const frameStorage = frameCount * frameBytes;
+
+  // Encoding overhead: palette generation + output assembly
+  const encodingOverhead = frameStorage * 0.5;
+
+  // VFS overhead (FFmpeg path): input + palette + output coexist briefly
+  const vfsOverhead = format === 'gif' ? frameCount * frameBytes * 0.3 : 0;
+
+  return Math.ceil(frameStorage + encodingOverhead + vfsOverhead);
+}
 
 function getSupportedFormat(request: ConversionRequest): ConversionFormat {
   if (isSupportedFormat(request.format)) {
@@ -93,6 +134,32 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
   request.onStatus?.(STATUS_INITIALIZING);
 
   try {
+    // Pre-conversion memory check: estimate if we have enough heap space
+    // to hold all decoded frames + encoding overhead without crashing.
+    const requiredBytes = estimateRequiredMemory(
+      request.metadata,
+      request.format,
+      request.options.quality
+    );
+    const availableBytes = getAvailableMemory();
+
+    if (requiredBytes > availableBytes * 0.8) {
+      logger.warn('conversion', 'Pre-conversion memory check failed', {
+        requiredMB: Math.round(requiredBytes / 1024 / 1024),
+        availableMB: Math.round(availableBytes / 1024 / 1024),
+        width: request.metadata?.width,
+        height: request.metadata?.height,
+        duration: request.metadata?.duration,
+        format: request.format,
+        quality: request.options.quality,
+      });
+      throw new Error(
+        `Insufficient memory for conversion. Need ~${Math.round(requiredBytes / 1024 / 1024)}MB ` +
+          `but only ~${Math.round(availableBytes / 1024 / 1024)}MB available. ` +
+          'Try reducing quality, scale, or trim duration.'
+      );
+    }
+
     const selection = await selectSimplePath({
       file: request.file,
       format: request.format,
