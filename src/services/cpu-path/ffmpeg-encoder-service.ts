@@ -681,9 +681,10 @@ export class FFmpegEncoder {
     const conversionThreadArgs = getThreadingArgs('filter-complex');
     const ditherMode = quality === 'high' ? 'sierra2' : 'bayer';
     const bayerScale = quality === 'low' ? 3 : 2;
-    const ditherConfig = ditherMode === 'bayer'
-      ? `dither=${ditherMode}:bayer_scale=${bayerScale}:diff_mode=rectangle`
-      : `dither=${ditherMode}:diff_mode=rectangle`;
+    const ditherConfig =
+      ditherMode === 'bayer'
+        ? `dither=${ditherMode}:bayer_scale=${bayerScale}:diff_mode=rectangle`
+        : `dither=${ditherMode}:diff_mode=rectangle`;
     // Use concat instead of spread to prevent stack overflow
     const conversionCmd = ([] as string[])
       .concat(Array.from(conversionThreadArgs))
@@ -1054,9 +1055,10 @@ export class FFmpegEncoder {
       const conversionThreadArgs = getThreadingArgs('filter-complex');
       const ditherMode = quality === 'high' ? 'sierra2' : 'bayer';
       const bayerScale = quality === 'low' ? 3 : 2;
-      const ditherConfig = ditherMode === 'bayer'
-        ? `dither=${ditherMode}:bayer_scale=${bayerScale}:diff_mode=rectangle`
-        : `dither=${ditherMode}:diff_mode=rectangle`;
+      const ditherConfig =
+        ditherMode === 'bayer'
+          ? `dither=${ditherMode}:bayer_scale=${bayerScale}:diff_mode=rectangle`
+          : `dither=${ditherMode}:diff_mode=rectangle`;
       const gifFilterChain = scaleFilter
         ? `${scaleFilter},fps=${fps}[v];[v][1:v]paletteuse=${ditherConfig}`
         : `fps=${fps}[v];[v][1:v]paletteuse=${ditherConfig}`;

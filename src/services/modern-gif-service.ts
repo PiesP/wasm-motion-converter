@@ -62,7 +62,10 @@ const QUALITY_TO_MAX_COLORS = { high: 255, medium: 128, low: 64 } as const;
  * - medium: atkinson (balanced quality, clean edges)
  * - high: floyd-steinberg (best quality, more noise)
  */
-const DITTER_QUALITY_MAP: Record<'low' | 'medium' | 'high', 'stucki' | 'atkinson' | 'floyd-steinberg'> = {
+const DITTER_QUALITY_MAP: Record<
+  'low' | 'medium' | 'high',
+  'stucki' | 'atkinson' | 'floyd-steinberg'
+> = {
   low: 'stucki',
   medium: 'atkinson',
   high: 'floyd-steinberg',
