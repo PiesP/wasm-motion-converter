@@ -13,6 +13,7 @@
 
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import type { ConversionOptions, ConversionOutputBlob, VideoMetadata } from '@t/conversion-types';
+import { createConversionOutputBlob } from '@t/conversion-types';
 import { isCancellationError } from '@utils/cancellation-context';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -69,8 +70,7 @@ export async function convert(
             abortSignal
           );
 
-    const outputBlob = blob as ConversionOutputBlob;
-    outputBlob.encoderBackendUsed = 'ffmpeg';
+    const outputBlob = createConversionOutputBlob(blob, { encoderBackendUsed: 'ffmpeg' });
 
     endConversion();
     return outputBlob;

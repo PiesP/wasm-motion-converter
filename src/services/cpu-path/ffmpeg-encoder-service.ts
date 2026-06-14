@@ -211,7 +211,7 @@ export class FFmpegEncoder {
     const { core } = this.getDeps();
 
     if (!core.isLoaded()) {
-      logger.error('conversion', 'FFmpeg validation failed: not loaded', {
+      logger.error('ffmpeg', 'FFmpeg validation failed: not loaded', {
         isLoaded: core.isLoaded(),
         isInitializing: core.isInitializing(),
       });
@@ -221,9 +221,9 @@ export class FFmpegEncoder {
     try {
       // This will throw if FFmpeg instance is null or invalid
       core.getFFmpeg();
-      logger.debug('conversion', 'FFmpeg state validation passed');
+      logger.debug('ffmpeg', 'FFmpeg state validation passed');
     } catch (error) {
-      logger.error('conversion', 'FFmpeg validation failed: instance check', {
+      logger.error('ffmpeg', 'FFmpeg validation failed: instance check', {
         error: getErrorMessage(error),
       });
       throw new Error(`FFmpeg instance invalid: ${getErrorMessage(error)}`);
@@ -351,7 +351,7 @@ export class FFmpegEncoder {
    */
   private buildInputArgs(inputFileName: string, inputOverride?: FFmpegInputOverride): string[] {
     if (inputOverride) {
-      logger.debug('conversion', 'Using input format override', {
+      logger.debug('ffmpeg', 'Using input format override', {
         format: inputOverride.format,
         framerate: inputOverride.framerate,
       });
@@ -412,7 +412,7 @@ export class FFmpegEncoder {
       return enriched;
     } catch (enrichError) {
       // If error enrichment fails, return original error
-      logger.warn('conversion', 'Failed to enrich error context', {
+      logger.warn('ffmpeg', 'Failed to enrich error context', {
         originalError: message,
         enrichError: getErrorMessage(enrichError),
       });
@@ -459,7 +459,7 @@ export class FFmpegEncoder {
 
     try {
       // Validate FFmpeg state before attempting encoding
-      logger.debug('conversion', 'Starting frame sequence encoding', {
+      logger.debug('ffmpeg', 'Starting frame sequence encoding', {
         format,
         frameCount,
         fps,
@@ -539,7 +539,7 @@ export class FFmpegEncoder {
    * Validate frame sequence
    */
   private async validateFrameSequence(frameCount: number, format: 'gif' | 'webp'): Promise<void> {
-    logger.debug('conversion', 'Validating frame sequence', {
+    logger.debug('ffmpeg', 'Validating frame sequence', {
       frameCount,
       format,
     });
@@ -627,7 +627,7 @@ export class FFmpegEncoder {
 
     const { args: inputArgs, frameFormatForLog } = buildInputArgs();
 
-    logger.info('conversion', 'Generating GIF palette from frame sequence', {
+    logger.info('ffmpeg', 'Generating GIF palette from frame sequence', {
       frameCount,
       fps,
       colors: qualitySettings.colors,
@@ -747,7 +747,7 @@ export class FFmpegEncoder {
       : null;
 
     if (!presetArgs) {
-      logger.warn('conversion', 'Skipping unsupported libwebp preset', {
+      logger.warn('ffmpeg', 'Skipping unsupported libwebp preset', {
         preset: qualitySettings.preset,
       });
     }
@@ -792,7 +792,7 @@ export class FFmpegEncoder {
         outputFileName,
       ]);
 
-    logger.info('conversion', 'Encoding frames directly to WebP', {
+    logger.info('ffmpeg', 'Encoding frames directly to WebP', {
       frameCount,
       fps,
       quality: qualitySettings.quality,
@@ -840,7 +840,7 @@ export class FFmpegEncoder {
       monitoring.stopProgressHeartbeat(webpHeartbeat);
     }
 
-    logger.info('conversion', 'Direct WebP encoding complete');
+    logger.info('ffmpeg', 'Direct WebP encoding complete');
   }
 
   /**
@@ -879,7 +879,7 @@ export class FFmpegEncoder {
       const scaleFilter =
         scale === 1.0 ? null : `scale=iw*${scale}:ih*${scale}:flags=${SCALE_FILTERS[quality]}`;
 
-      logger.info('conversion', 'Starting GIF conversion', {
+      logger.info('ffmpeg', 'Starting GIF conversion', {
         quality,
         scale,
         fps,
@@ -1034,7 +1034,7 @@ export class FFmpegEncoder {
           throw new Error('Palette file is 0 bytes');
         }
       } catch (paletteError) {
-        logger.error('conversion', 'Palette generation did not produce a readable palette file', {
+        logger.error('ffmpeg', 'Palette generation did not produce a readable palette file', {
           paletteFile: paletteFileName,
           codec: metadata?.codec,
           error: getErrorMessage(paletteError),
@@ -1128,9 +1128,9 @@ export class FFmpegEncoder {
         const wasCancelled = this.isCancellationError(errorMessage);
 
         if (!wasCancelled) {
-          logger.warn('conversion', 'GIF conversion failed, will attempt cleanup');
+          logger.warn('ffmpeg', 'GIF conversion failed, will attempt cleanup');
         } else {
-          logger.debug('conversion', 'GIF conversion cancelled by user');
+          logger.debug('ffmpeg', 'GIF conversion cancelled by user');
         }
         throw error;
       } finally {
@@ -1171,7 +1171,7 @@ export class FFmpegEncoder {
       }) as ConversionOutputBlob;
 
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.GIF.COMPLETE);
-      logger.info('conversion', 'GIF conversion completed successfully', {
+      logger.info('ffmpeg', 'GIF conversion completed successfully', {
         outputSize: blob.size,
       });
 
@@ -1231,12 +1231,12 @@ export class FFmpegEncoder {
         : null;
 
       if (!presetArgs) {
-        logger.warn('conversion', 'Skipping unsupported libwebp preset', {
+        logger.warn('ffmpeg', 'Skipping unsupported libwebp preset', {
           preset: qualitySettings.preset,
         });
       }
 
-      logger.info('conversion', 'Starting WebP conversion', {
+      logger.info('ffmpeg', 'Starting WebP conversion', {
         quality,
         scale,
         fps,
@@ -1403,9 +1403,9 @@ export class FFmpegEncoder {
         const wasCancelled = this.isCancellationError(errorMessage);
 
         if (!wasCancelled) {
-          logger.warn('conversion', 'WebP conversion failed, will attempt cleanup');
+          logger.warn('ffmpeg', 'WebP conversion failed, will attempt cleanup');
         } else {
-          logger.debug('conversion', 'WebP conversion cancelled by user');
+          logger.debug('ffmpeg', 'WebP conversion cancelled by user');
         }
         throw error;
       }
@@ -1438,7 +1438,7 @@ export class FFmpegEncoder {
       }) as ConversionOutputBlob;
 
       monitoring.updateProgress(FFMPEG_INTERNALS.PROGRESS.WEBP.COMPLETE);
-      logger.info('conversion', 'WebP conversion completed successfully', {
+      logger.info('ffmpeg', 'WebP conversion completed successfully', {
         outputSize: blob.size,
       });
 

@@ -132,7 +132,9 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
     );
     const availableBytes = getAvailableMemory();
 
-    if (requiredBytes > availableBytes * 0.8) {
+    const MEMORY_HEADROOM_RATIO = 0.8; // 20% headroom for GC and other operations
+
+    if (requiredBytes > availableBytes * MEMORY_HEADROOM_RATIO) {
       logger.warn('conversion', 'Pre-conversion memory check failed', {
         requiredMB: Math.round(requiredBytes / 1024 / 1024),
         availableMB: Math.round(availableBytes / 1024 / 1024),

@@ -140,6 +140,20 @@ export interface ConversionBlobMetadata {
 export type ConversionOutputBlob = Blob & ConversionBlobMetadata;
 
 /**
+ * Factory function for creating ConversionOutputBlob from a Blob.
+ * Attaches optional metadata via Object.assign instead of unsafe cast+mutation.
+ */
+export function createConversionOutputBlob(
+  blob: Blob,
+  meta?: Partial<ConversionBlobMetadata>
+): ConversionOutputBlob {
+  if (meta) {
+    return Object.assign(blob, meta);
+  }
+  return blob as ConversionOutputBlob;
+}
+
+/**
  * Conversion result with metadata
  *
  * Complete record of a successful conversion including the output blob,

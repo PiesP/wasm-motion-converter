@@ -50,6 +50,8 @@ const IMPORTANT_CATEGORIES: ReadonlySet<LogCategory> = new Set([
   'progress',
   'watchdog',
   'general',
+  'encoders',
+  'performance',
 ]);
 
 function safeJsonStringify(value: unknown): string {
