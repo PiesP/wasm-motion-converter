@@ -142,3 +142,26 @@ button:focus-visible {
 html.dark :focus-visible {
   outline-color: var(--color-blue-400, #60a5fa);
 }
+
+/* ============================================================================
+   Reduced Motion
+   ============================================================================ */
+
+/**
+ * Disable animations for users who prefer reduced motion.
+ * Respects the OS-level accessibility setting.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
+    transition-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
+    scroll-behavior: auto !important;
+  }
+}

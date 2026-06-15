@@ -51,13 +51,20 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
 
   const userFriendlyMessage = createMemo(() => {
     if (!local.errorType || local.errorType === 'general') {
-      return local.message;
+      return 'Conversion failed unexpectedly';
     }
 
     return ERROR_MESSAGES[local.errorType] ?? local.message;
   });
 
   const errorIcon = createMemo(() => ERROR_ICONS[local.errorType ?? 'general'] ?? '');
+
+  const rawErrorMessage = createMemo(() => {
+    if (!local.errorType || local.errorType === 'general') {
+      return local.message;
+    }
+    return null;
+  });
 
   const handleDismiss = () => local.onDismiss?.();
   const handleRetry = () => local.onRetry();
@@ -111,9 +118,24 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
         </div>
         <div class="ml-3 flex-1">
           <h3 class="text-sm font-medium text-red-800 dark:text-red-300">
-            Conversion Failed {errorIcon() && <span class="ml-1">{errorIcon()}</span>}
+            Conversion Failed{' '}
+            {errorIcon() && (
+              <span class="ml-1" aria-hidden="true">
+                {errorIcon()}
+              </span>
+            )}
           </h3>
           <p class="mt-2 text-sm text-red-700 dark:text-red-400">{userFriendlyMessage()}</p>
+          <Show when={rawErrorMessage()}>
+            <details class="mt-2">
+              <summary class="text-xs text-red-600 dark:text-red-400 cursor-pointer hover:underline">
+                Technical details
+              </summary>
+              <pre class="mt-1 text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-all bg-red-100 dark:bg-red-900 p-2 rounded max-h-32 overflow-auto">
+                {rawErrorMessage()}
+              </pre>
+            </details>
+          </Show>
           <Show when={local.suggestion}>
             <div class="mt-2 p-3 bg-red-100 dark:bg-red-900 rounded text-sm text-red-700 dark:text-red-300">
               <strong>Suggestion:</strong> {local.suggestion}

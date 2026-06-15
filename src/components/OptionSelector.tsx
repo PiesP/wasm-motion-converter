@@ -120,7 +120,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
             <button
               type="button"
               tabIndex={0}
-              class="inline-flex items-center focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+              class="inline-flex items-center justify-center w-11 h-11 -m-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
               aria-label={`Information about ${local.title}`}
               onKeyDown={handleTooltipKeyDown}
             >

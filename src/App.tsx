@@ -252,12 +252,6 @@ const App: Component = () => {
         >
           Skip to main content
         </a>
-        <a
-          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-blue-600 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
-          href="#main-content"
-        >
-          Skip to main content
-        </a>
 
         <header class="border-b border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900 dark:shadow-gray-800">
           <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
