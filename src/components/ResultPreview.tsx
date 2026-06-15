@@ -34,6 +34,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   createEffect(() => {
     const blob = local.outputBlob;
+    setLoaded(false);
     const url = URL.createObjectURL(blob);
     setPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
@@ -74,8 +75,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     () =>
       `max-w-full h-auto rounded transition-opacity duration-300 ${loaded() ? 'opacity-100' : 'opacity-0'}`
   );
-
-  createEffect(() => setLoaded(false));
 
   const handleDownload = () => {
     const url = previewUrl();
