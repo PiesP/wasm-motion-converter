@@ -142,6 +142,23 @@ const App: Component = () => {
     debouncedSaveSettings(conversionSettings());
   });
 
+  // Expose app state to DOM for automated testing.
+  // Uses a hidden <div id="app-state"> that is always rendered and updated.
+  onMount(() => {
+    const el = document.createElement('div');
+    el.id = 'app-state';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-hidden', 'true');
+    el.style.cssText =
+      'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0';
+    document.body.appendChild(el);
+  });
+
+  createEffect(() => {
+    const el = document.getElementById('app-state');
+    if (el) el.textContent = appState();
+  });
+
   const dropzoneStatus = createMemo(() => {
     if (appState() !== 'converting') {
       return null;
@@ -227,8 +244,13 @@ const App: Component = () => {
       <div
         class="flex min-h-screen flex-col bg-gray-50 transition-colors dark:bg-gray-950"
         data-testid="app"
-        data-state={appState()}
       >
+        <a
+          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-blue-600 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
+          href="#main-content"
+        >
+          Skip to main content
+        </a>
         <a
           class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-blue-600 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
           href="#main-content"
