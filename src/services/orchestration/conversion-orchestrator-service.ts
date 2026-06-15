@@ -25,6 +25,7 @@ import {
   throwIfAborted,
 } from '@utils/cancellation-context';
 import { isSupportedFormat } from '@utils/codec-utils';
+import { getTargetFps } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { getAvailableMemory } from '@utils/memory-monitor';
@@ -59,10 +60,7 @@ function estimateRequiredMemory(
   const width = metadata?.width ?? 1920;
   const height = metadata?.height ?? 1080;
   const duration = metadata?.duration ?? 10;
-  const fps = Math.min(
-    metadata?.framerate ?? 30,
-    quality === 'low' ? 10 : quality === 'medium' ? 15 : 20
-  );
+  const fps = Math.min(metadata?.framerate ?? 30, getTargetFps(quality));
   const frameCount = Math.ceil(duration * fps);
   const frameBytes = width * height * 4;
 
@@ -294,10 +292,7 @@ async function convertWithSoftwareDecode(
       format,
       options: request.options,
       frameCount: frameResult.frameCount,
-      fps: Math.min(
-        request.metadata?.framerate ?? 30,
-        request.options.quality === 'low' ? 10 : request.options.quality === 'medium' ? 15 : 20
-      ),
+      fps: Math.min(request.metadata?.framerate ?? 30, getTargetFps(request.options.quality)),
       durationSeconds: request.metadata?.duration ?? 10,
       frameFiles: [],
       frameInput: {
@@ -367,10 +362,7 @@ async function decodeFramesWithExtractor(
 
   throwIfAborted(abortSignal);
 
-  const fps = Math.min(
-    metadata?.framerate ?? 30,
-    quality === 'low' ? 10 : quality === 'medium' ? 15 : 20
-  );
+  const fps = Math.min(metadata?.framerate ?? 30, getTargetFps(quality));
   const duration = metadata?.duration ?? (video.duration || 10);
   const frameCount = Math.ceil(duration * fps);
 

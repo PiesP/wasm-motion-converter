@@ -82,39 +82,6 @@ html.dark body {
 }
 
 /* ============================================================================
-   Animations & Transitions
-   ============================================================================ */
-
-/**
- * Slide-in animation keyframes
- *
- * Animates elements from right to left with fade-in effect.
- * Used for toast notifications and modal transitions.
- *
- * Duration: 0.3s with ease-out timing for natural acceleration curve
- */
-@keyframes slide-in {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-/**
- * Slide-in animation utility class
- *
- * Applies slide-in keyframes to elements for smooth entry animations.
- * Commonly used for toast notifications and dynamic content.
- */
-.animate-slide-in {
-  animation: slide-in 0.3s ease-out;
-}
-
-/* ============================================================================
    Focus Visible Styles
    ============================================================================ */
 

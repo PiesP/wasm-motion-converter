@@ -194,6 +194,14 @@ export const QUALITY_PRESETS = {
   },
 } as const;
 
+/**
+ * Get the target FPS for a given quality preset.
+ * Used by conversion paths to cap the output framerate.
+ */
+export function getTargetFps(quality: 'low' | 'medium' | 'high'): number {
+  return QUALITY_PRESETS.gif[quality].fps;
+}
+
 // ============================================================================
 // MEMORY / PIXEL THRESHOLDS
 // ============================================================================

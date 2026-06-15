@@ -192,6 +192,16 @@ export const FFMPEG_INTERNALS = {
     /** Maximum number of concurrent decoded frames in VideoDecoder queue. Set to 2. */
     MAX_QUEUE_SIZE: 2,
   },
+
+  // GIF encoding dither configuration
+  GIF_ENCODING: {
+    /** Dither mode per quality: high uses sierra2, others use bayer */
+    DITTER_MODE_HIGH: 'sierra2' as const,
+    DITTER_MODE_DEFAULT: 'bayer' as const,
+    /** Bayer scale per quality: low=3 (coarser), medium/high=2 (finer) */
+    BAYER_SCALE_LOW: 3,
+    BAYER_SCALE_DEFAULT: 2,
+  },
 } as const;
 
 /**

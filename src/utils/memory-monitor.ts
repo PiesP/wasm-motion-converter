@@ -26,7 +26,7 @@ interface MemoryInfo {
 }
 
 // Thresholds for memory warning levels
-const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
+export const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
 
 // Tracked decoded frame memory (bytes) — updated by WebCodecs decoder
 let trackedDecodedFrameBytes = 0;

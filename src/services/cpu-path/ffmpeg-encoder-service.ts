@@ -759,8 +759,14 @@ export class FFmpegEncoder {
 
     // Convert frames to GIF using palette
     const conversionThreadArgs = getThreadingArgs('filter-complex');
-    const ditherMode = quality === 'high' ? 'sierra2' : 'bayer';
-    const bayerScale = quality === 'low' ? 3 : 2;
+    const ditherMode =
+      quality === 'high'
+        ? FFMPEG_INTERNALS.GIF_ENCODING.DITTER_MODE_HIGH
+        : FFMPEG_INTERNALS.GIF_ENCODING.DITTER_MODE_DEFAULT;
+    const bayerScale =
+      quality === 'low'
+        ? FFMPEG_INTERNALS.GIF_ENCODING.BAYER_SCALE_LOW
+        : FFMPEG_INTERNALS.GIF_ENCODING.BAYER_SCALE_DEFAULT;
     const ditherConfig =
       ditherMode === 'bayer'
         ? `dither=${ditherMode}:bayer_scale=${bayerScale}:diff_mode=rectangle`

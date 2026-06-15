@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
+import { MEMORY_CRITICAL_THRESHOLD } from '@utils/memory-monitor';
 import type { Component } from 'solid-js';
 import { createMemo, Show, splitProps } from 'solid-js';
-
-const MEMORY_CRITICAL_THRESHOLD = 80;
 
 interface MemoryWarningProps {
   isDuringConversion: boolean;
