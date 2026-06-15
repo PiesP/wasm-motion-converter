@@ -422,6 +422,10 @@ async function decodeFramesWithExtractor(
     enableLogSilenceCheck: false,
   });
 
+  // Report initial progress so the UI shows 0% immediately
+  ffmpegService.reportProgress(0);
+  ffmpegService.reportStatus('Extracting frames...');
+
   const outputFileName = 'raw_frames.raw';
 
   try {
@@ -433,6 +437,7 @@ async function decodeFramesWithExtractor(
       options: { width, height },
       signal: abortSignal,
       onProgress: (current, total) => {
+        // Map frame extraction (0-100%) to overall progress (0-50%)
         const progress = Math.round((current / total) * 50);
         ffmpegService.reportProgress(progress);
       },
