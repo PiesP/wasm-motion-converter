@@ -762,6 +762,14 @@ export default defineConfig(({ mode }) => {
             (p) => !p.includes('service-worker')
           );
 
+          // Add icons and other root assets not matched by collectFiles
+          for (const f of readdirSync(distDir)) {
+            if (f.endsWith('.svg') || f.endsWith('.png') || f.endsWith('.ico')) {
+              const p = `/${f}`;
+              if (!precacheUrls.includes(p)) precacheUrls.push(p);
+            }
+          }
+
           const swPath = path.join(distDir, 'service-worker.js');
           if (existsSync(swPath)) {
             let swContent = readFileSync(swPath, 'utf-8');
