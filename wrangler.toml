@@ -5,15 +5,6 @@ name = "wasm-motion-converter"
 compatibility_date = "2026-06-15"
 pages_build_output_dir = "dist"
 
-# Build command — runs pnpm build (which includes pnpm quality gate)
-[build]
-command = "pnpm build"
-
 # Production environment variables
 [vars]
 NODE_ENV = "production"
-
-# Node.js compatibility flags for FFmpeg WASM
-# SharedArrayBuffer requires COOP/COEP headers (set in public/_headers)
-[compatibility_flags]
-nodejs_compat = true
