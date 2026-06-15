@@ -32,6 +32,8 @@ import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
 import { getAvailableMemory } from '@utils/memory-monitor';
 import { performanceTracker } from '@utils/performance-tracker';
+import { frameAssemblerService } from './frame-assembler-service';
+import { frameExtractorService } from './frame-extractor-service';
 import { selectSimplePath } from './simple-path-planner-service';
 
 const STATUS_INITIALIZING = 'Initializing conversion...';
@@ -314,8 +316,8 @@ async function convertWithSoftwareDecode(
     await ffmpegService.initialize();
   }
 
-  // Use <video> + Canvas to decode frames, then encode via FFmpeg
-  const frameFiles = await decodeFramesToVFS(
+  // Extract frames using the new FrameExtractorService
+  const frameResult = await decodeFramesWithExtractor(
     request.file,
     request.metadata,
     request.options.quality,
@@ -329,14 +331,20 @@ async function convertWithSoftwareDecode(
     {
       format,
       options: request.options,
-      frameCount: frameFiles.length,
+      frameCount: frameResult.frameCount,
       fps: Math.min(
         request.metadata?.framerate ?? 30,
         request.options.quality === 'low' ? 10 : request.options.quality === 'medium' ? 15 : 20
       ),
       durationSeconds: request.metadata?.duration ?? 10,
-      frameFiles,
-      frameInput: { kind: 'image-sequence', frameFiles },
+      frameFiles: [],
+      frameInput: {
+        kind: 'rawvideo',
+        fileName: frameResult.fileName,
+        width: frameResult.width,
+        height: frameResult.height,
+        pixelFormat: 'rgba',
+      },
       progressOffset: 50, // software decode occupies 0-50%, encode occupies 50-100%
     },
     {
@@ -355,39 +363,27 @@ async function convertWithSoftwareDecode(
 }
 
 /**
- * Decode video frames using <video> + Canvas pipeline.
- * Works for any codec the browser can decode (including AV1).
- *
- * Memory optimization: frames are written to VFS in batches to avoid
- * holding all PNG data in JS heap simultaneously. Each batch is flushed
- * to VFS before the next batch is decoded.
+ * Decode video frames using FrameExtractorService.
+ * Uses createImageBitmap (GPU) when available, falls back to canvas.
+ * Writes raw RGBA frames to FFmpeg VFS as rawvideo.
  */
-async function decodeFramesToVFS(
+async function decodeFramesWithExtractor(
   file: File,
   metadata: VideoMetadata | undefined,
   quality: ConversionQuality,
   format: ConversionFormat,
   abortSignal: AbortSignal
-): Promise<string[]> {
-  // Create hidden video element
+): Promise<{ fileName: string; frameCount: number; width: number; height: number }> {
   const video = document.createElement('video');
   video.src = URL.createObjectURL(file);
   video.muted = true;
   video.playsInline = true;
   video.preload = 'auto';
 
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) {
-    throw new Error('Could not get canvas 2D context');
-  }
-
   const width = metadata?.width ?? 1920;
   const height = metadata?.height ?? 1080;
-  canvas.width = width;
-  canvas.height = height;
 
-  // Wait for video metadata and first frame
+  // Wait for video to load
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const settle = (fn: () => void) => {
@@ -412,89 +408,60 @@ async function decodeFramesToVFS(
   );
   const duration = metadata?.duration ?? (video.duration || 10);
   const frameCount = Math.ceil(duration * fps);
-  const frameFiles: string[] = [];
+
+  // Select best extraction strategy
+  const strategy = await frameExtractorService.selectStrategy();
+  logger.info('conversion', `Frame extraction strategy: ${strategy}`, {
+    width,
+    height,
+    fps,
+    frameCount,
+  });
 
   ffmpegService.beginExternalConversion(metadata, quality, format, {
     enableLogSilenceCheck: false,
   });
 
-  // Batch size: write every N frames to VFS to limit peak JS heap usage.
-  // Each 1080p PNG frame ≈ 8MB, so batch of 5 = ~40MB peak per batch.
-  const BATCH_SIZE = 5;
-  // Accumulate frame data before flushing to VFS in batches.
-  let batch: { fileName: string; data: Uint8Array }[] = [];
-  const flushBatch = async () => {
-    for (const { fileName, data } of batch) {
-      await ffmpegService.writeVirtualFile(fileName, data);
-      frameFiles.push(fileName);
-    }
-    batch = []; // Release JS heap for GC
-  };
+  const outputFileName = 'raw_frames.raw';
 
   try {
-    for (let i = 0; i < frameCount; i++) {
-      if (abortSignal.aborted) {
-        throw new Error('Conversion cancelled by user');
-      }
+    // Extract all frames
+    const result = await frameExtractorService.extractFrames({
+      video,
+      fps,
+      duration,
+      options: { width, height },
+      signal: abortSignal,
+      onProgress: (current, total) => {
+        const progress = Math.round((current / total) * 50);
+        ffmpegService.reportProgress(progress);
+      },
+    });
 
-      const time = i / fps;
-      if (time >= video.duration) break;
-
-      // Seek to frame time
-      await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const settle = (fn: () => void) => {
-          if (!settled) {
-            settled = true;
-            fn();
-          }
-        };
-        video.onseeked = () => settle(resolve);
-        video.onerror = () => settle(() => reject(new Error(`Seek failed at ${time.toFixed(2)}s`)));
-        setTimeout(
-          () => settle(() => reject(new Error(`Seek timeout at ${time.toFixed(2)}s`))),
-          5_000
-        );
-        video.currentTime = time;
-      });
-
-      // Draw frame to canvas
-      ctx.drawImage(video, 0, 0, width, height);
-
-      // Get PNG data
-      const blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(
-          (b) => {
-            if (b) resolve(b);
-            else reject(new Error('Canvas toBlob failed'));
-          },
-          'image/png',
-          0.92
-        );
-      });
-
-      const arrayBuffer = await blob.arrayBuffer();
-      const fileName = `frame_${i.toString().padStart(6, '0')}.png`;
-      batch.push({ fileName, data: new Uint8Array(arrayBuffer) });
-
-      // Flush batch to VFS when it reaches BATCH_SIZE
-      if (batch.length >= BATCH_SIZE) {
-        await flushBatch();
-      }
-
-      // Report progress (decode phase = 0-50%)
-      const progress = Math.round((i / frameCount) * 50);
-      ffmpegService.reportProgress(progress);
+    if (abortSignal.aborted) {
+      throw new Error('Conversion cancelled by user');
     }
 
-    // Flush remaining frames
-    if (batch.length > 0) {
-      await flushBatch();
-    }
+    // Write raw frames to VFS
+    await frameAssemblerService.writeRawVideo({
+      ffmpeg: ffmpegService.getFFmpegInstance(),
+      pixels: result.pixels,
+      width: result.width,
+      height: result.height,
+      frameCount: result.frameCount,
+      outputFileName,
+    });
+
+    ffmpegService.reportProgress(50);
+
+    return {
+      fileName: outputFileName,
+      frameCount: result.frameCount,
+      width: result.width,
+      height: result.height,
+    };
   } finally {
     ffmpegService.endExternalConversion();
     URL.revokeObjectURL(video.src);
   }
-
-  return frameFiles;
 }

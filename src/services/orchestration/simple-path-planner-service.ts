@@ -11,14 +11,14 @@
  * 1. FFmpeg-preferred codecs (theora, vp6, mpeg4, etc.) → CPU path
  *    These codecs have no WebCodecs support, must use FFmpeg.
  *
- * 2. WebCodecs-native codecs (H.264, VP8/9, AV1, HEVC) → FFmpeg Direct path
+ * 2. WebCodecs-native codecs (H.264, VP8/9, AV1, HEVC) → Software path
  *    H.264: ~99% decode support — universal
  *    VP9:   ~97% decode support — all major browsers
  *    AV1:   ~91.5% decode — Chrome/Firefox/Safari 14+
  *    HEVC:  ~85% decode — Safari/Edge/Chrome (no Firefox)
  *
- *    FFmpeg Direct path: FFmpeg handles decode + encode internally.
- *    (Despite the "gpu" path label, no WebCodecs decode is used here.)
+ *    Software path: FrameExtractorService (GPU decode via createImageBitmap)
+ *    → FFmpeg VFS → FFmpeg encode. Avoids slow FFmpeg WASM decode.
  *
  * 3. AV1/AV01 → Software Decode path
  *    FFmpeg WASM can't decode AV1 — uses <video> + Canvas, then FFmpeg encode.
@@ -54,17 +54,17 @@ type SimplePathPlanParams = {
  * 1. FFmpeg-preferred codecs (theora, vp6, mpeg4, etc.) → CPU path
  *    These codecs have no WebCodecs support, must use FFmpeg.
  *
- * 2. WebCodecs-native codecs (H.264, VP8/9, AV1, HEVC) → GPU path
+ * 2. WebCodecs-native codecs (H.264, VP8/9, AV1, HEVC) → Software path
  *    H.264: ~99% decode support — universal
  *    VP9:   ~97% decode support — all major browsers
  *    AV1:   ~91.5% decode — Chrome/Firefox/Safari 14+
  *    HEVC:  ~85% decode — Safari/Edge/Chrome (no Firefox)
  *
- *    All GPU paths: WebCodecs decode → FFmpeg VFS → FFmpeg encode
+ *    All Software paths: FrameExtractorService (GPU decode) → FFmpeg VFS → FFmpeg encode
  *
  * 3. Unknown codecs → runtime probe (isWebCodecsCodecSupported)
  *
- * @returns PathSelection with 'gpu' or 'cpu' path and reason
+ * @returns PathSelection with 'software' or 'cpu' path and reason
  */
 export async function selectSimplePath(params: SimplePathPlanParams): Promise<PathSelection> {
   const { file, format, metadata, abortSignal } = params;
@@ -101,8 +101,8 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
       };
     }
     return {
-      path: 'gpu',
-      reason: `${format.toUpperCase()} + ${codec}: FFmpeg direct (codec is WebCodecs-native)`,
+      path: 'software',
+      reason: `${format.toUpperCase()} + ${codec}: GPU frame extraction → FFmpeg encode`,
     };
   }
 
@@ -127,9 +127,9 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
     };
   }
 
-  // Runtime probe succeeded: use FFmpeg direct path
+  // Runtime probe succeeded: use software path for GPU frame extraction
   return {
-    path: 'gpu',
-    reason: `${format.toUpperCase()} + ${codec}: FFmpeg direct (runtime probe)`,
+    path: 'software',
+    reason: `${format.toUpperCase()} + ${codec}: GPU frame extraction → FFmpeg encode (runtime probe)`,
   };
 }

@@ -15,7 +15,8 @@ type PerformancePhase =
   | 'palette-gen'
   | 'webp-encode'
   | 'gif-fallback'
-  | 'webp-fallback';
+  | 'webp-fallback'
+  | 'frame-extract';
 
 /**
  * Timing entry for a single performance phase

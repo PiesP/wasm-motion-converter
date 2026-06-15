@@ -176,6 +176,30 @@ export class FFmpegPipeline {
     return true;
   }
 
+  /**
+   * Determine if a conversion should be retried.
+   * Retries on: WASM out-of-bounds errors, timeout errors.
+   */
+  private shouldRetry(error: unknown): boolean {
+    if (this.encoder.isCancellationRequested() || this.callbacks.shouldCancel?.() === true) {
+      return false;
+    }
+
+    const message = getErrorMessage(error).toLowerCase();
+
+    // Retry on timeout errors
+    if (message.includes('timed out')) {
+      return true;
+    }
+
+    // Retry on WASM memory errors
+    if (isFFmpegWasmOutOfBoundsError(error)) {
+      return true;
+    }
+
+    return false;
+  }
+
   constructor() {
     this.core = new FFmpegCore();
     this.vfs = new FFmpegVFS();
@@ -455,7 +479,7 @@ export class FFmpegPipeline {
       this.monitoring.startWatchdog(watchdogConfig);
 
       let attempt = 0;
-      // Retry exactly once on fatal WASM crashes.
+      const maxAttempts = 2; // Allow up to 2 attempts (original + 1 retry)
       while (true) {
         // Check cancellation before each attempt
         if (abortSignal) throwIfAborted(abortSignal);
@@ -475,9 +499,14 @@ export class FFmpegPipeline {
         } catch (error) {
           this.monitoring.stopWatchdog();
 
-          if (attempt === 0 && this.shouldRetryAfterWasmCrash(error)) {
+          if (attempt < maxAttempts - 1 && this.shouldRetry(error)) {
             attempt += 1;
-            this.callbacks.onStatusUpdate?.(WATCHDOG_STALL_MESSAGE);
+            const isTimeout = getErrorMessage(error).toLowerCase().includes('timed out');
+            this.callbacks.onStatusUpdate?.(
+              isTimeout
+                ? `Conversion timed out, retrying with conservative settings (attempt ${attempt + 1}/${maxAttempts})...`
+                : WATCHDOG_STALL_MESSAGE
+            );
             this.hardResetForRetry(format === 'gif' ? 'convertToGIF' : 'convertToWebP', error);
             await this.initialize(callbacks?.onProgress, callbacks?.onStatusUpdate);
             this.core.clearAllListeners();
@@ -750,6 +779,13 @@ export class FFmpegPipeline {
    */
   getMonitoring(): FFmpegMonitoring {
     return this.monitoring;
+  }
+
+  /**
+   * Get the FFmpeg instance for external operations (e.g., frame assembly).
+   */
+  getFFmpegInstance(): FFmpeg {
+    return this.getFFmpeg();
   }
 
   /**

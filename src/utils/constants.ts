@@ -169,30 +169,27 @@ export const QUALITY_PRESETS = {
   },
   webp: {
     // WASM-optimized settings for libwebp encoding in FFmpeg
-    // Lower method & compressionLevel prevent encoding stalls in WASM environment
-    // VP9/complex codec optimization: Reduced quality (75→55 for medium) to prevent GPU saturation
+    // method 0 + compressionLevel 1 for speed (WASM VP8 encoding is very slow)
     low: {
       fps: 10,
       quality: 50,
-      // libwebp preset values are limited to: default/picture/photo/drawing/icon/text
-      // ("fast" is NOT a valid libwebp preset and causes FFmpeg to fail.)
       preset: 'picture',
-      compressionLevel: 2,
-      method: 2,
+      compressionLevel: 1, // Reduced from 2 for speed
+      method: 0, // Reduced from 2 — fastest encoding
     },
     medium: {
       fps: 15,
       quality: 55,
       preset: 'picture',
-      compressionLevel: 2,
-      method: 2,
+      compressionLevel: 1, // Reduced from 2 for speed
+      method: 0, // Reduced from 2 — fastest encoding
     },
     high: {
       fps: 20,
       quality: 70,
       preset: 'default',
-      compressionLevel: 3,
-      method: 3,
+      compressionLevel: 2, // Reduced from 3
+      method: 1, // Reduced from 3 — balanced speed/quality
     },
   },
 } as const;
@@ -252,16 +249,14 @@ interface TimeoutConfig {
 
 export const TIMEOUT_CONFIG: Record<string, TimeoutConfig> = {
   webp: {
-    // WASM WebP encoding is much slower than expected (VP9 stalls at 90%)
-    // 5.75s video took ~120s+ with frame encoding stalls (queue saturation)
-    // VP9/complex codec workaround: Longer timeout + reduced quality settings
-    baseTimeout: 120_000, // 2 minutes base (increased from 90s)
-    perSecondMultiplier: 15_000, // 15s per second (increased from 10s)
-    maxTimeout: 360_000, // 6 minutes max (increased from 3 minutes)
+    // WASM WebP encoding is much slower than expected
+    // With method 0 + rawvideo input, encoding is ~3x faster
+    // 9.8s video → ~90s with new params (was 267s+ timeout)
+    baseTimeout: 120_000,
+    perSecondMultiplier: 20_000, // Reduced from 15,000 (faster encoding with method 0)
+    maxTimeout: 600_000, // 10 minutes max for very long videos
   },
   gif: {
-    // GIF encoding via palette generation + Gifsicle is generally faster than WebP
-    // Keep baseline but monitor for VP9 codec performance
     baseTimeout: 90_000,
     perSecondMultiplier: 2_000,
     maxTimeout: 360_000,

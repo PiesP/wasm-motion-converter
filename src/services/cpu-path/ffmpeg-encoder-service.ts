@@ -578,6 +578,7 @@ export class FFmpegEncoder {
           { fps, frameCount, quality: options.quality },
           durationSeconds,
           providedFrameFiles,
+          frameInput,
           progressOffset
         );
       }
@@ -787,6 +788,18 @@ export class FFmpegEncoder {
     settings: { fps: number; frameCount: number; quality: ConversionQuality },
     durationSeconds: number,
     frameFiles?: string[],
+    frameInput?:
+      | {
+          kind: 'image-sequence';
+          frameFiles: string[];
+        }
+      | {
+          kind: 'rawvideo';
+          fileName: string;
+          width: number;
+          height: number;
+          pixelFormat: 'rgba';
+        },
     progressOffset = 0
   ): Promise<void> {
     const { fps, frameCount, quality } = settings;
@@ -806,9 +819,32 @@ export class FFmpegEncoder {
     const encodeStart = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_START + progressOffset;
     const encodeEnd = FFMPEG_INTERNALS.PROGRESS.WEBCODECS.ENCODE_END + progressOffset;
 
-    // Detect frame file extension (PNG or JPEG) for correct FFmpeg input pattern
-    const frameExtension = detectFrameExtension(frameFiles);
-    const inputPattern = `frame_%06d.${frameExtension}`;
+    // Build input args — support both image-sequence and rawvideo
+    let inputArgs: string[];
+    let frameFormatForLog: string;
+
+    if (frameInput?.kind === 'rawvideo') {
+      const size = `${frameInput.width}x${frameInput.height}`;
+      inputArgs = [
+        '-f',
+        'rawvideo',
+        '-pixel_format',
+        frameInput.pixelFormat,
+        '-video_size',
+        size,
+        '-framerate',
+        fps.toString(),
+        '-i',
+        frameInput.fileName,
+      ];
+      frameFormatForLog = `rawvideo(${frameInput.pixelFormat},${size})`;
+    } else {
+      // Existing image-sequence path
+      const frameExtension = detectFrameExtension(frameFiles);
+      const inputPattern = `frame_%06d.${frameExtension}`;
+      inputArgs = ['-framerate', fps.toString(), '-i', inputPattern];
+      frameFormatForLog = frameExtension;
+    }
 
     // WebP encoding in WASM can be slow enough to hit timeouts on larger frames.
     // Use limited multithreading when cross-origin isolation is available.
@@ -820,18 +856,8 @@ export class FFmpegEncoder {
     // Use concat instead of spread to prevent stack overflow
     const webpCmd = ([] as string[])
       .concat(webpThreadArgs)
-      .concat([
-        '-framerate',
-        fps.toString(),
-        '-i',
-        inputPattern,
-        '-c:v',
-        'libwebp',
-        '-lossless',
-        '0',
-        '-quality',
-        qualitySettings.quality.toString(),
-      ])
+      .concat(inputArgs)
+      .concat(['-c:v', 'libwebp', '-lossless', '0', '-quality', qualitySettings.quality.toString()])
       .concat(presetArgs ? Array.from(presetArgs) : [])
       .concat([
         '-compression_level',
@@ -848,7 +874,7 @@ export class FFmpegEncoder {
       fps,
       quality: qualitySettings.quality,
       output: outputFileName,
-      frameFormat: frameExtension,
+      frameFormat: frameFormatForLog,
       durationSeconds,
       preset: qualitySettings.preset,
       compressionLevel: qualitySettings.compressionLevel,
