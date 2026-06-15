@@ -9,25 +9,6 @@
  */
 
 declare module 'virtual:cdn-deps' {
-  /** Runtime dependency versions taken from package.json (dependencies). */
+  /** Runtime dependency versions taken from package.json (dependencies + cdnDependencies). */
   export const RUNTIME_DEP_VERSIONS: Record<string, string>;
-
-  /** Primary CDN base URL (currently esm.sh). */
-  export const ESM_SH_BASE_URL: string;
-
-  /** esm.sh target parameter used for ESM transpilation (e.g. esnext). */
-  export const ESM_SH_TARGET: string;
-
-  /**
-   * Builds an esm.sh module URL for a runtime dependency.
-   *
-   * @example
-   * esmShModuleUrl('comlink')
-   * esmShModuleUrl('@jsquash/webp', '/encode.js')
-   */
-  export function esmShModuleUrl(
-    pkg: string,
-    subpath?: string,
-    params?: Record<string, string>
-  ): string;
 }
