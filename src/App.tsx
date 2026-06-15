@@ -276,7 +276,7 @@ const App: Component = () => {
           </div>
         </header>
 
-        <main id="main-content" class="mx-auto w-full max-w-6xl flex-1 px-4 py-8" data-testid="app">
+        <main id="main-content" class="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
           <StatusAlerts
             environmentSupported={environmentSupported()}
             errorContext={errorContext()}
