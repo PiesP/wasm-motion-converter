@@ -224,7 +224,11 @@ const App: Component = () => {
         </div>
       )}
     >
-      <div class="flex min-h-screen flex-col bg-gray-50 transition-colors dark:bg-gray-950">
+      <div
+        class="flex min-h-screen flex-col bg-gray-50 transition-colors dark:bg-gray-950"
+        data-testid="app"
+        data-state={appState()}
+      >
         <a
           class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-blue-600 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
           href="#main-content"

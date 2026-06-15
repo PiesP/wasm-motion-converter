@@ -185,14 +185,13 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 }}
                 id="file-upload"
                 type="file"
-                class="sr-only"
+                class="absolute opacity-0 w-0 h-0 overflow-hidden"
                 accept="video/*"
                 onChange={handleFileInput}
                 disabled={local.disabled}
                 tabIndex={-1}
                 aria-label="Select video file for conversion"
                 data-testid="file-input"
-                required
               />
             </div>
             <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">or drag and drop</p>

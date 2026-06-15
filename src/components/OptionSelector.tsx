@@ -69,7 +69,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
     return (
       <label
         for={inputId}
-        class={optionClass(option.value === local.value)}
+        class={`${optionClass(option.value === local.value)} relative`}
         data-testid={`option-${local.name}-${String(option.value)}`}
       >
         <input
@@ -80,11 +80,11 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
           checked={option.value === local.value}
           onChange={() => handleOptionChange(option.value)}
           disabled={local.disabled}
-          class="sr-only"
+          class="absolute inset-0 w-full h-full opacity-0 cursor-pointer peer"
           aria-label={ariaLabel}
           aria-describedby={descriptionId}
         />
-        <div class="text-center">
+        <div class="text-center pointer-events-none">
           <div class="font-medium">{option.label}</div>
           <Show when={option.description}>
             <div id={descriptionId} class="text-xs mt-1 opacity-75">
