@@ -295,7 +295,7 @@ export class FrameExtractorService {
       const imageData = ctx.getImageData(0, 0, w, h);
 
       return {
-        pixels: new Uint8Array(imageData.data.buffer),
+        pixels: new Uint8Array(imageData.data),
         width: w,
         height: h,
       };
@@ -349,7 +349,7 @@ export class FrameExtractorService {
       const imageData = ctx.getImageData(0, 0, w, h);
 
       return {
-        pixels: new Uint8Array(imageData.data.buffer),
+        pixels: new Uint8Array(imageData.data),
         width: w,
         height: h,
       };
@@ -395,7 +395,7 @@ export class FrameExtractorService {
     const imageData = ctx.getImageData(0, 0, w, h);
 
     return {
-      pixels: new Uint8Array(imageData.data.buffer),
+      pixels: new Uint8Array(imageData.data),
       width: w,
       height: h,
     };

@@ -9,19 +9,16 @@
  */
 
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
-import {
-  cleanup as cleanupWebCodecs,
-  convert as ffmpegDirectConvert,
-} from '@services/webcodecs-conversion-service';
+import { cleanup as cleanupWebCodecs } from '@services/webcodecs-conversion-service';
 import type {
   ConversionFormat,
   ConversionMetadata,
-  ConversionOutputBlob,
   ConversionQuality,
   ConversionRequest,
   ConversionResponse,
   VideoMetadata,
 } from '@t/conversion-types';
+import { createConversionOutputBlob } from '@t/conversion-types';
 import {
   CANCELLED_MESSAGE,
   isCancellationError,
@@ -173,9 +170,6 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
       case 'software':
         blob = await convertWithSoftwareDecode(request, operation.abortController.signal);
         break;
-      case 'gpu':
-        blob = await convertWithFFmpegDirect(request, operation.abortController.signal);
-        break;
       default:
         blob = await convertWithCpu(request, operation.abortController.signal);
         break;
@@ -188,9 +182,7 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
 
     const metadata: ConversionMetadata = {
       path: selection.path,
-      encoder:
-        blob.encoderBackendUsed ??
-        (selection.path === 'gpu' ? 'ffmpeg-rawvideo-streaming' : 'ffmpeg'),
+      encoder: blob.encoderBackendUsed ?? 'ffmpeg',
       conversionTimeMs: performance.now() - startedAt,
       wasTranscoded: blob.wasTranscoded,
       originalCodec: request.metadata?.codec,
@@ -232,36 +224,6 @@ export function cancelConversion(): void {
   abortActiveOperation();
   ffmpegService.cancelConversion();
   cleanupWebCodecs();
-}
-
-async function convertWithFFmpegDirect(
-  request: ConversionRequest,
-  abortSignal: AbortSignal
-): Promise<Awaited<ConversionResponse['blob']>> {
-  const format = getSupportedFormat(request);
-
-  try {
-    return await ffmpegDirectConvert(
-      request.file,
-      format,
-      request.options,
-      request.metadata,
-      abortSignal
-    );
-  } catch (error) {
-    if (abortSignal.aborted || isCancellationError(error)) {
-      throw error;
-    }
-
-    logger.warn('conversion', 'FFmpeg direct path failed, falling back to CPU decode', {
-      format: request.format,
-      codec: request.metadata?.codec,
-      error: getErrorMessage(error),
-    });
-
-    // Forward the abort signal so cancellation during fallback is honored
-    return convertWithCpu(request, abortSignal);
-  }
 }
 
 async function convertWithCpu(
@@ -354,12 +316,11 @@ async function convertWithSoftwareDecode(
     }
   );
 
-  const typed = blob as ConversionOutputBlob;
-  typed.encoderBackendUsed = 'software-decode+ffmpeg';
-  typed.wasTranscoded = true;
-  typed.originalCodec = request.metadata?.codec;
-
-  return typed;
+  return createConversionOutputBlob(blob, {
+    encoderBackendUsed: 'software-decode+ffmpeg',
+    wasTranscoded: true,
+    originalCodec: request.metadata?.codec,
+  });
 }
 
 /**
@@ -375,7 +336,6 @@ async function decodeFramesWithExtractor(
   abortSignal: AbortSignal
 ): Promise<{ fileName: string; frameCount: number; width: number; height: number }> {
   const video = document.createElement('video');
-  video.src = URL.createObjectURL(file);
   video.muted = true;
   video.playsInline = true;
   video.preload = 'auto';
@@ -384,6 +344,8 @@ async function decodeFramesWithExtractor(
   const height = metadata?.height ?? 1080;
 
   // Wait for video to load
+  const objectUrl = URL.createObjectURL(file);
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const settle = (fn: () => void) => {
@@ -395,12 +357,15 @@ async function decodeFramesWithExtractor(
     video.onloadeddata = () => settle(resolve);
     video.onerror = () =>
       settle(() => reject(new Error('Failed to load video for software decode')));
-    setTimeout(
+    timeoutId = setTimeout(
       () => settle(() => reject(new Error('Video load timeout (software decode)'))),
       10_000
     );
-    video.load();
+    // Set src AFTER handlers are attached to avoid race condition
+    video.src = objectUrl;
   });
+
+  throwIfAborted(abortSignal);
 
   const fps = Math.min(
     metadata?.framerate ?? 30,
@@ -467,6 +432,10 @@ async function decodeFramesWithExtractor(
     };
   } finally {
     ffmpegService.endExternalConversion();
-    URL.revokeObjectURL(video.src);
+    clearTimeout(timeoutId);
+    video.onloadeddata = null;
+    video.onerror = null;
+    video.removeAttribute('src');
+    URL.revokeObjectURL(objectUrl);
   }
 }

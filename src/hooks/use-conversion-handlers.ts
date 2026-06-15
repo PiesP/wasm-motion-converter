@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import type { Setter } from 'solid-js';
+import { onCleanup, type Setter } from 'solid-js';
 import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';
 import {
@@ -35,6 +35,10 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     setConversionStartTime: options.setConversionStartTime,
     setEstimatedSecondsRemaining: options.setEstimatedSecondsRemaining,
     setMemoryWarning: options.setMemoryWarning,
+  });
+
+  onCleanup(() => {
+    runtime.resetTimingState();
   });
 
   return {

@@ -25,6 +25,7 @@ import type {
   ConversionQuality,
   VideoMetadata,
 } from '@t/conversion-types';
+import { createConversionOutputBlob } from '@t/conversion-types';
 import { CANCELLED_MESSAGE, throwIfAborted } from '@utils/cancellation-context';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { QUALITY_PRESETS } from '@utils/constants';
@@ -504,9 +505,12 @@ export class FFmpegEncoder {
       // Non-fatal
     }
 
-    return new Blob([new Uint8Array(outputData)], {
+    const plainBlob = new Blob([new Uint8Array(outputData)], {
       type: format === 'gif' ? 'image/gif' : 'image/webp',
-    }) as ConversionOutputBlob;
+    });
+    return createConversionOutputBlob(plainBlob, {
+      encoderBackendUsed: 'ffmpeg',
+    });
   }
 
   async encodeFrameSequence(params: {
@@ -590,9 +594,12 @@ export class FFmpegEncoder {
         format,
         'Output validation failed'
       );
-      const blob = new Blob([new Uint8Array(outputData)], {
+      const outputBlob = new Blob([new Uint8Array(outputData)], {
         type: format === 'gif' ? 'image/gif' : 'image/webp',
-      }) as ConversionOutputBlob;
+      });
+      const typedBlob = createConversionOutputBlob(outputBlob, {
+        encoderBackendUsed: 'ffmpeg',
+      });
 
       // Cleanup
       const frameFilesToClean =
@@ -605,7 +612,7 @@ export class FFmpegEncoder {
       if (frameFilesToClean.length === 0 && frameInput?.kind !== 'rawvideo') {
         // Fallback: reconstruct frame file names if not provided (old behavior for CPU path)
         for (let i = 0; i < frameCount; i++) {
-          frameFilesToClean.push(`frame${i.toString().padStart(5, '0')}.png`);
+          frameFilesToClean.push(`frame_${String(i).padStart(6, '0')}.png`);
         }
       }
       await vfs.handleConversionCleanup(
@@ -615,7 +622,7 @@ export class FFmpegEncoder {
         isMemoryCritical
       );
 
-      return blob;
+      return typedBlob;
     } catch (error) {
       throw this.enrichConversionError({
         error,

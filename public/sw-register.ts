@@ -13,6 +13,7 @@ const state: SWRegistrationState = {
 };
 
 let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
+let updateCheckVisibilityHandler: (() => void) | null = null;
 let notificationsSetup = false;
 
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
@@ -67,11 +68,21 @@ function setupUpdateCheck(registration: ServiceWorkerRegistration): void {
 
   const UPDATE_INTERVAL = 60 * 60 * 1000; // 1 hour
 
-  updateCheckInterval = setInterval(() => {
+  const checkForUpdate = () => {
+    // Only poll when the tab is visible — the browser already checks on navigation
+    if (document.hidden) return;
     registration.update().catch((error) => {
       console.warn('[SW Register] Update check failed:', error);
     });
-  }, UPDATE_INTERVAL);
+  };
+
+  // Run an immediate check on first setup, then hourly
+  checkForUpdate();
+  updateCheckInterval = setInterval(checkForUpdate, UPDATE_INTERVAL);
+
+  // Also check immediately when the tab becomes visible again
+  updateCheckVisibilityHandler = checkForUpdate;
+  document.addEventListener('visibilitychange', updateCheckVisibilityHandler);
 }
 
 /** Clean up the update check interval. Call on page unload to prevent leaks. */
@@ -80,9 +91,10 @@ export function cleanupServiceWorkerUpdateCheck(): void {
     clearInterval(updateCheckInterval);
     updateCheckInterval = null;
   }
-  navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
-  notificationsSetup = false;
-  state.isRegistered = false;
+  if (updateCheckVisibilityHandler !== null) {
+    document.removeEventListener('visibilitychange', updateCheckVisibilityHandler);
+    updateCheckVisibilityHandler = null;
+  }
 }
 
 function onControllerChange(): void {

@@ -21,14 +21,17 @@ self.addEventListener('install', (event: ExtendableEvent) => {
 
   event.waitUntil(
     (async () => {
-      await self.skipWaiting();
       const cache = await caches.open(CACHE_NAMES.app);
-      try {
-        await cache.addAll(PRECACHE_URLS);
-        console.log(`[SW ${SW_VERSION}] App shell pre-cached (${PRECACHE_URLS.length} files)`);
-      } catch (error) {
-        console.warn(`[SW ${SW_VERSION}] Pre-cache failed (non-fatal):`, error);
+      // Use individual cache.add() so one failure doesn't abort entire install
+      const results = await Promise.allSettled(PRECACHE_URLS.map((url) => cache.add(url)));
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length > 0) {
+        console.warn(`[SW ${SW_VERSION}] ${failed.length} precache URLs failed (non-fatal)`);
       }
+      console.log(
+        `[SW ${SW_VERSION}] App shell pre-cached (${PRECACHE_URLS.length - failed.length}/${PRECACHE_URLS.length} files)`
+      );
+      await self.skipWaiting();
     })()
   );
 });

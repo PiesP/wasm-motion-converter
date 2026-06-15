@@ -32,14 +32,12 @@ const resetAnalysisState = (): void => {
   setLoadingStatusMessage('');
 };
 
-let activeSelectionId = 0;
-
 export async function handleFileSelected(
   file: File,
   runtime: ConversionRuntimeController
 ): Promise<void> {
-  const selectionId = (activeSelectionId += 1);
-  const isStale = () => selectionId !== activeSelectionId;
+  const run = runtime.startNewRun();
+  const isStale = () => !run.isActive();
 
   runtime.resetRuntimeState();
   resetErrorState();
