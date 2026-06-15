@@ -12,6 +12,12 @@
     "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/+esm": {
       "jsdelivr": "sha384-eXElrPbYJXxhUpBNnhEZKuel4U5lZXYtx/1lFr5BICq9Xca+6BRvl6r1qQ02ZSSh"
     },
+    "https://esm.sh/@jsquash/webp@1.5.0?target=esnext": {
+      "esm.sh": "sha384-fFpV0u7nDSMqcBlpiOAR66BsDKSoaB+sjHrMNkE2EfQtE7L49EhxcebavkOJ0Ewo"
+    },
+    "https://cdn.jsdelivr.net/npm/@jsquash/webp@1.5.0/+esm": {
+      "jsdelivr": "sha384-TfVCRE97tKp3uYt9ALxDgLABDW3lWm6igfngvqGWyepkXnEkl5tlb935X9U6F7BU"
+    },
     "https://esm.sh/solid-js@1.9.13?target=esnext": {
       "esm.sh": "sha384-/K1chA0r9DEbfexR+wceqaDiiguYNj9nMVuE4eiBTFkJkEA1FFXviQGIrZtorTOC"
     },
@@ -34,7 +40,7 @@
       "esm.sh": "sha384-bUDNic6aEyfdzJHYdyV9Grnh3jISWQ+LVW57fNPmDMKyEjoxGgOz0Ha+SHreW/Dg"
     },
     "https://cdn.jsdelivr.net/npm/solid-js@1.9.13/h/+esm": {
-      "jsdelivr": "sha384-L0XdzLjXBoRKVKb4YuHKH5lgL0+E78mLyL+I0+vbHJkFMwpOG+hSnltRdd+DTFXW"
+      "jsdelivr": "sha384-tvrrwqmeRlByHUmLZ3x5T3RhJkkkMNIS174aZ9ahtagUrotsfnCkdZrghNXHYLHF"
     },
     "https://esm.sh/solid-js@1.9.13/html?target=esnext": {
       "esm.sh": "sha384-Ib6rX7zlN97Y7DEwg5S7hRVfByqzj0Su744OYuCrLafk0yvD7jhAhkN/5jeW99Bj"
@@ -50,9 +56,6 @@
     },
     "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm/ffmpeg-core.js": {
       "jsdelivr": "sha384-CqK+fB7O3Dl0SbCkpBiLNrSGeKVUCxa/mwPUPzOGLIQwVNBZEO3OOBhsTz6WqRw3"
-    },
-    "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm/ffmpeg-core.wasm": {
-      "jsdelivr": "sha384-IXnr5PE2UFcQ5DvI5LyubPqmMF46EkyIMlbdn4CNQR1iQ8/2irEkyhDFnVDxv4f/"
     },
     "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm/ffmpeg-core.worker.js": {
       "jsdelivr": "sha384-mH8cZ9JWsDxI1nYKmKMTA3qGV40dhtv4c6nOLSi5O2rr+0bx3pzHPIkIi6++JFye"

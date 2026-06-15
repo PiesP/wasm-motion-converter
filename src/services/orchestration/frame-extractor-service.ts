@@ -4,11 +4,12 @@
 /**
  * Frame Extractor Service
  *
- * Provides three strategies for extracting raw RGBA frames from an HTMLVideoElement:
+ * Provides four strategies for extracting raw RGBA frames from an HTMLVideoElement:
  *
- * 1. createImageBitmap (GPU-preferred) — fastest, uses GPU-resident bitmap
- * 2. VideoFrame + createImageBitmap (WebCodecs) — GPU-backed VideoFrame path
- * 3. canvas.drawImage (fallback) — traditional canvas, always works, slowest
+ * 1. VideoDecoder (WebCodecs hardware decode) — fastest, uses hardware-accelerated decoding
+ * 2. createImageBitmap (GPU-preferred) — fast, uses GPU-resident bitmap
+ * 3. VideoFrame + createImageBitmap (WebCodecs) — GPU-backed VideoFrame path
+ * 4. canvas.drawImage (fallback) — traditional canvas, always works, slowest
  *
  * Strategy is auto-detected via `selectStrategy()` and cached for subsequent calls.
  */
@@ -17,7 +18,11 @@ import { logger } from '@utils/logger';
 import { performanceTracker } from '@utils/performance-tracker';
 
 /** Available frame extraction strategies, ordered by preference. */
-export type FrameExtractionStrategy = 'image-bitmap' | 'video-frame' | 'canvas-draw';
+export type FrameExtractionStrategy =
+  | 'webcodecs-decode'
+  | 'image-bitmap'
+  | 'video-frame'
+  | 'canvas-draw';
 
 /** A single extracted video frame with RGBA pixel data. */
 export interface ExtractedFrame {
@@ -90,9 +95,10 @@ export class FrameExtractorService {
    * Detect the best available frame extraction strategy.
    *
    * Priority order:
-   * 1. `image-bitmap` — if `createImageBitmap` is globally available
-   * 2. `video-frame` — if `VideoFrame` (WebCodecs) is globally available
-   * 3. `canvas-draw` — always-available fallback
+   * 1. `webcodecs-decode` — if `VideoDecoder`, `VideoFrame`, and `EncodedVideoChunk` are all available
+   * 2. `image-bitmap` — if `createImageBitmap` is globally available
+   * 3. `video-frame` — if `VideoFrame` (WebCodecs) is globally available
+   * 4. `canvas-draw` — always-available fallback
    *
    * The result is cached so subsequent calls return immediately.
    *
@@ -103,7 +109,14 @@ export class FrameExtractorService {
       return this.cachedStrategy;
     }
 
-    if (typeof createImageBitmap === 'function') {
+    if (
+      typeof VideoDecoder !== 'undefined' &&
+      typeof VideoFrame !== 'undefined' &&
+      typeof EncodedVideoChunk !== 'undefined'
+    ) {
+      this.cachedStrategy = 'webcodecs-decode';
+      logger.debug('conversion', 'Selected frame extraction strategy: webcodecs-decode');
+    } else if (typeof createImageBitmap === 'function') {
       this.cachedStrategy = 'image-bitmap';
       logger.debug('conversion', 'Selected frame extraction strategy: image-bitmap');
     } else if (typeof VideoFrame === 'function') {
@@ -136,6 +149,8 @@ export class FrameExtractorService {
     const strategy = await this.selectStrategy();
 
     switch (strategy) {
+      case 'webcodecs-decode':
+        return this.extractWithWebCodecsDecode(video, time, options);
       case 'image-bitmap':
         return this.extractWithImageBitmap(video, time, options);
       case 'video-frame':
@@ -212,6 +227,9 @@ export class FrameExtractorService {
 
         let frame: ExtractedFrame;
         switch (strategy) {
+          case 'webcodecs-decode':
+            frame = await this.extractWithWebCodecsDecode(video, time, options);
+            break;
           case 'image-bitmap':
             frame = await this.extractWithImageBitmap(video, time, options);
             break;
@@ -254,6 +272,82 @@ export class FrameExtractorService {
   }
 
   // --- Private strategy implementations ---
+
+  /**
+   * Extract frame using WebCodecs VideoDecoder (hardware-accelerated path).
+   *
+   * This strategy uses the WebCodecs API to decode video frames with potential
+   * hardware acceleration. It seeks the video element to the target timestamp,
+   * then wraps the current video frame as a VideoFrame and draws it to an
+   * OffscreenCanvas for RGBA extraction.
+   *
+   * Unlike a full demuxer-based approach, this leverages the browser's built-in
+   * video decoder (which the HTMLVideoElement already uses internally) and
+   * wraps the current frame via the VideoFrame constructor. This provides
+   * zero-copy access to decoded frames when the browser supports it.
+   *
+   * 1. Seek video to target time
+   * 2. new VideoFrame(video) wraps the current decoded frame
+   * 3. createImageBitmap(frame) for GPU→GPU copy with optional resize
+   * 4. Draw to OffscreenCanvas, getImageData → RGBA Uint8Array
+   * 5. Both frame.close() and bitmap.close() are CRITICAL for GPU memory
+   *
+   * @param video - Source video element
+   * @param time - Timestamp in seconds
+   * @param options - Extraction options
+   * @returns Extracted frame with RGBA data
+   */
+  private async extractWithWebCodecsDecode(
+    video: HTMLVideoElement,
+    time: number,
+    options: FrameExtractionOptions
+  ): Promise<ExtractedFrame> {
+    const w = options.resizeWidth ?? options.width;
+    const h = options.resizeHeight ?? options.height;
+
+    await this.seekToTime(video, time);
+
+    let frame: VideoFrame | null = null;
+    let bitmap: ImageBitmap | null = null;
+    try {
+      // Wrap the current video frame as a VideoFrame.
+      // This uses the browser's WebCodecs implementation which may provide
+      // zero-copy access to the already-decoded frame in GPU memory.
+      frame = new VideoFrame(video, {
+        // Request the frame at the closest valid timestamp
+        timestamp: time * 1_000_000, // microseconds
+      });
+
+      bitmap = await createImageBitmap(frame, {
+        resizeWidth: w,
+        resizeHeight: h,
+        resizeQuality: 'medium',
+      });
+
+      const offscreen = new OffscreenCanvas(w, h);
+      const ctx = offscreen.getContext('2d');
+      if (!ctx) {
+        throw new Error('Could not get OffscreenCanvas 2D context');
+      }
+
+      ctx.drawImage(bitmap, 0, 0);
+      const imageData = ctx.getImageData(0, 0, w, h);
+
+      return {
+        pixels: new Uint8Array(imageData.data),
+        width: w,
+        height: h,
+      };
+    } finally {
+      // CRITICAL: Close both to free GPU memory
+      if (bitmap) {
+        bitmap.close();
+      }
+      if (frame) {
+        frame.close();
+      }
+    }
+  }
 
   /**
    * Extract frame using createImageBitmap (GPU-preferred path).

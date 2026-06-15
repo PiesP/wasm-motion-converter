@@ -10,6 +10,7 @@
 
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import { cleanup as cleanupWebCodecs } from '@services/webcodecs-conversion-service';
+import { WebpEncoderService } from '@services/webp-encoder-service';
 import type {
   ConversionFormat,
   ConversionMetadata,
@@ -164,13 +165,32 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
     throwIfAborted(operation.abortController.signal);
 
     let blob: Awaited<ConversionResponse['blob']>;
-    switch (selection.path) {
-      case 'software':
-        blob = await convertWithSoftwareDecode(request, operation.abortController.signal);
-        break;
-      default:
-        blob = await convertWithCpu(request, operation.abortController.signal);
-        break;
+
+    // WebP format with WebpEncoderService available: bypass FFmpeg entirely
+    // for significantly faster encoding via @jsquash/webp WASM SIMD.
+    if (request.format === 'webp') {
+      try {
+        blob = await convertWithWebpEncoder(request, operation.abortController.signal);
+      } catch (error) {
+        // Fall back to FFmpeg path if WebpEncoderService fails
+        logger.warn('conversion', 'WebpEncoderService failed, falling back to FFmpeg', {
+          error: getErrorMessage(error),
+        });
+        blob =
+          selection.path === 'software'
+            ? await convertWithSoftwareDecode(request, operation.abortController.signal)
+            : await convertWithCpu(request, operation.abortController.signal);
+      }
+    } else {
+      // GIF format: always use FFmpeg (no good browser-based alternative)
+      switch (selection.path) {
+        case 'software':
+          blob = await convertWithSoftwareDecode(request, operation.abortController.signal);
+          break;
+        default:
+          blob = await convertWithCpu(request, operation.abortController.signal);
+          break;
+      }
     }
 
     if (activeOperation?.id !== operation.id) {
@@ -319,6 +339,86 @@ async function convertWithSoftwareDecode(
 }
 
 /**
+ * Convert video to WebP using GPU frame extraction + @jsquash/webp encoder.
+ *
+ * This bypasses FFmpeg entirely for WebP output, using:
+ * 1. FrameExtractorService (GPU-accelerated decode via createImageBitmap)
+ * 2. WebpEncoderService (WASM SIMD @jsquash/webp for per-frame VP8 encoding)
+ *
+ * Expected to be significantly faster than the FFmpeg libwebp path.
+ */
+async function convertWithWebpEncoder(
+  request: ConversionRequest,
+  abortSignal: AbortSignal
+): Promise<Awaited<ConversionResponse['blob']>> {
+  if (abortSignal) throwIfAborted(abortSignal);
+
+  logger.info('conversion', 'WebP encoder path: GPU frame extraction → @jsquash/webp', {
+    codec: request.metadata?.codec,
+    quality: request.options.quality,
+  });
+
+  // Initialize the WebP encoder service (loads WASM)
+  const webpEncoder = new WebpEncoderService();
+  const encoderReady = await webpEncoder.initialize();
+  if (!encoderReady) {
+    throw new Error('Failed to initialize @jsquash/webp encoder');
+  }
+
+  if (abortSignal) throwIfAborted(abortSignal);
+
+  // Extract frames using FrameExtractorService (GPU-accelerated)
+  const frameResult = await decodeFramesWithExtractor(
+    request.file,
+    request.metadata,
+    request.options.quality,
+    request.format,
+    abortSignal
+  );
+
+  if (abortSignal) throwIfAborted(abortSignal);
+
+  // Convert raw frames to WebpEncoderFrame format
+  const w = frameResult.width;
+  const h = frameResult.height;
+  const bytesPerFrame = w * h * 4;
+  const frames: Array<{ pixels: Uint8Array; width: number; height: number }> = [];
+
+  for (let i = 0; i < frameResult.frameCount; i++) {
+    const offset = i * bytesPerFrame;
+    const framePixels = new Uint8Array(
+      frameResult.pixels.buffer as ArrayBuffer,
+      offset,
+      bytesPerFrame
+    );
+    frames.push({ pixels: framePixels, width: w, height: h });
+  }
+
+  if (abortSignal) throwIfAborted(abortSignal);
+
+  // Encode frames to animated WebP
+  const fps = Math.min(request.metadata?.framerate ?? 30, getTargetFps(request.options.quality));
+
+  const blob = await webpEncoder.encode({
+    frames,
+    fps,
+    quality: request.options.quality,
+    onProgress: (current, total) => {
+      // Map encoding progress (0-100%) to overall progress (50-100%)
+      const progress = 50 + Math.round((current / total) * 50);
+      request.onProgress?.(progress);
+    },
+    signal: abortSignal,
+  });
+
+  return createConversionOutputBlob(blob, {
+    encoderBackendUsed: WebpEncoderService.getEncoderBackend(),
+    wasTranscoded: true,
+    originalCodec: request.metadata?.codec,
+  });
+}
+
+/**
  * Decode video frames using FrameExtractorService.
  * Uses createImageBitmap (GPU) when available, falls back to canvas.
  * Writes raw RGBA frames to FFmpeg VFS as rawvideo.
@@ -329,7 +429,13 @@ async function decodeFramesWithExtractor(
   quality: ConversionQuality,
   format: ConversionFormat,
   abortSignal: AbortSignal
-): Promise<{ fileName: string; frameCount: number; width: number; height: number }> {
+): Promise<{
+  fileName: string;
+  frameCount: number;
+  width: number;
+  height: number;
+  pixels: Uint8Array;
+}> {
   const video = document.createElement('video');
   video.muted = true;
   video.playsInline = true;
@@ -421,6 +527,7 @@ async function decodeFramesWithExtractor(
       frameCount: result.frameCount,
       width: result.width,
       height: result.height,
+      pixels: result.pixels,
     };
   } finally {
     ffmpegService.endExternalConversion();
