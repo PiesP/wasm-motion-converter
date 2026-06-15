@@ -202,7 +202,7 @@ function importMapPlugin(): Plugin {
             }
           }
 
-          return `    <link rel="modulepreload" href="${href}" crossorigin${integrityAttr}>`;
+          return `    <link rel="modulepreload" href="${href}" as="script" crossorigin${integrityAttr}>`;
         })
         .filter((hint): hint is string => hint !== null)
         .join('\n');

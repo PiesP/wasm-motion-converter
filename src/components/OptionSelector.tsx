@@ -62,16 +62,19 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
   };
 
   const renderOption = (option: OptionSelectorOption<T>): JSX.Element => {
-    const descriptionId = option.description ? `${local.name}-${option.value}-desc` : undefined;
+    const inputId = `${local.name}-${String(option.value)}`;
+    const descriptionId = option.description ? `${inputId}-desc` : undefined;
     const ariaLabel = option.description ? `${option.label}: ${option.description}` : option.label;
 
     return (
       <label
+        for={inputId}
         class={optionClass(option.value === local.value)}
         data-testid={`option-${local.name}-${String(option.value)}`}
       >
         <input
           type="radio"
+          id={inputId}
           name={local.name}
           value={String(option.value)}
           checked={option.value === local.value}
@@ -111,13 +114,13 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
         id={legendId()}
         class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"
       >
-        {local.title}
+        <span>{local.title}</span>
         <Show when={local.tooltip}>
           <Tooltip content={local.tooltip!}>
             <button
               type="button"
               tabIndex={0}
-              class="focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+              class="inline-flex items-center focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
               aria-label={`Information about ${local.title}`}
               onKeyDown={handleTooltipKeyDown}
             >

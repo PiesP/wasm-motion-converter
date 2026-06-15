@@ -113,3 +113,32 @@ html.dark body {
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
+
+/* ============================================================================
+   Focus Visible Styles
+   ============================================================================ */
+
+/**
+ * Consistent focus-visible styles for keyboard navigation.
+ * Uses :focus-visible (modern browsers) with :focus fallback.
+ */
+:focus-visible {
+  outline: 2px solid var(--color-blue-500, #3b82f6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/**
+ * Button-specific focus styles — override browser default.
+ */
+button:focus-visible {
+  outline: 2px solid var(--color-blue-500, #3b82f6);
+  outline-offset: 2px;
+}
+
+/**
+ * Dark mode focus color — lighter blue for dark backgrounds.
+ */
+html.dark :focus-visible {
+  outline-color: var(--color-blue-400, #60a5fa);
+}

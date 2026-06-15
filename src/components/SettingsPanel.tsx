@@ -34,13 +34,18 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
             when={props.isConverting}
             fallback={
               <Button
-                ariaLabel="Convert video to animated image"
+                ariaLabel={
+                  !props.metadata
+                    ? 'Select a video to start conversion'
+                    : 'Convert video to animated image'
+                }
                 class="flex-1"
                 disabled={!props.metadata || props.isBusy}
                 onClick={props.onConvert}
+                variant={!props.metadata ? 'ghost' : 'primary'}
                 data-testid="convert-button"
               >
-                Convert
+                {!props.metadata ? 'Select a video to start' : 'Convert'}
               </Button>
             }
           >
@@ -55,11 +60,6 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
             </Button>
           </Show>
         </div>
-        {!props.metadata && !props.isBusy && (
-          <p class="mt-2 text-xs text-gray-400 dark:text-gray-500 text-center">
-            Select a video to start
-          </p>
-        )}
       </div>
 
       <Show when={props.metadata}>
