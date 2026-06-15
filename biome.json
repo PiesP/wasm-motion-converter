@@ -33,7 +33,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "correctness": {
         "noUnusedImports": "warn",
         "noUnusedVariables": "warn",
@@ -90,7 +90,6 @@
       "tailwindDirectives": true
     }
   },
-
   "assist": {
     "enabled": true,
     "actions": {
