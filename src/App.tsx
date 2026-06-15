@@ -168,6 +168,7 @@ const App: Component = () => {
       label: 'Converting video...',
       progress: conversionProgress(),
       message: conversionStatusMessage(),
+      subPhaseLabel: conversionStatusMessage() || 'Extracting frames...',
       showElapsedTime: true,
       startTime: conversionStartTime(),
       estimatedSecondsRemaining: estimatedSecondsRemaining(),
