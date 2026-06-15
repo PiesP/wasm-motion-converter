@@ -24,11 +24,6 @@ is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or 
 **License**: MIT
 **Repository**: https://github.com/ffmpegwasm/ffmpeg.wasm#readme
 ---
-## @jsquash/webp v1.5.0
-
-**License**: Apache-2.0
-**Repository**: https://github.com/jamsinclair/jSquash#readme
----
 ## csstype v3.2.3
 
 **License**: MIT
@@ -48,11 +43,6 @@ is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or 
 
 **License**: MIT
 **Repository**: https://solidjs.com
----
-## wasm-feature-detect v1.8.0
-
-**License**: Apache-2.0
-**Repository**: https://github.com/GoogleChromeLabs/wasm-feature-detect#readme
 
 ## FFmpeg (WebAssembly Core)
 
