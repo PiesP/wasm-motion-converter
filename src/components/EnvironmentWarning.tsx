@@ -76,7 +76,7 @@ const EnvironmentWarning: Component = () => {
         </div>
         <div class="ml-3 flex-1">
           <div class="flex items-start justify-between">
-            <h3 class="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+            <h3 class="text-sm font-medium text-yellow-950 dark:text-yellow-300">
               Environment Not Supported
             </h3>
             <button

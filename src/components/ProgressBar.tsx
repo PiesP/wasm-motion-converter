@@ -185,14 +185,14 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
-            <span class="text-gray-400 dark:text-gray-600">|</span>
+            <span class="text-gray-500 dark:text-gray-600">|</span>
             <span>ETA: {formatDuration(local.estimatedSecondsRemaining!)}</span>
           </Show>
           <Show
             when={local.estimatedSecondsRemaining == null || local.estimatedSecondsRemaining <= 0}
           >
-            <span class="text-gray-400 dark:text-gray-600">|</span>
-            <span class="text-gray-400 dark:text-gray-500 italic">Calculating...</span>
+            <span class="text-gray-500 dark:text-gray-600">|</span>
+            <span class="text-gray-500 dark:text-gray-500 italic">Calculating...</span>
           </Show>
         </div>
       </Show>

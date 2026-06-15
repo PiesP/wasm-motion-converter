@@ -522,7 +522,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       </div>
 
       {/* 3. Track boundary labels — above the bar, integrated */}
-      <div class="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 px-0.5 pt-1">
+      <div class="flex justify-between text-[10px] text-gray-500 dark:text-gray-500 px-0.5 pt-1">
         <span>{formatTime(0)}</span>
         <span>{formatTime(props.duration)}</span>
       </div>
@@ -556,7 +556,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             onKeyDown={handleStartTextKeyDown}
             class={textClass}
           />
-          <span class="text-xs text-gray-400 dark:text-gray-500">to</span>
+          <span class="text-xs text-gray-500 dark:text-gray-500">to</span>
           <span class="text-xs text-gray-600 dark:text-gray-400">End</span>
           <input
             type="text"
@@ -575,7 +575,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       </div>
 
       {/* 6. Frame estimate */}
-      <div class="text-[10px] text-gray-400 dark:text-gray-500 text-center">
+      <div class="text-[10px] text-gray-500 dark:text-gray-500 text-center">
         ~{frameCount()} frames · {fps()} fps
       </div>
     </div>

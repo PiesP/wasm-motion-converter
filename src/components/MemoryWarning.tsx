@@ -59,7 +59,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
           </svg>
         </div>
         <div class="ml-3 flex-1">
-          <h3 class="text-sm font-medium text-red-800 dark:text-red-200">{warningTitle()}</h3>
+          <h3 class="text-sm font-medium text-red-900 dark:text-red-100">{warningTitle()}</h3>
           <div class="mt-2 text-sm text-red-700 dark:text-red-300">
             <p>{warningMessage()}</p>
             <Show when={!local.isDuringConversion}>

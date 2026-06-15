@@ -124,7 +124,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
               aria-label={`Information about ${local.title}`}
               onKeyDown={handleTooltipKeyDown}
             >
-              <Icon name="info" size="sm" class="text-gray-400 dark:text-gray-600 cursor-help" />
+              <Icon name="info" size="sm" class="text-gray-500 dark:text-gray-600 cursor-help" />
             </button>
           </Tooltip>
         </Show>

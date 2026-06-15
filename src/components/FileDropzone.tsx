@@ -144,7 +144,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       >
         <div class="text-center">
           <svg
-            class="mx-auto h-12 w-12 text-gray-400"
+            class="mx-auto h-12 w-12 text-gray-500"
             stroke="currentColor"
             fill="none"
             viewBox="0 0 48 48"

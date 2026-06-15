@@ -72,7 +72,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
 
   return (
     <Panel
-      class="relative border-l-4 border-red-400 dark:border-red-500 p-4 bg-red-50 dark:bg-red-950"
+      class="relative border-l-4 border-red-500 dark:border-red-500 p-4 bg-red-50 dark:bg-red-950"
       role="alert"
       ariaLive="assertive"
       data-testid="error-display"
@@ -81,7 +81,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
         <button
           type="button"
           onClick={handleDismiss}
-          class="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-red-100 dark:hover:bg-red-900"
+          class="absolute top-4 right-4 p-2 text-gray-500 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-red-100 dark:hover:bg-red-900"
           aria-label="Dismiss error message"
           data-testid="error-dismiss-button"
         >
@@ -117,7 +117,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
           </svg>
         </div>
         <div class="ml-3 flex-1">
-          <h3 class="text-sm font-medium text-red-800 dark:text-red-300">
+          <h3 class="text-sm font-medium text-red-900 dark:text-red-300">
             Conversion Failed{' '}
             {errorIcon() && (
               <span class="ml-1" aria-hidden="true">
@@ -128,10 +128,10 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
           <p class="mt-2 text-sm text-red-700 dark:text-red-400">{userFriendlyMessage()}</p>
           <Show when={rawErrorMessage()}>
             <details class="mt-2">
-              <summary class="text-xs text-red-600 dark:text-red-400 cursor-pointer hover:underline">
+              <summary class="text-xs text-red-700 dark:text-red-400 cursor-pointer hover:underline">
                 Technical details
               </summary>
-              <pre class="mt-1 text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-all bg-red-100 dark:bg-red-900 p-2 rounded max-h-32 overflow-auto">
+              <pre class="mt-1 text-xs text-red-700 dark:text-red-400 whitespace-pre-wrap break-all bg-red-100 dark:bg-red-900 p-2 rounded max-h-32 overflow-auto">
                 {rawErrorMessage()}
               </pre>
             </details>
