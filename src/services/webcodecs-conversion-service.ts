@@ -2,11 +2,13 @@
 // Copyright (c) 2025 PiesP
 
 /**
- * WebCodecs Conversion Service — Streaming Unified
+ * FFmpeg Direct Conversion Service
  *
- * GPU path selection (WebCodecs-native codec detection) routes to
- * FFmpeg direct encode. The path planner already selected the optimal
- * route; FFmpeg handles the full pipeline internally.
+ * Path planner selected this route for WebCodecs-native codecs.
+ * Despite the "gpu" path label, this service delegates to FFmpeg
+ * for the full decode+encode pipeline. The path planner chose this
+ * route because the codec is WebCodecs-native, but the actual
+ * conversion goes through FFmpeg directly (no WebCodecs decode).
  *
  * Supported formats: GIF, WebP
  */
@@ -20,9 +22,9 @@ import { logger } from '@utils/logger';
 import { resetTrackedFrames } from '@utils/memory-monitor';
 
 /**
- * Convert video using GPU-selected FFmpeg path.
- * The path planner already verified WebCodecs is viable for this codec.
- * FFmpeg handles decode + encode internally (streaming built-in).
+ * Convert video using FFmpeg direct path.
+ * The path planner selected this route because the codec is WebCodecs-native,
+ * but the actual conversion uses FFmpeg for the full decode+encode pipeline.
  */
 export async function convert(
   file: File,
@@ -79,7 +81,7 @@ export async function convert(
       throw error;
     }
 
-    logger.error('conversion', 'GPU path failed', {
+    logger.error('conversion', 'FFmpeg direct path failed', {
       format,
       codec: metadata?.codec,
       error: getErrorMessage(error),

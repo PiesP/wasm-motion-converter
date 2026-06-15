@@ -11,7 +11,7 @@
 import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import {
   cleanup as cleanupWebCodecs,
-  convert as webcodecsConvert,
+  convert as ffmpegDirectConvert,
 } from '@services/webcodecs-conversion-service';
 import type {
   ConversionFormat,
@@ -172,7 +172,7 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
         blob = await convertWithSoftwareDecode(request, operation.abortController.signal);
         break;
       case 'gpu':
-        blob = await convertWithGpuFallback(request, operation.abortController.signal);
+        blob = await convertWithFFmpegDirect(request, operation.abortController.signal);
         break;
       default:
         blob = await convertWithCpu(request, operation.abortController.signal);
@@ -232,14 +232,14 @@ export function cancelConversion(): void {
   cleanupWebCodecs();
 }
 
-async function convertWithGpuFallback(
+async function convertWithFFmpegDirect(
   request: ConversionRequest,
   abortSignal: AbortSignal
 ): Promise<Awaited<ConversionResponse['blob']>> {
   const format = getSupportedFormat(request);
 
   try {
-    return await webcodecsConvert(
+    return await ffmpegDirectConvert(
       request.file,
       format,
       request.options,
@@ -251,7 +251,7 @@ async function convertWithGpuFallback(
       throw error;
     }
 
-    logger.warn('conversion', 'GPU path failed, falling back to FFmpeg', {
+    logger.warn('conversion', 'FFmpeg direct path failed, falling back to CPU decode', {
       format: request.format,
       codec: request.metadata?.codec,
       error: getErrorMessage(error),
@@ -357,6 +357,10 @@ async function convertWithSoftwareDecode(
 /**
  * Decode video frames using <video> + Canvas pipeline.
  * Works for any codec the browser can decode (including AV1).
+ *
+ * Memory optimization: frames are written to VFS in batches to avoid
+ * holding all PNG data in JS heap simultaneously. Each batch is flushed
+ * to VFS before the next batch is decoded.
  */
 async function decodeFramesToVFS(
   file: File,
@@ -414,6 +418,19 @@ async function decodeFramesToVFS(
     enableLogSilenceCheck: false,
   });
 
+  // Batch size: write every N frames to VFS to limit peak JS heap usage.
+  // Each 1080p PNG frame ≈ 8MB, so batch of 5 = ~40MB peak per batch.
+  const BATCH_SIZE = 5;
+  // Accumulate frame data before flushing to VFS in batches.
+  let batch: { fileName: string; data: Uint8Array }[] = [];
+  const flushBatch = async () => {
+    for (const { fileName, data } of batch) {
+      await ffmpegService.writeVirtualFile(fileName, data);
+      frameFiles.push(fileName);
+    }
+    batch = []; // Release JS heap for GC
+  };
+
   try {
     for (let i = 0; i < frameCount; i++) {
       if (abortSignal.aborted) {
@@ -458,13 +475,21 @@ async function decodeFramesToVFS(
 
       const arrayBuffer = await blob.arrayBuffer();
       const fileName = `frame_${i.toString().padStart(6, '0')}.png`;
+      batch.push({ fileName, data: new Uint8Array(arrayBuffer) });
 
-      await ffmpegService.writeVirtualFile(fileName, new Uint8Array(arrayBuffer));
-      frameFiles.push(fileName);
+      // Flush batch to VFS when it reaches BATCH_SIZE
+      if (batch.length >= BATCH_SIZE) {
+        await flushBatch();
+      }
 
       // Report progress (decode phase = 0-50%)
       const progress = Math.round((i / frameCount) * 50);
       ffmpegService.reportProgress(progress);
+    }
+
+    // Flush remaining frames
+    if (batch.length > 0) {
+      await flushBatch();
     }
   } finally {
     ffmpegService.endExternalConversion();

@@ -44,11 +44,6 @@ import { handleFileSelected } from './use-handle-file-selected';
 
 const MS_PER_SECOND = 1000;
 
-const clearConversionCallbacks = (): void => {
-  ffmpegService.setProgressCallback(null);
-  ffmpegService.setStatusCallback(null);
-};
-
 const focusDownloadButton = (): void => focusElement('[data-download-button]');
 const focusRetryButton = (): void => focusElement('[data-error-retry-button]');
 
@@ -139,9 +134,6 @@ async function performConversion(
       runtime.updateStatus(message);
     };
 
-    ffmpegService.setProgressCallback(progressCallback);
-    ffmpegService.setStatusCallback(statusCallback);
-
     const result = await convertVideo({
       file,
       format: settings.format,
@@ -163,7 +155,6 @@ async function performConversion(
 
     const blob = result.blob;
 
-    clearConversionCallbacks();
     runtime.stopMemoryMonitoring();
 
     const duration = Math.max(0, performance.now() - startTimeMs);
@@ -198,14 +189,6 @@ async function performConversion(
   } catch (error) {
     if (!isActive()) {
       return;
-    }
-
-    try {
-      clearConversionCallbacks();
-    } catch (callbackError) {
-      logger.warn('conversion', 'Error clearing callbacks', {
-        error: getErrorMessage(callbackError),
-      });
     }
 
     try {
@@ -259,7 +242,6 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
   // queueMicrotask ensures UI renders the cancelling state before cleanup begins
   queueMicrotask(() => {
     cancelConversion();
-    clearConversionCallbacks();
     runtime.resetRuntimeState();
     setAppState('idle');
   });
@@ -274,7 +256,6 @@ export function handleCancelFFmpegLoad(): void {
 
   queueMicrotask(() => {
     cancelConversion();
-    clearConversionCallbacks();
 
     setInputFile(null);
     const url = videoPreviewUrl();

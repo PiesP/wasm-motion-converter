@@ -4,11 +4,26 @@
 /**
  * Simple Path Planner
  *
- * Selects the conversion path (GPU/WebCodecs vs CPU/FFmpeg) based on
- * codec availability and browser capabilities.
+ * Selects the conversion path based on codec availability and browser capabilities.
  *
- * All GPU paths now use a unified streaming pipeline:
- * WebCodecs decode → FFmpeg VFS → FFmpeg encode
+ * Path selection strategy (2026 browser support data):
+ *
+ * 1. FFmpeg-preferred codecs (theora, vp6, mpeg4, etc.) → CPU path
+ *    These codecs have no WebCodecs support, must use FFmpeg.
+ *
+ * 2. WebCodecs-native codecs (H.264, VP8/9, AV1, HEVC) → FFmpeg Direct path
+ *    H.264: ~99% decode support — universal
+ *    VP9:   ~97% decode support — all major browsers
+ *    AV1:   ~91.5% decode — Chrome/Firefox/Safari 14+
+ *    HEVC:  ~85% decode — Safari/Edge/Chrome (no Firefox)
+ *
+ *    FFmpeg Direct path: FFmpeg handles decode + encode internally.
+ *    (Despite the "gpu" path label, no WebCodecs decode is used here.)
+ *
+ * 3. AV1/AV01 → Software Decode path
+ *    FFmpeg WASM can't decode AV1 — uses <video> + Canvas, then FFmpeg encode.
+ *
+ * 4. Unknown codecs → runtime probe (isWebCodecsCodecSupported)
  */
 
 import {
@@ -87,7 +102,7 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
     }
     return {
       path: 'gpu',
-      reason: `${format.toUpperCase()} + ${codec}: WebCodecs decode → FFmpeg VFS encode`,
+      reason: `${format.toUpperCase()} + ${codec}: FFmpeg direct (codec is WebCodecs-native)`,
     };
   }
 
@@ -112,9 +127,9 @@ export async function selectSimplePath(params: SimplePathPlanParams): Promise<Pa
     };
   }
 
-  // Runtime probe succeeded: use GPU path
+  // Runtime probe succeeded: use FFmpeg direct path
   return {
     path: 'gpu',
-    reason: `${format.toUpperCase()} + ${codec}: WebCodecs decode → FFmpeg VFS encode (runtime probe)`,
+    reason: `${format.toUpperCase()} + ${codec}: FFmpeg direct (runtime probe)`,
   };
 }

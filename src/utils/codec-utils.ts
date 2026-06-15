@@ -10,7 +10,6 @@
 import type { ConversionFormat } from '@t/conversion-types';
 import { CONVERSION_FORMATS } from '@t/conversion-types';
 import {
-  COMPLEX_CODECS,
   FFMPEG_DECODE_UNSUPPORTED_CODECS,
   FFMPEG_PREFERRED_CODECS,
   WEBCODECS_NATIVE_CODECS,
@@ -64,20 +63,6 @@ export function isVp8Codec(codec: string | undefined): boolean {
 export function isVp9Codec(codec: string | undefined): boolean {
   const c = normalizeCodecString(codec);
   return c === 'vp9' || c.includes('vp09') || c.includes('vp9');
-}
-
-/**
- * Check whether a codec is "complex" (requires direct WebCodecs frame extraction
- * to avoid double-transcoding overhead).
- *
- * Complex codecs are enumerated in `COMPLEX_CODECS` (e.g., AV1, VP9, HEVC).
- */
-export function isComplexCodec(codec?: string): boolean {
-  if (!codec || codec === 'unknown') {
-    return false;
-  }
-  const normalized = normalizeCodecString(codec);
-  return COMPLEX_CODECS.some((entry) => normalized.includes(entry));
 }
 
 /**
@@ -172,29 +157,4 @@ export function isFFmpegDecodeUnsupportedCodec(codec: string | undefined): boole
   return FFMPEG_DECODE_UNSUPPORTED_CODECS.some(
     (entry) => normalized === entry || normalized.startsWith(entry)
   );
-}
-
-/**
- * Get the optimal conversion path for a given codec and format.
- * Returns 'gpu' for WebCodecs-native codecs, 'cpu' for FFmpeg-preferred,
- * and 'auto' for unknown codecs (runtime probe needed).
- *
- * @param codec - Codec name or RFC 6381 string
- * @param format - Output format (gif or webp)
- * @returns Recommended path: 'gpu' | 'cpu' | 'auto'
- */
-export function getOptimalPath(
-  codec: string | undefined,
-  _format?: ConversionFormat
-): 'gpu' | 'cpu' | 'auto' {
-  if (!codec || codec === 'unknown') {
-    return 'auto';
-  }
-  if (isFFmpegPreferredCodec(codec)) {
-    return 'cpu';
-  }
-  if (isWebCodecsNativeCodec(codec)) {
-    return 'gpu';
-  }
-  return 'auto';
 }
