@@ -115,7 +115,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
             <Show when={local.previewUrl}>
               <video
                 src={local.previewUrl!}
-                class="w-full rounded-lg shadow-md bg-black aspect-video opacity-60"
+                class="w-full rounded-lg shadow-md bg-black aspect-video"
                 muted
                 playsinline
                 preload="metadata"
