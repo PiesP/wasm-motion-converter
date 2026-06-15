@@ -56,16 +56,7 @@ function readRuntimeDependencies(): Record<string, string> {
 }
 
 function injectRuntimeDepsIntoServiceWorker(code: string): string {
-  const runtimeDeps = readRuntimeDependencies();
-  const json = JSON.stringify(runtimeDeps);
-  const escaped = json.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  let replaced = code.replaceAll('__RUNTIME_DEP_VERSIONS__', escaped);
-
-  if (replaced === code) {
-    console.warn('[cdn-deps] Service worker runtime dependency placeholder not replaced');
-  }
-
-  // ponytail: build-time cache key per deploy — commit hash prevents stale SW caching
+  // Build-time cache key per deploy — commit hash prevents stale SW caching
   const cacheKey = (() => {
     try {
       return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
@@ -73,9 +64,7 @@ function injectRuntimeDepsIntoServiceWorker(code: string): string {
       return 'unknown';
     }
   })();
-  replaced = replaced.replaceAll('__CACHE_VERSION__', cacheKey);
-
-  return replaced;
+  return code.replaceAll('__CACHE_VERSION__', cacheKey);
 }
 
 function cdnDepsVirtualModulePlugin(): Plugin {
