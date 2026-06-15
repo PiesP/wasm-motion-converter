@@ -13,11 +13,6 @@ import {
   installWorkerDiagnostics,
 } from '@services/ffmpeg/init-diagnostics-service';
 import { verifyWorkerIsolation } from '@services/ffmpeg/worker-isolation-service';
-import {
-  checkSWReadiness,
-  isLikelyFirstVisit,
-  waitForSWReady,
-} from '@services/sw/sw-readiness-service';
 import { TIMEOUT_FFMPEG_INIT } from '@utils/constants';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -39,15 +34,6 @@ const DOWNLOAD_STATUS_THRESHOLD = 25;
 const INIT_PROGRESS_WORKER_CHECK = 2;
 const NETWORK_SLOW_STATUS =
   'Network seems slow. If this persists, check your connection or firewall.';
-const STATUS_WAITING_SW = 'Waiting for Service Worker to take control...';
-const STATUS_SW_READY = 'Service Worker active. Continuing initialization...';
-const STATUS_DOWNLOAD_PREFIX = 'Downloading FFmpeg assets';
-const STATUS_VALIDATING_ASSETS = 'Validating FFmpeg assets...';
-const STATUS_INIT_RUNTIME = 'Initializing FFmpeg runtime...';
-const STATUS_INIT_DONE = 'FFmpeg ready.';
-const STATUS_SW_NOT_READY =
-  'Service Worker not ready. Continuing without offline cache (refresh later to enable it).';
-const STATUS_INIT_SLOW = 'Still initializing FFmpeg runtime (first run can take up to a minute)...';
 const ERROR_OFFLINE_FIRST_VISIT =
   'Cannot initialize FFmpeg while offline on first visit. ' +
   'Please connect to the internet and try again. ' +
@@ -74,8 +60,6 @@ type InitEnvironmentSnapshot = {
   isSecureContext?: boolean;
   hardwareConcurrency?: number;
   deviceMemoryGB?: number;
-  isLikelyFirstVisit?: boolean;
-  swReadiness?: ReturnType<typeof checkSWReadiness>;
   connection?: {
     effectiveType?: string;
     downlinkMbps?: number;
@@ -111,8 +95,6 @@ const getInitEnvironmentSnapshot = (): InitEnvironmentSnapshot => {
     isSecureContext: typeof isSecureContext !== 'undefined' ? isSecureContext : undefined,
     hardwareConcurrency: navigator.hardwareConcurrency,
     deviceMemoryGB: navigatorWithMemory.deviceMemory,
-    isLikelyFirstVisit: isLikelyFirstVisit(),
-    swReadiness: checkSWReadiness(),
     connection: connection
       ? {
           effectiveType: connection.effectiveType,
@@ -122,37 +104,6 @@ const getInitEnvironmentSnapshot = (): InitEnvironmentSnapshot => {
         }
       : undefined,
   };
-};
-
-const SW_CONTROL_TIMEOUT_MS = 30_000;
-
-const ensureServiceWorkerControl = async (callbacks: FFmpegInitCallbacks): Promise<void> => {
-  const readiness = checkSWReadiness();
-
-  if (!readiness.isSupported) {
-    logger.warn('ffmpeg', 'Service Workers not supported; skipping SW gate');
-    return;
-  }
-
-  if (readiness.isReady) {
-    return;
-  }
-
-  callbacks.reportStatus(STATUS_WAITING_SW);
-
-  const swReady = await waitForSWReady(SW_CONTROL_TIMEOUT_MS);
-
-  if (!swReady) {
-    logger.debug('ffmpeg', 'Service Worker not ready; continuing FFmpeg init without SW control', {
-      timeoutMs: SW_CONTROL_TIMEOUT_MS,
-      readiness: checkSWReadiness(),
-      initSnapshot: getInitEnvironmentSnapshot(),
-    });
-    callbacks.reportStatus(STATUS_SW_NOT_READY);
-    return;
-  }
-
-  callbacks.reportStatus(STATUS_SW_READY);
 };
 
 /**
@@ -214,13 +165,13 @@ export async function initializeFFmpegRuntime(
 
   const resolveFFmpegAssets = async (): Promise<[string, string, string, string]> => {
     const coreLabel = coreVariant === 'mt' ? 'multithreaded' : 'single-threaded';
-    callbacks.reportStatus(`${STATUS_DOWNLOAD_PREFIX} (${coreLabel}) from CDN...`);
+    callbacks.reportStatus(`Downloading FFmpeg assets (${coreLabel}) from CDN...`);
 
     performanceTracker.startPhase('ffmpeg-download', {
       cdn: 'unified-system',
       core: coreVariant,
     });
-    logger.performance('Starting FFmpeg asset download (unified CDN system with 4-CDN cascade)');
+    logger.performance('Starting FFmpeg asset download (unified CDN system)');
 
     // Load all three assets in parallel
     // Each asset will try all 4 CDN providers (esm.sh → jsdelivr → unpkg → skypack)
@@ -271,7 +222,6 @@ export async function initializeFFmpegRuntime(
     removeSecurityPolicyListener = installSecurityPolicyViolationLogger('ffmpeg-init');
 
     logger.debug('ffmpeg', 'FFmpeg init preflight snapshot', getInitEnvironmentSnapshot());
-    await ensureServiceWorkerControl(callbacks);
 
     callbacks.reportStatus('Checking FFmpeg worker environment...');
     reportProgress(INIT_PROGRESS_WORKER_CHECK);
@@ -283,7 +233,7 @@ export async function initializeFFmpegRuntime(
     logger.performance('FFmpeg asset download complete');
 
     // Validate blob URLs are accessible before passing to ffmpeg.load()
-    callbacks.reportStatus(STATUS_VALIDATING_ASSETS);
+    callbacks.reportStatus('Validating FFmpeg assets...');
     await Promise.all([
       validateBlobUrl(classWorkerUrl, 'classWorker'),
       validateBlobUrl(coreUrl, 'core'),
@@ -294,7 +244,7 @@ export async function initializeFFmpegRuntime(
 
     const initBaseProgress = Math.max(downloadProgress, INIT_PROGRESS_START);
     reportProgress(initBaseProgress);
-    callbacks.reportStatus(STATUS_INIT_RUNTIME);
+    callbacks.reportStatus('Initializing FFmpeg runtime...');
 
     const initStartTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
     let initProgress = initBaseProgress;
@@ -315,7 +265,9 @@ export async function initializeFFmpegRuntime(
       }, INIT_HEARTBEAT_INTERVAL_MS);
 
       initStatusTimeoutId = window.setTimeout(() => {
-        callbacks.reportStatus(STATUS_INIT_SLOW);
+        callbacks.reportStatus(
+          'Still initializing FFmpeg runtime (first run can take up to a minute)...'
+        );
         logger.warn('ffmpeg', 'FFmpeg initialization taking longer than expected', {
           elapsedMs: Math.round(
             (typeof performance !== 'undefined' ? performance.now() : Date.now()) - initStartTime
@@ -392,7 +344,7 @@ export async function initializeFFmpegRuntime(
     logger.performance('FFmpeg initialization complete');
 
     reportProgress(PROGRESS_MAX);
-    callbacks.reportStatus(STATUS_INIT_DONE);
+    callbacks.reportStatus('FFmpeg ready.');
   } catch (error) {
     options.terminate();
 
