@@ -1,4 +1,4 @@
-import GIFEncoder from 'gif-encoder-2';
+import GIFEncoder from 'gif-encoder-2-browser';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import { frameToImageBitmap } from './transfer-utils';
 
