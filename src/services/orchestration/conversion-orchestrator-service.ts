@@ -47,15 +47,19 @@ const STATUS_ERROR = 'Error';
  * - Encoding overhead: ~1.5× frame data for palette + output assembly
  * - VFS overhead (FFmpeg path): input file + output file in WASM heap
  *
+ * In streaming mode, only the batch buffer is counted instead of the full frame buffer.
+ *
  * @param metadata - Video metadata (width, height, duration, framerate)
  * @param format - Output format
  * @param quality - Quality preset
+ * @param streaming - If true, estimate for streaming mode (batch buffer only)
  * @returns Estimated peak memory in bytes
  */
 function estimateRequiredMemory(
   metadata: { width?: number; height?: number; duration?: number; framerate?: number } | undefined,
   _format: ConversionFormat,
-  quality: 'low' | 'medium' | 'high'
+  quality: 'low' | 'medium' | 'high',
+  streaming = false
 ): number {
   const width = metadata?.width ?? 1920;
   const height = metadata?.height ?? 1080;
@@ -63,6 +67,15 @@ function estimateRequiredMemory(
   const fps = Math.min(metadata?.framerate ?? 30, getTargetFps(quality));
   const frameCount = Math.ceil(duration * fps);
   const frameBytes = width * height * 4;
+
+  if (streaming) {
+    // Streaming mode: only hold batch buffer (10 frames) + one pooled frame
+    const BATCH_SIZE = 10;
+    const batchBuffer = BATCH_SIZE * frameBytes;
+    const pooledFrame = frameBytes; // one frame from pool
+    const encodingOverhead = frameBytes * 2; // palette + output
+    return Math.ceil(batchBuffer + pooledFrame + encodingOverhead);
+  }
 
   // Single raw buffer for all frames (streaming, no intermediate files)
   const rawBuffer = frameCount * frameBytes;
@@ -124,11 +137,13 @@ export async function convertVideo(request: ConversionRequest): Promise<Conversi
 
   try {
     // Pre-conversion memory check: estimate if we have enough heap space
-    // to hold all decoded frames + encoding overhead without crashing.
+    // to hold decoded frames + encoding overhead without crashing.
+    // Use streaming mode estimation when possible to reduce memory pressure.
     const requiredBytes = estimateRequiredMemory(
       request.metadata,
       request.format,
-      request.options.quality
+      request.options.quality,
+      true // streaming mode: only batch buffer, not full frame buffer
     );
     const availableBytes = getAvailableMemory();
 
@@ -392,8 +407,16 @@ async function decodeFramesWithExtractor(
   const outputFileName = 'raw_frames.raw';
 
   try {
-    // Extract all frames
-    const result = await frameExtractorService.extractFrames({
+    // Extract all frames using streaming mode for reduced memory usage
+    const writer = frameAssemblerService.createStreamingRawVideoWriter({
+      ffmpeg: ffmpegService.getFFmpegInstance(),
+      width,
+      height,
+      outputFileName,
+      expectedFrameCount: frameCount,
+    });
+
+    const result = await frameExtractorService.extractFramesStreaming({
       video,
       fps,
       duration,
@@ -404,21 +427,18 @@ async function decodeFramesWithExtractor(
         const progress = Math.round((current / total) * 50);
         ffmpegService.reportProgress(progress);
       },
+      onFrame: async (frameData, _frameIndex, _totalFrames) => {
+        // Write each frame immediately to the streaming writer
+        writer.writeFrame(frameData);
+      },
     });
 
     if (abortSignal.aborted) {
       throw new Error('Conversion cancelled by user');
     }
 
-    // Write raw frames to VFS
-    await frameAssemblerService.writeRawVideo({
-      ffmpeg: ffmpegService.getFFmpegInstance(),
-      pixels: result.pixels,
-      width: result.width,
-      height: result.height,
-      frameCount: result.frameCount,
-      outputFileName,
-    });
+    // Finalize: concatenate all chunks and write to VFS
+    await writer.finalize();
 
     ffmpegService.reportProgress(50);
 
@@ -427,7 +447,7 @@ async function decodeFramesWithExtractor(
       frameCount: result.frameCount,
       width: result.width,
       height: result.height,
-      pixels: result.pixels,
+      pixels: new Uint8Array(0), // Not used in streaming mode
     };
   } finally {
     ffmpegService.endExternalConversion();
