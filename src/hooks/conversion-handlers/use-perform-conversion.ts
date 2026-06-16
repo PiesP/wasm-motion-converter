@@ -18,8 +18,6 @@ import {
   setErrorContext,
   setErrorMessage,
   setInputFile,
-  setLoadingProgress,
-  setLoadingStatusMessage,
   setVideoMetadata,
   setVideoPreviewUrl,
   videoMetadata,
@@ -263,8 +261,6 @@ export function handleCancelAnalysis(): void {
     if (url) URL.revokeObjectURL(url);
     setVideoPreviewUrl(null);
     setVideoMetadata(null);
-    setLoadingProgress(0);
-    setLoadingStatusMessage('');
     setAppState('idle');
   });
 }
@@ -285,8 +281,6 @@ export function handleReset(runtime: ConversionRuntimeController): void {
 
   batch(() => {
     setVideoMetadata(null);
-    setLoadingProgress(0);
-    setLoadingStatusMessage('');
     setConversionSettings(DEFAULT_CONVERSION_SETTINGS);
     setAppState('idle');
   });

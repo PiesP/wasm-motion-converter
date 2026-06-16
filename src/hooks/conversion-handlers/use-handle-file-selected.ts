@@ -6,8 +6,6 @@ import {
   setErrorContext,
   setErrorMessage,
   setInputFile,
-  setLoadingProgress,
-  setLoadingStatusMessage,
   setVideoMetadata,
   setVideoPreviewUrl,
   videoPreviewUrl,
@@ -28,8 +26,6 @@ const resetErrorState = (): void => {
 
 const resetAnalysisState = (): void => {
   setVideoMetadata(null);
-  setLoadingProgress(0);
-  setLoadingStatusMessage('');
 };
 
 /**
@@ -101,20 +97,15 @@ export async function handleFileSelected(
 
   try {
     setAppState('analyzing');
-    setLoadingStatusMessage('Reading video metadata...');
 
     const metadata = await extractMetadata(file);
     if (isStale()) return;
 
     setVideoMetadata(metadata);
-    setLoadingProgress(0);
-    setLoadingStatusMessage('');
     setAppState('idle');
   } catch (error) {
     if (isStale()) return;
 
-    setLoadingProgress(0);
-    setLoadingStatusMessage('');
     setErrorMessage(getErrorMessage(error));
     setAppState('error');
     focusRetryButton();

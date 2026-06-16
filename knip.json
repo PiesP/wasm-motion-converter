@@ -11,15 +11,7 @@
     "@hooks": ["src/hooks"],
     "@t": ["src/types"]
   },
-  "ignore": [
-    "dist/**",
-    "tmp/**",
-    "docs/**",
-    ".github/**",
-    "**/*.test.{ts,tsx}",
-    "**/*.spec.{ts,tsx}",
-    "**/*.d.ts"
-  ],
+  "ignore": ["**/*.d.ts"],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["@types/dom-webcodecs", "gifenc", "wasm-webp"]
+  "ignoreDependencies": ["@types/dom-webcodecs"]
 }

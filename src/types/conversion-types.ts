@@ -130,20 +130,6 @@ export interface ConversionBlobMetadata {
 export type ConversionOutputBlob = Blob & ConversionBlobMetadata;
 
 /**
- * Factory function for creating ConversionOutputBlob from a Blob.
- * Attaches optional metadata via Object.assign instead of unsafe cast+mutation.
- */
-export function createConversionOutputBlob(
-  blob: Blob,
-  meta?: Partial<ConversionBlobMetadata>
-): ConversionOutputBlob {
-  if (meta) {
-    return Object.assign(blob, meta);
-  }
-  return blob as ConversionOutputBlob;
-}
-
-/**
  * Conversion result with metadata
  *
  * Complete record of a successful conversion including the output blob,
@@ -271,36 +257,3 @@ export interface VideoMetadata {
 
 /** Conversion path types */
 export type ConversionPath = 'gpu' | 'cpu' | 'software';
-
-/** Conversion request */
-export interface ConversionRequest {
-  file: File;
-  format: ConversionFormat;
-  options: ConversionOptions;
-  metadata?: VideoMetadata;
-  onProgress?: (progress: number) => void;
-  onStatus?: (status: string) => void;
-  shouldCancel?: () => boolean;
-}
-
-/** Conversion response */
-export interface ConversionResponse {
-  blob: ConversionOutputBlob;
-  metadata: ConversionMetadata;
-}
-
-/** Conversion metadata */
-export interface ConversionMetadata {
-  path: ConversionPath;
-  encoder: string;
-  conversionTimeMs: number;
-  frameCount?: number;
-  wasTranscoded?: boolean;
-  originalCodec?: string;
-}
-
-/** Path selection result */
-export interface PathSelection {
-  path: ConversionPath;
-  reason: string;
-}
