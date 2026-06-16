@@ -90,7 +90,8 @@ async function performConversion(
   file: File,
   settings: ConversionSettings,
   runtime: ConversionRuntimeController,
-  videoDurationMs?: number
+  videoDurationMs?: number,
+  signal?: AbortSignal
 ): Promise<void> {
   const { isActive, runId } = runtime.startNewRun();
 
@@ -121,12 +122,23 @@ async function performConversion(
       trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
     };
 
-    const v2Result = await performConversionV2(file, v2Options, (v2Progress) => {
-      if (!isActive()) return;
-      runtime.updateProgress(v2Progress.progress);
-      if (v2Progress.phase !== 'assembling') {
-        runtime.updateStatus(`${v2Progress.phase}... ${v2Progress.fps} fps`);
-      }
+    const abortController = new AbortController();
+    const onAbort = () => abortController.abort();
+    signal?.addEventListener('abort', onAbort);
+
+    const v2Result = await performConversionV2(
+      file,
+      v2Options,
+      (v2Progress) => {
+        if (!isActive()) return;
+        runtime.updateProgress(v2Progress.progress);
+        if (v2Progress.phase !== 'assembling') {
+          runtime.updateStatus(`${v2Progress.phase}... ${v2Progress.fps} fps`);
+        }
+      },
+      abortController.signal
+    ).finally(() => {
+      signal?.removeEventListener('abort', onAbort);
     });
 
     if (!isActive()) return;

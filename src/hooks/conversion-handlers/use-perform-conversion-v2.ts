@@ -4,13 +4,12 @@
 /**
  * V2 Conversion Service
  *
- * Orchestrates video conversion via Web Worker.
- * The worker runs the full pipeline: demux → decode → encode.
+ * Runs the full pipeline on the main thread: demux → decode → encode.
+ * WebCodecs VideoDecoder requires main thread access in most browsers.
  */
 
-import type { ConversionProgress, ConversionRequest } from '@/types/v2-conversion-types';
-
-const MAX_MEMORY_MB = 1500;
+import { runConversionPipeline } from '@/services/v2/conversion-pipeline';
+import type { ConversionProgress } from '@/types/v2-conversion-types';
 
 export interface V2ConversionOptions {
   format: 'gif' | 'webp';
@@ -22,52 +21,25 @@ export interface V2ConversionOptions {
 
 export type V2ProgressCallback = (progress: ConversionProgress) => void;
 
-/**
- * Create a conversion worker and return a promise-based interface.
- */
-function createConversionWorker(): Worker {
-  return new Worker(new URL('../../workers/conversion.worker.ts', import.meta.url), {
-    type: 'module',
-  });
+export class ConversionCancelledError extends Error {
+  constructor() {
+    super('Cancelled');
+    this.name = 'AbortError';
+  }
 }
 
 export async function performConversionV2(
   inputFile: File,
   options: V2ConversionOptions,
-  onProgress: V2ProgressCallback
+  onProgress: V2ProgressCallback,
+  signal?: AbortSignal
 ): Promise<{ blob: Blob; format: 'gif' | 'webp' }> {
   const buffer = await inputFile.arrayBuffer();
 
-  const worker = createConversionWorker();
+  if (signal?.aborted) throw new ConversionCancelledError();
 
-  return new Promise((resolve, reject) => {
-    worker.onmessage = (e: MessageEvent) => {
-      const msg = e.data;
-      switch (msg.type) {
-        case 'progress':
-          onProgress(msg.progress);
-          break;
-        case 'complete': {
-          const mimeType = msg.format === 'gif' ? 'image/gif' : 'image/webp';
-          const blob = new Blob([msg.output], { type: mimeType });
-          resolve({ blob, format: msg.format });
-          worker.terminate();
-          break;
-        }
-        case 'error': {
-          reject(new Error(msg.message));
-          worker.terminate();
-          break;
-        }
-      }
-    };
-
-    worker.onerror = (err) => {
-      reject(new Error(err.message));
-      worker.terminate();
-    };
-
-    const request: ConversionRequest = {
+  const output = await runConversionPipeline(
+    {
       inputBuffer: buffer,
       fileName: inputFile.name,
       format: options.format,
@@ -75,10 +47,12 @@ export async function performConversionV2(
       scale: options.scale,
       trimStart: options.trimStart,
       trimEnd: options.trimEnd,
-      maxMemoryMB: MAX_MEMORY_MB,
-    };
+      maxMemoryMB: 1500,
+    },
+    onProgress,
+    signal
+  );
 
-    // Transfer ArrayBuffer ownership to worker (zero-copy)
-    worker.postMessage({ type: 'convert', request }, [buffer]);
-  });
+  const mimeType = options.format === 'gif' ? 'image/gif' : 'image/webp';
+  return { blob: new Blob([output], { type: mimeType }), format: options.format };
 }
