@@ -88,6 +88,10 @@ export async function encodeGif(
 
   if (decodeError) throw decodeError;
 
+  console.log(
+    `[encodeGif] decoded ${frameQueue.length} frames → encoding at ${w}×${h} (${maxColors} colors)`
+  );
+
   // Process frames sequentially — O(1) memory per frame
   while (frameQueue.length > 0) {
     const frame = frameQueue.shift()!;
