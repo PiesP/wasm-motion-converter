@@ -73,17 +73,25 @@ export async function encodeWebp(
   const pendingConversions: Promise<void>[] = [];
   let decodeError: Error | null = null;
   let frameCount = 0;
+  let accumulatedDuration = 0;  // Accumulate duration of skipped frames
   const startTime = performance.now();
 
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
+      const frameDuration = getFrameDurationMs(frame);
+
       if (frameCount % frameStep !== 0) {
+        // Skip this frame but accumulate its duration
+        accumulatedDuration += frameDuration;
         frame.close();
         frameCount++;
         return;
       }
 
-      const durationMs = getFrameDurationMs(frame);
+      // Include accumulated duration from skipped frames
+      const totalDuration = frameDuration + accumulatedDuration;
+      accumulatedDuration = 0;
+
       const conversion = (async () => {
         try {
           let rgbData: Uint8Array;
@@ -93,7 +101,7 @@ export async function encodeWebp(
           } else {
             rgbData = await copyFrameToRGB(frame, w, h);
           }
-          rgbFrames.push({ data: rgbData, duration: durationMs });
+          rgbFrames.push({ data: rgbData, duration: totalDuration });
         } finally {
           frame.close();
         }
@@ -130,6 +138,12 @@ export async function encodeWebp(
 
   if (rgbFrames.length === 0) {
     throw new Error('No frames decoded for WebP encoding');
+  }
+
+  // Add any remaining accumulated duration to the last frame
+  if (accumulatedDuration > 0 && rgbFrames.length > 0) {
+    const last = rgbFrames[rgbFrames.length - 1];
+    if (last) last.duration += accumulatedDuration;
   }
 
   // Report progress
