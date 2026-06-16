@@ -73,7 +73,7 @@ export async function encodeWebp(
   const pendingConversions: Promise<void>[] = [];
   let decodeError: Error | null = null;
   let frameCount = 0;
-  let accumulatedDuration = 0;  // Accumulate duration of skipped frames
+  let accumulatedDuration = 0; // Accumulate duration of skipped frames
   const startTime = performance.now();
 
   const decoder = new VideoDecoder({
