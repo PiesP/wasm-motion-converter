@@ -93,7 +93,12 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
   const activePhaseIndex = createMemo(() => (progressValue() > 50 ? 1 : 0));
 
   return (
-    <div class="flex flex-col gap-3">
+    <div
+      class="flex flex-col gap-3"
+      role="status"
+      aria-live="polite"
+      aria-busy={progressValue() > 0 && progressValue() < 100}
+    >
       {/* Header row: spinner + status + main percent */}
       <div
         class={`flex items-center ${

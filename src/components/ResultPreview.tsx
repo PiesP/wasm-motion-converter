@@ -76,6 +76,11 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       `max-w-full h-auto rounded transition-opacity duration-300 ${loaded() ? 'opacity-100' : 'opacity-0'}`
   );
 
+  const ariaLabel = createMemo(
+    () =>
+      `${outputExtension().toUpperCase()} conversion results: ${downloadFileName()}, ${formatBytes(local.outputBlob.size)}`
+  );
+
   const handleDownload = () => {
     const url = previewUrl();
     if (!url) return;
@@ -93,7 +98,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     <Panel class="p-6">
       <div class="flex gap-3">
         <Button
-          ariaLabel="Download converted file"
+          ariaLabel={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
           class="flex-1"
           onClick={handleDownload}
           data-testid="download-result-button"
@@ -117,7 +122,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         </Show>
       </div>
 
-      <div class="mt-4" role="region" aria-label="Conversion results">
+      <section class="mt-4" aria-label={ariaLabel()}>
         <h3 class="text-lg font-medium text-gray-900 dark:text-white">Conversion Complete</h3>
         <dl class={sizeGridClass()}>
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
@@ -141,7 +146,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             )}
           </Show>
         </dl>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3">
+        <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3">
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
             <dt class="text-gray-600 dark:text-gray-400">Format</dt>
             <dd class="font-medium text-gray-900 dark:text-white uppercase" data-result-format>
@@ -160,8 +165,8 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               {(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%
             </dd>
           </div>
-        </div>
-      </div>
+        </dl>
+      </section>
     </Panel>
   );
 };

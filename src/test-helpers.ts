@@ -120,12 +120,22 @@ export interface TestHelpers {
     condition: () => boolean,
     options?: { timeoutMs?: number; intervalMs?: number }
   ): Promise<boolean>;
+
+  /** Wait for conversion to complete (format-aware default timeout) */
+  waitForConvert(
+    format: 'gif' | 'webp',
+    options?: { timeoutMs?: number; intervalMs?: number }
+  ): Promise<boolean>;
 }
 
 // ─── Helper implementations ─────────────────────────────────────────────────
 
 const DEFAULT_WAIT_TIMEOUT = 30_000;
 const DEFAULT_WAIT_INTERVAL = 200;
+const FORMAT_WAIT_TIMEOUTS: Record<string, number> = {
+  gif: 120_000,
+  webp: 90_000,
+};
 
 const injectFile = (file: File, metadata?: VideoMetadata): void => {
   // Clean up previous state
@@ -197,6 +207,17 @@ const waitFor = (
       setTimeout(check, intervalMs);
     };
     check();
+  });
+};
+
+const waitForConvert = (
+  format: 'gif' | 'webp',
+  options?: { timeoutMs?: number; intervalMs?: number }
+): Promise<boolean> => {
+  const defaultTimeout = FORMAT_WAIT_TIMEOUTS[format] ?? 120_000;
+  return waitFor(() => isResultVisible() || isErrorVisible(), {
+    timeoutMs: options?.timeoutMs ?? defaultTimeout,
+    intervalMs: options?.intervalMs,
   });
 };
 
@@ -273,6 +294,7 @@ const testHelpers: TestHelpers = {
   queryAllTestIds,
   readProgressFromDOM,
   waitFor,
+  waitForConvert,
 };
 
 export function attachTestHelpers(): void {
