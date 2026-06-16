@@ -181,14 +181,17 @@ export class FrameAssemblerService {
 
     // Write each frame as an individual chunk file
     const chunkFileNames: string[] = [];
-    let totalBytes = 0;
     let frameIdx = 0;
 
     const writeFrame = async (frameData: Uint8Array): Promise<void> => {
       const chunkName = `raw_frame_${String(frameIdx).padStart(5, '0')}.raw`;
-      await ffmpeg.writeFile(chunkName, frameData);
+      // Ensure we only write the visible portion of the Uint8Array
+      // (not the underlying ArrayBuffer which may be larger)
+      const dataToWrite = frameData.byteOffset === 0 && frameData.buffer.byteLength === frameData.byteLength
+        ? frameData
+        : frameData.slice();
+      await ffmpeg.writeFile(chunkName, dataToWrite);
       chunkFileNames.push(chunkName);
-      totalBytes += frameData.byteLength;
       frameIdx++;
     };
 
@@ -196,7 +199,6 @@ export class FrameAssemblerService {
       logger.info('conversion', 'Finalizing streaming raw video write', {
         file: outputFileName,
         chunksWritten: chunkFileNames.length,
-        totalBytes,
         expectedBytes,
       });
 
@@ -205,20 +207,32 @@ export class FrameAssemblerService {
         return 0;
       }
 
-      // Concatenate chunks into a single buffer for FFmpeg rawvideo input
-      const pixels = new Uint8Array(totalBytes);
-      let offset = 0;
-
+      // First pass: read all chunks to determine actual total size
+      // (writeFile may detach the source buffer, so we can't rely on totalBytes)
+      const chunkDataArray: Uint8Array[] = [];
+      let actualTotalBytes = 0;
       for (const chunkName of chunkFileNames) {
         const chunkData = await ffmpeg.readFile(chunkName);
-        // readFile returns Uint8Array for binary files, string for text
-        const chunkBytes =
-          chunkData instanceof Uint8Array
-            ? chunkData
-            : new Uint8Array(chunkData.split('').map((c) => c.charCodeAt(0)));
+        const chunkBytes = chunkData instanceof Uint8Array
+          ? chunkData
+          : new Uint8Array(chunkData.split('').map((c) => c.charCodeAt(0)));
+        chunkDataArray.push(chunkBytes);
+        actualTotalBytes += chunkBytes.byteLength;
+      }
+
+      // Concatenate chunks into a single buffer
+      const pixels = new Uint8Array(actualTotalBytes);
+      let offset = 0;
+      for (const chunkBytes of chunkDataArray) {
         pixels.set(chunkBytes, offset);
         offset += chunkBytes.byteLength;
-        // Delete chunk file immediately to free VFS space
+      }
+
+      // Write the final output
+      await ffmpeg.writeFile(outputFileName, pixels);
+
+      // Delete chunk files to free VFS space
+      for (const chunkName of chunkFileNames) {
         try {
           (ffmpeg as unknown as { FS: { unlink: (name: string) => void } }).FS.unlink(chunkName);
         } catch {
@@ -226,14 +240,12 @@ export class FrameAssemblerService {
         }
       }
 
-      await ffmpeg.writeFile(outputFileName, pixels);
-
       logger.debug('conversion', 'Streaming raw video write complete', {
         file: outputFileName,
-        totalBytes,
+        totalBytes: actualTotalBytes,
       });
 
-      return totalBytes;
+      return actualTotalBytes;
     };
 
     return {
