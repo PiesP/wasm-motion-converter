@@ -160,19 +160,35 @@ const App: Component = () => {
   });
 
   const dropzoneStatus = createMemo(() => {
-    if (appState() !== 'converting') {
-      return null;
+    const state = appState();
+    if (state === 'converting') {
+      return {
+        label: 'Converting video...',
+        progress: conversionProgress(),
+        message: conversionStatusMessage(),
+        subPhaseLabel: conversionStatusMessage() || 'Extracting frames...',
+        showElapsedTime: true,
+        startTime: conversionStartTime(),
+        estimatedSecondsRemaining: estimatedSecondsRemaining(),
+      };
     }
-
-    return {
-      label: 'Converting video...',
-      progress: conversionProgress(),
-      message: conversionStatusMessage(),
-      subPhaseLabel: conversionStatusMessage() || 'Extracting frames...',
-      showElapsedTime: true,
-      startTime: conversionStartTime(),
-      estimatedSecondsRemaining: estimatedSecondsRemaining(),
-    };
+    if (state === 'loading-ffmpeg') {
+      return {
+        label: 'Loading FFmpeg...',
+        progress: loadingProgress(),
+        message: loadingStatusMessage(),
+        subPhaseLabel: loadingStatusMessage() || 'Downloading FFmpeg (~30MB)...',
+      };
+    }
+    if (state === 'analyzing') {
+      return {
+        label: 'Analyzing video...',
+        progress: 0,
+        message: 'Reading video metadata...',
+        subPhaseLabel: 'Reading video metadata...',
+      };
+    }
+    return null;
   });
 
   const isConversionActive = createMemo(

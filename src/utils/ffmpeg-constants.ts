@@ -181,18 +181,6 @@ export const FFMPEG_INTERNALS = {
     },
   },
 
-  // Demuxer configuration (external library demuxing for MP4/WebM)
-  DEMUXER: {
-    /** Timeout for CDN loading of demuxer libraries (mp4box, web-demuxer). Set to 15 seconds. */
-    CDN_TIMEOUT_MS: 15000,
-    /** Timeout for demuxer initialization and container parsing. Set to 10 seconds. */
-    INIT_TIMEOUT_MS: 10000,
-    /** Timeout for complete sample extraction from container. Set to 60 seconds. */
-    SAMPLE_EXTRACTION_TIMEOUT_MS: 60000,
-    /** Maximum number of concurrent decoded frames in VideoDecoder queue. Set to 2. */
-    MAX_QUEUE_SIZE: 2,
-  },
-
   // GIF encoding dither configuration
   GIF_ENCODING: {
     /** Dither mode per quality: high uses sierra2, others use bayer */

@@ -111,17 +111,6 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         when={isInteractive()}
         fallback={
           <div class="space-y-4">
-            {/* Keep video preview visible during conversion */}
-            <Show when={local.previewUrl}>
-              <video
-                src={local.previewUrl!}
-                class="w-full rounded-lg shadow-md bg-black aspect-video"
-                muted
-                playsinline
-                preload="metadata"
-                aria-label="Video being converted"
-              />
-            </Show>
             <Show when={local.subPhaseLabel}>
               <p class="text-center text-xs text-gray-500 dark:text-gray-400 font-medium">
                 {local.subPhaseLabel}
@@ -143,6 +132,17 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         }
       >
         <div class="text-center">
+          {/* Video preview when file is selected */}
+          <Show when={local.previewUrl}>
+            <video
+              src={local.previewUrl!}
+              class="w-full rounded-lg shadow-md bg-black aspect-video mb-4"
+              muted
+              playsinline
+              preload="metadata"
+              aria-label="Selected video preview"
+            />
+          </Show>
           <svg
             class="mx-auto h-12 w-12 text-gray-500"
             stroke="currentColor"

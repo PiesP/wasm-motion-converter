@@ -44,7 +44,7 @@ import { handleFileSelected } from './use-handle-file-selected';
 
 const MS_PER_SECOND = 1000;
 
-const focusDownloadButton = (): void => focusElement('[data-download-button]');
+const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
 const focusRetryButton = (): void => focusElement('[data-error-retry-button]');
 
 export async function handleConvert(runtime: ConversionRuntimeController): Promise<void> {

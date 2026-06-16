@@ -112,7 +112,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             alt="Converted animation"
             class={imageClass()}
             onLoad={handlePreviewLoad}
-            loading="lazy"
             data-testid="result-image"
           />
         </Show>
