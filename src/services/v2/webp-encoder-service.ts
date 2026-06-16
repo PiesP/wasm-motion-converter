@@ -4,7 +4,6 @@
 import type { WebPConfig } from 'wasm-webp';
 import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
-import { decodeStreaming } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import {
   compositeAlphaToRGB,
@@ -28,11 +27,15 @@ const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
 
 export type WebpProgressCallback = (progress: ConversionProgress) => void;
 
+/**
+ * Collect decoded frames into an array, then encode to WebP.
+ * This avoids async generator issues in the Worker context.
+ */
 export async function encodeWebp(
   demux: DemuxResult,
   opts: WebpEncodeOptions,
   onProgress?: WebpProgressCallback,
-  _signal?: AbortSignal
+  signal?: AbortSignal
 ): Promise<Uint8Array> {
   const srcW = opts.width;
   const srcH = opts.height;
@@ -42,11 +45,53 @@ export async function encodeWebp(
   const webpConfig: WebPConfig = { lossless: 0, quality };
   const needsResize = w !== srcW || h !== srcH;
 
+  // Phase 1: Decode all frames
   const frames: { data: Uint8Array; duration: number; config: WebPConfig }[] = [];
-  let frameIdx = 0;
-  const startTime = performance.now();
+  const decodedFrames: VideoFrame[] = [];
+  let decodeError: Error | null = null;
 
-  for await (const frame of decodeStreaming(demux, undefined, undefined)) {
+  const decoder = new VideoDecoder({
+    output(frame: VideoFrame) {
+      decodedFrames.push(frame);
+    },
+    error(e: Error) {
+      decodeError = e;
+    },
+  });
+
+  decoder.configure(demux.config);
+
+  console.log('[webp-encoder] chunks:', demux.chunks.length, 'codec:', demux.config.codec);
+
+  for (const chunk of demux.chunks) {
+    if (signal?.aborted) {
+      decoder.close();
+      throw new DOMException('Cancelled', 'AbortError');
+    }
+    if (decodeError) break;
+    decoder.decode(chunk);
+  }
+
+  try {
+    await decoder.flush();
+  } catch (e) {
+    if (!decodeError) {
+      decodeError = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  decoder.close();
+
+  if (decodeError) throw decodeError;
+
+  // Phase 2: Convert each VideoFrame to RGB
+  const startTime = performance.now();
+  for (let i = 0; i < decodedFrames.length; i++) {
+    const frame = decodedFrames[i]!;
+    if (signal?.aborted) {
+      for (let j = i; j < decodedFrames.length; j++) decodedFrames[j]?.close();
+      throw new DOMException('Cancelled', 'AbortError');
+    }
+
     const durationMs = getFrameDurationMs(frame);
 
     let rgbData: Uint8Array;
@@ -60,13 +105,12 @@ export async function encodeWebp(
 
     frames.push({ data: rgbData, duration: durationMs, config: webpConfig });
 
-    frameIdx++;
-    if (onProgress && frameIdx % 5 === 0) {
+    if (onProgress && (i + 1) % 5 === 0) {
       const elapsed = (performance.now() - startTime) / 1000;
       onProgress({
         phase: 'encoding',
-        progress: Math.round((frameIdx / demux.totalFrames) * 100),
-        fps: Math.round(frameIdx / elapsed),
+        progress: Math.round(((i + 1) / demux.totalFrames) * 100),
+        fps: Math.round((i + 1) / elapsed),
         etaSeconds: null,
         memoryMB: 0,
       });
