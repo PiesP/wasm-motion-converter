@@ -39,7 +39,7 @@
   "dependencies": {
     "@ffmpeg/ffmpeg": "0.12.15",
     "@ffmpeg/util": "0.12.2",
-    "gif-encoder-2-browser": "^1.0.5",
+    "gifenc": "^1.0.3",
     "mediabunny": "^1.46.0",
     "solid-js": "1.9.13",
     "wasm-webp": "^0.1.0"

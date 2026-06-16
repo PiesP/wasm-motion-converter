@@ -14,9 +14,9 @@ importers:
       '@ffmpeg/util':
         specifier: 0.12.2
         version: 0.12.2
-      gif-encoder-2-browser:
-        specifier: ^1.0.5
-        version: 1.0.5
+      gifenc:
+        specifier: ^1.0.3
+        version: 1.0.3
       mediabunny:
         specifier: ^1.46.0
         version: 1.46.0
@@ -991,8 +991,8 @@ packages:
   get-tsconfig@4.14.0:
     resolution: {integrity: sha512-yTb+8DXzDREzgvYmh6s9vHsSVCHeC0G3PI5bEXNBHtmshPnO+S5O7qgLEOn0I5QvMy6kpZN8K1NKGyilLb93wA==}
 
-  gif-encoder-2-browser@1.0.5:
-    resolution: {integrity: sha512-YFIFc3yjgoBFnClWAYFq0FmSSdrk1Q4AFVp+2/CN7mRzh+fDHC6q/jUBzWY9SpGUP8fICzgW1Q2iZtHbdONabA==}
+  gifenc@1.0.3:
+    resolution: {integrity: sha512-xdr6AdrfGBcfzncONUOlXMBuc5wJDtOueE3c5rdG0oNgtINLD+f2iFZltrBRZYzACRbKr+mSVU/x98zv2u3jmw==}
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
@@ -2065,7 +2065,7 @@ snapshots:
     dependencies:
       resolve-pkg-maps: 1.0.0
 
-  gif-encoder-2-browser@1.0.5: {}
+  gifenc@1.0.3: {}
 
   graceful-fs@4.2.11: {}
 
