@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-/**
- * WebP Encoder Service
- *
- * Encodes decoded video frames into animated WebP using wasm-webp.
- * Uses direct VideoFrame.copyTo() for zero-copy pixel extraction.
- * Alpha compositing: blends RGBA over black to avoid dark artifacts.
- */
-
 import type { WebPConfig } from 'wasm-webp';
 import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
@@ -36,15 +28,11 @@ const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
 
 export type WebpProgressCallback = (progress: ConversionProgress) => void;
 
-/**
- * Encode demuxed video frames to WebP.
- * Uses direct VideoFrame pixel copy + alpha compositing.
- */
 export async function encodeWebp(
   demux: DemuxResult,
   opts: WebpEncodeOptions,
   onProgress?: WebpProgressCallback,
-  signal?: AbortSignal
+  _signal?: AbortSignal
 ): Promise<Uint8Array> {
   const srcW = opts.width;
   const srcH = opts.height;
@@ -58,18 +46,14 @@ export async function encodeWebp(
   let frameIdx = 0;
   const startTime = performance.now();
 
-  for await (const frame of decodeStreaming(demux, undefined, signal)) {
-    // Capture duration before close() invalidates the frame
+  for await (const frame of decodeStreaming(demux, undefined, undefined)) {
     const durationMs = getFrameDurationMs(frame);
 
-    // Zero-copy: VideoFrame → RGB with alpha compositing
     let rgbData: Uint8Array;
     if (needsResize) {
-      // Resize path: RGBA with alpha composite
       const rgba = await resizeFrameToRGBA(frame, w, h);
       rgbData = compositeAlphaToRGB(rgba);
     } else {
-      // Direct path: VideoFrame → RGB
       rgbData = await copyFrameToRGB(frame, w, h);
     }
     frame.close();

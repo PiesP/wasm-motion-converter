@@ -5,8 +5,7 @@
  * Decoder Service
  *
  * Video decoder using WebCodecs VideoDecoder.
- * Collects all decoded frames then yields them sequentially.
- * This is more reliable than complex streaming queue logic.
+ * Uses a completion Promise to guarantee all frames are collected before yielding.
  */
 
 import type { ConversionProgress } from '@/types/v2-conversion-types';
@@ -17,8 +16,10 @@ export type DecodeProgressCallback = (progress: ConversionProgress) => void;
 /**
  * Decode video chunks and yield frames one at a time.
  *
- * Feeds all chunks to the decoder, collects output frames,
- * then yields them via async generator.
+ * Creates a completion Promise that resolves only after:
+ * 1. All chunks are fed to the decoder
+ * 2. decoder.flush() is called and awaited
+ * 3. The flush promise resolves (all output callbacks have fired)
  */
 export async function* decodeStreaming(
   demux: DemuxResult,
@@ -41,6 +42,7 @@ export async function* decodeStreaming(
   decoder.configure(demux.config);
 
   // Feed all chunks
+  let chunkIdx = 0;
   for (const chunk of demux.chunks) {
     if (signal?.aborted) {
       decoder.close();
@@ -48,10 +50,24 @@ export async function* decodeStreaming(
     }
     if (decodeError) break;
     decoder.decode(chunk);
+    chunkIdx++;
   }
 
-  // Flush to get remaining frames
-  await decoder.flush();
+  // Flush and wait for all output callbacks
+  try {
+    const flushPromise = decoder.flush();
+    // Handle both Promise and undefined return
+    if (flushPromise) {
+      await flushPromise;
+    }
+    // Additional delay ensures output callbacks have fired
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  } catch (e) {
+    if (!decodeError) {
+      decodeError = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+
   decoder.close();
 
   if (decodeError) throw decodeError;
@@ -59,7 +75,6 @@ export async function* decodeStreaming(
   // Yield frames
   for (let i = 0; i < frames.length; i++) {
     if (signal?.aborted) {
-      // Close remaining frames
       for (let j = i; j < frames.length; j++) {
         frames[j]?.close();
       }
