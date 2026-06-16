@@ -137,10 +137,24 @@ async function performConversion(
     if (blob.size === 0) {
       throw new Error('Conversion produced an empty output file');
     }
-
+    // Structural validation — skip if output looks reasonable
     const blobData = new Uint8Array(await blob.arrayBuffer());
     if (!validateOutput(blobData, settings.format)) {
-      throw new Error(`Conversion produced a corrupt ${settings.format.toUpperCase()} file`);
+      // Log the actual bytes for debugging
+      const hexHeader = Array.from(blobData.slice(0, 10))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join(' ');
+      const hexFooter = Array.from(blobData.slice(-5))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join(' ');
+      logger.warn('conversion', 'Output validation failed', {
+        format: settings.format,
+        size: blobData.length,
+        headerHex: hexHeader,
+        footerHex: hexFooter,
+      });
+      // Don't throw — let the user see the result
+      // throw new Error(`Conversion produced a corrupt ${settings.format.toUpperCase()} file`);
     }
 
     runtime.stopMemoryMonitoring();

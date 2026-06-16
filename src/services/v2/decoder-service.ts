@@ -4,8 +4,9 @@
 /**
  * Decoder Service
  *
- * Streaming video decoder using WebCodecs VideoDecoder.
- * Frames are yielded one at a time to minimize memory usage.
+ * Video decoder using WebCodecs VideoDecoder.
+ * Collects all decoded frames then yields them sequentially.
+ * This is more reliable than complex streaming queue logic.
  */
 
 import type { ConversionProgress } from '@/types/v2-conversion-types';
@@ -16,13 +17,8 @@ export type DecodeProgressCallback = (progress: ConversionProgress) => void;
 /**
  * Decode video chunks and yield frames one at a time.
  *
- * Uses a streaming approach: chunks are fed to the decoder sequentially,
- * and frames are yielded via an async generator as they become available.
- * This avoids storing all decoded frames in memory simultaneously.
- *
- * @param demux - Demuxed video data (chunks + config)
- * @param onProgress - Progress callback
- * @param signal - AbortSignal for cancellation
+ * Feeds all chunks to the decoder, collects output frames,
+ * then yields them via async generator.
  */
 export async function* decodeStreaming(
   demux: DemuxResult,
@@ -30,99 +26,58 @@ export async function* decodeStreaming(
   signal?: AbortSignal
 ): AsyncGenerator<VideoFrame, void, void> {
   const startTime = performance.now();
-  let frameCount = 0;
+  const frames: VideoFrame[] = [];
   let decodeError: Error | null = null;
-
-  // Queue for frames ready to be yielded
-  const frameQueue: VideoFrame[] = [];
-  let resolveNext: (() => void) | null = null;
 
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
-      frameQueue.push(frame);
-      if (resolveNext) {
-        resolveNext();
-        resolveNext = null;
-      }
+      frames.push(frame);
     },
     error(e: Error) {
       decodeError = e;
-      if (resolveNext) {
-        resolveNext();
-        resolveNext = null;
-      }
     },
   });
 
   decoder.configure(demux.config);
 
-  // Feed chunks sequentially
-  let chunkIdx = 0;
-  const feedNextChunk = (): void => {
-    if (chunkIdx >= demux.chunks.length || decodeError) {
-      if (chunkIdx >= demux.chunks.length) {
-        decoder.flush();
-      }
-      return;
+  // Feed all chunks
+  for (const chunk of demux.chunks) {
+    if (signal?.aborted) {
+      decoder.close();
+      throw new DOMException('Cancelled', 'AbortError');
     }
-    const chunk = demux.chunks[chunkIdx];
-    if (chunk) {
-      decoder.decode(chunk);
+    if (decodeError) break;
+    decoder.decode(chunk);
+  }
+
+  // Flush to get remaining frames
+  await decoder.flush();
+  decoder.close();
+
+  if (decodeError) throw decodeError;
+
+  // Yield frames
+  for (let i = 0; i < frames.length; i++) {
+    if (signal?.aborted) {
+      // Close remaining frames
+      for (let j = i; j < frames.length; j++) {
+        frames[j]?.close();
+      }
+      throw new DOMException('Cancelled', 'AbortError');
     }
-    chunkIdx++;
-  };
 
-  // Start feeding chunks
-  feedNextChunk();
-
-  try {
-    while (true) {
-      if (signal?.aborted) {
-        throw new DOMException('Cancelled', 'AbortError');
-      }
-
-      // Wait for frames or completion
-      while (frameQueue.length === 0 && !decodeError && chunkIdx < demux.chunks.length) {
-        await new Promise<void>((resolve) => {
-          resolveNext = resolve;
-          // Also resolve when next chunk is fed
-          if (chunkIdx < demux.chunks.length) {
-            feedNextChunk();
-          }
-        });
-      }
-
-      // Yield available frames
-      while (frameQueue.length > 0) {
-        const frame = frameQueue.shift()!;
-        frameCount++;
-
-        if (onProgress && frameCount % 5 === 0) {
-          const elapsed = (performance.now() - startTime) / 1000;
-          onProgress({
-            phase: 'decoding',
-            progress: Math.round((frameCount / demux.totalFrames) * 100),
-            fps: Math.round(frameCount / elapsed),
-            etaSeconds:
-              frameCount > 0
-                ? Math.round((demux.totalFrames - frameCount) / (frameCount / elapsed))
-                : null,
-            memoryMB: 0,
-          });
-        }
-
-        yield frame;
-      }
-
-      // Check if we're done
-      if (chunkIdx >= demux.chunks.length && frameQueue.length === 0) {
-        break;
-      }
-
-      if (decodeError) throw decodeError;
+    if (onProgress && (i + 1) % 5 === 0) {
+      const elapsed = (performance.now() - startTime) / 1000;
+      onProgress({
+        phase: 'decoding',
+        progress: Math.round(((i + 1) / demux.totalFrames) * 100),
+        fps: Math.round((i + 1) / elapsed),
+        etaSeconds: i > 0 ? Math.round((demux.totalFrames - i - 1) / ((i + 1) / elapsed)) : null,
+        memoryMB: 0,
+      });
     }
-  } finally {
-    decoder.close();
+
+    yield frames[i]!;
   }
 
   if (onProgress) {
@@ -137,8 +92,7 @@ export async function* decodeStreaming(
 }
 
 /**
- * Legacy batch decoder — decodes all chunks then yields frames.
- * Kept for backward compatibility but decodeStreaming is preferred.
+ * Legacy batch decoder — same as decodeStreaming.
  */
 export async function* decodeStream(
   demux: DemuxResult,

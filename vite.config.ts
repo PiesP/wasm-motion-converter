@@ -77,6 +77,10 @@ export default defineConfig(({ mode }) => {
       },
     },
 
+    optimizeDeps: {
+      include: ['wasm-webp', 'gifenc', 'mediabunny'],
+    },
+
     build: {
       target: 'esnext',
       chunkSizeWarningLimit: 1000,

@@ -90,8 +90,10 @@ export async function encodeWebp(
   }
 
   const result = await encodeAnimation(w, h, false, frames);
-  if (!result) {
-    throw new Error('wasm-webp encodeAnimation returned null');
+  if (!result || result.length === 0) {
+    throw new Error(
+      `wasm-webp encodeAnimation returned ${result ? `empty (${result.length} bytes)` : 'null'} (frames: ${frames.length}, w: ${w}, h: ${h}, totalInputBytes: ${frames.reduce((s, f) => s + f.data.length, 0)})`
+    );
   }
 
   return result;
