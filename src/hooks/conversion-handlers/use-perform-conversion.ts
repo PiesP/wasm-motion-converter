@@ -6,6 +6,7 @@ import {
   cancelConversion,
   convertVideo,
 } from '@services/orchestration/conversion-orchestrator-service';
+import { classifyError } from '@services/v2/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -41,6 +42,7 @@ import { batch } from 'solid-js';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 import { handleFileSelected } from './use-handle-file-selected';
+import { performConversionV2 } from './use-perform-conversion-v2';
 
 const MS_PER_SECOND = 1000;
 
@@ -132,20 +134,51 @@ async function performConversion(
       runtime.updateStatus(message);
     };
 
-    const result = await convertVideo({
-      file,
-      format: settings.format,
-      options: {
-        quality: settings.quality,
-        scale: settings.scale,
-        duration: videoDurationMs ? videoDurationMs / MS_PER_SECOND : undefined,
-        trimStart: settings.trimStart > 0 ? settings.trimStart : undefined,
-        trimEnd: settings.trimEnd > 0 ? settings.trimEnd : undefined,
-      },
-      metadata: videoMetadata() ?? undefined,
-      onProgress: progressCallback,
-      onStatus: statusCallback,
-    });
+    let result: { blob: Blob & { wasTranscoded?: boolean } };
+    try {
+      // Try V2 pipeline first (WebCodecs hardware-accelerated)
+      const v2Result = await performConversionV2(
+        file,
+        {
+          format: settings.format,
+          quality: settings.quality,
+          scale: settings.scale,
+          trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
+          trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
+        },
+        (v2Progress) => {
+          if (!isActive()) return;
+          runtime.updateProgress(v2Progress.progress);
+          if (v2Progress.phase !== 'assembling') {
+            runtime.updateStatus(`${v2Progress.phase}... ${v2Progress.fps} fps`);
+          }
+        }
+      );
+      result = { blob: v2Result.blob };
+    } catch (v2Error) {
+      const classified = classifyError(v2Error);
+      if (classified.recoverable) {
+        logger.info('conversion', 'V2 pipeline failed, falling back to V1', {
+          error: classified.message,
+        });
+        result = await convertVideo({
+          file,
+          format: settings.format,
+          options: {
+            quality: settings.quality,
+            scale: settings.scale,
+            duration: videoDurationMs ? videoDurationMs / MS_PER_SECOND : undefined,
+            trimStart: settings.trimStart > 0 ? settings.trimStart : undefined,
+            trimEnd: settings.trimEnd > 0 ? settings.trimEnd : undefined,
+          },
+          metadata: videoMetadata() ?? undefined,
+          onProgress: progressCallback,
+          onStatus: statusCallback,
+        });
+      } else {
+        throw v2Error;
+      }
+    }
 
     if (!isActive()) {
       return;
