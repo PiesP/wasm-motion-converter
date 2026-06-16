@@ -37,9 +37,18 @@ export async function demuxVideo(request: ConversionRequest): Promise<DemuxResul
 
   const sink = new EncodedPacketSink(videoTrack);
 
-  // Start from a keyframe — the VideoDecoder requires it after configure().
+  // Start from the first keyframe — the VideoDecoder requires it after configure().
+  // For trimStart > 0, find the nearest keyframe at-or-before trimStart.
+  // For trimStart == 0, use the first packet (guaranteed to be decodable).
   const startPacket =
-    (await sink.getKeyPacket(request.trimStart)) ?? (await sink.getPacket(request.trimStart));
+    request.trimStart > 0
+      ? ((await sink.getKeyPacket(request.trimStart)) ?? (await sink.getPacket(0)))
+      : await sink.getFirstPacket();
+  if (!startPacket) {
+    input.dispose();
+    throw new Error('No decodable packets found in input buffer');
+  }
+
   const endPacket = await sink.getPacket(request.trimEnd);
 
   const chunks: EncodedVideoChunk[] = [];
