@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { logger } from '@utils/logger';
 import type { WebPConfig } from 'wasm-webp';
 import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
@@ -63,10 +64,22 @@ export async function encodeWebp(
     demux.totalFrames > maxFramesByMemory ? Math.ceil(demux.totalFrames / maxFramesByMemory) : 1;
 
   if (frameStep > 1) {
-    console.warn(
-      `[encodeWebp] ${demux.totalFrames} frames → ~${Math.ceil(demux.totalFrames / frameStep)} frames (step=${frameStep})`
-    );
+    logger.info('encoders', 'WebP frame decimation active', {
+      totalFrames: demux.totalFrames,
+      keptFrames: Math.ceil(demux.totalFrames / frameStep),
+      frameStep,
+      bytesPerFrame,
+      maxFramesByMemory,
+    });
   }
+
+  logger.info('encoders', 'WebP encoding started', {
+    totalFrames: demux.totalFrames,
+    resolution: `${w}×${h}`,
+    quality: webpConfig.quality,
+    scale: opts.scale,
+    frameStep,
+  });
 
   // Collect RGB frames with immediate VideoFrame disposal
   const rgbFrames: { data: Uint8Array; duration: number }[] = [];
@@ -108,6 +121,22 @@ export async function encodeWebp(
       })();
       pendingConversions.push(conversion);
       frameCount++;
+
+      // Intermediate progress every ~5% of frames
+      const reportInterval = Math.max(1, Math.floor(demux.totalFrames / 20));
+      if (onProgress && frameCount % reportInterval === 0) {
+        const elapsed = (performance.now() - startTime) / 1000;
+        onProgress({
+          phase: 'encoding',
+          progress: Math.round((frameCount / demux.totalFrames) * 100),
+          fps: Math.round(frameCount / elapsed),
+          etaSeconds: null,
+          memoryMB: 0,
+          currentFrame: frameCount,
+          totalFrames: demux.totalFrames,
+          elapsedMs: Math.round(performance.now() - startTime),
+        });
+      }
     },
     error(e: Error) {
       decodeError = e;
@@ -155,6 +184,9 @@ export async function encodeWebp(
       fps: Math.round(rgbFrames.length / elapsed),
       etaSeconds: 0,
       memoryMB: 0,
+      currentFrame: rgbFrames.length,
+      totalFrames: demux.totalFrames,
+      elapsedMs: Math.round(performance.now() - startTime),
     });
   }
 
@@ -171,6 +203,19 @@ export async function encodeWebp(
       `wasm-webp encodeAnimation returned ${result ? 'empty' : 'null'} (frames: ${rgbFrames.length}, w: ${w}, h: ${h})`
     );
   }
+
+  const totalElapsed = (performance.now() - startTime) / 1000;
+  logger.info('encoders', 'WebP encoding complete', {
+    decodedFrames: frameCount,
+    keptFrames: rgbFrames.length,
+    totalFrames: demux.totalFrames,
+    frameStep,
+    outputBytes: result.length,
+    fps: Math.round(rgbFrames.length / totalElapsed),
+    duration: `${totalElapsed.toFixed(2)}s`,
+    resolution: `${w}×${h}`,
+    quality: webpConfig.quality,
+  });
 
   return result;
 }

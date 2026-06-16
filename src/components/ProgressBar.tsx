@@ -14,9 +14,13 @@ import {
 
 /** Thin horizontal phase indicator bar above the main progress bar. */
 const PHASE_SEGMENTS = [
-  { label: 'Decoding', colorClass: 'bg-purple-500' },
-  { label: 'Encoding', colorClass: 'bg-blue-500' },
+  { label: 'Preparing', colorClass: 'bg-amber-500', phase: 'demuxing' },
+  { label: 'Decoding', colorClass: 'bg-purple-500', phase: 'decoding' },
+  { label: 'Encoding', colorClass: 'bg-blue-500', phase: 'encoding' },
+  { label: 'Finalizing', colorClass: 'bg-green-500', phase: 'assembling' },
 ] as const;
+
+type Phase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
 
 interface ProgressBarProps {
   /** Overall progress 0-100 */
@@ -42,6 +46,14 @@ interface ProgressBarProps {
   subPhaseProgress?: number;
   /** Label for the sub-phase tick, shown in the detail row */
   subPhaseLabel?: string;
+  /** Current frame number for frame-level progress */
+  currentFrame?: number;
+  /** Total frame number for frame-level progress */
+  totalFrames?: number;
+  /** Memory usage string (e.g. "128 MB / 512 MB (25%)") */
+  memoryUsage?: string | null;
+  /** Active phase for multi-segment bar */
+  phase?: Phase;
 }
 
 const ProgressBar: Component<ProgressBarProps> = (props) => {
@@ -56,6 +68,10 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     'layout',
     'subPhaseProgress',
     'subPhaseLabel',
+    'currentFrame',
+    'totalFrames',
+    'memoryUsage',
+    'phase',
   ]);
   const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
 
@@ -73,6 +89,18 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
 
   const isHorizontal = createMemo(() => local.layout === 'horizontal');
 
+  const activePhaseIndex = createMemo(() => {
+    const p = local.phase;
+    if (p === 'assembling') return 3;
+    if (p === 'encoding') return 2;
+    if (p === 'decoding') return 1;
+    return 0;
+  });
+
+  const showFrameCounter = createMemo(
+    () => local.currentFrame != null && local.totalFrames != null && local.totalFrames > 0
+  );
+
   createEffect(() => {
     if (!local.showElapsedTime || !local.startTime) return;
 
@@ -88,9 +116,6 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       clearInterval(interval);
     });
   });
-
-  /** Translate overall 0-100 to the active sub-phase's visual segment (0-50 → decode, 50-100 → encode). */
-  const activePhaseIndex = createMemo(() => (progressValue() > 50 ? 1 : 0));
 
   return (
     <div
@@ -135,7 +160,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         </span>
       </div>
 
-      {/* Two-phase segmented bar */}
+      {/* Multi-phase segmented bar */}
       <div class="flex flex-col gap-1">
         <div
           class="flex h-3 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800"
@@ -146,42 +171,63 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           aria-label={local.status}
           data-progress={progressValue()}
         >
-          {/* Decode segment: fills 0-50% of overall → maps to 0-100% width of this half */}
-          <div class="flex h-full flex-1 overflow-hidden">
-            <div
-              class={`h-full rounded-l-full transition-all duration-300 ${PHASE_SEGMENTS[0].colorClass}`}
-              style={{ width: `${Math.min(100, progressValue() * 2)}%` }}
-            />
-          </div>
-          {/* Encode segment: fills 50-100% of overall → maps to 0-100% width of this half */}
-          <div class={`flex h-full flex-1 overflow-hidden ${activePhaseIndex() === 1 ? '' : ''}`}>
-            <div
-              class={`h-full rounded-r-full transition-all duration-300 ${
-                activePhaseIndex() === 1 ? PHASE_SEGMENTS[1].colorClass : 'bg-transparent'
-              }`}
-              style={{ width: `${Math.max(0, Math.min(100, (progressValue() - 50) * 2))}%` }}
-            />
-          </div>
+          {PHASE_SEGMENTS.map((seg, idx) => {
+            const isActive = idx === activePhaseIndex();
+            const isPast = idx < activePhaseIndex();
+            const segmentWidth = 25; // each phase is 25% of the bar
+
+            let widthPercent: number;
+            if (isPast) {
+              widthPercent = segmentWidth;
+            } else if (isActive) {
+              // Map progress within this phase to segment width
+              const phaseProgress = Math.max(0, Math.min(100, progressValue() - idx * 25));
+              widthPercent = (phaseProgress / 100) * segmentWidth;
+            } else {
+              widthPercent = 0;
+            }
+
+            return (
+              <div class="flex h-full flex-1 overflow-hidden">
+                <div
+                  class={`h-full transition-all duration-300 ${
+                    widthPercent > 0 ? seg.colorClass : 'bg-transparent'
+                  } ${idx === 0 ? 'rounded-l-full' : ''} ${idx === PHASE_SEGMENTS.length - 1 ? 'rounded-r-full' : ''}`}
+                  style={{ width: `${widthPercent}%` }}
+                />
+              </div>
+            );
+          })}
         </div>
 
         {/* Phase labels beneath bar */}
         <div class="flex justify-between text-[10px] text-gray-500 dark:text-gray-500 font-medium">
-          <span>Decoding</span>
-          <span>Encoding</span>
+          {PHASE_SEGMENTS.map((seg) => (
+            <span>{seg.label}</span>
+          ))}
         </div>
       </div>
 
-      {/* Sub-phase detail row (e.g. "Extracting frames: 45/75") */}
-      <Show when={local.subPhaseLabel || local.statusMessage}>
-        <div class="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
-          <span class="italic">{local.subPhaseLabel ?? local.statusMessage}</span>
-          <Show when={local.subPhaseProgress != null && local.subPhaseProgress > 0}>
+      {/* Frame counter + sub-phase detail row */}
+      <div class="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
+        <span class="italic">
+          {showFrameCounter()
+            ? `Frame ${local.currentFrame} / ${local.totalFrames}`
+            : (local.subPhaseLabel ?? local.statusMessage)}
+        </span>
+        <div class="flex items-center gap-2">
+          {showFrameCounter() && subPhaseValue() > 0 && (
             <span class="font-mono tabular-nums text-gray-500 dark:text-gray-500">
               {subPhaseValue()}%
             </span>
-          </Show>
+          )}
+          {local.memoryUsage && (
+            <span class="font-mono tabular-nums text-gray-400 dark:text-gray-600 text-[10px]">
+              🧠 {local.memoryUsage}
+            </span>
+          )}
         </div>
-      </Show>
+      </div>
 
       {/* Elapsed / ETA row */}
       <Show when={local.showElapsedTime && local.startTime}>

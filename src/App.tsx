@@ -142,13 +142,14 @@ const App: Component = () => {
     const state = appState();
     if (state === 'converting') {
       return {
-        label: 'Converting video...',
+        label: 'Converting...',
         progress: conversionProgress(),
         message: conversionStatusMessage(),
-        subPhaseLabel: conversionStatusMessage() || 'Extracting frames...',
+        subPhaseLabel: undefined,
         showElapsedTime: true,
         startTime: conversionStartTime(),
         estimatedSecondsRemaining: estimatedSecondsRemaining(),
+        phase: 'encoding' as const,
       };
     }
     if (state === 'analyzing') {
@@ -291,6 +292,7 @@ const App: Component = () => {
                 startTime={dropzoneStatus()?.startTime}
                 status={dropzoneStatus()?.label}
                 statusMessage={dropzoneStatus()?.message}
+                phase={dropzoneStatus()?.phase}
               />
 
               <Show when={appState() === 'analyzing'}>

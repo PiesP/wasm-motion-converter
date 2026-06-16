@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { logger } from '@utils/logger';
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import type { DemuxResult } from './demuxer-service';
@@ -70,6 +71,9 @@ function bayerDitherRGB(rgb: Uint8Array, width: number, height: number, strength
 
 export type GifProgressCallback = (progress: ConversionProgress) => void;
 
+// Throttle: report every N ms to avoid flooding the main thread
+const PROGRESS_THROTTLE_MS = 150;
+
 /**
  * Encode demuxed video frames to GIF using streaming encoding.
  *
@@ -102,6 +106,7 @@ export async function encodeGif(
   let frameIdx = 0;
   const startTime = performance.now();
   let globalPalette: number[][] | null = null;
+  let lastProgressReport = 0;
 
   // Frame queue for ordered processing
   const frameQueue: VideoFrame[] = [];
@@ -138,9 +143,13 @@ export async function encodeGif(
 
   if (decodeError) throw decodeError;
 
-  console.log(
-    `[encodeGif] decoded ${frameQueue.length} frames → encoding at ${w}×${h} (${maxColors} colors)`
-  );
+  logger.info('encoders', 'GIF encoding started', {
+    frameCount: frameQueue.length,
+    resolution: `${w}×${h}`,
+    maxColors,
+    quality: opts.quality,
+    scale: opts.scale,
+  });
 
   // Process frames sequentially — O(1) memory per frame
   while (frameQueue.length > 0) {
@@ -179,14 +188,22 @@ export async function encodeGif(
     });
 
     frameIdx++;
-    if (onProgress && frameIdx % 5 === 0) {
-      const elapsed = (performance.now() - startTime) / 1000;
+    const now = performance.now();
+    if (
+      onProgress &&
+      (now - lastProgressReport >= PROGRESS_THROTTLE_MS || frameIdx === demux.totalFrames)
+    ) {
+      lastProgressReport = now;
+      const elapsedSec = (now - startTime) / 1000;
       onProgress({
         phase: 'encoding',
         progress: Math.round((frameIdx / demux.totalFrames) * 100),
-        fps: Math.round(frameIdx / elapsed),
+        fps: Math.round(frameIdx / elapsedSec),
         etaSeconds: null,
         memoryMB: 0,
+        currentFrame: frameIdx,
+        totalFrames: demux.totalFrames,
+        elapsedMs: Math.round(now - startTime),
       });
     }
   }
@@ -196,5 +213,16 @@ export async function encodeGif(
   }
 
   encoder.finish();
-  return encoder.bytes();
+  const result = encoder.bytes();
+  const totalElapsed = (performance.now() - startTime) / 1000;
+  logger.info('encoders', 'GIF encoding complete', {
+    framesEncoded: frameIdx,
+    totalFrames: demux.totalFrames,
+    outputBytes: result.length,
+    fps: Math.round(frameIdx / totalElapsed),
+    duration: `${totalElapsed.toFixed(2)}s`,
+    resolution: `${w}×${h}`,
+    maxColors,
+  });
+  return result;
 }

@@ -9,10 +9,15 @@ export interface ConversionRequest {
   maxMemoryMB: number;
 }
 
+export type ConversionPhase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
+
 export interface ConversionProgress {
-  phase: 'decoding' | 'encoding' | 'assembling';
+  phase: ConversionPhase;
   progress: number;
   fps: number;
   etaSeconds: number | null;
   memoryMB: number;
+  currentFrame?: number;
+  totalFrames?: number;
+  elapsedMs?: number;
 }

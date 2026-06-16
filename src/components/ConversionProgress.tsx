@@ -6,6 +6,8 @@ import type { Component } from 'solid-js';
 import { splitProps } from 'solid-js';
 import ProgressBar from './ProgressBar';
 
+type Phase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
+
 /**
  * Conversion progress component props
  */
@@ -20,24 +22,20 @@ interface ConversionProgressProps {
   showElapsedTime?: boolean;
   /** Conversion start timestamp in milliseconds */
   startTime?: number;
+  /** ETA in seconds */
+  estimatedSecondsRemaining?: number | null;
+  /** Current frame number */
+  currentFrame?: number;
+  /** Total frame number */
+  totalFrames?: number;
+  /** Memory usage string */
+  memoryUsage?: string | null;
+  /** Active phase for multi-segment bar */
+  phase?: Phase;
 }
 
 /**
  * Conversion progress display component
- *
- * Displays a progress bar with status information for ongoing video conversions.
- * Includes accessibility features for screen readers and keyboard users.
- *
- * @example
- * ```tsx
- * <ConversionProgress
- *   progress={45}
- *   status="Converting to GIF..."
- *   statusMessage="Processing frame 450/1000"
- *   showElapsedTime={true}
- *   startTime={performance.now()}
- * />
- * ```
  */
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {
   const [local] = splitProps(props, [
@@ -46,6 +44,11 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
     'statusMessage',
     'showElapsedTime',
     'startTime',
+    'estimatedSecondsRemaining',
+    'currentFrame',
+    'totalFrames',
+    'memoryUsage',
+    'phase',
   ]);
   const isInProgress = () => local.progress < 100;
   const ariaBusy = () => (isInProgress() ? true : undefined);
@@ -66,6 +69,11 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
         showSpinner={true}
         showElapsedTime={local.showElapsedTime}
         startTime={local.startTime}
+        estimatedSecondsRemaining={local.estimatedSecondsRemaining}
+        currentFrame={local.currentFrame}
+        totalFrames={local.totalFrames}
+        memoryUsage={local.memoryUsage}
+        phase={local.phase}
         layout="horizontal"
       />
     </Panel>

@@ -20,6 +20,7 @@ interface FileDropzoneProps {
   estimatedSecondsRemaining?: number | null;
   subPhaseLabel?: string;
   previewUrl?: string | null;
+  phase?: 'demuxing' | 'decoding' | 'encoding' | 'assembling';
 }
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
@@ -34,6 +35,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     'estimatedSecondsRemaining',
     'subPhaseLabel',
     'previewUrl',
+    'phase',
   ]);
   const [isDragging, setIsDragging] = createSignal(false);
   const [justSelected, setJustSelected] = createSignal(false);
@@ -126,6 +128,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 startTime={local.startTime}
                 estimatedSecondsRemaining={local.estimatedSecondsRemaining}
                 layout="vertical"
+                phase={local.phase}
               />
             </div>
           </div>

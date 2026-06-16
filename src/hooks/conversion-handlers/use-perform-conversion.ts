@@ -29,8 +29,9 @@ import { classifyConversionError } from '@utils/classify-conversion-error';
 import { focusElement } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoDuration } from '@utils/file-validation';
-import { createId } from '@utils/format-utils';
+import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
+import { getMemoryUsageMB } from '@utils/memory-monitor';
 import { batch } from 'solid-js';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
@@ -137,8 +138,28 @@ async function performConversion(
       (v2Progress) => {
         if (!isActive()) return;
         runtime.updateProgress(v2Progress.progress);
-        if (v2Progress.phase !== 'assembling') {
-          runtime.updateStatus(`${v2Progress.phase}... ${v2Progress.fps} fps`);
+
+        // User-friendly phase messages
+        const phaseLabel =
+          v2Progress.phase === 'demuxing'
+            ? 'Preparing video data...'
+            : v2Progress.phase === 'decoding'
+              ? 'Decoding...'
+              : v2Progress.phase === 'encoding'
+                ? `Encoding to ${settings.format.toUpperCase()}...`
+                : 'Finalizing...';
+
+        if (
+          v2Progress.currentFrame != null &&
+          v2Progress.totalFrames != null &&
+          v2Progress.currentFrame > 0 &&
+          v2Progress.totalFrames > 0
+        ) {
+          runtime.updateStatus(
+            `Frame ${v2Progress.currentFrame}/${v2Progress.totalFrames} — ${phaseLabel}`
+          );
+        } else {
+          runtime.updateStatus(phaseLabel);
         }
       },
       abortController.signal
@@ -177,13 +198,20 @@ async function performConversion(
     runtime.stopMemoryMonitoring();
 
     const duration = Math.max(0, performance.now() - startTimeMs);
-    logger.debug('conversion', 'Conversion result received by UI layer', {
-      duration: `${(duration / MS_PER_SECOND).toFixed(2)}s`,
+    const durationSeconds = Math.max(0, duration / MS_PER_SECOND);
+    const memMB = getMemoryUsageMB();
+    logger.info('conversion', 'Conversion complete', {
+      format: settings.format,
+      quality: settings.quality,
+      scale: settings.scale,
+      duration: `${durationSeconds.toFixed(2)}s`,
       outputSize: blob.size,
+      outputSizeFormatted: formatBytes(blob.size),
+      compressionRatio: `${((blob.size / file.size) * 100).toFixed(1)}%`,
+      memoryMB: memMB ?? 'N/A',
     });
 
     const resultId = createId();
-    const durationSeconds = Math.max(0, duration / MS_PER_SECOND);
     const newResult: ConversionResult = {
       id: resultId,
       outputBlob: blob,

@@ -7,7 +7,7 @@
 
 export const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
 
-interface MemoryInfo {
+export interface MemoryInfo {
   usedJSHeapSize: number;
   totalJSHeapSize: number;
   jsHeapSizeLimit: number;
@@ -54,4 +54,24 @@ export function isMemoryCritical(): boolean {
   const memInfo = getMemoryInfo();
   if (!memInfo) return false;
   return memInfo.usagePercentage > MEMORY_CRITICAL_THRESHOLD;
+}
+
+/**
+ * Get current memory usage in MB. Returns null if unavailable.
+ */
+export function getMemoryUsageMB(): number | null {
+  const memInfo = getMemoryInfo();
+  if (!memInfo) return null;
+  return Math.round(memInfo.usedJSHeapSize / (1024 * 1024));
+}
+
+/**
+ * Get current memory usage as a formatted string (e.g. "128 MB / 512 MB (25%)").
+ */
+export function getMemoryUsageString(): string | null {
+  const memInfo = getMemoryInfo();
+  if (!memInfo) return null;
+  const usedMB = Math.round(memInfo.usedJSHeapSize / (1024 * 1024));
+  const totalMB = Math.round(memInfo.totalJSHeapSize / (1024 * 1024));
+  return `${usedMB} MB / ${totalMB} MB (${Math.round(memInfo.usagePercentage)}%)`;
 }
