@@ -4,7 +4,12 @@
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import type { DemuxResult } from './demuxer-service';
-import { copyFrameToRGBA, getFrameDurationMs, resizeFrameToRGBA } from './frame-utils';
+import {
+  compositeAlphaToRGB,
+  copyFrameToRGB,
+  getFrameDurationMs,
+  resizeFrameToRGBA,
+} from './frame-utils';
 
 export interface GifEncodeOptions {
   width: number;
@@ -18,6 +23,50 @@ const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
   medium: 128,
   high: 256,
 };
+
+// Bayer ordered dithering strength per quality (0-255 range, lower = subtler)
+const QUALITY_DITHER_STRENGTH: Record<GifEncodeOptions['quality'], number> = {
+  low: 32, // strong dither to compensate for 64 colors
+  medium: 24, // moderate dither for 128 colors
+  high: 16, // subtle dither for 256 colors (near-truecolor)
+};
+
+/**
+ * Bayer ordered dithering (8×8 matrix) applied in-place on RGB data.
+ *
+ * Deterministic — same pattern every frame, no inter-frame swarming.
+ * This preserves GIF LZW temporal compression unlike error-diffusion dithering.
+ *
+ * Memory: O(1) — modifies `rgb` in-place, no allocations.
+ */
+const BAYER_8X8 = [
+  [0, 32, 8, 40, 2, 34, 10, 42],
+  [48, 16, 56, 24, 50, 18, 58, 26],
+  [12, 44, 4, 36, 14, 46, 6, 38],
+  [60, 28, 52, 20, 62, 30, 54, 22],
+  [3, 35, 11, 43, 1, 33, 9, 41],
+  [51, 19, 59, 27, 49, 17, 57, 25],
+  [15, 47, 7, 39, 13, 45, 5, 37],
+  [63, 31, 55, 23, 61, 29, 53, 21],
+];
+
+function bayerDitherRGB(rgb: Uint8Array, width: number, height: number, strength: number): void {
+  if (strength <= 0) return;
+  const scale = strength / 64; // normalize 8×8 matrix values to [-strength/2, +strength/2]
+  for (let y = 0; y < height; y++) {
+    const by = BAYER_8X8[y & 7]!;
+    for (let x = 0; x < width; x++) {
+      const threshold = (by[x & 7]! - 32) * scale; // center around 0
+      const idx = (y * width + x) * 3;
+      const r = rgb[idx]!;
+      const g = rgb[idx + 1]!;
+      const b = rgb[idx + 2]!;
+      rgb[idx] = r + threshold < 0 ? 0 : r + threshold > 255 ? 255 : (r + threshold) | 0;
+      rgb[idx + 1] = g + threshold < 0 ? 0 : g + threshold > 255 ? 255 : (g + threshold) | 0;
+      rgb[idx + 2] = b + threshold < 0 ? 0 : b + threshold > 255 ? 255 : (b + threshold) | 0;
+    }
+  }
+}
 
 export type GifProgressCallback = (progress: ConversionProgress) => void;
 
@@ -39,6 +88,7 @@ export async function encodeGif(
   const w = Math.floor(srcW * opts.scale);
   const h = Math.floor(srcH * opts.scale);
   const maxColors = QUALITY_COLORS[opts.quality];
+  const ditherStrength = QUALITY_DITHER_STRENGTH[opts.quality];
   const needsResize = w !== srcW || h !== srcH;
 
   // Check codec support
@@ -103,18 +153,22 @@ export async function encodeGif(
 
     const delayMs = getFrameDurationMs(frame);
 
-    // Convert frame to RGBA — one frame at a time
-    let rgba: Uint8Array;
+    // Convert frame to RGB — one frame at a time
+    let rgb: Uint8Array;
     if (needsResize) {
-      rgba = await resizeFrameToRGBA(frame, w, h);
+      const rgba = await resizeFrameToRGBA(frame, w, h);
+      rgb = compositeAlphaToRGB(rgba);
     } else {
-      rgba = await copyFrameToRGBA(frame, w, h);
+      rgb = await copyFrameToRGB(frame, w, h);
     }
     frame.close();
 
+    // Bayer ordered dithering (pre-processing, in-place on RGB)
+    bayerDitherRGB(rgb, w, h, ditherStrength);
+
     // Quantize and write to GIF encoder immediately
-    globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
-    const indexed = applyPalette(rgba, globalPalette, 'rgb565');
+    globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
+    const indexed = applyPalette(rgb, globalPalette, 'rgb565');
     encoder.writeFrame(indexed, w, h, {
       palette: globalPalette,
       repeat: 0,
