@@ -61,6 +61,12 @@ export async function encodeGif(
   const decodedFrames: VideoFrame[] = [];
   let decodeError: Error | null = null;
 
+  // Check codec support before creating decoder
+  const support = await VideoDecoder.isConfigSupported(demux.config);
+  if (!support.supported) {
+    throw new Error(`Codec not supported: ${demux.config.codec}`);
+  }
+
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
       decodedFrames.push(frame);
@@ -74,7 +80,7 @@ export async function encodeGif(
 
   for (const chunk of demux.chunks) {
     if (signal?.aborted) {
-      decoder.close();
+      if (decoder.state !== 'closed') decoder.close();
       throw new DOMException('Cancelled', 'AbortError');
     }
     if (decodeError) break;
@@ -82,13 +88,13 @@ export async function encodeGif(
   }
 
   try {
-    await decoder.flush();
+    if (decoder.state !== 'closed') await decoder.flush();
   } catch (e) {
     if (!decodeError) {
       decodeError = e instanceof Error ? e : new Error(String(e));
     }
   }
-  decoder.close();
+  if (decoder.state !== 'closed') decoder.close();
 
   if (decodeError) throw decodeError;
 

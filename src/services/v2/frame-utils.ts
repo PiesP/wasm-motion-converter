@@ -4,44 +4,52 @@
 /**
  * Frame Processing Utilities
  *
- * Zero-copy frame processing: VideoFrame → ArrayBuffer directly,
- * avoiding the ImageBitmap → Canvas → getImageData pipeline.
+ * Zero-copy frame processing where possible:
+ * - VideoFrame.copyTo() for RGBA-compatible formats
+ * - createImageBitmap fallback for native YUV formats
  */
 
 /**
- * Copy VideoFrame pixels directly to an ArrayBuffer.
- * This avoids the 3-step ImageBitmap → Canvas → getImageData pipeline.
- *
- * @param frame - VideoFrame to copy
- * @param width - Target width (for resize)
- * @param height - Target height (for resize)
- * @returns Uint8Array of RGBA pixel data
+ * Copy VideoFrame pixels to RGBA Uint8Array.
+ * Tries direct copyTo first, falls back to Canvas for non-RGBA formats.
  */
 export async function copyFrameToRGBA(
   frame: VideoFrame,
   width: number,
   height: number
 ): Promise<Uint8Array> {
-  const size = frame.allocationSize({
-    rect: { x: 0, y: 0, width, height },
-    layout: [{ offset: 0, stride: width * 4 }],
+  // Try direct copyTo for RGBA-format frames
+  try {
+    const size = frame.allocationSize({
+      rect: { x: 0, y: 0, width, height },
+      layout: [{ offset: 0, stride: width * 4 }],
+    });
+    const buffer = new Uint8Array(size);
+    await frame.copyTo(buffer, {
+      rect: { x: 0, y: 0, width, height },
+      layout: [{ offset: 0, stride: width * 4 }],
+    });
+    return buffer;
+  } catch {
+    // Fallback for non-RGBA formats (NV12, YUV, etc.)
+  }
+
+  // Canvas-based extraction for non-RGBA formats
+  const bitmap = await createImageBitmap(frame, {
+    resizeWidth: width,
+    resizeHeight: height,
+    resizeQuality: 'pixelated',
   });
-  const buffer = new Uint8Array(size);
-  await frame.copyTo(buffer, {
-    rect: { x: 0, y: 0, width, height },
-    layout: [{ offset: 0, stride: width * 4 }],
-  });
-  return buffer;
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const imageData = ctx.getImageData(0, 0, width, height);
+  return new Uint8Array(imageData.data);
 }
 
 /**
- * Copy VideoFrame to RGBA, then strip alpha to RGB.
- * Uses direct VideoFrame.copyTo() — no intermediate allocations.
- *
- * @param frame - VideoFrame to copy
- * @param width - Target width
- * @param height - Target height
- * @returns Uint8Array of RGB pixel data (3 bytes per pixel)
+ * Copy VideoFrame to RGB (strip alpha).
  */
 export async function copyFrameToRGB(
   frame: VideoFrame,
@@ -52,7 +60,6 @@ export async function copyFrameToRGB(
   const pixelCount = width * height;
   const rgb = new Uint8Array(pixelCount * 3);
 
-  // RGBA → RGB: skip every 4th byte (alpha)
   for (let i = 0; i < pixelCount; i++) {
     const srcIdx = i * 4;
     const dstIdx = i * 3;
@@ -66,19 +73,12 @@ export async function copyFrameToRGB(
 
 /**
  * Resize a VideoFrame to target dimensions using createImageBitmap.
- * Returns RGBA pixel data.
- *
- * @param frame - Source VideoFrame
- * @param width - Target width
- * @param height - Target height
- * @returns Uint8Array of RGBA pixel data
  */
 export async function resizeFrameToRGBA(
   frame: VideoFrame,
   width: number,
   height: number
 ): Promise<Uint8Array> {
-  // Use createImageBitmap with resize for GPU-accelerated scaling
   const bitmap = await createImageBitmap(frame, {
     resizeWidth: width,
     resizeHeight: height,
@@ -106,10 +106,6 @@ export function getFrameDurationMs(frame: VideoFrame): number {
 /**
  * Alpha composite: blend RGBA pixels over a black background.
  * Converts RGBA → RGB by applying alpha pre-multiplication.
- * This avoids dark artifacts where alpha < 255.
- *
- * @param rgba - RGBA pixel data (4 bytes per pixel)
- * @returns RGB pixel data (3 bytes per pixel)
  */
 export function compositeAlphaToRGB(rgba: Uint8Array): Uint8Array {
   const pixelCount = rgba.length / 4;
