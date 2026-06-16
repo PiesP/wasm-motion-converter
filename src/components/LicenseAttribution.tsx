@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
+// Copyright (c) 2025-2026 PiesP
 
 import type { Component } from 'solid-js';
 
 const LINKS = {
-  FFMPEG_WASM: 'https://github.com/ffmpegwasm/ffmpeg.wasm',
-  FFMPEG_ORG: 'https://ffmpeg.org/',
+  GIFENC: 'https://github.com/mattdesl/gifenc',
+  WASM_WEBP: 'https://github.com/GoogleChromeLabs/wasm-webp',
+  MEDIABUNNY: 'https://github.com/w3reality/mediabunny',
   LICENSES: '/LICENSES.md',
   GITHUB_ISSUES: 'https://github.com/PiesP/wasm-motion-converter/issues',
 } as const;
@@ -20,25 +21,35 @@ const LicenseAttribution: Component = () => (
       <p>
         Powered by{' '}
         <a
-          href={LINKS.FFMPEG_WASM}
+          href={LINKS.GIFENC}
           target="_blank"
           rel="noopener noreferrer"
           class="text-blue-600 dark:text-blue-400 hover:underline"
-          aria-label="ffmpeg.wasm on GitHub (opens in new tab)"
+          aria-label="gifenc on GitHub (opens in new tab)"
         >
-          ffmpeg.wasm
-        </a>{' '}
-        (MIT License) using{' '}
+          gifenc
+        </a>
+        {', '}
         <a
-          href={LINKS.FFMPEG_ORG}
+          href={LINKS.WASM_WEBP}
           target="_blank"
           rel="noopener noreferrer"
           class="text-blue-600 dark:text-blue-400 hover:underline"
-          aria-label="FFmpeg official website (opens in new tab)"
+          aria-label="wasm-webp on GitHub (opens in new tab)"
         >
-          FFmpeg
+          wasm-webp
+        </a>
+        {', and '}
+        <a
+          href={LINKS.MEDIABUNNY}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-blue-600 dark:text-blue-400 hover:underline"
+          aria-label="mediabunny on GitHub (opens in new tab)"
+        >
+          mediabunny
         </a>{' '}
-        (LGPL 2.1+ License)
+        — processing happens entirely in your browser via WebCodecs.
       </p>
       <p>
         <a

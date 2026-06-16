@@ -1,41 +1,13 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
-
-/**
- * Application Types
- *
- * Core type definitions for application-wide state and configuration.
- * These types are used across stores, components, and services to ensure
- * type safety and consistency throughout the application.
- */
+// Copyright (c) 2025-2026 PiesP
 
 /**
  * Application state
  *
- * Represents the high-level workflow state of the application.
- *
- * - `idle`: Initial state, waiting for user to select a video file
- * - `loading-ffmpeg`: Downloading and initializing FFmpeg.wasm (~30MB)
- * - `analyzing`: Extracting video metadata (duration, dimensions, codec)
+ * - `idle`: Waiting for user to select a video file
+ * - `analyzing`: Extracting video metadata via mediabunny
  * - `converting`: Active video conversion in progress
- * - `done`: Conversion completed successfully, results available
- * - `error`: An error occurred, error message displayed to user
- *
- * @example
- * // In a store
- * export const [appState, setAppState] = createSignal<AppState>('idle');
- *
- * @example
- * // In a component
- * <Show when={appState() === 'converting'}>
- *   <ConversionProgress />
- * </Show>
+ * - `done`: Conversion completed successfully
+ * - `error`: An error occurred
  */
-export type AppState =
-  | 'idle'
-  | 'loading-ffmpeg'
-  | 'analyzing'
-  | 'converting'
-  | 'cancelling'
-  | 'done'
-  | 'error';
+export type AppState = 'idle' | 'analyzing' | 'converting' | 'cancelling' | 'done' | 'error';
