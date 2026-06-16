@@ -16,7 +16,8 @@ type PerformancePhase =
   | 'webp-encode'
   | 'gif-fallback'
   | 'webp-fallback'
-  | 'frame-extract';
+  | 'frame-extract'
+  | 'frame-extract-streaming';
 
 /**
  * Timing entry for a single performance phase

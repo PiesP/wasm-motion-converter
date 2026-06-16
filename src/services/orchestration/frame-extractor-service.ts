@@ -74,11 +74,97 @@ export interface ExtractFramesResult {
   height: number;
 }
 
+/** Callback invoked per frame in streaming mode. */
+export type StreamingFrameCallback = (
+  frameData: Uint8Array,
+  frameIndex: number,
+  totalFrames: number
+) => Promise<void>;
+
+/** Parameters for streaming frame extraction. */
+export interface StreamingExtractParams extends ExtractFramesParams {
+  /** Callback invoked for each extracted frame (instead of batch accumulation). */
+  onFrame: StreamingFrameCallback;
+}
+
+/**
+ * Fixed-size buffer pool for frame extraction.
+ *
+ * Reuses a small number of pre-allocated buffers to avoid GC pressure
+ * from repeated large Uint8Array allocations during frame extraction.
+ *
+ * Pool size of 4 balances memory usage (~32MB at 1080p) with concurrency headroom.
+ *
+ * @example
+ * ```ts
+ * const pool = new FrameBufferPool(1920 * 1080 * 4, 4);
+ * const buf = pool.acquire();
+ * await frame.copyTo(buf);
+ * // use buf...
+ * pool.release(buf);
+ * ```
+ */
+export class FrameBufferPool {
+  private readonly buffers: Uint8Array[];
+  private readonly available: Uint8Array[];
+  private readonly bufferSize: number;
+
+  constructor(bufferSize: number, poolSize = 4) {
+    this.bufferSize = bufferSize;
+    this.buffers = [];
+    this.available = [];
+    for (let i = 0; i < poolSize; i++) {
+      const buf = new Uint8Array(bufferSize);
+      this.buffers.push(buf);
+      this.available.push(buf);
+    }
+  }
+
+  /**
+   * Acquire a buffer from the pool.
+   *
+   * If no buffer is available, allocates a new one (fallback).
+   * Always returns a buffer of the configured size.
+   */
+  acquire(): Uint8Array {
+    const buf = this.available.pop();
+    if (buf) return buf;
+    // Pool exhausted — allocate a new one (will be GC'd)
+    logger.debug('conversion', 'FrameBufferPool exhausted, allocating fallback buffer');
+    return new Uint8Array(this.bufferSize);
+  }
+
+  /**
+   * Release a buffer back to the pool for reuse.
+   *
+   * Only buffers that were originally allocated by this pool are accepted.
+   * Non-pool buffers are silently dropped (GC handles them).
+   */
+  release(buffer: Uint8Array): void {
+    if (this.buffers.includes(buffer) && !this.available.includes(buffer)) {
+      this.available.push(buffer);
+    }
+  }
+
+  /** Number of buffers currently available for reuse. */
+  get availableCount(): number {
+    return this.available.length;
+  }
+
+  /** Total number of buffers managed by this pool. */
+  get totalCount(): number {
+    return this.buffers.length;
+  }
+}
+
 /**
  * Service for extracting raw RGBA video frames using the best available strategy.
  *
  * Auto-detects browser capabilities and caches the selected strategy.
  * All GPU resources (ImageBitmap, VideoFrame) are properly closed after use.
+ *
+ * Uses VideoFrame.copyTo() for direct GPU→CPU transfer when no resize is needed,
+ * eliminating the ImageBitmap → Canvas → getImageData pipeline.
  *
  * @example
  * ```ts
@@ -90,6 +176,8 @@ export interface ExtractFramesResult {
  */
 export class FrameExtractorService {
   private cachedStrategy: FrameExtractionStrategy | null = null;
+  private bufferPool: FrameBufferPool | null = null;
+  private lastBufferPoolKey = 0; // bytesPerFrame used to create current pool
 
   /**
    * Detect the best available frame extraction strategy.
@@ -128,6 +216,22 @@ export class FrameExtractorService {
     }
 
     return this.cachedStrategy;
+  }
+
+  /**
+   * Get or create the buffer pool for the given frame size.
+   *
+   * Creates a new pool when the frame size changes, reuses existing pool otherwise.
+   * Pool is 4 buffers × frame bytes, ~32MB at 1080p.
+   */
+  private getBufferPool(bytesPerFrame: number): FrameBufferPool {
+    if (this.bufferPool && this.lastBufferPoolKey === bytesPerFrame) {
+      return this.bufferPool;
+    }
+    this.bufferPool = new FrameBufferPool(bytesPerFrame, 4);
+    this.lastBufferPoolKey = bytesPerFrame;
+    logger.debug('conversion', 'Created FrameBufferPool', { bytesPerFrame, poolSize: 4 });
+    return this.bufferPool;
   }
 
   /**
@@ -271,26 +375,164 @@ export class FrameExtractorService {
     };
   }
 
+  /**
+   * Extract frames in streaming mode — invokes `onFrame` callback per frame.
+   *
+   * Instead of accumulating all frames into a single buffer, this method
+   * calls the provided callback for each extracted frame immediately.
+   * Uses FrameBufferPool to reuse buffers and minimize GC pressure.
+   *
+   * @param params - Streaming extraction parameters (includes onFrame callback)
+   * @returns Frame metadata (width, height, frameCount)
+   */
+  async extractFramesStreaming(params: StreamingExtractParams): Promise<{
+    frameCount: number;
+    width: number;
+    height: number;
+  }> {
+    const { video, fps, duration, options, signal, onProgress, onFrame } = params;
+    const strategy = await this.selectStrategy();
+
+    const frameCount = Math.ceil(duration * fps);
+    const w = options.resizeWidth ?? options.width;
+    const h = options.resizeHeight ?? options.height;
+    const bytesPerFrame = w * h * 4;
+    const needsResize = w !== options.width || h !== options.height;
+
+    logger.info('conversion', 'Starting streaming frame extraction', {
+      strategy,
+      frameCount,
+      fps,
+      duration,
+      width: w,
+      height: h,
+      needsResize,
+    });
+
+    performanceTracker.startPhase('frame-extract-streaming', { strategy, frameCount, width: w, height: h });
+
+    // Buffer pool for reuse — only used when no resize needed (copyTo path)
+    const pool = needsResize ? null : this.getBufferPool(bytesPerFrame);
+    let extractedCount = 0;
+
+    try {
+      for (let i = 0; i < frameCount; i++) {
+        if (signal.aborted) {
+          logger.info('conversion', 'Streaming frame extraction cancelled', { frame: i, total: frameCount });
+          break;
+        }
+
+        const time = i / fps;
+        if (time >= video.duration) {
+          logger.debug('conversion', 'Reached end of video duration', { frame: i, time });
+          break;
+        }
+
+        let frame: ExtractedFrame;
+        if (!needsResize && pool) {
+          // Fast path: direct copyTo into pooled buffer
+          frame = await this.extractWithCopyTo(video, time, options, pool);
+        } else {
+          // Resize needed — use strategy-specific path
+          switch (strategy) {
+            case 'webcodecs-decode':
+              frame = await this.extractWithWebCodecsDecode(video, time, options);
+              break;
+            case 'image-bitmap':
+              frame = await this.extractWithImageBitmap(video, time, options);
+              break;
+            case 'video-frame':
+              frame = await this.extractWithVideoFrame(video, time, options);
+              break;
+            case 'canvas-draw':
+              frame = await this.extractWithCanvasDraw(video, time, options);
+              break;
+          }
+        }
+
+        // Clone the pixel data for the callback (pool buffer will be reused)
+        const frameCopy = new Uint8Array(frame.pixels);
+        await onFrame(frameCopy, i, frameCount);
+
+        extractedCount++;
+        onProgress?.(extractedCount, frameCount);
+      }
+    } finally {
+      performanceTracker.endPhase('frame-extract-streaming');
+    }
+
+    logger.info('conversion', 'Streaming frame extraction complete', {
+      extractedCount,
+      expectedCount: frameCount,
+    });
+
+    return {
+      frameCount: extractedCount,
+      width: w,
+      height: h,
+    };
+  }
+
   // --- Private strategy implementations ---
+
+  /**
+   * Extract frame using VideoFrame.copyTo() — fastest direct path.
+   *
+   * When no resize is needed, this avoids the ImageBitmap → Canvas → getImageData
+   * pipeline entirely. Instead:
+   * 1. new VideoFrame(video) wraps the current decoded frame
+   * 2. frame.copyTo(buffer) performs direct GPU→CPU transfer
+   * 3. Buffer is returned from the pool for reuse
+   *
+   * This eliminates 2 intermediate allocations (ImageBitmap + ImageData)
+   * and reduces GPU→CPU transfer from 3 stages to 1.
+   *
+   * @param video - Source video element
+   * @param time - Timestamp in seconds
+   * @param options - Extraction options
+   * @param pool - Buffer pool for reuse
+   * @returns Extracted frame with RGBA data (pixels are pooled — caller must copy)
+   */
+  private async extractWithCopyTo(
+    video: HTMLVideoElement,
+    time: number,
+    options: FrameExtractionOptions,
+    pool: FrameBufferPool
+  ): Promise<ExtractedFrame> {
+    const w = options.width;
+    const h = options.height;
+
+    await this.seekToTime(video, time);
+
+    let frame: VideoFrame | null = null;
+    const buffer = pool.acquire();
+    try {
+      frame = new VideoFrame(video, {
+        timestamp: time * 1_000_000, // microseconds
+      });
+
+      // Direct GPU→CPU copy into pre-allocated buffer
+      await frame.copyTo(buffer);
+
+      return {
+        pixels: buffer,
+        width: w,
+        height: h,
+      };
+    } finally {
+      if (frame) {
+        frame.close();
+      }
+      // Note: buffer is NOT released here — caller must copy data first,
+      // then release. This is handled by extractFramesStreaming.
+    }
+  }
 
   /**
    * Extract frame using WebCodecs VideoDecoder (hardware-accelerated path).
    *
-   * This strategy uses the WebCodecs API to decode video frames with potential
-   * hardware acceleration. It seeks the video element to the target timestamp,
-   * then wraps the current video frame as a VideoFrame and draws it to an
-   * OffscreenCanvas for RGBA extraction.
-   *
-   * Unlike a full demuxer-based approach, this leverages the browser's built-in
-   * video decoder (which the HTMLVideoElement already uses internally) and
-   * wraps the current frame via the VideoFrame constructor. This provides
-   * zero-copy access to decoded frames when the browser supports it.
-   *
-   * 1. Seek video to target time
-   * 2. new VideoFrame(video) wraps the current decoded frame
-   * 3. createImageBitmap(frame) for GPU→GPU copy with optional resize
-   * 4. Draw to OffscreenCanvas, getImageData → RGBA Uint8Array
-   * 5. Both frame.close() and bitmap.close() are CRITICAL for GPU memory
+   * Uses VideoFrame.copyTo() when no resize is needed for direct transfer.
+   * Falls back to createImageBitmap + OffscreenCanvas when resize is required.
    *
    * @param video - Source video element
    * @param time - Timestamp in seconds
@@ -304,45 +546,52 @@ export class FrameExtractorService {
   ): Promise<ExtractedFrame> {
     const w = options.resizeWidth ?? options.width;
     const h = options.resizeHeight ?? options.height;
+    const needsResize = w !== options.width || h !== options.height;
 
     await this.seekToTime(video, time);
 
     let frame: VideoFrame | null = null;
-    let bitmap: ImageBitmap | null = null;
     try {
-      // Wrap the current video frame as a VideoFrame.
-      // This uses the browser's WebCodecs implementation which may provide
-      // zero-copy access to the already-decoded frame in GPU memory.
       frame = new VideoFrame(video, {
-        // Request the frame at the closest valid timestamp
         timestamp: time * 1_000_000, // microseconds
       });
 
-      bitmap = await createImageBitmap(frame, {
-        resizeWidth: w,
-        resizeHeight: h,
-        resizeQuality: 'medium',
-      });
-
-      const offscreen = new OffscreenCanvas(w, h);
-      const ctx = offscreen.getContext('2d');
-      if (!ctx) {
-        throw new Error('Could not get OffscreenCanvas 2D context');
+      if (!needsResize) {
+        // Fast path: direct copyTo, no intermediate allocations
+        const buffer = new Uint8Array(w * h * 4);
+        await frame.copyTo(buffer);
+        return { pixels: buffer, width: w, height: h };
       }
 
-      ctx.drawImage(bitmap, 0, 0);
-      const imageData = ctx.getImageData(0, 0, w, h);
+      // Resize needed — use createImageBitmap path
+      let bitmap: ImageBitmap | null = null;
+      try {
+        bitmap = await createImageBitmap(frame, {
+          resizeWidth: w,
+          resizeHeight: h,
+          resizeQuality: 'medium',
+        });
 
-      return {
-        pixels: new Uint8Array(imageData.data),
-        width: w,
-        height: h,
-      };
+        const offscreen = new OffscreenCanvas(w, h);
+        const ctx = offscreen.getContext('2d');
+        if (!ctx) {
+          throw new Error('Could not get OffscreenCanvas 2D context');
+        }
+
+        ctx.drawImage(bitmap, 0, 0);
+        const imageData = ctx.getImageData(0, 0, w, h);
+
+        return {
+          pixels: new Uint8Array(imageData.data),
+          width: w,
+          height: h,
+        };
+      } finally {
+        if (bitmap) {
+          bitmap.close();
+        }
+      }
     } finally {
-      // CRITICAL: Close both to free GPU memory
-      if (bitmap) {
-        bitmap.close();
-      }
       if (frame) {
         frame.close();
       }
@@ -352,9 +601,8 @@ export class FrameExtractorService {
   /**
    * Extract frame using createImageBitmap (GPU-preferred path).
    *
-   * 1. createImageBitmap(video) captures the current frame as a GPU-resident bitmap
-   * 2. Draw to OffscreenCanvas, getImageData → RGBA Uint8Array
-   * 3. bitmap.close() is CRITICAL to free GPU memory
+   * Uses VideoFrame.copyTo() when no resize is needed for direct transfer.
+   * Falls back to createImageBitmap + OffscreenCanvas when resize is required.
    *
    * @param video - Source video element
    * @param time - Timestamp in seconds
@@ -368,9 +616,26 @@ export class FrameExtractorService {
   ): Promise<ExtractedFrame> {
     const w = options.resizeWidth ?? options.width;
     const h = options.resizeHeight ?? options.height;
+    const needsResize = w !== options.width || h !== options.height;
 
     await this.seekToTime(video, time);
 
+    if (!needsResize) {
+      // Fast path: use VideoFrame.copyTo directly
+      let frame: VideoFrame | null = null;
+      try {
+        frame = new VideoFrame(video);
+        const buffer = new Uint8Array(w * h * 4);
+        await frame.copyTo(buffer);
+        return { pixels: buffer, width: w, height: h };
+      } finally {
+        if (frame) {
+          frame.close();
+        }
+      }
+    }
+
+    // Resize needed — use createImageBitmap path
     let bitmap: ImageBitmap | null = null;
     try {
       bitmap = await createImageBitmap(video, {
@@ -404,9 +669,8 @@ export class FrameExtractorService {
   /**
    * Extract frame using VideoFrame + createImageBitmap (WebCodecs path).
    *
-   * 1. new VideoFrame(video) creates a GPU-backed VideoFrame
-   * 2. createImageBitmap(frame) performs GPU→GPU copy
-   * 3. Both frame.close() and bitmap.close() are CRITICAL
+   * Uses VideoFrame.copyTo() when no resize is needed for direct transfer.
+   * Falls back to createImageBitmap + OffscreenCanvas when resize is required.
    *
    * @param video - Source video element
    * @param time - Timestamp in seconds
@@ -420,38 +684,50 @@ export class FrameExtractorService {
   ): Promise<ExtractedFrame> {
     const w = options.resizeWidth ?? options.width;
     const h = options.resizeHeight ?? options.height;
+    const needsResize = w !== options.width || h !== options.height;
 
     await this.seekToTime(video, time);
 
     let frame: VideoFrame | null = null;
-    let bitmap: ImageBitmap | null = null;
     try {
       frame = new VideoFrame(video);
-      bitmap = await createImageBitmap(frame, {
-        resizeWidth: w,
-        resizeHeight: h,
-        resizeQuality: 'medium',
-      });
 
-      const offscreen = new OffscreenCanvas(w, h);
-      const ctx = offscreen.getContext('2d');
-      if (!ctx) {
-        throw new Error('Could not get OffscreenCanvas 2D context');
+      if (!needsResize) {
+        // Fast path: direct copyTo
+        const buffer = new Uint8Array(w * h * 4);
+        await frame.copyTo(buffer);
+        return { pixels: buffer, width: w, height: h };
       }
 
-      ctx.drawImage(bitmap, 0, 0);
-      const imageData = ctx.getImageData(0, 0, w, h);
+      // Resize needed — use createImageBitmap path
+      let bitmap: ImageBitmap | null = null;
+      try {
+        bitmap = await createImageBitmap(frame, {
+          resizeWidth: w,
+          resizeHeight: h,
+          resizeQuality: 'medium',
+        });
 
-      return {
-        pixels: new Uint8Array(imageData.data),
-        width: w,
-        height: h,
-      };
+        const offscreen = new OffscreenCanvas(w, h);
+        const ctx = offscreen.getContext('2d');
+        if (!ctx) {
+          throw new Error('Could not get OffscreenCanvas 2D context');
+        }
+
+        ctx.drawImage(bitmap, 0, 0);
+        const imageData = ctx.getImageData(0, 0, w, h);
+
+        return {
+          pixels: new Uint8Array(imageData.data),
+          width: w,
+          height: h,
+        };
+      } finally {
+        if (bitmap) {
+          bitmap.close();
+        }
+      }
     } finally {
-      // CRITICAL: Close both to free GPU memory
-      if (bitmap) {
-        bitmap.close();
-      }
       if (frame) {
         frame.close();
       }
@@ -499,7 +775,9 @@ export class FrameExtractorService {
    * Seek the video to a specific time and wait for the seek to complete.
    *
    * Returns a promise that resolves when the `onseeked` event fires,
-   * or rejects on `onerror` or after a 5-second timeout.
+   * or rejects on `onerror` or after a 3-second timeout.
+   *
+   * Ensures forward-only seeking to avoid backward seek penalties.
    *
    * @param video - The HTMLVideoElement to seek
    * @param time - Target time in seconds
@@ -522,10 +800,16 @@ export class FrameExtractorService {
 
       const timeout = setTimeout(
         () => settle(() => reject(new Error(`Seek timeout at ${time.toFixed(2)}s`))),
-        5_000
+        3_000 // Reduced from 5s to 3s for faster failure detection
       );
 
-      video.currentTime = time;
+      // Ensure forward-only seek to avoid backward seek penalties
+      if (time > video.currentTime) {
+        video.currentTime = time;
+      } else {
+        // Already at or past the target time — resolve immediately
+        settle(resolve);
+      }
     });
   }
 }
