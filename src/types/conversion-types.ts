@@ -92,27 +92,6 @@ export interface ConversionSettings {
  * from settings, plus optional metadata for adaptive behavior (e.g., timeout
  * calculation based on duration).
  *
- * @example
- * const options: ConversionOptions = {
- *   quality: 'high',
- *   scale: 1.0,
- *   duration: 5.0 // 5 seconds video
- * };
- */
-export interface ConversionOptions {
-  /** Quality level (low, medium, high) */
-  quality: ConversionQuality;
-  /** Scaling factor (0.5, 0.75, 1.0) */
-  scale: ConversionScale;
-  /** Video duration in seconds (for adaptive timeout calculation) */
-  duration?: number;
-  /** Trim start in seconds (0 = beginning of video) */
-  trimStart?: number;
-  /** Trim end in seconds (0 = end of video) */
-  trimEnd?: number;
-}
-
-/**
  * Optional metadata attached to output blobs for UI display
  */
 export interface ConversionBlobMetadata {
@@ -254,6 +233,3 @@ export interface VideoMetadata {
   /** Video bitrate (bits per second) */
   bitrate: number;
 }
-
-/** Conversion path types */
-export type ConversionPath = 'gpu' | 'cpu' | 'software';

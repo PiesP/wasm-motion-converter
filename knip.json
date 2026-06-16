@@ -12,6 +12,7 @@
     "@t": ["src/types"]
   },
   "ignore": ["**/*.d.ts"],
+  "ignoreBinaries": ["sha256sum"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["@types/dom-webcodecs"]
 }
