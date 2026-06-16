@@ -54,3 +54,7 @@ export const WEBP_MAX_FRAMES = 9000;
 
 export const DURATION_WARNING_GIF_MEDIUM = 30_000;
 export const DURATION_WARNING_GIF_LONG = 60_000;
+
+/** GIF output pixel count threshold (921,600 = 1280×720) — warn users
+ *  about large file sizes when output exceeds ~720p at 100% scale. */
+export const GIF_HIGH_PIXEL_WARNING_THRESHOLD = 921_600;

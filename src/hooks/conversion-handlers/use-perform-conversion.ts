@@ -49,7 +49,11 @@ export async function handleConvert(runtime: ConversionRuntimeController): Promi
   const settings = conversionSettings();
 
   try {
-    const durationValidation = await validateVideoDuration(file, settings.format);
+    const md = videoMetadata();
+    const durationValidation = await validateVideoDuration(file, settings.format, {
+      resolution: md ? { width: md.width, height: md.height } : undefined,
+      scale: settings.scale,
+    });
     const needsConfirmation = durationValidation.warnings.some(
       (warning) => warning.requiresConfirmation
     );
@@ -94,8 +98,11 @@ async function performConversion(
   const { isActive, runId } = runtime.startNewRun();
 
   try {
-    setAppState('converting');
-    setConversionStatusMessage('');
+    batch(() => {
+      setAppState('converting');
+      setConversionStatusMessage('');
+      setConversionResults([]);
+    });
     const startTimeMs = performance.now();
     runtime.prepareForNewConversion(startTimeMs);
     setErrorContext(null);
