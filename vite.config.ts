@@ -179,7 +179,7 @@ function importMapPlugin(): Plugin {
         );
       }
 
-      const criticalDeps = ['mp4box', 'web-demuxer', '@ffmpeg/core-mt'] as const;
+      const criticalDeps = ['@ffmpeg/core-mt'] as const;
 
       const modulePreloadHints = criticalDeps
         .map((dep) => {
@@ -567,13 +567,6 @@ function sriGenerationPlugin(): Plugin {
           for (const file of ['ffmpeg-core.js', 'ffmpeg-core.wasm', 'ffmpeg-core.worker.js']) {
             extraUrls.push({ url: `${jsdelivrBase}/${file}`, provider: 'jsdelivr' });
           }
-        }
-
-        // esm.sh redirects ?target=esnext to /esnext/{pkg}.mjs for non-solid-js packages.
-        // Register the post-redirect URL so SRI verification succeeds at runtime.
-        if (pkg === 'mp4box' || pkg === 'web-demuxer') {
-          const esmShEntry = `https://esm.sh/${pkg}@${version}/esnext/${pkg}.mjs`;
-          extraUrls.push({ url: esmShEntry, provider: 'esm.sh' });
         }
 
         for (const subpath of subpaths) {

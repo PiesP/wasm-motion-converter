@@ -83,9 +83,7 @@ export function buildRuntimeModuleUrls(packageName: string): string[] {
 /** Packages installed as direct dependencies (bundled, not CDN-loaded). */
 const LOCAL_MODULES: string[] = (() => {
   // Generated at build time from dependencies ∩ cdnDependencies keys
-  // Since mp4box and web-demuxer moved to dependencies only (not in cdnDependencies),
-  // they won't have CDN URLs generated for them at all.
-  // This array is a safety net for the runtime loader.
+  // mp4box and web-demuxer were removed — only @ffmpeg/core-mt remains as a CDN dependency.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const pkg = require('../../package.json') as {
