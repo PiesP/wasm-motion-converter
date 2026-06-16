@@ -409,7 +409,12 @@ export class FrameExtractorService {
       needsResize,
     });
 
-    performanceTracker.startPhase('frame-extract-streaming', { strategy, frameCount, width: w, height: h });
+    performanceTracker.startPhase('frame-extract-streaming', {
+      strategy,
+      frameCount,
+      width: w,
+      height: h,
+    });
 
     // Buffer pool for reuse — only used when no resize needed (copyTo path)
     const pool = needsResize ? null : this.getBufferPool(bytesPerFrame);
@@ -418,7 +423,10 @@ export class FrameExtractorService {
     try {
       for (let i = 0; i < frameCount; i++) {
         if (signal.aborted) {
-          logger.info('conversion', 'Streaming frame extraction cancelled', { frame: i, total: frameCount });
+          logger.info('conversion', 'Streaming frame extraction cancelled', {
+            frame: i,
+            total: frameCount,
+          });
           break;
         }
 
