@@ -187,10 +187,9 @@ export class FrameAssemblerService {
       const chunkName = `raw_frame_${String(frameIdx).padStart(5, '0')}.raw`;
       // Ensure we only write the visible portion of the Uint8Array
       // (not the underlying ArrayBuffer which may be larger)
-      const dataToWrite =
-        frameData.byteOffset === 0 && frameData.buffer.byteLength === frameData.byteLength
-          ? frameData
-          : frameData.slice();
+      const dataToWrite = frameData.byteOffset === 0 && frameData.buffer.byteLength === frameData.byteLength
+        ? frameData
+        : frameData.slice();
       await ffmpeg.writeFile(chunkName, dataToWrite);
       chunkFileNames.push(chunkName);
       frameIdx++;
@@ -214,10 +213,9 @@ export class FrameAssemblerService {
       let actualTotalBytes = 0;
       for (const chunkName of chunkFileNames) {
         const chunkData = await ffmpeg.readFile(chunkName);
-        const chunkBytes =
-          chunkData instanceof Uint8Array
-            ? chunkData
-            : new Uint8Array(chunkData.split('').map((c) => c.charCodeAt(0)));
+        const chunkBytes = chunkData instanceof Uint8Array
+          ? chunkData
+          : new Uint8Array(chunkData.split('').map((c) => c.charCodeAt(0)));
         chunkDataArray.push(chunkBytes);
         actualTotalBytes += chunkBytes.byteLength;
       }
