@@ -37,7 +37,9 @@ export async function demuxVideo(request: ConversionRequest): Promise<DemuxResul
 
   const sink = new EncodedPacketSink(videoTrack);
 
-  const startPacket = await sink.getPacket(request.trimStart);
+  // Start from a keyframe — the VideoDecoder requires it after configure().
+  const startPacket =
+    (await sink.getKeyPacket(request.trimStart)) ?? (await sink.getPacket(request.trimStart));
   const endPacket = await sink.getPacket(request.trimEnd);
 
   const chunks: EncodedVideoChunk[] = [];
