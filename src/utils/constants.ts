@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
-
-import { getRuntimeDepVersion } from '@utils/cdn-config';
+// Copyright (c) 2025-2026 PiesP
 
 /**
  * Application Configuration Constants
@@ -55,31 +53,6 @@ export const WEBCODECS_NATIVE_CODECS = [
   'hev1',
 ];
 
-/**
- * Codecs where FFmpeg WASM path is preferred over WebCodecs.
- * These codecs have poor or inconsistent WebCodecs browser support.
- */
-export const FFMPEG_PREFERRED_CODECS = [
-  'theora',
-  'vp6',
-  'vp7',
-  'mpeg4',
-  'mp4v',
-  'h263',
-  'prores',
-  'dnxhd',
-  'cinepak',
-  'sorenson',
-];
-
-/**
- * Codecs that FFmpeg WASM (@ffmpeg/core-mt 0.12.10) cannot decode.
- * These codecs require browser software decode (<video> + Canvas).
- *
- * AV1: ffmpeg-core-mt doesn't include libdav1d/libaom decoder.
- */
-export const FFMPEG_DECODE_UNSUPPORTED_CODECS = ['av1', 'av01'];
-
 // ============================================================================
 // SUPPORTED VIDEO FORMATS
 // ============================================================================
@@ -124,79 +97,37 @@ export const SUPPORTED_VIDEO_EXTENSIONS = [
 ];
 
 // ============================================================================
-// FFmpeg CORE CONFIGURATION
-// ============================================================================
-
-/** FFmpeg.wasm core version (multithreaded build) */
-export const FFMPEG_CORE_VERSION = getRuntimeDepVersion('@ffmpeg/core-mt');
-
-/**
- * CDN URLs for FFmpeg core files (JavaScript, WebAssembly, workers).
- * Uses npm and unpkg mirrors for redundancy and global availability.
- *
- * @legacy Use the unified CDN system from @utils/cdn-config for new code.
- * Still referenced by ffmpeg-core-service.ts for backward-compatible loading.
- * FFmpeg loading uses all 3 CDN providers (esm.sh, jsdelivr, unpkg).
- * This constant is kept for backward compatibility only.
- */
-export const FFMPEG_CORE_BASE_URLS = [
-  `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
-  `https://unpkg.com/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
-];
-
-// ============================================================================
 // CONVERSION QUALITY PRESETS
 // ============================================================================
 
 /**
  * Quality presets for GIF and WebP conversions.
  *
- * GIF Presets (FFmpeg palettegen/paletteuse):
+ * GIF Presets (gifenc quantize):
  * - `low`: 10 FPS, 64 colors (smallest file, lowest quality)
  * - `medium`: 15 FPS, 128 colors (balanced quality and size)
- * - `high`: 20 FPS, 255 colors (max quality)
+ * - `high`: 20 FPS, 256 colors (max quality)
  *
- * WebP Presets (WASM-optimized libwebp):
- * - `low`: 10 FPS, 50% quality, compressionLevel 2 (fastest, smallest)
- * - `medium`: 15 FPS, 55% quality, compressionLevel 2 (balanced)
- * - `high`: 20 FPS, 70% quality, compressionLevel 3 (best quality within WASM limits)
+ * WebP Presets (wasm-webp):
+ * - `low`: 10 FPS, 50 quality
+ * - `medium`: 15 FPS, 75 quality
+ * - `high`: 20 FPS, 95 quality
  */
 export const QUALITY_PRESETS = {
   gif: {
     low: { fps: 10, colors: 64 },
     medium: { fps: 15, colors: 128 },
-    high: { fps: 20, colors: 255 },
+    high: { fps: 20, colors: 256 },
   },
   webp: {
-    // WASM-optimized settings for libwebp encoding in FFmpeg
-    // method 0 + compressionLevel 1 for speed (WASM VP8 encoding is very slow)
-    low: {
-      fps: 10,
-      quality: 50,
-      preset: 'picture',
-      compressionLevel: 1, // Reduced from 2 for speed
-      method: 0, // Reduced from 2 — fastest encoding
-    },
-    medium: {
-      fps: 15,
-      quality: 55,
-      preset: 'picture',
-      compressionLevel: 1, // Reduced from 2 for speed
-      method: 0, // Reduced from 2 — fastest encoding
-    },
-    high: {
-      fps: 20,
-      quality: 70,
-      preset: 'default',
-      compressionLevel: 2, // Reduced from 3
-      method: 1, // Reduced from 3 — balanced speed/quality
-    },
+    low: { fps: 10, quality: 50 },
+    medium: { fps: 15, quality: 75 },
+    high: { fps: 20, quality: 95 },
   },
 } as const;
 
 /**
  * Get the target FPS for a given quality preset.
- * Used by conversion paths to cap the output framerate.
  */
 export function getTargetFps(quality: 'low' | 'medium' | 'high'): number {
   return QUALITY_PRESETS.gif[quality].fps;
@@ -215,58 +146,25 @@ export function getTargetFps(quality: 'low' | 'medium' | 'high'): number {
 export const MAX_TOTAL_PIXEL_COUNT = 500_000_000;
 
 // ============================================================================
-// TIMEOUT CONFIGURATIONS (milliseconds)
+// TIMEOUT CONFIGURATION
+// ============================================================================
 // ============================================================================
 
-/** Timeout for FFmpeg initialization and library loading (90 seconds) */
-export const TIMEOUT_FFMPEG_INIT = 90_000;
-
-/** Timeout for worker isolation check via SharedArrayBuffer (10 seconds) */
-export const TIMEOUT_FFMPEG_WORKER_CHECK = 10_000;
-
-/** Timeout for video metadata analysis (30 seconds) */
-export const TIMEOUT_VIDEO_ANALYSIS = 30_000;
-
-// ============================================================================
-// DYNAMIC TIMEOUT CONFIGURATION
-// ============================================================================
-
-/**
- * Format-specific timeout configuration for adaptive timeout calculation.
- *
- * Timeout formula: `baseTimeout + (videoDurationSeconds * perSecondMultiplier)`
- * Result is capped at `maxTimeout`.
- *
- * **WebP (fastest codec):**
- * - Base: 60s, per-second: 6s, max: 120s
- * - A 10s video gets 60 + 60 = 120s timeout
- *
- * **GIF (slowest format, Gifsicle tier):**
- * - Base: 90s, per-second: 2s, max: 360s (6 minutes)
- * - A 60s video gets 90 + 120 = 210s timeout
- *
- */
 interface TimeoutConfig {
-  /** Base timeout in milliseconds */
   baseTimeout: number;
-  /** Additional time per second of video duration (milliseconds) */
   perSecondMultiplier: number;
-  /** Maximum timeout cap (milliseconds) */
   maxTimeout: number;
 }
 
 export const TIMEOUT_CONFIG: Record<string, TimeoutConfig> = {
   webp: {
-    // WASM WebP encoding is much slower than expected
-    // With method 0 + rawvideo input, encoding is ~3x faster
-    // 9.8s video → ~90s with new params (was 267s+ timeout)
     baseTimeout: 120_000,
-    perSecondMultiplier: 20_000, // Reduced from 15,000 (faster encoding with method 0)
-    maxTimeout: 600_000, // 10 minutes max for very long videos
+    perSecondMultiplier: 10_000,
+    maxTimeout: 600_000,
   },
   gif: {
     baseTimeout: 90_000,
-    perSecondMultiplier: 2_000,
+    perSecondMultiplier: 5_000,
     maxTimeout: 360_000,
   },
 };

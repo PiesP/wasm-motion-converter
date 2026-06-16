@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
+// Copyright (c) 2025-2026 PiesP
 
-import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
-import {
-  cancelConversion,
-  convertVideo,
-} from '@services/orchestration/conversion-orchestrator-service';
 import { classifyError, validateOutput } from '@services/v2/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
 import {
@@ -42,7 +37,7 @@ import { batch } from 'solid-js';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 import { handleFileSelected } from './use-handle-file-selected';
-import { performConversionV2 } from './use-perform-conversion-v2';
+import { performConversionV2, type V2ConversionOptions } from './use-perform-conversion-v2';
 
 const MS_PER_SECOND = 1000;
 
@@ -51,9 +46,7 @@ const focusRetryButton = (): void => focusElement('[data-error-retry-button]');
 
 export async function handleConvert(runtime: ConversionRuntimeController): Promise<void> {
   const file = inputFile();
-  if (!file) {
-    return;
-  }
+  if (!file) return;
 
   const settings = conversionSettings();
 
@@ -120,77 +113,31 @@ async function performConversion(
 
     runtime.startMemoryMonitoring();
 
-    const progressCallback = (progress: number) => {
-      if (!isActive()) {
-        return;
-      }
-      runtime.updateProgress(progress);
+    const v2Options: V2ConversionOptions = {
+      format: settings.format,
+      quality: settings.quality,
+      scale: settings.scale,
+      trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
+      trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
     };
 
-    const statusCallback = (message: string) => {
-      if (!isActive()) {
-        return;
+    const v2Result = await performConversionV2(file, v2Options, (v2Progress) => {
+      if (!isActive()) return;
+      runtime.updateProgress(v2Progress.progress);
+      if (v2Progress.phase !== 'assembling') {
+        runtime.updateStatus(`${v2Progress.phase}... ${v2Progress.fps} fps`);
       }
-      runtime.updateStatus(message);
-    };
+    });
 
-    let result: { blob: Blob & { wasTranscoded?: boolean } };
-    try {
-      // Try V2 pipeline first (WebCodecs hardware-accelerated)
-      const v2Result = await performConversionV2(
-        file,
-        {
-          format: settings.format,
-          quality: settings.quality,
-          scale: settings.scale,
-          trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
-          trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
-        },
-        (v2Progress) => {
-          if (!isActive()) return;
-          runtime.updateProgress(v2Progress.progress);
-          if (v2Progress.phase !== 'assembling') {
-            runtime.updateStatus(`${v2Progress.phase}... ${v2Progress.fps} fps`);
-          }
-        }
-      );
-      result = { blob: v2Result.blob };
-    } catch (v2Error) {
-      const classified = classifyError(v2Error);
-      if (classified.recoverable) {
-        logger.info('conversion', 'V2 pipeline failed, falling back to V1', {
-          error: classified.message,
-        });
-        result = await convertVideo({
-          file,
-          format: settings.format,
-          options: {
-            quality: settings.quality,
-            scale: settings.scale,
-            duration: videoDurationMs ? videoDurationMs / MS_PER_SECOND : undefined,
-            trimStart: settings.trimStart > 0 ? settings.trimStart : undefined,
-            trimEnd: settings.trimEnd > 0 ? settings.trimEnd : undefined,
-          },
-          metadata: videoMetadata() ?? undefined,
-          onProgress: progressCallback,
-          onStatus: statusCallback,
-        });
-      } else {
-        throw v2Error;
-      }
-    }
+    if (!isActive()) return;
 
-    if (!isActive()) {
-      return;
-    }
+    const blob = v2Result.blob;
 
-    const blob = result.blob;
-
-    // Validate output integrity — catch empty/corrupt files before displaying success
+    // Validate output integrity
     if (blob.size === 0) {
       throw new Error('Conversion produced an empty output file');
     }
-    // Structural validation for V2 output (V1 handles its own validation)
+
     const blobData = new Uint8Array(await blob.arrayBuffer());
     if (!validateOutput(blobData, settings.format)) {
       throw new Error(`Conversion produced a corrupt ${settings.format.toUpperCase()} file`);
@@ -214,7 +161,7 @@ async function performConversion(
       createdAt: performance.now(),
       settings,
       conversionDurationSeconds: durationSeconds,
-      wasTranscoded: blob.wasTranscoded,
+      wasTranscoded: false,
       originalCodec: videoMetadata()?.codec,
     };
 
@@ -228,9 +175,7 @@ async function performConversion(
 
     focusDownloadButton();
   } catch (error) {
-    if (!isActive()) {
-      return;
-    }
+    if (!isActive()) return;
 
     try {
       runtime.stopMemoryMonitoring();
@@ -251,17 +196,14 @@ async function performConversion(
       return;
     }
 
-    const context = classifyConversionError(
-      errorMessage_,
-      videoMetadata(),
-      settings,
-      ffmpegService.getRecentFFmpegLogs()
-    );
+    const classified = classifyError(error);
+    const context = classifyConversionError(errorMessage_, videoMetadata(), settings, undefined);
 
     logger.error('conversion', 'Conversion failed', {
       error: errorMessage_,
       settings,
       errorType: context.type,
+      errorCode: classified.code,
     });
 
     batch(() => {
@@ -280,44 +222,16 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
   runtime.invalidateActiveConversions();
   setAppState('cancelling');
 
-  // queueMicrotask ensures UI renders the cancelling state before cleanup begins
   queueMicrotask(() => {
-    cancelConversion();
     runtime.resetRuntimeState();
     setAppState('idle');
   });
 }
 
-/**
- * Cancel during FFmpeg download phase.
- * Resets input state so the user can start fresh with a different file.
- */
-export function handleCancelFFmpegLoad(): void {
-  setAppState('cancelling');
-
-  queueMicrotask(() => {
-    cancelConversion();
-
-    setInputFile(null);
-    const url = videoPreviewUrl();
-    if (url) URL.revokeObjectURL(url);
-    setVideoPreviewUrl(null);
-    setLoadingProgress(0);
-    setLoadingStatusMessage('');
-    setAppState('idle');
-  });
-}
-
-/**
- * Cancel during video analysis phase.
- * Resets input state so the user can start fresh with a different file.
- */
 export function handleCancelAnalysis(): void {
   setAppState('cancelling');
 
   queueMicrotask(() => {
-    cancelConversion();
-
     setInputFile(null);
     const url = videoPreviewUrl();
     if (url) URL.revokeObjectURL(url);
@@ -345,19 +259,11 @@ export function handleReset(runtime: ConversionRuntimeController): void {
 
   batch(() => {
     setVideoMetadata(null);
-
     setLoadingProgress(0);
     setLoadingStatusMessage('');
-
     setConversionSettings(DEFAULT_CONVERSION_SETTINGS);
     setAppState('idle');
   });
-
-  void ffmpegService.clearCachedInput().catch((error) =>
-    logger.debug('ffmpeg', 'Non-critical: clearCachedInput failed', {
-      error: getErrorMessage(error),
-    })
-  );
 }
 
 export function handleRetry(runtime: ConversionRuntimeController): void {

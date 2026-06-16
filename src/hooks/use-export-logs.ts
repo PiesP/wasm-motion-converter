@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
+// Copyright (c) 2025-2026 PiesP
 
-import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
+import { logger } from '@utils/logger';
 
 /**
- * Hook for exporting application and FFmpeg logs.
+ * Hook for exporting application logs.
  *
- * Provides a stable reference to FFmpeg's log ring buffer for use by
- * the ExportLogsButton component. Keeps the UI layer free of direct
- * service-layer dependencies.
+ * Provides access to the application log buffer for use by
+ * the ExportLogsButton component.
  */
 export function useExportLogs() {
-  return { getFfmpegLogs: () => ffmpegService.getRecentFFmpegLogs() };
+  return { getLogs: () => logger.getRecentLogs() };
 }

@@ -12,8 +12,6 @@ import ThemeToggle from '@components/ThemeToggle';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@hooks/use-conversion-handlers';
 import { useNetworkState } from '@hooks/use-network-state';
-import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
-import { requestIdle } from '@services/ffmpeg/core-assets-service';
 import { dismissConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -29,8 +27,6 @@ import {
   errorContext,
   errorMessage,
   inputFile,
-  loadingProgress,
-  loadingStatusMessage,
   setEnvironmentSupported,
   videoMetadata,
   videoPreviewUrl,
@@ -80,7 +76,6 @@ const App: Component = () => {
     handleConvert,
     handleReset,
     handleCancelConversion,
-    handleCancelFFmpegLoad,
     handleCancelAnalysis,
     handleRetry,
     handleDismissError,
@@ -100,22 +95,6 @@ const App: Component = () => {
       crossOriginIsolated === true;
 
     setEnvironmentSupported(isSupported);
-
-    // Prefetch FFmpeg core assets in idle time to reduce first-conversion latency.
-    // On CDN deployments (Cloudflare Pages), WASM loading from jsdelivr can take 30-60s.
-    // Starting prefetch early with a long timeout ensures FFmpeg is ready when the user
-    // clicks Convert, preventing the 50% stall where decoding is done but FFmpeg isn't loaded.
-    if (isSupported) {
-      requestIdle(
-        () => {
-          ffmpegService.prefetchCoreAssets().catch(() => {
-            // Non-fatal: prefetch failure will be handled on first conversion
-            logger.debug('general', 'FFmpeg core prefetch failed (will retry on demand)');
-          });
-        },
-        { timeout: 30_000 }
-      );
-    }
 
     // Attach test helpers in dev mode (AI-driven browser testing)
     if (attachTestHelpers) {
@@ -172,14 +151,6 @@ const App: Component = () => {
         estimatedSecondsRemaining: estimatedSecondsRemaining(),
       };
     }
-    if (state === 'loading-ffmpeg') {
-      return {
-        label: 'Loading FFmpeg...',
-        progress: loadingProgress(),
-        message: loadingStatusMessage(),
-        subPhaseLabel: loadingStatusMessage() || 'Downloading FFmpeg (~30MB)...',
-      };
-    }
     if (state === 'analyzing') {
       return {
         label: 'Analyzing video...',
@@ -196,11 +167,7 @@ const App: Component = () => {
   );
 
   const isBusy = createMemo(
-    () =>
-      appState() === 'loading-ffmpeg' ||
-      appState() === 'analyzing' ||
-      appState() === 'converting' ||
-      appState() === 'cancelling'
+    () => appState() === 'analyzing' || appState() === 'converting' || appState() === 'cancelling'
   );
 
   const handleReduceSettings = (): void => {
@@ -325,29 +292,6 @@ const App: Component = () => {
                 status={dropzoneStatus()?.label}
                 statusMessage={dropzoneStatus()?.message}
               />
-
-              <Show when={appState() === 'loading-ffmpeg'}>
-                <Suspense
-                  fallback={
-                    <div class="h-20 animate-pulse rounded-lg bg-blue-50 dark:bg-blue-900/20" />
-                  }
-                >
-                  <div class="space-y-2">
-                    <ConversionProgress
-                      progress={loadingProgress()}
-                      status="Loading FFmpeg (~30MB download)..."
-                      statusMessage={loadingStatusMessage()}
-                    />
-                    <button
-                      type="button"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900"
-                      onClick={handleCancelFFmpegLoad}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </Suspense>
-              </Show>
 
               <Show when={appState() === 'analyzing'}>
                 <Suspense

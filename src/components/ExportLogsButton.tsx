@@ -230,7 +230,7 @@ const buildExportJsonl = (options: ExportOptions): string => {
 
 const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
   const [local] = splitProps(props, ['class']);
-  const { getFfmpegLogs } = useExportLogs();
+  const { getLogs } = useExportLogs();
 
   const handleExport = (event: MouseEvent): void => {
     try {
@@ -246,7 +246,11 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
       const filename = buildExportFilename(format, now);
 
       if (format === 'jsonl') {
-        const text = buildExportJsonl({ includeVerboseFfmpegProgress, format, getFfmpegLogs });
+        const text = buildExportJsonl({
+          includeVerboseFfmpegProgress,
+          format,
+          getFfmpegLogs: getLogs,
+        });
         downloadText({
           filename,
           text,
@@ -255,7 +259,11 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
         return;
       }
 
-      const text = buildExportText({ includeVerboseFfmpegProgress, format, getFfmpegLogs });
+      const text = buildExportText({
+        includeVerboseFfmpegProgress,
+        format,
+        getFfmpegLogs: getLogs,
+      });
       downloadText({ filename, text });
     } catch (error) {
       logger.error('general', 'Failed to export logs', { error });

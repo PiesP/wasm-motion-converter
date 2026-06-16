@@ -9,11 +9,7 @@
 
 import type { ConversionFormat } from '@t/conversion-types';
 import { CONVERSION_FORMATS } from '@t/conversion-types';
-import {
-  FFMPEG_DECODE_UNSUPPORTED_CODECS,
-  FFMPEG_PREFERRED_CODECS,
-  WEBCODECS_NATIVE_CODECS,
-} from '@utils/constants';
+import { WEBCODECS_NATIVE_CODECS } from '@utils/constants';
 
 export function normalizeCodecString(codec: string | undefined): string {
   return (codec ?? '').trim().toLowerCase();
@@ -128,33 +124,28 @@ export function isWebCodecsNativeCodec(codec: string | undefined): boolean {
 }
 
 /**
- * Check whether a codec should prefer FFmpeg WASM path over WebCodecs.
+ * Check whether a codec should prefer software decode path over WebCodecs.
  * These codecs have poor or inconsistent WebCodecs browser support.
  *
  * @param codec - Codec name or RFC 6381 string
- * @returns True if FFmpeg path is preferred
+ * @returns True if software decode is preferred
  */
-export function isFFmpegPreferredCodec(codec: string | undefined): boolean {
+export function isSoftwareDecodePreferredCodec(codec: string | undefined): boolean {
   if (!codec || codec === 'unknown') {
     return false;
   }
   const normalized = normalizeCodecString(codec);
-  return FFMPEG_PREFERRED_CODECS.some(
-    (entry) => normalized === entry || normalized.includes(entry)
-  );
-}
-
-/**
- * Check whether a codec is natively decodable by FFmpeg WASM.
- * Codecs in FFMPEG_DECODE_UNSUPPORTED_CODECS must use browser software decode
- * (<video> + Canvas) as a preprocessing step.
- */
-export function isFFmpegDecodeUnsupportedCodec(codec: string | undefined): boolean {
-  if (!codec || codec === 'unknown') {
-    return false;
-  }
-  const normalized = normalizeCodecString(codec);
-  return FFMPEG_DECODE_UNSUPPORTED_CODECS.some(
-    (entry) => normalized === entry || normalized.startsWith(entry)
-  );
+  const legacyCodecs = [
+    'theora',
+    'vp6',
+    'vp7',
+    'mpeg4',
+    'mp4v',
+    'h263',
+    'prores',
+    'dnxhd',
+    'cinepak',
+    'sorenson',
+  ];
+  return legacyCodecs.some((entry) => normalized === entry || normalized.includes(entry));
 }

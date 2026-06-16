@@ -37,15 +37,10 @@
     "quality:ci": "pnpm -s quality"
   },
   "dependencies": {
-    "@ffmpeg/ffmpeg": "0.12.15",
-    "@ffmpeg/util": "0.12.2",
     "gifenc": "^1.0.3",
     "mediabunny": "^1.46.0",
     "solid-js": "1.9.13",
     "wasm-webp": "^0.1.0"
-  },
-  "cdnDependencies": {
-    "@ffmpeg/core-mt": "0.12.10"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",

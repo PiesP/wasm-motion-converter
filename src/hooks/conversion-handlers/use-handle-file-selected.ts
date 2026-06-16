@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
+// Copyright (c) 2025-2026 PiesP
 
-import { ffmpegService } from '@services/cpu-path/ffmpeg-pipeline-service';
 import {
   setAppState,
   setErrorContext,
@@ -16,6 +15,7 @@ import {
 import { focusElement } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoFile } from '@utils/file-validation';
+import { ALL_FORMATS, BufferSource, Input } from 'mediabunny';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 
@@ -31,6 +31,44 @@ const resetAnalysisState = (): void => {
   setLoadingProgress(0);
   setLoadingStatusMessage('');
 };
+
+/**
+ * Extract video metadata using MediaBunny (no FFmpeg needed).
+ */
+async function extractMetadata(file: File) {
+  const source = new BufferSource(await file.arrayBuffer());
+  const input = new Input({ formats: ALL_FORMATS, source });
+
+  try {
+    const videoTracks = await input.getVideoTracks();
+    const track = videoTracks[0];
+    if (!track) throw new Error('No video track found');
+
+    const config = await track.getDecoderConfig();
+    if (!config) throw new Error('Unable to obtain VideoDecoderConfig');
+
+    const duration = await track.computeDuration();
+    const width = config.codedWidth ?? 0;
+    const height = config.codedHeight ?? 0;
+
+    // Extract codec string (e.g. "avc1.42E01E" → "avc1")
+    const codec = config.codec?.split('.')[0] ?? 'unknown';
+
+    // Estimate frame rate from config if available
+    const framerate = 30; // Default; MediaBunny doesn't always expose this directly
+
+    return {
+      width,
+      height,
+      duration,
+      codec,
+      framerate,
+      bitrate: 0,
+    };
+  } finally {
+    input.dispose();
+  }
+}
 
 export async function handleFileSelected(
   file: File,
@@ -51,12 +89,7 @@ export async function handleFileSelected(
     return;
   }
 
-  if (ffmpegService.isLoaded()) {
-    await ffmpegService.clearCachedInput();
-  }
-  if (isStale()) {
-    return;
-  }
+  if (isStale()) return;
 
   setInputFile(file);
 
@@ -67,29 +100,18 @@ export async function handleFileSelected(
   setVideoPreviewUrl(URL.createObjectURL(file));
 
   try {
-    if (!ffmpegService.isLoaded()) {
-      setAppState('loading-ffmpeg');
-      await ffmpegService.initialize(setLoadingProgress, setLoadingStatusMessage);
-      if (isStale()) {
-        return;
-      }
-    }
-
     setAppState('analyzing');
+    setLoadingStatusMessage('Reading video metadata...');
 
-    const metadata = await ffmpegService.getVideoMetadata(file);
-    if (isStale()) {
-      return;
-    }
+    const metadata = await extractMetadata(file);
+    if (isStale()) return;
 
     setVideoMetadata(metadata);
     setLoadingProgress(0);
     setLoadingStatusMessage('');
     setAppState('idle');
   } catch (error) {
-    if (isStale()) {
-      return;
-    }
+    if (isStale()) return;
 
     setLoadingProgress(0);
     setLoadingStatusMessage('');
