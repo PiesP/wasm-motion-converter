@@ -5,14 +5,15 @@
  * GIF Encoder Service
  *
  * Encodes decoded video frames into animated GIF using gifenc.
- * Uses a single global palette from the first frame for speed.
- * Frames are processed one at a time to minimize memory usage.
+ * Uses direct VideoFrame.copyTo() for zero-copy pixel extraction.
+ * Single global palette from first frame for speed.
  */
 
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import { decodeStreaming } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
+import { copyFrameToRGBA, getFrameDurationMs, resizeFrameToRGBA } from './frame-utils';
 
 export interface GifEncodeOptions {
   width: number;
@@ -30,8 +31,8 @@ const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
 export type GifProgressCallback = (progress: ConversionProgress) => void;
 
 /**
- * Encode demuxed video chunks directly to GIF.
- * Decodes and encodes frames one at a time — no intermediate frame storage.
+ * Encode demuxed video frames to GIF.
+ * Uses direct VideoFrame pixel copy — no ImageBitmap intermediate.
  */
 export async function encodeGif(
   demux: DemuxResult,
@@ -39,31 +40,26 @@ export async function encodeGif(
   onProgress?: GifProgressCallback,
   signal?: AbortSignal
 ): Promise<Uint8Array> {
-  const w = Math.floor(opts.width * opts.scale);
-  const h = Math.floor(opts.height * opts.scale);
+  const srcW = opts.width;
+  const srcH = opts.height;
+  const w = Math.floor(srcW * opts.scale);
+  const h = Math.floor(srcH * opts.scale);
   const maxColors = QUALITY_COLORS[opts.quality];
+  const needsResize = w !== srcW || h !== srcH;
 
   const encoder = GIFEncoder({ auto: true });
-  const canvas = new OffscreenCanvas(w, h);
-  const ctx = canvas.getContext('2d')!;
-
   let frameIdx = 0;
   const startTime = performance.now();
   let globalPalette: number[][] | null = null;
 
   for await (const frame of decodeStreaming(demux, undefined, signal)) {
-    // Convert VideoFrame → ImageBitmap → Canvas → ImageData
-    const bitmap = await createImageBitmap(frame, {
-      resizeWidth: w,
-      resizeHeight: h,
-    });
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    bitmap.close();
+    // Zero-copy: VideoFrame → RGBA directly (with optional resize)
+    const rgba = needsResize
+      ? await resizeFrameToRGBA(frame, w, h)
+      : await copyFrameToRGBA(frame, w, h);
     frame.close();
 
-    const imageData = ctx.getImageData(0, 0, w, h);
-    const rgba = new Uint8Array(imageData.data);
-    const delayMs = Math.max(10, Math.round((frame.duration ?? 33_333) / 1000));
+    const delayMs = getFrameDurationMs(frame);
 
     if (!globalPalette) {
       globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
