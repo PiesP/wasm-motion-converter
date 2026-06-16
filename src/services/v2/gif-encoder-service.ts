@@ -19,29 +19,14 @@ const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
   high: 256,
 };
 
-const PALETTE_RECALC_INTERVAL: Record<GifEncodeOptions['quality'], number | null> = {
-  low: null,
-  medium: 30,
-  high: 15,
-};
-
 export type GifProgressCallback = (progress: ConversionProgress) => void;
 
-function computeColorDiff(a: Uint8Array, b: Uint8Array): number {
-  const len = Math.min(a.length, b.length);
-  if (len === 0) return 0;
-  let totalDiff = 0;
-  const pixelCount = len / 4;
-  for (let i = 0; i < len; i += 4) {
-    totalDiff += Math.abs((a[i] ?? 0) - (b[i] ?? 0));
-    totalDiff += Math.abs((a[i + 1] ?? 0) - (b[i + 1] ?? 0));
-    totalDiff += Math.abs((a[i + 2] ?? 0) - (b[i + 2] ?? 0));
-  }
-  return totalDiff / (pixelCount * 3);
-}
-
 /**
- * Encode demuxed video frames to GIF.
+ * Encode demuxed video frames to GIF using streaming encoding.
+ *
+ * Memory usage: O(1) per frame — only one frame's RGBA data in memory at a time.
+ * The VideoDecoder output callback queues frames, and we process them sequentially
+ * through the GIF encoder, which writes each frame immediately without accumulation.
  */
 export async function encodeGif(
   demux: DemuxResult,
@@ -55,21 +40,26 @@ export async function encodeGif(
   const h = Math.floor(srcH * opts.scale);
   const maxColors = QUALITY_COLORS[opts.quality];
   const needsResize = w !== srcW || h !== srcH;
-  const recalcInterval = PALETTE_RECALC_INTERVAL[opts.quality];
 
-  // Decode all frames
-  const decodedFrames: VideoFrame[] = [];
-  let decodeError: Error | null = null;
-
-  // Check codec support before creating decoder
+  // Check codec support
   const support = await VideoDecoder.isConfigSupported(demux.config);
   if (!support.supported) {
     throw new Error(`Codec not supported: ${demux.config.codec}`);
   }
 
+  // Streaming GIF encoder — writes frames one at a time
+  const encoder = GIFEncoder({ auto: true });
+  let frameIdx = 0;
+  const startTime = performance.now();
+  let globalPalette: number[][] | null = null;
+
+  // Frame queue for ordered processing
+  const frameQueue: VideoFrame[] = [];
+  let decodeError: Error | null = null;
+
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
-      decodedFrames.push(frame);
+      frameQueue.push(frame);
     },
     error(e: Error) {
       decodeError = e;
@@ -78,6 +68,7 @@ export async function encodeGif(
 
   decoder.configure(demux.config);
 
+  // Feed all chunks
   for (const chunk of demux.chunks) {
     if (signal?.aborted) {
       if (decoder.state !== 'closed') decoder.close();
@@ -87,56 +78,46 @@ export async function encodeGif(
     decoder.decode(chunk);
   }
 
+  // Flush decoder
   try {
     if (decoder.state !== 'closed') await decoder.flush();
   } catch (e) {
-    if (!decodeError) {
-      decodeError = e instanceof Error ? e : new Error(String(e));
-    }
+    if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
   }
   if (decoder.state !== 'closed') decoder.close();
 
   if (decodeError) throw decodeError;
 
-  // Encode to GIF
-  const encoder = GIFEncoder({ auto: true });
-  let frameIdx = 0;
-  const startTime = performance.now();
-  let globalPalette: number[][] | null = null;
-  let prevFrameRGBA: Uint8Array | null = null;
-
-  for (let i = 0; i < decodedFrames.length; i++) {
-    const frame = decodedFrames[i]!;
+  // Process frames sequentially — O(1) memory per frame
+  while (frameQueue.length > 0) {
+    const frame = frameQueue.shift()!;
     if (signal?.aborted) {
-      for (let j = i; j < decodedFrames.length; j++) decodedFrames[j]?.close();
+      frame.close();
+      for (const f of frameQueue) f.close();
       throw new DOMException('Cancelled', 'AbortError');
     }
 
     const delayMs = getFrameDurationMs(frame);
-    const rgba = needsResize
-      ? await resizeFrameToRGBA(frame, w, h)
-      : await copyFrameToRGBA(frame, w, h);
+
+    // Convert frame to RGBA — one frame at a time
+    let rgba: Uint8Array;
+    if (needsResize) {
+      rgba = await resizeFrameToRGBA(frame, w, h);
+    } else {
+      rgba = await copyFrameToRGBA(frame, w, h);
+    }
     frame.close();
 
-    const shouldRecalc =
-      recalcInterval !== null &&
-      frameIdx > 0 &&
-      frameIdx % recalcInterval === 0 &&
-      prevFrameRGBA !== null &&
-      computeColorDiff(rgba, prevFrameRGBA) > 30;
+    // Quantize and write to GIF encoder immediately
+    globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
+    const indexed = applyPalette(rgba, globalPalette, 'rgb565');
+    encoder.writeFrame(indexed, w, h, {
+      palette: globalPalette,
+      repeat: 0,
+      delay: delayMs,
+    });
 
-    if (!globalPalette || shouldRecalc) {
-      globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
-      const indexed = applyPalette(rgba, globalPalette, 'rgb565');
-      encoder.writeFrame(indexed, w, h, { palette: globalPalette, repeat: 0, delay: delayMs });
-    } else {
-      const indexed = applyPalette(rgba, globalPalette, 'rgb565');
-      encoder.writeFrame(indexed, w, h, { delay: delayMs });
-    }
-
-    prevFrameRGBA = rgba;
     frameIdx++;
-
     if (onProgress && frameIdx % 5 === 0) {
       const elapsed = (performance.now() - startTime) / 1000;
       onProgress({
