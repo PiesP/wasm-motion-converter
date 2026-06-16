@@ -61,11 +61,9 @@ export async function* decodeStream(
 
   if (decodeError) throw decodeError;
 
-  // Yield frames in small batches to bound memory
-  let yieldedCount = 0;
+  // Yield frames
   for (const frame of frames) {
     yield frame;
-    yieldedCount++;
   }
 
   if (onProgress) {

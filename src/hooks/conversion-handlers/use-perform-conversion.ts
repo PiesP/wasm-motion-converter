@@ -6,7 +6,7 @@ import {
   cancelConversion,
   convertVideo,
 } from '@services/orchestration/conversion-orchestrator-service';
-import { classifyError } from '@services/v2/error-recovery';
+import { classifyError, validateOutput } from '@services/v2/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -185,6 +185,16 @@ async function performConversion(
     }
 
     const blob = result.blob;
+
+    // Validate output integrity — catch empty/corrupt files before displaying success
+    if (blob.size === 0) {
+      throw new Error('Conversion produced an empty output file');
+    }
+    // Structural validation for V2 output (V1 handles its own validation)
+    const blobData = new Uint8Array(await blob.arrayBuffer());
+    if (!validateOutput(blobData, settings.format)) {
+      throw new Error(`Conversion produced a corrupt ${settings.format.toUpperCase()} file`);
+    }
 
     runtime.stopMemoryMonitoring();
 
