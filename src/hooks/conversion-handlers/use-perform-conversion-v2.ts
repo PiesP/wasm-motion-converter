@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
+// Copyright (c) 2025-2026 PiesP
 
-import { MemoryGuard } from '@services/v2/memory-guard';
-import { createConversionWorker } from '@services/v2/worker-utils';
-import type { ConversionProgress, ConversionRequest } from '@t/v2-conversion-types';
+/**
+ * V2 Conversion Service
+ *
+ * Orchestrates video conversion via Web Worker.
+ * The worker runs the full pipeline: demux → decode → encode.
+ */
+
+import type { ConversionProgress, ConversionRequest } from '@/types/v2-conversion-types';
 
 const MAX_MEMORY_MB = 1500;
 
@@ -17,19 +22,23 @@ export interface V2ConversionOptions {
 
 export type V2ProgressCallback = (progress: ConversionProgress) => void;
 
+/**
+ * Create a conversion worker and return a promise-based interface.
+ */
+function createConversionWorker(): Worker {
+  return new Worker(new URL('../../workers/conversion.worker.ts', import.meta.url), {
+    type: 'module',
+  });
+}
+
 export async function performConversionV2(
   inputFile: File,
   options: V2ConversionOptions,
   onProgress: V2ProgressCallback
 ): Promise<{ blob: Blob; format: 'gif' | 'webp' }> {
-  const guard = new MemoryGuard(MAX_MEMORY_MB);
-  const suggestedScale = guard.suggestScale(1920, 1080, 300);
-  const finalScale = Math.min(options.scale, suggestedScale);
-
   const buffer = await inputFile.arrayBuffer();
 
-  const canvas = document.createElement('canvas');
-  const { worker } = createConversionWorker(canvas);
+  const worker = createConversionWorker();
 
   return new Promise((resolve, reject) => {
     worker.onmessage = (e: MessageEvent) => {
@@ -43,13 +52,11 @@ export async function performConversionV2(
           const blob = new Blob([msg.output], { type: mimeType });
           resolve({ blob, format: msg.format });
           worker.terminate();
-          canvas.remove();
           break;
         }
         case 'error': {
           reject(new Error(msg.message));
           worker.terminate();
-          canvas.remove();
           break;
         }
       }
@@ -58,7 +65,6 @@ export async function performConversionV2(
     worker.onerror = (err) => {
       reject(new Error(err.message));
       worker.terminate();
-      canvas.remove();
     };
 
     const request: ConversionRequest = {
@@ -66,12 +72,13 @@ export async function performConversionV2(
       fileName: inputFile.name,
       format: options.format,
       quality: options.quality,
-      scale: finalScale,
+      scale: options.scale,
       trimStart: options.trimStart,
       trimEnd: options.trimEnd,
       maxMemoryMB: MAX_MEMORY_MB,
     };
 
+    // Transfer ArrayBuffer ownership to worker (zero-copy)
     worker.postMessage({ type: 'convert', request }, [buffer]);
   });
 }

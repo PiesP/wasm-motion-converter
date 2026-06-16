@@ -1,5 +1,5 @@
-import { runConversionPipeline } from '@/services/v2/conversion-pipeline';
-import type { ConversionRequest, ConversionWorkerMessage } from '@/types/v2-conversion-types';
+import { runConversionPipeline } from '../services/v2/conversion-pipeline';
+import type { ConversionRequest, ConversionWorkerMessage } from '../types/v2-conversion-types';
 
 let currentController: AbortController | null = null;
 
@@ -8,7 +8,6 @@ self.onmessage = async (e: MessageEvent<ConversionWorkerMessage>) => {
 
   switch (msg.type) {
     case 'init': {
-      // OffscreenCanvas received via transfer — store if needed later
       break;
     }
 

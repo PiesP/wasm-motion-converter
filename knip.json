@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  "entry": ["index.html", "public/service-worker.ts", "public/sw-register.ts"],
-  "project": ["src/**/*.{ts,tsx}", "public/*.ts"],
+  "entry": ["index.html"],
+  "project": ["src/**/*.{ts,tsx}"],
   "paths": {
     "@": ["src"],
     "@components": ["src/components"],
@@ -15,12 +15,11 @@
     "dist/**",
     "tmp/**",
     "docs/**",
-    ".vite-sw-temp/**",
     ".github/**",
     "**/*.test.{ts,tsx}",
     "**/*.spec.{ts,tsx}",
     "**/*.d.ts"
   ],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["@types/dom-webcodecs"]
+  "ignoreDependencies": ["@types/dom-webcodecs", "gifenc", "wasm-webp"]
 }

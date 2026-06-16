@@ -1,7 +1,18 @@
-import type { WebPAnimationFrame, WebPConfig } from 'wasm-webp';
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 PiesP
+
+/**
+ * WebP Encoder Service
+ *
+ * Encodes decoded video frames into animated WebP using wasm-webp.
+ * Processes frames one at a time to minimize memory usage.
+ */
+
+import type { WebPConfig } from 'wasm-webp';
 import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
-import { frameToImageBitmap } from './transfer-utils';
+import { decodeStreaming } from './decoder-service';
+import type { DemuxResult } from './demuxer-service';
 
 export interface WebpEncodeOptions {
   width: number;
@@ -10,12 +21,6 @@ export interface WebpEncodeOptions {
   scale: number;
 }
 
-/**
- * Quality → WebP quality value mapping.
- *
- * wasm-webp's encodeAnimation accepts quality in the range 0–100
- * via the per-frame WebPConfig.quality field.
- */
 const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
   low: 50,
   medium: 75,
@@ -25,83 +30,73 @@ const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
 export type WebpProgressCallback = (progress: ConversionProgress) => void;
 
 /**
- * Encode an async stream of {@link VideoFrame}s into an animated WebP
- * {@link Uint8Array} using the wasm-webp library's `encodeAnimation()`.
+ * Encode demuxed video chunks directly to WebP.
+ * Decodes and encodes frames in a streaming pipeline.
  *
- * Each frame is rendered through an {@link OffscreenCanvas} to the target
- * dimensions (`opts.width × opts.height × opts.scale`), then the RGB pixel
- * data is extracted and fed to the WebP animation encoder. Alpha is stripped
- * to produce smaller output (matching GIF-like behavior).
- *
- * @returns The encoded animated WebP bytes.
+ * Note: WebP encoder accumulates all frames before final encode,
+ * but frames are decoded one at a time to minimize decode-side memory.
  */
 export async function encodeWebp(
-  frameStream: AsyncGenerator<VideoFrame, void, void>,
+  demux: DemuxResult,
   opts: WebpEncodeOptions,
-  onProgress?: WebpProgressCallback
+  onProgress?: WebpProgressCallback,
+  signal?: AbortSignal
 ): Promise<Uint8Array> {
   const w = Math.floor(opts.width * opts.scale);
   const h = Math.floor(opts.height * opts.scale);
-
   const quality = QUALITY_MAP[opts.quality];
   const webpConfig: WebPConfig = { lossless: 0, quality };
 
-  const frames: WebPAnimationFrame[] = [];
+  const frames: { data: Uint8Array; duration: number; config: WebPConfig }[] = [];
   let frameIdx = 0;
   const startTime = performance.now();
 
   const canvas = new OffscreenCanvas(w, h);
   const ctx = canvas.getContext('2d')!;
 
-  for await (const frame of frameStream) {
-    // Convert VideoFrame → ImageBitmap → draw to target-sized canvas
-    const bitmap = await frameToImageBitmap(frame);
+  for await (const frame of decodeStreaming(demux, undefined, signal)) {
+    const bitmap = await createImageBitmap(frame, {
+      resizeWidth: w,
+      resizeHeight: h,
+    });
     ctx.drawImage(bitmap, 0, 0, w, h);
     bitmap.close();
+    frame.close();
 
     const imageData = ctx.getImageData(0, 0, w, h);
 
-    // Strip alpha channel: RGBA (4 bytes/pixel) → RGB (3 bytes/pixel)
+    // Strip alpha: RGBA → RGB
     const pixelCount = w * h;
     const rgbData = new Uint8Array(pixelCount * 3);
     const src = imageData.data;
     for (let i = 0; i < pixelCount; i++) {
       const srcIdx = i * 4;
       const dstIdx = i * 3;
-      rgbData[dstIdx] = src[srcIdx]!; // R
-      rgbData[dstIdx + 1] = src[srcIdx + 1]!; // G
-      rgbData[dstIdx + 2] = src[srcIdx + 2]!; // B
+      rgbData[dstIdx] = src[srcIdx]!;
+      rgbData[dstIdx + 1] = src[srcIdx + 1]!;
+      rgbData[dstIdx + 2] = src[srcIdx + 2]!;
     }
 
-    // VideoFrame.duration is in microseconds; WebP frame duration is in
-    // milliseconds. Guard against 0 or null duration with a fallback.
     const rawDuration = frame.duration as number | null;
     const durationMs =
-      rawDuration != null && rawDuration > 0 ? Math.max(1, Math.round(rawDuration / 1000)) : 100; // fallback: 100 ms ≈ 10 fps
+      rawDuration != null && rawDuration > 0 ? Math.max(1, Math.round(rawDuration / 1000)) : 100;
 
-    frames.push({
-      data: rgbData,
-      duration: durationMs,
-      config: webpConfig,
-    });
+    frames.push({ data: rgbData, duration: durationMs, config: webpConfig });
 
     frameIdx++;
     if (onProgress && frameIdx % 5 === 0) {
       const elapsed = (performance.now() - startTime) / 1000;
-      const fps = frameIdx / elapsed;
       onProgress({
         phase: 'encoding',
-        progress: 50,
-        fps: Math.round(fps),
+        progress: Math.round((frameIdx / demux.totalFrames) * 100),
+        fps: Math.round(frameIdx / elapsed),
         etaSeconds: null,
         memoryMB: 0,
       });
     }
-    frame.close();
   }
 
   const result = await encodeAnimation(w, h, false, frames);
-
   if (!result) {
     throw new Error('wasm-webp encodeAnimation returned null');
   }

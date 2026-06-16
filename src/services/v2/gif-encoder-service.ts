@@ -1,6 +1,18 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 PiesP
+
+/**
+ * GIF Encoder Service
+ *
+ * Encodes decoded video frames into animated GIF using gifenc.
+ * Uses a single global palette from the first frame for speed.
+ * Frames are processed one at a time to minimize memory usage.
+ */
+
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
-import { frameToImageBitmap } from './transfer-utils';
+import { decodeStreaming } from './decoder-service';
+import type { DemuxResult } from './demuxer-service';
 
 export interface GifEncodeOptions {
   width: number;
@@ -18,17 +30,14 @@ const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
 export type GifProgressCallback = (progress: ConversionProgress) => void;
 
 /**
- * Encode an async stream of VideoFrames into a GIF Uint8Array using gifenc.
- *
- * gifenc uses PNN (pairwise nearest neighbor) quantization. A single global
- * palette is computed from the first frame and reused across all frames for
- * speed. Each frame is rendered via OffscreenCanvas, quantized, palette-mapped,
- * and written to the GIF stream.
+ * Encode demuxed video chunks directly to GIF.
+ * Decodes and encodes frames one at a time — no intermediate frame storage.
  */
 export async function encodeGif(
-  frameStream: AsyncGenerator<VideoFrame, void, void>,
+  demux: DemuxResult,
   opts: GifEncodeOptions,
-  onProgress?: GifProgressCallback
+  onProgress?: GifProgressCallback,
+  signal?: AbortSignal
 ): Promise<Uint8Array> {
   const w = Math.floor(opts.width * opts.scale);
   const h = Math.floor(opts.height * opts.scale);
@@ -40,38 +49,33 @@ export async function encodeGif(
 
   let frameIdx = 0;
   const startTime = performance.now();
-
-  // ponytail: single global palette from first frame. Per-frame palettes
-  // look better but double encode time. Add if quality complaints arise.
   let globalPalette: number[][] | null = null;
 
-  for await (const frame of frameStream) {
-    const bitmap = await frameToImageBitmap(frame);
+  for await (const frame of decodeStreaming(demux, undefined, signal)) {
+    // Convert VideoFrame → ImageBitmap → Canvas → ImageData
+    const bitmap = await createImageBitmap(frame, {
+      resizeWidth: w,
+      resizeHeight: h,
+    });
     ctx.drawImage(bitmap, 0, 0, w, h);
     bitmap.close();
+    frame.close();
 
     const imageData = ctx.getImageData(0, 0, w, h);
     const rgba = new Uint8Array(imageData.data);
-
-    const delayMs = Math.max(10, Math.round((frame.duration ?? 33_333) / 1000)); // µs → ms
+    const delayMs = Math.max(10, Math.round((frame.duration ?? 33_333) / 1000));
 
     if (!globalPalette) {
-      // First frame: quantize → get global palette
       globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
       const indexed = applyPalette(rgba, globalPalette, 'rgb565');
-
       encoder.writeFrame(indexed, w, h, {
         palette: globalPalette,
-        repeat: 0, // loop forever
+        repeat: 0,
         delay: delayMs,
       });
     } else {
-      // Subsequent frames: reuse global palette
       const indexed = applyPalette(rgba, globalPalette, 'rgb565');
-      // palette omitted → uses global color table from first frame
-      encoder.writeFrame(indexed, w, h, {
-        delay: delayMs,
-      });
+      encoder.writeFrame(indexed, w, h, { delay: delayMs });
     }
 
     frameIdx++;
@@ -79,13 +83,12 @@ export async function encodeGif(
       const elapsed = (performance.now() - startTime) / 1000;
       onProgress({
         phase: 'encoding',
-        progress: 50,
+        progress: Math.round((frameIdx / demux.totalFrames) * 100),
         fps: Math.round(frameIdx / elapsed),
         etaSeconds: null,
         memoryMB: 0,
       });
     }
-    frame.close();
   }
 
   encoder.finish();
