@@ -26,9 +26,9 @@ const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
 
 // Bayer ordered dithering strength per quality (0-255 range, lower = subtler)
 const QUALITY_DITHER_STRENGTH: Record<GifEncodeOptions['quality'], number> = {
-  low: 32, // strong dither to compensate for 64 colors
-  medium: 24, // moderate dither for 128 colors
-  high: 16, // subtle dither for 256 colors (near-truecolor)
+  low: 12, // moderate dither to compensate for 64 colors
+  medium: 8, // subtle dither for 128 colors
+  high: 4, // very subtle dither for 256 colors (near-truecolor)
 };
 
 /**
@@ -164,7 +164,10 @@ export async function encodeGif(
     frame.close();
 
     // Bayer ordered dithering (pre-processing, in-place on RGB)
-    bayerDitherRGB(rgb, w, h, ditherStrength);
+    // Skip at 100% scale — too many pixels for synchronous JS loop (blocks main thread)
+    if (opts.scale < 1.0) {
+      bayerDitherRGB(rgb, w, h, ditherStrength);
+    }
 
     // Quantize and write to GIF encoder immediately
     globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
