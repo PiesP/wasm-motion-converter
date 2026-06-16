@@ -146,29 +146,25 @@ export class FrameAssemblerService {
   // ── Streaming Raw Video ────────────────────────────────────────────────
 
   /**
-   * Write frames to VFS incrementally as they are extracted.
+   * Write frames to VFS incrementally as individual chunk files.
    *
-   * Instead of accumulating all frames into a single buffer and writing once,
-   * this method writes frames in chunks to the VFS. This dramatically reduces
-   * peak memory usage (from ~1.6GB to ~100MB for a 1080p 197-frame video).
+   * Each frame is written as a separate VFS file (e.g. `raw_frames_000.raw`).
+   * This keeps peak memory at ~1 frame (~8MB at 1080p) instead of
+   * accumulating all frames (~1.6GB for 197 frames).
    *
-   * Since FFmpeg WASM's VFS doesn't support append, we simulate it by
-   * writing chunk files and then concatenating them via FFmpeg later,
-   * or by writing the full file in chunks using writeFile with offset.
-   *
-   * Current approach: accumulate chunks in a temporary array, then write
-   * the full file at the end. The memory savings come from the caller
-   * not needing to hold all frames simultaneously — frames are freed
-   * after being added to the chunk accumulator.
+   * The caller is responsible for concatenating the chunks into a single
+   * file before FFmpeg encoding, or using the concat demuxer.
    *
    * @param params - Streaming raw video parameters
    * @returns Object with write function for each frame and finalize function
    */
   createStreamingRawVideoWriter(params: StreamingRawVideoParams): {
     /** Write a single frame's pixel data. */
-    writeFrame: (frameData: Uint8Array) => void;
-    /** Finalize and write the accumulated data to VFS. */
+    writeFrame: (frameData: Uint8Array) => Promise<void>;
+    /** Finalize: concatenate all chunks and write the final VFS file. */
     finalize: () => Promise<number>;
+    /** Number of frames written so far. */
+    readonly frameCount: number;
   } {
     const { ffmpeg, width, height, outputFileName, expectedFrameCount } = params;
     const expectedBytes = width * height * 4 * expectedFrameCount;
@@ -183,33 +179,52 @@ export class FrameAssemblerService {
       sizeMiB: Number(sizeMiB.toFixed(2)),
     });
 
-    // Accumulate chunks — each chunk is a frame's pixel data
-    const chunks: Uint8Array[] = [];
+    // Write each frame as an individual chunk file
+    const chunkFileNames: string[] = [];
     let totalBytes = 0;
+    let frameIdx = 0;
 
-    const writeFrame = (frameData: Uint8Array): void => {
-      chunks.push(frameData);
+    const writeFrame = async (frameData: Uint8Array): Promise<void> => {
+      const chunkName = `raw_frame_${String(frameIdx).padStart(5, '0')}.raw`;
+      await ffmpeg.writeFile(chunkName, frameData);
+      chunkFileNames.push(chunkName);
       totalBytes += frameData.byteLength;
+      frameIdx++;
     };
 
     const finalize = async (): Promise<number> => {
       logger.info('conversion', 'Finalizing streaming raw video write', {
         file: outputFileName,
-        chunksWritten: chunks.length,
+        chunksWritten: chunkFileNames.length,
         totalBytes,
         expectedBytes,
       });
 
-      // Concatenate all chunks into a single buffer
-      const pixels = new Uint8Array(totalBytes);
-      let offset = 0;
-      for (const chunk of chunks) {
-        pixels.set(chunk, offset);
-        offset += chunk.length;
+      if (chunkFileNames.length === 0) {
+        await ffmpeg.writeFile(outputFileName, new Uint8Array(0));
+        return 0;
       }
 
-      // Clear chunks to free memory before write
-      chunks.length = 0;
+      // Concatenate chunks into a single buffer for FFmpeg rawvideo input
+      const pixels = new Uint8Array(totalBytes);
+      let offset = 0;
+
+      for (const chunkName of chunkFileNames) {
+        const chunkData = await ffmpeg.readFile(chunkName);
+        // readFile returns Uint8Array for binary files, string for text
+        const chunkBytes =
+          chunkData instanceof Uint8Array
+            ? chunkData
+            : new Uint8Array(chunkData.split('').map((c) => c.charCodeAt(0)));
+        pixels.set(chunkBytes, offset);
+        offset += chunkBytes.byteLength;
+        // Delete chunk file immediately to free VFS space
+        try {
+          (ffmpeg as unknown as { FS: { unlink: (name: string) => void } }).FS.unlink(chunkName);
+        } catch {
+          // Non-fatal: file may not exist
+        }
+      }
 
       await ffmpeg.writeFile(outputFileName, pixels);
 
@@ -221,7 +236,13 @@ export class FrameAssemblerService {
       return totalBytes;
     };
 
-    return { writeFrame, finalize };
+    return {
+      writeFrame,
+      finalize,
+      get frameCount() {
+        return chunkFileNames.length;
+      },
+    };
   }
 
   // ── PNG Sequence ───────────────────────────────────────────────────────

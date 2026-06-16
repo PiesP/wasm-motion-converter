@@ -428,8 +428,8 @@ async function decodeFramesWithExtractor(
         ffmpegService.reportProgress(progress);
       },
       onFrame: async (frameData, _frameIndex, _totalFrames) => {
-        // Write each frame immediately to the streaming writer
-        writer.writeFrame(frameData);
+        // Write each frame immediately to the streaming writer (async)
+        await writer.writeFrame(frameData);
       },
     });
 

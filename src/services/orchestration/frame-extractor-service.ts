@@ -460,6 +460,10 @@ export class FrameExtractorService {
 
         // Clone the pixel data for the callback (pool buffer will be reused)
         const frameCopy = new Uint8Array(frame.pixels);
+        // Release the pool buffer if it came from the pool
+        if (pool && 'release' in pool && typeof pool.release === 'function') {
+          pool.release(frame.pixels);
+        }
         await onFrame(frameCopy, i, frameCount);
 
         extractedCount++;
