@@ -16,14 +16,19 @@ declare module 'gif-encoder-2' {
       height: number,
       algorithm?: 'neuquant' | 'octree',
       useOptimizer?: boolean,
-      totalFrames?: number,
+      totalFrames?: number
     );
 
     out: GIFEncoderOut;
 
     start(): void;
     finish(): void;
-    addFrame(input: Uint8Array | Uint8ClampedArray | { getImageData(x: number, y: number, w: number, h: number): { data: Uint8ClampedArray } }): void;
+    addFrame(
+      input:
+        | Uint8Array
+        | Uint8ClampedArray
+        | { getImageData(x: number, y: number, w: number, h: number): { data: Uint8ClampedArray } }
+    ): void;
     setDelay(ms: number): void;
     setQuality(quality: number): void;
     setRepeat(repeat: number): void;

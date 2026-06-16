@@ -1,8 +1,8 @@
-import { demuxVideo } from './demuxer-service';
+import type { ConversionProgress, ConversionRequest } from '@/types/v2-conversion-types';
 import { decodeStream } from './decoder-service';
+import { demuxVideo } from './demuxer-service';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
-import type { ConversionRequest, ConversionProgress } from '@/types/v2-conversion-types';
 
 export type PipelineProgressCallback = (progress: ConversionProgress) => void;
 
@@ -19,7 +19,10 @@ export async function runConversionPipeline(
   // Phase 2: Decode (10~30%)
   const codedWidth = demuxResult.config.codedWidth!;
   const codedHeight = demuxResult.config.codedHeight!;
-  const poolSize = Math.min(30, Math.floor((request.maxMemoryMB * 1024 * 1024) / (codedWidth * codedHeight * 4)));
+  const poolSize = Math.min(
+    30,
+    Math.floor((request.maxMemoryMB * 1024 * 1024) / (codedWidth * codedHeight * 4))
+  );
   const frameStream = decodeStream(demuxResult, poolSize, (p) => {
     const mappedProgress = 10 + Math.round(p.progress * 0.2); // 10→30%
     onProgress({ ...p, progress: mappedProgress });
@@ -31,25 +34,35 @@ export async function runConversionPipeline(
 
   let output: ArrayBuffer;
   if (request.format === 'gif') {
-    output = (await encodeGif(frameStream, {
-      width: codedWidth,
-      height: codedHeight,
-      quality: request.quality,
-      scale: request.scale,
-    }, (p) => {
-      const mappedProgress = 30 + Math.round(p.fps * 0.6 / 100);
-      onProgress({ ...p, progress: Math.min(90, mappedProgress) });
-    })).buffer as ArrayBuffer;
+    output = (
+      await encodeGif(
+        frameStream,
+        {
+          width: codedWidth,
+          height: codedHeight,
+          quality: request.quality,
+          scale: request.scale,
+        },
+        (p) => {
+          const mappedProgress = 30 + Math.round((p.fps * 0.6) / 100);
+          onProgress({ ...p, progress: Math.min(90, mappedProgress) });
+        }
+      )
+    ).buffer as ArrayBuffer;
   } else {
-    const encoded = await encodeWebp(frameStream, {
-      width: codedWidth,
-      height: codedHeight,
-      quality: request.quality,
-      scale: request.scale,
-    }, (p) => {
-      const mappedProgress = 30 + Math.round(p.progress * 0.6);
-      onProgress({ ...p, progress: Math.min(90, mappedProgress) });
-    });
+    const encoded = await encodeWebp(
+      frameStream,
+      {
+        width: codedWidth,
+        height: codedHeight,
+        quality: request.quality,
+        scale: request.scale,
+      },
+      (p) => {
+        const mappedProgress = 30 + Math.round(p.progress * 0.6);
+        onProgress({ ...p, progress: Math.min(90, mappedProgress) });
+      }
+    );
     output = encoded.buffer as ArrayBuffer;
   }
 

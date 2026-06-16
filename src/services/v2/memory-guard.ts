@@ -16,11 +16,13 @@ export class MemoryGuard {
     let estimated: number;
 
     if ('memory' in performance) {
+      // biome-ignore lint/suspicious/noExplicitAny: performance.memory is non-standard Chrome API
       const mem = (performance as any).memory;
       const used = mem.usedJSHeapSize / (1024 * 1024);
       const limit = mem.jsHeapSizeLimit / (1024 * 1024);
       estimated = Math.max(0, limit - used);
     } else {
+      // biome-ignore lint/suspicious/noExplicitAny: navigator.deviceMemory is non-standard API
       const deviceMemGB = (navigator as any).deviceMemory ?? 4;
       estimated = deviceMemGB * 1024 * 0.5;
     }
@@ -42,7 +44,7 @@ export class MemoryGuard {
     const targetMB = this.availableMB * 0.6;
     const bytesPerFrame = width * height * 4;
     const targetBytes = bytesPerFrame * frameCount;
-    const rawScale = Math.sqrt(targetMB * 1024 * 1024 / targetBytes);
+    const rawScale = Math.sqrt((targetMB * 1024 * 1024) / targetBytes);
     return Math.max(0.1, Math.min(1.0, rawScale));
   }
 }

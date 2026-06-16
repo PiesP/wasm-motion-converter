@@ -1,7 +1,7 @@
-import { encodeAnimation } from 'wasm-webp';
 import type { WebPAnimationFrame, WebPConfig } from 'wasm-webp';
-import { frameToImageBitmap } from './transfer-utils';
+import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
+import { frameToImageBitmap } from './transfer-utils';
 
 export interface WebpEncodeOptions {
   width: number;
@@ -38,7 +38,7 @@ export type WebpProgressCallback = (progress: ConversionProgress) => void;
 export async function encodeWebp(
   frameStream: AsyncGenerator<VideoFrame, void, void>,
   opts: WebpEncodeOptions,
-  onProgress?: WebpProgressCallback,
+  onProgress?: WebpProgressCallback
 ): Promise<Uint8Array> {
   const w = Math.floor(opts.width * opts.scale);
   const h = Math.floor(opts.height * opts.scale);
@@ -77,9 +77,7 @@ export async function encodeWebp(
     // milliseconds. Guard against 0 or null duration with a fallback.
     const rawDuration = frame.duration as number | null;
     const durationMs =
-      rawDuration != null && rawDuration > 0
-        ? Math.max(1, Math.round(rawDuration / 1000))
-        : 100; // fallback: 100 ms ≈ 10 fps
+      rawDuration != null && rawDuration > 0 ? Math.max(1, Math.round(rawDuration / 1000)) : 100; // fallback: 100 ms ≈ 10 fps
 
     frames.push({
       data: rgbData,

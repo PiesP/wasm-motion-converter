@@ -43,10 +43,7 @@ export async function demuxVideo(request: ConversionRequest): Promise<DemuxResul
   const chunks: EncodedVideoChunk[] = [];
   let totalFrames = 0;
 
-  for await (const packet of sink.packets(
-    startPacket ?? undefined,
-    endPacket ?? undefined,
-  )) {
+  for await (const packet of sink.packets(startPacket ?? undefined, endPacket ?? undefined)) {
     chunks.push(packet.toEncodedVideoChunk());
     totalFrames++;
   }

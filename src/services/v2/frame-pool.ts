@@ -38,7 +38,13 @@ export class FrameRingBuffer {
     this.readIdx = 0;
   }
 
-  get size(): number { return this.count; }
-  get isFull(): boolean { return this.count === this.capacity; }
-  get isEmpty(): boolean { return this.count === 0; }
+  get size(): number {
+    return this.count;
+  }
+  get isFull(): boolean {
+    return this.count === this.capacity;
+  }
+  get isEmpty(): boolean {
+    return this.count === 0;
+  }
 }

@@ -22,5 +22,5 @@
     "**/*.d.ts"
   ],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": []
+  "ignoreDependencies": ["@types/dom-webcodecs"]
 }

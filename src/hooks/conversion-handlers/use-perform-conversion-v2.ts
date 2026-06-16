@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { createConversionWorker } from '@services/v2/worker-utils';
 import { MemoryGuard } from '@services/v2/memory-guard';
-import type { ConversionRequest, ConversionProgress } from '@t/v2-conversion-types';
+import { createConversionWorker } from '@services/v2/worker-utils';
+import type { ConversionProgress, ConversionRequest } from '@t/v2-conversion-types';
 
 const MAX_MEMORY_MB = 1500;
 

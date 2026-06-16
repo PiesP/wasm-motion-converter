@@ -1,6 +1,6 @@
-import { FrameRingBuffer } from './frame-pool';
-import type { DemuxResult } from './demuxer-service';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
+import type { DemuxResult } from './demuxer-service';
+import { FrameRingBuffer } from './frame-pool';
 
 const BATCH_SIZE = 30;
 

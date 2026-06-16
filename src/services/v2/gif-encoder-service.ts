@@ -1,6 +1,6 @@
 import GIFEncoder from 'gif-encoder-2';
-import { frameToImageBitmap } from './transfer-utils';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
+import { frameToImageBitmap } from './transfer-utils';
 
 export interface GifEncodeOptions {
   width: number;
@@ -37,7 +37,7 @@ export type GifProgressCallback = (progress: ConversionProgress) => void;
 export async function encodeGif(
   frameStream: AsyncGenerator<VideoFrame, void, void>,
   opts: GifEncodeOptions,
-  onProgress?: GifProgressCallback,
+  onProgress?: GifProgressCallback
 ): Promise<Uint8Array> {
   const w = Math.floor(opts.width * opts.scale);
   const h = Math.floor(opts.height * opts.scale);
