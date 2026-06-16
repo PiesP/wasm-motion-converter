@@ -166,7 +166,7 @@ kill $(lsof -t -i :5173)  # Stop dev server
   - Source/comments/docs in English
   - Commits in English using conventional commits
   - Alias-first imports (see below)
-  - Use WebCodecs with FFmpeg fallback
+  - Prefer FFmpeg built-in demuxer/decoder/encoder for broad codec support; use browser VideoFrame API for software-decode path when FFmpeg WASM cannot decode the codec (e.g. AV1)
   - Use COOP/COEP headers (`public/_headers`, `vite.config.ts`)
   - Keep diffs small, UI responsive, always handle loading/progress/error states
   - Do not document MP4 export as supported unless the UI and end-to-end workflow support it
@@ -227,15 +227,44 @@ Aliases: `@/*`, `@components/*`, `@services/*`, `@utils/*`, `@stores/*`, `@hooks
 
 ## Architecture Notes
 
-- `convertVideo()` / `cancelConversion()` (`src/services/orchestration/conversion-orchestrator-service.ts`) manage the top-level conversion lifecycle
-- `selectSimplePath()` (`src/services/orchestration/simple-path-planner-service.ts`) selects the WebCodecs or FFmpeg path for the current request
-- `capabilityService` (`src/services/video-pipeline/capability-service.ts`) probes and caches browser media capabilities
-- `webcodecsConversionService` (`src/services/webcodecs-conversion-service.ts`) handles the accelerated conversion path
-- `ffmpegService` (`src/services/cpu-path/ffmpeg-pipeline-service.ts`) handles CPU fallback conversion and shared FFmpeg lifecycle
-- `src/services/ffmpeg/core-assets-service.ts` and `src/services/ffmpeg/init-service.ts` manage runtime CDN loading and FFmpeg initialization
-- **Mediabunny** (`src/services/decoders/mediabunny-demuxer.ts`) is the unified demuxer for all container formats (MP4, WebM, MKV, MOV, etc.), replacing the previously separate mp4box.js and web-demuxer CDN-loaded demuxers
-- **wasm-webp** is the WebP encoder, bundled via npm
-- **Removed dependencies**: mp4box, web-demuxer (replaced by Mediabunny — both were CDN-loaded, per-format demuxer libraries)
+### Conversion pipeline
+
+```
+File → path planner → FFmpeg path (default) or Software decode path
+                                 ↓                              ↓
+                    FFmpeg built-in demuxer +              HTMLVideoElement
+                    decoder + encoder (WASM)                → VideoFrame / ImageBitmap
+                    [all codecs]                           → raw RGBA → VFS
+                                                                   ↓
+                                                           FFmpeg encoder (WASM)
+                                                                   ↓
+                                                              output blob
+```
+
+### Service map
+
+- `convertVideo()` / `cancelConversion()` (`src/services/orchestration/conversion-orchestrator-service.ts`) — top-level conversion lifecycle
+- `selectSimplePath()` (`src/services/orchestration/simple-path-planner-service.ts`) — selects FFmpeg or software-decode path based on codec
+- `capabilityService` (`src/services/video-pipeline/capability-service.ts`) — probes and caches browser media capabilities (VideoDecoder, WebP encode)
+- `ffmpegService` (`src/services/cpu-path/ffmpeg-pipeline-service.ts`) — shared FFmpeg lifecycle, VFS, encoding; uses FFmpeg built-in demuxer/decoder/encoder
+- `FrameExtractorService` (`src/services/orchestration/frame-extractor-service.ts`) —software-decode path frame extraction via `VideoFrame` + `createImageBitmap` + `OffscreenCanvas`
+- `src/services/ffmpeg/core-assets-service.ts` + `init-service.ts` — FFmpeg WASM CDN loading and initialization
+
+### Path selection
+
+| Path | Codec condition | Demux | Decode | Encode |
+|------|----------------|-------|--------|--------|
+| `cpu` | FFmpeg-preferred (theora, vp6, mpeg4…) or unknown | FFmpeg built-in | FFmpeg built-in | FFmpeg built-in |
+| `software` | WebCodecs-native (H.264, VP9, AV1, HEVC) or FFmpeg-unsupported decode (AV1) | Browser built-in (HTMLVideoElement) | Browser GPU via VideoFrame API | FFmpeg built-in (rawvideo → GIF/WebP) |
+
+### Planned (not yet implemented)
+
+- **WebCodecs VideoEncoder** — would enable full GPU pipeline (Chrome WebP only; GIF and cross-browser support unclear as of 2026). Requires Mediabunny as a prerequisite for demuxing.
+- **Mediabunny** — unified demuxer needed only for the WebCodecs VideoEncoder path; FFmpeg path uses FFmpeg's built-in demuxer. No standalone benefit without WebCodecs encode support.
+
+### Removed
+
+- mp4box, web-demuxer — previously used as CDN-loaded per-format demuxers; replaced by FFmpeg built-in demuxer in current architecture
 
 ## Security Rules
 
