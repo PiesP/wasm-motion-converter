@@ -9,16 +9,11 @@ export interface DemuxResult {
 }
 
 /**
- * Demux a video buffer using MediaBunny, extracting encoded video chunks
- * for the specified trim range.
+ * Demux a video buffer using MediaBunny, extracting encoded video chunks.
  */
 export async function demuxVideo(request: ConversionRequest): Promise<DemuxResult> {
   const source = new BufferSource(request.inputBuffer);
-
-  const input = new Input({
-    formats: ALL_FORMATS,
-    source,
-  });
+  const input = new Input({ formats: ALL_FORMATS, source });
 
   const videoTracks = await input.getVideoTracks();
   const videoTrack = videoTracks[0];
@@ -34,32 +29,33 @@ export async function demuxVideo(request: ConversionRequest): Promise<DemuxResul
   }
 
   const duration = await videoTrack.computeDuration();
-
   const sink = new EncodedPacketSink(videoTrack);
 
-  // Start from the first keyframe — the VideoDecoder requires it after configure().
-  // For trimStart > 0, find the nearest keyframe at-or-before trimStart.
-  // For trimStart == 0, use the first packet (guaranteed to be decodable).
-  const startPacket =
-    request.trimStart > 0
-      ? ((await sink.getKeyPacket(request.trimStart)) ?? (await sink.getPacket(0)))
-      : await sink.getFirstPacket();
+  // Start from first packet (requires keyframe after configure)
+  const startPacket = await sink.getFirstPacket();
   if (!startPacket) {
     input.dispose();
     throw new Error('No decodable packets found in input buffer');
   }
 
-  const endPacket = await sink.getPacket(request.trimEnd);
+  // trimEnd == 0 means "until the end" — use duration to get last packet
+  let endPacket = startPacket;
+  if (request.trimEnd > 0) {
+    const trimmedEnd = await sink.getPacket(request.trimEnd);
+    if (trimmedEnd) endPacket = trimmedEnd;
+  } else {
+    const lastPkt = await sink.getPacket(duration);
+    if (lastPkt) endPacket = lastPkt;
+  }
 
   const chunks: EncodedVideoChunk[] = [];
   let totalFrames = 0;
 
-  for await (const packet of sink.packets(startPacket ?? undefined, endPacket ?? undefined)) {
+  for await (const packet of sink.packets(startPacket, endPacket)) {
     chunks.push(packet.toEncodedVideoChunk());
     totalFrames++;
   }
 
   input.dispose();
-
   return { chunks, config, totalFrames, duration };
 }

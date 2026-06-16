@@ -27,9 +27,12 @@ const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
 
 export type WebpProgressCallback = (progress: ConversionProgress) => void;
 
+/** Max frames per encodeAnimation call to keep WASM memory under ~2GB */
+const MAX_FRAMES = 300;
+
 /**
- * Collect decoded frames into an array, then encode to WebP.
- * This avoids async generator issues in the Worker context.
+ * Encode demuxed video frames to WebP.
+ * Skips frames if needed to keep WASM memory under the 2GB limit.
  */
 export async function encodeWebp(
   demux: DemuxResult,
@@ -45,10 +48,18 @@ export async function encodeWebp(
   const webpConfig: WebPConfig = { lossless: 0, quality };
   const needsResize = w !== srcW || h !== srcH;
 
-  // Phase 1: Decode all frames
-  const frames: { data: Uint8Array; duration: number; config: WebPConfig }[] = [];
+  // Calculate frame skip if too many frames
+  const frameStep = demux.totalFrames > MAX_FRAMES ? Math.ceil(demux.totalFrames / MAX_FRAMES) : 1;
+  if (frameStep > 1) {
+    console.warn(
+      `[encodeWebp] ${demux.totalFrames} frames → ~${Math.ceil(demux.totalFrames / frameStep)} frames (step=${frameStep})`
+    );
+  }
+
+  // Decode all frames
   const decodedFrames: VideoFrame[] = [];
   let decodeError: Error | null = null;
+  let chunkIdx = 0;
 
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
@@ -61,8 +72,6 @@ export async function encodeWebp(
 
   decoder.configure(demux.config);
 
-  console.log('[webp-encoder] chunks:', demux.chunks.length, 'codec:', demux.config.codec);
-
   for (const chunk of demux.chunks) {
     if (signal?.aborted) {
       decoder.close();
@@ -70,6 +79,7 @@ export async function encodeWebp(
     }
     if (decodeError) break;
     decoder.decode(chunk);
+    chunkIdx++;
   }
 
   try {
@@ -83,9 +93,12 @@ export async function encodeWebp(
 
   if (decodeError) throw decodeError;
 
-  // Phase 2: Convert each VideoFrame to RGB
+  // Convert frames and encode
+  const frames: { data: Uint8Array; duration: number; config: WebPConfig }[] = [];
   const startTime = performance.now();
-  for (let i = 0; i < decodedFrames.length; i++) {
+  let encodedFrames = 0;
+
+  for (let i = 0; i < decodedFrames.length; i += frameStep) {
     const frame = decodedFrames[i]!;
     if (signal?.aborted) {
       for (let j = i; j < decodedFrames.length; j++) decodedFrames[j]?.close();
@@ -104,23 +117,35 @@ export async function encodeWebp(
     frame.close();
 
     frames.push({ data: rgbData, duration: durationMs, config: webpConfig });
+    encodedFrames++;
 
-    if (onProgress && (i + 1) % 5 === 0) {
+    if (onProgress && encodedFrames % 5 === 0) {
       const elapsed = (performance.now() - startTime) / 1000;
       onProgress({
         phase: 'encoding',
-        progress: Math.round(((i + 1) / demux.totalFrames) * 100),
-        fps: Math.round((i + 1) / elapsed),
+        progress: Math.round((encodedFrames / Math.ceil(demux.totalFrames / frameStep)) * 100),
+        fps: Math.round(encodedFrames / elapsed),
         etaSeconds: null,
         memoryMB: 0,
       });
     }
+
+    // Close remaining frames we skipped
+    if (frameStep > 1) {
+      for (let j = i + 1; j < Math.min(i + frameStep, decodedFrames.length); j++) {
+        decodedFrames[j]?.close();
+      }
+    }
+  }
+
+  if (frames.length === 0) {
+    throw new Error('No frames decoded for WebP encoding');
   }
 
   const result = await encodeAnimation(w, h, false, frames);
   if (!result || result.length === 0) {
     throw new Error(
-      `wasm-webp encodeAnimation returned ${result ? `empty (${result.length} bytes)` : 'null'} (frames: ${frames.length}, w: ${w}, h: ${h}, totalInputBytes: ${frames.reduce((s, f) => s + f.data.length, 0)})`
+      `wasm-webp encodeAnimation returned ${result ? `empty (${result.length} bytes)` : 'null'} (frames: ${frames.length}, w: ${w}, h: ${h})`
     );
   }
 

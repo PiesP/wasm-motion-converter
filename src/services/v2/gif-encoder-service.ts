@@ -1,19 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-/**
- * GIF Encoder Service
- *
- * Encodes decoded video frames into animated GIF using gifenc.
- * Uses direct VideoFrame.copyTo() for zero-copy pixel extraction.
- *
- * Adaptive palette: for high quality, recalculates palette every N frames
- * to handle scenes with significant color changes.
- */
-
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
-import { decodeStreaming } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { copyFrameToRGBA, getFrameDurationMs, resizeFrameToRGBA } from './frame-utils';
 
@@ -30,20 +19,14 @@ const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
   high: 256,
 };
 
-/** How often to recalculate the palette (in frames). Only for high quality. */
 const PALETTE_RECALC_INTERVAL: Record<GifEncodeOptions['quality'], number | null> = {
-  low: null, // Never recalculate — speed priority
-  medium: 30, // Every 30 frames (~1s at 30fps)
-  high: 15, // Every 15 frames (~0.5s at 30fps)
+  low: null,
+  medium: 30,
+  high: 15,
 };
 
 export type GifProgressCallback = (progress: ConversionProgress) => void;
 
-/**
- * Compute color difference between two RGBA buffers.
- * Returns average per-pixel color distance (0-255).
- * Used to decide when to recalculate the palette.
- */
 function computeColorDiff(a: Uint8Array, b: Uint8Array): number {
   const len = Math.min(a.length, b.length);
   if (len === 0) return 0;
@@ -59,8 +42,6 @@ function computeColorDiff(a: Uint8Array, b: Uint8Array): number {
 
 /**
  * Encode demuxed video frames to GIF.
- * Uses direct VideoFrame pixel copy — no ImageBitmap intermediate.
- * Adaptive palette recalculation for medium/high quality.
  */
 export async function encodeGif(
   demux: DemuxResult,
@@ -76,23 +57,61 @@ export async function encodeGif(
   const needsResize = w !== srcW || h !== srcH;
   const recalcInterval = PALETTE_RECALC_INTERVAL[opts.quality];
 
+  // Decode all frames
+  const decodedFrames: VideoFrame[] = [];
+  let decodeError: Error | null = null;
+
+  const decoder = new VideoDecoder({
+    output(frame: VideoFrame) {
+      decodedFrames.push(frame);
+    },
+    error(e: Error) {
+      decodeError = e;
+    },
+  });
+
+  decoder.configure(demux.config);
+
+  for (const chunk of demux.chunks) {
+    if (signal?.aborted) {
+      decoder.close();
+      throw new DOMException('Cancelled', 'AbortError');
+    }
+    if (decodeError) break;
+    decoder.decode(chunk);
+  }
+
+  try {
+    await decoder.flush();
+  } catch (e) {
+    if (!decodeError) {
+      decodeError = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  decoder.close();
+
+  if (decodeError) throw decodeError;
+
+  // Encode to GIF
   const encoder = GIFEncoder({ auto: true });
   let frameIdx = 0;
   const startTime = performance.now();
   let globalPalette: number[][] | null = null;
   let prevFrameRGBA: Uint8Array | null = null;
 
-  for await (const frame of decodeStreaming(demux, undefined, signal)) {
-    // Capture duration before close() invalidates the frame
-    const delayMs = getFrameDurationMs(frame);
+  for (let i = 0; i < decodedFrames.length; i++) {
+    const frame = decodedFrames[i]!;
+    if (signal?.aborted) {
+      for (let j = i; j < decodedFrames.length; j++) decodedFrames[j]?.close();
+      throw new DOMException('Cancelled', 'AbortError');
+    }
 
-    // Zero-copy: VideoFrame → RGBA directly (with optional resize)
+    const delayMs = getFrameDurationMs(frame);
     const rgba = needsResize
       ? await resizeFrameToRGBA(frame, w, h)
       : await copyFrameToRGBA(frame, w, h);
     frame.close();
 
-    // Adaptive palette: recalculate if color changed significantly
     const shouldRecalc =
       recalcInterval !== null &&
       frameIdx > 0 &&
@@ -103,11 +122,7 @@ export async function encodeGif(
     if (!globalPalette || shouldRecalc) {
       globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
       const indexed = applyPalette(rgba, globalPalette, 'rgb565');
-      encoder.writeFrame(indexed, w, h, {
-        palette: globalPalette,
-        repeat: 0,
-        delay: delayMs,
-      });
+      encoder.writeFrame(indexed, w, h, { palette: globalPalette, repeat: 0, delay: delayMs });
     } else {
       const indexed = applyPalette(rgba, globalPalette, 'rgb565');
       encoder.writeFrame(indexed, w, h, { delay: delayMs });
@@ -126,6 +141,10 @@ export async function encodeGif(
         memoryMB: 0,
       });
     }
+  }
+
+  if (frameIdx === 0) {
+    throw new Error('No frames decoded for GIF encoding');
   }
 
   encoder.finish();
