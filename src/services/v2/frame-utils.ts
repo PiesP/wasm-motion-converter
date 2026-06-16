@@ -102,3 +102,25 @@ export function getFrameDurationMs(frame: VideoFrame): number {
   const raw = frame.duration as number | null;
   return raw != null && raw > 0 ? Math.max(1, Math.round(raw / 1000)) : 100;
 }
+
+/**
+ * Alpha composite: blend RGBA pixels over a black background.
+ * Converts RGBA → RGB by applying alpha pre-multiplication.
+ * This avoids dark artifacts where alpha < 255.
+ *
+ * @param rgba - RGBA pixel data (4 bytes per pixel)
+ * @returns RGB pixel data (3 bytes per pixel)
+ */
+export function compositeAlphaToRGB(rgba: Uint8Array): Uint8Array {
+  const pixelCount = rgba.length / 4;
+  const rgb = new Uint8Array(pixelCount * 3);
+  for (let i = 0; i < pixelCount; i++) {
+    const srcIdx = i * 4;
+    const dstIdx = i * 3;
+    const a = (rgba[srcIdx + 3] ?? 255) / 255;
+    rgb[dstIdx] = Math.round((rgba[srcIdx] ?? 0) * a);
+    rgb[dstIdx + 1] = Math.round((rgba[srcIdx + 1] ?? 0) * a);
+    rgb[dstIdx + 2] = Math.round((rgba[srcIdx + 2] ?? 0) * a);
+  }
+  return rgb;
+}

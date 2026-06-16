@@ -6,6 +6,7 @@
  *
  * Encodes decoded video frames into animated WebP using wasm-webp.
  * Uses direct VideoFrame.copyTo() for zero-copy pixel extraction.
+ * Alpha compositing: blends RGBA over black to avoid dark artifacts.
  */
 
 import type { WebPConfig } from 'wasm-webp';
@@ -13,7 +14,12 @@ import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import { decodeStreaming } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
-import { copyFrameToRGB, getFrameDurationMs, resizeFrameToRGBA } from './frame-utils';
+import {
+  compositeAlphaToRGB,
+  copyFrameToRGB,
+  getFrameDurationMs,
+  resizeFrameToRGBA,
+} from './frame-utils';
 
 export interface WebpEncodeOptions {
   width: number;
@@ -32,7 +38,7 @@ export type WebpProgressCallback = (progress: ConversionProgress) => void;
 
 /**
  * Encode demuxed video frames to WebP.
- * Uses direct VideoFrame pixel copy — no ImageBitmap intermediate.
+ * Uses direct VideoFrame pixel copy + alpha compositing.
  */
 export async function encodeWebp(
   demux: DemuxResult,
@@ -53,27 +59,21 @@ export async function encodeWebp(
   const startTime = performance.now();
 
   for await (const frame of decodeStreaming(demux, undefined, signal)) {
-    // Zero-copy: VideoFrame → RGB directly (with optional resize)
+    // Capture duration before close() invalidates the frame
+    const durationMs = getFrameDurationMs(frame);
+
+    // Zero-copy: VideoFrame → RGB with alpha compositing
     let rgbData: Uint8Array;
     if (needsResize) {
-      // Resize path: get RGBA then strip alpha
+      // Resize path: RGBA with alpha composite
       const rgba = await resizeFrameToRGBA(frame, w, h);
-      const pixelCount = w * h;
-      rgbData = new Uint8Array(pixelCount * 3);
-      for (let i = 0; i < pixelCount; i++) {
-        const srcIdx = i * 4;
-        const dstIdx = i * 3;
-        rgbData[dstIdx] = rgba[srcIdx]!;
-        rgbData[dstIdx + 1] = rgba[srcIdx + 1]!;
-        rgbData[dstIdx + 2] = rgba[srcIdx + 2]!;
-      }
+      rgbData = compositeAlphaToRGB(rgba);
     } else {
       // Direct path: VideoFrame → RGB
       rgbData = await copyFrameToRGB(frame, w, h);
     }
     frame.close();
 
-    const durationMs = getFrameDurationMs(frame);
     frames.push({ data: rgbData, duration: durationMs, config: webpConfig });
 
     frameIdx++;
