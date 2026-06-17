@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
+import type { ConversionPhase } from '@t/v2-conversion-types';
 import { onCleanup, type Setter } from 'solid-js';
 import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';
@@ -18,6 +19,7 @@ interface ConversionHandlersOptions {
   setConversionStartTime: Setter<number>;
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
+  setConversionPhase?: Setter<ConversionPhase>;
 }
 
 export function useConversionHandlers(options: ConversionHandlersOptions): {
@@ -33,6 +35,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     setConversionStartTime: options.setConversionStartTime,
     setEstimatedSecondsRemaining: options.setEstimatedSecondsRemaining,
     setMemoryWarning: options.setMemoryWarning,
+    setConversionPhase: options.setConversionPhase,
   });
 
   onCleanup(() => {

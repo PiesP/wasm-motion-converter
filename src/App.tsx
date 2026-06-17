@@ -31,10 +31,11 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
+import type { ConversionPhase } from '@t/v2-conversion-types';
 import { debounce } from '@utils/debounce';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
-import { isMemoryCritical } from '@utils/memory-monitor';
+import { getMemoryUsageString, isMemoryCritical } from '@utils/memory-monitor';
 import {
   type Component,
   createEffect,
@@ -71,6 +72,8 @@ const App: Component = () => {
   );
   const [memoryWarning, setMemoryWarning] = createSignal(false);
 
+  const [conversionPhase, setConversionPhase] = createSignal<ConversionPhase>('demuxing');
+
   const {
     handleFileSelected,
     handleConvert,
@@ -84,6 +87,7 @@ const App: Component = () => {
     setConversionStartTime,
     setEstimatedSecondsRemaining,
     setMemoryWarning,
+    setConversionPhase,
   });
 
   useNetworkState();
@@ -149,7 +153,8 @@ const App: Component = () => {
         showElapsedTime: true,
         startTime: conversionStartTime(),
         estimatedSecondsRemaining: estimatedSecondsRemaining(),
-        phase: 'encoding' as const,
+        phase: conversionPhase(),
+        memoryUsage: getMemoryUsageString(),
       };
     }
     if (state === 'analyzing') {

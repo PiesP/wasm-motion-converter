@@ -172,18 +172,24 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           data-progress={progressValue()}
         >
           {PHASE_SEGMENTS.map((seg, idx) => {
-            const isActive = idx === activePhaseIndex();
             const isPast = idx < activePhaseIndex();
+            const isActive = idx === activePhaseIndex();
             const segmentWidth = 25; // each phase is 25% of the bar
 
             let widthPercent: number;
             if (isPast) {
+              // Completed phases: fully filled
               widthPercent = segmentWidth;
             } else if (isActive) {
-              // Map progress within this phase to segment width
-              const phaseProgress = Math.max(0, Math.min(100, progressValue() - idx * 25));
-              widthPercent = (phaseProgress / 100) * segmentWidth;
+              // Active phase: map overall progress to this segment's portion
+              // progressValue() maps to 0-100 overall, each segment covers 25%
+              const segmentStart = idx * 25;
+              const segmentEnd = (idx + 1) * 25;
+              const clampedProgress = Math.max(segmentStart, Math.min(segmentEnd, progressValue()));
+              widthPercent =
+                ((clampedProgress - segmentStart) / (segmentEnd - segmentStart)) * segmentWidth;
             } else {
+              // Future phases: empty
               widthPercent = 0;
             }
 

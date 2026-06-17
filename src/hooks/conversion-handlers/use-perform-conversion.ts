@@ -137,7 +137,7 @@ async function performConversion(
       v2Options,
       (v2Progress) => {
         if (!isActive()) return;
-        runtime.updateProgress(v2Progress.progress);
+        runtime.updateProgress(v2Progress.progress, v2Progress.phase);
 
         // User-friendly phase messages
         const phaseLabel =

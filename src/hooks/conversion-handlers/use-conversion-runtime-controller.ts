@@ -2,6 +2,7 @@
 // Copyright (c) 2025 PiesP
 
 import { setConversionProgress, setConversionStatusMessage } from '@stores/conversion-store';
+import type { ConversionPhase } from '@t/v2-conversion-types';
 import { ETACalculator } from '@utils/eta-calculator';
 import { formatDuration } from '@utils/format-utils';
 import { logger } from '@utils/logger';
@@ -42,6 +43,7 @@ interface ConversionRuntimeControllerDeps {
   setConversionStartTime: Setter<number>;
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
+  setConversionPhase?: Setter<ConversionPhase>;
 }
 
 export class ConversionRuntimeController {
@@ -190,7 +192,7 @@ export class ConversionRuntimeController {
     }
   }
 
-  updateProgress(progress: number): void {
+  updateProgress(progress: number, phase?: string): void {
     if (!Number.isFinite(progress)) {
       return;
     }
@@ -203,6 +205,11 @@ export class ConversionRuntimeController {
     }
 
     this.lastProgressValue = monotonic;
+
+    // Update phase if provided
+    if (phase && this.deps.setConversionPhase) {
+      this.deps.setConversionPhase(phase as ConversionPhase);
+    }
 
     // Reset stall timer whenever progress advances
     this.startStallTimer();
