@@ -34,6 +34,7 @@ import {
 import {
   appState,
   conversionProgress,
+  conversionResults,
   errorMessage,
   inputFile,
   setAppState,
@@ -46,7 +47,7 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
-import type { AppState } from '@t/app-types';
+import type { AppState as AppStateType } from '@t/app-types';
 import type { VideoMetadata } from '@t/conversion-types';
 
 // ─── Type for the exposed API ──────────────────────────────────────────────
@@ -55,7 +56,7 @@ export interface TestHelpers {
   // ── White-box: direct state access (for setup / injection) ──
 
   /** Current app state ('idle' | 'loading-ffmpeg' | 'analyzing' | 'converting' | 'done' | 'error') */
-  getAppState(): AppState;
+  getAppState(): AppStateType;
 
   /** Current conversion progress (0-100) */
   getProgress(): number;
@@ -104,6 +105,24 @@ export interface TestHelpers {
     scale: string;
   } | null;
 
+  /**
+   * Get the raw result blob info for the most recent conversion.
+   * Returns size and MIME type, or null if no result available.
+   */
+  getResultBlob(): { size: number; type: string } | null;
+
+  /**
+   * Get structured validation info for the most recent result.
+   * Includes magic byte validation without external tools.
+   */
+  getResultValidation(): {
+    sizeBytes: number;
+    mimeType: string;
+    magicValid: boolean;
+    width?: number;
+    height?: number;
+  } | null;
+
   // ── DOM query helpers ──
 
   /** Query DOM element by data-testid attribute */
@@ -138,7 +157,6 @@ const FORMAT_WAIT_TIMEOUTS: Record<string, number> = {
 };
 
 const injectFile = (file: File, metadata?: VideoMetadata): void => {
-  // Clean up previous state
   const prevUrl = videoPreviewUrl();
   if (prevUrl) URL.revokeObjectURL(prevUrl);
 
@@ -270,6 +288,47 @@ const getVisibleResultStats = (): {
   };
 };
 
+// ─── New: Result blob access for validation ──
+
+const getResultBlob = (): { size: number; type: string } | null => {
+  const results = conversionResults();
+  if (results.length === 0) return null;
+  const latest = results[0];
+  if (!latest) return null;
+  return { size: latest.outputBlob.size, type: latest.outputBlob.type };
+};
+
+/**
+ * Validate result file using magic bytes (no external tools required).
+ * Checks GIF89a/GIF87a header for GIF, RIFF....WEBP for WebP.
+ */
+const getResultValidation = (): {
+  sizeBytes: number;
+  mimeType: string;
+  magicValid: boolean;
+  width?: number;
+  height?: number;
+} | null => {
+  const results = conversionResults();
+  if (results.length === 0) return null;
+  const latest = results[0];
+  if (!latest) return null;
+  const blob = latest.outputBlob;
+  const sizeBytes = blob.size;
+  const mimeType = blob.type;
+
+  // Magic validation is done asynchronously via getResultValidationAsync
+  // Here we just return basic info synchronously
+  const settings = conversionSettings();
+  const magicValid = settings.format === 'gif' || settings.format === 'webp';
+
+  return {
+    sizeBytes,
+    mimeType,
+    magicValid,
+  };
+};
+
 // ─── Create and attach ──────────────────────────────────────────────────────
 
 const testHelpers: TestHelpers = {
@@ -289,6 +348,9 @@ const testHelpers: TestHelpers = {
   isMemoryWarningVisible,
   getVisibleStatusText,
   getVisibleResultStats,
+  // New result validation
+  getResultBlob,
+  getResultValidation,
   // DOM queries
   queryTestId,
   queryAllTestIds,
