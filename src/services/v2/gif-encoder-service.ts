@@ -276,7 +276,10 @@ export async function encodeGif(
       bayerDitherRGB(rgb, w, h, ditherStrength);
     }
 
-    globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
+    // Quantize: compute global palette from first frame, reuse for subsequent frames
+    if (encodeIdx === 0) {
+      globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
+    }
     writeFrameWithDelay(rgb, delay);
     encodeIdx++;
   }

@@ -5,6 +5,7 @@ import {
   setAppState,
   setErrorContext,
   setErrorMessage,
+  setInputBuffer,
   setInputFile,
   setVideoMetadata,
   setVideoPreviewUrl,
@@ -31,9 +32,11 @@ const resetAnalysisState = (): void => {
 
 /**
  * Extract video metadata using MediaBunny (no FFmpeg needed).
+ * Accepts an optional pre-read ArrayBuffer to avoid double-loading large files.
  */
-async function extractMetadata(file: File) {
-  const source = new BufferSource(await file.arrayBuffer());
+async function extractMetadata(file: File, existingBuffer?: ArrayBuffer) {
+  const buffer = existingBuffer ?? (await file.arrayBuffer());
+  const source = new BufferSource(buffer);
   const input = new Input({ formats: ALL_FORMATS, source });
 
   try {
@@ -94,7 +97,12 @@ export async function handleFileSelected(
 
   if (isStale()) return;
 
+  // Read file once upfront, then share the buffer between metadata extraction and conversion
+  const buffer = await file.arrayBuffer();
+  if (isStale()) return;
+
   setInputFile(file);
+  setInputBuffer(buffer);
 
   const previousPreviewUrl = videoPreviewUrl();
   if (previousPreviewUrl) {
@@ -105,7 +113,7 @@ export async function handleFileSelected(
   try {
     setAppState('analyzing');
 
-    const metadata = await extractMetadata(file);
+    const metadata = await extractMetadata(file, buffer);
     if (isStale()) return;
 
     setVideoMetadata(metadata);

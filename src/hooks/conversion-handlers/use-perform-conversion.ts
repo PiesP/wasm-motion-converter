@@ -10,6 +10,7 @@ import {
 } from '@stores/conversion-settings-store';
 import {
   appState,
+  inputBuffer,
   inputFile,
   MAX_RESULTS,
   setAppState,
@@ -17,6 +18,7 @@ import {
   setConversionStatusMessage,
   setErrorContext,
   setErrorMessage,
+  setInputBuffer,
   setInputFile,
   setVideoMetadata,
   setVideoPreviewUrl,
@@ -173,7 +175,8 @@ async function performConversion(
           runtime.updateStatus(phaseLabel);
         }
       },
-      abortController.signal
+      abortController.signal,
+      inputBuffer() ?? undefined
     ).finally(() => {
       signal?.removeEventListener('abort', onAbort);
     });
@@ -182,12 +185,10 @@ async function performConversion(
 
     const blob = v2Result.blob;
 
-    // Validate output integrity
-    if (blob.size === 0) {
-      throw new Error('Conversion produced an empty output file');
-    }
-    // Structural validation — skip if output looks reasonable
-    const blobData = new Uint8Array(await blob.arrayBuffer());
+    // Validate output integrity — read only the first 16 bytes to check header
+    // instead of loading the entire blob into memory (avoids 2x memory for large outputs)
+    const headerBuf = await blob.slice(0, 16).arrayBuffer();
+    const blobData = new Uint8Array(headerBuf);
     if (!validateOutput(blobData, settings.format)) {
       // Log the actual bytes for debugging
       const hexHeader = Array.from(blobData.slice(0, 10))
@@ -318,6 +319,7 @@ export function handleReset(runtime: ConversionRuntimeController): void {
   setErrorContext(null);
 
   setInputFile(null);
+  setInputBuffer(null);
 
   const previousPreviewUrl = videoPreviewUrl();
   if (previousPreviewUrl) {

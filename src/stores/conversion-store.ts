@@ -54,5 +54,6 @@ export const [conversionResults, setConversionResults] = createSignal<Conversion
 // ---------------------------------------------------------------------------
 
 export const [inputFile, setInputFile] = createSignal<File | null>(null);
+export const [inputBuffer, setInputBuffer] = createSignal<ArrayBuffer | null>(null);
 export const [videoMetadata, setVideoMetadata] = createSignal<VideoMetadata | null>(null);
 export const [videoPreviewUrl, setVideoPreviewUrl] = createSignal<string | null>(null);

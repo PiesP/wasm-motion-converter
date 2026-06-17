@@ -33,11 +33,12 @@ export async function performConversionV2(
   inputFile: File,
   options: V2ConversionOptions,
   onProgress: V2ProgressCallback,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  existingBuffer?: ArrayBuffer
 ): Promise<{ blob: Blob; format: 'gif' | 'webp' }> {
   let buffer: ArrayBuffer;
   try {
-    buffer = await inputFile.arrayBuffer();
+    buffer = existingBuffer ?? (await inputFile.arrayBuffer());
   } catch (err) {
     logger.error('conversion', 'Failed to read input file buffer', {
       fileName: inputFile.name,
