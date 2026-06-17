@@ -99,15 +99,9 @@ export async function encodeWebp(
       }
 
       // Include accumulated duration from skipped frames
-      // T2: Cap accumulated delay to prevent excessively long frame display
-      const rawDuration = frameDuration + accumulatedDuration;
-      const totalDuration = Math.min(rawDuration, 200); // Max 200ms per frame
-      if (rawDuration > 200) {
-        // Excess duration will be carried over to next frame
-        accumulatedDuration = rawDuration - 200;
-      } else {
-        accumulatedDuration = 0;
-      }
+      // Preserve original timing — no capping (unlike GIF which has frame delay limits)
+      const totalDuration = frameDuration + accumulatedDuration;
+      accumulatedDuration = 0;
 
       const conversion = (async () => {
         try {
