@@ -10,13 +10,11 @@ import { type Component, createEffect, createMemo, createSignal, Show, splitProp
 const SCALE_PERCENTAGE_MULTIPLIER = 100;
 
 interface ResultPreviewProps {
-  outputBlob: import('@t/conversion-types').ConversionOutputBlob;
+  outputBlob: Blob;
   originalName: string;
   originalSize: number;
   settings: ConversionSettings;
   conversionDurationSeconds?: number;
-  wasTranscoded?: boolean;
-  originalCodec?: string;
 }
 
 const ResultPreview: Component<ResultPreviewProps> = (props) => {
@@ -26,8 +24,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     'originalSize',
     'settings',
     'conversionDurationSeconds',
-    'wasTranscoded',
-    'originalCodec',
   ]);
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);

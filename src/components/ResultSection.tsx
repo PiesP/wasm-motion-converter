@@ -22,12 +22,10 @@ const ResultSection: Component<ResultSectionProps> = (props) => {
             >
               <ResultPreview
                 conversionDurationSeconds={result.conversionDurationSeconds}
-                originalCodec={result.originalCodec}
                 originalName={result.originalName}
                 originalSize={result.originalSize}
                 outputBlob={result.outputBlob}
                 settings={result.settings}
-                wasTranscoded={result.wasTranscoded}
               />
             </Suspense>
           )}

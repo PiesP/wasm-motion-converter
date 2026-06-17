@@ -231,10 +231,7 @@ async function performConversion(
       createdAt: performance.now(),
       settings,
       conversionDurationSeconds: durationSeconds,
-      wasTranscoded: false,
-      originalCodec: videoMetadata()?.codec,
     };
-
     setConversionResults((results) => [newResult, ...results].slice(0, MAX_RESULTS));
 
     batch(() => {
@@ -267,7 +264,7 @@ async function performConversion(
     }
 
     const classified = classifyError(error);
-    const context = classifyConversionError(errorMessage_, videoMetadata(), settings, undefined);
+    const context = classifyConversionError(errorMessage_, videoMetadata(), settings);
 
     logger.error('conversion', 'Conversion failed', {
       error: errorMessage_,

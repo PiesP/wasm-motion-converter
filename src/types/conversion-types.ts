@@ -86,29 +86,6 @@ export interface ConversionSettings {
 }
 
 /**
- * Conversion operation options
- *
- * Extended options passed to conversion functions. Includes quality and scale
- * from settings, plus optional metadata for adaptive behavior (e.g., timeout
- * calculation based on duration).
- *
- * Optional metadata attached to output blobs for UI display
- */
-export interface ConversionBlobMetadata {
-  /** Whether video was transcoded (re-encoded) */
-  wasTranscoded?: boolean;
-  /** Original video codec */
-  originalCodec?: string;
-  /** Encoder backend used to produce the output (dev/debug; best-effort) */
-  encoderBackendUsed?: string;
-}
-
-/**
- * Output blob with optional conversion metadata
- */
-export type ConversionOutputBlob = Blob & ConversionBlobMetadata;
-
-/**
  * Conversion result with metadata
  *
  * Complete record of a successful conversion including the output blob,
@@ -123,16 +100,14 @@ export type ConversionOutputBlob = Blob & ConversionBlobMetadata;
  *   originalSize: 1024000,
  *   createdAt: performance.now(),
  *   settings: { format: 'gif', quality: 'high', scale: 1.0 },
- *   conversionDurationSeconds: 12.5,
- *   wasTranscoded: true,
- *   originalCodec: 'h264'
+ *   conversionDurationSeconds: 12.5
  * };
  */
 export interface ConversionResult {
   /** Unique identifier (UUID) */
   id: string;
   /** Converted video blob */
-  outputBlob: ConversionOutputBlob;
+  outputBlob: Blob;
   /** Original video filename */
   originalName: string;
   /** Original file size in bytes */
@@ -143,10 +118,6 @@ export interface ConversionResult {
   settings: ConversionSettings;
   /** Time taken to convert (seconds) */
   conversionDurationSeconds?: number;
-  /** Whether video was transcoded (re-encoded) */
-  wasTranscoded?: boolean;
-  /** Original video codec */
-  originalCodec?: string;
 }
 
 /**
@@ -155,35 +126,20 @@ export interface ConversionResult {
  * Categories of errors that can occur during conversion, used to provide
  * context-specific error messages and suggestions to the user.
  *
- * - `timeout`: Conversion exceeded time limit
  * - `memory`: Out of memory or memory limit reached
  * - `format`: Unsupported video format
  * - `codec`: Unsupported video codec
  * - `general`: Other errors (catch-all)
- *
- * @example
- * const errorType: ConversionErrorType = 'timeout';
  */
-export type ConversionErrorType = 'timeout' | 'memory' | 'format' | 'codec' | 'general';
+export type ConversionErrorType = 'memory' | 'format' | 'codec' | 'general';
 
 /**
  * Detailed error context for conversion failures
  *
  * Extended error information including type classification, original error
  * message, timestamp, suggested resolution, and diagnostic data (settings,
- * FFmpeg logs, conversion phase). Used to provide user-friendly error
+ * conversion phase). Used to provide user-friendly error
  * messages and debugging information.
- *
- * @example
- * const context: ErrorContext = {
- *   type: 'timeout',
- *   originalError: 'Conversion exceeded 60s timeout',
- *   timestamp: performance.now(),
- *   suggestion: 'Try a shorter video or reduce quality settings',
- *   conversionSettings: { format: 'gif', quality: 'high', scale: 1.0 },
- *   ffmpegLogs: ['[info] Processing...', '[error] Timeout'],
- *   phase: 'encoding'
- * };
  */
 export interface ErrorContext {
   /** Error type classification */
@@ -196,14 +152,10 @@ export interface ErrorContext {
   suggestion?: string;
   /** Settings used for failed conversion */
   conversionSettings?: ConversionSettings;
-  /** FFmpeg log output for debugging */
-  ffmpegLogs?: string[];
   /** Which phase of conversion failed (e.g., 'decoding', 'encoding') */
   phase?: string;
 }
-
 /**
- * Extracted video metadata
  *
  * Video file properties extracted during analysis phase. Used to validate
  * the video, calculate timeouts, detect performance issues, and provide
