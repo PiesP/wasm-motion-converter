@@ -6,12 +6,7 @@ import type { WebPConfig } from 'wasm-webp';
 import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import type { DemuxResult } from './demuxer-service';
-import {
-  compositeAlphaToRGB,
-  copyFrameToRGB,
-  getFrameDurationMs,
-  resizeFrameToRGBA,
-} from './frame-utils';
+import { copyFrameToRGB, getFrameDurationMs } from './frame-utils';
 
 export interface WebpEncodeOptions {
   width: number;
@@ -51,7 +46,7 @@ export async function encodeWebp(
   const webpConfig: WebPConfig = { lossless: 0, quality };
   const needsResize = w !== srcW || h !== srcH;
 
-  // Check codec support
+  // Check codec support + H2: hardware acceleration
   const support = await VideoDecoder.isConfigSupported(demux.config);
   if (!support.supported) {
     throw new Error(`Codec not supported: ${demux.config.codec}`);
@@ -107,13 +102,8 @@ export async function encodeWebp(
 
       const conversion = (async () => {
         try {
-          let rgbData: Uint8Array;
-          if (needsResize) {
-            const rgba = await resizeFrameToRGBA(frame, w, h);
-            rgbData = compositeAlphaToRGB(rgba);
-          } else {
-            rgbData = await copyFrameToRGB(frame, w, h);
-          }
+          // H3: Use optimized copyFrameToRGB with resize support
+          const rgbData = await copyFrameToRGB(frame, w, h, needsResize);
           rgbFrames.push({ data: rgbData, duration: totalDuration });
         } finally {
           frame.close();
@@ -143,7 +133,11 @@ export async function encodeWebp(
     },
   });
 
-  decoder.configure(demux.config);
+  // H2: Hardware-accelerated decoding (with fallback)
+  const hwConfig = { ...demux.config, hardwareAcceleration: 'prefer-hardware' as const };
+  const swConfig = { ...demux.config, hardwareAcceleration: 'prefer-software' as const };
+  const hwSupport = await VideoDecoder.isConfigSupported(hwConfig);
+  decoder.configure(hwSupport.supported ? hwConfig : swConfig);
 
   for (const chunk of demux.chunks) {
     if (signal?.aborted) {
