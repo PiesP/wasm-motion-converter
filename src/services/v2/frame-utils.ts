@@ -269,6 +269,178 @@ export function isDuplicateFrame(
   return hammingDistanceDHash(hashA, hashB) < threshold;
 }
 
+// ─── Histogram-based Duplicate Detection (A1) ───
+
+/** Number of histogram bins per color channel */
+const HIST_BINS = 32;
+
+/**
+ * Compute per-channel histograms for RGB frame data.
+ * Used to complement dHash with color-based similarity.
+ */
+export function computeHistogram(rgb: Uint8Array): Float32Array {
+  const total = new Float32Array(HIST_BINS * 3);
+  const pixelCount = rgb.length / 3;
+  const step = 256 / HIST_BINS;
+
+  for (let i = 0; i < pixelCount; i++) {
+    const idx = i * 3;
+    const rBin = Math.min(HIST_BINS - 1, Math.floor(rgb[idx]! / step));
+    const gBin = Math.min(HIST_BINS - 1, Math.floor(rgb[idx + 1]! / step));
+    const bBin = Math.min(HIST_BINS - 1, Math.floor(rgb[idx + 2]! / step));
+    total[rBin]!++;
+    total[gBin + HIST_BINS]!++;
+    total[bBin + HIST_BINS * 2]!++;
+  }
+
+  // Normalize to [0, 1]
+  const invCount = 1 / pixelCount;
+  for (let i = 0; i < total.length; i++) {
+    total[i] = (total[i] ?? 0) * invCount;
+  }
+  return total;
+}
+
+/**
+ * Compute histogram intersection similarity (0 = completely different, 1 = identical).
+ */
+export function histogramSimilarity(a: Float32Array, b: Float32Array): number {
+  let intersection = 0;
+  for (let i = 0; i < a.length; i++) {
+    intersection += Math.min(a[i]!, b[i]!);
+  }
+  return intersection; // Already normalized, range [0, 1]
+}
+
+/**
+ * Combined duplicate detection using dHash (structure) + histogram (color).
+ * More accurate than dHash alone — catches color-only changes that dHash misses.
+ *
+ * @returns { duplicate: boolean, score: number } — score 0 = identical, >= 1 = different
+ */
+export function isDuplicateFrameCombined(
+  prevRGB: Uint8Array,
+  currRGB: Uint8Array,
+  width: number,
+  height: number,
+  dhashThreshold = 8,
+  histThreshold = 0.98 // 98% histogram similarity = duplicate
+): { duplicate: boolean; score: number } {
+  // Quick dHash check first (O(64) → fast)
+  const hashA = computeFrameDHash(prevRGB, width, height);
+  const hashB = computeFrameDHash(currRGB, width, height);
+  const dhashDist = hammingDistanceDHash(hashA, hashB);
+
+  // If dHash is very different, definitely not duplicate — skip histogram
+  if (dhashDist >= dhashThreshold * 2) {
+    return { duplicate: false, score: dhashDist / 64 };
+  }
+
+  // If dHash is very similar, compute histogram for secondary check
+  if (dhashDist < dhashThreshold) {
+    const histA = computeHistogram(prevRGB);
+    const histB = computeHistogram(currRGB);
+    const histSim = histogramSimilarity(histA, histB);
+
+    // Both dHash AND histogram must agree for duplicate classification
+    const duplicate = histSim >= histThreshold;
+    // Score: combine dHash distance (normalized) with histogram dissimilarity
+    const score = (dhashDist / 64) * 0.5 + (1 - histSim) * 0.5;
+    return { duplicate, score };
+  }
+
+  // dHash borderline — compute histogram for final verdict
+  const histA = computeHistogram(prevRGB);
+  const histB = computeHistogram(currRGB);
+  const histSim = histogramSimilarity(histA, histB);
+  const score = (dhashDist / 64) * 0.6 + (1 - histSim) * 0.4;
+  return { duplicate: histSim >= histThreshold, score };
+}
+
+// ─── Adaptive Threshold (A2) ───
+
+/** Sampling window for auto-threshold calibration */
+const AUTO_THRESHOLD_SAMPLE_FRAMES = 30;
+/** Minimum threshold value (strictest — keeps more frames) */
+const MIN_THRESHOLD = 4;
+/** Maximum threshold value (loosest — removes more frames) */
+const MAX_THRESHOLD = 20;
+/** Default threshold when auto-calibration is insufficient */
+const DEFAULT_THRESHOLD = 8;
+
+/**
+ * Compute adaptive threshold based on initial frame sample.
+ * Analyzes the first N frames to determine content type:
+ * - Static content (low frame-to-frame variance) → lower threshold (keep more)
+ * - Dynamic content (high variance) → higher threshold (remove more)
+ *
+ * The optimal threshold is 2x the median pairwise dHash distance
+ * from the first N frames, clamped to [MIN_THRESHOLD, MAX_THRESHOLD].
+ */
+export function autoThreshold(
+  frames: { rgb: Uint8Array; width: number; height: number }[]
+): number {
+  if (frames.length < 4) return DEFAULT_THRESHOLD;
+
+  const pairs = Math.min(AUTO_THRESHOLD_SAMPLE_FRAMES, frames.length);
+  const distances: number[] = [];
+
+  for (let i = 1; i < pairs; i++) {
+    const prev = frames[i - 1]!;
+    const curr = frames[i]!;
+    const prevHash = computeFrameDHash(prev.rgb, prev.width, prev.height);
+    const currHash = computeFrameDHash(curr.rgb, curr.width, curr.height);
+    distances.push(hammingDistanceDHash(prevHash, currHash));
+  }
+
+  // Sort and take median
+  distances.sort((a, b) => a - b);
+  const median = distances[Math.floor(distances.length / 2)] ?? 0;
+
+  // Threshold = 2× median distance, clamped
+  // 2× multiplier because we want to catch moderate changes, not just median
+  const rawThreshold = Math.round(median * 2);
+  return Math.max(MIN_THRESHOLD, Math.min(MAX_THRESHOLD, rawThreshold));
+}
+
+/**
+ * Check if two frames are duplicates using adaptive threshold.
+ * Selects the best detection strategy based on content type.
+ */
+export function isDuplicateFrameAdaptive(
+  prevRGB: Uint8Array,
+  currRGB: Uint8Array,
+  width: number,
+  height: number,
+  threshold?: number
+): { duplicate: boolean; score: number } {
+  // Measure frame-to-frame difference using dHash
+  const hashA = computeFrameDHash(prevRGB, width, height);
+  const hashB = computeFrameDHash(currRGB, width, height);
+  const dhashDist = hammingDistanceDHash(hashA, hashB);
+
+  // If frames are clearly different (dHash >> threshold), skip histogram
+  const effectiveThreshold = threshold ?? DEFAULT_THRESHOLD;
+  if (dhashDist >= effectiveThreshold * 2) {
+    return { duplicate: false, score: 1 };
+  }
+
+  // If dHash is clearly similar, return duplicate immediately
+  if (dhashDist < effectiveThreshold / 2) {
+    return { duplicate: true, score: 0 };
+  }
+
+  // Borderline case: compute histogram for final decision
+  const histA = computeHistogram(prevRGB);
+  const histB = computeHistogram(currRGB);
+  const histSim = histogramSimilarity(histA, histB);
+
+  // Histogram similarity threshold: >95% = duplicate
+  const duplicate = histSim >= 0.95;
+  const score = (dhashDist / 64) * 0.5 + (1 - histSim) * 0.5;
+  return { duplicate, score };
+}
+
 /**
  * Alpha composite: blend RGBA pixels over a black background.
  * Converts RGBA → RGB by applying alpha pre-multiplication.

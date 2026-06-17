@@ -6,7 +6,7 @@ import type { WebPConfig } from 'wasm-webp';
 import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import type { DemuxResult } from './demuxer-service';
-import { copyFrameToRGB, getFrameDurationMs, isDuplicateFrame } from './frame-utils';
+import { copyFrameToRGB, getFrameDurationMs, isDuplicateFrameAdaptive } from './frame-utils';
 
 export interface WebpEncodeOptions {
   width: number;
@@ -108,11 +108,14 @@ export async function encodeWebp(
           // H3: Use optimized copyFrameToRGB with resize support
           const rgbData = await copyFrameToRGB(frame, w, h, needsResize);
 
-          // F1: Frame deduplication — skip similar frames
-          if (prevRGB !== null && isDuplicateFrame(prevRGB, rgbData, w, h, 8)) {
-            accumulatedDuration += totalDuration;
-            skippedByDedup++;
-            return;
+          // F1: Frame deduplication — skip similar frames (dHash + histogram adaptive)
+          if (prevRGB !== null) {
+            const result = isDuplicateFrameAdaptive(prevRGB, rgbData, w, h, 8);
+            if (result.duplicate) {
+              accumulatedDuration += totalDuration;
+              skippedByDedup++;
+              return;
+            }
           }
 
           rgbFrames.push({ data: rgbData, duration: totalDuration });

@@ -5,7 +5,7 @@ import { logger } from '@utils/logger';
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import type { DemuxResult } from './demuxer-service';
-import { copyFrameToRGB, getFrameDurationMs, isDuplicateFrame } from './frame-utils';
+import { copyFrameToRGB, getFrameDurationMs, isDuplicateFrameAdaptive } from './frame-utils';
 
 export interface GifEncodeOptions {
   width: number;
@@ -227,13 +227,15 @@ export async function encodeGif(
     const rgb = await copyFrameToRGB(frame, w, h, needsResize);
     frame.close();
 
-    // F1: Frame deduplication — skip similar frames
-    if (doDedup && prevRGB !== null && isDuplicateFrame(prevRGB, rgb, w, h, dedupThreshold)) {
-      accumulatedDelay += frameDelay;
-      frameIdx++;
-      skippedByDedup++;
-      // Don't update prevRGB — keep the original for comparison
-      continue;
+    // F1: Frame deduplication — skip similar frames (dHash + histogram adaptive)
+    if (doDedup && prevRGB !== null) {
+      const result = isDuplicateFrameAdaptive(prevRGB, rgb, w, h, dedupThreshold);
+      if (result.duplicate) {
+        accumulatedDelay += frameDelay;
+        frameIdx++;
+        skippedByDedup++;
+        continue;
+      }
     }
 
     // Add accumulated delay from skipped frames
