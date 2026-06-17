@@ -5,13 +5,19 @@ import { logger } from '@utils/logger';
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import type { DemuxResult } from './demuxer-service';
-import { copyFrameToRGB, getFrameDurationMs } from './frame-utils';
+import { copyFrameToRGB, getFrameDurationMs, isDuplicateFrame } from './frame-utils';
 
 export interface GifEncodeOptions {
   width: number;
   height: number;
   quality: 'low' | 'medium' | 'high';
   scale: number;
+  /** Frame decimation: keep every Nth frame (1 = keep all, 2 = keep 50%, etc.) */
+  frameDecimation?: number;
+  /** Enable frame deduplication (dHash-based) */
+  deduplicate?: boolean;
+  /** dHash threshold for deduplication (0-64, lower = stricter) */
+  dedupThreshold?: number;
 }
 
 const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
@@ -82,6 +88,9 @@ export async function encodeGif(
   const maxColors = QUALITY_COLORS[opts.quality];
   const ditherStrength = QUALITY_DITHER_STRENGTH[opts.quality];
   const needsResize = w !== srcW || h !== srcH;
+  const frameDecimation = opts.frameDecimation ?? 1;
+  const doDedup = opts.deduplicate ?? true;
+  const dedupThreshold = opts.dedupThreshold ?? 8;
 
   // Check codec support
   const support = await VideoDecoder.isConfigSupported(demux.config);
@@ -146,6 +155,12 @@ export async function encodeGif(
   });
 
   // Process frames sequentially — O(1) memory per frame
+  // With deduplication and decimation for size optimization
+  let prevRGB: Uint8Array | null = null;
+  let accumulatedDelay = 0;
+  let skippedByDecimation = 0;
+  let skippedByDedup = 0;
+
   while (frameQueue.length > 0) {
     const frame = frameQueue.shift()!;
     if (signal?.aborted) {
@@ -154,14 +169,35 @@ export async function encodeGif(
       throw new DOMException('Cancelled', 'AbortError');
     }
 
-    const delayMs = getFrameDurationMs(frame);
+    const frameDelay = getFrameDurationMs(frame);
+
+    // F2: Frame decimation — skip every Nth frame
+    if (frameDecimation > 1 && frameIdx % frameDecimation !== 0) {
+      accumulatedDelay += frameDelay;
+      frame.close();
+      frameIdx++;
+      skippedByDecimation++;
+      continue;
+    }
 
     // H3: Direct RGB copy (no createImageBitmap fallback)
     const rgb = await copyFrameToRGB(frame, w, h, needsResize);
     frame.close();
 
+    // F1: Frame deduplication — skip similar frames
+    if (doDedup && prevRGB !== null && isDuplicateFrame(prevRGB, rgb, w, h, dedupThreshold)) {
+      accumulatedDelay += frameDelay;
+      frameIdx++;
+      skippedByDedup++;
+      // Don't update prevRGB — keep the original for comparison
+      continue;
+    }
+
+    // Add accumulated delay from skipped frames
+    const totalDelay = frameDelay + accumulatedDelay;
+    accumulatedDelay = 0;
+
     // Bayer ordered dithering (pre-processing, in-place on RGB)
-    // Apply at all scales now — optimized copyTo makes this affordable
     if (ditherStrength > 0) {
       bayerDitherRGB(rgb, w, h, ditherStrength);
     }
@@ -172,9 +208,10 @@ export async function encodeGif(
     encoder.writeFrame(indexed, w, h, {
       palette: globalPalette,
       repeat: 0,
-      delay: delayMs,
+      delay: totalDelay,
     });
 
+    prevRGB = rgb;
     frameIdx++;
     const now = performance.now();
     if (
@@ -217,6 +254,10 @@ export async function encodeGif(
     totalDuration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
     maxColors,
+    skippedByDecimation,
+    skippedByDedup,
+    dedupEnabled: doDedup,
+    frameDecimation,
   });
 
   return finalBytes;

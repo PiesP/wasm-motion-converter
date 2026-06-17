@@ -159,12 +159,104 @@ export async function resizeFrameToRGBA(
 }
 
 /**
- * Get frame duration in milliseconds.
- * Falls back to 100ms (10fps) if duration is unavailable.
+ * Get frame duration in milliseconds with clamping.
+ * Clamps to [MIN_DELAY_MS, MAX_DELAY_MS] to avoid:
+ * - Too-fast frames (<20ms) that waste space and aren't perceptible
+ * - Too-slow frames (>200ms) that cause visible stuttering
  */
+const MIN_DELAY_MS = 20; // 50fps max — faster is imperceptible
+const MAX_DELAY_MS = 200; // 5fps min — slower causes visible stutter
+
 export function getFrameDurationMs(frame: VideoFrame): number {
   const raw = frame.duration as number | null;
-  return raw != null && raw > 0 ? Math.max(1, Math.round(raw / 1000)) : 100;
+  const ms = raw != null && raw > 0 ? Math.max(1, Math.round(raw / 1000)) : 100;
+  return Math.max(MIN_DELAY_MS, Math.min(MAX_DELAY_MS, ms));
+}
+
+// ─── Frame Deduplication (dHash) ───
+
+/**
+ * Compute a 64-bit dHash (difference hash) for a grayscale frame.
+ * Used for fast frame deduplication: frames with small hamming distance
+ * are considered duplicates/near-duplicates.
+ *
+ * Algorithm:
+ * 1. Convert RGB to 8×8 grayscale (luminance)
+ * 2. Compare adjacent pixels horizontally → 64 bits
+ * 3. Return as two 32-bit numbers (high, low)
+ */
+export function computeFrameDHash(
+  rgb: Uint8Array,
+  width: number,
+  height: number
+): { hi: number; lo: number } {
+  // Sample 8×8 grid from the frame
+  const gray = new Uint8Array(64);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      const srcX = Math.floor((x / 8) * width);
+      const srcY = Math.floor((y / 8) * height);
+      const srcIdx = (srcY * width + srcX) * 3;
+      // Luminance: 0.299R + 0.587G + 0.114B
+      gray[y * 8 + x] = Math.round(
+        rgb[srcIdx]! * 0.299 + rgb[srcIdx + 1]! * 0.587 + rgb[srcIdx + 2]! * 0.114
+      );
+    }
+  }
+
+  // Compute difference hash: compare adjacent pixels
+  let hi = 0;
+  let lo = 0;
+  for (let i = 0; i < 64; i++) {
+    const bit = gray[i]! > gray[(i + 1) % 64]! ? 1 : 0;
+    if (i < 32) {
+      lo = (lo << 1) | bit;
+    } else {
+      hi = (hi << 1) | bit;
+    }
+  }
+
+  return { hi, lo };
+}
+
+/**
+ * Compute hamming distance between two dHash values.
+ * Distance < threshold means frames are visually similar.
+ */
+export function hammingDistanceDHash(
+  a: { hi: number; lo: number },
+  b: { hi: number; lo: number }
+): number {
+  let diff = (a.hi ^ b.hi) | (a.lo ^ b.lo);
+  // Count set bits
+  let count = 0;
+  while (diff) {
+    count += diff & 1;
+    diff >>>= 1;
+  }
+  return count;
+}
+
+/**
+ * Check if two frames are duplicates based on dHash comparison.
+ * Returns true if frames are similar enough to be considered duplicates.
+ *
+ * @param prevRGB - Previous frame's RGB data
+ * @param currRGB - Current frame's RGB data
+ * @param width   - Frame width
+ * @param height  - Frame height
+ * @param threshold - Max hamming distance (default: 8, out of 64 bits)
+ */
+export function isDuplicateFrame(
+  prevRGB: Uint8Array,
+  currRGB: Uint8Array,
+  width: number,
+  height: number,
+  threshold = 8
+): boolean {
+  const hashA = computeFrameDHash(prevRGB, width, height);
+  const hashB = computeFrameDHash(currRGB, width, height);
+  return hammingDistanceDHash(hashA, hashB) < threshold;
 }
 
 /**

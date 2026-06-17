@@ -6,7 +6,7 @@ import type { WebPConfig } from 'wasm-webp';
 import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import type { DemuxResult } from './demuxer-service';
-import { copyFrameToRGB, getFrameDurationMs } from './frame-utils';
+import { copyFrameToRGB, getFrameDurationMs, isDuplicateFrame } from './frame-utils';
 
 export interface WebpEncodeOptions {
   width: number;
@@ -76,12 +76,14 @@ export async function encodeWebp(
     frameStep,
   });
 
-  // Collect RGB frames with immediate VideoFrame disposal
+  // Collect RGB frames with immediate VideoFrame disposal + deduplication
   const rgbFrames: { data: Uint8Array; duration: number }[] = [];
   const pendingConversions: Promise<void>[] = [];
   let decodeError: Error | null = null;
   let frameCount = 0;
-  let accumulatedDuration = 0; // Accumulate duration of skipped frames
+  let accumulatedDuration = 0;
+  let prevRGB: Uint8Array | null = null;
+  let skippedByDedup = 0;
   const startTime = performance.now();
 
   const decoder = new VideoDecoder({
@@ -104,7 +106,16 @@ export async function encodeWebp(
         try {
           // H3: Use optimized copyFrameToRGB with resize support
           const rgbData = await copyFrameToRGB(frame, w, h, needsResize);
+
+          // F1: Frame deduplication — skip similar frames
+          if (prevRGB !== null && isDuplicateFrame(prevRGB, rgbData, w, h, 8)) {
+            accumulatedDuration += totalDuration;
+            skippedByDedup++;
+            return;
+          }
+
           rgbFrames.push({ data: rgbData, duration: totalDuration });
+          prevRGB = rgbData;
         } finally {
           frame.close();
         }
@@ -209,6 +220,7 @@ export async function encodeWebp(
     duration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
     quality: webpConfig.quality,
+    skippedByDedup,
   });
 
   return result;
