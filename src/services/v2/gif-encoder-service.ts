@@ -175,6 +175,9 @@ export async function encodeGif(
   // GIF spec max is 65535ms, but >200ms causes visible stuttering
   const MAX_FRAME_DELAY = 200;
 
+  // Safety: don't dedup more than 90% of frames to prevent single-frame output
+  const MAX_DEDUP_RATIO = 0.9;
+
   /**
    * Write a frame to the GIF encoder with delay capping.
    * If accumulated delay exceeds MAX_FRAME_DELAY, insert intermediate frames
@@ -229,8 +232,10 @@ export async function encodeGif(
 
     // F1: Frame deduplication — skip similar frames (dHash + histogram adaptive)
     if (doDedup && prevRGB !== null) {
+      const dedupRatio = frameIdx > 0 ? skippedByDedup / frameIdx : 0;
       const result = isDuplicateFrameAdaptive(prevRGB, rgb, w, h, dedupThreshold);
-      if (result.duplicate) {
+      // Only dedup if we haven't removed too many frames already
+      if (result.duplicate && dedupRatio < MAX_DEDUP_RATIO) {
         accumulatedDelay += frameDelay;
         frameIdx++;
         skippedByDedup++;

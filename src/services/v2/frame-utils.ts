@@ -444,8 +444,9 @@ export function isDuplicateFrameAdaptive(
   const histB = computeHistogram(currRGB);
   const histSim = histogramSimilarity(histA, histB);
 
-  // Histogram similarity threshold: >95% = duplicate
-  const duplicate = histSim >= 0.95;
+  // Histogram similarity threshold: >99% = duplicate (very strict)
+  // 98% was still too lenient for some content types
+  const duplicate = histSim >= 0.99;
   const score = (dhashDist / 64) * 0.5 + (1 - histSim) * 0.5;
   return { duplicate, score };
 }
