@@ -237,12 +237,18 @@ export function hammingDistanceDHash(
   a: { hi: number; lo: number },
   b: { hi: number; lo: number }
 ): number {
-  let diff = (a.hi ^ b.hi) | (a.lo ^ b.lo);
-  // Count set bits
+  // XOR each 32-bit half separately, then count set bits in both.
+  // Using OR would lose information when hi and lo have overlapping bits.
+  let hiDiff = (a.hi ^ b.hi) >>> 0; // Force unsigned
+  let loDiff = (a.lo ^ b.lo) >>> 0;
   let count = 0;
-  while (diff) {
-    count += diff & 1;
-    diff >>>= 1;
+  while (hiDiff) {
+    count += hiDiff & 1;
+    hiDiff >>>= 1;
+  }
+  while (loDiff) {
+    count += loDiff & 1;
+    loDiff >>>= 1;
   }
   return count;
 }
@@ -425,12 +431,12 @@ export function isDuplicateFrameAdaptive(
     return { duplicate: false, score: 1 };
   }
 
-  // If dHash is clearly similar, return duplicate immediately
-  if (dhashDist < effectiveThreshold / 2) {
+  // If frames are pixel-identical, skip histogram
+  if (dhashDist === 0) {
     return { duplicate: true, score: 0 };
   }
 
-  // Borderline case: compute histogram for final decision
+  // Borderline: compute histogram for final decision
   const histA = computeHistogram(prevRGB);
   const histB = computeHistogram(currRGB);
   const histSim = histogramSimilarity(histA, histB);

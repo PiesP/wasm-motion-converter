@@ -268,7 +268,7 @@ export async function encodeGif(
       const elapsedSec = (now - startTime) / 1000;
       onProgress({
         phase: 'encoding',
-        progress: Math.round((frameIdx / demux.totalFrames) * 100),
+        progress: Math.round((Math.min(frameIdx, demux.totalFrames) / demux.totalFrames) * 100),
         fps: Math.round(frameIdx / elapsedSec),
         etaSeconds: null,
         memoryMB: 0,
