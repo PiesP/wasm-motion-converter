@@ -26,12 +26,20 @@ export async function demuxVideo(
   const videoTrack = videoTracks[0];
   if (!videoTrack) {
     input.dispose();
+    logger.error('demuxer', 'No video track found in input buffer', {
+      fileName: request.fileName,
+      fileSizeBytes: request.inputBuffer.byteLength,
+    });
     throw new Error('No video track found in input buffer');
   }
 
   const config = await videoTrack.getDecoderConfig();
   if (!config) {
     input.dispose();
+    logger.error('demuxer', 'Unable to obtain VideoDecoderConfig', {
+      fileName: request.fileName,
+      trackCount: videoTracks.length,
+    });
     throw new Error('Unable to obtain VideoDecoderConfig from video track');
   }
 
@@ -42,6 +50,11 @@ export async function demuxVideo(
   const startPacket = await sink.getFirstPacket();
   if (!startPacket) {
     input.dispose();
+    logger.error('demuxer', 'No decodable packets found', {
+      fileName: request.fileName,
+      codec: config.codec,
+      duration: `${duration.toFixed(2)}s`,
+    });
     throw new Error('No decodable packets found in input buffer');
   }
 

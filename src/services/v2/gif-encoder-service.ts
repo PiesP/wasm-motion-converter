@@ -115,6 +115,11 @@ export async function encodeGif(
       frameQueue.push(frame);
     },
     error(e: Error) {
+      logger.error('encoders', 'GIF VideoDecoder error', {
+        codec: demux.config.codec,
+        hardwareAccel: hwSupport.supported ? 'hardware' : 'software',
+        error: e.message,
+      });
       decodeError = e;
     },
   });

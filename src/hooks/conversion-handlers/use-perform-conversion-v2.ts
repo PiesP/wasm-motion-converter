@@ -8,6 +8,7 @@
  * WebCodecs VideoDecoder requires main thread access in most browsers.
  */
 
+import { logger } from '@utils/logger';
 import { runConversionPipeline } from '@/services/v2/conversion-pipeline';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 
@@ -34,9 +35,25 @@ export async function performConversionV2(
   onProgress: V2ProgressCallback,
   signal?: AbortSignal
 ): Promise<{ blob: Blob; format: 'gif' | 'webp' }> {
-  const buffer = await inputFile.arrayBuffer();
+  let buffer: ArrayBuffer;
+  try {
+    buffer = await inputFile.arrayBuffer();
+  } catch (err) {
+    logger.error('conversion', 'Failed to read input file buffer', {
+      fileName: inputFile.name,
+      fileSizeBytes: inputFile.size,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 
-  if (signal?.aborted) throw new ConversionCancelledError();
+  if (signal?.aborted) {
+    logger.info('conversion', 'Conversion cancelled before pipeline start', {
+      fileName: inputFile.name,
+      format: options.format,
+    });
+    throw new ConversionCancelledError();
+  }
 
   const output = await runConversionPipeline(
     {

@@ -24,23 +24,36 @@ export async function runConversionPipeline(
 ): Promise<ArrayBuffer> {
   const pipelineStart = performance.now();
 
-  // Demux (0~10%) — "Preparing video data..."
-  const demuxResult = await demuxVideo(request, (packetsExtracted) => {
-    const memMB = getMemoryUsageMB() ?? 0;
-    const elapsedMs = Math.round(performance.now() - pipelineStart);
-    onProgress({
-      phase: 'demuxing',
-      progress: 0, // demux has no total yet; caller maps to 0~10%
-      fps: 0,
-      etaSeconds: null,
-      memoryMB: memMB,
-      currentFrame: packetsExtracted,
-      totalFrames: 0, // unknown during demux
-      elapsedMs,
+  // Demux (0~10%)
+  let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
+  try {
+    demuxResult = await demuxVideo(request, (packetsExtracted) => {
+      const memMB = getMemoryUsageMB() ?? 0;
+      const elapsedMs = Math.round(performance.now() - pipelineStart);
+      onProgress({
+        phase: 'demuxing',
+        progress: 0,
+        fps: 0,
+        etaSeconds: null,
+        memoryMB: memMB,
+        currentFrame: packetsExtracted,
+        totalFrames: 0,
+        elapsedMs,
+      });
     });
-  });
+  } catch (err) {
+    logger.error('conversion', 'Demux failed', {
+      fileName: request.fileName,
+      format: request.format,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 
-  if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+  if (signal?.aborted) {
+    logger.info('conversion', 'Conversion aborted after demux');
+    throw new DOMException('Cancelled', 'AbortError');
+  }
 
   const codedWidth = demuxResult.config.codedWidth!;
   const codedHeight = demuxResult.config.codedHeight!;

@@ -141,6 +141,10 @@ export async function encodeWebp(
       }
     },
     error(e: Error) {
+      logger.error('encoders', 'WebP VideoDecoder error', {
+        codec: demux.config.codec,
+        error: e.message,
+      });
       decodeError = e;
     },
   });

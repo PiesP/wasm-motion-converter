@@ -45,7 +45,13 @@ const focusRetryButton = (): void => focusElement('[data-error-retry-button]');
 
 export async function handleConvert(runtime: ConversionRuntimeController): Promise<void> {
   const file = inputFile();
-  if (!file) return;
+  if (!file) {
+    logger.warn('conversion', 'Convert called but no file loaded — conversion skipped', {
+      appState: appState(),
+      settings: conversionSettings(),
+    });
+    return;
+  }
 
   const settings = conversionSettings();
 
@@ -278,6 +284,9 @@ async function performConversion(
 }
 
 export function handleCancelConversion(runtime: ConversionRuntimeController): void {
+  logger.info('conversion', 'User cancelled conversion', {
+    appState: appState(),
+  });
   runtime.invalidateActiveConversions();
   setAppState('cancelling');
 

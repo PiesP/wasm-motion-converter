@@ -13,6 +13,7 @@ import {
 import { focusElement } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoFile } from '@utils/file-validation';
+import { logger } from '@utils/logger';
 import { ALL_FORMATS, BufferSource, Input } from 'mediabunny';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
@@ -79,6 +80,12 @@ export async function handleFileSelected(
 
   const validation = validateVideoFile(file);
   if (!validation.valid) {
+    logger.warn('conversion', 'File validation failed — conversion blocked', {
+      fileName: file.name,
+      fileSizeBytes: file.size,
+      fileType: file.type,
+      error: getErrorMessage(validation.error),
+    });
     setErrorMessage(getErrorMessage(validation.error));
     setAppState('error');
     focusRetryButton();
@@ -106,6 +113,11 @@ export async function handleFileSelected(
   } catch (error) {
     if (isStale()) return;
 
+    logger.warn('conversion', 'Metadata extraction failed', {
+      fileName: file.name,
+      fileSizeBytes: file.size,
+      error: getErrorMessage(error),
+    });
     setErrorMessage(getErrorMessage(error));
     setAppState('error');
     focusRetryButton();
