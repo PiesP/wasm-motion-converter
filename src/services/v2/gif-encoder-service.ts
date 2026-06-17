@@ -121,7 +121,6 @@ export async function encodeGif(
   let decodeError: Error | null = null;
   let inputFrameCount = 0;
   let accumulatedDuration = 0;
-  let prevRGB: Uint8Array | null = null;
   let skippedByDecimation = 0;
   let skippedByDedup = 0;
   let splitFrames = 0;
@@ -179,22 +178,8 @@ export async function encodeGif(
 
       const conversion = (async () => {
         try {
-          // H3: Direct RGB copy (no createImageBitmap fallback)
           const rgbData = await copyFrameToRGB(frame, w, h, needsResize);
-
-          // F1: Frame deduplication — skip similar frames (dHash + histogram adaptive)
-          if (prevRGB !== null) {
-            const dedupRatio = encodeIdx > 0 ? skippedByDedup / encodeIdx : 0;
-            const result = isDuplicateFrameAdaptive(prevRGB, rgbData, w, h, dedupThreshold);
-            if (result.duplicate && dedupRatio < MAX_DEDUP_RATIO) {
-              accumulatedDuration += totalDuration;
-              skippedByDedup++;
-              return;
-            }
-          }
-
           rgbFrames.push({ data: rgbData, duration: totalDuration });
-          prevRGB = rgbData;
         } finally {
           frame.close();
         }
@@ -261,15 +246,34 @@ export async function encodeGif(
     scale: opts.scale,
   });
 
-  // Write collected RGB frames to GIF encoder
+  // Write collected RGB frames to GIF encoder with deduplication
+  let prevRGBForDedup: Uint8Array | null = null;
   for (const { data: rgb, duration: totalDelay } of rgbFrames) {
     if (signal?.aborted) {
       throw new DOMException('Cancelled', 'AbortError');
     }
 
+    // F1: Frame deduplication — skip similar frames (dHash + histogram adaptive)
+    if (prevRGBForDedup !== null && doDedup) {
+      const totalProcessed = encodeIdx + skippedByDedup;
+      const dedupRatio = totalProcessed > 0 ? skippedByDedup / totalProcessed : 0;
+      const result = isDuplicateFrameAdaptive(prevRGBForDedup, rgb, w, h, dedupThreshold);
+      if (result.duplicate && dedupRatio < MAX_DEDUP_RATIO) {
+        accumulatedDuration += totalDelay;
+        skippedByDedup++;
+        continue;
+      }
+    }
+
+    // Add accumulated delay from skipped frames
+    const totalDelayWithAccumulated = totalDelay + accumulatedDuration;
+    accumulatedDuration = 0;
+
     const isFirstFrame = encodeIdx === 0;
     const MIN_FIRST_FRAME_DELAY = 100;
-    const delay = isFirstFrame ? Math.max(MIN_FIRST_FRAME_DELAY, totalDelay) : totalDelay;
+    const delay = isFirstFrame
+      ? Math.max(MIN_FIRST_FRAME_DELAY, totalDelayWithAccumulated)
+      : totalDelayWithAccumulated;
 
     // Bayer ordered dithering
     if (ditherStrength > 0) {
@@ -281,6 +285,7 @@ export async function encodeGif(
       globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
     }
     writeFrameWithDelay(rgb, delay);
+    prevRGBForDedup = rgb;
     encodeIdx++;
   }
 
