@@ -77,21 +77,21 @@ export function classifyError(err: unknown): ClassifiedError {
   };
 }
 
-/** 출력 파일 유효성 검증 */
+/** 출력 파일 유효성 검증 (헤더만 검사, 전체 파일 불필요) */
 export function validateOutput(output: Uint8Array, format: 'gif' | 'webp'): boolean {
-  if (output.length < 50) return false;
+  // Minimum bytes needed: GIF=6 (header), WebP=12 (RIFF+size+WEBP)
+  if (output.length < 6) return false;
 
   if (format === 'gif') {
     const header = new TextDecoder().decode(output.slice(0, 6));
     if (header !== 'GIF89a' && header !== 'GIF87a') return false;
-    if (output[output.length - 1] !== 0x3b) return false;
+    // Trailer byte (0x3b) check requires full file — skip for header-only validation
   } else {
+    if (output.length < 12) return false;
     const riff = new TextDecoder().decode(output.slice(0, 4));
     const webp = new TextDecoder().decode(output.slice(8, 12));
     if (riff !== 'RIFF' || webp !== 'WEBP') return false;
-    const expectedSize =
-      new DataView(output.buffer, output.byteOffset, output.byteLength).getUint32(4, true) + 8;
-    if (output.length !== expectedSize) return false;
+    // Size check requires full file — skip for header-only validation
   }
 
   return true;

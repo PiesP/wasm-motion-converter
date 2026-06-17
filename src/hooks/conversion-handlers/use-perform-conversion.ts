@@ -185,6 +185,10 @@ async function performConversion(
 
     const blob = v2Result.blob;
 
+    if (blob.size === 0) {
+      throw new Error('Conversion produced an empty output file');
+    }
+
     // Validate output integrity — read only the first 16 bytes to check header
     // instead of loading the entire blob into memory (avoids 2x memory for large outputs)
     const headerBuf = await blob.slice(0, 16).arrayBuffer();
