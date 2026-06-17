@@ -64,9 +64,6 @@ function bayerDitherRGB(rgb: Uint8Array, width: number, height: number, strength
 
 export type GifProgressCallback = (progress: ConversionProgress) => void;
 
-// Throttle: report every N ms to avoid flooding the main thread
-const PROGRESS_THROTTLE_MS = 150;
-
 /**
  * Encode demuxed video frames to GIF using streaming encoding + gifsicle post-processing.
  *
@@ -113,94 +110,36 @@ export async function encodeGif(
     dedupThreshold,
   });
 
-  // Streaming GIF encoder — writes frames one at a time
-  const encoder = GIFEncoder({ auto: true });
-  let frameIdx = 0;
   const startTime = performance.now();
-  let globalPalette: number[][] | null = null;
-  let lastProgressReport = 0;
 
-  // Frame queue for ordered processing
-  const frameQueue: VideoFrame[] = [];
+  // Collect RGB frames with immediate VideoFrame disposal + deduplication
+  // Pipeline: VideoDecoder.output → copyFrameToRGB (async) → write to GIF encoder
+  // Each conversion starts immediately in the decoder callback so flush() waits
+  // for both decode + convert concurrently (same pattern as WebP encoder).
+  const pendingConversions: Promise<void>[] = [];
+  const rgbFrames: { data: Uint8Array; duration: number }[] = [];
   let decodeError: Error | null = null;
-
-  // H2: Hardware-accelerated decoding (with fallback)
-  const decoder = new VideoDecoder({
-    output(frame: VideoFrame) {
-      frameQueue.push(frame);
-    },
-    error(e: Error) {
-      logger.error('encoders', 'GIF VideoDecoder error', {
-        codec: demux.config.codec,
-        hardwareAccel: hwSupport.supported ? 'hardware' : 'software',
-        error: e.message,
-      });
-      decodeError = e;
-    },
-  });
-
-  // Try hardware acceleration first, fall back to software
-  const hwConfig = { ...demux.config, hardwareAcceleration: 'prefer-hardware' as const };
-  const swConfig = { ...demux.config, hardwareAcceleration: 'prefer-software' as const };
-  const hwSupport = await VideoDecoder.isConfigSupported(hwConfig);
-  decoder.configure(hwSupport.supported ? hwConfig : swConfig);
-
-  // Feed all chunks
-  for (const chunk of demux.chunks) {
-    if (signal?.aborted) {
-      if (decoder.state !== 'closed') decoder.close();
-      throw new DOMException('Cancelled', 'AbortError');
-    }
-    if (decodeError) break;
-    decoder.decode(chunk);
-  }
-
-  // Flush decoder
-  try {
-    if (decoder.state !== 'closed') await decoder.flush();
-  } catch (e) {
-    if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
-  }
-  if (decoder.state !== 'closed') decoder.close();
-
-  if (decodeError) throw decodeError;
-
-  logger.info('encoders', 'GIF encoding started', {
-    frameCount: frameQueue.length,
-    resolution: `${w}×${h}`,
-    maxColors,
-    quality: opts.quality,
-    scale: opts.scale,
-    hardwareAcceleration: 'prefer-hardware',
-  });
-
-  // T3: Track total output duration to verify timing matches source
-  let outputTotalDelay = 0;
-  const sourceTotalDelay = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000; // ms
-
-  // Process frames sequentially — O(1) memory per frame
-  // With deduplication and decimation for size optimization
+  let inputFrameCount = 0;
+  let accumulatedDuration = 0;
   let prevRGB: Uint8Array | null = null;
-  let accumulatedDelay = 0;
   let skippedByDecimation = 0;
   let skippedByDedup = 0;
   let splitFrames = 0;
+  let encodeIdx = 0;
 
   // T2: Maximum delay per frame — prevents a single frame from displaying too long
-  // GIF spec max is 65535ms, but >200ms causes visible stuttering
   const MAX_FRAME_DELAY = 200;
-
-  // Safety: don't dedup more than 90% of frames to prevent single-frame output
+  // Safety: don't dedup more than 90% of frames
   const MAX_DEDUP_RATIO = 0.9;
 
-  /**
-   * Write a frame to the GIF encoder with delay capping.
-   * If accumulated delay exceeds MAX_FRAME_DELAY, insert intermediate frames
-   * to maintain smooth playback.
-   */
+  // Streaming GIF encoder — writes frames one at a time
+  const encoder = GIFEncoder({ auto: true });
+  let globalPalette: number[][] | null = null;
+  let outputTotalDelay = 0;
+  const sourceTotalDelay = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
+
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     let remaining = delayMs;
-
     if (remaining <= MAX_FRAME_DELAY) {
       const pal = globalPalette;
       if (!pal) return;
@@ -209,7 +148,6 @@ export async function encodeGif(
       outputTotalDelay += remaining;
       return;
     }
-
     while (remaining > 0) {
       const chunk = Math.min(remaining, MAX_FRAME_DELAY);
       const pal = globalPalette;
@@ -222,101 +160,141 @@ export async function encodeGif(
     }
   }
 
-  while (frameQueue.length > 0) {
-    const frame = frameQueue.shift()!;
+  // H2: Hardware-accelerated decoding (with fallback)
+  const decoder = new VideoDecoder({
+    output(frame: VideoFrame) {
+      const frameDuration = getFrameDurationMs(frame);
+      const frameNum = inputFrameCount++;
+
+      // F2: Frame decimation — skip every Nth frame
+      if (frameDecimation > 1 && frameNum % frameDecimation !== 0) {
+        accumulatedDuration += frameDuration;
+        frame.close();
+        skippedByDecimation++;
+        return;
+      }
+
+      const totalDuration = frameDuration + accumulatedDuration;
+      accumulatedDuration = 0;
+
+      const conversion = (async () => {
+        try {
+          // H3: Direct RGB copy (no createImageBitmap fallback)
+          const rgbData = await copyFrameToRGB(frame, w, h, needsResize);
+
+          // F1: Frame deduplication — skip similar frames (dHash + histogram adaptive)
+          if (prevRGB !== null) {
+            const dedupRatio = encodeIdx > 0 ? skippedByDedup / encodeIdx : 0;
+            const result = isDuplicateFrameAdaptive(prevRGB, rgbData, w, h, dedupThreshold);
+            if (result.duplicate && dedupRatio < MAX_DEDUP_RATIO) {
+              accumulatedDuration += totalDuration;
+              skippedByDedup++;
+              return;
+            }
+          }
+
+          rgbFrames.push({ data: rgbData, duration: totalDuration });
+          prevRGB = rgbData;
+        } finally {
+          frame.close();
+        }
+      })();
+      pendingConversions.push(conversion);
+
+      // Intermediate progress every ~5% of input frames
+      const reportInterval = Math.max(1, Math.floor(demux.totalFrames / 20));
+      if (onProgress && frameNum % reportInterval === 0) {
+        const elapsed = (performance.now() - startTime) / 1000;
+        onProgress({
+          phase: 'encoding',
+          progress: Math.round((frameNum / demux.totalFrames) * 100),
+          fps: Math.round(frameNum / elapsed),
+          etaSeconds: null,
+          memoryMB: 0,
+          currentFrame: frameNum,
+          totalFrames: demux.totalFrames,
+          elapsedMs: Math.round(performance.now() - startTime),
+        });
+      }
+    },
+    error(e: Error) {
+      logger.error('encoders', 'GIF VideoDecoder error', {
+        codec: demux.config.codec,
+        error: e.message,
+      });
+      decodeError = e;
+    },
+  });
+
+  const swConfig = { ...demux.config, hardwareAcceleration: 'prefer-software' as const };
+  decoder.configure(swConfig);
+
+  // Feed all chunks
+  for (const chunk of demux.chunks) {
     if (signal?.aborted) {
-      frame.close();
-      for (const f of frameQueue) f.close();
+      if (decoder.state !== 'closed') decoder.close();
+      throw new DOMException('Cancelled', 'AbortError');
+    }
+    if (decodeError) break;
+    decoder.decode(chunk);
+  }
+
+  // Flush decoder — resolves when all decode + convert are done
+  try {
+    if (decoder.state !== 'closed') await decoder.flush();
+  } catch (e) {
+    if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
+  }
+  if (decoder.state !== 'closed') decoder.close();
+
+  if (decodeError) throw decodeError;
+
+  // Wait for all RGB conversions to finish
+  await Promise.all(pendingConversions);
+
+  logger.info('encoders', 'GIF encoding started', {
+    decodedFrames: inputFrameCount,
+    keptFrames: rgbFrames.length,
+    resolution: `${w}×${h}`,
+    maxColors,
+    quality: opts.quality,
+    scale: opts.scale,
+  });
+
+  // Write collected RGB frames to GIF encoder
+  for (const { data: rgb, duration: totalDelay } of rgbFrames) {
+    if (signal?.aborted) {
       throw new DOMException('Cancelled', 'AbortError');
     }
 
-    const frameDelay = getFrameDurationMs(frame);
+    const isFirstFrame = encodeIdx === 0;
+    const MIN_FIRST_FRAME_DELAY = 100;
+    const delay = isFirstFrame ? Math.max(MIN_FIRST_FRAME_DELAY, totalDelay) : totalDelay;
 
-    // F2: Frame decimation — skip every Nth frame
-    if (frameDecimation > 1 && frameIdx % frameDecimation !== 0) {
-      accumulatedDelay += frameDelay;
-      frame.close();
-      frameIdx++;
-      skippedByDecimation++;
-      continue;
-    }
-
-    // H3: Direct RGB copy (no createImageBitmap fallback)
-    const rgb = await copyFrameToRGB(frame, w, h, needsResize);
-    frame.close();
-
-    // F1: Frame deduplication — skip similar frames (dHash + histogram adaptive)
-    if (doDedup && prevRGB !== null) {
-      const dedupRatio = frameIdx > 0 ? skippedByDedup / frameIdx : 0;
-      const result = isDuplicateFrameAdaptive(prevRGB, rgb, w, h, dedupThreshold);
-      // Only dedup if we haven't removed too many frames already
-      if (result.duplicate && dedupRatio < MAX_DEDUP_RATIO) {
-        accumulatedDelay += frameDelay;
-        frameIdx++;
-        skippedByDedup++;
-        continue;
-      }
-    }
-
-    // Add accumulated delay from skipped frames
-    // First frame needs minimum display time to be visible
-    const isFirstFrame = prevRGB === null;
-    const MIN_FIRST_FRAME_DELAY = 100; // ms — ensures first frame is visible
-    const rawTotalDelay = frameDelay + accumulatedDelay;
-    const totalDelay = isFirstFrame
-      ? Math.max(MIN_FIRST_FRAME_DELAY, rawTotalDelay)
-      : rawTotalDelay;
-    accumulatedDelay = 0;
-
-    // Bayer ordered dithering (pre-processing, in-place on RGB)
+    // Bayer ordered dithering
     if (ditherStrength > 0) {
       bayerDitherRGB(rgb, w, h, ditherStrength);
     }
 
-    // Quantize and write to GIF encoder with delay optimization
     globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
-    writeFrameWithDelay(rgb, totalDelay);
-
-    prevRGB = rgb;
-    frameIdx++;
-    const now = performance.now();
-    if (
-      onProgress &&
-      (now - lastProgressReport >= PROGRESS_THROTTLE_MS || frameIdx === demux.totalFrames)
-    ) {
-      lastProgressReport = now;
-      const elapsedSec = (now - startTime) / 1000;
-      onProgress({
-        phase: 'encoding',
-        progress: Math.round((Math.min(frameIdx, demux.totalFrames) / demux.totalFrames) * 100),
-        fps: Math.round(frameIdx / elapsedSec),
-        etaSeconds: null,
-        memoryMB: 0,
-        currentFrame: frameIdx,
-        totalFrames: demux.totalFrames,
-        elapsedMs: Math.round(now - startTime),
-      });
-    }
+    writeFrameWithDelay(rgb, delay);
+    encodeIdx++;
   }
 
-  if (frameIdx === 0) {
+  if (encodeIdx === 0) {
     throw new Error('No frames decoded for GIF encoding');
   }
 
   encoder.finish();
   const rawBytes = encoder.bytes();
-  const encodeElapsed = (performance.now() - startTime) / 1000;
-
-  // NOTE: gifsicle WASM post-processing disabled — browser virtual filesystem issues
-  // TODO: Re-enable after fixing gifsicle.run() output in browser context
-  const finalBytes = rawBytes;
   const totalElapsed = (performance.now() - startTime) / 1000;
 
   logger.info('encoders', 'GIF encoding complete', {
-    framesEncoded: frameIdx,
+    decodedFrames: inputFrameCount,
+    framesEncoded: encodeIdx,
     totalFrames: demux.totalFrames,
-    outputBytes: finalBytes.length,
-    encodeFps: Math.round(frameIdx / encodeElapsed),
+    outputBytes: rawBytes.length,
+    fps: Math.round(encodeIdx / totalElapsed),
     totalDuration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
     maxColors,
@@ -330,12 +308,12 @@ export async function encodeGif(
     timingErrorMs: Math.round(outputTotalDelay - sourceTotalDelay),
   });
   logger.info('encoders', '  │  └─ GIF: encode finished', {
-    framesEncoded: frameIdx,
-    outputBytes: finalBytes.length,
+    framesEncoded: encodeIdx,
+    outputBytes: rawBytes.length,
     duration: `${totalElapsed.toFixed(2)}s`,
     skippedByDecimation,
     skippedByDedup,
   });
 
-  return finalBytes;
+  return rawBytes;
 }
