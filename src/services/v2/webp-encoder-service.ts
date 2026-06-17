@@ -187,6 +187,10 @@ export async function encodeWebp(
     if (last) last.duration += accumulatedDuration;
   }
 
+  // T3: Verify total output duration matches source
+  const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
+  const outputTotalMs = rgbFrames.reduce((sum, f) => sum + f.duration, 0);
+
   // Report progress
   if (onProgress) {
     const elapsed = (performance.now() - startTime) / 1000;
@@ -228,6 +232,9 @@ export async function encodeWebp(
     resolution: `${w}×${h}`,
     quality: webpConfig.quality,
     skippedByDedup,
+    sourceDurationMs: Math.round(sourceTotalMs),
+    outputDurationMs: Math.round(outputTotalMs),
+    timingErrorMs: Math.round(outputTotalMs - sourceTotalMs),
   });
 
   return result;

@@ -159,18 +159,28 @@ export async function resizeFrameToRGBA(
 }
 
 /**
- * Get frame duration in milliseconds with clamping.
- * Clamps to [MIN_DELAY_MS, MAX_DELAY_MS] to avoid:
- * - Too-fast frames (<20ms) that waste space and aren't perceptible
- * - Too-slow frames (>200ms) that cause visible stuttering
+ * Get frame duration in milliseconds — preserves original timing.
+ * No clamping: the original video frame duration is used as-is to maintain
+ * accurate playback speed. Clamping is applied only at the output stage
+ * when writing frames (see writeFrameWithDelay in gif-encoder-service).
  */
-const MIN_DELAY_MS = 20; // 50fps max — faster is imperceptible
-const MAX_DELAY_MS = 200; // 5fps min — slower causes visible stutter
-
 export function getFrameDurationMs(frame: VideoFrame): number {
   const raw = frame.duration as number | null;
-  const ms = raw != null && raw > 0 ? Math.max(1, Math.round(raw / 1000)) : 100;
-  return Math.max(MIN_DELAY_MS, Math.min(MAX_DELAY_MS, ms));
+  // VideoFrame.duration is in microseconds → convert to milliseconds
+  return raw != null && raw > 0 ? Math.max(1, Math.round(raw / 1000)) : 100;
+}
+
+/**
+ * Calculate the total duration of all frames in a video.
+ * Used to verify output timing matches source timing after dedup/decimation.
+ */
+export function calculateTotalDuration(frames: VideoFrame[]): number {
+  let total = 0;
+  for (const frame of frames) {
+    const raw = frame.duration as number | null;
+    total += raw != null && raw > 0 ? Math.round(raw / 1000) : 100;
+  }
+  return total;
 }
 
 // ─── Frame Deduplication (dHash) ───

@@ -154,6 +154,10 @@ export async function encodeGif(
     hardwareAcceleration: 'prefer-hardware',
   });
 
+  // T3: Track total output duration to verify timing matches source
+  let outputTotalDelay = 0;
+  const sourceTotalDelay = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000; // ms
+
   // Process frames sequentially — O(1) memory per frame
   // With deduplication and decimation for size optimization
   let prevRGB: Uint8Array | null = null;
@@ -174,22 +178,22 @@ export async function encodeGif(
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     let remaining = delayMs;
 
-    // If delay is within limit, write directly
     if (remaining <= MAX_FRAME_DELAY) {
       const pal = globalPalette;
-      if (!pal) return; // Should not happen — palette is set on first frame
+      if (!pal) return;
       const indexed = applyPalette(rgbData, pal, 'rgb565');
       encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: remaining });
+      outputTotalDelay += remaining;
       return;
     }
 
-    // Split long delay into multiple frames for smooth playback
     while (remaining > 0) {
       const chunk = Math.min(remaining, MAX_FRAME_DELAY);
       const pal = globalPalette;
       if (!pal) return;
       const indexed = applyPalette(rgbData, pal, 'rgb565');
       encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: chunk });
+      outputTotalDelay += chunk;
       remaining -= chunk;
       if (remaining > 0) splitFrames++;
     }
@@ -288,6 +292,9 @@ export async function encodeGif(
     splitFrames,
     dedupEnabled: doDedup,
     frameDecimation,
+    sourceDurationMs: Math.round(sourceTotalDelay),
+    outputDurationMs: Math.round(outputTotalDelay),
+    timingErrorMs: Math.round(outputTotalDelay - sourceTotalDelay),
   });
 
   return finalBytes;
