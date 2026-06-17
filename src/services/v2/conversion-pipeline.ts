@@ -68,8 +68,9 @@ export async function runConversionPipeline(
     throw new DOMException('Cancelled', 'AbortError');
   }
 
-  const codedWidth = demuxResult.config.codedWidth!;
-  const codedHeight = demuxResult.config.codedHeight!;
+  const cfg = demuxResult.config as unknown as Record<string, number>;
+  const codedWidth = cfg.displayWidth ?? demuxResult.config.codedWidth!;
+  const codedHeight = cfg.displayHeight ?? demuxResult.config.codedHeight!;
 
   const demuxElapsedMs = performance.now() - pipelineStart;
   const demuxMemMB = getMemoryUsageMB() ?? 0;

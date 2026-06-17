@@ -48,8 +48,10 @@ async function extractMetadata(file: File, existingBuffer?: ArrayBuffer) {
     if (!config) throw new Error('Unable to obtain VideoDecoderConfig');
 
     const duration = await track.computeDuration();
-    const width = config.codedWidth ?? 0;
-    const height = config.codedHeight ?? 0;
+    const width =
+      (config as unknown as Record<string, number>).displayWidth ?? config.codedWidth ?? 0;
+    const height =
+      (config as unknown as Record<string, number>).displayHeight ?? config.codedHeight ?? 0;
 
     // Extract codec string (e.g. "avc1.42E01E" → "avc1")
     const codec = config.codec?.split('.')[0] ?? 'unknown';
