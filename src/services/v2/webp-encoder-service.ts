@@ -46,9 +46,12 @@ export async function encodeWebp(
   const webpConfig: WebPConfig = { lossless: 0, quality };
   const needsResize = w !== srcW || h !== srcH;
 
+  logger.info('encoders', '  │  ├─ WebP: codec support check', { codec: demux.config.codec });
+
   // Check codec support + H2: hardware acceleration
   const support = await VideoDecoder.isConfigSupported(demux.config);
   if (!support.supported) {
+    logger.warn('encoders', '  │  ├─ WebP: codec NOT supported', { codec: demux.config.codec });
     throw new Error(`Codec not supported: ${demux.config.codec}`);
   }
 
@@ -236,6 +239,13 @@ export async function encodeWebp(
     sourceDurationMs: Math.round(sourceTotalMs),
     outputDurationMs: Math.round(outputTotalMs),
     timingErrorMs: Math.round(outputTotalMs - sourceTotalMs),
+  });
+  logger.info('encoders', '  │  └─ WebP: encode finished', {
+    keptFrames: rgbFrames.length,
+    outputBytes: result.length,
+    duration: `${totalElapsed.toFixed(2)}s`,
+    frameStep,
+    skippedByDedup,
   });
 
   return result;

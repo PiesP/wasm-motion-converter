@@ -92,11 +92,26 @@ export async function encodeGif(
   const doDedup = opts.deduplicate ?? true;
   const dedupThreshold = opts.dedupThreshold ?? 8;
 
+  logger.info('encoders', '  │  ├─ GIF: codec support check', { codec: demux.config.codec });
+
   // Check codec support
   const support = await VideoDecoder.isConfigSupported(demux.config);
   if (!support.supported) {
+    logger.warn('encoders', '  │  ├─ GIF: codec NOT supported', { codec: demux.config.codec });
     throw new Error(`Codec not supported: ${demux.config.codec}`);
   }
+
+  logger.info('encoders', '  │  ├─ GIF: VideoDecoder configured', {
+    codec: demux.config.codec,
+    hwAccel: support.supported ? 'prefer-hardware' : 'prefer-software',
+    resolution: `${w}×${h}`,
+    maxColors,
+    quality: opts.quality,
+    scale: opts.scale,
+    frameDecimation,
+    dedupEnabled: doDedup,
+    dedupThreshold,
+  });
 
   // Streaming GIF encoder — writes frames one at a time
   const encoder = GIFEncoder({ auto: true });
@@ -313,6 +328,13 @@ export async function encodeGif(
     sourceDurationMs: Math.round(sourceTotalDelay),
     outputDurationMs: Math.round(outputTotalDelay),
     timingErrorMs: Math.round(outputTotalDelay - sourceTotalDelay),
+  });
+  logger.info('encoders', '  │  └─ GIF: encode finished', {
+    framesEncoded: frameIdx,
+    outputBytes: finalBytes.length,
+    duration: `${totalElapsed.toFixed(2)}s`,
+    skippedByDecimation,
+    skippedByDedup,
   });
 
   return finalBytes;

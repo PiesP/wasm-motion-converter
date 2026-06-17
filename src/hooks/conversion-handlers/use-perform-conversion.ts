@@ -123,6 +123,11 @@ async function performConversion(
       scale: settings.scale,
       durationMs: videoDurationMs,
     });
+    logger.info('conversion', '▶ Conversion handler: use-perform-conversion.ts → V2 pipeline', {
+      format: settings.format,
+      quality: settings.quality,
+      scale: settings.scale,
+    });
 
     runtime.startMemoryMonitoring();
 

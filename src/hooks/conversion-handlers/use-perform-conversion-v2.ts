@@ -70,6 +70,12 @@ export async function performConversionV2(
     signal
   );
 
+  logger.info('conversion', `  └─ Generated: ${options.format.toUpperCase()} blob`, {
+    outputBytes: output.byteLength,
+    format: options.format,
+    fileName: inputFile.name,
+  });
+
   const mimeType = options.format === 'gif' ? 'image/gif' : 'image/webp';
   return { blob: new Blob([output], { type: mimeType }), format: options.format };
 }

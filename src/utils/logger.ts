@@ -112,9 +112,18 @@ class Logger {
   }
 
   private log(level: LogLevel, category: LogCategory, message: string, context?: unknown): void {
-    if (!this.isDev && (level === 'DEBUG' || level === 'INFO') && category !== 'performance') {
+    // In production, route-tracking logs (marked with ▶/◀/├─/└─) are always shown
+    const isRouteLog = /^[▶◀├└│]/.test(message.trimStart());
+    if (
+      !this.isDev &&
+      !isRouteLog &&
+      (level === 'DEBUG' || level === 'INFO') &&
+      category !== 'performance'
+    ) {
       return;
     }
+    // In production, downgrade route logs to WARN so they pass the filter
+    const effectiveLevel: LogLevel = !this.isDev && isRouteLog ? 'WARN' : level;
 
     const now = new Date();
     const ts = now.toTimeString().slice(0, 8);
@@ -138,7 +147,7 @@ class Logger {
       timestampMs: now.getTime(),
       timestampIso: now.toISOString(),
       time: ts,
-      level,
+      level: effectiveLevel,
       category,
       message,
       conversionProgress: progress,
@@ -147,7 +156,13 @@ class Logger {
     };
 
     const method =
-      level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : level === 'INFO' ? 'info' : 'log';
+      effectiveLevel === 'ERROR'
+        ? 'error'
+        : effectiveLevel === 'WARN'
+          ? 'warn'
+          : effectiveLevel === 'INFO'
+            ? 'info'
+            : 'log';
     console[method](line);
 
     this.recentLines.push(line);

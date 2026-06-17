@@ -23,6 +23,19 @@ export async function runConversionPipeline(
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
   const pipelineStart = performance.now();
+  const format = request.format;
+  const logCtx = {
+    format,
+    quality: request.quality,
+    scale: request.scale,
+    fileName: request.fileName,
+    trimStart: request.trimStart,
+    trimEnd: request.trimEnd,
+    inputBytes: request.inputBuffer.byteLength,
+  };
+
+  logger.performance('Pipeline started', logCtx);
+  logger.info('conversion', `▶ Pipeline route: V2_MAINTHREAD_${format.toUpperCase()}`, logCtx);
 
   // Demux (0~10%)
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
@@ -74,6 +87,12 @@ export async function runConversionPipeline(
   // Decode + Encode (10~90%)
   let output: ArrayBuffer;
   if (request.format === 'gif') {
+    logger.info('conversion', '  ├─ Branch: GIF encoder (gifenc + VideoDecoder)', {
+      codec: demuxResult.config.codec,
+      codedWidth: demuxResult.config.codedWidth,
+      codedHeight: demuxResult.config.codedHeight,
+      totalFrames: demuxResult.totalFrames,
+    });
     output = (
       await encodeGif(
         demuxResult,
@@ -94,6 +113,12 @@ export async function runConversionPipeline(
       )
     ).buffer as ArrayBuffer;
   } else {
+    logger.info('conversion', '  ├─ Branch: WebP encoder (wasm-webp + VideoDecoder)', {
+      codec: demuxResult.config.codec,
+      codedWidth: demuxResult.config.codedWidth,
+      codedHeight: demuxResult.config.codedHeight,
+      totalFrames: demuxResult.totalFrames,
+    });
     const encoded = await encodeWebp(
       demuxResult,
       { width: codedWidth, height: codedHeight, quality: request.quality, scale: request.scale },
@@ -141,13 +166,19 @@ export async function runConversionPipeline(
   });
 
   // Completion summary
-  logger.info('conversion', 'Pipeline complete', {
+  logger.info('conversion', `◀ Pipeline complete: V2_MAINTHREAD_${request.format.toUpperCase()}`, {
     format: request.format,
     quality: request.quality,
     scale: request.scale,
     totalFrames: demuxResult.totalFrames,
     outputBytes: output.byteLength,
     duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
+    peakMemoryMB: memMB,
+  });
+  logger.performance('Pipeline complete', {
+    format: request.format,
+    outputBytes: output.byteLength,
+    durationMs: totalElapsedMs,
     peakMemoryMB: memMB,
   });
 
