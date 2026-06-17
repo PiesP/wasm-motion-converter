@@ -78,6 +78,8 @@ export async function encodeWebp(
     totalInputFrames,
     skippedByDecimation,
     skippedByFilter,
+    sourceTotalMs,
+    outputTotalMs,
   } = await decodeFrames(
     demux,
     { width: w, height: h, frameDecimation, hwAccel: 'prefer-hardware', filterFrame },
@@ -87,10 +89,6 @@ export async function encodeWebp(
   if (rgbFrames.length === 0) {
     throw new Error('No frames decoded for WebP encoding');
   }
-
-  // T3: Verify total output duration matches source
-  const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
-  const outputTotalMs = rgbFrames.reduce((sum, f) => sum + f.duration, 0);
 
   logger.info('encoders', 'WebP encoding started', {
     decodedFrames: totalInputFrames,
@@ -129,9 +127,9 @@ export async function encodeWebp(
     quality: webpConfig.quality,
     skippedByDedup: skippedByFilter,
     skippedByDecimation,
-    sourceDurationMs: Math.round(sourceTotalMs),
+    sourceDurationMs: Math.round(sourceTotalMs * 1000),
     outputDurationMs: Math.round(outputTotalMs),
-    timingErrorMs: Math.round(outputTotalMs - sourceTotalMs),
+    timingErrorMs: Math.round(outputTotalMs - sourceTotalMs * 1000),
   });
   logger.info('encoders', '  │  └─ WebP: encode finished', {
     keptFrames: rgbFrames.length,

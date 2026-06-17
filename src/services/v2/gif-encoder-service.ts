@@ -69,8 +69,8 @@ export type GifProgressCallback = (progress: ConversionProgress) => void;
  * Encode demuxed video frames to GIF.
  *
  * Pipeline:
- *   1. decodeFrames (common VideoDecoder pipeline) → RGB frames
- *   2. Per-frame: dedup → dither → quantize → writeFrame
+ *   1. decodeFrames (common VideoDecoder pipeline + dedup) → RGB frames
+ *   2. Per-frame: dither → quantize → writeFrame
  */
 export async function encodeGif(
   demux: DemuxResult,
@@ -92,26 +92,39 @@ export async function encodeGif(
 
   const startTime = performance.now();
 
-  // Decode frames using common decoder pipeline
+  // Build frame deduplication filter for decodeFrames
+  let prevRGBForDedup: Uint8Array | null = null;
+  const filterFrame = doDedup
+    ? (rgb: Uint8Array, fw: number, fh: number): boolean => {
+        if (prevRGBForDedup !== null) {
+          const result = isDuplicateFrameAdaptive(prevRGBForDedup, rgb, fw, fh, dedupThreshold);
+          if (result.duplicate) return false;
+        }
+        prevRGBForDedup = rgb;
+        return true;
+      }
+    : undefined;
+
+  // Decode frames using common decoder pipeline (with dedup)
   const {
     frames: rgbFrames,
     totalInputFrames,
     skippedByDecimation,
+    skippedByFilter,
+    sourceTotalMs,
   } = await decodeFrames(
     demux,
-    { width: w, height: h, frameDecimation, hwAccel: 'prefer-software' },
+    { width: w, height: h, frameDecimation, hwAccel: 'prefer-software', filterFrame },
     signal
   );
 
-  let skippedByDedup = 0;
+  const skippedByDedup = skippedByFilter;
   let splitFrames = 0;
   let encodeIdx = 0;
   let accumulatedDuration = 0;
 
   // T2: Maximum delay per frame — prevents a single frame from displaying too long
   const MAX_FRAME_DELAY = 200;
-  // Safety: don't dedup more than 90% of frames
-  const MAX_DEDUP_RATIO = 0.9;
 
   // Streaming GIF encoder — writes frames one at a time
   // Estimate initial capacity: width * height * estimatedFrames * 0.1 (LZW ~10:1)
@@ -123,7 +136,6 @@ export async function encodeGif(
   });
   let globalPalette: number[][] | null = null;
   let outputTotalDelay = 0;
-  const sourceTotalDelay = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
 
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     let remaining = delayMs;
@@ -156,23 +168,10 @@ export async function encodeGif(
     scale: opts.scale,
   });
 
-  // Write collected RGB frames to GIF encoder with deduplication
-  let prevRGBForDedup: Uint8Array | null = null;
+  // Write collected RGB frames to GIF encoder (dedup already done in decodeFrames)
   for (const { data: rgb, duration: totalDelay } of rgbFrames) {
     if (signal?.aborted) {
       throw new DOMException('Cancelled', 'AbortError');
-    }
-
-    // F1: Frame deduplication — skip similar frames (dHash + histogram adaptive)
-    if (prevRGBForDedup !== null && doDedup) {
-      const totalProcessed = encodeIdx + skippedByDedup;
-      const dedupRatio = totalProcessed > 0 ? skippedByDedup / totalProcessed : 0;
-      const result = isDuplicateFrameAdaptive(prevRGBForDedup, rgb, w, h, dedupThreshold);
-      if (result.duplicate && dedupRatio < MAX_DEDUP_RATIO) {
-        accumulatedDuration += totalDelay;
-        skippedByDedup++;
-        continue;
-      }
     }
 
     // Add accumulated delay from skipped frames
@@ -195,7 +194,6 @@ export async function encodeGif(
       globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
     }
     writeFrameWithDelay(rgb, delay);
-    prevRGBForDedup = rgb;
     encodeIdx++;
   }
 
@@ -209,24 +207,24 @@ export async function encodeGif(
 
   logger.info('encoders', 'GIF encoding complete', {
     decodedFrames: totalInputFrames,
-    framesEncoded: encodeIdx,
+    keptFrames: encodeIdx,
     totalFrames: demux.totalFrames,
     outputBytes: rawBytes.length,
     fps: Math.round(encodeIdx / totalElapsed),
-    totalDuration: `${totalElapsed.toFixed(2)}s`,
+    duration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
+    quality: opts.quality,
     maxColors,
+    frameDecimation,
     skippedByDecimation,
     skippedByDedup,
     splitFrames,
-    dedupEnabled: doDedup,
-    frameDecimation,
-    sourceDurationMs: Math.round(sourceTotalDelay),
+    sourceDurationMs: Math.round(sourceTotalMs * 1000),
     outputDurationMs: Math.round(outputTotalDelay),
-    timingErrorMs: Math.round(outputTotalDelay - sourceTotalDelay),
+    timingErrorMs: Math.round(outputTotalDelay - sourceTotalMs * 1000),
   });
   logger.info('encoders', '  │  └─ GIF: encode finished', {
-    framesEncoded: encodeIdx,
+    keptFrames: encodeIdx,
     outputBytes: rawBytes.length,
     duration: `${totalElapsed.toFixed(2)}s`,
     skippedByDecimation,

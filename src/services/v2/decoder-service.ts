@@ -42,6 +42,10 @@ export interface DecodeResult {
   totalInputFrames: number;
   skippedByDecimation: number;
   skippedByFilter: number;
+  /** Total source duration in milliseconds (from demux chunk durations) */
+  sourceTotalMs: number;
+  /** Total output duration in milliseconds (sum of all frame durations) */
+  outputTotalMs: number;
 }
 
 /**
@@ -175,6 +179,10 @@ export async function decodeFrames(
     if (last) last.duration += accumulatedDuration;
   }
 
+  // Compute timing summary
+  const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
+  const outputTotalMs = rgbFrames.reduce((sum, f) => sum + f.duration, 0);
+
   logger.info('encoders', 'Decoding complete', {
     totalInputFrames: inputFrameCount,
     outputFrames: rgbFrames.length,
@@ -188,5 +196,7 @@ export async function decodeFrames(
     totalInputFrames: inputFrameCount,
     skippedByDecimation,
     skippedByFilter,
+    sourceTotalMs,
+    outputTotalMs,
   };
 }
