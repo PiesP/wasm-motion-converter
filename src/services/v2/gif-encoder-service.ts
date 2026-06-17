@@ -237,7 +237,13 @@ export async function encodeGif(
     }
 
     // Add accumulated delay from skipped frames
-    const totalDelay = frameDelay + accumulatedDelay;
+    // First frame needs minimum display time to be visible
+    const isFirstFrame = prevRGB === null;
+    const MIN_FIRST_FRAME_DELAY = 100; // ms — ensures first frame is visible
+    const rawTotalDelay = frameDelay + accumulatedDelay;
+    const totalDelay = isFirstFrame
+      ? Math.max(MIN_FIRST_FRAME_DELAY, rawTotalDelay)
+      : rawTotalDelay;
     accumulatedDelay = 0;
 
     // Bayer ordered dithering (pre-processing, in-place on RGB)
