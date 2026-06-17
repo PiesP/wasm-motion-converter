@@ -132,7 +132,13 @@ export async function encodeGif(
   const MAX_DEDUP_RATIO = 0.9;
 
   // Streaming GIF encoder — writes frames one at a time
-  const encoder = GIFEncoder({ auto: true });
+  // Estimate initial capacity: width * height * estimatedFrames * 0.1 (LZW ~10:1)
+  const estimatedFrames = Math.max(1, Math.floor(demux.totalFrames / (opts.frameDecimation ?? 1)));
+  const estimatedBytes = Math.min(w * h * estimatedFrames * 0.1, 32 * 1024 * 1024);
+  const encoder = GIFEncoder({
+    auto: true,
+    initialCapacity: Math.max(4096, Math.round(estimatedBytes)),
+  });
   let globalPalette: number[][] | null = null;
   let outputTotalDelay = 0;
   const sourceTotalDelay = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
@@ -143,7 +149,7 @@ export async function encodeGif(
       const pal = globalPalette;
       if (!pal) return;
       const indexed = applyPalette(rgbData, pal, 'rgb565');
-      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: remaining, dispose: 2 });
+      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: remaining });
       outputTotalDelay += remaining;
       return;
     }
@@ -152,7 +158,7 @@ export async function encodeGif(
       const pal = globalPalette;
       if (!pal) return;
       const indexed = applyPalette(rgbData, pal, 'rgb565');
-      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: chunk, dispose: 2 });
+      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: chunk });
       outputTotalDelay += chunk;
       remaining -= chunk;
       if (remaining > 0) splitFrames++;

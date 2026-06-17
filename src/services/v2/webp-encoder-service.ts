@@ -16,9 +16,9 @@ export interface WebpEncodeOptions {
 }
 
 const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
-  low: 50,
-  medium: 75,
-  high: 95,
+  low: 60,
+  medium: 80,
+  high: 92,
 };
 
 export type WebpProgressCallback = (progress: ConversionProgress) => void;

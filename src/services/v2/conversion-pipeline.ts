@@ -69,8 +69,9 @@ export async function runConversionPipeline(
   }
 
   const cfg = demuxResult.config as unknown as Record<string, number>;
-  const codedWidth = cfg.displayWidth ?? demuxResult.config.codedWidth!;
-  const codedHeight = cfg.displayHeight ?? demuxResult.config.codedHeight!;
+  const codedWidth = cfg.displayAspectWidth ?? cfg.displayWidth ?? demuxResult.config.codedWidth!;
+  const codedHeight =
+    cfg.displayAspectHeight ?? cfg.displayHeight ?? demuxResult.config.codedHeight!;
 
   const demuxElapsedMs = performance.now() - pipelineStart;
   const demuxMemMB = getMemoryUsageMB() ?? 0;

@@ -48,10 +48,11 @@ async function extractMetadata(file: File, existingBuffer?: ArrayBuffer) {
     if (!config) throw new Error('Unable to obtain VideoDecoderConfig');
 
     const duration = await track.computeDuration();
-    const width =
-      (config as unknown as Record<string, number>).displayWidth ?? config.codedWidth ?? 0;
-    const height =
-      (config as unknown as Record<string, number>).displayHeight ?? config.codedHeight ?? 0;
+    // displayAspectWidth/Height: present when pixel aspect ratio is non-square (mediabunny v1.40.0+).
+    // These represent the display dimensions directly.
+    const cfg = config as unknown as Record<string, number>;
+    const width = cfg.displayAspectWidth ?? cfg.displayWidth ?? config.codedWidth ?? 0;
+    const height = cfg.displayAspectHeight ?? cfg.displayHeight ?? config.codedHeight ?? 0;
 
     // Extract codec string (e.g. "avc1.42E01E" → "avc1")
     const codec = config.codec?.split('.')[0] ?? 'unknown';
