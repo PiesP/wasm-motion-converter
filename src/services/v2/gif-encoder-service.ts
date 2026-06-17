@@ -160,6 +160,40 @@ export async function encodeGif(
   let accumulatedDelay = 0;
   let skippedByDecimation = 0;
   let skippedByDedup = 0;
+  let splitFrames = 0;
+
+  // T2: Maximum delay per frame — prevents a single frame from displaying too long
+  // GIF spec max is 65535ms, but >200ms causes visible stuttering
+  const MAX_FRAME_DELAY = 200;
+
+  /**
+   * Write a frame to the GIF encoder with delay capping.
+   * If accumulated delay exceeds MAX_FRAME_DELAY, insert intermediate frames
+   * to maintain smooth playback.
+   */
+  function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
+    let remaining = delayMs;
+
+    // If delay is within limit, write directly
+    if (remaining <= MAX_FRAME_DELAY) {
+      const pal = globalPalette;
+      if (!pal) return; // Should not happen — palette is set on first frame
+      const indexed = applyPalette(rgbData, pal, 'rgb565');
+      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: remaining });
+      return;
+    }
+
+    // Split long delay into multiple frames for smooth playback
+    while (remaining > 0) {
+      const chunk = Math.min(remaining, MAX_FRAME_DELAY);
+      const pal = globalPalette;
+      if (!pal) return;
+      const indexed = applyPalette(rgbData, pal, 'rgb565');
+      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: chunk });
+      remaining -= chunk;
+      if (remaining > 0) splitFrames++;
+    }
+  }
 
   while (frameQueue.length > 0) {
     const frame = frameQueue.shift()!;
@@ -202,14 +236,9 @@ export async function encodeGif(
       bayerDitherRGB(rgb, w, h, ditherStrength);
     }
 
-    // Quantize and write to GIF encoder immediately
+    // Quantize and write to GIF encoder with delay optimization
     globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
-    const indexed = applyPalette(rgb, globalPalette, 'rgb565');
-    encoder.writeFrame(indexed, w, h, {
-      palette: globalPalette,
-      repeat: 0,
-      delay: totalDelay,
-    });
+    writeFrameWithDelay(rgb, totalDelay);
 
     prevRGB = rgb;
     frameIdx++;
@@ -256,6 +285,7 @@ export async function encodeGif(
     maxColors,
     skippedByDecimation,
     skippedByDedup,
+    splitFrames,
     dedupEnabled: doDedup,
     frameDecimation,
   });
