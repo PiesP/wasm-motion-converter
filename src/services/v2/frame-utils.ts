@@ -344,13 +344,12 @@ export function isDuplicateFrameCombined(
 
   // If dHash is very similar, compute histogram for secondary check
   if (dhashDist < dhashThreshold) {
+    // dHash says "similar" — verify with histogram to avoid false positives
     const histA = computeHistogram(prevRGB);
     const histB = computeHistogram(currRGB);
     const histSim = histogramSimilarity(histA, histB);
-
     // Both dHash AND histogram must agree for duplicate classification
     const duplicate = histSim >= histThreshold;
-    // Score: combine dHash distance (normalized) with histogram dissimilarity
     const score = (dhashDist / 64) * 0.5 + (1 - histSim) * 0.5;
     return { duplicate, score };
   }
@@ -399,12 +398,16 @@ export function autoThreshold(
     distances.push(hammingDistanceDHash(prevHash, currHash));
   }
 
-  // Sort and take median
   distances.sort((a, b) => a - b);
   const median = distances[Math.floor(distances.length / 2)] ?? 0;
 
-  // Threshold = 2× median distance, clamped
-  // 2× multiplier because we want to catch moderate changes, not just median
+  // For static content (median=0), use a small default to avoid over-dedup
+  // For dynamic content, use 2× median to catch moderate changes
+  if (median <= 1) {
+    // Very static content — use conservative threshold
+    return Math.max(MIN_THRESHOLD, 6);
+  }
+
   const rawThreshold = Math.round(median * 2);
   return Math.max(MIN_THRESHOLD, Math.min(MAX_THRESHOLD, rawThreshold));
 }
