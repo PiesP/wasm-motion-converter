@@ -143,7 +143,7 @@ export async function encodeGif(
       const pal = globalPalette;
       if (!pal) return;
       const indexed = applyPalette(rgbData, pal, 'rgb565');
-      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: remaining });
+      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: remaining, dispose: 2 });
       outputTotalDelay += remaining;
       return;
     }
@@ -152,7 +152,7 @@ export async function encodeGif(
       const pal = globalPalette;
       if (!pal) return;
       const indexed = applyPalette(rgbData, pal, 'rgb565');
-      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: chunk });
+      encoder.writeFrame(indexed, w, h, { palette: pal, repeat: 0, delay: chunk, dispose: 2 });
       outputTotalDelay += chunk;
       remaining -= chunk;
       if (remaining > 0) splitFrames++;
