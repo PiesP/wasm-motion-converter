@@ -106,11 +106,17 @@ export async function runConversionPipeline(
     // Auto frame decimation for GIF: target ~15fps output to reduce file size
     // and encoding time. Source fps is estimated from totalFrames / duration.
     // forceDecimation from memory check overrides auto-decimation.
+    // At higher scales (>50%), decimation is doubled to keep memory and CPU
+    // manageable — raw RGB frames at 1080p are ~6MB each, so holding all
+    // decoded frames in memory simultaneously can exceed 1GB+ and cause
+    // GC thrashing / timeout.
     const sourceFps =
       demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : 30;
     const targetFps = 15;
-    const autoDecimation =
+    const baseDecimation =
       sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
+    const scaleBoost = request.scale > 0.5 ? 2 : 1;
+    const autoDecimation = baseDecimation * scaleBoost;
     const gifDecimation = request.forceDecimation ?? autoDecimation;
 
     logger.info('conversion', '  ├─ Branch: GIF encoder (gifenc + VideoDecoder)', {

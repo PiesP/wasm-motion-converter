@@ -7,6 +7,7 @@ const LINKS = {
   GIFENC: 'https://github.com/mattdesl/gifenc',
   WASM_WEBP: 'https://github.com/GoogleChromeLabs/wasm-webp',
   MEDIABUNNY: 'https://github.com/w3reality/mediabunny',
+  FFMPEG_WASM: 'https://github.com/ffmpegwasm/ffmpeg.wasm',
   LICENSES: '/LICENSES.md',
   GITHUB_ISSUES: 'https://github.com/PiesP/wasm-motion-converter/issues',
 } as const;
@@ -48,6 +49,16 @@ const LicenseAttribution: Component = () => (
           aria-label="mediabunny on GitHub (opens in new tab)"
         >
           mediabunny
+        </a>{' '}
+        , and{' '}
+        <a
+          href={LINKS.FFMPEG_WASM}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-blue-600 dark:text-blue-400 hover:underline"
+          aria-label="ffmpeg.wasm on GitHub (opens in new tab)"
+        >
+          ffmpeg.wasm
         </a>{' '}
         — processing happens entirely in your browser via WebCodecs.
       </p>
