@@ -27,9 +27,9 @@ interface SettingsPanelProps {
 
 const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   return (
-    <Panel class="p-6">
-      <div class="mb-6">
-        <div class="flex gap-3">
+    <Panel class="p-4">
+      <div class="mb-4">
+        <div class="flex gap-2">
           <Show
             when={props.isConverting}
             fallback={
@@ -63,7 +63,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
       </div>
 
       <Show when={props.metadata}>
-        <div class="mb-6">
+        <div class="mb-4">
           <TrimSelector
             duration={props.metadata!.duration}
             trimStart={props.settings.trimStart}

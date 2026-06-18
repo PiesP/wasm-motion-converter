@@ -19,39 +19,41 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
   const [local] = splitProps(props, ['metadata', 'fileName', 'fileSize']);
 
   const codecDisplay = createMemo(() =>
-    local.metadata.codec === UNKNOWN_CODEC ? DETECTING_LABEL : local.metadata.codec
+    local.metadata.codec === UNKNOWN_CODEC ? DETECTING_LABEL : local.metadata.codec.toUpperCase()
   );
 
   return (
     <div
-      class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-6"
+      class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4"
       data-testid="video-metadata"
     >
-      <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Input Video</h3>
-      <dl class="space-y-2">
-        <div class="grid grid-cols-[auto_1fr] gap-x-4 items-baseline">
-          <dt class="text-gray-500 dark:text-gray-400 text-xs">File</dt>
-          <dd class="text-gray-900 dark:text-white truncate text-sm">{local.fileName}</dd>
+      <h3 class="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wide">
+        Input Video
+      </h3>
+      <dl class="space-y-1.5 text-sm">
+        <div class="flex justify-between gap-3">
+          <dt class="text-gray-500 dark:text-gray-400 shrink-0">File</dt>
+          <dd class="text-gray-900 dark:text-white truncate text-right">{local.fileName}</dd>
         </div>
-        <div class="grid grid-cols-[auto_1fr] gap-x-4 items-baseline">
-          <dt class="text-gray-500 dark:text-gray-400 text-xs">Resolution</dt>
-          <dd class="text-gray-900 dark:text-white text-sm">
-            {local.metadata.width}x{local.metadata.height}
+        <div class="flex justify-between gap-3">
+          <dt class="text-gray-500 dark:text-gray-400 shrink-0">Resolution</dt>
+          <dd class="text-gray-900 dark:text-white tabular-nums">
+            {local.metadata.width}×{local.metadata.height}
           </dd>
         </div>
-        <div class="grid grid-cols-[auto_1fr] gap-x-4 items-baseline">
-          <dt class="text-gray-500 dark:text-gray-400 text-xs">Duration</dt>
-          <dd class="text-gray-900 dark:text-white text-sm">
+        <div class="flex justify-between gap-3">
+          <dt class="text-gray-500 dark:text-gray-400 shrink-0">Duration</dt>
+          <dd class="text-gray-900 dark:text-white tabular-nums">
             {formatDuration(local.metadata.duration)}
           </dd>
         </div>
-        <div class="grid grid-cols-[auto_1fr] gap-x-4 items-baseline">
-          <dt class="text-gray-500 dark:text-gray-400 text-xs">Codec</dt>
-          <dd class="text-gray-900 dark:text-white text-sm uppercase">{codecDisplay()}</dd>
+        <div class="flex justify-between gap-3">
+          <dt class="text-gray-500 dark:text-gray-400 shrink-0">Codec</dt>
+          <dd class="text-gray-900 dark:text-white tabular-nums">{codecDisplay()}</dd>
         </div>
-        <div class="grid grid-cols-[auto_1fr] gap-x-4 items-baseline">
-          <dt class="text-gray-500 dark:text-gray-400 text-xs">File Size</dt>
-          <dd class="text-gray-900 dark:text-white text-sm">{formatBytes(local.fileSize)}</dd>
+        <div class="flex justify-between gap-3">
+          <dt class="text-gray-500 dark:text-gray-400 shrink-0">Size</dt>
+          <dd class="text-gray-900 dark:text-white tabular-nums">{formatBytes(local.fileSize)}</dd>
         </div>
       </dl>
     </div>

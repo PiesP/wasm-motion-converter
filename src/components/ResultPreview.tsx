@@ -40,12 +40,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     return formatDuration(local.conversionDurationSeconds);
   });
 
-  const sizeGridClass = createMemo(() =>
-    conversionTimeLabel()
-      ? 'grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3'
-      : 'grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mt-3'
-  );
-
   const outputExtension = createMemo(() => {
     if (local.outputBlob.type === 'image/gif') return 'gif';
     if (local.outputBlob.type === 'image/webp') return 'webp';
@@ -76,27 +70,26 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       `${outputExtension().toUpperCase()} conversion results: ${downloadFileName()}, ${formatBytes(local.outputBlob.size)}`
   );
 
-  // Expose download URL for the <a> tag
   const downloadUrl = createMemo(() => previewUrl());
 
   const handlePreviewLoad = () => setLoaded(true);
 
   return (
-    <Panel class="p-6">
-      <div class="flex gap-3">
+    <Panel class="p-4">
+      <div class="flex gap-2">
         <a
           href={downloadUrl() ?? undefined}
           download={downloadFileName()}
           aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
-          class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-900"
+          class="flex-1 inline-flex justify-center items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-900"
           data-testid="download-result-button"
           role="button"
         >
-          Download
+          Download {outputExtension().toUpperCase()}
         </a>
       </div>
 
-      <div class="mt-4 flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg p-4 relative overflow-hidden">
+      <div class="mt-3 flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg p-2 relative overflow-hidden">
         <div class={skeletonClass()}>
           <div class="w-full h-full bg-gray-200 dark:bg-gray-800 animate-pulse rounded" />
         </div>
@@ -111,45 +104,42 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         </Show>
       </div>
 
-      <section class="mt-4" aria-label={ariaLabel()}>
-        <h3 class="text-lg font-medium text-gray-900 dark:text-white">Conversion Complete</h3>
-        <dl class={sizeGridClass()}>
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <dt class="text-gray-600 dark:text-gray-400">Original Size</dt>
+      <section class="mt-3" aria-label={ariaLabel()}>
+        <dl class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
+            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Original</dt>
             <dd class="font-medium text-gray-900 dark:text-white" data-result-original-size>
               {formatBytes(local.originalSize)}
             </dd>
           </div>
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <dt class="text-gray-600 dark:text-gray-400">Output Size</dt>
+          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
+            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Output</dt>
             <dd class="font-medium text-gray-900 dark:text-white" data-result-output-size>
               {formatBytes(local.outputBlob.size)}
             </dd>
           </div>
           <Show when={conversionTimeLabel()}>
             {(label) => (
-              <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-                <dt class="text-gray-600 dark:text-gray-400">Conversion Time</dt>
+              <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
+                <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Time</dt>
                 <dd class="font-medium text-gray-900 dark:text-white">{label()}</dd>
               </div>
             )}
           </Show>
-        </dl>
-        <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm mt-3">
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <dt class="text-gray-600 dark:text-gray-400">Format</dt>
+          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
+            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Format</dt>
             <dd class="font-medium text-gray-900 dark:text-white uppercase" data-result-format>
               {local.settings.format}
             </dd>
           </div>
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <dt class="text-gray-600 dark:text-gray-400">Quality</dt>
+          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
+            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Quality</dt>
             <dd class="font-medium text-gray-900 dark:text-white capitalize" data-result-quality>
               {local.settings.quality}
             </dd>
           </div>
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-3">
-            <dt class="text-gray-600 dark:text-gray-400">Scale</dt>
+          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
+            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Scale</dt>
             <dd class="font-medium text-gray-900 dark:text-white" data-result-scale>
               {(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%
             </dd>

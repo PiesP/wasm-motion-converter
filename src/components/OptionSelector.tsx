@@ -7,7 +7,7 @@ import Tooltip from './Tooltip';
 import Icon from './ui/Icon';
 
 const BASE_OPTION_CLASS =
-  'relative flex items-center justify-center px-4 py-3 border rounded-lg cursor-pointer transition-colors';
+  'relative flex items-center justify-center px-3 py-2 border rounded-lg cursor-pointer transition-colors text-sm';
 const SELECTED_OPTION_CLASS =
   'bg-blue-50 dark:bg-blue-950 border-blue-500 dark:border-blue-400 text-blue-700 dark:text-blue-100 ring-2 ring-blue-500/30 dark:ring-blue-400/30';
 const DEFAULT_OPTION_CLASS =
@@ -87,7 +87,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
         <div class="text-center pointer-events-none">
           <div class="font-medium">{option.label}</div>
           <Show when={option.description}>
-            <div id={descriptionId} class="text-xs mt-1 opacity-75">
+            <div id={descriptionId} class="text-[10px] mt-0.5 opacity-75">
               {option.description}
             </div>
           </Show>
@@ -105,14 +105,14 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
 
   return (
     <fieldset
-      class={`mb-6 ${local.disabled ? 'opacity-50 pointer-events-none' : ''}`}
+      class={`mb-4 ${local.disabled ? 'opacity-50 pointer-events-none' : ''}`}
       disabled={local.disabled}
       aria-label={local.title}
       data-testid={`option-group-${local.name}`}
     >
       <legend
         id={legendId()}
-        class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"
+        class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2 flex items-center gap-1.5"
       >
         <span>{local.title}</span>
         <Show when={local.tooltip}>
@@ -132,7 +132,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
       <div
         role="radiogroup"
         aria-labelledby={legendId()}
-        class={`grid gap-3 ${gridColumnsClass()}`}
+        class={`grid gap-2 ${gridColumnsClass()}`}
       >
         <For each={local.options}>{renderOption}</For>
       </div>

@@ -7,35 +7,19 @@ import type { Component } from 'solid-js';
 import { splitProps } from 'solid-js';
 import ProgressBar from './ProgressBar';
 
-/**
- * Conversion progress component props
- */
 interface ConversionProgressProps {
-  /** Current progress percentage (0-100) */
   progress: number;
-  /** Current conversion status text */
   status: string;
-  /** Optional detailed status message */
   statusMessage?: string;
-  /** Whether to show elapsed time */
   showElapsedTime?: boolean;
-  /** Conversion start timestamp in milliseconds */
   startTime?: number;
-  /** ETA in seconds */
   estimatedSecondsRemaining?: number | null;
-  /** Current frame number */
   currentFrame?: number;
-  /** Total frame number */
   totalFrames?: number;
-  /** Memory usage string */
   memoryUsage?: string | null;
-  /** Active phase for multi-segment bar */
   phase?: ConversionPhase;
 }
 
-/**
- * Conversion progress display component
- */
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {
   const [local] = splitProps(props, [
     'progress',
@@ -54,7 +38,7 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
 
   return (
     <Panel
-      class="p-6"
+      class="p-4"
       role="region"
       ariaLabel="Video conversion progress"
       ariaLive="polite"
