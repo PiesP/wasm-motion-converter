@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
+// Copyright (c) 2025-2026 PiesP
 
 import { MEMORY_CRITICAL_THRESHOLD } from '@utils/memory-monitor';
 import type { Component } from 'solid-js';

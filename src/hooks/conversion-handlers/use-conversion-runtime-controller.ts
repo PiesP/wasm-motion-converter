@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
+// Copyright (c) 2025-2026 PiesP
 
 import { setConversionProgress, setConversionStatusMessage } from '@stores/conversion-store';
 import type { ConversionPhase } from '@t/v2-conversion-types';

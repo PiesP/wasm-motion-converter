@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
+// Copyright (c) 2025-2026 PiesP
 
 import type { ConversionSettings } from '@t/conversion-types';
 import { CONVERSION_FORMATS, CONVERSION_QUALITIES, CONVERSION_SCALES } from '@t/conversion-types';

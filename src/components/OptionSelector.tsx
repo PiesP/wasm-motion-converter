@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2025 PiesP
+// Copyright (c) 2025-2026 PiesP
 
 import type { JSX } from 'solid-js';
 import { For, Show, splitProps } from 'solid-js';
