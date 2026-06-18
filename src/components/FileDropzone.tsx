@@ -154,10 +154,18 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
             aria-hidden="true"
           >
             <path
-              d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
+              d="M15 8h18a3 3 0 013 3v26a3 3 0 01-3 3H15a3 3 0 01-3-3V11a3 3 0 013-3z"
               stroke-width="2"
               stroke-linecap="round"
               stroke-linejoin="round"
+            />
+            <path
+              d="M20 18l8 5-8 5v-10z"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              fill="currentColor"
+              fill-opacity="0.15"
             />
           </svg>
           <div class="mt-4">
@@ -185,8 +193,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               data-testid="file-input"
             />
           </div>
-          <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">or drag and drop</p>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">
+          <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">or drag and drop</p>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Most video formats (MP4, MOV, WebM, MKV, AVI) - max 500MB
           </p>
         </div>

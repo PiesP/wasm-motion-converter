@@ -260,7 +260,7 @@ const App: Component = () => {
           </div>
         </header>
 
-        <main id="main-content" class="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
+        <main id="main-content" class="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 lg:px-8">
           <StatusAlerts
             environmentSupported={environmentSupported()}
             errorContext={errorContext()}
@@ -270,7 +270,7 @@ const App: Component = () => {
             onSelectNewFile={handleReset}
           />
 
-          <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-8">
+          <div class="mt-6 grid gap-6 sm:grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-8">
             <div class="space-y-6 order-2 lg:order-1">
               <Show when={memoryWarning()}>
                 <Suspense

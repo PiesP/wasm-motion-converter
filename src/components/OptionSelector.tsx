@@ -9,9 +9,9 @@ import Icon from './ui/Icon';
 const BASE_OPTION_CLASS =
   'relative flex items-center justify-center px-4 py-3 border rounded-lg cursor-pointer transition-colors';
 const SELECTED_OPTION_CLASS =
-  'bg-blue-50 dark:bg-blue-950 border-blue-500 dark:border-blue-400 text-blue-700 dark:text-blue-300 ring-2 ring-blue-500/30';
+  'bg-blue-50 dark:bg-blue-950 border-blue-500 dark:border-blue-400 text-blue-700 dark:text-blue-100 ring-2 ring-blue-500/30 dark:ring-blue-400/30';
 const DEFAULT_OPTION_CLASS =
-  'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600';
+  'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:border-gray-300 dark:hover:border-gray-500';
 const DEFAULT_COLUMNS_MANY = 3;
 const DEFAULT_COLUMNS_FEW = 2;
 

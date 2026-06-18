@@ -41,6 +41,7 @@ import {
   setConversionResults,
   setErrorContext,
   setErrorMessage,
+  setInputBuffer,
   setInputFile,
   setVideoMetadata,
   setVideoPreviewUrl,
@@ -161,12 +162,24 @@ const injectFile = (file: File, metadata?: VideoMetadata): void => {
   if (prevUrl) URL.revokeObjectURL(prevUrl);
 
   setInputFile(file);
+  // Read file into buffer so conversion can proceed without re-reading
+  file
+    .arrayBuffer()
+    .then((buf) => {
+      setInputBuffer(buf);
+    })
+    .catch(() => {});
   const previewUrl = URL.createObjectURL(file);
   setVideoPreviewUrl(previewUrl);
 
   if (metadata) {
     setVideoMetadata(metadata);
   }
+
+  // Ensure app is in idle state so convert button becomes enabled.
+  // Without this, injectFile alone does not transition state from a previous
+  // conversion/error, leaving the button disabled.
+  setAppState('idle');
 };
 
 const resetApp = (): void => {

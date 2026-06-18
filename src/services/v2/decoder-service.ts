@@ -76,7 +76,9 @@ export async function decodeFrames(
   // Check codec support
   const support = await VideoDecoder.isConfigSupported(demux.config);
   if (!support.supported) {
-    throw new Error(`Codec not supported: ${demux.config.codec}`);
+    throw new Error(
+      `Unsupported configuration. Check isConfigSupported() prior to calling configure(). Codec: ${demux.config.codec}`
+    );
   }
 
   // Build hw/sw configs
@@ -157,6 +159,7 @@ export async function decodeFrames(
       throw new DOMException('Cancelled', 'AbortError');
     }
     if (decodeError) break;
+    if (decoder.state === 'closed') break;
     decoder.decode(chunk);
   }
 
@@ -166,6 +169,7 @@ export async function decodeFrames(
   } catch (e) {
     if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
   }
+  // Guard against double-close: flush() may have already closed the decoder
   if (decoder.state !== 'closed') decoder.close();
 
   if (decodeError) throw decodeError;
