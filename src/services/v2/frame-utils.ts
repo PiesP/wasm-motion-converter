@@ -54,18 +54,10 @@ export async function copyFrameToRGB(
   }
 
   // Fallback: Canvas-based extraction for YUV/NV12 formats
-  // Use resize via createImageBitmap to avoid separate resize step
-  const bitmap = await createImageBitmap(frame, {
-    resizeWidth: width,
-    resizeHeight: height,
-    resizeQuality: 'pixelated',
-    premultiplyAlpha: 'none',
-  });
-
+  // Draw the VideoFrame directly to an OffscreenCanvas at the target size
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close();
+  ctx.drawImage(frame, 0, 0, width, height);
 
   const imageData = ctx.getImageData(0, 0, width, height);
   return rgbaToRGB(new Uint8Array(imageData.data), width, height);
