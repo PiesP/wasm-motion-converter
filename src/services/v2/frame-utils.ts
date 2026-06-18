@@ -19,8 +19,7 @@
 export async function copyFrameToRGB(
   frame: VideoFrame,
   width: number,
-  height: number,
-  needsResize = false
+  height: number
 ): Promise<Uint8Array> {
   // Try direct copyTo for RGB formats (zero-copy path)
   const rgbFormats: Array<'RGBX' | 'BGRX' | 'RGB' | 'RGBA' | 'BGRA'> = [
@@ -57,21 +56,19 @@ export async function copyFrameToRGB(
   // Fallback: Canvas-based extraction for YUV/NV12 formats
   // Use resize via createImageBitmap to avoid separate resize step
   const bitmap = await createImageBitmap(frame, {
-    resizeWidth: needsResize ? width : frame.displayWidth,
-    resizeHeight: needsResize ? height : frame.displayHeight,
+    resizeWidth: width,
+    resizeHeight: height,
     resizeQuality: 'pixelated',
     premultiplyAlpha: 'none',
   });
 
-  const targetW = needsResize ? width : frame.displayWidth;
-  const targetH = needsResize ? height : frame.displayHeight;
-  const canvas = new OffscreenCanvas(targetW, targetH);
+  const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+  ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
 
-  const imageData = ctx.getImageData(0, 0, targetW, targetH);
-  return rgbaToRGB(new Uint8Array(imageData.data), targetW, targetH);
+  const imageData = ctx.getImageData(0, 0, width, height);
+  return rgbaToRGB(new Uint8Array(imageData.data), width, height);
 }
 
 /**

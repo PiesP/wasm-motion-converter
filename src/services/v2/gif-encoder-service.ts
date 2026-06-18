@@ -193,6 +193,7 @@ export async function encodeGif(
     if (encodeIdx === 0) {
       globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
     }
+
     writeFrameWithDelay(rgb, delay);
     encodeIdx++;
   }

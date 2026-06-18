@@ -63,7 +63,6 @@ export async function decodeFrames(
   signal?: AbortSignal
 ): Promise<DecodeResult> {
   const { width, height, frameDecimation = 1, hwAccel = 'prefer-software', filterFrame } = opts;
-  const needsResize = false; // Resolution is set by caller
 
   const rgbFrames: DecodedFrame[] = [];
   const pendingConversions: Promise<void>[] = [];
@@ -125,7 +124,7 @@ export async function decodeFrames(
 
       const conversion = (async () => {
         try {
-          const rgbData = await copyFrameToRGB(frame, width, height, needsResize);
+          const rgbData = await copyFrameToRGB(frame, width, height);
 
           // Apply optional frame filter (e.g. deduplication)
           if (filterFrame && !filterFrame(rgbData, width, height)) {

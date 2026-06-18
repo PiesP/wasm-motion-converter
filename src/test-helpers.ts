@@ -26,6 +26,7 @@
  * 9. eval `__TEST_HELPERS__.resetApp()` — clean up, repeat
  */
 
+import { confirmDialog } from '@stores/confirmation-store';
 import {
   conversionSettings,
   DEFAULT_CONVERSION_SETTINGS,
@@ -146,6 +147,9 @@ export interface TestHelpers {
     format: 'gif' | 'webp',
     options?: { timeoutMs?: number; intervalMs?: number }
   ): Promise<boolean>;
+
+  /** Auto-confirm any pending confirmation dialog (for testing) */
+  autoConfirm(): void;
 }
 
 // ─── Helper implementations ─────────────────────────────────────────────────
@@ -155,6 +159,11 @@ const DEFAULT_WAIT_INTERVAL = 200;
 const FORMAT_WAIT_TIMEOUTS: Record<string, number> = {
   gif: 120_000,
   webp: 90_000,
+};
+
+/** Auto-confirm any pending confirmation dialog (for testing). */
+const autoConfirm = (): void => {
+  confirmDialog();
 };
 
 const injectFile = (file: File, metadata?: VideoMetadata): void => {
@@ -370,6 +379,8 @@ const testHelpers: TestHelpers = {
   readProgressFromDOM,
   waitFor,
   waitForConvert,
+  // Test flow helpers
+  autoConfirm,
 };
 
 export function attachTestHelpers(): void {
