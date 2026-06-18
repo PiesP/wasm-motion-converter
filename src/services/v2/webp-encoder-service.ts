@@ -1,12 +1,27 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+/**
+ * WebP Encoder Service — Streaming Architecture
+ *
+ * Uses wasm-webp's single-frame encodeRGB API to encode frames one at a
+ * time, then muxes the results into an animated WebP container.
+ *
+ * This replaces the previous batch encodeAnimation approach which held all
+ * frames in memory simultaneously and failed at 2GB WASM memory limit for
+ * 1920x1080 full-scale videos.
+ *
+ * Pipeline:
+ *   1. decodeFrames → RGB frames (same as before)
+ *   2. Per frame: encodeRGB() → VP8 bitstream extraction
+ *   3. muxAnimatedWebP() → final animated WebP blob
+ */
+
 import { logger } from '@utils/logger';
-import type { WebPConfig } from 'wasm-webp';
-import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
+import { encodeStreamingWebP } from './streaming-webp-encoder';
 
 export interface WebpEncodeOptions {
   width: number;
@@ -28,16 +43,16 @@ const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
 export type WebpProgressCallback = (progress: ConversionProgress) => void;
 
 /**
- * Encode demuxed video frames to WebP.
+ * Encode demuxed video frames to animated WebP using streaming.
  *
  * Pipeline:
  *   1. decodeFrames (common VideoDecoder pipeline + dedup) → RGB frames
- *   2. encodeAnimation (wasm-webp) → WebP output
+ *   2. encodeStreamingWebP (per-frame encodeRGB + mux) → WebP output
  */
 export async function encodeWebp(
   demux: DemuxResult,
   opts: WebpEncodeOptions,
-  _onProgress?: WebpProgressCallback,
+  onProgress?: WebpProgressCallback,
   signal?: AbortSignal
 ): Promise<Uint8Array> {
   const srcW = opts.width;
@@ -45,7 +60,6 @@ export async function encodeWebp(
   const w = Math.floor(srcW * opts.scale);
   const h = Math.floor(srcH * opts.scale);
   const quality = QUALITY_MAP[opts.quality];
-  const webpConfig: WebPConfig = { lossless: 0, quality };
   const frameDecimation = opts.frameDecimation ?? 1;
 
   logger.info('encoders', '  │  ├─ WebP: codec support check', { codec: demux.config.codec });
@@ -58,7 +72,6 @@ export async function encodeWebp(
     totalInputFrames,
     skippedByDecimation,
     sourceTotalMs,
-    outputTotalMs,
   } = await decodeFrames(
     demux,
     {
@@ -71,6 +84,9 @@ export async function encodeWebp(
     signal
   );
 
+  // Note: outputTotalMs from decodeFrames is not used in streaming path.
+  // Timing is computed from individual frame durations during muxing.
+
   if (rgbFrames.length === 0) {
     throw new Error('No frames decoded for WebP encoding');
   }
@@ -79,15 +95,15 @@ export async function encodeWebp(
     decodedFrames: totalInputFrames,
     keptFrames: rgbFrames.length,
     resolution: `${w}×${h}`,
-    quality: webpConfig.quality,
+    quality,
     scale: opts.scale,
     frameDecimation,
     skippedByDecimation,
   });
 
-  // Report encoding progress start (decoding is 50%, encoding starts now)
-  if (_onProgress) {
-    _onProgress({
+  // Report encoding progress start
+  if (onProgress) {
+    onProgress({
       phase: 'encoding',
       progress: 50,
       fps: 0,
@@ -98,66 +114,55 @@ export async function encodeWebp(
     });
   }
 
-  // Encode to WebP via wasm-webp
-  // Apply minimum frame delays: first frame >= 100ms, others >= 50ms
-  // This ensures frames are visible to human eyes (frames < 50ms are perceptually instant)
-  const MIN_FIRST_FRAME_DELAY = 100;
-  const MIN_FRAME_DELAY = 50;
-  const frames = rgbFrames.map((f, idx) => {
-    const isFirstFrame = idx === 0;
-    const delay = isFirstFrame
-      ? Math.max(MIN_FIRST_FRAME_DELAY, f.duration)
-      : Math.max(MIN_FRAME_DELAY, f.duration);
-    return {
-      data: f.data,
-      duration: delay,
-      config: webpConfig,
-    };
-  });
+  // Convert decoded frames to streaming encoder format
+  const streamingFrames = rgbFrames.map((f) => ({
+    data: f.data,
+    width: w,
+    height: h,
+    duration: f.duration,
+  }));
 
-  // Release RGB frame buffer references before encoding to reduce peak memory.
-  // wasm-webp's encodeAnimation allocates its own internal WASM buffers, and
-  // holding onto the RGB frames simultaneously can push total memory past limits.
+  // Release RGB frame references before encoding to reduce peak memory
   rgbFrames.length = 0;
 
-  const result = await encodeAnimation(w, h, false, frames);
-  if (!result || result.length === 0) {
-    throw new Error(
-      `wasm-webp encodeAnimation returned ${result ? 'empty' : 'null'} (frames: ${frames.length}, w: ${w}, h: ${h}). Try reducing scale to 50% or switching to GIF format.`
-    );
-  }
+  // Encode using streaming approach (one frame at a time)
+  const result = await encodeStreamingWebP(streamingFrames, {
+    width: w,
+    height: h,
+    quality,
+  });
 
   // Report encoding complete
-  if (_onProgress) {
-    _onProgress({
+  if (onProgress) {
+    onProgress({
       phase: 'encoding',
       progress: 90,
       fps: 0,
       etaSeconds: null,
       memoryMB: 0,
-      currentFrame: rgbFrames.length,
-      totalFrames: rgbFrames.length,
+      currentFrame: streamingFrames.length,
+      totalFrames: streamingFrames.length,
     });
   }
 
   const totalElapsed = (performance.now() - startTime) / 1000;
   logger.info('encoders', 'WebP encoding complete', {
     decodedFrames: totalInputFrames,
-    keptFrames: rgbFrames.length,
+    keptFrames: streamingFrames.length,
     totalFrames: demux.totalFrames,
     frameDecimation,
     outputBytes: result.length,
-    fps: Math.round(rgbFrames.length / totalElapsed),
+    fps: Math.round(streamingFrames.length / totalElapsed),
     duration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
-    quality: webpConfig.quality,
+    quality,
     skippedByDecimation,
     sourceDurationMs: Math.round(sourceTotalMs),
-    outputDurationMs: Math.round(outputTotalMs),
-    timingErrorMs: Math.round(outputTotalMs - sourceTotalMs),
+    outputDurationMs: Math.round(streamingFrames.reduce((s, f) => s + f.duration, 0)),
+    timingErrorMs: Math.round(streamingFrames.reduce((s, f) => s + f.duration, 0) - sourceTotalMs),
   });
   logger.info('encoders', '  │  └─ WebP: encode finished', {
-    keptFrames: rgbFrames.length,
+    keptFrames: streamingFrames.length,
     outputBytes: result.length,
     duration: `${totalElapsed.toFixed(2)}s`,
     frameDecimation,

@@ -148,19 +148,17 @@ export async function runConversionPipeline(
       )
     ).buffer as ArrayBuffer;
   } else {
-    // Auto frame decimation for WebP: same logic as GIF.
-    // Without decimation, 1920×1080×582 frames ≈ 3.8GB RGB → WASM OOM (2GB limit).
-    // With decimation=3 (20fps), 194 frames ≈ 1.2GB RGB — still tight with wasm-webp
-    // encodeAnimation which needs additional memory during encoding.
-    // Target ~15fps output for WebP to stay safely under 2GB WASM limit.
+    // Auto frame decimation for WebP: streaming encodeRGB + JS muxing.
+    // Only 1 RGB frame in WASM memory at a time → scale=1.0 always safe.
+    // Decimation controls output frame rate (quality), not memory safety.
     const sourceFps =
       demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : 30;
-    const targetFps = 15;
+    const targetFps = request.format === 'webp' ? 20 : 15;
     const autoDecimation =
       sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
     const webpDecimation = request.forceDecimation ?? autoDecimation;
 
-    logger.info('conversion', '  ├─ Branch: WebP encoder (wasm-webp + VideoDecoder)', {
+    logger.info('conversion', '  ├─ Branch: WebP encoder (streaming encodeRGB + mux)', {
       codec: demuxResult.config.codec,
       codedWidth: demuxResult.config.codedWidth,
       codedHeight: demuxResult.config.codedHeight,
