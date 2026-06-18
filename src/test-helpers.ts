@@ -26,6 +26,8 @@
  * 9. eval `__TEST_HELPERS__.resetApp()` — clean up, repeat
  */
 
+import { getLastConversionProfiler } from '@services/v2/conversion-pipeline';
+import type { ConversionProfileReport } from '@services/v2/conversion-profiler';
 import { confirmDialog } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -150,6 +152,15 @@ export interface TestHelpers {
 
   /** Auto-confirm any pending confirmation dialog (for testing) */
   autoConfirm(): void;
+
+  // ── Profiler: per-phase timing and memory metrics ──
+
+  /**
+   * Get the structured profile report from the last conversion.
+   * Returns null if no conversion has been run yet.
+   * Available in dev mode only.
+   */
+  getConversionProfile(): ConversionProfileReport | null;
 }
 
 // ─── Helper implementations ─────────────────────────────────────────────────
@@ -381,6 +392,12 @@ const testHelpers: TestHelpers = {
   waitForConvert,
   // Test flow helpers
   autoConfirm,
+  // Profiler
+  getConversionProfile: () => {
+    const profiler = getLastConversionProfiler();
+    if (!profiler) return null;
+    return profiler.getLastReport() ?? profiler.getReport();
+  },
 };
 
 export function attachTestHelpers(): void {

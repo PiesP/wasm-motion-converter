@@ -55,7 +55,8 @@ export class BufferPool {
   }
 
   /** Round up to next power of 2 for bucket sizing */
-  private static nextPow2(v: number): number {
+  private static nextPow2(value: number): number {
+    let v = value;
     v--;
     v |= v >> 1;
     v |= v >> 2;

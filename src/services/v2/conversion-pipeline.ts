@@ -10,6 +10,7 @@
  * 1. GIF streaming: decode→encode interleaved (no frame array accumulation)
  * 2. Dynamic decimation: adjusts frame skip ratio based on real-time memory
  * 3. Buffer pooling: reuses Uint8Array allocations across frames
+ * 4. Profiling: per-phase timing, memory, and throughput measurement
  */
 
 import type { ProgressCallback } from '@t/v2-conversion-types';
@@ -18,9 +19,18 @@ import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
 import type { ConversionRequest } from '@/types/v2-conversion-types';
 import { globalBufferPool } from './buffer-pool';
+import { ConversionProfiler } from './conversion-profiler';
 import { demuxVideo } from './demuxer-service';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
+
+/** Singleton profiler instance — stores last conversion profile for diagnostics */
+let lastProfiler: ConversionProfiler | null = null;
+
+/** Get the profiler from the last conversion (for test helpers / diagnostics) */
+export function getLastConversionProfiler(): ConversionProfiler | null {
+  return lastProfiler;
+}
 
 export async function runConversionPipeline(
   request: ConversionRequest,
@@ -45,10 +55,17 @@ export async function runConversionPipeline(
   // Clear buffer pool from any previous conversion
   globalBufferPool.clear();
 
-  // Demux (0~10%)
+  // Initialize profiler
+  const profiler = new ConversionProfiler();
+  profiler.start();
+  lastProfiler = profiler;
+
+  // ── Demux Phase (0~10%) ──
+  profiler.startPhase('demux');
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
   try {
     demuxResult = await demuxVideo(request, (packetsExtracted) => {
+      profiler.updatePhase('demux', packetsExtracted);
       const memMB = getMemoryUsageMB() ?? 0;
       const elapsedMs = Math.round(performance.now() - pipelineStart);
       onProgress({
@@ -82,6 +99,8 @@ export async function runConversionPipeline(
     cfg.displayAspectHeight ?? cfg.displayHeight ?? demuxResult.config.codedHeight;
   if (!codedWidth || !codedHeight) throw new Error('Unable to determine video dimensions');
 
+  profiler.endPhase('demux', { frames: demuxResult.totalFrames });
+
   const demuxElapsedMs = performance.now() - pipelineStart;
   const demuxMemMB = getMemoryUsageMB() ?? 0;
   onProgress({
@@ -95,9 +114,11 @@ export async function runConversionPipeline(
     elapsedMs: Math.round(demuxElapsedMs),
   });
 
-  // Decode + Encode (10~90%)
+  // ── Decode + Encode Phase (10~90%) ──
   // Progress split: decoding 10~50%, encoding 50~90%
   let output: ArrayBuffer;
+  let encodeResult: { frames: number; outputBytes: number } | null = null;
+
   const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
     const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
     onProgress({
@@ -134,6 +155,10 @@ export async function runConversionPipeline(
     });
 
     // GIF streaming: encodeGif handles decode→encode interleaving internally
+    // We track decode and encode as a single combined phase for profiling
+    profiler.startPhase('decode');
+    profiler.startPhase('encode');
+
     output = (
       await encodeGif(
         demuxResult,
@@ -148,6 +173,11 @@ export async function runConversionPipeline(
         signal
       )
     ).buffer as ArrayBuffer;
+
+    encodeResult = {
+      frames: demuxResult.totalFrames,
+      outputBytes: output.byteLength,
+    };
   } else {
     // Auto frame decimation for WebP: streaming encodeRGB + JS muxing
     const sourceFps =
@@ -165,6 +195,10 @@ export async function runConversionPipeline(
       sourceFps: Math.round(sourceFps),
       webpDecimation,
     });
+
+    profiler.startPhase('decode');
+    profiler.startPhase('encode');
+
     const encoded = await encodeWebp(
       demuxResult,
       {
@@ -190,14 +224,23 @@ export async function runConversionPipeline(
       signal
     );
     output = encoded.buffer as ArrayBuffer;
+    encodeResult = {
+      frames: demuxResult.totalFrames,
+      outputBytes: output.byteLength,
+    };
   }
 
   if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
+  profiler.endPhase('decode');
+  profiler.endPhase('encode', encodeResult ?? undefined);
+
+  // ── Assembly Phase (90~100%) ──
+  profiler.startPhase('assemble');
+
   // Clear buffer pool after conversion
   globalBufferPool.clear();
 
-  // Assembly (90~100%)
   const memMB = getMemoryUsageMB() ?? 0;
   const totalElapsedMs = Math.round(performance.now() - pipelineStart);
   onProgress({
@@ -221,21 +264,21 @@ export async function runConversionPipeline(
     elapsedMs: totalElapsedMs,
   });
 
-  // Completion summary
-  logger.info('conversion', `◀ Pipeline complete: V2_MAINTHREAD_${request.format.toUpperCase()}`, {
+  profiler.endPhase('assemble');
+
+  // ── Profile Report ──
+  const profileReport = profiler.finish();
+  logger.performance('Pipeline profile', profileReport);
+  logger.info('conversion', `◀ Pipeline complete: ${profileReport.summary}`, {
     format: request.format,
     quality: request.quality,
     scale: request.scale,
     totalFrames: demuxResult.totalFrames,
     outputBytes: output.byteLength,
     duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
-    peakMemoryMB: memMB,
-  });
-  logger.performance('Pipeline complete', {
-    format: request.format,
-    outputBytes: output.byteLength,
-    durationMs: totalElapsedMs,
-    peakMemoryMB: memMB,
+    peakMemoryMB: profileReport.heapPeakMB,
+    bottleneck: profileReport.bottleneck,
+    phaseTimePct: profileReport.phaseTimePct,
   });
 
   return output;
