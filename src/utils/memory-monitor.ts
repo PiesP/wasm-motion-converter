@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import type { ConversionFormat } from '@t/conversion-types';
+
 /**
  * Memory monitoring utilities for tracking browser memory usage during conversions.
  */
@@ -75,6 +77,7 @@ export function getMemoryUsageMB(): number | null {
  *
  * @param width - Output width in pixels
  * @param height - Output height in pixels
+ *
  * @param totalFrames - Total number of frames after decimation
  * @param format - Output format (gif uses more memory for palette)
  * @returns Estimated peak memory in MB
@@ -83,7 +86,7 @@ export function estimatePeakMemoryMB(
   width: number,
   height: number,
   totalFrames: number,
-  format: 'gif' | 'webp'
+  format: ConversionFormat
 ): number {
   const bytesPerFrame = width * height * 3; // RGB
   // GIF: all frames held in memory before encoding (worst case)

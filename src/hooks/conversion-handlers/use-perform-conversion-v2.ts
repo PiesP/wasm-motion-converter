@@ -8,20 +8,20 @@
  * WebCodecs VideoDecoder requires main thread access in most browsers.
  */
 
+import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
+import type { ProgressCallback } from '@t/v2-conversion-types';
 import { logger } from '@utils/logger';
 import { runConversionPipeline } from '@/services/v2/conversion-pipeline';
 
 export interface V2ConversionOptions {
-  format: 'gif' | 'webp';
-  quality: 'low' | 'medium' | 'high';
+  format: ConversionFormat;
+  quality: ConversionQuality;
   scale: number;
   trimStart: number;
   trimEnd: number;
   /** Force frame decimation (overrides auto-decimation for GIF) */
   forceDecimation?: number;
 }
-
-import type { ProgressCallback } from '@t/v2-conversion-types';
 
 class ConversionCancelledError extends Error {
   constructor() {

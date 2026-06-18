@@ -86,8 +86,10 @@ export function classifyError(err: unknown): ClassifiedError {
   };
 }
 
+import type { ConversionFormat } from '@t/conversion-types';
+
 /** Validate output file header (header-only check, no need to read full file) */
-export function validateOutput(output: Uint8Array, format: 'gif' | 'webp'): boolean {
+export function validateOutput(output: Uint8Array, format: ConversionFormat): boolean {
   // Minimum bytes needed: GIF=6 (header), WebP=12 (RIFF+size+WEBP)
   if (output.length < 6) return false;
 

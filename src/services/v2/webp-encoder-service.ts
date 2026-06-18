@@ -17,8 +17,9 @@
  *   3. muxAnimatedWebP() → final animated WebP blob
  */
 
+import type { ConversionQuality } from '@t/conversion-types';
+import type { ProgressCallback } from '@t/v2-conversion-types';
 import { logger } from '@utils/logger';
-
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { encodeStreamingWebP } from './streaming-webp-encoder';
@@ -26,7 +27,7 @@ import { encodeStreamingWebP } from './streaming-webp-encoder';
 export interface WebpEncodeOptions {
   width: number;
   height: number;
-  quality: 'low' | 'medium' | 'high';
+  quality: ConversionQuality;
   scale: number;
   /** Frame decimation: keep every Nth frame (1 = keep all) */
   frameDecimation?: number;
@@ -39,8 +40,6 @@ const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
   medium: 80,
   high: 92,
 };
-
-import type { ProgressCallback } from '@t/v2-conversion-types';
 
 /**
  * Encode demuxed video frames to animated WebP using streaming.

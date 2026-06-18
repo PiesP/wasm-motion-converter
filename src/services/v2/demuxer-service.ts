@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 PiesP
+
 import { logger } from '@utils/logger';
 import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from 'mediabunny';
 import type { ConversionRequest } from '@/types/v2-conversion-types';

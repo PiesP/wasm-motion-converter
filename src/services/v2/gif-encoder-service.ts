@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import type { ConversionQuality } from '@t/conversion-types';
 import {
   GIF_LZW_RATIO,
   GIF_MAX_BUFFER_BYTES,
@@ -16,7 +17,7 @@ import type { DemuxResult } from './demuxer-service';
 export interface GifEncodeOptions {
   width: number;
   height: number;
-  quality: 'low' | 'medium' | 'high';
+  quality: ConversionQuality;
   scale: number;
   /** Frame decimation: keep every Nth frame (1 = keep all, 2 = keep 50%, etc.) */
   frameDecimation?: number;
