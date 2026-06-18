@@ -10,11 +10,16 @@
  *
  * H3: Optimized to avoid unnecessary RGBA→RGB intermediate buffer.
  *     Direct copyTo to RGB format when supported.
+ *
+ * BufferPool: Reuses Uint8Array allocations across frames to reduce GC.
  */
+
+import { globalBufferPool } from './buffer-pool';
 
 /**
  * Copy VideoFrame pixels directly to RGB Uint8Array.
  * Tries multiple RGB formats first, falls back to Canvas only as last resort.
+ * Uses buffer pooling for the copyTo target buffer.
  */
 export async function copyFrameToRGB(
   frame: VideoFrame,
@@ -32,20 +37,23 @@ export async function copyFrameToRGB(
 
   for (const fmt of rgbFormats) {
     try {
+      const bytesPerPixel = fmt === 'RGB' ? 3 : 4;
       const size = frame.allocationSize({
         rect: { x: 0, y: 0, width, height },
-        layout: [{ offset: 0, stride: width * (fmt === 'RGB' ? 3 : 4) }],
+        layout: [{ offset: 0, stride: width * bytesPerPixel }],
       });
-      const buffer = new Uint8Array(size);
+      // Use pooled buffer for copyTo target
+      const buffer = globalBufferPool.acquire(size);
       await frame.copyTo(buffer, {
         rect: { x: 0, y: 0, width, height },
-        layout: [{ offset: 0, stride: width * (fmt === 'RGB' ? 3 : 4) }],
+        layout: [{ offset: 0, stride: width * bytesPerPixel }],
       });
 
       // If we got RGBA/BGRA/BGRX/RGBX, strip alpha/convert to RGB
-      const bytesPerPixel = fmt === 'RGB' ? 3 : 4;
       if (bytesPerPixel === 4) {
-        return rgbaToRGB(buffer, width, height);
+        const rgb = rgbaToRGB(buffer, width, height);
+        globalBufferPool.release(buffer); // Release the 4-channel buffer
+        return rgb;
       }
       return buffer;
     } catch {
@@ -72,7 +80,9 @@ export async function copyFrameToRGB(
   );
 
   const imageData = ctx.getImageData(0, 0, width, height);
-  return rgbaToRGB(new Uint8Array(imageData.data), width, height);
+  const rgbaBuf = new Uint8Array(imageData.data);
+  const rgb = rgbaToRGB(rgbaBuf, width, height);
+  return rgb;
 }
 
 /**
@@ -81,7 +91,7 @@ export async function copyFrameToRGB(
  */
 function rgbaToRGB(rgba: Uint8Array, width: number, height: number): Uint8Array {
   const pixelCount = width * height;
-  const rgb = new Uint8Array(pixelCount * 3);
+  const rgb = globalBufferPool.acquire(pixelCount * 3);
 
   for (let i = 0; i < pixelCount; i++) {
     const srcIdx = i << 2; // i * 4

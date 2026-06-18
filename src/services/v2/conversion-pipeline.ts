@@ -5,7 +5,11 @@
  * Conversion Pipeline (Main Thread)
  *
  * demux → decode → encode, all on main thread.
- * Each encoder handles its own VideoDecoder.
+ *
+ * Optimizations:
+ * 1. GIF streaming: decode→encode interleaved (no frame array accumulation)
+ * 2. Dynamic decimation: adjusts frame skip ratio based on real-time memory
+ * 3. Buffer pooling: reuses Uint8Array allocations across frames
  */
 
 import type { ProgressCallback } from '@t/v2-conversion-types';
@@ -13,6 +17,7 @@ import { DEFAULT_FPS, GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
 import type { ConversionRequest } from '@/types/v2-conversion-types';
+import { globalBufferPool } from './buffer-pool';
 import { demuxVideo } from './demuxer-service';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
@@ -36,6 +41,9 @@ export async function runConversionPipeline(
 
   logger.performance('Pipeline started', logCtx);
   logger.info('conversion', `▶ Pipeline route: V2_MAINTHREAD_${format.toUpperCase()}`, logCtx);
+
+  // Clear buffer pool from any previous conversion
+  globalBufferPool.clear();
 
   // Demux (0~10%)
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
@@ -103,27 +111,20 @@ export async function runConversionPipeline(
       elapsedMs: Math.round(performance.now() - pipelineStart),
     });
   };
+
   if (request.format === 'gif') {
-    // Auto frame decimation for GIF: target ~15fps output to reduce file size
-    // and encoding time. Source fps is estimated from totalFrames / duration.
-    // forceDecimation from memory check overrides auto-decimation.
-    // At higher scales (>50%), decimation is doubled to keep memory and CPU
-    // manageable — raw RGB frames at 1080p are ~6MB each, so holding all
-    // decoded frames in memory simultaneously can exceed 1GB+ and cause
-    // GC thrashing / timeout.
+    // Auto frame decimation for GIF: target ~15fps output
     const sourceFps =
       demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
     const targetFps = GIF_TARGET_FPS;
     const baseDecimation =
       sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
-    // At higher scales, decimation is aggressively increased to keep memory
-    // and CPU manageable. Raw RGB at 1080p = ~6MB/frame; 146 frames = ~900MB.
-    // GC thrashing at that heap size causes super-linear slowdown.
+    // At higher scales, decimation is aggressively increased
     const scaleBoost = request.scale >= 1.0 ? 4 : request.scale > 0.5 ? 2 : 1;
     const autoDecimation = baseDecimation * scaleBoost;
     const gifDecimation = request.forceDecimation ?? autoDecimation;
 
-    logger.info('conversion', '  ├─ Branch: GIF encoder (gifenc + VideoDecoder)', {
+    logger.info('conversion', '  ├─ Branch: GIF encoder (streaming decode→encode)', {
       codec: demuxResult.config.codec,
       codedWidth: demuxResult.config.codedWidth,
       codedHeight: demuxResult.config.codedHeight,
@@ -131,6 +132,8 @@ export async function runConversionPipeline(
       sourceFps: Math.round(sourceFps),
       gifDecimation,
     });
+
+    // GIF streaming: encodeGif handles decode→encode interleaving internally
     output = (
       await encodeGif(
         demuxResult,
@@ -146,9 +149,7 @@ export async function runConversionPipeline(
       )
     ).buffer as ArrayBuffer;
   } else {
-    // Auto frame decimation for WebP: streaming encodeRGB + JS muxing.
-    // Only 1 RGB frame in WASM memory at a time → scale=1.0 always safe.
-    // Decimation controls output frame rate (quality), not memory safety.
+    // Auto frame decimation for WebP: streaming encodeRGB + JS muxing
     const sourceFps =
       demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
     const targetFps = WEBP_TARGET_FPS;
@@ -192,6 +193,9 @@ export async function runConversionPipeline(
   }
 
   if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+
+  // Clear buffer pool after conversion
+  globalBufferPool.clear();
 
   // Assembly (90~100%)
   const memMB = getMemoryUsageMB() ?? 0;

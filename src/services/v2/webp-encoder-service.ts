@@ -114,14 +114,14 @@ export async function encodeWebp(
   }
 
   // Convert decoded frames to streaming encoder format
+  // Release RGB frame references immediately after mapping to reduce peak memory
   const streamingFrames = rgbFrames.map((f) => ({
     data: f.data,
     width: w,
     height: h,
     duration: f.duration,
   }));
-
-  // Release RGB frame references before encoding to reduce peak memory
+  // Release the batch array — RGB buffers are now referenced by streamingFrames
   rgbFrames.length = 0;
   const totalStreamingFrames = streamingFrames.length;
 

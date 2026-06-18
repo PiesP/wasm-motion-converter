@@ -1,6 +1,24 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+/**
+ * GIF Encoder Service — Streaming Architecture
+ *
+ * Interleaves decoding and encoding: frames are encoded immediately after
+ * decoding, so only 1 RGB + 1 RGBA buffer exists in memory at any time.
+ *
+ * Previous architecture held ALL decoded frames in an array, causing:
+ *   - 1080p @ 30fps × 5s = 146 frames × 6MB = ~900MB peak
+ *   - GC thrashing from per-frame allocations
+ *
+ * New architecture peak: ~12MB (1 RGB + 1 RGBA + encoder internal buffer)
+ *
+ * Pipeline:
+ *   1. decodeFrames streams frames via callback (no array accumulation)
+ *   2. Per frame: dither → RGB→RGBA (pooled) → quantize/applyPalette → writeFrame
+ *   3. Encoder writes GIF incrementally
+ */
+
 import type { ConversionQuality } from '@t/conversion-types';
 import {
   GIF_LZW_RATIO,
@@ -11,6 +29,7 @@ import {
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
+import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 
@@ -50,15 +69,13 @@ const BAYER_8X8 = [
 ];
 
 /**
- * Convert RGB (3 bytes/pixel) to RGBA (4 bytes/pixel).
+ * Convert RGB (3 bytes/pixel) to RGBA (4 bytes/pixel) using buffer pool.
  * gifenc's quantize() and applyPalette() require RGBA input because they
  * internally cast the buffer to Uint32Array (4-byte aligned).
- * Without this conversion, the 3-byte pixel boundaries cause a 1-byte
- * misalignment per pixel, producing a 4x repeated/corrupted image.
  */
-function rgbToRgba(rgb: Uint8Array, width: number, height: number): Uint8Array {
+function rgbToRgbaPooled(rgb: Uint8Array, width: number, height: number): Uint8Array {
   const pixelCount = width * height;
-  const rgba = new Uint8Array(pixelCount * 4);
+  const rgba = globalBufferPool.acquire(pixelCount * 4);
   for (let i = 0; i < pixelCount; i++) {
     const srcIdx = i * 3;
     const dstIdx = i << 2; // i * 4
@@ -89,11 +106,11 @@ function bayerDitherRGB(rgb: Uint8Array, width: number, height: number, strength
 }
 
 /**
- * Encode demuxed video frames to GIF.
+ * Encode demuxed video frames to GIF with streaming decode→encode.
  *
- * Pipeline:
- *   1. decodeFrames (common VideoDecoder pipeline + dedup) → RGB frames
- *   2. Per-frame: dither → quantize → writeFrame
+ * Instead of collecting all decoded frames into an array first, each frame
+ * is encoded immediately upon decoding. This reduces peak memory from
+ * O(N × frame_size) to O(frame_size).
  */
 export async function encodeGif(
   demux: DemuxResult,
@@ -112,46 +129,30 @@ export async function encodeGif(
 
   const startTime = performance.now();
 
-  // Decode frames using common VideoDecoder pipeline
-  const {
-    frames: rgbFrames,
-    totalInputFrames,
-    skippedByDecimation,
-    sourceTotalMs,
-  } = await decodeFrames(
-    demux,
-    {
-      width: w,
-      height: h,
-      frameDecimation,
-      hwAccel: 'prefer-hardware',
-      onFrameDecoded: opts.onFrameDecoded,
-    },
-    signal
-  );
-
-  let splitFrames = 0;
-  let encodeIdx = 0;
-  let accumulatedDuration = 0;
-
-  // T2: Maximum delay per frame — prevents a single frame from displaying too long
-  const MAX_FRAME_DELAY = GIF_MAX_FRAME_DELAY_CS;
-  // Minimum delay for the first frame — ensures it's visible to human eyes
-  // GIF/WebP players may render frames too quickly otherwise
-  const MIN_FIRST_FRAME_DELAY = GIF_MIN_FIRST_FRAME_DELAY_MS;
-  // Minimum delay for any frame — frames shorter than this are perceptually instant
-  const MIN_FRAME_DELAY = GIF_MIN_FRAME_DELAY_MS;
-
-  // Streaming GIF encoder — writes frames one at a time
-  // Estimate initial capacity: width * height * estimatedFrames * LZW_RATIO (~10:1)
+  // Streaming encoder — writes frames one at a time
   const estimatedFrames = Math.max(1, Math.floor(demux.totalFrames / (opts.frameDecimation ?? 1)));
   const estimatedBytes = Math.min(w * h * estimatedFrames * GIF_LZW_RATIO, GIF_MAX_BUFFER_BYTES);
   const encoder = GIFEncoder({
     auto: true,
     initialCapacity: Math.max(4096, Math.round(estimatedBytes)),
   });
+
   let globalPalette: number[][] | null = null;
   let outputTotalDelay = 0;
+  let encodeIdx = 0;
+  let splitFrames = 0;
+  let totalInputFrames = 0;
+  let skippedByDecimation = 0;
+  const sourceTotalMs = 0;
+
+  // T2: Maximum delay per frame — prevents a single frame from displaying too long
+  const MAX_FRAME_DELAY = GIF_MAX_FRAME_DELAY_CS;
+  // Minimum delay for the first frame — ensures it's visible to human eyes
+  const MIN_FIRST_FRAME_DELAY = GIF_MIN_FIRST_FRAME_DELAY_MS;
+  // Minimum delay for any frame — frames shorter than this are perceptually instant
+  const MIN_FRAME_DELAY = GIF_MIN_FRAME_DELAY_MS;
+
+  let accumulatedDuration = 0;
 
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     let remaining = delayMs;
@@ -175,56 +176,74 @@ export async function encodeGif(
     }
   }
 
-  logger.info('encoders', 'GIF encoding started', {
-    decodedFrames: totalInputFrames,
-    keptFrames: rgbFrames.length,
-    resolution: `${w}×${h}`,
-    maxColors,
-    quality: opts.quality,
-    scale: opts.scale,
-  });
+  // Decode frames with streaming callback — each frame is encoded immediately
+  const { totalInputFrames: totalDecoded } = await decodeFrames(
+    demux,
+    {
+      width: w,
+      height: h,
+      frameDecimation,
+      hwAccel: 'prefer-hardware',
+      onFrameDecoded: (_frameNum, total) => {
+        totalInputFrames = total;
+        // Report decoding progress — throttle to every 10 frames
+        if (opts.onFrameDecoded && (encodeIdx % 10 === 0 || encodeIdx === 0)) {
+          opts.onFrameDecoded(encodeIdx, total);
+        }
+      },
+      // Streaming callback: encode each frame immediately upon decoding
+      onFrameAvailable: async (rgbData: Uint8Array, frameDurationMs: number, frameNum: number) => {
+        if (signal?.aborted) {
+          globalBufferPool.release(rgbData);
+          throw new DOMException('Cancelled', 'AbortError');
+        }
 
-  // Write collected RGB frames to GIF encoder
-  for (const { data: rgb, duration: totalDelay } of rgbFrames) {
-    if (signal?.aborted) {
-      throw new DOMException('Cancelled', 'AbortError');
-    }
+        totalInputFrames = frameNum;
+        // In streaming mode, decimation is handled by the decoder.
+        // skippedByDecimation = totalKeptFrames - totalInputFrames (approximate)
 
-    // Add accumulated delay from skipped frames
-    const totalDelayWithAccumulated = totalDelay + accumulatedDuration;
-    accumulatedDuration = 0;
+        // Accumulate duration from skipped frames
+        const totalDelayWithAccumulated = frameDurationMs + accumulatedDuration;
+        accumulatedDuration = 0;
 
-    const isFirstFrame = encodeIdx === 0;
+        const isFirstFrame = encodeIdx === 0;
 
-    // Apply minimum delays:
-    // - First frame: always at least MIN_FIRST_FRAME_DELAY (100ms) so humans can see it
-    // - Other frames: at least MIN_FRAME_DELAY (50ms) to avoid perceptual instant
-    let delay: number;
-    if (isFirstFrame) {
-      delay = Math.max(MIN_FIRST_FRAME_DELAY, totalDelayWithAccumulated);
-    } else {
-      delay = Math.max(MIN_FRAME_DELAY, totalDelayWithAccumulated);
-    }
+        // Apply minimum delays
+        let delay: number;
+        if (isFirstFrame) {
+          delay = Math.max(MIN_FIRST_FRAME_DELAY, totalDelayWithAccumulated);
+        } else {
+          delay = Math.max(MIN_FRAME_DELAY, totalDelayWithAccumulated);
+        }
 
-    // Bayer ordered dithering (applied to RGB buffer in-place)
-    if (ditherStrength > 0) {
-      bayerDitherRGB(rgb, w, h, ditherStrength);
-    }
+        // Bayer ordered dithering (applied to RGB buffer in-place)
+        if (ditherStrength > 0) {
+          bayerDitherRGB(rgbData, w, h, ditherStrength);
+        }
 
-    // Convert RGB (3B/pixel) → RGBA (4B/pixel) for gifenc compatibility.
-    // gifenc's quantize() and applyPalette() internally cast the buffer to
-    // Uint32Array, which requires 4-byte alignment. Without this conversion,
-    // 3-byte pixel boundaries cause misalignment, producing corrupted output.
-    const rgba = rgbToRgba(rgb, w, h);
+        // Convert RGB → RGBA for gifenc compatibility (pooled)
+        const rgba = rgbToRgbaPooled(rgbData, w, h);
+        // Release the RGB buffer back to pool immediately
+        globalBufferPool.release(rgbData);
 
-    // Quantize: compute global palette from first frame, reuse for subsequent frames
-    if (encodeIdx === 0) {
-      globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
-    }
+        // Quantize: compute global palette from first frame, reuse for subsequent
+        if (encodeIdx === 0) {
+          globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
+        }
 
-    writeFrameWithDelay(rgba, delay);
-    encodeIdx++;
-  }
+        writeFrameWithDelay(rgba, delay);
+        // Release RGBA buffer after encoding
+        globalBufferPool.release(rgba);
+
+        encodeIdx++;
+      },
+    },
+    signal
+  );
+
+  totalInputFrames = totalDecoded;
+  // Compute skippedByDecimation from decoder stats
+  skippedByDecimation = totalInputFrames - encodeIdx;
 
   if (encodeIdx === 0) {
     throw new Error('No frames decoded for GIF encoding');

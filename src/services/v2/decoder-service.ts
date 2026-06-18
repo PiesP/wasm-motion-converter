@@ -7,6 +7,10 @@
  * Extracts RGB frames from demuxed video chunks using VideoDecoder,
  * with hardware acceleration support, frame decimation, and abort handling.
  *
+ * Supports two modes:
+ * 1. Batch mode (WebP): collects all frames into an array (existing behavior)
+ * 2. Streaming mode (GIF): calls onFrameAvailable per frame for immediate encoding
+ *
  * Both encoders share the same demux output and frame extraction logic;
  * only the encoding step (gifenc vs wasm-webp) differs.
  */
@@ -24,6 +28,17 @@ export interface DecodeOptions {
   hwAccel?: 'prefer-hardware' | 'prefer-software';
   /** Callback fired after each frame is decoded (for progress tracking) */
   onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
+  /**
+   * Streaming callback: fired for each decoded frame with RGB data.
+   * When provided, frames are NOT accumulated into an array — instead they
+   * are passed to this callback for immediate processing (e.g. encoding).
+   * The callback receives ownership of the RGB buffer (must release to pool).
+   */
+  onFrameAvailable?: (
+    rgbData: Uint8Array,
+    durationMs: number,
+    frameNum: number
+  ) => Promise<void> | void;
 }
 
 export interface DecodedFrame {
@@ -50,16 +65,25 @@ export interface DecodeResult {
  *   1. Configure VideoDecoder (hwAccel with software fallback)
  *   2. Feed all chunks from DemuxResult
  *   3. Per-frame: copyTo RGB → optional filter → accumulate skipped durations
- *   4. Return RGB frames + timing info
+ *   4a. Batch mode: collect into frames array
+ *   4b. Stream mode: call onFrameAvailable callback per frame
  */
 export async function decodeFrames(
   demux: DemuxResult,
   opts: DecodeOptions,
   signal?: AbortSignal
 ): Promise<DecodeResult> {
-  const { width, height, frameDecimation = 1, hwAccel = 'prefer-software', onFrameDecoded } = opts;
+  const {
+    width,
+    height,
+    frameDecimation = 1,
+    hwAccel = 'prefer-software',
+    onFrameDecoded,
+    onFrameAvailable,
+  } = opts;
 
-  const rgbFrames: DecodedFrame[] = [];
+  const streaming = typeof onFrameAvailable === 'function';
+  const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
   const pendingConversions: Promise<void>[] = [];
   let decodeError: Error | null = null;
   let inputFrameCount = 0;
@@ -98,6 +122,7 @@ export async function decodeFrames(
     resolution: `${width}×${height}`,
     totalFrames: demux.totalFrames,
     frameDecimation,
+    streaming,
   });
 
   const decoder = new VideoDecoder({
@@ -120,11 +145,23 @@ export async function decodeFrames(
         try {
           const rgbData = await copyFrameToRGB(frame, width, height);
 
-          rgbFrames.push({ data: rgbData, duration: totalDuration });
-          // Report decoding progress — throttle to every 10 frames to avoid
-          // flooding the logger and UI with hundreds of events per second.
-          if (onFrameDecoded && (rgbFrames.length % 10 === 0 || rgbFrames.length === 1)) {
-            onFrameDecoded(rgbFrames.length, demux.totalFrames);
+          if (streaming) {
+            // Streaming mode: pass frame to callback for immediate processing
+            await onFrameAvailable(rgbData, totalDuration, frameNum);
+            // Note: onFrameAvailable is responsible for releasing rgbData
+          } else {
+            // Batch mode: collect into array (existing behavior for WebP)
+            rgbFrames.push({ data: rgbData, duration: totalDuration });
+          }
+
+          // Report decoding progress — throttle to every 10 frames
+          if (
+            onFrameDecoded &&
+            (streaming
+              ? inputFrameCount % 10 === 0
+              : rgbFrames.length % 10 === 0 || rgbFrames.length === 1)
+          ) {
+            onFrameDecoded(streaming ? inputFrameCount : rgbFrames.length, demux.totalFrames);
           }
         } finally {
           frame.close();
@@ -168,21 +205,24 @@ export async function decodeFrames(
 
   if (decodeError) throw decodeError;
 
-  // Add any remaining accumulated duration to the last frame
-  if (accumulatedDuration > 0 && rgbFrames.length > 0) {
+  // Add any remaining accumulated duration to the last frame (batch mode only)
+  if (!streaming && accumulatedDuration > 0 && rgbFrames.length > 0) {
     const last = rgbFrames[rgbFrames.length - 1];
     if (last) last.duration += accumulatedDuration;
   }
 
   // Compute timing summary
   const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
-  const outputTotalMs = rgbFrames.reduce((sum, f) => sum + f.duration, 0);
+  const outputTotalMs = streaming
+    ? 0 // Not tracked in streaming mode (encoder handles timing)
+    : rgbFrames.reduce((sum, f) => sum + f.duration, 0);
 
   logger.info('encoders', 'Decoding complete', {
     totalInputFrames: inputFrameCount,
-    outputFrames: rgbFrames.length,
+    outputFrames: streaming ? inputFrameCount - skippedByDecimation : rgbFrames.length,
     skippedByDecimation,
     resolution: `${width}×${height}`,
+    streaming,
   });
 
   return {
