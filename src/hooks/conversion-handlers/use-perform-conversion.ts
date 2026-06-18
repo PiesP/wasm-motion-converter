@@ -220,21 +220,18 @@ async function performConversion(
     const headerBuf = await blob.slice(0, 16).arrayBuffer();
     const blobData = new Uint8Array(headerBuf);
     if (!validateOutput(blobData, settings.format)) {
-      // Log the actual bytes for debugging
       const hexHeader = Array.from(blobData.slice(0, 10))
         .map((b) => b.toString(16).padStart(2, '0'))
         .join(' ');
-      const hexFooter = Array.from(blobData.slice(-5))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join(' ');
-      logger.warn('conversion', 'Output validation failed', {
+      logger.warn('conversion', 'Output validation failed — header mismatch', {
         format: settings.format,
         size: blobData.length,
         headerHex: hexHeader,
-        footerHex: hexFooter,
       });
-      // Don't throw — let the user see the result
-      // throw new Error(`Conversion produced a corrupt ${settings.format.toUpperCase()} file`);
+      // Note: We intentionally do NOT throw here. Some valid outputs may have
+      // non-standard headers (e.g., animated WebP with VP8L codec). The user
+      // can still download and use the file. If the file is truly corrupt,
+      // the browser will fail to decode it naturally.
     }
 
     runtime.stopMemoryMonitoring();

@@ -47,6 +47,8 @@ export interface GifEncodeOptions {
   frameDecimation?: number;
   /** Callback fired after each frame is decoded (for progress tracking) */
   onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
+  /** Callback fired after each frame is encoded (for progress tracking) */
+  onFrameEncoded?: (frameIndex: number, totalFrames: number) => void;
 }
 
 const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
@@ -333,6 +335,11 @@ export async function encodeGif(
         writeFrameWithDelay(rgba, delay);
         // Release RGBA buffer after encoding
         globalBufferPool.release(rgba);
+
+        // Report encoding progress (50~90% range in pipeline)
+        if (opts.onFrameEncoded) {
+          opts.onFrameEncoded(encodeIdx, totalInputFrames);
+        }
 
         encodeIdx++;
       },

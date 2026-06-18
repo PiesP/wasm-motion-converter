@@ -145,16 +145,6 @@ export async function encodeWebp(
     throw new Error('No frames decoded for WebP encoding');
   }
 
-  logger.info('encoders', 'WebP encoding started', {
-    decodedFrames: totalInputFrames,
-    keptFrames: muxer.frames,
-    resolution: `${w}×${h}`,
-    quality,
-    scale: opts.scale,
-    frameDecimation,
-    skippedByDecimation,
-  });
-
   // Mux all encoded frames into animated WebP container
   const result = muxer.finish();
   const totalElapsed = (performance.now() - startTime) / 1000;
@@ -170,9 +160,6 @@ export async function encodeWebp(
     resolution: `${w}×${h}`,
     quality,
     skippedByDecimation,
-    sourceDurationMs: 0,
-    outputDurationMs: 0,
-    timingErrorMs: 0,
   });
   logger.info('encoders', '  │  └─ WebP: encode finished', {
     keptFrames: muxer.frames,

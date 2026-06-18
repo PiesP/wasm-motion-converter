@@ -119,6 +119,8 @@ export async function runConversionPipeline(
   let output: ArrayBuffer;
   let encodeResult: { frames: number; outputBytes: number } | null = null;
 
+  // Unified decode progress callback for both GIF and WebP.
+  // Maps decoded frame index to 10~50% progress range.
   const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
     const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
     onProgress({
@@ -155,7 +157,8 @@ export async function runConversionPipeline(
     });
 
     // GIF streaming: encodeGif handles decode→encode interleaving internally
-    // We track decode and encode as a single combined phase for profiling
+    // We track decode and encode as a single combined phase for profiling.
+    // Both decode and encode progress are reported via onFrameDecoded (shared callback).
     profiler.startPhase('decode');
     profiler.startPhase('encode');
 
@@ -169,6 +172,20 @@ export async function runConversionPipeline(
           scale: request.scale,
           frameDecimation: gifDecimation,
           onFrameDecoded: decodeProgressCb,
+          onFrameEncoded: (frameIdx: number, totalFrames: number) => {
+            // Map encoded frames to 50~90% progress range
+            const encodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
+            onProgress({
+              phase: 'encoding',
+              progress: 50 + Math.min(40, encodePct),
+              fps: 0,
+              etaSeconds: null,
+              memoryMB: getMemoryUsageMB() ?? 0,
+              currentFrame: frameIdx,
+              totalFrames,
+              elapsedMs: Math.round(performance.now() - pipelineStart),
+            });
+          },
         },
         signal
       )
