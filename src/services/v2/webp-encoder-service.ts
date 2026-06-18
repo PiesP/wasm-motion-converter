@@ -7,7 +7,6 @@ import { encodeAnimation } from 'wasm-webp';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
-import { isDuplicateFrameAdaptive } from './frame-utils';
 
 export interface WebpEncodeOptions {
   width: number;
@@ -16,10 +15,6 @@ export interface WebpEncodeOptions {
   scale: number;
   /** Frame decimation: keep every Nth frame (1 = keep all) */
   frameDecimation?: number;
-  /** Enable frame deduplication (dHash-based) */
-  deduplicate?: boolean;
-  /** dHash threshold for deduplication (0-64, lower = stricter) */
-  dedupThreshold?: number;
   /** Callback fired after each frame is decoded (for progress tracking) */
   onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
 }
@@ -52,34 +47,16 @@ export async function encodeWebp(
   const quality = QUALITY_MAP[opts.quality];
   const webpConfig: WebPConfig = { lossless: 0, quality };
   const frameDecimation = opts.frameDecimation ?? 1;
-  const doDedup = opts.deduplicate ?? true;
-  const dedupThreshold = opts.dedupThreshold ?? 8;
 
   logger.info('encoders', '  │  ├─ WebP: codec support check', { codec: demux.config.codec });
 
   const startTime = performance.now();
 
-  // Build frame deduplication filter
-  let prevRGBForDedup: Uint8Array | null = null;
-  const filterFrame = doDedup
-    ? (rgb: Uint8Array, fw: number, fh: number): boolean => {
-        if (prevRGBForDedup !== null) {
-          const result = isDuplicateFrameAdaptive(prevRGBForDedup, rgb, fw, fh, dedupThreshold);
-          if (result.duplicate) {
-            return false;
-          }
-        }
-        prevRGBForDedup = rgb;
-        return true;
-      }
-    : undefined;
-
-  // Decode frames using common decoder pipeline (with HW accel + dedup)
+  // Decode frames using common VideoDecoder pipeline
   const {
     frames: rgbFrames,
     totalInputFrames,
     skippedByDecimation,
-    skippedByFilter,
     sourceTotalMs,
     outputTotalMs,
   } = await decodeFrames(
@@ -89,7 +66,6 @@ export async function encodeWebp(
       height: h,
       frameDecimation,
       hwAccel: 'prefer-hardware',
-      filterFrame,
       onFrameDecoded: opts.onFrameDecoded,
     },
     signal
@@ -106,7 +82,7 @@ export async function encodeWebp(
     quality: webpConfig.quality,
     scale: opts.scale,
     frameDecimation,
-    skippedByDedup: skippedByFilter,
+    skippedByDecimation,
   });
 
   // Report encoding progress start (decoding is 50%, encoding starts now)
@@ -170,7 +146,6 @@ export async function encodeWebp(
     duration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
     quality: webpConfig.quality,
-    skippedByDedup: skippedByFilter,
     skippedByDecimation,
     sourceDurationMs: Math.round(sourceTotalMs * 1000),
     outputDurationMs: Math.round(outputTotalMs),
@@ -181,7 +156,7 @@ export async function encodeWebp(
     outputBytes: result.length,
     duration: `${totalElapsed.toFixed(2)}s`,
     frameDecimation,
-    skippedByDedup: skippedByFilter,
+    skippedByDecimation,
   });
 
   return result;

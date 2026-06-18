@@ -6,7 +6,6 @@ import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import type { ConversionProgress } from '@/types/v2-conversion-types';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
-import { isDuplicateFrameAdaptive } from './frame-utils';
 
 export interface GifEncodeOptions {
   width: number;
@@ -15,10 +14,6 @@ export interface GifEncodeOptions {
   scale: number;
   /** Frame decimation: keep every Nth frame (1 = keep all, 2 = keep 50%, etc.) */
   frameDecimation?: number;
-  /** Enable frame deduplication (dHash-based) */
-  deduplicate?: boolean;
-  /** dHash threshold for deduplication (0-64, lower = stricter) */
-  dedupThreshold?: number;
   /** Callback fired after each frame is decoded (for progress tracking) */
   onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
 }
@@ -87,32 +82,16 @@ export async function encodeGif(
   const maxColors = QUALITY_COLORS[opts.quality];
   const ditherStrength = QUALITY_DITHER_STRENGTH[opts.quality];
   const frameDecimation = opts.frameDecimation ?? 1;
-  const doDedup = opts.deduplicate ?? true;
-  const dedupThreshold = opts.dedupThreshold ?? 8;
 
   logger.info('encoders', '  │  ├─ GIF: codec support check', { codec: demux.config.codec });
 
   const startTime = performance.now();
 
-  // Build frame deduplication filter for decodeFrames
-  let prevRGBForDedup: Uint8Array | null = null;
-  const filterFrame = doDedup
-    ? (rgb: Uint8Array, fw: number, fh: number): boolean => {
-        if (prevRGBForDedup !== null) {
-          const result = isDuplicateFrameAdaptive(prevRGBForDedup, rgb, fw, fh, dedupThreshold);
-          if (result.duplicate) return false;
-        }
-        prevRGBForDedup = rgb;
-        return true;
-      }
-    : undefined;
-
-  // Decode frames using common decoder pipeline (with dedup)
+  // Decode frames using common VideoDecoder pipeline
   const {
     frames: rgbFrames,
     totalInputFrames,
     skippedByDecimation,
-    skippedByFilter,
     sourceTotalMs,
   } = await decodeFrames(
     demux,
@@ -121,13 +100,11 @@ export async function encodeGif(
       height: h,
       frameDecimation,
       hwAccel: 'prefer-software',
-      filterFrame,
       onFrameDecoded: opts.onFrameDecoded,
     },
     signal
   );
 
-  const skippedByDedup = skippedByFilter;
   let splitFrames = 0;
   let encodeIdx = 0;
   let accumulatedDuration = 0;
@@ -182,7 +159,7 @@ export async function encodeGif(
     scale: opts.scale,
   });
 
-  // Write collected RGB frames to GIF encoder (dedup already done in decodeFrames)
+  // Write collected RGB frames to GIF encoder
   for (const { data: rgb, duration: totalDelay } of rgbFrames) {
     if (signal?.aborted) {
       throw new DOMException('Cancelled', 'AbortError');
@@ -238,7 +215,6 @@ export async function encodeGif(
     maxColors,
     frameDecimation,
     skippedByDecimation,
-    skippedByDedup,
     splitFrames,
     sourceDurationMs: Math.round(sourceTotalMs * 1000),
     outputDurationMs: Math.round(outputTotalDelay),
@@ -249,7 +225,6 @@ export async function encodeGif(
     outputBytes: rawBytes.length,
     duration: `${totalElapsed.toFixed(2)}s`,
     skippedByDecimation,
-    skippedByDedup,
   });
 
   return rawBytes;

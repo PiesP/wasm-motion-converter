@@ -22,12 +22,6 @@ export interface DecodeOptions {
   frameDecimation?: number;
   /** Hardware acceleration policy */
   hwAccel?: 'prefer-hardware' | 'prefer-software';
-  /**
-   * Optional per-frame filter called after RGB extraction.
-   * Return true to keep the frame, false to discard it.
-   * Discarded frame's duration is accumulated into the next kept frame.
-   */
-  filterFrame?: (rgb: Uint8Array, width: number, height: number) => boolean;
   /** Callback fired after each frame is decoded (for progress tracking) */
   onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
 }
@@ -43,7 +37,6 @@ export interface DecodeResult {
   frames: DecodedFrame[];
   totalInputFrames: number;
   skippedByDecimation: number;
-  skippedByFilter: number;
   /** Total source duration in milliseconds (from demux chunk durations) */
   sourceTotalMs: number;
   /** Total output duration in milliseconds (sum of all frame durations) */
@@ -64,14 +57,7 @@ export async function decodeFrames(
   opts: DecodeOptions,
   signal?: AbortSignal
 ): Promise<DecodeResult> {
-  const {
-    width,
-    height,
-    frameDecimation = 1,
-    hwAccel = 'prefer-software',
-    filterFrame,
-    onFrameDecoded,
-  } = opts;
+  const { width, height, frameDecimation = 1, hwAccel = 'prefer-software', onFrameDecoded } = opts;
 
   const rgbFrames: DecodedFrame[] = [];
   const pendingConversions: Promise<void>[] = [];
@@ -79,7 +65,6 @@ export async function decodeFrames(
   let inputFrameCount = 0;
   let accumulatedDuration = 0;
   let skippedByDecimation = 0;
-  let skippedByFilter = 0;
 
   // Check codec support
   const support = await VideoDecoder.isConfigSupported(demux.config);
@@ -134,13 +119,6 @@ export async function decodeFrames(
       const conversion = (async () => {
         try {
           const rgbData = await copyFrameToRGB(frame, width, height);
-
-          // Apply optional frame filter (e.g. deduplication)
-          if (filterFrame && !filterFrame(rgbData, width, height)) {
-            accumulatedDuration += totalDuration;
-            skippedByFilter++;
-            return;
-          }
 
           rgbFrames.push({ data: rgbData, duration: totalDuration });
           // Report decoding progress (fire-and-forget)
@@ -203,7 +181,6 @@ export async function decodeFrames(
     totalInputFrames: inputFrameCount,
     outputFrames: rgbFrames.length,
     skippedByDecimation,
-    skippedByFilter,
     resolution: `${width}×${height}`,
   });
 
@@ -211,7 +188,6 @@ export async function decodeFrames(
     frames: rgbFrames,
     totalInputFrames: inputFrameCount,
     skippedByDecimation,
-    skippedByFilter,
     sourceTotalMs,
     outputTotalMs,
   };
