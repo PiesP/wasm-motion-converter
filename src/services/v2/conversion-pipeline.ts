@@ -115,7 +115,10 @@ export async function runConversionPipeline(
     const targetFps = 15;
     const baseDecimation =
       sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
-    const scaleBoost = request.scale > 0.5 ? 2 : 1;
+    // At higher scales, decimation is aggressively increased to keep memory
+    // and CPU manageable. Raw RGB at 1080p = ~6MB/frame; 146 frames = ~900MB.
+    // GC thrashing at that heap size causes super-linear slowdown.
+    const scaleBoost = request.scale >= 1.0 ? 4 : request.scale > 0.5 ? 2 : 1;
     const autoDecimation = baseDecimation * scaleBoost;
     const gifDecimation = request.forceDecimation ?? autoDecimation;
 
