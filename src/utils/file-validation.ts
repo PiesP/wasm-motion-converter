@@ -24,9 +24,6 @@
 
 import type { DurationValidationResult, ValidationWarning } from '@t/validation-types';
 import {
-  DURATION_WARNING_GIF_LONG,
-  DURATION_WARNING_GIF_MEDIUM,
-  GIF_HIGH_PIXEL_THRESHOLD,
   MAX_FILE_SIZE,
   SUPPORTED_VIDEO_EXTENSIONS,
   SUPPORTED_VIDEO_MIMES,
@@ -228,40 +225,20 @@ function estimateFrameCount(durationMs: number, fps = 30): number {
 }
 
 /**
- * Options for duration validation
- *
- * @property resolution - Video resolution (width/height in pixels) for pixel-count warnings
- * @property scale - Output scale factor (0.5, 0.75, 1) for effective output size calculation
- */
-export interface DurationValidationOptions {
-  resolution?: { width: number; height: number };
-  scale?: number;
-}
-
-/**
  * Validate video duration against format-specific constraints and limits
  *
  * Extracts video duration and estimated frame count, then validates against
- * format-specific requirements. WebP has strict constraints; GIF has soft warnings.
+ * format-specific requirements. WebP has strict constraints; GIF has no warnings.
  *
- * **WebP constraints (errors with confirmation required)**:
- * - Maximum 10 seconds duration (WEBP_MAX_DURATION_MS)
- * - Maximum 240 frames estimated (WEBP_MAX_FRAMES)
- * - Either violation produces an error warning; users must explicitly confirm to proceed
+ * **WebP constraints (soft warnings)**:
+ * - Maximum 900 seconds duration (WEBP_MAX_DURATION_MS)
+ * - Maximum 9000 frames estimated (WEBP_MAX_FRAMES)
+ * - Either violation produces a warning; users can proceed without confirmation
  *
- * **GIF constraints (soft warnings)**:
- * - ≥60s: Warning that conversion may take 3-5 minutes and produce very large files
- * - 30-60s: Warning that conversion may take 1-2 minutes
- * - High resolution at 100% scale (>720p effective): Warning about large output files
- * - <30s: No warning (fast conversion)
- *
- * **Error handling**: If duration extraction fails (unsupported codec, corrupted file),
- * returns success with info warning. Conversion proceeds with default settings.
- * Caller should not block conversion based on extraction errors.
+ * **GIF**: No warnings — conversion proceeds directly.
  *
  * @param file - The video File object
  * @param targetFormat - Target conversion format ('gif', 'webp', or other)
- * @param options - Optional resolution and scale for pixel-count warnings
  * @returns Promise with duration, frame estimate, warnings, and valid flag
  *
  * @example
@@ -269,25 +246,10 @@ export interface DurationValidationOptions {
  * const result = await validateVideoDuration(file, 'webp');
  * // result.valid = true (warnings don't block)
  * // result.warnings[0].severity = 'warning'
- *
- * @example
- * // GIF with medium length (soft warning)
- * const result = await validateVideoDuration(file, 'gif');
- * // result.valid = true (warnings don't block, even with warnings)
- * // result.warnings[0].severity = 'warning' (30-60s)
- *
- * @example
- * // High-res GIF at 100% scale warning
- * const result = await validateVideoDuration(file, 'gif', {
- *   resolution: { width: 1920, height: 1080 },
- *   scale: 1
- * });
- * // result.warnings includes pixel-count warning
  */
 export async function validateVideoDuration(
   file: File,
-  targetFormat: string,
-  options?: DurationValidationOptions
+  targetFormat: string
 ): Promise<DurationValidationResult> {
   try {
     // STEP 1: Extract video metadata
@@ -324,50 +286,8 @@ export async function validateVideoDuration(
       }
     }
 
-    // STEP 2b: GIF validation (soft warnings - user can proceed despite warnings)
-    // GIF conversion is slower/larger but technically possible for longer videos
-    if (targetFormat === 'gif') {
-      // Very long: 60+ seconds (DURATION_WARNING_GIF_LONG = 60000ms)
-      // Warn about time and file size
-      if (duration > DURATION_WARNING_GIF_LONG) {
-        warnings.push({
-          severity: 'warning', // Soft warning - user can override
-          message: `Long video detected (${(duration / 1000).toFixed(1)}s)`,
-          details: 'GIF conversion may take 3-5 minutes and produce large files',
-          suggestedAction: 'Consider shorter clips for better results',
-          requiresConfirmation: true, // Ask user to confirm before proceeding
-        });
-      }
-      // Medium length: 30-60 seconds (DURATION_WARNING_GIF_MEDIUM = 30000ms)
-      // Warn about conversion time
-      else if (duration > DURATION_WARNING_GIF_MEDIUM) {
-        warnings.push({
-          severity: 'warning', // Soft warning
-          message: `Medium-length video (${(duration / 1000).toFixed(1)}s)`,
-          details: 'Conversion may take 1-2 minutes',
-          suggestedAction: 'Shorter videos convert faster',
-          requiresConfirmation: true,
-        });
-      }
-
-      // High resolution check: warn when effective output exceeds ~720p
-      // GIFs at high resolutions produce extremely large files (>100MB possible)
-      if (options?.resolution && options?.scale) {
-        const effectivePixels =
-          options.resolution.width * options.scale * options.resolution.height * options.scale;
-        if (effectivePixels > GIF_HIGH_PIXEL_THRESHOLD) {
-          const effectiveWidth = Math.round(options.resolution.width * options.scale);
-          const effectiveHeight = Math.round(options.resolution.height * options.scale);
-          warnings.push({
-            severity: 'warning',
-            message: `High-resolution GIF (${effectiveWidth}x${effectiveHeight}) will produce a very large file`,
-            details: `Output may exceed 50–150 MB. Consider reducing scale to 50% for much smaller files.`,
-            suggestedAction: 'Reduce scale to 50% or switch to WebP for smaller file sizes',
-            requiresConfirmation: true,
-          });
-        }
-      }
-    }
+    // STEP 2b: GIF validation — no soft warnings; GIF conversion proceeds without confirmation
+    // (previously warned on duration >30s/60s and high pixel count, now removed per user request)
 
     // STEP 3: Determine validity: false if any ERROR warnings, true otherwise
     // (warnings with severity='warning' or 'info' don't block conversion)
