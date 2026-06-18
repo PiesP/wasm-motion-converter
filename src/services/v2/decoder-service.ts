@@ -121,8 +121,9 @@ export async function decodeFrames(
           const rgbData = await copyFrameToRGB(frame, width, height);
 
           rgbFrames.push({ data: rgbData, duration: totalDuration });
-          // Report decoding progress (fire-and-forget)
-          if (onFrameDecoded) {
+          // Report decoding progress — throttle to every 10 frames to avoid
+          // flooding the logger and UI with hundreds of events per second.
+          if (onFrameDecoded && (rgbFrames.length % 10 === 0 || rgbFrames.length === 1)) {
             onFrameDecoded(rgbFrames.length, demux.totalFrames);
           }
         } finally {

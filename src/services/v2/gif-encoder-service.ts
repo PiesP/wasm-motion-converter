@@ -99,7 +99,7 @@ export async function encodeGif(
       width: w,
       height: h,
       frameDecimation,
-      hwAccel: 'prefer-software',
+      hwAccel: 'prefer-hardware',
       onFrameDecoded: opts.onFrameDecoded,
     },
     signal
@@ -216,9 +216,9 @@ export async function encodeGif(
     frameDecimation,
     skippedByDecimation,
     splitFrames,
-    sourceDurationMs: Math.round(sourceTotalMs * 1000),
+    sourceDurationMs: Math.round(sourceTotalMs),
     outputDurationMs: Math.round(outputTotalDelay),
-    timingErrorMs: Math.round(outputTotalDelay - sourceTotalMs * 1000),
+    timingErrorMs: Math.round(outputTotalDelay - sourceTotalMs),
   });
   logger.info('encoders', '  │  └─ GIF: encode finished', {
     keptFrames: encodeIdx,

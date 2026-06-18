@@ -13,6 +13,7 @@ import { batch } from 'solid-js';
 const MEMORY_CHECK_INTERVAL = 5000;
 const ETA_UPDATE_INTERVAL = 1000;
 const UI_PROGRESS_LOG_INTERVAL_MS = 1000;
+const UI_STATUS_LOG_INTERVAL_MS = 500;
 const STALL_DETECTION_MS = 60_000; // warn user if no progress for 60s (FFmpeg encoding can be slow)
 const STALL_DETECTION_ACTIVE_THRESHOLD = 10; // only trigger stall warning if progress > 10% (not during init)
 
@@ -92,6 +93,7 @@ export class ConversionRuntimeController {
     this.currentStartTimeMs = 0;
     this.lastStatusMessage = '';
     this.lastUiProgressLogAtMs = 0;
+    this.lastUiStatusLogAtMs = 0;
     this.activeRunId = null;
     this.clearStallTimer();
   }
@@ -109,8 +111,11 @@ export class ConversionRuntimeController {
     this.lastProgressValue = 0;
     this.lastStatusMessage = '';
     this.lastUiProgressLogAtMs = 0;
+    this.lastUiStatusLogAtMs = 0;
     this.startStallTimer();
   }
+
+  private lastUiStatusLogAtMs = 0;
 
   updateStatus(message: string): void {
     const safeMessage = message ?? '';
@@ -127,6 +132,11 @@ export class ConversionRuntimeController {
     }
 
     const now = performance.now();
+    // Throttle status logging: skip if logged less than UI_STATUS_LOG_INTERVAL_MS ago
+    if (now - this.lastUiStatusLogAtMs < UI_STATUS_LOG_INTERVAL_MS) {
+      return;
+    }
+    this.lastUiStatusLogAtMs = now;
     const elapsedMs = this.currentStartTimeMs > 0 ? Math.max(0, now - this.currentStartTimeMs) : 0;
     const elapsedSeconds = Math.floor(elapsedMs / 1000);
     const elapsed = formatDuration(elapsedSeconds);

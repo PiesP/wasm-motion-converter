@@ -147,9 +147,9 @@ export async function encodeWebp(
     resolution: `${w}×${h}`,
     quality: webpConfig.quality,
     skippedByDecimation,
-    sourceDurationMs: Math.round(sourceTotalMs * 1000),
+    sourceDurationMs: Math.round(sourceTotalMs),
     outputDurationMs: Math.round(outputTotalMs),
-    timingErrorMs: Math.round(outputTotalMs - sourceTotalMs * 1000),
+    timingErrorMs: Math.round(outputTotalMs - sourceTotalMs),
   });
   logger.info('encoders', '  │  └─ WebP: encode finished', {
     keptFrames: rgbFrames.length,
