@@ -49,6 +49,27 @@ const BAYER_8X8 = [
   [63, 31, 55, 23, 61, 29, 53, 21],
 ];
 
+/**
+ * Convert RGB (3 bytes/pixel) to RGBA (4 bytes/pixel).
+ * gifenc's quantize() and applyPalette() require RGBA input because they
+ * internally cast the buffer to Uint32Array (4-byte aligned).
+ * Without this conversion, the 3-byte pixel boundaries cause a 1-byte
+ * misalignment per pixel, producing a 4x repeated/corrupted image.
+ */
+function rgbToRgba(rgb: Uint8Array, width: number, height: number): Uint8Array {
+  const pixelCount = width * height;
+  const rgba = new Uint8Array(pixelCount * 4);
+  for (let i = 0; i < pixelCount; i++) {
+    const srcIdx = i * 3;
+    const dstIdx = i << 2; // i * 4
+    rgba[dstIdx] = rgb[srcIdx]!;
+    rgba[dstIdx + 1] = rgb[srcIdx + 1]!;
+    rgba[dstIdx + 2] = rgb[srcIdx + 2]!;
+    rgba[dstIdx + 3] = 255; // fully opaque
+  }
+  return rgba;
+}
+
 function bayerDitherRGB(rgb: Uint8Array, width: number, height: number, strength: number): void {
   if (strength <= 0) return;
   const scale = strength / 64;
@@ -185,17 +206,23 @@ export async function encodeGif(
       delay = Math.max(MIN_FRAME_DELAY, totalDelayWithAccumulated);
     }
 
-    // Bayer ordered dithering
+    // Bayer ordered dithering (applied to RGB buffer in-place)
     if (ditherStrength > 0) {
       bayerDitherRGB(rgb, w, h, ditherStrength);
     }
 
+    // Convert RGB (3B/pixel) → RGBA (4B/pixel) for gifenc compatibility.
+    // gifenc's quantize() and applyPalette() internally cast the buffer to
+    // Uint32Array, which requires 4-byte alignment. Without this conversion,
+    // 3-byte pixel boundaries cause misalignment, producing corrupted output.
+    const rgba = rgbToRgba(rgb, w, h);
+
     // Quantize: compute global palette from first frame, reuse for subsequent frames
     if (encodeIdx === 0) {
-      globalPalette = quantize(rgb, maxColors, { format: 'rgb565' });
+      globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
     }
 
-    writeFrameWithDelay(rgb, delay);
+    writeFrameWithDelay(rgba, delay);
     encodeIdx++;
   }
 
