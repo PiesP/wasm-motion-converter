@@ -29,7 +29,11 @@ import { logger } from '@utils/logger';
 import { encodeRGB } from 'wasm-webp';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
-import { extractVP8Bitstream, muxAnimatedWebP } from './streaming-webp-encoder';
+import {
+  extractVP8Bitstream,
+  extractVP8BitstreamFast,
+  StreamingWebpMuxer,
+} from './streaming-webp-encoder';
 
 export interface WebpEncodeOptions {
   width: number;
@@ -73,8 +77,8 @@ export async function encodeWebp(
 
   const startTime = performance.now();
 
-  // Streaming encode state
-  const encodedFrames: { data: Uint8Array; duration: number }[] = [];
+  // Streaming encode state — use incremental muxer to avoid O(N) memory accumulation
+  const muxer = new StreamingWebpMuxer(w, h);
   let totalInputFrames = 0;
   let skippedByDecimation = 0;
   let encodeIdx = 0;
@@ -123,9 +127,11 @@ export async function encodeWebp(
         }
 
         const webpData = webpResult instanceof Uint8Array ? webpResult : new Uint8Array(webpResult);
-        const bitstream = extractVP8Bitstream(webpData);
+        // First frame: full validation. Subsequent frames: fast path (same encoder = same format).
+        const bitstream =
+          encodeIdx === 0 ? extractVP8Bitstream(webpData) : extractVP8BitstreamFast(webpData);
 
-        encodedFrames.push({ data: bitstream, duration: frameDurationMs });
+        muxer.addFrame(bitstream, frameDurationMs);
         encodeIdx++;
       },
     },
@@ -135,13 +141,13 @@ export async function encodeWebp(
   totalInputFrames = totalDecoded;
   skippedByDecimation = totalSkipped;
 
-  if (encodedFrames.length === 0) {
+  if (muxer.frames === 0) {
     throw new Error('No frames decoded for WebP encoding');
   }
 
   logger.info('encoders', 'WebP encoding started', {
     decodedFrames: totalInputFrames,
-    keptFrames: encodedFrames.length,
+    keptFrames: muxer.frames,
     resolution: `${w}×${h}`,
     quality,
     scale: opts.scale,
@@ -150,16 +156,16 @@ export async function encodeWebp(
   });
 
   // Mux all encoded frames into animated WebP container
-  const result = muxAnimatedWebP(encodedFrames, w, h);
+  const result = muxer.finish();
   const totalElapsed = (performance.now() - startTime) / 1000;
 
   logger.info('encoders', 'WebP encoding complete', {
     decodedFrames: totalInputFrames,
-    keptFrames: encodedFrames.length,
+    keptFrames: muxer.frames,
     totalFrames: demux.totalFrames,
     frameDecimation,
     outputBytes: result.length,
-    fps: Math.round(encodedFrames.length / totalElapsed),
+    fps: Math.round(muxer.frames / totalElapsed),
     duration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
     quality,
@@ -169,7 +175,7 @@ export async function encodeWebp(
     timingErrorMs: 0,
   });
   logger.info('encoders', '  │  └─ WebP: encode finished', {
-    keptFrames: encodedFrames.length,
+    keptFrames: muxer.frames,
     outputBytes: result.length,
     duration: `${totalElapsed.toFixed(2)}s`,
     frameDecimation,
