@@ -18,9 +18,6 @@
  *   3. Mux into RIFF/WEBP container with VP8X + ANIM + ANMF chunks
  */
 
-import { logger } from '@utils/logger';
-import { encodeRGB } from 'wasm-webp';
-
 // ---------------------------------------------------------------------------
 // WebP format constants for muxing
 // ---------------------------------------------------------------------------
@@ -29,28 +26,6 @@ const ANIM_MAGIC = 0x414e494d; // "ANIM"
 const ANMF_MAGIC = 0x414e4d46; // "ANMF"
 const RIFF_MAGIC = 0x52494646; // "RIFF"
 const WEBP_MAGIC = 0x57454250; // "WEBP"
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface StreamingWebPFrame {
-  /** RGB pixel data (3 bytes per pixel) */
-  data: Uint8Array;
-  width: number;
-  height: number;
-  /** Frame duration in milliseconds */
-  duration: number;
-}
-
-export interface StreamingWebPEncodeOptions {
-  width: number;
-  height: number;
-  quality: number; // 0-100
-  signal?: AbortSignal;
-  /** Callback fired after each frame is encoded (for progress tracking) */
-  onFrameEncoded?: (frameIndex: number, totalFrames: number) => void;
-}
 
 // ---------------------------------------------------------------------------
 // VP8 bitstream extraction
@@ -227,60 +202,10 @@ export function muxAnimatedWebP(
 }
 
 // ---------------------------------------------------------------------------
-// Streaming encoder
+// Internal streaming encoder (unused — kept for reference)
 // ---------------------------------------------------------------------------
+// The streaming encode logic is now inline in webp-encoder-service.ts
+// via the onFrameAvailable callback. This function is kept as reference
+// but is no longer imported anywhere.
 
-/**
- * Encode an array of decoded RGB frames to animated WebP using streaming.
- * Each frame is encoded individually via wasm-webp's encodeRGB, then muxed
- * into the final animated WebP container.
- */
-export async function encodeStreamingWebP(
-  frames: StreamingWebPFrame[],
-  opts: StreamingWebPEncodeOptions
-): Promise<Uint8Array> {
-  if (frames.length === 0) {
-    throw new Error('No frames to encode');
-  }
-
-  const startTime = performance.now();
-  const encodedFrames: { data: Uint8Array; duration: number }[] = [];
-
-  logger.info('encoders', 'Streaming WebP encoding started', {
-    frames: frames.length,
-    width: opts.width,
-    height: opts.height,
-    quality: opts.quality,
-  });
-
-  for (let i = 0; i < frames.length; i++) {
-    if (opts.signal?.aborted) {
-      throw new DOMException('Cancelled', 'AbortError');
-    }
-    const frame = frames[i]!;
-
-    const webpResult = await encodeRGB(frame.data, frame.width, frame.height, opts.quality);
-
-    if (!webpResult || webpResult.length === 0) {
-      throw new Error(`encodeRGB returned ${webpResult ? 'empty' : 'null'} for frame ${i}`);
-    }
-
-    const webpData = webpResult instanceof Uint8Array ? webpResult : new Uint8Array(webpResult);
-    const bitstream = extractVP8Bitstream(webpData);
-
-    encodedFrames.push({ data: bitstream, duration: frame.duration });
-    opts.onFrameEncoded?.(i + 1, frames.length);
-  }
-
-  const result = muxAnimatedWebP(encodedFrames, opts.width, opts.height);
-  const elapsed = (performance.now() - startTime) / 1000;
-
-  logger.info('encoders', 'Streaming WebP encoding complete', {
-    frames: frames.length,
-    outputBytes: result.length,
-    duration: `${elapsed.toFixed(2)}s`,
-    fps: Math.round(frames.length / elapsed),
-  });
-
-  return result;
-}
+// encodeStreamingWebP removed — logic merged into webp-encoder-service.ts

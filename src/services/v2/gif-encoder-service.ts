@@ -56,8 +56,9 @@ const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
 };
 
 // Bayer ordered dithering strength per quality (0-255 range, lower = subtler)
+// low quality: dithering disabled (0) — fewer colors don't benefit from dithering
 const QUALITY_DITHER_STRENGTH: Record<GifEncodeOptions['quality'], number> = {
-  low: 12,
+  low: 0,
   medium: 8,
   high: 4,
 };
