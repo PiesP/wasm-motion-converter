@@ -17,7 +17,7 @@ export interface MemoryInfo {
   deviceMemoryGB?: number;
 }
 
-function getMemoryInfo(): MemoryInfo | null {
+export function getMemoryInfo(): MemoryInfo | null {
   if ('memory' in performance && performance.memory) {
     const memory = performance.memory as {
       usedJSHeapSize: number;
