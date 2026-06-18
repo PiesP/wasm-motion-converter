@@ -115,10 +115,15 @@ export async function encodeWebp(
     };
   });
 
+  // Release RGB frame buffer references before encoding to reduce peak memory.
+  // wasm-webp's encodeAnimation allocates its own internal WASM buffers, and
+  // holding onto the RGB frames simultaneously can push total memory past limits.
+  rgbFrames.length = 0;
+
   const result = await encodeAnimation(w, h, false, frames);
   if (!result || result.length === 0) {
     throw new Error(
-      `wasm-webp encodeAnimation returned ${result ? 'empty' : 'null'} (frames: ${rgbFrames.length}, w: ${w}, h: ${h})`
+      `wasm-webp encodeAnimation returned ${result ? 'empty' : 'null'} (frames: ${frames.length}, w: ${w}, h: ${h}). Try reducing scale to 50% or switching to GIF format.`
     );
   }
 
