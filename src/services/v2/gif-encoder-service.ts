@@ -134,6 +134,11 @@ export async function encodeGif(
 
   // T2: Maximum delay per frame — prevents a single frame from displaying too long
   const MAX_FRAME_DELAY = 200;
+  // Minimum delay for the first frame — ensures it's visible to human eyes
+  // GIF/WebP players may render frames too quickly otherwise
+  const MIN_FIRST_FRAME_DELAY = 100;
+  // Minimum delay for any frame — frames shorter than this are perceptually instant
+  const MIN_FRAME_DELAY = 50;
 
   // Streaming GIF encoder — writes frames one at a time
   // Estimate initial capacity: width * height * estimatedFrames * 0.1 (LZW ~10:1)
@@ -188,10 +193,16 @@ export async function encodeGif(
     accumulatedDuration = 0;
 
     const isFirstFrame = encodeIdx === 0;
-    const MIN_FIRST_FRAME_DELAY = 100;
-    const delay = isFirstFrame
-      ? Math.max(MIN_FIRST_FRAME_DELAY, totalDelayWithAccumulated)
-      : totalDelayWithAccumulated;
+
+    // Apply minimum delays:
+    // - First frame: always at least MIN_FIRST_FRAME_DELAY (100ms) so humans can see it
+    // - Other frames: at least MIN_FRAME_DELAY (50ms) to avoid perceptual instant
+    let delay: number;
+    if (isFirstFrame) {
+      delay = Math.max(MIN_FIRST_FRAME_DELAY, totalDelayWithAccumulated);
+    } else {
+      delay = Math.max(MIN_FRAME_DELAY, totalDelayWithAccumulated);
+    }
 
     // Bayer ordered dithering
     if (ditherStrength > 0) {

@@ -123,11 +123,21 @@ export async function encodeWebp(
   }
 
   // Encode to WebP via wasm-webp
-  const frames = rgbFrames.map((f) => ({
-    data: f.data,
-    duration: f.duration,
-    config: webpConfig,
-  }));
+  // Apply minimum frame delays: first frame >= 100ms, others >= 50ms
+  // This ensures frames are visible to human eyes (frames < 50ms are perceptually instant)
+  const MIN_FIRST_FRAME_DELAY = 100;
+  const MIN_FRAME_DELAY = 50;
+  const frames = rgbFrames.map((f, idx) => {
+    const isFirstFrame = idx === 0;
+    const delay = isFirstFrame
+      ? Math.max(MIN_FIRST_FRAME_DELAY, f.duration)
+      : Math.max(MIN_FRAME_DELAY, f.duration);
+    return {
+      data: f.data,
+      duration: delay,
+      config: webpConfig,
+    };
+  });
 
   const result = await encodeAnimation(w, h, false, frames);
   if (!result || result.length === 0) {
