@@ -57,7 +57,18 @@ export async function copyFrameToRGB(
   // Draw the VideoFrame directly to an OffscreenCanvas at the target size
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(frame, 0, 0, width, height);
+  // Use frame's display dimensions as source, target dimensions as dest
+  ctx.drawImage(
+    frame,
+    0,
+    0,
+    frame.codedWidth || frame.displayWidth,
+    frame.codedHeight || frame.displayHeight,
+    0,
+    0,
+    width,
+    height
+  );
 
   const imageData = ctx.getImageData(0, 0, width, height);
   return rgbaToRGB(new Uint8Array(imageData.data), width, height);
