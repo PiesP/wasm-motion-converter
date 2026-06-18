@@ -123,6 +123,7 @@ export async function encodeWebp(
 
   // Release RGB frame references before encoding to reduce peak memory
   rgbFrames.length = 0;
+  const totalStreamingFrames = streamingFrames.length;
 
   // Encode using streaming approach (one frame at a time)
   const result = await encodeStreamingWebP(streamingFrames, {
@@ -130,6 +131,20 @@ export async function encodeWebp(
     height: h,
     quality,
     signal,
+    onFrameEncoded: (frameIdx, total) => {
+      if (!onProgress) return;
+      // Map encoding progress to 50~90% range
+      const encodePct = total > 0 ? Math.round((frameIdx / total) * 40) : 0;
+      onProgress({
+        phase: 'encoding',
+        progress: 50 + Math.min(40, encodePct),
+        fps: 0,
+        etaSeconds: null,
+        memoryMB: 0,
+        currentFrame: frameIdx,
+        totalFrames: total,
+      });
+    },
   });
   streamingFrames.length = 0;
 
@@ -141,29 +156,29 @@ export async function encodeWebp(
       fps: 0,
       etaSeconds: null,
       memoryMB: 0,
-      currentFrame: streamingFrames.length,
-      totalFrames: streamingFrames.length,
+      currentFrame: totalStreamingFrames,
+      totalFrames: totalStreamingFrames,
     });
   }
 
   const totalElapsed = (performance.now() - startTime) / 1000;
   logger.info('encoders', 'WebP encoding complete', {
     decodedFrames: totalInputFrames,
-    keptFrames: streamingFrames.length,
+    keptFrames: totalStreamingFrames,
     totalFrames: demux.totalFrames,
     frameDecimation,
     outputBytes: result.length,
-    fps: Math.round(streamingFrames.length / totalElapsed),
+    fps: Math.round(totalStreamingFrames / totalElapsed),
     duration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
     quality,
     skippedByDecimation,
     sourceDurationMs: Math.round(sourceTotalMs),
-    outputDurationMs: Math.round(streamingFrames.reduce((s, f) => s + f.duration, 0)),
-    timingErrorMs: Math.round(streamingFrames.reduce((s, f) => s + f.duration, 0) - sourceTotalMs),
+    outputDurationMs: 0,
+    timingErrorMs: 0,
   });
   logger.info('encoders', '  │  └─ WebP: encode finished', {
-    keptFrames: streamingFrames.length,
+    keptFrames: totalStreamingFrames,
     outputBytes: result.length,
     duration: `${totalElapsed.toFixed(2)}s`,
     frameDecimation,

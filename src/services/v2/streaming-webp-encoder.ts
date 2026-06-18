@@ -48,6 +48,8 @@ export interface StreamingWebPEncodeOptions {
   height: number;
   quality: number; // 0-100
   signal?: AbortSignal;
+  /** Callback fired after each frame is encoded (for progress tracking) */
+  onFrameEncoded?: (frameIndex: number, totalFrames: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +266,7 @@ export async function encodeStreamingWebP(
     const bitstream = extractVP8Bitstream(webpData);
 
     encodedFrames.push({ data: bitstream, duration: frame.duration });
+    opts.onFrameEncoded?.(i + 1, frames.length);
   }
 
   const result = muxAnimatedWebP(encodedFrames, opts.width, opts.height);
