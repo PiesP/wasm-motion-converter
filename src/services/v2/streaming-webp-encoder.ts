@@ -67,7 +67,7 @@ export interface StreamingWebPEncodeOptions {
  *   16-19: chunk size (LE)
  *   20+:   raw VP8/VP8L bitstream
  */
-function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
+export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
   if (webp.length < 24) {
     throw new Error(`WebP too small: ${webp.length} bytes (minimum 24)`);
   }
@@ -126,7 +126,7 @@ function writeUint24(output: Uint8Array, offset: number, value: number): number 
  *     FourCC "ANMF" (4) + size (4) + x(3) + y(3) + w(3) + h(3) + duration(3) + flags(1)
  *     VP8 sub-chunk: FourCC "VP8 " (4) + size (4) + VP8 bitstream data
  */
-function muxAnimatedWebP(
+export function muxAnimatedWebP(
   bitstreams: { data: Uint8Array; duration: number }[],
   width: number,
   height: number

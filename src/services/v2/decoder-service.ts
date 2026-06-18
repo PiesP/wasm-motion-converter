@@ -90,31 +90,8 @@ export async function decodeFrames(
   let accumulatedDuration = 0;
   let skippedByDecimation = 0;
 
-  // Check codec support
-  const support = await VideoDecoder.isConfigSupported(demux.config);
-  if (!support.supported) {
-    throw new Error(
-      `Unsupported configuration. Check isConfigSupported() prior to calling configure(). Codec: ${demux.config.codec}`
-    );
-  }
-
-  // Build hw/sw configs
-  const buildConfig = (hw: 'prefer-hardware' | 'prefer-software') => ({
-    ...demux.config,
-    hardwareAcceleration: hw,
-  });
-
-  // Try hardware first if requested
-  let activeConfig = buildConfig(hwAccel);
-  if (hwAccel === 'prefer-hardware') {
-    const hwSupport = await VideoDecoder.isConfigSupported(buildConfig('prefer-hardware'));
-    if (!hwSupport.supported) {
-      logger.info('encoders', 'Hardware decoding not available, falling back to software', {
-        codec: demux.config.codec,
-      });
-      activeConfig = buildConfig('prefer-software');
-    }
-  }
+  // Check codec support (cached per codec+hw combo)
+  const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
 
   logger.info('encoders', 'VideoDecoder configured', {
     codec: demux.config.codec,
@@ -190,18 +167,21 @@ export async function decodeFrames(
 
   while (chunkIdx < chunks.length) {
     if (signal?.aborted) {
-      if (decoder.state !== 'closed') decoder.close();
+      decoder.close();
       throw new DOMException('Cancelled', 'AbortError');
     }
     if (decodeError) break;
-    if (signal?.aborted || decodeError) break;
 
     // Backpressure: wait if decode queue is full
     while (decoder.decodeQueueSize > MAX_DECODE_QUEUE && !signal?.aborted && !decodeError) {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
-    if (signal?.aborted || decodeError) break;
+    if (signal?.aborted) {
+      decoder.close();
+      throw new DOMException('Cancelled', 'AbortError');
+    }
+    if (decodeError) break;
 
     decoder.decode(chunks[chunkIdx]!);
     chunkIdx++;
@@ -247,4 +227,45 @@ export async function decodeFrames(
     sourceTotalMs,
     outputTotalMs,
   };
+}
+
+// ─── Codec support cache ──────────────────────────────────────────
+// isConfigSupported() is synchronous in some browsers but the spec says
+// it returns a Promise. Cache results to avoid redundant calls when
+// multiple conversions use the same codec.
+
+interface CachedConfig {
+  config: VideoDecoderConfig;
+  hwSupported: boolean;
+}
+
+const configCache = new Map<string, CachedConfig>();
+
+function configCacheKey(cfg: VideoDecoderConfig): string {
+  return `${cfg.codec}-${cfg.codedWidth}x${cfg.codedHeight}-${cfg.hardwareAcceleration ?? 'default'}`;
+}
+
+async function resolveDecoderConfig(
+  baseConfig: VideoDecoderConfig,
+  hwAccel: 'prefer-hardware' | 'prefer-software'
+): Promise<VideoDecoderConfig> {
+  const key = configCacheKey(baseConfig);
+  let cached = configCache.get(key);
+
+  if (!cached) {
+    const support = await VideoDecoder.isConfigSupported(baseConfig);
+    if (!support.supported) {
+      throw new Error(`Unsupported codec configuration: ${baseConfig.codec}`);
+    }
+    // Check HW support with a HW-specific config
+    const hwConfig = { ...baseConfig, hardwareAcceleration: 'prefer-hardware' as const };
+    const hwSupport = await VideoDecoder.isConfigSupported(hwConfig);
+    cached = { config: baseConfig, hwSupported: hwSupport.supported === true };
+    configCache.set(key, cached);
+  }
+
+  if (hwAccel === 'prefer-hardware' && cached!.hwSupported) {
+    return { ...baseConfig, hardwareAcceleration: 'prefer-hardware' };
+  }
+  return { ...baseConfig, hardwareAcceleration: 'prefer-software' };
 }
