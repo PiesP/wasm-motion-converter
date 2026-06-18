@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import {
+  GIF_LZW_RATIO,
+  GIF_MAX_BUFFER_BYTES,
+  GIF_MAX_FRAME_DELAY_CS,
+  GIF_MIN_FIRST_FRAME_DELAY_MS,
+  GIF_MIN_FRAME_DELAY_MS,
+} from '@utils/constants';
 import { logger } from '@utils/logger';
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
-import type { ConversionProgress } from '@/types/v2-conversion-types';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 
@@ -60,8 +66,6 @@ function bayerDitherRGB(rgb: Uint8Array, width: number, height: number, strength
   }
 }
 
-export type GifProgressCallback = (progress: ConversionProgress) => void;
-
 /**
  * Encode demuxed video frames to GIF.
  *
@@ -72,7 +76,6 @@ export type GifProgressCallback = (progress: ConversionProgress) => void;
 export async function encodeGif(
   demux: DemuxResult,
   opts: GifEncodeOptions,
-  _onProgress?: GifProgressCallback,
   signal?: AbortSignal
 ): Promise<Uint8Array> {
   const srcW = opts.width;
@@ -110,17 +113,17 @@ export async function encodeGif(
   let accumulatedDuration = 0;
 
   // T2: Maximum delay per frame — prevents a single frame from displaying too long
-  const MAX_FRAME_DELAY = 200;
+  const MAX_FRAME_DELAY = GIF_MAX_FRAME_DELAY_CS;
   // Minimum delay for the first frame — ensures it's visible to human eyes
   // GIF/WebP players may render frames too quickly otherwise
-  const MIN_FIRST_FRAME_DELAY = 100;
+  const MIN_FIRST_FRAME_DELAY = GIF_MIN_FIRST_FRAME_DELAY_MS;
   // Minimum delay for any frame — frames shorter than this are perceptually instant
-  const MIN_FRAME_DELAY = 50;
+  const MIN_FRAME_DELAY = GIF_MIN_FRAME_DELAY_MS;
 
   // Streaming GIF encoder — writes frames one at a time
-  // Estimate initial capacity: width * height * estimatedFrames * 0.1 (LZW ~10:1)
+  // Estimate initial capacity: width * height * estimatedFrames * LZW_RATIO (~10:1)
   const estimatedFrames = Math.max(1, Math.floor(demux.totalFrames / (opts.frameDecimation ?? 1)));
-  const estimatedBytes = Math.min(w * h * estimatedFrames * 0.1, 32 * 1024 * 1024);
+  const estimatedBytes = Math.min(w * h * estimatedFrames * GIF_LZW_RATIO, GIF_MAX_BUFFER_BYTES);
   const encoder = GIFEncoder({
     auto: true,
     initialCapacity: Math.max(4096, Math.round(estimatedBytes)),

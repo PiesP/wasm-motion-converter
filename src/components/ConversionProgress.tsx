@@ -2,11 +2,10 @@
 // Copyright (c) 2025 PiesP
 
 import Panel from '@components/ui/Panel';
+import type { ConversionPhase } from '@t/v2-conversion-types';
 import type { Component } from 'solid-js';
 import { splitProps } from 'solid-js';
 import ProgressBar from './ProgressBar';
-
-type Phase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
 
 /**
  * Conversion progress component props
@@ -31,7 +30,7 @@ interface ConversionProgressProps {
   /** Memory usage string */
   memoryUsage?: string | null;
   /** Active phase for multi-segment bar */
-  phase?: Phase;
+  phase?: ConversionPhase;
 }
 
 /**

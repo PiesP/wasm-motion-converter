@@ -18,7 +18,7 @@
  */
 
 import { logger } from '@utils/logger';
-import type { ConversionProgress } from '@/types/v2-conversion-types';
+
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { encodeStreamingWebP } from './streaming-webp-encoder';
@@ -40,7 +40,7 @@ const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
   high: 92,
 };
 
-export type WebpProgressCallback = (progress: ConversionProgress) => void;
+import type { ProgressCallback } from '@t/v2-conversion-types';
 
 /**
  * Encode demuxed video frames to animated WebP using streaming.
@@ -52,7 +52,7 @@ export type WebpProgressCallback = (progress: ConversionProgress) => void;
 export async function encodeWebp(
   demux: DemuxResult,
   opts: WebpEncodeOptions,
-  onProgress?: WebpProgressCallback,
+  onProgress?: ProgressCallback,
   signal?: AbortSignal
 ): Promise<Uint8Array> {
   const srcW = opts.width;

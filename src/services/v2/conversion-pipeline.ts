@@ -8,18 +8,18 @@
  * Each encoder handles its own VideoDecoder.
  */
 
+import type { ProgressCallback } from '@t/v2-conversion-types';
+import { DEFAULT_FPS, GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
-import type { ConversionProgress, ConversionRequest } from '@/types/v2-conversion-types';
+import type { ConversionRequest } from '@/types/v2-conversion-types';
 import { demuxVideo } from './demuxer-service';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
 
-export type PipelineProgressCallback = (progress: ConversionProgress) => void;
-
 export async function runConversionPipeline(
   request: ConversionRequest,
-  onProgress: PipelineProgressCallback,
+  onProgress: ProgressCallback,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
   const pipelineStart = performance.now();
@@ -112,8 +112,8 @@ export async function runConversionPipeline(
     // decoded frames in memory simultaneously can exceed 1GB+ and cause
     // GC thrashing / timeout.
     const sourceFps =
-      demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : 30;
-    const targetFps = 15;
+      demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
+    const targetFps = GIF_TARGET_FPS;
     const baseDecimation =
       sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
     // At higher scales, decimation is aggressively increased to keep memory
@@ -142,18 +142,6 @@ export async function runConversionPipeline(
           frameDecimation: gifDecimation,
           onFrameDecoded: decodeProgressCb,
         },
-        (p) => {
-          const mappedProgress = 50 + Math.round(p.progress * 0.4);
-          onProgress({
-            ...p,
-            phase: 'encoding',
-            progress: Math.min(90, mappedProgress),
-            memoryMB: getMemoryUsageMB() ?? 0,
-            currentFrame: p.currentFrame,
-            totalFrames: demuxResult.totalFrames,
-            elapsedMs: Math.round(performance.now() - pipelineStart),
-          });
-        },
         signal
       )
     ).buffer as ArrayBuffer;
@@ -162,8 +150,8 @@ export async function runConversionPipeline(
     // Only 1 RGB frame in WASM memory at a time → scale=1.0 always safe.
     // Decimation controls output frame rate (quality), not memory safety.
     const sourceFps =
-      demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : 30;
-    const targetFps = request.format === 'webp' ? 20 : 15;
+      demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
+    const targetFps = WEBP_TARGET_FPS;
     const autoDecimation =
       sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
     const webpDecimation = request.forceDecimation ?? autoDecimation;

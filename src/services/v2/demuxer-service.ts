@@ -9,7 +9,7 @@ export interface DemuxResult {
   duration: number;
 }
 
-export type DemuxProgressCallback = (packetsExtracted: number) => void;
+type DemuxProgressCallback = (packetsExtracted: number) => void;
 
 /**
  * Demux a video buffer using MediaBunny, extracting encoded video chunks.

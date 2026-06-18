@@ -10,7 +10,6 @@
 
 import { logger } from '@utils/logger';
 import { runConversionPipeline } from '@/services/v2/conversion-pipeline';
-import type { ConversionProgress } from '@/types/v2-conversion-types';
 
 export interface V2ConversionOptions {
   format: 'gif' | 'webp';
@@ -22,9 +21,9 @@ export interface V2ConversionOptions {
   forceDecimation?: number;
 }
 
-export type V2ProgressCallback = (progress: ConversionProgress) => void;
+import type { ProgressCallback } from '@t/v2-conversion-types';
 
-export class ConversionCancelledError extends Error {
+class ConversionCancelledError extends Error {
   constructor() {
     super('Cancelled');
     this.name = 'AbortError';
@@ -34,7 +33,7 @@ export class ConversionCancelledError extends Error {
 export async function performConversionV2(
   inputFile: File,
   options: V2ConversionOptions,
-  onProgress: V2ProgressCallback,
+  onProgress: ProgressCallback,
   signal?: AbortSignal,
   existingBuffer?: ArrayBuffer
 ): Promise<{ blob: Blob; format: 'gif' | 'webp' }> {

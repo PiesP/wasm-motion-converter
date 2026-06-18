@@ -1,3 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 PiesP
+
+/**
+ * Error Recovery
+ *
+ * Classifies conversion errors into structured codes with user-friendly
+ * suggestions. Single-layer classification with structured output.
+ */
 export type ErrorCode =
   | 'CODEC_NOT_SUPPORTED'
   | 'OUT_OF_MEMORY'
@@ -15,7 +24,7 @@ export interface ClassifiedError {
   suggestion: string;
 }
 
-/** 오류 분류 — 단일 계층, 구조화된 결과 */
+/** Classify error — single-layer, structured result */
 export function classifyError(err: unknown): ClassifiedError {
   const msg = err instanceof Error ? err.message : String(err);
 
@@ -77,7 +86,7 @@ export function classifyError(err: unknown): ClassifiedError {
   };
 }
 
-/** 출력 파일 유효성 검증 (헤더만 검사, 전체 파일 불필요) */
+/** Validate output file header (header-only check, no need to read full file) */
 export function validateOutput(output: Uint8Array, format: 'gif' | 'webp'): boolean {
   // Minimum bytes needed: GIF=6 (header), WebP=12 (RIFF+size+WEBP)
   if (output.length < 6) return false;

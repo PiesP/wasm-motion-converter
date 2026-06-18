@@ -20,7 +20,7 @@ const PHASE_SEGMENTS = [
   { label: 'Finalizing', colorClass: 'bg-green-500', phase: 'assembling' },
 ] as const;
 
-type Phase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
+import type { ConversionPhase } from '@t/v2-conversion-types';
 
 interface ProgressBarProps {
   /** Overall progress 0-100 */
@@ -53,7 +53,7 @@ interface ProgressBarProps {
   /** Memory usage string (e.g. "128 MB / 512 MB (25%)") */
   memoryUsage?: string | null;
   /** Active phase for multi-segment bar */
-  phase?: Phase;
+  phase?: ConversionPhase;
 }
 
 const ProgressBar: Component<ProgressBarProps> = (props) => {

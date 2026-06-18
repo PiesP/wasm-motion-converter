@@ -11,6 +11,7 @@ import {
   setVideoPreviewUrl,
   videoPreviewUrl,
 } from '@stores/conversion-store';
+import { DEFAULT_FPS } from '@utils/constants';
 import { focusElement } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoFile } from '@utils/file-validation';
@@ -58,7 +59,7 @@ async function extractMetadata(file: File, existingBuffer?: ArrayBuffer) {
     const codec = config.codec?.split('.')[0] ?? 'unknown';
 
     // Estimate frame rate from config if available
-    const framerate = 30; // Default; MediaBunny doesn't always expose this directly
+    const framerate = DEFAULT_FPS; // Default; MediaBunny doesn't always expose this directly
 
     return {
       width,

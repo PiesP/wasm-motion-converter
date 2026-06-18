@@ -26,7 +26,7 @@ import type { DurationValidationResult, ValidationWarning } from '@t/validation-
 import {
   DURATION_WARNING_GIF_LONG,
   DURATION_WARNING_GIF_MEDIUM,
-  GIF_HIGH_PIXEL_WARNING_THRESHOLD,
+  GIF_HIGH_PIXEL_THRESHOLD,
   MAX_FILE_SIZE,
   SUPPORTED_VIDEO_EXTENSIONS,
   SUPPORTED_VIDEO_MIMES,
@@ -355,7 +355,7 @@ export async function validateVideoDuration(
       if (options?.resolution && options?.scale) {
         const effectivePixels =
           options.resolution.width * options.scale * options.resolution.height * options.scale;
-        if (effectivePixels > GIF_HIGH_PIXEL_WARNING_THRESHOLD) {
+        if (effectivePixels > GIF_HIGH_PIXEL_THRESHOLD) {
           const effectiveWidth = Math.round(options.resolution.width * options.scale);
           const effectiveHeight = Math.round(options.resolution.height * options.scale);
           warnings.push({
