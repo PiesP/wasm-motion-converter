@@ -180,25 +180,40 @@ export async function decodeFrames(
 
   decoder.configure(activeConfig);
 
-  // Feed all chunks
-  for (const chunk of demux.chunks) {
+  // Feed all chunks with backpressure — prevent decode queue from growing unbounded.
+  // VideoDecoder internally queues decoded frames; if we feed chunks faster than
+  // they can be decoded, memory grows and GC pressure increases.
+  // We pause when queue size exceeds a threshold and resume when it drains.
+  const MAX_DECODE_QUEUE = 8;
+  const chunks = demux.chunks;
+  let chunkIdx = 0;
+
+  while (chunkIdx < chunks.length) {
     if (signal?.aborted) {
       if (decoder.state !== 'closed') decoder.close();
       throw new DOMException('Cancelled', 'AbortError');
     }
     if (decodeError) break;
-    if (decoder.state === 'closed') break;
-    decoder.decode(chunk);
+    if (signal?.aborted || decodeError) break;
+
+    // Backpressure: wait if decode queue is full
+    while (decoder.decodeQueueSize > MAX_DECODE_QUEUE && !signal?.aborted && !decodeError) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    if (signal?.aborted || decodeError) break;
+
+    decoder.decode(chunks[chunkIdx]!);
+    chunkIdx++;
   }
 
   // Flush decoder
   try {
-    if (decoder.state !== 'closed') await decoder.flush();
+    await decoder.flush();
   } catch (e) {
     if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
   }
-  // Guard against double-close: flush() may have already closed the decoder
-  if (decoder.state !== 'closed') decoder.close();
+  decoder.close();
 
   // Always await pending conversions before throwing to avoid VideoFrame leak
   await Promise.all(pendingConversions);

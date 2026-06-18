@@ -94,7 +94,10 @@ function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
     throw new Error(`Frame size ${frameSize} exceeds buffer ${webp.length}`);
   }
 
-  return webp.slice(20, 20 + frameSize);
+  // Use subarray instead of slice to avoid copying the VP8 bitstream.
+  // The original webp buffer is retained by the caller (encodedFrames array),
+  // so this view remains valid for the lifetime of the conversion.
+  return webp.subarray(20, 20 + frameSize);
 }
 
 // ---------------------------------------------------------------------------
