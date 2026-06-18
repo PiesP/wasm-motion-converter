@@ -18,6 +18,8 @@ export interface V2ConversionOptions {
   scale: number;
   trimStart: number;
   trimEnd: number;
+  /** Force frame decimation (overrides auto-decimation for GIF) */
+  forceDecimation?: number;
 }
 
 export type V2ProgressCallback = (progress: ConversionProgress) => void;
@@ -66,6 +68,7 @@ export async function performConversionV2(
       trimStart: options.trimStart,
       trimEnd: options.trimEnd,
       maxMemoryMB: 1500,
+      forceDecimation: options.forceDecimation,
     },
     onProgress,
     signal

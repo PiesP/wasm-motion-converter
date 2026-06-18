@@ -20,6 +20,8 @@ export interface WebpEncodeOptions {
   deduplicate?: boolean;
   /** dHash threshold for deduplication (0-64, lower = stricter) */
   dedupThreshold?: number;
+  /** Callback fired after each frame is decoded (for progress tracking) */
+  onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
 }
 
 const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
@@ -82,7 +84,14 @@ export async function encodeWebp(
     outputTotalMs,
   } = await decodeFrames(
     demux,
-    { width: w, height: h, frameDecimation, hwAccel: 'prefer-hardware', filterFrame },
+    {
+      width: w,
+      height: h,
+      frameDecimation,
+      hwAccel: 'prefer-hardware',
+      filterFrame,
+      onFrameDecoded: opts.onFrameDecoded,
+    },
     signal
   );
 
@@ -100,6 +109,19 @@ export async function encodeWebp(
     skippedByDedup: skippedByFilter,
   });
 
+  // Report encoding progress start (decoding is 50%, encoding starts now)
+  if (_onProgress) {
+    _onProgress({
+      phase: 'encoding',
+      progress: 50,
+      fps: 0,
+      etaSeconds: null,
+      memoryMB: 0,
+      currentFrame: 0,
+      totalFrames: rgbFrames.length,
+    });
+  }
+
   // Encode to WebP via wasm-webp
   const frames = rgbFrames.map((f) => ({
     data: f.data,
@@ -112,6 +134,19 @@ export async function encodeWebp(
     throw new Error(
       `wasm-webp encodeAnimation returned ${result ? 'empty' : 'null'} (frames: ${rgbFrames.length}, w: ${w}, h: ${h})`
     );
+  }
+
+  // Report encoding complete
+  if (_onProgress) {
+    _onProgress({
+      phase: 'encoding',
+      progress: 90,
+      fps: 0,
+      etaSeconds: null,
+      memoryMB: 0,
+      currentFrame: rgbFrames.length,
+      totalFrames: rgbFrames.length,
+    });
   }
 
   const totalElapsed = (performance.now() - startTime) / 1000;

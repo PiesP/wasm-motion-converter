@@ -19,6 +19,8 @@ export interface GifEncodeOptions {
   deduplicate?: boolean;
   /** dHash threshold for deduplication (0-64, lower = stricter) */
   dedupThreshold?: number;
+  /** Callback fired after each frame is decoded (for progress tracking) */
+  onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
 }
 
 const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
@@ -114,7 +116,14 @@ export async function encodeGif(
     sourceTotalMs,
   } = await decodeFrames(
     demux,
-    { width: w, height: h, frameDecimation, hwAccel: 'prefer-software', filterFrame },
+    {
+      width: w,
+      height: h,
+      frameDecimation,
+      hwAccel: 'prefer-software',
+      filterFrame,
+      onFrameDecoded: opts.onFrameDecoded,
+    },
     signal
   );
 

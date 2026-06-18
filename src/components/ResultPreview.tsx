@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import Button from '@components/ui/Button';
 import Panel from '@components/ui/Panel';
 import type { ConversionSettings } from '@t/conversion-types';
 import { formatBytes, formatDuration } from '@utils/format-utils';
@@ -77,30 +76,24 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       `${outputExtension().toUpperCase()} conversion results: ${downloadFileName()}, ${formatBytes(local.outputBlob.size)}`
   );
 
-  const handleDownload = () => {
-    const url = previewUrl();
-    if (!url) return;
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = downloadFileName();
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-  };
+  // Expose download URL for the <a> tag
+  const downloadUrl = createMemo(() => previewUrl());
 
   const handlePreviewLoad = () => setLoaded(true);
 
   return (
     <Panel class="p-6">
       <div class="flex gap-3">
-        <Button
-          ariaLabel={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
-          class="flex-1"
-          onClick={handleDownload}
+        <a
+          href={downloadUrl() ?? undefined}
+          download={downloadFileName()}
+          aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
+          class="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-900"
           data-testid="download-result-button"
+          role="button"
         >
           Download
-        </Button>
+        </a>
       </div>
 
       <div class="mt-4 flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg p-4 relative overflow-hidden">

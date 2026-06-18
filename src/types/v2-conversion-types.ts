@@ -7,6 +7,8 @@ export interface ConversionRequest {
   trimStart: number;
   trimEnd: number;
   maxMemoryMB: number;
+  /** Force frame decimation (overrides auto-decimation for GIF) */
+  forceDecimation?: number;
 }
 
 export type ConversionPhase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';

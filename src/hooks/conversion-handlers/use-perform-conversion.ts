@@ -33,7 +33,7 @@ import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
-import { getMemoryUsageMB } from '@utils/memory-monitor';
+import { checkMemoryForConversion, getMemoryUsageMB } from '@utils/memory-monitor';
 import { batch } from 'solid-js';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
@@ -133,12 +133,42 @@ async function performConversion(
 
     runtime.startMemoryMonitoring();
 
+    // Pre-conversion memory check for high-risk settings (high quality + full scale)
+    const md = videoMetadata();
+    const isHighRisk = settings.quality === 'high' && settings.scale >= 1.0;
+    let forcedDecimation: number | undefined;
+    if (isHighRisk && md) {
+      const estFrames = md.duration > 0 ? Math.round(md.duration * (md.framerate ?? 30)) : 300;
+      const outW = Math.floor(md.width * settings.scale);
+      const outH = Math.floor(md.height * settings.scale);
+      const memCheck = checkMemoryForConversion(outW, outH, estFrames, settings.format);
+      logger.info('conversion', 'Pre-conversion memory check', {
+        level: memCheck.level,
+        estimatedMB: memCheck.estimatedMB,
+        availableMB: memCheck.availableMB,
+        width: outW,
+        height: outH,
+        estFrames,
+      });
+      if (memCheck.level === 'critical') {
+        // Force decimation to reduce memory: target 15fps
+        const srcFps = md.framerate ?? 30;
+        forcedDecimation = Math.max(2, Math.round(srcFps / 15));
+        logger.warn('conversion', 'Forcing frame decimation due to memory pressure', {
+          forcedDecimation,
+          estimatedMB: memCheck.estimatedMB,
+          availableMB: memCheck.availableMB,
+        });
+      }
+    }
+
     const v2Options: V2ConversionOptions = {
       format: settings.format,
       quality: settings.quality,
       scale: settings.scale,
       trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
       trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
+      forceDecimation: forcedDecimation,
     };
 
     const abortController = new AbortController();

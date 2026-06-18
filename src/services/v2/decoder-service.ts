@@ -28,6 +28,8 @@ export interface DecodeOptions {
    * Discarded frame's duration is accumulated into the next kept frame.
    */
   filterFrame?: (rgb: Uint8Array, width: number, height: number) => boolean;
+  /** Callback fired after each frame is decoded (for progress tracking) */
+  onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
 }
 
 export interface DecodedFrame {
@@ -62,7 +64,14 @@ export async function decodeFrames(
   opts: DecodeOptions,
   signal?: AbortSignal
 ): Promise<DecodeResult> {
-  const { width, height, frameDecimation = 1, hwAccel = 'prefer-software', filterFrame } = opts;
+  const {
+    width,
+    height,
+    frameDecimation = 1,
+    hwAccel = 'prefer-software',
+    filterFrame,
+    onFrameDecoded,
+  } = opts;
 
   const rgbFrames: DecodedFrame[] = [];
   const pendingConversions: Promise<void>[] = [];
@@ -134,6 +143,10 @@ export async function decodeFrames(
           }
 
           rgbFrames.push({ data: rgbData, duration: totalDuration });
+          // Report decoding progress (fire-and-forget)
+          if (onFrameDecoded) {
+            onFrameDecoded(rgbFrames.length, demux.totalFrames);
+          }
         } finally {
           frame.close();
         }

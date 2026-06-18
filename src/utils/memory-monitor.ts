@@ -66,6 +66,65 @@ export function getMemoryUsageMB(): number | null {
 }
 
 /**
+ * Estimate peak memory usage for a conversion (in MB).
+ *
+ * Formula: raw RGB frames + encoded output + decoder overhead
+ * - Each frame: width * height * 3 bytes (RGB)
+ * - Peak = all decoded frames in flight + encoder output
+ * - Decoder typically holds ~5-10 frames in flight
+ *
+ * @param width - Output width in pixels
+ * @param height - Output height in pixels
+ * @param totalFrames - Total number of frames after decimation
+ * @param format - Output format (gif uses more memory for palette)
+ * @returns Estimated peak memory in MB
+ */
+export function estimatePeakMemoryMB(
+  width: number,
+  height: number,
+  totalFrames: number,
+  format: 'gif' | 'webp'
+): number {
+  const bytesPerFrame = width * height * 3; // RGB
+  // GIF: all frames held in memory before encoding (worst case)
+  // WebP: frames streamed to encoder, ~10 frames in flight
+  const inFlightFrames = format === 'gif' ? totalFrames : Math.min(10, totalFrames);
+  const frameMemory = inFlightFrames * bytesPerFrame;
+  // Encoder output buffer: ~20% of raw frame data for GIF, ~5% for WebP
+  const outputRatio = format === 'gif' ? 0.2 : 0.05;
+  const outputMemory = totalFrames * bytesPerFrame * outputRatio;
+  // Decoder overhead: ~50MB
+  const decoderOverhead = 50 * 1024 * 1024;
+  const totalBytes = frameMemory + outputMemory + decoderOverhead;
+  return Math.round(totalBytes / (1024 * 1024));
+}
+
+/**
+ * Check if a conversion is likely to exceed available memory.
+ * Returns a warning level: 'ok' | 'warning' | 'critical'
+ */
+export function checkMemoryForConversion(
+  width: number,
+  height: number,
+  totalFrames: number,
+  format: 'gif' | 'webp'
+): { level: 'ok' | 'warning' | 'critical'; estimatedMB: number; availableMB: number } {
+  const estimatedMB = estimatePeakMemoryMB(width, height, totalFrames, format);
+  const memInfo = getMemoryInfo();
+  const availableMB = memInfo
+    ? Math.round((memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize) / (1024 * 1024))
+    : 1024; // Default 1GB if unknown
+
+  if (estimatedMB > availableMB * 0.9) {
+    return { level: 'critical', estimatedMB, availableMB };
+  }
+  if (estimatedMB > availableMB * 0.6) {
+    return { level: 'warning', estimatedMB, availableMB };
+  }
+  return { level: 'ok', estimatedMB, availableMB };
+}
+
+/**
  * Get current memory usage as a formatted string (e.g. "128 MB / 512 MB (25%)").
  */
 export function getMemoryUsageString(): string | null {

@@ -186,69 +186,110 @@ export function calculateTotalDuration(frames: VideoFrame[]): number {
 // ─── Frame Deduplication (dHash) ───
 
 /**
- * Compute a 64-bit dHash (difference hash) for a grayscale frame.
+ * Determine the dHash sampling grid size based on frame resolution.
+ * - <=1280px width: 8×8 grid (64 samples) — sufficient for low-res
+ * - >1280px width: 16×16 grid (256 samples) — 4× density for high-res
+ *
+ * The threshold 1280 is chosen as the boundary between "standard" and
+ * "high" resolution content (720p vs 1080p+).
+ */
+function getDHashGridSize(width: number): number {
+  return width > 1280 ? 16 : 8;
+}
+
+/**
+ * Compute a dHash (difference hash) for a grayscale frame.
  * Used for fast frame deduplication: frames with small hamming distance
  * are considered duplicates/near-duplicates.
  *
  * Algorithm:
- * 1. Convert RGB to 8×8 grayscale (luminance)
- * 2. Compare adjacent pixels horizontally → 64 bits
- * 3. Return as two 32-bit numbers (high, low)
+ * 1. Convert RGB to NxN grayscale (luminance), where N depends on resolution
+ *    (<=1280px → 8×8, >1280px → 16×16)
+ * 2. Compare adjacent pixels horizontally → N² bits
+ * 3. Return as Uint32Array of bit values (length 4 for 16×16, length 2 for 8×8)
+ *
+ * Sampling point distribution uses center-weighted offsets:
+ * Instead of uniform grid positions at (i+0.5)/N, we apply a mild
+ * center-weighting that places ~60% of samples in the central 60% of
+ * the frame, capturing important content (faces, text, UI elements)
+ * more reliably.
  */
-export function computeFrameDHash(
-  rgb: Uint8Array,
-  width: number,
-  height: number
-): { hi: number; lo: number } {
-  // Sample 8×8 grid from the frame
-  const gray = new Uint8Array(64);
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 8; x++) {
-      const srcX = Math.floor((x / 8) * width);
-      const srcY = Math.floor((y / 8) * height);
+export function computeFrameDHash(rgb: Uint8Array, width: number, height: number): Uint32Array {
+  const gridSize = getDHashGridSize(width);
+  const totalBits = gridSize * gridSize; // 64 or 256
+  const wordCount = totalBits >>> 5; // 2 (8×8) or 4 (16×16)
+
+  // Sample grid from the frame with center-weighted distribution
+  const gray = new Uint8Array(totalBits);
+  const centerWeight = 0.6; // 60% of samples concentrated in center 60% of frame
+
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      // Center-weighted sampling: map uniform [0,1] through a curve that
+      // concentrates points near the center (0.5).
+      // t ∈ [0,1] → biased toward 0.5 using: 0.5 + (t - 0.5) * (1 + centerWeight * (1 - |2t-1|))
+      // Simplified: use a smoothstep-like bias
+      const tx = (x + 0.5) / gridSize;
+      const ty = (y + 0.5) / gridSize;
+
+      // Apply center bias: compress toward center
+      const bx = applyCenterBias(tx, centerWeight);
+      const by = applyCenterBias(ty, centerWeight);
+
+      const srcX = Math.min(width - 1, Math.floor(bx * width));
+      const srcY = Math.min(height - 1, Math.floor(by * height));
       const srcIdx = (srcY * width + srcX) * 3;
       // Luminance: 0.299R + 0.587G + 0.114B
-      gray[y * 8 + x] = Math.round(
+      gray[y * gridSize + x] = Math.round(
         rgb[srcIdx]! * 0.299 + rgb[srcIdx + 1]! * 0.587 + rgb[srcIdx + 2]! * 0.114
       );
     }
   }
 
-  // Compute difference hash: compare adjacent pixels
-  let hi = 0;
-  let lo = 0;
-  for (let i = 0; i < 64; i++) {
-    const bit = gray[i]! > gray[(i + 1) % 64]! ? 1 : 0;
-    if (i < 32) {
-      lo = (lo << 1) | bit;
-    } else {
-      hi = (hi << 1) | bit;
-    }
+  // Compute difference hash: compare adjacent pixels horizontally
+  const hash = new Uint32Array(wordCount);
+  for (let i = 0; i < totalBits; i++) {
+    const bit = gray[i]! > gray[(i + 1) % totalBits]! ? 1 : 0;
+    const wordIdx = i >>> 5; // i / 32
+    hash[wordIdx] = (hash[wordIdx]! << 1) | bit;
   }
 
-  return { hi, lo };
+  return hash;
+}
+
+/**
+ * Apply center bias to a normalized coordinate t ∈ [0, 1].
+ * Maps uniform distribution to one concentrated around 0.5.
+ *
+ * biasStrength 0.0 = no change (uniform)
+ * biasStrength 1.0 = all points at center
+ */
+function applyCenterBias(t: number, biasStrength: number): number {
+  // Smooth bias: blend between uniform and center-clamped
+  // Uses a power curve centered at 0.5
+  if (biasStrength === 0) return t;
+
+  const centered = t - 0.5; // [-0.5, 0.5]
+  // Scale factor: 1.0 at edges, (1 + biasStrength) at center
+  const scale = 1 + biasStrength * (1 - Math.abs(centered) * 2);
+  const biased = centered * scale;
+
+  // Clamp to [0, 1] range
+  return Math.max(0, Math.min(1, biased + 0.5));
 }
 
 /**
  * Compute hamming distance between two dHash values.
  * Distance < threshold means frames are visually similar.
  */
-export function hammingDistanceDHash(
-  a: { hi: number; lo: number },
-  b: { hi: number; lo: number }
-): number {
-  // XOR each 32-bit half separately, then count set bits in both.
-  // Using OR would lose information when hi and lo have overlapping bits.
-  let hiDiff = (a.hi ^ b.hi) >>> 0; // Force unsigned
-  let loDiff = (a.lo ^ b.lo) >>> 0;
+export function hammingDistanceDHash(a: Uint32Array, b: Uint32Array): number {
   let count = 0;
-  while (hiDiff) {
-    count += hiDiff & 1;
-    hiDiff >>>= 1;
-  }
-  while (loDiff) {
-    count += loDiff & 1;
-    loDiff >>>= 1;
+  for (let i = 0; i < a.length; i++) {
+    let diff = (a[i]! ^ b[i]!) >>> 0;
+    while (diff) {
+      count += diff & 1;
+      diff >>>= 1;
+    }
   }
   return count;
 }
@@ -439,7 +480,16 @@ export function isDuplicateFrameAdaptive(
     return { duplicate: true, score: 0 };
   }
 
-  // Borderline: compute histogram for final decision
+  // For high-resolution frames (>1920px), skip expensive histogram computation
+  // and rely on dHash alone. dHash is already very accurate for structure.
+  const isHighRes = width > 1920 || height > 1080;
+  if (isHighRes) {
+    const duplicate = dhashDist < effectiveThreshold;
+    const score = dhashDist / 64;
+    return { duplicate, score };
+  }
+
+  // Borderline: compute histogram for final decision (low-res only)
   const histA = computeHistogram(prevRGB);
   const histB = computeHistogram(currRGB);
   const histSim = histogramSimilarity(histA, histB);

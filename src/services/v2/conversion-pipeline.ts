@@ -87,20 +87,53 @@ export async function runConversionPipeline(
   });
 
   // Decode + Encode (10~90%)
+  // Progress split: decoding 10~50%, encoding 50~90%
   let output: ArrayBuffer;
+  const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
+    const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
+    onProgress({
+      phase: 'decoding',
+      progress: 10 + Math.min(40, decodePct),
+      fps: 0,
+      etaSeconds: null,
+      memoryMB: getMemoryUsageMB() ?? 0,
+      currentFrame: frameIdx,
+      totalFrames,
+      elapsedMs: Math.round(performance.now() - pipelineStart),
+    });
+  };
   if (request.format === 'gif') {
+    // Auto frame decimation for GIF: target ~15fps output to reduce file size
+    // and encoding time. Source fps is estimated from totalFrames / duration.
+    // forceDecimation from memory check overrides auto-decimation.
+    const sourceFps =
+      demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : 30;
+    const targetFps = 15;
+    const autoDecimation =
+      sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
+    const gifDecimation = request.forceDecimation ?? autoDecimation;
+
     logger.info('conversion', '  ├─ Branch: GIF encoder (gifenc + VideoDecoder)', {
       codec: demuxResult.config.codec,
       codedWidth: demuxResult.config.codedWidth,
       codedHeight: demuxResult.config.codedHeight,
       totalFrames: demuxResult.totalFrames,
+      sourceFps: Math.round(sourceFps),
+      gifDecimation,
     });
     output = (
       await encodeGif(
         demuxResult,
-        { width: codedWidth, height: codedHeight, quality: request.quality, scale: request.scale },
+        {
+          width: codedWidth,
+          height: codedHeight,
+          quality: request.quality,
+          scale: request.scale,
+          frameDecimation: gifDecimation,
+          onFrameDecoded: decodeProgressCb,
+        },
         (p) => {
-          const mappedProgress = 10 + Math.round(p.progress * 0.8);
+          const mappedProgress = 50 + Math.round(p.progress * 0.4);
           onProgress({
             ...p,
             phase: 'encoding',
@@ -123,9 +156,15 @@ export async function runConversionPipeline(
     });
     const encoded = await encodeWebp(
       demuxResult,
-      { width: codedWidth, height: codedHeight, quality: request.quality, scale: request.scale },
+      {
+        width: codedWidth,
+        height: codedHeight,
+        quality: request.quality,
+        scale: request.scale,
+        onFrameDecoded: decodeProgressCb,
+      },
       (p) => {
-        const mappedProgress = 10 + Math.round(p.progress * 0.8);
+        const mappedProgress = 50 + Math.round(p.progress * 0.4);
         onProgress({
           ...p,
           phase: 'encoding',
