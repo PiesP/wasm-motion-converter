@@ -455,7 +455,22 @@ export function autoThreshold(
 
 /**
  * Check if two frames are duplicates using adaptive threshold.
- * Selects the best detection strategy based on content type.
+ * Uses mean absolute difference (MAD) for noise-robust comparison.
+ *
+ * Algorithm:
+ * 1. Compute per-pixel absolute difference (grayscale)
+ * 2. If mean difference < threshold → duplicate
+ * 3. dHash is NOT used here because it's too sensitive to noise:
+ *    adjacent-pixel comparison flips ~50% of bits with even 1-level noise,
+ *    making it useless for real video content with compression artifacts.
+ *
+ * @param prevRGB - Previous frame's RGB data
+ * @param currRGB - Current frame's RGB data
+ * @param width   - Frame width
+ * @param height  - Frame height
+ * @param threshold - Mean absolute difference threshold (default: 8, range 0-255)
+ *                   Lower = stricter (only near-identical frames deduped)
+ *                   Higher = looser (more frames deduped)
  */
 export function isDuplicateFrameAdaptive(
   prevRGB: Uint8Array,
@@ -464,40 +479,30 @@ export function isDuplicateFrameAdaptive(
   height: number,
   threshold?: number
 ): { duplicate: boolean; score: number } {
-  // Measure frame-to-frame difference using dHash
-  const hashA = computeFrameDHash(prevRGB, width, height);
-  const hashB = computeFrameDHash(currRGB, width, height);
-  const dhashDist = hammingDistanceDHash(hashA, hashB);
-
-  // If frames are clearly different (dHash >> threshold), skip histogram
   const effectiveThreshold = threshold ?? DEFAULT_THRESHOLD;
-  if (dhashDist >= effectiveThreshold * 2) {
-    return { duplicate: false, score: 1 };
+  const pixelCount = width * height;
+
+  // Compute mean absolute difference (grayscale)
+  // This is far more robust to noise than dHash because:
+  // - dHash: compares adjacent pixels → noise flips ~50% of bits
+  // - MAD: compares same-position pixels → noise averages out
+  let totalDiff = 0;
+  for (let i = 0; i < pixelCount; i++) {
+    const idx = i * 3;
+    // Grayscale luminance
+    const prevGray = prevRGB[idx]! * 0.299 + prevRGB[idx + 1]! * 0.587 + prevRGB[idx + 2]! * 0.114;
+    const currGray = currRGB[idx]! * 0.299 + currRGB[idx + 1]! * 0.587 + currRGB[idx + 2]! * 0.114;
+    totalDiff += Math.abs(prevGray - currGray);
   }
 
-  // If frames are pixel-identical, skip histogram
-  if (dhashDist === 0) {
-    return { duplicate: true, score: 0 };
-  }
+  const meanDiff = totalDiff / pixelCount;
 
-  // For high-resolution frames (>1920px), skip expensive histogram computation
-  // and rely on dHash alone. dHash is already very accurate for structure.
-  const isHighRes = width > 1920 || height > 1080;
-  if (isHighRes) {
-    const duplicate = dhashDist < effectiveThreshold;
-    const score = dhashDist / 64;
-    return { duplicate, score };
-  }
+  // Score: 0 = identical, 1 = completely different
+  const score = Math.min(1, meanDiff / 50); // 50 gray levels diff = max score
 
-  // Borderline: compute histogram for final decision (low-res only)
-  const histA = computeHistogram(prevRGB);
-  const histB = computeHistogram(currRGB);
-  const histSim = histogramSimilarity(histA, histB);
+  // Duplicate if mean difference is below threshold
+  const duplicate = meanDiff < effectiveThreshold;
 
-  // Histogram similarity threshold: >99% = duplicate (very strict)
-  // 98% was still too lenient for some content types
-  const duplicate = histSim >= 0.99;
-  const score = (dhashDist / 64) * 0.5 + (1 - histSim) * 0.5;
   return { duplicate, score };
 }
 
