@@ -131,7 +131,7 @@ export interface ConversionResult {
  * - `codec`: Unsupported video codec
  * - `general`: Other errors (catch-all)
  */
-export type ConversionErrorType = 'memory' | 'format' | 'codec' | 'general';
+export type ConversionErrorType = 'memory' | 'format' | 'codec' | 'timeout' | 'general';
 
 /**
  * Detailed error context for conversion failures
@@ -154,6 +154,8 @@ export interface ErrorContext {
   conversionSettings?: ConversionSettings;
   /** Which phase of conversion failed (e.g., 'decoding', 'encoding') */
   phase?: string;
+  /** FFmpeg log lines for debugging (optional) */
+  ffmpegLogs?: string[];
 }
 /**
  *

@@ -9,6 +9,7 @@ import { createMemo, onMount, Show, splitProps } from 'solid-js';
 const ERROR_MESSAGES: Record<ConversionErrorType, string> = {
   format: 'This video format is not supported. Please try a different file.',
   codec: 'This video codec cannot be processed. Please try a different file.',
+  timeout: 'The conversion took too long. Try a shorter video or lower quality settings.',
   memory: 'Ran out of memory. Close other browser tabs or use lower quality settings.',
   general: '',
 };

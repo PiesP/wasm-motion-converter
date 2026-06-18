@@ -64,6 +64,41 @@ const ERROR_RULES: readonly ErrorRule[] = [
       'Your browser ran out of memory or encountered a memory issue. Try using a smaller video file, reducing quality to "low", or scaling down the resolution.',
   },
 
+  // -- Timeout ------------------------------------------------------------
+  {
+    name: 'watchdog-stall',
+    type: 'timeout',
+    phase: 'watchdog_timeout',
+    pattern: /stall|watchdog|no\s*progress/i,
+    suggestion:
+      'The conversion stalled — no progress was detected. Try a shorter video or reduce quality/scale.',
+  },
+  {
+    name: 'conversion-timeout',
+    type: 'timeout',
+    phase: 'ffmpeg_timeout',
+    pattern: /timed?\s*out|took\s*too\s*long/i,
+    suggestion:
+      'The conversion took too long. Try a shorter video, reduce quality to "low", or scale down the resolution.',
+  },
+
+  // -- Worker / threading -------------------------------------------------
+  {
+    name: 'worker-init-failure',
+    type: 'general',
+    phase: 'worker_init_failure',
+    pattern: /failed\s*to\s*initiali[sz]e|comlink|worker\s*(init|thread|failed)/i,
+    suggestion: 'Worker initialization failed. Reload the page and try again.',
+  },
+  {
+    name: 'shared-array-buffer',
+    type: 'general',
+    phase: 'worker_error',
+    pattern: /sharedarraybuffer|coop|coep/i,
+    suggestion:
+      'SharedArrayBuffer is not available. Ensure the server sends COOP/COEP headers for multi-threaded WASM.',
+  },
+
   // -- WebCodecs / hardware -----------------------------------------------
   {
     name: 'webcodecs-failure',
@@ -72,6 +107,26 @@ const ERROR_RULES: readonly ErrorRule[] = [
     pattern: /webcodecs|hardware\s*accel|frame\s*callback|media\s*capabilit/i,
     suggestion:
       'Hardware decoding is not available for this codec in your browser. Try a different browser with AV1/WebCodecs support.',
+  },
+
+  // -- AV1-specific codec (before generic codec-error for priority) -----
+  {
+    name: 'av1-gif-failure',
+    type: 'codec',
+    phase: 'av1_gif_conversion_failure',
+    pattern: /av1/i,
+    condition: (_msg, meta) => meta?.codec === 'av1',
+    suggestion:
+      'AV1 to GIF conversion is not supported. Use WebP format for AV1 videos, or convert to H.264 first.',
+  },
+  {
+    name: 'av1-decode-failure',
+    type: 'codec',
+    phase: 'av1_decode_failure',
+    pattern: /av1|av01/i,
+    condition: (_msg, meta) => meta?.codec === 'av1' || meta?.codec === 'av01',
+    suggestion:
+      'AV1 decoding failed. This browser may not support AV1. Try H.264/MP4 videos instead.',
   },
 
   // -- Generic codec / decode ---------------------------------------------
@@ -84,13 +139,19 @@ const ERROR_RULES: readonly ErrorRule[] = [
       'The video format or codec is not supported. Try converting the video to H.264/MP4 format first using another tool.',
   },
 
-  // -- WebP ---------------------------------------------------------------
+  // -- Format -------------------------------------------------------------
   {
     name: 'webp-format',
     type: 'format',
     pattern: /\bwebp\b|libwebp/i,
     suggestion:
       'WebP conversion failed. Try using GIF format instead, or reduce the quality/scale settings.',
+  },
+  {
+    name: 'avif-format',
+    type: 'format',
+    pattern: /avif/i,
+    suggestion: 'AVIF format is not supported. Use GIF or WebP instead.',
   },
 ];
 
@@ -113,12 +174,14 @@ function isVideoTooComplex(metadata: VideoMetadata): boolean {
  * @param errorMessage - The error message from the conversion process
  * @param metadata - Video metadata for context-aware classification
  * @param conversionSettings - The settings used for conversion (optional)
+ * @param ffmpegLogs - FFmpeg log lines for debugging (optional)
  * @returns ErrorContext with error type, phase, and user-friendly suggestion
  */
 export function classifyConversionError(
   errorMessage: string,
   metadata: VideoMetadata | null,
-  conversionSettings?: ConversionSettings
+  conversionSettings?: ConversionSettings,
+  ffmpegLogs?: string[]
 ): ErrorContext {
   const msg = errorMessage.toLowerCase();
   const timestamp = performance.now();
@@ -126,7 +189,8 @@ export function classifyConversionError(
     timestamp,
     originalError: errorMessage,
     conversionSettings,
-    phase: 'unknown',
+    phase: 'unknown' as string,
+    ffmpegLogs,
   };
 
   for (const rule of ERROR_RULES) {
