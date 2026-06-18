@@ -43,7 +43,7 @@ import { performConversionV2, type V2ConversionOptions } from './use-perform-con
 const MS_PER_SECOND = 1000;
 
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
-const focusRetryButton = (): void => focusElement('[data-error-retry-button]');
+const focusRetryButton = (): void => focusElement('[data-testid="error-retry-button"]');
 
 export async function handleConvert(runtime: ConversionRuntimeController): Promise<void> {
   const file = inputFile();

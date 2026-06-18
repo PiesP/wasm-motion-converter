@@ -69,9 +69,10 @@ export async function runConversionPipeline(
   }
 
   const cfg = demuxResult.config as unknown as Record<string, number>;
-  const codedWidth = cfg.displayAspectWidth ?? cfg.displayWidth ?? demuxResult.config.codedWidth!;
+  const codedWidth = cfg.displayAspectWidth ?? cfg.displayWidth ?? demuxResult.config.codedWidth;
   const codedHeight =
-    cfg.displayAspectHeight ?? cfg.displayHeight ?? demuxResult.config.codedHeight!;
+    cfg.displayAspectHeight ?? cfg.displayHeight ?? demuxResult.config.codedHeight;
+  if (!codedWidth || !codedHeight) throw new Error('Unable to determine video dimensions');
 
   const demuxElapsedMs = performance.now() - pipelineStart;
   const demuxMemMB = getMemoryUsageMB() ?? 0;

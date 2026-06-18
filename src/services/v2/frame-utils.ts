@@ -56,7 +56,8 @@ export async function copyFrameToRGB(
   // Fallback: Canvas-based extraction for YUV/NV12 formats
   // Draw the VideoFrame directly to an OffscreenCanvas at the target size
   const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('Failed to get 2d context from OffscreenCanvas');
   // Use frame's display dimensions as source, target dimensions as dest
   ctx.drawImage(
     frame,
@@ -91,71 +92,6 @@ function rgbaToRGB(rgba: Uint8Array, width: number, height: number): Uint8Array 
   }
 
   return rgb;
-}
-
-/**
- * Copy VideoFrame to RGBA Uint8Array (for alpha-compositing path).
- * Tries direct copyTo first, falls back to Canvas.
- */
-export async function copyFrameToRGBA(
-  frame: VideoFrame,
-  width: number,
-  height: number
-): Promise<Uint8Array> {
-  // Try direct copyTo for RGBA formats
-  for (const _fmt of ['RGBA', 'BGRA', 'RGBX', 'BGRX'] as const) {
-    void _fmt; // Used for format iteration
-    try {
-      const size = frame.allocationSize({
-        rect: { x: 0, y: 0, width, height },
-        layout: [{ offset: 0, stride: width * 4 }],
-      });
-      const buffer = new Uint8Array(size);
-      await frame.copyTo(buffer, {
-        rect: { x: 0, y: 0, width, height },
-        layout: [{ offset: 0, stride: width * 4 }],
-      });
-      return buffer;
-    } catch {
-      // Not supported
-    }
-  }
-
-  // Canvas-based extraction for non-RGBA formats
-  const bitmap = await createImageBitmap(frame, {
-    resizeWidth: width,
-    resizeHeight: height,
-    resizeQuality: 'pixelated',
-  });
-  const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
-  const imageData = ctx.getImageData(0, 0, width, height);
-  return new Uint8Array(imageData.data);
-}
-
-/**
- * Resize a VideoFrame to target dimensions using createImageBitmap.
- */
-export async function resizeFrameToRGBA(
-  frame: VideoFrame,
-  width: number,
-  height: number
-): Promise<Uint8Array> {
-  const bitmap = await createImageBitmap(frame, {
-    resizeWidth: width,
-    resizeHeight: height,
-    resizeQuality: 'medium',
-  });
-
-  const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
-
-  const imageData = ctx.getImageData(0, 0, width, height);
-  return new Uint8Array(imageData.data);
 }
 
 /**

@@ -15,7 +15,22 @@
 
 /// <reference types="vite/client" />
 
-import type { VideoCapabilities } from '@t/video-pipeline-types';
+/* ============================================================================
+   Video Pipeline Types (defined inline — @t/video-pipeline-types was stale)
+   ============================================================================ */
+
+interface VideoCapabilities {
+  webCodecs: boolean;
+  webp: boolean;
+  gif: boolean;
+  vp8: boolean;
+  vp9: boolean;
+  av1: boolean;
+  h264: boolean;
+  h265: boolean;
+  aac: boolean;
+  opus: boolean;
+}
 
 /* ============================================================================
    Vite Environment Variables

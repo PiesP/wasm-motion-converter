@@ -47,6 +47,7 @@ export interface StreamingWebPEncodeOptions {
   width: number;
   height: number;
   quality: number; // 0-100
+  signal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +249,9 @@ export async function encodeStreamingWebP(
   });
 
   for (let i = 0; i < frames.length; i++) {
+    if (opts.signal?.aborted) {
+      throw new DOMException('Cancelled', 'AbortError');
+    }
     const frame = frames[i]!;
 
     const webpResult = await encodeRGB(frame.data, frame.width, frame.height, opts.quality);

@@ -130,7 +130,9 @@ export async function encodeWebp(
     width: w,
     height: h,
     quality,
+    signal,
   });
+  streamingFrames.length = 0;
 
   // Report encoding complete
   if (onProgress) {

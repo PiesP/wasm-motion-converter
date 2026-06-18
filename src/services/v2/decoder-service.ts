@@ -163,10 +163,10 @@ export async function decodeFrames(
   // Guard against double-close: flush() may have already closed the decoder
   if (decoder.state !== 'closed') decoder.close();
 
-  if (decodeError) throw decodeError;
-
-  // Wait for all RGB conversions
+  // Always await pending conversions before throwing to avoid VideoFrame leak
   await Promise.all(pendingConversions);
+
+  if (decodeError) throw decodeError;
 
   // Add any remaining accumulated duration to the last frame
   if (accumulatedDuration > 0 && rgbFrames.length > 0) {
