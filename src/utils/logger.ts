@@ -78,7 +78,7 @@ function safeJsonStringify(value: unknown): string {
 }
 
 class Logger {
-  private isDev = import.meta.env.DEV;
+  private isDev = import.meta.env.MODE === 'development';
   private recentLines: string[] = [];
   private recentEntries: LogEntry[] = [];
   private ffmpegRecentLines: string[] = [];

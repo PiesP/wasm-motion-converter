@@ -17,14 +17,17 @@ import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
 import { ALL_FORMATS, BufferSource, Input } from 'mediabunny';
+import { batch } from 'solid-js';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 
 const focusRetryButton = (): void => focusElement('[data-testid="error-retry-button"]');
 
 const resetErrorState = (): void => {
-  setErrorMessage(null);
-  setErrorContext(null);
+  batch(() => {
+    setErrorMessage(null);
+    setErrorContext(null);
+  });
 };
 
 const resetAnalysisState = (): void => {
@@ -93,8 +96,10 @@ export async function handleFileSelected(
       fileType: file.type,
       error: getErrorMessage(validation.error),
     });
-    setErrorMessage(getErrorMessage(validation.error));
-    setAppState('error');
+    batch(() => {
+      setErrorMessage(getErrorMessage(validation.error));
+      setAppState('error');
+    });
     focusRetryButton();
     return;
   }
@@ -132,8 +137,10 @@ export async function handleFileSelected(
       fileSizeBytes: file.size,
       error: getErrorMessage(error),
     });
-    setErrorMessage(getErrorMessage(error));
-    setAppState('error');
+    batch(() => {
+      setErrorMessage(getErrorMessage(error));
+      setAppState('error');
+    });
     focusRetryButton();
   }
 }
