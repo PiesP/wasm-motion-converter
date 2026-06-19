@@ -37,7 +37,7 @@ export function classifyError(err: unknown): ClassifiedError {
     };
   }
 
-  if (msg.includes('NotSupportedError') || msg.includes('codec')) {
+  if (/NotSupportedError|codec/i.test(msg)) {
     return {
       code: 'CODEC_NOT_SUPPORTED',
       message: msg,
@@ -46,7 +46,7 @@ export function classifyError(err: unknown): ClassifiedError {
     };
   }
 
-  if (msg.includes('memory') || msg.includes('OOM') || msg.includes('allocation')) {
+  if (/memory|OOM|allocation/i.test(msg)) {
     return {
       code: 'OUT_OF_MEMORY',
       message: msg,
@@ -55,7 +55,7 @@ export function classifyError(err: unknown): ClassifiedError {
     };
   }
 
-  if (msg.includes('decode') || msg.includes('decoder')) {
+  if (/decode|decoder/i.test(msg)) {
     return {
       code: 'DECODER_ERROR',
       message: msg,
@@ -64,12 +64,7 @@ export function classifyError(err: unknown): ClassifiedError {
     };
   }
 
-  if (
-    msg.includes('encode') ||
-    msg.includes('encoder') ||
-    msg.includes('webp') ||
-    msg.includes('gif')
-  ) {
+  if (/encode|encoder|webp|gif/i.test(msg)) {
     return {
       code: 'ENCODER_ERROR',
       message: msg,

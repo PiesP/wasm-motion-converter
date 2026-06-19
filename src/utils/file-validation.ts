@@ -286,8 +286,7 @@ export async function validateVideoDuration(
       }
     }
 
-    // STEP 2b: GIF validation — no soft warnings; GIF conversion proceeds without confirmation
-    // (previously warned on duration >30s/60s and high pixel count, now removed per user request)
+    // STEP 2b: GIF validation — no soft warnings; GIF conversion proceeds directly
 
     // STEP 3: Determine validity: false if any ERROR warnings, true otherwise
     // (warnings with severity='warning' or 'info' don't block conversion)

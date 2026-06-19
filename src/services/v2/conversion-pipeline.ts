@@ -246,8 +246,10 @@ export async function runConversionPipeline(
     output = encoded.buffer as ArrayBuffer;
   }
 
+  // Note: encodeResult.frames is set by the encoder functions themselves
+  // via profiler.endPhase('encode', ...). We just record output size here.
   encodeResult = {
-    frames: demuxResult.totalFrames,
+    frames: 0, // Will be overwritten by profiler.endPhase below
     outputBytes: output.byteLength,
   };
 

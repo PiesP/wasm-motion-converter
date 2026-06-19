@@ -36,12 +36,14 @@ export function getMemoryInfo(): MemoryInfo | null {
 
   const deviceMemoryGB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
   if (typeof deviceMemoryGB === 'number' && deviceMemoryGB > 0) {
-    const jsHeapSizeLimit = deviceMemoryGB * 1024 * 1024 * 1024;
+    // deviceMemory is total device RAM, not JS heap limit.
+    // Use a conservative estimate: ~25% of device memory as available JS heap.
+    const jsHeapSizeLimit = deviceMemoryGB * 1024 * 1024 * 1024 * 0.25;
     return {
-      usedJSHeapSize: jsHeapSizeLimit * 0.5,
-      totalJSHeapSize: jsHeapSizeLimit * 0.5,
+      usedJSHeapSize: 0, // Unknown without performance.memory
+      totalJSHeapSize: 0,
       jsHeapSizeLimit,
-      usagePercentage: 50,
+      usagePercentage: 0, // Cannot determine without actual measurement
       deviceMemoryGB,
     };
   }
