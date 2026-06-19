@@ -22,8 +22,6 @@
 // WebP format constants for muxing
 // ---------------------------------------------------------------------------
 
-const ANIM_MAGIC = 0x414e494d; // "ANIM"
-const ANMF_MAGIC = 0x414e4d46; // "ANMF"
 const RIFF_MAGIC = 0x52494646; // "RIFF"
 const WEBP_MAGIC = 0x57454250; // "WEBP"
 
@@ -93,17 +91,6 @@ export function extractVP8BitstreamFast(webp: Uint8Array): Uint8Array {
 // ---------------------------------------------------------------------------
 // WebP muxing (RIFF container)
 // ---------------------------------------------------------------------------
-
-/**
- * Write a 24-bit little-endian value to the output buffer. Returns new offset.
- */
-function writeUint24(output: Uint8Array, offset: number, value: number): number {
-  let o = offset;
-  output[o++] = value & 0xff;
-  output[o++] = (value >> 8) & 0xff;
-  output[o++] = (value >> 16) & 0xff;
-  return o;
-}
 
 /**
  * Streaming animated WebP muxer.
@@ -296,89 +283,6 @@ export class StreamingWebpMuxer {
     output[o++] = (value >> 16) & 0xff;
     return o;
   }
-}
-
-// Keep the old function for backward compat (used by tests)
-export function muxAnimatedWebP(
-  bitstreams: { data: Uint8Array; duration: number }[],
-  width: number,
-  height: number
-): Uint8Array {
-  if (bitstreams.length === 0) {
-    throw new Error('No bitstreams to mux');
-  }
-
-  const VP8_FOURCC = 0x56503820;
-  const VP8X_FOURCC = 0x56503858;
-
-  const vp8xChunkData = 10;
-  const vp8xOverhead = 4 + 4 + vp8xChunkData;
-  const anmfHeader = 4 + 4 + 3 + 3 + 3 + 3 + 3 + 1;
-  const vp8ChunkOverhead = 4 + 4;
-
-  let payloadSize = 4; // "WEBP"
-  payloadSize += vp8xOverhead;
-  payloadSize += 4 + 4 + 6; // ANIM
-  for (const bs of bitstreams) {
-    payloadSize += anmfHeader + vp8ChunkOverhead + bs.data.length;
-  }
-
-  const totalSize = 8 + payloadSize;
-  const output = new Uint8Array(totalSize);
-  const view = new DataView(output.buffer);
-  let off = 0;
-
-  view.setUint32(off, RIFF_MAGIC, false);
-  off += 4;
-  view.setUint32(off, totalSize - 8, true);
-  off += 4;
-  view.setUint32(off, WEBP_MAGIC, false);
-  off += 4;
-
-  view.setUint32(off, VP8X_FOURCC, false);
-  off += 4;
-  view.setUint32(off, vp8xChunkData, true);
-  off += 4;
-  output[off++] = 0x02;
-  output[off++] = 0x00;
-  output[off++] = 0x00;
-  output[off++] = 0x00;
-  off = writeUint24(output, off, width - 1);
-  off = writeUint24(output, off, height - 1);
-
-  view.setUint32(off, ANIM_MAGIC, false);
-  off += 4;
-  view.setUint32(off, 6, true);
-  off += 4;
-  view.setUint32(off, 0, true);
-  off += 4;
-  view.setUint16(off, 0, true);
-  off += 2;
-
-  for (const bs of bitstreams) {
-    const frameDataSize = vp8ChunkOverhead + bs.data.length;
-    const chunkData = anmfHeader - 8 + frameDataSize;
-
-    view.setUint32(off, ANMF_MAGIC, false);
-    off += 4;
-    view.setUint32(off, chunkData, true);
-    off += 4;
-    off = writeUint24(output, off, 0);
-    off = writeUint24(output, off, 0);
-    off = writeUint24(output, off, width > 1 ? width - 1 : 0);
-    off = writeUint24(output, off, height > 1 ? height - 1 : 0);
-    off = writeUint24(output, off, bs.duration);
-    output[off++] = 0x00;
-
-    view.setUint32(off, VP8_FOURCC, false);
-    off += 4;
-    view.setUint32(off, bs.data.length, true);
-    off += 4;
-    output.set(bs.data, off);
-    off += bs.data.length;
-  }
-
-  return output;
 }
 
 // ---------------------------------------------------------------------------

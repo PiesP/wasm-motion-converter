@@ -174,24 +174,24 @@ export class ConversionRuntimeController {
 
   private startStallTimer(): void {
     this.clearStallTimer();
-    // Only start stall timer if we've made meaningful progress (>10%).
-    // During initialization (0-10%), progress events may be sparse.
-    if (this.lastProgressValue < STALL_DETECTION_ACTIVE_THRESHOLD) {
-      return;
-    }
+    // Always start a stall timer, even during initialization (0-10%).
+    // The threshold check only affects whether we show the warning immediately.
     this.stallTimer = setTimeout(() => {
       const elapsedMs =
         this.currentStartTimeMs > 0 ? Math.max(0, performance.now() - this.currentStartTimeMs) : 0;
       const elapsedSeconds = Math.floor(elapsedMs / 1000);
-      logger.warn('progress', 'Conversion stalled — no progress update in 60s', {
-        runId: this.activeRunId,
-        lastProgressValue: this.lastProgressValue,
-        elapsedSeconds,
-        elapsed: formatDuration(elapsedSeconds),
-      });
-      setConversionStatusMessage(
-        'Still processing… conversion may be slow for this format. Consider cancelling and reducing quality or scale.'
-      );
+      // Only warn if we've made some progress (>10%) or if we've been waiting >120s
+      if (this.lastProgressValue >= STALL_DETECTION_ACTIVE_THRESHOLD || elapsedSeconds > 120) {
+        logger.warn('progress', 'Conversion stalled — no progress update in 60s', {
+          runId: this.activeRunId,
+          lastProgressValue: this.lastProgressValue,
+          elapsedSeconds,
+          elapsed: formatDuration(elapsedSeconds),
+        });
+        setConversionStatusMessage(
+          'Still processing… conversion may be slow for this format. Consider cancelling and reducing quality or scale.'
+        );
+      }
     }, STALL_DETECTION_MS);
   }
 

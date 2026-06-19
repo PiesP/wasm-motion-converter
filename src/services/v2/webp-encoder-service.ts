@@ -23,28 +23,19 @@
  *   3. muxAnimatedWebP() → final animated WebP container
  */
 
-import type { ConversionQuality } from '@t/conversion-types';
 import type { ProgressCallback } from '@t/v2-conversion-types';
 import { logger } from '@utils/logger';
 import { encodeRGB } from 'wasm-webp';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
+import type { BaseEncoderOptions } from './encoder-common';
 import {
   extractVP8Bitstream,
   extractVP8BitstreamFast,
   StreamingWebpMuxer,
 } from './streaming-webp-encoder';
 
-export interface WebpEncodeOptions {
-  width: number;
-  height: number;
-  quality: ConversionQuality;
-  scale: number;
-  /** Frame decimation: keep every Nth frame (1 = keep all) */
-  frameDecimation?: number;
-  /** Callback fired after each frame is decoded (for progress tracking) */
-  onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
-}
+export interface WebpEncodeOptions extends BaseEncoderOptions {}
 
 const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
   low: 60,

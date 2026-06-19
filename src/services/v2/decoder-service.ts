@@ -39,6 +39,12 @@ export interface DecodeOptions {
     durationMs: number,
     frameNum: number
   ) => Promise<void> | void;
+  /**
+   * Explicit decode mode. When 'stream', frames are passed to onFrameAvailable
+   * immediately. When 'batch', frames are collected into an array.
+   * @default 'stream' when onFrameAvailable is provided, 'batch' otherwise
+   */
+  mode?: 'stream' | 'batch';
 }
 
 export interface DecodedFrame {
@@ -80,9 +86,12 @@ export async function decodeFrames(
     hwAccel = 'prefer-software',
     onFrameDecoded,
     onFrameAvailable,
+    mode,
   } = opts;
 
-  const streaming = typeof onFrameAvailable === 'function';
+  // Determine streaming mode: explicit flag takes precedence, otherwise infer from callback
+  const streaming =
+    mode === 'stream' || (mode !== 'batch' && typeof onFrameAvailable === 'function');
   const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
   const pendingConversions: Promise<void>[] = [];
   let decodeError: Error | null = null;
@@ -124,7 +133,7 @@ export async function decodeFrames(
 
           if (streaming) {
             // Streaming mode: pass frame to callback for immediate processing
-            await onFrameAvailable(rgbData, totalDuration, frameNum);
+            await onFrameAvailable!(rgbData, totalDuration, frameNum);
             // Note: onFrameAvailable is responsible for releasing rgbData
           } else {
             // Batch mode: collect into array (existing behavior for WebP)
@@ -172,9 +181,13 @@ export async function decodeFrames(
     }
     if (decodeError) break;
 
-    // Backpressure: wait if decode queue is full
+    // Backpressure: wait if decode queue is full.
+    // Use requestAnimationFrame + setTimeout(0) to yield to the browser's
+    // rendering loop, avoiding busy-wait CPU usage from setTimeout(1).
     while (decoder.decodeQueueSize > MAX_DECODE_QUEUE && !signal?.aborted && !decodeError) {
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => setTimeout(resolve, 0));
+      });
     }
 
     if (signal?.aborted) {

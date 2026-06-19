@@ -21,15 +21,22 @@ import type { ConversionRequest } from '@/types/v2-conversion-types';
 import { globalBufferPool } from './buffer-pool';
 import { ConversionProfiler } from './conversion-profiler';
 import { demuxVideo } from './demuxer-service';
+import { calcAutoDecimation } from './encoder-common';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
 
-/** Singleton profiler instance — stores last conversion profile for diagnostics */
-let lastProfiler: ConversionProfiler | null = null;
+/** Active profilers keyed by run ID — supports concurrent conversions */
+const activeProfilers = new Map<string, ConversionProfiler>();
 
-/** Get the profiler from the last conversion (for test helpers / diagnostics) */
+/** Get the profiler for a specific run, or the most recent one */
+export function getProfilerForRun(runId: string): ConversionProfiler | null {
+  return activeProfilers.get(runId) ?? null;
+}
+
+/** Get the most recent profiler (for test helpers / diagnostics) */
 export function getLastConversionProfiler(): ConversionProfiler | null {
-  return lastProfiler;
+  const lastKey = [...activeProfilers.keys()].pop();
+  return lastKey ? activeProfilers.get(lastKey)! : null;
 }
 
 export async function runConversionPipeline(
@@ -56,9 +63,15 @@ export async function runConversionPipeline(
   globalBufferPool.clear();
 
   // Initialize profiler
+  const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const profiler = new ConversionProfiler();
   profiler.start();
-  lastProfiler = profiler;
+  activeProfilers.set(runId, profiler);
+  // Clean up old profilers (keep last 5)
+  if (activeProfilers.size > 5) {
+    const oldestKey = activeProfilers.keys().next().value!;
+    activeProfilers.delete(oldestKey);
+  }
 
   // ── Demux Phase (0~10%) ──
   profiler.startPhase('demux');
@@ -135,17 +148,22 @@ export async function runConversionPipeline(
     });
   };
 
+  // ── Encode Phase (10~90%) ──
+  // Both GIF and WebP use streaming decode→encode with the same progress model:
+  //   decode progress → 10~50%, encode progress → 50~90%
+  profiler.startPhase('decode');
+  profiler.startPhase('encode');
+
+  const sourceFps =
+    demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
+
   if (request.format === 'gif') {
-    // Auto frame decimation for GIF: target ~15fps output
-    const sourceFps =
-      demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
-    const targetFps = GIF_TARGET_FPS;
-    const baseDecimation =
-      sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
-    // At higher scales, decimation is aggressively increased
-    const scaleBoost = request.scale >= 1.0 ? 4 : request.scale > 0.5 ? 2 : 1;
-    const autoDecimation = baseDecimation * scaleBoost;
-    const gifDecimation = request.forceDecimation ?? autoDecimation;
+    const gifDecimation = calcAutoDecimation(
+      sourceFps,
+      GIF_TARGET_FPS,
+      request.scale,
+      request.forceDecimation
+    );
 
     logger.info('conversion', '  ├─ Branch: GIF encoder (streaming decode→encode)', {
       codec: demuxResult.config.codec,
@@ -155,12 +173,6 @@ export async function runConversionPipeline(
       sourceFps: Math.round(sourceFps),
       gifDecimation,
     });
-
-    // GIF streaming: encodeGif handles decode→encode interleaving internally
-    // We track decode and encode as a single combined phase for profiling.
-    // Both decode and encode progress are reported via onFrameDecoded (shared callback).
-    profiler.startPhase('decode');
-    profiler.startPhase('encode');
 
     output = (
       await encodeGif(
@@ -173,7 +185,6 @@ export async function runConversionPipeline(
           frameDecimation: gifDecimation,
           onFrameDecoded: decodeProgressCb,
           onFrameEncoded: (frameIdx: number, totalFrames: number) => {
-            // Map encoded frames to 50~90% progress range
             const encodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
             onProgress({
               phase: 'encoding',
@@ -190,19 +201,13 @@ export async function runConversionPipeline(
         signal
       )
     ).buffer as ArrayBuffer;
-
-    encodeResult = {
-      frames: demuxResult.totalFrames,
-      outputBytes: output.byteLength,
-    };
   } else {
-    // Auto frame decimation for WebP: streaming encodeRGB + JS muxing
-    const sourceFps =
-      demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
-    const targetFps = WEBP_TARGET_FPS;
-    const autoDecimation =
-      sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
-    const webpDecimation = request.forceDecimation ?? autoDecimation;
+    const webpDecimation = calcAutoDecimation(
+      sourceFps,
+      WEBP_TARGET_FPS,
+      request.scale,
+      request.forceDecimation
+    );
 
     logger.info('conversion', '  ├─ Branch: WebP encoder (streaming encodeRGB + mux)', {
       codec: demuxResult.config.codec,
@@ -212,9 +217,6 @@ export async function runConversionPipeline(
       sourceFps: Math.round(sourceFps),
       webpDecimation,
     });
-
-    profiler.startPhase('decode');
-    profiler.startPhase('encode');
 
     const encoded = await encodeWebp(
       demuxResult,
@@ -226,14 +228,15 @@ export async function runConversionPipeline(
         frameDecimation: webpDecimation,
         onFrameDecoded: decodeProgressCb,
       },
-      (p) => {
+      (p: { progress: number; currentFrame?: number }) => {
         const mappedProgress = 50 + Math.round(p.progress * 0.4);
         onProgress({
-          ...p,
           phase: 'encoding',
           progress: Math.min(90, mappedProgress),
+          fps: 0,
+          etaSeconds: null,
           memoryMB: getMemoryUsageMB() ?? 0,
-          currentFrame: p.currentFrame,
+          currentFrame: p.currentFrame ?? 0,
           totalFrames: demuxResult.totalFrames,
           elapsedMs: Math.round(performance.now() - pipelineStart),
         });
@@ -241,11 +244,12 @@ export async function runConversionPipeline(
       signal
     );
     output = encoded.buffer as ArrayBuffer;
-    encodeResult = {
-      frames: demuxResult.totalFrames,
-      outputBytes: output.byteLength,
-    };
   }
+
+  encodeResult = {
+    frames: demuxResult.totalFrames,
+    outputBytes: output.byteLength,
+  };
 
   if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 

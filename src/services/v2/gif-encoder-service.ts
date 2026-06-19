@@ -19,7 +19,6 @@
  *   3. Encoder writes GIF incrementally
  */
 
-import type { ConversionQuality } from '@t/conversion-types';
 import {
   GIF_LZW_RATIO,
   GIF_MAX_BUFFER_BYTES,
@@ -33,23 +32,13 @@ import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
+import type { BaseEncoderOptions } from './encoder-common';
+
+export interface GifEncodeOptions extends BaseEncoderOptions {}
 
 /** Memory threshold for dynamic decimation (percentage of JS heap limit) */
-const DYNAMIC_DECIMATION_MEM_THRESHOLD = 70; // Start increasing decimation at 70%
-const DYNAMIC_DECIMATION_MEM_CRITICAL = 85; // Aggressive decimation at 85%
-
-export interface GifEncodeOptions {
-  width: number;
-  height: number;
-  quality: ConversionQuality;
-  scale: number;
-  /** Frame decimation: keep every Nth frame (1 = keep all, 2 = keep 50%, etc.) */
-  frameDecimation?: number;
-  /** Callback fired after each frame is decoded (for progress tracking) */
-  onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
-  /** Callback fired after each frame is encoded (for progress tracking) */
-  onFrameEncoded?: (frameIndex: number, totalFrames: number) => void;
-}
+const DYNAMIC_DECIMATION_MEM_THRESHOLD = 70;
+const DYNAMIC_DECIMATION_MEM_CRITICAL = 85;
 
 const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
   low: 64,
