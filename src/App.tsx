@@ -73,6 +73,8 @@ const App: Component = () => {
   );
   const [memoryWarning, setMemoryWarning] = createSignal(false);
 
+  const [memoryUsageText, setMemoryUsageText] = createSignal<string | null>(null);
+
   const [conversionPhase, setConversionPhase] = createSignal<ConversionPhase>('demuxing');
 
   const {
@@ -106,6 +108,21 @@ const App: Component = () => {
       attachTestHelpers();
       logger.debug('general', 'Test helpers attached via App onMount');
     }
+  });
+
+  // Poll memory usage on a 2-second interval — decoupled from progress updates
+  // to avoid calling performance.memory on every progress tick.
+  createEffect(() => {
+    if (appState() !== 'converting') {
+      setMemoryUsageText(null);
+      return;
+    }
+    const update = () => {
+      setMemoryUsageText(getMemoryUsageString());
+    };
+    update();
+    const interval = setInterval(update, 2000);
+    onCleanup(() => clearInterval(interval));
   });
 
   const debouncedSaveSettings = debounce(saveConversionSettings, SETTINGS_DEBOUNCE_MS);
@@ -155,7 +172,7 @@ const App: Component = () => {
         startTime: conversionStartTime(),
         estimatedSecondsRemaining: estimatedSecondsRemaining(),
         phase: conversionPhase(),
-        memoryUsage: getMemoryUsageString(),
+        memoryUsage: memoryUsageText(),
         outputFrames: outputFrames(),
       };
     }

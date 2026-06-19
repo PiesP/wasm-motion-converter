@@ -255,6 +255,11 @@ export async function encodeGif(
 
         totalInputFrames = frameNum;
 
+        // Yield to browser event loop every frame to prevent UI freezing.
+        // Without this, the heavy CPU work below blocks the main thread for
+        // 30-80ms per 1080p frame, causing multi-second UI freezes.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
         // ── Dynamic decimation based on memory pressure ──
         // Check JS heap usage every 5 frames to avoid per-frame overhead
         let shouldSkip = false;

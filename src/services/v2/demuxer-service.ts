@@ -87,6 +87,11 @@ export async function demuxVideo(
     if (onProgress && totalFrames % 10 === 0) {
       onProgress(totalFrames);
     }
+    // Yield to browser event loop every 50 packets to prevent UI freezing
+    // during demuxing of large files with thousands of packets.
+    if (totalFrames % 50 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   }
 
   input.dispose();

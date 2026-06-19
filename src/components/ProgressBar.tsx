@@ -3,15 +3,7 @@
 
 import type { ConversionPhase } from '@t/v2-conversion-types';
 import { formatDuration } from '@utils/format-utils';
-import {
-  type Component,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  Show,
-  splitProps,
-} from 'solid-js';
+import { type Component, createEffect, createMemo, onCleanup, Show, splitProps } from 'solid-js';
 
 const PHASE_SEGMENTS = [
   { label: 'Demux', colorClass: 'bg-amber-500 dark:bg-amber-400', phase: 'demuxing' },
@@ -56,7 +48,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     'memoryUsage',
     'phase',
   ]);
-  const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
+  let elapsedDisplayRef: HTMLSpanElement | undefined;
 
   const progressValue = createMemo(() => {
     const rawValue = Number(local.progress);
@@ -95,8 +87,10 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     if (!local.showElapsedTime || !local.startTime) return;
 
     const updateElapsed = () => {
+      if (!elapsedDisplayRef) return;
       const now = performance.now();
-      setElapsedSeconds(Math.floor(Math.max(0, now - local.startTime!) / 1000));
+      const secs = Math.floor(Math.max(0, now - local.startTime!) / 1000);
+      elapsedDisplayRef.textContent = formatDuration(secs);
     };
 
     updateElapsed();
@@ -212,7 +206,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       {/* Elapsed / ETA row */}
       <Show when={local.showElapsedTime && local.startTime}>
         <div class="flex items-center justify-center gap-2 text-[10px] text-gray-500 dark:text-gray-400 font-mono tabular-nums">
-          <span>⏱ {formatDuration(elapsedSeconds())}</span>
+          <span ref={elapsedDisplayRef}>⏱ 0:00</span>
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >

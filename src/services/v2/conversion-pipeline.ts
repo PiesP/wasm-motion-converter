@@ -25,6 +25,49 @@ import { calcAutoDecimation } from './encoder-common';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
 
+/**
+ * Throttled progress wrapper — prevents UI re-render spam by enforcing a
+ * minimum interval between onProgress calls. Without throttling, the encode
+ * progress callbacks fire on every frame (30+/sec), causing excessive SolidJS
+ * signal writes and re-renders during conversion.
+ */
+function createThrottledProgress(
+  onProgress: ProgressCallback,
+  minIntervalMs = 100
+): ProgressCallback {
+  let lastCallTime = 0;
+  let pendingCall: (() => void) | null = null;
+  let scheduled = false;
+
+  const flush = () => {
+    scheduled = false;
+    if (pendingCall) {
+      pendingCall();
+      pendingCall = null;
+    }
+  };
+
+  return (update) => {
+    const now = performance.now();
+    const elapsed = now - lastCallTime;
+
+    if (elapsed >= minIntervalMs) {
+      lastCallTime = now;
+      onProgress(update);
+    } else {
+      // Schedule a trailing call so the final state is not lost
+      pendingCall = () => {
+        lastCallTime = performance.now();
+        onProgress(update);
+      };
+      if (!scheduled) {
+        scheduled = true;
+        setTimeout(flush, minIntervalMs - elapsed);
+      }
+    }
+  };
+}
+
 /** Active profilers keyed by run ID — supports concurrent conversions */
 const activeProfilers = new Map<string, ConversionProfiler>();
 
@@ -73,6 +116,11 @@ export async function runConversionPipeline(
     activeProfilers.delete(oldestKey);
   }
 
+  // Throttle progress callbacks to prevent UI re-render spam.
+  // Without throttling, per-frame callbacks (30+/sec) cause excessive
+  // SolidJS signal writes and jank during conversion.
+  const throttledProgress = createThrottledProgress(onProgress, 100);
+
   // ── Demux Phase (0~10%) ──
   // Map demux progress to 0~10% range. Since total frames are unknown until
   // demux completes, we ramp progress based on elapsed time relative to the
@@ -80,6 +128,7 @@ export async function runConversionPipeline(
   profiler.startPhase('demux');
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
   const demuxStartMs = performance.now();
+  const demuxProgressThrottled = createThrottledProgress(onProgress, 200);
   try {
     demuxResult = await demuxVideo(request, (packetsExtracted) => {
       profiler.updatePhase('demux', packetsExtracted);
@@ -93,7 +142,7 @@ export async function runConversionPipeline(
       // Estimate: ~60ms per packet is typical. Scale progress toward 10%.
       const estimatedTotalPackets = Math.max(packetsExtracted, Math.ceil(demuxElapsed / 60));
       const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalPackets) * 10));
-      onProgress({
+      demuxProgressThrottled({
         phase: 'demuxing',
         progress: demuxPct,
         fps: 0,
@@ -146,9 +195,10 @@ export async function runConversionPipeline(
 
   // Unified decode progress callback for both GIF and WebP.
   // Maps decoded frame index to 10~50% progress range.
+  // Throttled to 100ms to prevent per-frame re-render spam.
   const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
     const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
-    onProgress({
+    throttledProgress({
       phase: 'decoding',
       progress: 10 + Math.min(40, decodePct),
       fps: 0,
@@ -202,7 +252,7 @@ export async function runConversionPipeline(
           onFrameDecoded: decodeProgressCb,
           onFrameEncoded: (frameIdx: number, totalFrames: number) => {
             const encodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
-            onProgress({
+            throttledProgress({
               phase: 'encoding',
               progress: 50 + Math.min(40, encodePct),
               fps: 0,
@@ -247,7 +297,7 @@ export async function runConversionPipeline(
       },
       (p: { progress: number; currentFrame?: number }) => {
         const mappedProgress = 50 + Math.round(p.progress * 0.4);
-        onProgress({
+        throttledProgress({
           phase: 'encoding',
           progress: Math.min(90, mappedProgress),
           fps: 0,
