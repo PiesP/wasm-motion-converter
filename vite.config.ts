@@ -87,7 +87,6 @@ export default defineConfig(({ mode }) => {
       cssCodeSplit: true,
       sourcemap: false,
       minify: 'esbuild',
-
       rollupOptions: {
         output: {
           format: 'es',
@@ -96,6 +95,16 @@ export default defineConfig(({ mode }) => {
           assetFileNames: 'assets/[name].[hash].[ext]',
           preserveModules: false,
           exports: 'auto',
+        },
+        onwarn(warning, defaultHandler) {
+          // Suppress "module" externalization warning from wasm-webp
+          if (
+            warning.code === 'MODULE_LEVEL_DIRECTIVE' ||
+            warning.message?.includes('Module "module" has been externalized')
+          ) {
+            return;
+          }
+          defaultHandler(warning);
         },
       },
     },
