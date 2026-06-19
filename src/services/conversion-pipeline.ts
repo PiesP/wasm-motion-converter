@@ -239,6 +239,7 @@ export async function runConversionPipeline(
       gifDecimation,
     });
 
+    let gifEncodeFrames = 0;
     output = (
       await encodeGif(
         demuxResult,
@@ -250,6 +251,7 @@ export async function runConversionPipeline(
           frameDecimation: gifDecimation,
           onFrameDecoded: decodeProgressCb,
           onFrameEncoded: (frameIdx: number, totalFrames: number) => {
+            gifEncodeFrames = frameIdx;
             const encodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
             throttledProgress({
               phase: 'encoding',
@@ -266,6 +268,10 @@ export async function runConversionPipeline(
         signal
       )
     ).buffer as ArrayBuffer;
+    encodeResult = {
+      frames: gifEncodeFrames,
+      outputBytes: output.byteLength,
+    };
   } else {
     const webpDecimation = calcAutoDecimation(
       sourceFps,
@@ -310,19 +316,16 @@ export async function runConversionPipeline(
       signal
     );
     output = encoded.buffer as ArrayBuffer;
+    encodeResult = {
+      frames: 0, // WebP encoder doesn't expose frame count directly
+      outputBytes: output.byteLength,
+    };
   }
-
-  // Note: encodeResult.frames is set by the encoder functions themselves
-  // via profiler.endPhase('encode', ...). We just record output size here.
-  encodeResult = {
-    frames: 0, // Will be overwritten by profiler.endPhase below
-    outputBytes: output.byteLength,
-  };
 
   if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
   profiler.endPhase('decode');
-  profiler.endPhase('encode', encodeResult ?? undefined);
+  profiler.endPhase('encode', encodeResult);
 
   // ── Assembly Phase (90~100%) ──
   profiler.startPhase('assemble');
