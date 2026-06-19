@@ -18,15 +18,12 @@ interface ButtonProps {
 }
 
 const BASE_CLASS =
-  'inline-flex justify-center items-center px-4 py-2 border text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900';
+  'inline-flex justify-center items-center px-4 py-2 border text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(94,106,210,0.5)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f1011] transition-all duration-150';
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary:
-    'border-transparent text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:ring-blue-500',
-  danger:
-    'border-transparent text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:ring-red-500',
-  ghost:
-    'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:ring-gray-500',
+  primary: 'border-transparent text-white bg-[#5e6ad2] hover:bg-[#828fff]',
+  danger: 'border-transparent text-white bg-red-600/80 hover:bg-red-500',
+  ghost: 'border-white/[0.08] text-[#d0d6e0] bg-white/[0.02] hover:bg-white/[0.05]',
 };
 
 const Button: Component<ButtonProps> = (props) => {

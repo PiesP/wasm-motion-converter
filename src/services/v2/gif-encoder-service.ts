@@ -274,10 +274,13 @@ export async function encodeGif(
 
         totalInputFrames = frameNum;
 
-        // Yield to browser event loop every frame to prevent UI freezing.
-        // Without this, the heavy CPU work below blocks the main thread for
-        // 30-80ms per 1080p frame, causing multi-second UI freezes.
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        // Yield to browser event loop every 5 frames to prevent UI freezing.
+        // Per-frame setTimeout(0) adds 1-4ms overhead per frame (150-600ms total
+        // for a 150-frame video). Yielding every 5 frames reduces this to ~30-120ms
+        // while still keeping the UI responsive.
+        if (frameNum % 5 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
 
         // ── Dynamic decimation based on memory pressure ──
         // Check JS heap usage every 5 frames to avoid per-frame overhead

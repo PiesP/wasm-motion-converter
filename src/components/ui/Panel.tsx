@@ -23,7 +23,7 @@ const Panel: Component<PanelProps> = (props) => {
   ]);
 
   const className = () =>
-    `bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg ${local.class ?? ''}`.trim();
+    `bg-[#0f1011] border border-white/[0.08] rounded-lg transition-all duration-150 ${local.class ?? ''}`.trim();
 
   return (
     <div

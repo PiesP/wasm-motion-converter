@@ -246,17 +246,15 @@ const App: Component = () => {
   return (
     <ErrorBoundary
       fallback={(error) => (
-        <div class="flex min-h-screen items-center justify-center bg-gray-50 p-4 dark:bg-gray-950">
-          <div class="max-w-2xl border-l-4 border-red-400 bg-red-50 p-6 dark:border-red-500 dark:bg-red-950">
-            <h2 class="mb-2 text-lg font-semibold text-red-800 dark:text-red-300">
-              Application Error
-            </h2>
-            <p class="mb-4 text-sm text-red-700 dark:text-red-400">
+        <div class="flex min-h-screen items-center justify-center bg-[#08090a] p-4">
+          <div class="max-w-2xl border-l-4 border-red-500/60 bg-[#191a1b] p-6 rounded-lg">
+            <h2 class="mb-2 text-lg font-semibold text-[#f7f8f8]">Application Error</h2>
+            <p class="mb-4 text-sm text-[#d0d6e0]">
               An unexpected error occurred. Please refresh the page to try again.
             </p>
-            <details class="text-xs text-red-600 dark:text-red-500">
+            <details class="text-xs text-[#d0d6e0]">
               <summary class="cursor-pointer hover:underline">Error details</summary>
-              <pre class="mt-2 overflow-auto rounded bg-red-100 p-3 dark:bg-red-900">
+              <pre class="mt-2 overflow-auto rounded bg-white/[0.02] border border-white/[0.08] p-3">
                 {String(error)}
               </pre>
             </details>
@@ -264,10 +262,7 @@ const App: Component = () => {
         </div>
       )}
     >
-      <div
-        class="flex min-h-screen flex-col bg-gray-50 transition-colors dark:bg-gray-950"
-        data-testid="app"
-      >
+      <div class="flex min-h-screen flex-col bg-[#08090a] transition-colors" data-testid="app">
         <a
           class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-blue-600 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
           href="#main-content"
@@ -275,13 +270,11 @@ const App: Component = () => {
           Skip to main content
         </a>
 
-        <header class="border-b border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900 dark:shadow-gray-800">
+        <header class="border-b border-white/[0.08] bg-[#08090a]">
           <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
             <div class="flex-1">
-              <h1 class="text-xl font-bold text-gray-900 dark:text-white sm:text-2xl">
-                Motion Converter
-              </h1>
-              <p class="mt-1 text-xs text-gray-600 dark:text-gray-400 sm:text-sm">
+              <h1 class="text-xl font-bold text-[#f7f8f8] sm:text-2xl">Motion Converter</h1>
+              <p class="mt-1 text-xs text-[#d0d6e0] sm:text-sm">
                 Convert videos to animated GIF or WebP images
               </p>
             </div>

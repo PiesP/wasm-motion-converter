@@ -109,9 +109,9 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const compressionColorClass = createMemo(() => {
     const ratio = compressionRatio();
     if (ratio === null) return '';
-    if (ratio > 50) return 'text-green-600 dark:text-green-400';
-    if (ratio > 0) return 'text-green-500 dark:text-green-500';
-    return 'text-orange-500 dark:text-orange-400';
+    if (ratio > 50) return 'text-green-400';
+    if (ratio > 0) return 'text-green-500';
+    return 'text-orange-400';
   });
 
   const handlePreviewLoad = () => setLoaded(true);
@@ -121,20 +121,20 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   };
 
   return (
-    <Panel class="p-4">
+    <Panel class="p-4 bg-[#0f1011] border border-white/[0.08] rounded-lg">
       {/* Preview area with hover download overlay (아이디어 7) */}
       <div
-        class="relative flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg overflow-hidden"
+        class="relative flex justify-center bg-white/[0.02] rounded-lg overflow-hidden"
         onMouseEnter={() => setIsHovering(true)}
         onMouseLeave={() => setIsHovering(false)}
       >
         <Show when={!skipPreview()}>
           <div class={skeletonClass()}>
-            <div class="w-full aspect-video bg-gray-200 dark:bg-gray-800 animate-pulse rounded" />
+            <div class="w-full aspect-video bg-white/[0.05] animate-pulse rounded" />
           </div>
         </Show>
         <Show when={skipPreview()}>
-          <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500 w-full">
+          <div class="flex flex-col items-center justify-center p-8 text-[#8a8f98] w-full">
             <svg
               class="h-10 w-10 mb-2"
               fill="none"
@@ -166,7 +166,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           />
         </Show>
         <Show when={!previewUrl() && !skipPreview() && previewError()}>
-          <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500 w-full">
+          <div class="flex flex-col items-center justify-center p-8 text-[#8a8f98] w-full">
             <svg
               class="h-10 w-10 mb-2"
               fill="none"
@@ -192,7 +192,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               href={previewUrl() ?? undefined}
               download={downloadFileName()}
               aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
-              class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium shadow-lg hover:bg-blue-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"
               data-testid="download-result-button"
               role="button"
             >
@@ -220,11 +220,11 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       <section class="mt-3" aria-label={ariaLabel()}>
         {/* Primary stats: size reduction + time — prominent */}
         <div class="flex items-center justify-center gap-3 text-sm mb-2">
-          <span class="text-gray-500 dark:text-gray-400 font-mono">
+          <span class="text-[#8a8f98] font-mono">
             {formatBytes(local.originalSize)}
           </span>
           <svg
-            class="h-4 w-4 text-gray-400"
+            class="h-4 w-4 text-[#5e6ad2]/40"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -237,20 +237,20 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               d="M13 7l5 5m0 0l-5 5m5-5H6"
             />
           </svg>
-          <span class="font-semibold text-gray-900 dark:text-white font-mono">
+          <span class="font-semibold text-[#d0d6e0] font-mono">
             {formatBytes(local.outputBlob.size)}
           </span>
           <Show when={compressionLabel()}>
             <span class={`font-semibold ${compressionColorClass()}`}>{compressionLabel()}</span>
           </Show>
           <Show when={conversionTimeLabel()}>
-            <span class="text-gray-400 dark:text-gray-500">·</span>
-            <span class="text-gray-500 dark:text-gray-400">⚡ {conversionTimeLabel()}</span>
+            <span class="text-[#5e6ad2]/40">·</span>
+            <span class="text-[#8a8f98]">⚡ {conversionTimeLabel()}</span>
           </Show>
         </div>
 
         {/* Secondary stats: format, quality, scale — subtle */}
-        <div class="flex items-center justify-center gap-2 text-[10px] text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+        <div class="flex items-center justify-center gap-2 text-[10px] text-[#5e6ad2]/50 uppercase tracking-wide">
           <span>{outputExtension().toUpperCase()}</span>
           <span>·</span>
           <span class="capitalize">{local.settings.quality}</span>

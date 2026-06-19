@@ -17,11 +17,7 @@ const ResultSection: Component<ResultSectionProps> = (props) => {
       <div class="mt-8 space-y-6 animate-crossfade" data-testid="result-section">
         <For each={props.results}>
           {(result) => (
-            <Suspense
-              fallback={
-                <div class="aspect-video animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
-              }
-            >
+            <Suspense fallback={<div class="aspect-video animate-pulse rounded-lg bg-[#191a1b]" />}>
               <ResultPreview
                 conversionDurationSeconds={result.conversionDurationSeconds}
                 originalName={result.originalName}

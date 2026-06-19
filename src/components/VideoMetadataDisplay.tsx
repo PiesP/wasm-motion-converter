@@ -24,40 +24,36 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
 
   return (
     <div
-      class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4"
+      class="bg-[#191a1b] border border-white/[0.06] rounded-lg p-4"
       data-testid="video-metadata"
     >
-      <h3 class="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wide">
-        Input Video
-      </h3>
+      <h3 class="text-xs font-medium text-[#8a8f98] mb-2 uppercase tracking-wide">Input Video</h3>
       <dl class="space-y-1.5 text-sm">
         <div class="flex justify-between gap-3">
-          <dt class="text-gray-500 dark:text-gray-400 shrink-0">File</dt>
-          <dd class="text-gray-900 dark:text-white truncate text-right">{local.fileName}</dd>
+          <dt class="text-[#8a8f98] shrink-0">File</dt>
+          <dd class="text-[#f7f8f8] truncate text-right">{local.fileName}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-gray-500 dark:text-gray-400 shrink-0">Resolution</dt>
-          <dd class="text-gray-900 dark:text-white tabular-nums">
+          <dt class="text-[#8a8f98] shrink-0">Resolution</dt>
+          <dd class="text-[#f7f8f8] tabular-nums">
             {local.metadata.width}×{local.metadata.height}
           </dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-gray-500 dark:text-gray-400 shrink-0">Duration</dt>
-          <dd class="text-gray-900 dark:text-white tabular-nums">
-            {formatDuration(local.metadata.duration)}
-          </dd>
+          <dt class="text-[#8a8f98] shrink-0">Duration</dt>
+          <dd class="text-[#f7f8f8] tabular-nums">{formatDuration(local.metadata.duration)}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-gray-500 dark:text-gray-400 shrink-0">FPS</dt>
-          <dd class="text-gray-900 dark:text-white tabular-nums">{local.metadata.framerate}</dd>
+          <dt class="text-[#8a8f98] shrink-0">FPS</dt>
+          <dd class="text-[#f7f8f8] tabular-nums">{local.metadata.framerate}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-gray-500 dark:text-gray-400 shrink-0">Codec</dt>
-          <dd class="text-gray-900 dark:text-white tabular-nums">{codecDisplay()}</dd>
+          <dt class="text-[#8a8f98] shrink-0">Codec</dt>
+          <dd class="text-[#f7f8f8] tabular-nums">{codecDisplay()}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-gray-500 dark:text-gray-400 shrink-0">Size</dt>
-          <dd class="text-gray-900 dark:text-white tabular-nums">{formatBytes(local.fileSize)}</dd>
+          <dt class="text-[#8a8f98] shrink-0">Size</dt>
+          <dd class="text-[#f7f8f8] tabular-nums">{formatBytes(local.fileSize)}</dd>
         </div>
       </dl>
     </div>

@@ -10,28 +10,28 @@ const PHASE_CONFIG = [
     label: 'Demux',
     icon: '📂',
     doneIcon: '✓',
-    colorClass: 'bg-amber-500 dark:bg-amber-400',
+    colorClass: 'bg-amber-400',
     phase: 'demuxing',
   },
   {
     label: 'Decode',
     icon: '🔓',
     doneIcon: '✓',
-    colorClass: 'bg-purple-500 dark:bg-purple-400',
+    colorClass: 'bg-purple-400',
     phase: 'decoding',
   },
   {
     label: 'Encode',
     icon: '⚙️',
     doneIcon: '✓',
-    colorClass: 'bg-blue-500 dark:bg-blue-400',
+    colorClass: 'bg-[#5e6ad2]',
     phase: 'encoding',
   },
   {
     label: 'Final',
     icon: '📦',
     doneIcon: '✓',
-    colorClass: 'bg-green-500 dark:bg-green-400',
+    colorClass: 'bg-green-400',
     phase: 'assembling',
   },
 ] as const;
@@ -136,10 +136,10 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       const isActive = idx === activeIdx;
       const marker = isPast ? '✓' : isActive ? '●' : '○';
       const markerClass = isPast
-        ? 'text-green-600 dark:text-green-400'
+        ? 'text-green-400'
         : isActive
-          ? 'text-blue-600 dark:text-blue-400'
-          : 'text-gray-400 dark:text-gray-600';
+          ? 'text-[#5e6ad2]'
+          : 'text-[#8a8f98]';
       return (
         <span class={`inline-flex items-center gap-0.5 ${markerClass}`}>
           <span class="text-[10px]">{marker}</span>
@@ -193,7 +193,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         <div class="flex items-center gap-2 text-xs">
           <Show when={local.showSpinner}>
             <svg
-              class="animate-spin h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0"
+              class="animate-spin h-3.5 w-3.5 text-[#5e6ad2] shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               aria-hidden="true"
@@ -213,36 +213,36 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
               />
             </svg>
           </Show>
-          <span class="truncate font-medium text-gray-700 dark:text-gray-300">{local.status}</span>
-          <div class="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+          <span class="truncate font-medium text-[#d0d6e0]">{local.status}</span>
+          <div class="flex-1 h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
             <div
-              class="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-400 dark:to-blue-500 transition-[width] duration-150 ease-out"
+              class="h-full rounded-full bg-[#5e6ad2] transition-[width] duration-150 ease-out"
               style={{ width: `${progressValue()}%` }}
             />
           </div>
-          <span class="font-mono text-[10px] tabular-nums text-gray-500 dark:text-gray-400 shrink-0">
+          <span class="font-mono text-[10px] tabular-nums text-[#8a8f98] shrink-0">
             {progressValue()}%
           </span>
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
-            <span class="font-mono text-[10px] tabular-nums text-gray-400 dark:text-gray-500 shrink-0">
+            <span class="font-mono text-[10px] tabular-nums text-[#5e6ad2]/60 shrink-0">
               ETA {formatDuration(local.estimatedSecondsRemaining!)}
             </span>
           </Show>
         </div>
 
         {/* Phase markers: ✓ Demux · ✓ Decode · ● Encode · ○ Final */}
-        <div class="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-500 px-px">
+        <div class="flex items-center justify-between text-[10px] text-[#8a8f98] px-px">
           {phaseMarkers().map((marker, idx) => (
-            <span class={idx < activePhaseIndex() ? 'text-gray-700 dark:text-gray-300' : ''}>
+            <span class={idx < activePhaseIndex() ? 'text-[#d0d6e0]' : ''}>
               {marker}
             </span>
           ))}
         </div>
 
         {/* Detail row: frame counter + memory */}
-        <div class="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 min-h-[1rem]">
+        <div class="flex items-center justify-between text-[10px] text-[#8a8f98] min-h-[1rem]">
           <span class="truncate italic">
             {showFrameCounter()
               ? frameCounterLabel()
@@ -250,10 +250,10 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           </span>
           <div class="flex items-center gap-1.5 shrink-0">
             {showFrameCounter() && subPhaseValue() > 0 && (
-              <span class="font-mono tabular-nums">{subPhaseValue()}%</span>
+              <span class="font-mono tabular-nums text-[#d0d6e0]">{subPhaseValue()}%</span>
             )}
             {local.memoryUsage && local.memoryUsage !== '0 MB / 0 MB (0%)' && (
-              <span class="font-mono tabular-nums text-gray-400 dark:text-gray-600">
+              <span class="font-mono tabular-nums text-[#5e6ad2]/50">
                 🧠 {local.memoryUsage}
               </span>
             )}
@@ -262,7 +262,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
 
         {/* Elapsed time */}
         <Show when={local.showElapsedTime && local.startTime}>
-          <div class="text-center text-[10px] text-gray-500 dark:text-gray-400 font-mono tabular-nums">
+          <div class="text-center text-[10px] text-[#8a8f98] font-mono tabular-nums">
             <span ref={elapsedDisplayRef}>⏱ 0:00</span>
           </div>
         </Show>
@@ -279,10 +279,10 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       aria-busy={progressValue() > 0 && progressValue() < 100}
     >
       {/* Header row: spinner + status + percent */}
-      <div class="flex items-center gap-1.5 text-xs font-medium text-gray-700 dark:text-gray-300">
+      <div class="flex items-center gap-1.5 text-xs font-medium text-[#d0d6e0]">
         <Show when={local.showSpinner}>
           <svg
-            class="animate-spin h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0"
+            class="animate-spin h-4 w-4 text-[#5e6ad2] shrink-0"
             fill="none"
             viewBox="0 0 24 24"
             aria-hidden="true"
@@ -303,14 +303,14 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           </svg>
         </Show>
         <span class="truncate">{local.status}</span>
-        <span class="text-gray-500 dark:text-gray-400 font-mono text-[10px] tabular-nums ml-auto shrink-0">
+        <span class="text-[#8a8f98] font-mono text-[10px] tabular-nums ml-auto shrink-0">
           {progressValue()}%
         </span>
       </div>
 
       {/* Multi-phase segmented bar */}
       <div
-        class="flex h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800"
+        class="flex h-2.5 w-full overflow-hidden rounded-full bg-white/[0.05]"
         role="progressbar"
         aria-valuenow={progressValue()}
         aria-valuemin={0}
@@ -322,7 +322,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       </div>
 
       {/* Phase labels with icons */}
-      <div class="flex justify-between text-[10px] text-gray-500 dark:text-gray-500 font-medium px-px">
+      <div class="flex justify-between text-[10px] text-[#8a8f98] font-medium px-px">
         {PHASE_CONFIG.map((seg, idx) => {
           const isPast = idx < activePhaseIndex();
           const isActive = idx === activePhaseIndex();
@@ -330,9 +330,9 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
             <span
               class={`inline-flex items-center gap-0.5 ${
                 isPast
-                  ? 'text-green-600 dark:text-green-400'
+                  ? 'text-green-400'
                   : isActive
-                    ? 'text-blue-600 dark:text-blue-400'
+                    ? 'text-[#5e6ad2]'
                     : ''
               }`}
             >
@@ -344,7 +344,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       </div>
 
       {/* Detail row: frame counter / sub-phase + memory */}
-      <div class="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 min-h-[1.25rem]">
+      <div class="flex items-center justify-between text-[10px] text-[#8a8f98] min-h-[1.25rem]">
         <span class="truncate italic">
           {showFrameCounter()
             ? frameCounterLabel()
@@ -352,10 +352,10 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         </span>
         <div class="flex items-center gap-1.5 shrink-0">
           {showFrameCounter() && subPhaseValue() > 0 && (
-            <span class="font-mono tabular-nums">{subPhaseValue()}%</span>
+            <span class="font-mono tabular-nums text-[#d0d6e0]">{subPhaseValue()}%</span>
           )}
           {local.memoryUsage && local.memoryUsage !== '0 MB / 0 MB (0%)' && (
-            <span class="font-mono tabular-nums text-gray-400 dark:text-gray-600">
+            <span class="font-mono tabular-nums text-[#5e6ad2]/50">
               🧠 {local.memoryUsage}
             </span>
           )}
@@ -364,19 +364,19 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
 
       {/* Elapsed / ETA row */}
       <Show when={local.showElapsedTime && local.startTime}>
-        <div class="flex items-center justify-center gap-2 text-[10px] text-gray-500 dark:text-gray-400 font-mono tabular-nums">
+        <div class="flex items-center justify-center gap-2 text-[10px] text-[#8a8f98] font-mono tabular-nums">
           <span ref={elapsedDisplayRef}>⏱ 0:00</span>
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
-            <span class="text-gray-400 dark:text-gray-600">·</span>
-            <span>ETA {formatDuration(local.estimatedSecondsRemaining!)}</span>
+            <span class="text-[#5e6ad2]/40">·</span>
+            <span class="text-[#5e6ad2]/60">ETA {formatDuration(local.estimatedSecondsRemaining!)}</span>
           </Show>
           <Show
             when={local.estimatedSecondsRemaining == null || local.estimatedSecondsRemaining <= 0}
           >
-            <span class="text-gray-400 dark:text-gray-600">·</span>
-            <span class="text-gray-400 dark:text-gray-500 italic">calculating…</span>
+            <span class="text-[#5e6ad2]/40">·</span>
+            <span class="text-[#5e6ad2]/40 italic">calculating…</span>
           </Show>
         </div>
       </Show>

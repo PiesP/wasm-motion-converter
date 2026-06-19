@@ -71,7 +71,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
 
   return (
     <Panel
-      class="relative border-l-4 border-red-500 dark:border-red-500 p-4 bg-red-50 dark:bg-red-950"
+      class="relative border-l-4 border-red-500/60 p-4 bg-[#191a1b] rounded-lg"
       role="alert"
       ariaLive="assertive"
       data-testid="error-display"
@@ -80,7 +80,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
         <button
           type="button"
           onClick={handleDismiss}
-          class="absolute top-4 right-4 p-2 text-gray-500 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300 transition-colors rounded-md hover:bg-red-100 dark:hover:bg-red-900"
+          class="absolute top-4 right-4 p-2 text-[#d0d6e0] hover:text-[#f7f8f8] transition-colors rounded-md hover:bg-white/[0.05]"
           aria-label="Dismiss error message"
           data-testid="error-dismiss-button"
         >
@@ -103,7 +103,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
-            class="h-5 w-5 text-red-400 dark:text-red-500"
+            class="h-5 w-5 text-red-500"
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden="true"
@@ -116,7 +116,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
           </svg>
         </div>
         <div class="ml-3 flex-1">
-          <h3 class="text-sm font-medium text-red-900 dark:text-red-300">
+          <h3 class="text-sm font-medium text-[#f7f8f8]">
             Conversion Failed{' '}
             {errorIcon() && (
               <span class="ml-1" aria-hidden="true">
@@ -124,20 +124,20 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               </span>
             )}
           </h3>
-          <p class="mt-2 text-sm text-red-700 dark:text-red-400">{userFriendlyMessage()}</p>
+          <p class="mt-2 text-sm text-[#d0d6e0]">{userFriendlyMessage()}</p>
           <Show when={rawErrorMessage()}>
             <details class="mt-2">
-              <summary class="text-xs text-red-700 dark:text-red-400 cursor-pointer hover:underline">
+              <summary class="text-xs text-[#d0d6e0] cursor-pointer hover:underline">
                 Technical details
               </summary>
-              <pre class="mt-1 text-xs text-red-700 dark:text-red-400 whitespace-pre-wrap break-all bg-red-100 dark:bg-red-900 p-2 rounded max-h-32 overflow-auto">
+              <pre class="mt-1 text-xs text-[#d0d6e0] whitespace-pre-wrap break-all bg-white/[0.02] border border-white/[0.08] p-2 rounded max-h-32 overflow-auto">
                 {rawErrorMessage()}
               </pre>
             </details>
           </Show>
           <Show when={local.suggestion}>
-            <div class="mt-2 p-3 bg-red-100 dark:bg-red-900 rounded text-sm text-red-700 dark:text-red-300">
-              <strong>Suggestion:</strong> {local.suggestion}
+            <div class="mt-2 p-3 bg-white/[0.02] border border-white/[0.08] rounded text-sm text-[#d0d6e0]">
+              <strong class="text-[#f7f8f8]">Suggestion:</strong> {local.suggestion}
             </div>
           </Show>
           <div class="mt-4 flex gap-3">
@@ -147,7 +147,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 <button
                   type="button"
                   data-testid="error-select-different-fallback-button"
-                  class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900"
+                  class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                   onClick={handleSelectNewFile}
                   aria-label="Select a different video file to convert"
                 >
@@ -159,7 +159,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 ref={retryButtonRef}
                 type="button"
                 data-testid="error-retry-button"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900"
+                class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                 onClick={handleRetry}
                 aria-label="Retry conversion with the same file"
               >
@@ -168,7 +168,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               <button
                 type="button"
                 data-testid="error-select-different-button"
-                class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 dark:focus:ring-offset-gray-900"
+                class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-[#d0d6e0] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                 onClick={handleSelectNewFile}
                 aria-label="Select a different video file to convert"
               >

@@ -101,12 +101,12 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
 
   return (
     <div
-      class={`relative rounded-xl border-2 border-dashed transition-all duration-300 ${
+      class={`relative rounded-lg border border-dashed transition-all duration-300 ${
         isDragging()
-          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+          ? 'border-[#5e6ad2] bg-white/[0.04]'
           : isInteractive()
-            ? 'border-gray-300 hover:border-blue-400 dark:border-gray-600 dark:hover:border-blue-500'
-            : 'border-gray-200 dark:border-gray-700'
+            ? 'border-white/[0.08] hover:border-[#5e6ad2] hover:bg-white/[0.04] bg-white/[0.02]'
+            : 'border-white/[0.06] bg-white/[0.01]'
       } ${isBusy() ? 'p-4' : hasFile() ? 'p-4' : 'p-12'}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -120,7 +120,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         <button
           type="button"
           onClick={local.onCancel}
-          class="absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full bg-red-100 text-red-600 transition-colors hover:bg-red-200 dark:bg-red-900/40 dark:text-red-400 dark:hover:bg-red-900/60"
+          class="absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full bg-red-500/10 text-red-400 transition-colors hover:bg-red-500/20"
           aria-label="Cancel conversion"
           title="Cancel conversion"
         >
@@ -135,7 +135,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         <div class="space-y-3">
           {/* File header with name + change button */}
           <Show when={hasFile()}>
-            <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <div class="flex items-center gap-2 text-xs text-[#8a8f98]">
               <svg
                 class="h-3.5 w-3.5 shrink-0"
                 fill="none"
@@ -152,13 +152,13 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               </svg>
               <span class="truncate font-medium">{local.fileName}</span>
               <Show when={local.fileSize}>
-                <span class="shrink-0 text-gray-400">· {local.metadataSummary}</span>
+                <span class="shrink-0 text-[#8a8f98]">· {local.metadataSummary}</span>
               </Show>
               <Show when={local.onClear && !isBusy()}>
                 <button
                   type="button"
                   onClick={local.onClear}
-                  class="ml-auto shrink-0 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                  class="ml-auto shrink-0 text-[#5e6ad2] hover:text-[#7e8ae8]"
                 >
                   Change
                 </button>
@@ -211,7 +211,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         when={isInteractive()}
         fallback={
           <Show when={!isBusy()}>
-            <div class="text-center text-sm text-gray-500 dark:text-gray-400">
+            <div class="text-center text-sm text-[#8a8f98]">
               {local.status || 'Processing...'}
             </div>
           </Show>
@@ -221,7 +221,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         <Show when={hasFile() && !isBusy()}>
           <div class="space-y-3 animate-in fade-in duration-300">
             {/* File header */}
-            <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <div class="flex items-center gap-2 text-xs text-[#8a8f98]">
               <svg
                 class="h-3.5 w-3.5 shrink-0"
                 fill="none"
@@ -238,7 +238,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               </svg>
               <span class="truncate font-medium">{local.fileName}</span>
               <Show when={local.fileSize}>
-                <span class="shrink-0 text-gray-400">· {local.metadataSummary}</span>
+                <span class="shrink-0 text-[#8a8f98]">· {local.metadataSummary}</span>
               </Show>
               <button
                 type="button"
@@ -246,7 +246,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                   e.stopPropagation();
                   local.onClear?.();
                 }}
-                class="ml-auto shrink-0 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                class="ml-auto shrink-0 text-[#5e6ad2] hover:text-[#7e8ae8]"
               >
                 Change
               </button>
@@ -270,7 +270,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         <Show when={!hasFile()}>
           <div class="text-center">
             <svg
-              class="mx-auto h-12 w-12 text-gray-500"
+              class="mx-auto h-12 w-12 text-[#8a8f98]"
               stroke="currentColor"
               fill="none"
               viewBox="0 0 48 48"
@@ -295,7 +295,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               <button
                 type="button"
                 onClick={openFilePicker}
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900"
+                class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-[#5e6ad2] hover:bg-[#7e8ae8] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#5e6ad2]"
                 disabled={!isInteractive()}
                 data-testid="choose-file-button"
               >
@@ -316,8 +316,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 data-testid="file-input"
               />
             </div>
-            <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">or drag and drop</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-2 text-sm text-[#8a8f98]">or drag and drop</p>
+            <p class="mt-1 text-xs text-[#5e6ad2]/60">
               Most video formats (MP4, MOV, WebM, MKV, AVI) - max 500MB
             </p>
           </div>
@@ -325,7 +325,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       </Show>
 
       <Show when={justSelected()}>
-        <div class="mt-2 text-center text-sm text-green-600 dark:text-green-400">
+        <div class="mt-2 text-center text-sm text-green-400">
           File selected!
         </div>
       </Show>

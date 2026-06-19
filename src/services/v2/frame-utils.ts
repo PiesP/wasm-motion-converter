@@ -16,44 +16,83 @@
 
 import { globalBufferPool } from './buffer-pool';
 
+// ─── Cached copyTo path ───────────────────────────────────────────
+// Strategy detection result cached after first frame to avoid repeated
+// try/catch fallback attempts on every frame.
+let cachedCopyPath: 'rgb' | 'four-channel' | 'canvas' | null = null;
+
 /**
  * Copy VideoFrame pixels directly to RGB Uint8Array.
  *
  * Strategy:
- * 1. Try native RGB output via copyTo({ format: 'RGB' }) — avoids RGBA→RGB conversion entirely.
+ * 1. Try native RGB output via copyTo({ format: 'RGB' }) — zero-conversion path.
  *    Supported in Chrome 114+, Firefox 130+.
  * 2. Fall back to 4-channel formats (RGBX/BGRX/RGBA/BGRA) + fast Uint32Array RGBA→RGB.
  * 3. Last resort: OffscreenCanvas for exotic YUV/NV12 formats.
  *
- * Uses buffer pooling for all copyTo target buffers.
+ * The detected path is cached after the first frame to avoid repeated
+ * try/catch overhead on subsequent frames.
  */
 export async function copyFrameToRGB(
   frame: VideoFrame,
   width: number,
   height: number
 ): Promise<Uint8Array> {
+  // Use cached path from first frame detection
+  if (cachedCopyPath === 'rgb') {
+    return copyFrameRGB(frame, width, height);
+  }
+  if (cachedCopyPath === 'four-channel') {
+    return copyFrameFourChannel(frame, width, height);
+  }
+
   // ── Strategy 1: Native RGB output (zero-conversion path) ──
   // Chrome 114+ / Firefox 130+ support format:'RGB' in copyTo options.
-  // This lets the browser's native code handle YUV→RGB conversion + packing.
   try {
-    const size = width * height * 3;
-    const buffer = globalBufferPool.acquire(size);
-    const layout = await frame.copyTo(buffer, {
-      rect: { x: 0, y: 0, width, height },
-      layout: [{ offset: 0, stride: width * 3 }],
-      format: 'RGB' as VideoFrameCopyToOptions['format'],
-    });
-    // Verify we actually got RGB data (3 bytes per pixel)
-    if (layout && layout[0]?.stride === width * 3) {
-      return buffer;
-    }
-    // Unexpected layout — release and fall through
-    globalBufferPool.release(buffer);
+    const result = await copyFrameRGB(frame, width, height);
+    cachedCopyPath = 'rgb';
+    return result;
   } catch {
     // format:'RGB' not supported, fall through to 4-channel path
   }
 
   // ── Strategy 2: 4-channel formats + fast Uint32Array RGBA→RGB ──
+  try {
+    const result = await copyFrameFourChannel(frame, width, height);
+    cachedCopyPath = 'four-channel';
+    return result;
+  } catch {
+    // Fall through to canvas fallback
+  }
+
+  // ── Strategy 3: Canvas fallback (cached for subsequent frames) ──
+  cachedCopyPath = 'canvas';
+  return copyFrameCanvas(frame, width, height);
+}
+
+/** Strategy 1: Native RGB copyTo */
+async function copyFrameRGB(frame: VideoFrame, width: number, height: number): Promise<Uint8Array> {
+  const size = width * height * 3;
+  const buffer = globalBufferPool.acquire(size);
+  const layout = await frame.copyTo(buffer, {
+    rect: { x: 0, y: 0, width, height },
+    layout: [{ offset: 0, stride: width * 3 }],
+    format: 'RGB' as VideoFrameCopyToOptions['format'],
+  });
+  // Verify we actually got RGB data (3 bytes per pixel)
+  if (layout && layout[0]?.stride === width * 3) {
+    return buffer;
+  }
+  globalBufferPool.release(buffer);
+  throw new Error('RGB layout unexpected');
+}
+
+/** Strategy 2: 4-channel copyTo + fast RGBA→RGB */
+async function copyFrameFourChannel(
+  frame: VideoFrame,
+  width: number,
+  height: number
+): Promise<Uint8Array> {
   const fourChannelFormats: Array<'RGBX' | 'BGRX' | 'RGBA' | 'BGRA'> = [
     'RGBX',
     'BGRX',
@@ -80,8 +119,15 @@ export async function copyFrameToRGB(
       // Format not supported, try next
     }
   }
+  throw new Error('No 4-channel format supported');
+}
 
-  // ── Strategy 3: Canvas fallback for exotic formats ──
+/** Strategy 3: Canvas fallback for exotic formats */
+async function copyFrameCanvas(
+  frame: VideoFrame,
+  width: number,
+  height: number
+): Promise<Uint8Array> {
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Failed to get 2d context from OffscreenCanvas');
