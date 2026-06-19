@@ -5,11 +5,35 @@ import type { ConversionPhase } from '@t/v2-conversion-types';
 import { formatDuration } from '@utils/format-utils';
 import { type Component, createEffect, createMemo, onCleanup, Show, splitProps } from 'solid-js';
 
-const PHASE_SEGMENTS = [
-  { label: 'Demux', colorClass: 'bg-amber-500 dark:bg-amber-400', phase: 'demuxing' },
-  { label: 'Decode', colorClass: 'bg-purple-500 dark:bg-purple-400', phase: 'decoding' },
-  { label: 'Encode', colorClass: 'bg-blue-500 dark:bg-blue-400', phase: 'encoding' },
-  { label: 'Final', colorClass: 'bg-green-500 dark:bg-green-400', phase: 'assembling' },
+const PHASE_CONFIG = [
+  {
+    label: 'Demux',
+    icon: '📂',
+    doneIcon: '✓',
+    colorClass: 'bg-amber-500 dark:bg-amber-400',
+    phase: 'demuxing',
+  },
+  {
+    label: 'Decode',
+    icon: '🔓',
+    doneIcon: '✓',
+    colorClass: 'bg-purple-500 dark:bg-purple-400',
+    phase: 'decoding',
+  },
+  {
+    label: 'Encode',
+    icon: '⚙️',
+    doneIcon: '✓',
+    colorClass: 'bg-blue-500 dark:bg-blue-400',
+    phase: 'encoding',
+  },
+  {
+    label: 'Final',
+    icon: '📦',
+    doneIcon: '✓',
+    colorClass: 'bg-green-500 dark:bg-green-400',
+    phase: 'assembling',
+  },
 ] as const;
 
 interface ProgressBarProps {
@@ -28,6 +52,7 @@ interface ProgressBarProps {
   outputFrames?: number;
   memoryUsage?: string | null;
   phase?: ConversionPhase;
+  compact?: boolean;
 }
 
 const ProgressBar: Component<ProgressBarProps> = (props) => {
@@ -47,6 +72,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     'outputFrames',
     'memoryUsage',
     'phase',
+    'compact',
   ]);
   let elapsedDisplayRef: HTMLSpanElement | undefined;
 
@@ -70,10 +96,12 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     return 0;
   });
 
-  // Memoize segment rendering to avoid re-evaluating all 4 segments on every tick
+  const isCompact = createMemo(() => local.compact === true);
+
+  // Memoize segment rendering
   const segmentDivs = createMemo(() => {
     const activeIdx = activePhaseIndex();
-    return PHASE_SEGMENTS.map((seg, idx) => {
+    return PHASE_CONFIG.map((seg, idx) => {
       const isPast = idx < activeIdx;
       const isActive = idx === activeIdx;
 
@@ -93,9 +121,30 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         <div
           class={`h-full transition-[width] duration-150 ease-out ${
             widthPercent > 0 ? seg.colorClass : 'bg-transparent'
-          } ${idx === 0 ? 'rounded-l-full' : ''} ${idx === PHASE_SEGMENTS.length - 1 ? 'rounded-r-full' : ''}`}
+          } ${idx === 0 ? 'rounded-l-full' : ''} ${idx === PHASE_CONFIG.length - 1 ? 'rounded-r-full' : ''} ${isActive && widthPercent > 0 && widthPercent < 25 ? 'animate-pulse' : ''}`}
           style={{ width: `${widthPercent}%` }}
         />
+      );
+    });
+  });
+
+  // Compact phase markers: ✓ Demux · ✓ Decode · ● Encode · ○ Final
+  const phaseMarkers = createMemo(() => {
+    const activeIdx = activePhaseIndex();
+    return PHASE_CONFIG.map((seg, idx) => {
+      const isPast = idx < activeIdx;
+      const isActive = idx === activeIdx;
+      const marker = isPast ? '✓' : isActive ? '●' : '○';
+      const markerClass = isPast
+        ? 'text-green-600 dark:text-green-400'
+        : isActive
+          ? 'text-blue-600 dark:text-blue-400'
+          : 'text-gray-400 dark:text-gray-600';
+      return (
+        <span class={`inline-flex items-center gap-0.5 ${markerClass}`}>
+          <span class="text-[10px]">{marker}</span>
+          <span>{seg.label}</span>
+        </span>
       );
     });
   });
@@ -108,9 +157,9 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     if (!showFrameCounter()) return '';
     const out = local.outputFrames;
     if (out != null && out !== local.totalFrames) {
-      return `Frame ${local.currentFrame} / ${local.totalFrames} (${out} output)`;
+      return `Frame ${local.currentFrame}/${local.totalFrames} (${out} out)`;
     }
-    return `Frame ${local.currentFrame} / ${local.totalFrames}`;
+    return `Frame ${local.currentFrame}/${local.totalFrames}`;
   });
 
   createEffect(() => {
@@ -131,6 +180,97 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     });
   });
 
+  // Compact layout: single inline row
+  if (isCompact()) {
+    return (
+      <div
+        class="flex flex-col gap-1.5"
+        role="status"
+        aria-live="polite"
+        aria-busy={progressValue() > 0 && progressValue() < 100}
+      >
+        {/* Inline: status + bar + percent + ETA */}
+        <div class="flex items-center gap-2 text-xs">
+          <Show when={local.showSpinner}>
+            <svg
+              class="animate-spin h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              />
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              />
+            </svg>
+          </Show>
+          <span class="truncate font-medium text-gray-700 dark:text-gray-300">{local.status}</span>
+          <div class="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+            <div
+              class="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-400 dark:to-blue-500 transition-[width] duration-150 ease-out"
+              style={{ width: `${progressValue()}%` }}
+            />
+          </div>
+          <span class="font-mono text-[10px] tabular-nums text-gray-500 dark:text-gray-400 shrink-0">
+            {progressValue()}%
+          </span>
+          <Show
+            when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
+          >
+            <span class="font-mono text-[10px] tabular-nums text-gray-400 dark:text-gray-500 shrink-0">
+              ETA {formatDuration(local.estimatedSecondsRemaining!)}
+            </span>
+          </Show>
+        </div>
+
+        {/* Phase markers: ✓ Demux · ✓ Decode · ● Encode · ○ Final */}
+        <div class="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-500 px-px">
+          {phaseMarkers().map((marker, idx) => (
+            <span class={idx < activePhaseIndex() ? 'text-gray-700 dark:text-gray-300' : ''}>
+              {marker}
+            </span>
+          ))}
+        </div>
+
+        {/* Detail row: frame counter + memory */}
+        <div class="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 min-h-[1rem]">
+          <span class="truncate italic">
+            {showFrameCounter()
+              ? frameCounterLabel()
+              : (local.subPhaseLabel ?? local.statusMessage ?? '')}
+          </span>
+          <div class="flex items-center gap-1.5 shrink-0">
+            {showFrameCounter() && subPhaseValue() > 0 && (
+              <span class="font-mono tabular-nums">{subPhaseValue()}%</span>
+            )}
+            {local.memoryUsage && local.memoryUsage !== '0 MB / 0 MB (0%)' && (
+              <span class="font-mono tabular-nums text-gray-400 dark:text-gray-600">
+                🧠 {local.memoryUsage}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Elapsed time */}
+        <Show when={local.showElapsedTime && local.startTime}>
+          <div class="text-center text-[10px] text-gray-500 dark:text-gray-400 font-mono tabular-nums">
+            <span ref={elapsedDisplayRef}>⏱ 0:00</span>
+          </div>
+        </Show>
+      </div>
+    );
+  }
+
+  // Full layout (original, with phase icon improvements)
   return (
     <div
       class="flex flex-col gap-1.5"
@@ -139,7 +279,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       aria-busy={progressValue() > 0 && progressValue() < 100}
     >
       {/* Header row: spinner + status + percent */}
-      <div class={`flex items-center gap-1.5 text-xs font-medium text-gray-700 dark:text-gray-300`}>
+      <div class="flex items-center gap-1.5 text-xs font-medium text-gray-700 dark:text-gray-300">
         <Show when={local.showSpinner}>
           <svg
             class="animate-spin h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0"
@@ -181,13 +321,26 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         {segmentDivs()}
       </div>
 
-      {/* Phase labels */}
+      {/* Phase labels with icons */}
       <div class="flex justify-between text-[10px] text-gray-500 dark:text-gray-500 font-medium px-px">
-        {PHASE_SEGMENTS.map((seg, idx) => (
-          <span class={idx < activePhaseIndex() ? 'text-gray-700 dark:text-gray-300' : ''}>
-            {seg.label}
-          </span>
-        ))}
+        {PHASE_CONFIG.map((seg, idx) => {
+          const isPast = idx < activePhaseIndex();
+          const isActive = idx === activePhaseIndex();
+          return (
+            <span
+              class={`inline-flex items-center gap-0.5 ${
+                isPast
+                  ? 'text-green-600 dark:text-green-400'
+                  : isActive
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : ''
+              }`}
+            >
+              <span>{isPast ? '✓' : seg.icon}</span>
+              <span>{seg.label}</span>
+            </span>
+          );
+        })}
       </div>
 
       {/* Detail row: frame counter / sub-phase + memory */}

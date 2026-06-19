@@ -110,8 +110,7 @@ const App: Component = () => {
     }
   });
 
-  // Poll memory usage on a 2-second interval — decoupled from progress updates
-  // to avoid calling performance.memory on every progress tick.
+  // Poll memory usage on a 2-second interval
   createEffect(() => {
     if (appState() !== 'converting') {
       setMemoryUsageText(null);
@@ -143,8 +142,7 @@ const App: Component = () => {
     debouncedSaveSettings(conversionSettings());
   });
 
-  // Expose app state to DOM for automated testing.
-  // Uses a hidden <div id="app-state"> that is always rendered and updated.
+  // Expose app state to DOM for automated testing
   onMount(() => {
     const el = document.createElement('div');
     el.id = 'app-state';
@@ -194,6 +192,22 @@ const App: Component = () => {
   const isBusy = createMemo(
     () => appState() === 'analyzing' || appState() === 'converting' || appState() === 'cancelling'
   );
+
+  // Metadata summary for dropzone card: "1920×1080 · 0:12 · 30fps"
+  const metadataSummary = createMemo(() => {
+    const meta = videoMetadata();
+    const file = inputFile();
+    if (!meta || !file) return '';
+    const parts: string[] = [];
+    if (meta.width && meta.height) parts.push(`${meta.width}×${meta.height}`);
+    if (meta.duration) {
+      const mins = Math.floor(meta.duration / 60);
+      const secs = Math.floor(meta.duration % 60);
+      parts.push(`${mins}:${secs.toString().padStart(2, '0')}`);
+    }
+    if (meta.framerate) parts.push(`${meta.framerate}fps`);
+    return parts.join(' · ');
+  });
 
   const handleReduceSettings = (): void => {
     setConversionSettings({
@@ -306,10 +320,12 @@ const App: Component = () => {
                 </Suspense>
               </Show>
 
+              {/* Unified dropzone card with preview + progress (아이디어 1) */}
               <FileDropzone
                 disabled={isBusy()}
                 estimatedSecondsRemaining={dropzoneStatus()?.estimatedSecondsRemaining}
                 onCancel={handleCancelConversion}
+                onClear={handleReset}
                 onFileSelected={handleFileSelected}
                 previewUrl={videoPreviewUrl()}
                 progress={dropzoneStatus()?.progress}
@@ -318,8 +334,13 @@ const App: Component = () => {
                 status={dropzoneStatus()?.label}
                 statusMessage={dropzoneStatus()?.message}
                 phase={dropzoneStatus()?.phase}
+                outputFrames={dropzoneStatus()?.outputFrames}
+                fileName={inputFile()?.name}
+                fileSize={inputFile()?.size}
+                metadataSummary={metadataSummary()}
               />
 
+              {/* Analyzing state: separate progress (not in dropzone) */}
               <Show when={appState() === 'analyzing'}>
                 <Suspense
                   fallback={
@@ -353,7 +374,8 @@ const App: Component = () => {
                 </Suspense>
               </Show>
 
-              <Show when={inputFile() && videoMetadata()}>
+              {/* Video metadata: shown below dropzone when file selected but not converting */}
+              <Show when={inputFile() && videoMetadata() && !isBusy()}>
                 <VideoMetadataDisplay
                   fileName={inputFile()!.name}
                   fileSize={inputFile()!.size}

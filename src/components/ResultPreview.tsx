@@ -35,29 +35,23 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
+  const [isHovering, setIsHovering] = createSignal(false);
 
-  // Skip preview for large blobs (>10MB) to prevent stack overflow from
-  // synchronous URL.createObjectURL + render cascade. The download button
-  // still works correctly.
+  // Skip preview for large blobs (>10MB)
   const skipPreview = createMemo(() => local.outputBlob.size > 10 * 1024 * 1024);
 
-  // Single createEffect: create blob URL synchronously, revoke previous on cleanup.
-  // This eliminates the timing gap between revoke and create that caused
-  // ERR_FILE_NOT_FOUND errors and "Preview failed to load".
   createEffect(() => {
     void local.outputBlob;
     setLoaded(false);
     setPreviewError(false);
 
     if (skipPreview()) {
-      // Large blob: skip preview entirely, just revoke previous URL
       const prevUrl = previewUrl();
       if (prevUrl) URL.revokeObjectURL(prevUrl);
       setPreviewUrl(null);
       return;
     }
 
-    // Small blob: create URL synchronously so <img> gets it in the same render
     const url = URL.createObjectURL(local.outputBlob);
     setPreviewUrl(url);
 
@@ -92,11 +86,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       `absolute inset-0 transition-opacity duration-300 ${loaded() ? 'opacity-0' : 'opacity-100'}`
   );
 
-  const imageClass = createMemo(
-    () =>
-      `max-w-full h-auto rounded transition-opacity duration-300 ${loaded() ? 'opacity-100' : 'opacity-0'}`
-  );
-
   const ariaLabel = createMemo(
     () =>
       `${outputExtension().toUpperCase()} conversion results: ${downloadFileName()}, ${formatBytes(local.outputBlob.size)}`
@@ -117,6 +106,14 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     return `${Math.abs(ratio).toFixed(0)}% larger`;
   });
 
+  const compressionColorClass = createMemo(() => {
+    const ratio = compressionRatio();
+    if (ratio === null) return '';
+    if (ratio > 50) return 'text-green-600 dark:text-green-400';
+    if (ratio > 0) return 'text-green-500 dark:text-green-500';
+    return 'text-orange-500 dark:text-orange-400';
+  });
+
   const handlePreviewLoad = () => setLoaded(true);
   const handlePreviewError = () => {
     setPreviewError(true);
@@ -125,27 +122,19 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   return (
     <Panel class="p-4">
-      <div class="flex gap-2">
-        <a
-          href={previewUrl() ?? undefined}
-          download={downloadFileName()}
-          aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
-          class="flex-1 inline-flex justify-center items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-900"
-          data-testid="download-result-button"
-          role="button"
-        >
-          Download {outputExtension().toUpperCase()} · {formatBytes(local.outputBlob.size)}
-        </a>
-      </div>
-
-      <div class="mt-3 flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg p-2 relative overflow-hidden">
+      {/* Preview area with hover download overlay (아이디어 7) */}
+      <div
+        class="relative flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg overflow-hidden"
+        onMouseEnter={() => setIsHovering(true)}
+        onMouseLeave={() => setIsHovering(false)}
+      >
         <Show when={!skipPreview()}>
           <div class={skeletonClass()}>
-            <div class="w-full h-full bg-gray-200 dark:bg-gray-800 animate-pulse rounded" />
+            <div class="w-full aspect-video bg-gray-200 dark:bg-gray-800 animate-pulse rounded" />
           </div>
         </Show>
         <Show when={skipPreview()}>
-          <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500">
+          <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500 w-full">
             <svg
               class="h-10 w-10 mb-2"
               fill="none"
@@ -170,14 +159,14 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           <img
             src={previewUrl()!}
             alt="Converted animation"
-            class={imageClass()}
+            class={`w-full h-auto rounded transition-opacity duration-300 ${loaded() ? 'opacity-100' : 'opacity-0'}`}
             onLoad={handlePreviewLoad}
             onError={handlePreviewError}
             data-testid="result-image"
           />
         </Show>
         <Show when={!previewUrl() && !skipPreview() && previewError()}>
-          <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500">
+          <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500 w-full">
             <svg
               class="h-10 w-10 mb-2"
               fill="none"
@@ -195,57 +184,79 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             <span class="text-xs">Preview failed to load</span>
           </div>
         </Show>
+
+        {/* Hover download overlay (아이디어 7) */}
+        <Show when={isHovering() && (previewUrl() || skipPreview())}>
+          <div class="absolute inset-0 flex items-center justify-center bg-black/40 transition-opacity duration-200 rounded-lg">
+            <a
+              href={previewUrl() ?? undefined}
+              download={downloadFileName()}
+              aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
+              class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium shadow-lg hover:bg-blue-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              data-testid="download-result-button"
+              role="button"
+            >
+              <svg
+                class="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                />
+              </svg>
+              Download {outputExtension().toUpperCase()} · {formatBytes(local.outputBlob.size)}
+            </a>
+          </div>
+        </Show>
       </div>
 
+      {/* Stats: 핵심 정보 강조 (아이디어 3) */}
       <section class="mt-3" aria-label={ariaLabel()}>
-        <dl class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
-            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Original</dt>
-            <dd class="font-medium text-gray-900 dark:text-white" data-result-original-size>
-              {formatBytes(local.originalSize)}
-            </dd>
-          </div>
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
-            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Output</dt>
-            <dd class="font-medium text-gray-900 dark:text-white" data-result-output-size>
-              {formatBytes(local.outputBlob.size)}
-            </dd>
-          </div>
+        {/* Primary stats: size reduction + time — prominent */}
+        <div class="flex items-center justify-center gap-3 text-sm mb-2">
+          <span class="text-gray-500 dark:text-gray-400 font-mono">
+            {formatBytes(local.originalSize)}
+          </span>
+          <svg
+            class="h-4 w-4 text-gray-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M13 7l5 5m0 0l-5 5m5-5H6"
+            />
+          </svg>
+          <span class="font-semibold text-gray-900 dark:text-white font-mono">
+            {formatBytes(local.outputBlob.size)}
+          </span>
           <Show when={compressionLabel()}>
-            {(label) => (
-              <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
-                <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Compression</dt>
-                <dd class="font-medium text-green-600 dark:text-green-400">{label()}</dd>
-              </div>
-            )}
+            <span class={`font-semibold ${compressionColorClass()}`}>{compressionLabel()}</span>
           </Show>
           <Show when={conversionTimeLabel()}>
-            {(label) => (
-              <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
-                <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Time</dt>
-                <dd class="font-medium text-gray-900 dark:text-white">{label()}</dd>
-              </div>
-            )}
+            <span class="text-gray-400 dark:text-gray-500">·</span>
+            <span class="text-gray-500 dark:text-gray-400">⚡ {conversionTimeLabel()}</span>
           </Show>
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
-            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Format</dt>
-            <dd class="font-medium text-gray-900 dark:text-white uppercase" data-result-format>
-              {local.settings.format}
-            </dd>
-          </div>
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
-            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Quality</dt>
-            <dd class="font-medium text-gray-900 dark:text-white capitalize" data-result-quality>
-              {local.settings.quality}
-            </dd>
-          </div>
-          <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
-            <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Scale</dt>
-            <dd class="font-medium text-gray-900 dark:text-white" data-result-scale>
-              {(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%
-            </dd>
-          </div>
-        </dl>
+        </div>
+
+        {/* Secondary stats: format, quality, scale — subtle */}
+        <div class="flex items-center justify-center gap-2 text-[10px] text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+          <span>{outputExtension().toUpperCase()}</span>
+          <span>·</span>
+          <span class="capitalize">{local.settings.quality}</span>
+          <span>·</span>
+          <span>{(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%</span>
+        </div>
       </section>
     </Panel>
   );

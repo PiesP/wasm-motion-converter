@@ -132,3 +132,53 @@ html.dark :focus-visible {
     scroll-behavior: auto !important;
   }
 }
+
+/* ============================================================================
+   UI Transition Animations (아이디어 4)
+   ============================================================================ */
+
+/** Fade in animation for newly appearing elements */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-in.fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+/** Crossfade for preview → result transition */
+@keyframes crossfade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-crossfade {
+  animation: crossfade-in 0.4s ease-out forwards;
+}
+
+/** Subtle scale-in for cards */
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-scale-in {
+  animation: scale-in 0.25s ease-out forwards;
+}

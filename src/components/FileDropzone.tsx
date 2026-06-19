@@ -12,6 +12,7 @@ const DEFAULT_STATUS = 'Processing';
 interface FileDropzoneProps {
   onFileSelected: (file: File) => void;
   onCancel?: () => void;
+  onClear?: () => void;
   disabled?: boolean;
   progress?: number;
   status?: string;
@@ -23,12 +24,16 @@ interface FileDropzoneProps {
   previewUrl?: string | null;
   phase?: 'demuxing' | 'decoding' | 'encoding' | 'assembling';
   outputFrames?: number;
+  fileName?: string;
+  fileSize?: number;
+  metadataSummary?: string;
 }
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [local] = splitProps(props, [
     'onFileSelected',
     'onCancel',
+    'onClear',
     'disabled',
     'progress',
     'status',
@@ -40,6 +45,9 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     'previewUrl',
     'phase',
     'outputFrames',
+    'fileName',
+    'fileSize',
+    'metadataSummary',
   ]);
   const [isDragging, setIsDragging] = createSignal(false);
   const [justSelected, setJustSelected] = createSignal(false);
@@ -47,6 +55,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
 
   const isBusy = createMemo(() => !!local.status);
   const isInteractive = createMemo(() => !local.disabled && !isBusy());
+  const hasFile = createMemo(() => !!local.previewUrl);
   const progressValue = createMemo(() => {
     const raw = local.progress ?? 0;
     if (!Number.isFinite(raw)) return 0;
@@ -92,13 +101,13 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
 
   return (
     <div
-      class={`relative rounded-xl border-2 border-dashed transition-all ${
+      class={`relative rounded-xl border-2 border-dashed transition-all duration-300 ${
         isDragging()
           ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
           : isInteractive()
             ? 'border-gray-300 hover:border-blue-400 dark:border-gray-600 dark:hover:border-blue-500'
             : 'border-gray-200 dark:border-gray-700'
-      } ${isBusy() ? 'p-6' : 'p-12'}`}
+      } ${isBusy() ? 'p-4' : hasFile() ? 'p-4' : 'p-12'}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -106,112 +115,213 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       role="region"
       data-testid="dropzone"
     >
-      {/* Spinner shown during processing */}
-      <Show when={isBusy()}>
-        <div class="absolute right-4 top-4">
-          <div class="h-5 w-5 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
-        </div>
+      {/* Cancel button — fixed top-right during conversion (아이디어 5) */}
+      <Show when={isBusy() && local.onCancel}>
+        <button
+          type="button"
+          onClick={local.onCancel}
+          class="absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full bg-red-100 text-red-600 transition-colors hover:bg-red-200 dark:bg-red-900/40 dark:text-red-400 dark:hover:bg-red-900/60"
+          aria-label="Cancel conversion"
+          title="Cancel conversion"
+        >
+          <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="1" />
+          </svg>
+        </button>
       </Show>
 
-      <Show
-        when={isInteractive()}
-        fallback={
-          <div class="space-y-4">
-            <Show when={local.subPhaseLabel}>
-              <p class="text-center text-xs text-gray-500 dark:text-gray-400 font-medium">
-                {local.subPhaseLabel}
-              </p>
-            </Show>
-            <div class="max-w-md mx-auto">
-              <ProgressBar
-                progress={progressValue()}
-                status={local.status || DEFAULT_STATUS}
-                statusMessage={local.statusMessage}
-                showSpinner={false}
-                showElapsedTime={local.showElapsedTime}
-                startTime={local.startTime}
-                estimatedSecondsRemaining={local.estimatedSecondsRemaining}
-                layout="vertical"
-                phase={local.phase}
-                outputFrames={local.outputFrames}
-              />
-              <Show when={local.onCancel}>
+      {/* Busy state: compact progress card (아이디어 1 — 통합 카드) */}
+      <Show when={isBusy()}>
+        <div class="space-y-3">
+          {/* File header with name + change button */}
+          <Show when={hasFile()}>
+            <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+              <svg
+                class="h-3.5 w-3.5 shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+              <span class="truncate font-medium">{local.fileName}</span>
+              <Show when={local.fileSize}>
+                <span class="shrink-0 text-gray-400">· {local.metadataSummary}</span>
+              </Show>
+              <Show when={local.onClear && !isBusy()}>
                 <button
                   type="button"
-                  onClick={local.onCancel}
-                  class="mt-2 w-full rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900"
+                  onClick={local.onClear}
+                  class="ml-auto shrink-0 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                 >
-                  Cancel
+                  Change
                 </button>
               </Show>
             </div>
+          </Show>
+
+          {/* Video preview thumbnail during conversion */}
+          <Show when={hasFile() && local.previewUrl}>
+            <div class="relative mx-auto w-full max-w-xs overflow-hidden rounded-lg bg-black">
+              <video
+                src={local.previewUrl!}
+                class="w-full aspect-video object-contain opacity-60"
+                muted
+                playsinline
+                preload="metadata"
+                aria-label="Selected video preview"
+              />
+              {/* Progress overlay on video */}
+              <div class="absolute inset-0 flex items-center justify-center">
+                <div class="text-center">
+                  <div class="text-2xl font-bold text-white drop-shadow-lg">{progressValue()}%</div>
+                  <div class="mt-0.5 text-[10px] text-white/80 drop-shadow">{local.status}</div>
+                </div>
+              </div>
+            </div>
+          </Show>
+
+          {/* Compact progress bar */}
+          <div class="max-w-md mx-auto">
+            <ProgressBar
+              progress={progressValue()}
+              status={local.status || DEFAULT_STATUS}
+              statusMessage={local.statusMessage}
+              showSpinner={false}
+              showElapsedTime={local.showElapsedTime}
+              startTime={local.startTime}
+              estimatedSecondsRemaining={local.estimatedSecondsRemaining}
+              layout="vertical"
+              phase={local.phase}
+              outputFrames={local.outputFrames}
+              compact={true}
+            />
           </div>
+        </div>
+      </Show>
+
+      {/* Interactive state: dropzone or file selected card */}
+      <Show
+        when={isInteractive()}
+        fallback={
+          <Show when={!isBusy()}>
+            <div class="text-center text-sm text-gray-500 dark:text-gray-400">
+              {local.status || 'Processing...'}
+            </div>
+          </Show>
         }
       >
-        <div class="text-center">
-          {/* Video preview when file is selected */}
-          <Show when={local.previewUrl}>
-            <video
-              src={local.previewUrl!}
-              class="w-full rounded-lg shadow-md bg-black aspect-video mb-4"
-              muted
-              playsinline
-              preload="metadata"
-              aria-label="Selected video preview"
-            />
-          </Show>
-          <svg
-            class="mx-auto h-12 w-12 text-gray-500"
-            stroke="currentColor"
-            fill="none"
-            viewBox="0 0 48 48"
-            aria-hidden="true"
-          >
-            <path
-              d="M15 8h18a3 3 0 013 3v26a3 3 0 01-3 3H15a3 3 0 01-3-3V11a3 3 0 013-3z"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path
-              d="M20 18l8 5-8 5v-10z"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              fill="currentColor"
-              fill-opacity="0.15"
-            />
-          </svg>
-          <div class="mt-4">
-            <button
-              type="button"
-              onClick={openFilePicker}
-              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900"
-              disabled={!isInteractive()}
-              data-testid="choose-file-button"
-            >
-              Choose a video file
-            </button>
-            <input
-              ref={(el) => {
-                fileInputElement = el;
-              }}
-              id="file-upload"
-              type="file"
-              class="absolute opacity-0 w-0 h-0 overflow-hidden"
-              accept="video/*"
-              onChange={handleFileInput}
-              disabled={local.disabled}
-              tabIndex={-1}
-              aria-label="Select video file for conversion"
-              data-testid="file-input"
-            />
+        {/* File selected but not yet converting: show preview card (아이디어 1) */}
+        <Show when={hasFile() && !isBusy()}>
+          <div class="space-y-3 animate-in fade-in duration-300">
+            {/* File header */}
+            <div class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+              <svg
+                class="h-3.5 w-3.5 shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+              <span class="truncate font-medium">{local.fileName}</span>
+              <Show when={local.fileSize}>
+                <span class="shrink-0 text-gray-400">· {local.metadataSummary}</span>
+              </Show>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  local.onClear?.();
+                }}
+                class="ml-auto shrink-0 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+              >
+                Change
+              </button>
+            </div>
+
+            {/* Video preview */}
+            <Show when={local.previewUrl}>
+              <video
+                src={local.previewUrl!}
+                class="w-full rounded-lg shadow-md bg-black aspect-video"
+                muted
+                playsinline
+                preload="metadata"
+                aria-label="Selected video preview"
+              />
+            </Show>
           </div>
-          <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">or drag and drop</p>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Most video formats (MP4, MOV, WebM, MKV, AVI) - max 500MB
-          </p>
-        </div>
+        </Show>
+
+        {/* Empty state: dropzone */}
+        <Show when={!hasFile()}>
+          <div class="text-center">
+            <svg
+              class="mx-auto h-12 w-12 text-gray-500"
+              stroke="currentColor"
+              fill="none"
+              viewBox="0 0 48 48"
+              aria-hidden="true"
+            >
+              <path
+                d="M15 8h18a3 3 0 013 3v26a3 3 0 01-3 3H15a3 3 0 01-3-3V11a3 3 0 013-3z"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M20 18l8 5-8 5v-10z"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                fill="currentColor"
+                fill-opacity="0.15"
+              />
+            </svg>
+            <div class="mt-4">
+              <button
+                type="button"
+                onClick={openFilePicker}
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-900"
+                disabled={!isInteractive()}
+                data-testid="choose-file-button"
+              >
+                Choose a video file
+              </button>
+              <input
+                ref={(el) => {
+                  fileInputElement = el;
+                }}
+                id="file-upload"
+                type="file"
+                class="absolute opacity-0 w-0 h-0 overflow-hidden"
+                accept="video/*"
+                onChange={handleFileInput}
+                disabled={local.disabled}
+                tabIndex={-1}
+                aria-label="Select video file for conversion"
+                data-testid="file-input"
+              />
+            </div>
+            <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">or drag and drop</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Most video formats (MP4, MOV, WebM, MKV, AVI) - max 500MB
+            </p>
+          </div>
+        </Show>
       </Show>
 
       <Show when={justSelected()}>
