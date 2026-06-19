@@ -85,7 +85,11 @@ export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
  * For a 150-frame video, that's ~7.5ms total.
  */
 export function extractVP8BitstreamFast(webp: Uint8Array): Uint8Array {
-  return webp.subarray(20, webp.length - 8);
+  // Same as extractVP8Bitstream but skips header validation.
+  // The bitstream starts at offset 20 and the chunk size is at offset 16 (little-endian).
+  const view = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
+  const frameSize = view.getUint32(16, true);
+  return webp.subarray(20, 20 + frameSize);
 }
 
 // ---------------------------------------------------------------------------
