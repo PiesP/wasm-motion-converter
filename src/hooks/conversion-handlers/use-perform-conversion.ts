@@ -261,7 +261,17 @@ async function performConversion(
       settings,
       conversionDurationSeconds: durationSeconds,
     };
+
+    // setConversionResults triggers ResultSection → ResultPreview →
+    // createEffect → URL.createObjectURL → setPreviewUrl → render →
+    // img onLoad → setLoaded, which can cascade back into further
+    // signal updates. When this happens synchronously inside batch,
+    // SolidJS's runUpdates ↔ completeUpdates loop overflows the stack.
+    // We keep setConversionResults outside batch and defer only
+    // setAppState('done') to break the synchronous chain.
     setConversionResults((results) => [newResult, ...results].slice(0, MAX_RESULTS));
+
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
 
     batch(() => {
       setAppState('done');
