@@ -15,11 +15,17 @@
  * only the encoding step (gifenc vs wasm-webp) differs.
  */
 
-import { logger } from '@utils/logger';
-import type { DemuxResult } from './demuxer-service';
-import { copyFrameToRGB, getFrameDurationMs, computeDHash, hammingDistance, getSkipThreshold } from './frame-utils';
 import type { SmartFrameSkipMode } from '@t/conversion-types';
+import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
+import type { DemuxResult } from './demuxer-service';
+import {
+  computeDHash,
+  copyFrameToRGB,
+  getFrameDurationMs,
+  getSkipThreshold,
+  hammingDistance,
+} from './frame-utils';
 
 export interface DecodeOptions {
   width: number;

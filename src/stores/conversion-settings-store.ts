@@ -2,7 +2,12 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { ConversionSettings } from '@t/conversion-types';
-import { CONVERSION_FORMATS, CONVERSION_QUALITIES, CONVERSION_SCALES, SMART_FRAME_SKIP_MODES } from '@t/conversion-types';
+import {
+  CONVERSION_FORMATS,
+  CONVERSION_QUALITIES,
+  CONVERSION_SCALES,
+  SMART_FRAME_SKIP_MODES,
+} from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { createSignal } from 'solid-js';
 

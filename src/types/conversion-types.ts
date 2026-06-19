@@ -73,7 +73,10 @@ export type SmartFrameSkipMode = 'off' | 'low' | 'medium' | 'high';
 
 /** Runtime-available list of all SmartFrameSkipMode values */
 export const SMART_FRAME_SKIP_MODES: readonly SmartFrameSkipMode[] = [
-  'off', 'low', 'medium', 'high',
+  'off',
+  'low',
+  'medium',
+  'high',
 ] as const;
 
 /**

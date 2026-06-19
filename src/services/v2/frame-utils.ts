@@ -181,10 +181,11 @@ export function computeDHash(rgbData: Uint8Array, width: number, height: number)
   const gray = new Uint8Array(64);
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) {
-      const srcX = Math.floor((x + 0.5) * width / 8);
-      const srcY = Math.floor((y + 0.5) * height / 8);
+      const srcX = Math.floor(((x + 0.5) * width) / 8);
+      const srcY = Math.floor(((y + 0.5) * height) / 8);
       const idx = (srcY * width + srcX) * 3;
-      gray[y * 8 + x] = ((rgbData[idx] ?? 0) + (rgbData[idx + 1] ?? 0) + (rgbData[idx + 2] ?? 0)) / 3;
+      gray[y * 8 + x] =
+        ((rgbData[idx] ?? 0) + (rgbData[idx + 1] ?? 0) + (rgbData[idx + 2] ?? 0)) / 3;
     }
   }
   let hash = 0n;
@@ -228,9 +229,13 @@ export function hammingDistance(a: bigint, b: bigint): number {
  */
 export function getSkipThreshold(mode: 'off' | 'low' | 'medium' | 'high'): number {
   switch (mode) {
-    case 'off': return -1;
-    case 'low': return 2;
-    case 'medium': return 3;
-    case 'high': return 5;
+    case 'off':
+      return -1;
+    case 'low':
+      return 2;
+    case 'medium':
+      return 3;
+    case 'high':
+      return 5;
   }
 }
