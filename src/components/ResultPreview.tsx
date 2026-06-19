@@ -35,7 +35,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
-  const [isHovering, setIsHovering] = createSignal(false);
 
   // Skip preview for large blobs (>10MB)
   const skipPreview = createMemo(() => local.outputBlob.size > 10 * 1024 * 1024);
@@ -122,12 +121,8 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   return (
     <Panel class="p-4 bg-[#0f1011] border border-white/[0.08] rounded-lg">
-      {/* Preview area with hover download overlay (아이디어 7) */}
-      <div
-        class="relative flex justify-center bg-white/[0.02] rounded-lg overflow-hidden"
-        onMouseEnter={() => setIsHovering(true)}
-        onMouseLeave={() => setIsHovering(false)}
-      >
+      {/* Preview area */}
+      <div class="relative flex justify-center bg-white/[0.02] rounded-lg overflow-hidden">
         <Show when={!skipPreview()}>
           <div class={skeletonClass()}>
             <div class="w-full aspect-video bg-white/[0.05] animate-pulse rounded" />
@@ -152,7 +147,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             <span class="text-xs">
               Preview skipped for large file ({formatBytes(local.outputBlob.size)})
             </span>
-            <span class="text-xs mt-1">Click download to save</span>
           </div>
         </Show>
         <Show when={previewUrl() && !skipPreview()}>
@@ -182,36 +176,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               />
             </svg>
             <span class="text-xs">Preview failed to load</span>
-          </div>
-        </Show>
-
-        {/* Hover download overlay (아이디어 7) */}
-        <Show when={isHovering() && (previewUrl() || skipPreview())}>
-          <div class="absolute inset-0 flex items-center justify-center bg-black/40 transition-opacity duration-200 rounded-lg">
-            <a
-              href={previewUrl() ?? undefined}
-              download={downloadFileName()}
-              aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
-              class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"
-              data-testid="download-result-button"
-              role="button"
-            >
-              <svg
-                class="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                aria-hidden="true"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                />
-              </svg>
-              Download {outputExtension().toUpperCase()} · {formatBytes(local.outputBlob.size)}
-            </a>
           </div>
         </Show>
       </div>
@@ -256,6 +220,34 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           <span>{(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%</span>
         </div>
       </section>
+
+      {/* Download button — always visible below stats */}
+      <div class="mt-3 flex justify-center">
+        <a
+          href={previewUrl() ?? undefined}
+          download={downloadFileName()}
+          aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
+          class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"
+          data-testid="download-result-button"
+          role="button"
+        >
+          <svg
+            class="h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+            />
+          </svg>
+          Download {outputExtension().toUpperCase()} · {formatBytes(local.outputBlob.size)}
+        </a>
+      </div>
     </Panel>
   );
 };
