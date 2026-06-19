@@ -32,6 +32,10 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     const blob = local.outputBlob;
     setLoaded(false);
     setPreviewError(false);
+    // Revoke the previous URL immediately before creating a new one
+    // to avoid memory leaks when blob reference changes rapidly.
+    const prevUrl = previewUrl();
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
     const url = URL.createObjectURL(blob);
     setPreviewUrl(url);
     return () => URL.revokeObjectURL(url);

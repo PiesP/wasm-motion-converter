@@ -70,6 +70,36 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     return 0;
   });
 
+  // Memoize segment rendering to avoid re-evaluating all 4 segments on every tick
+  const segmentDivs = createMemo(() => {
+    const activeIdx = activePhaseIndex();
+    return PHASE_SEGMENTS.map((seg, idx) => {
+      const isPast = idx < activeIdx;
+      const isActive = idx === activeIdx;
+
+      let widthPercent: number;
+      if (isPast) {
+        widthPercent = 25;
+      } else if (isActive) {
+        const segmentStart = idx * 25;
+        const segmentEnd = (idx + 1) * 25;
+        const clampedProgress = Math.max(segmentStart, Math.min(segmentEnd, progressValue()));
+        widthPercent = ((clampedProgress - segmentStart) / (segmentEnd - segmentStart)) * 25;
+      } else {
+        widthPercent = 0;
+      }
+
+      return (
+        <div
+          class={`h-full transition-[width] duration-150 ease-out ${
+            widthPercent > 0 ? seg.colorClass : 'bg-transparent'
+          } ${idx === 0 ? 'rounded-l-full' : ''} ${idx === PHASE_SEGMENTS.length - 1 ? 'rounded-r-full' : ''}`}
+          style={{ width: `${widthPercent}%` }}
+        />
+      );
+    });
+  });
+
   const showFrameCounter = createMemo(
     () => local.currentFrame != null && local.totalFrames != null && local.totalFrames > 0
   );
@@ -148,31 +178,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         aria-label={local.status}
         data-progress={progressValue()}
       >
-        {PHASE_SEGMENTS.map((seg, idx) => {
-          const isPast = idx < activePhaseIndex();
-          const isActive = idx === activePhaseIndex();
-
-          let widthPercent: number;
-          if (isPast) {
-            widthPercent = 25;
-          } else if (isActive) {
-            const segmentStart = idx * 25;
-            const segmentEnd = (idx + 1) * 25;
-            const clampedProgress = Math.max(segmentStart, Math.min(segmentEnd, progressValue()));
-            widthPercent = ((clampedProgress - segmentStart) / (segmentEnd - segmentStart)) * 25;
-          } else {
-            widthPercent = 0;
-          }
-
-          return (
-            <div
-              class={`h-full transition-[width] duration-150 ease-out ${
-                widthPercent > 0 ? seg.colorClass : 'bg-transparent'
-              } ${idx === 0 ? 'rounded-l-full' : ''} ${idx === PHASE_SEGMENTS.length - 1 ? 'rounded-r-full' : ''}`}
-              style={{ width: `${widthPercent}%` }}
-            />
-          );
-        })}
+        {segmentDivs()}
       </div>
 
       {/* Phase labels */}

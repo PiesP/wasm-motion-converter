@@ -62,6 +62,7 @@ export class ConversionRuntimeController {
   private activeRunId: string | null = null;
   private activeConversionSeq = 0;
   private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = false;
 
   constructor(private readonly deps: ConversionRuntimeControllerDeps) {}
 
@@ -87,6 +88,7 @@ export class ConversionRuntimeController {
   }
 
   resetTimingState(): void {
+    this.disposed = true;
     setOutputFrames(undefined);
     this.deps.setConversionStartTime(0);
     this.deps.setEstimatedSecondsRemaining(null);
@@ -104,6 +106,7 @@ export class ConversionRuntimeController {
   }
 
   prepareForNewConversion(startTimeMs: number): void {
+    this.disposed = false;
     setConversionProgress(0);
     setConversionStatusMessage('');
     this.deps.setConversionStartTime(startTimeMs);
@@ -164,6 +167,7 @@ export class ConversionRuntimeController {
   startMemoryMonitoring(): void {
     this.stopMemoryMonitoring();
     this.memoryCheckTimer = setInterval(() => {
+      if (this.disposed) return;
       if (isMemoryCritical()) {
         this.deps.setMemoryWarning(true);
       }

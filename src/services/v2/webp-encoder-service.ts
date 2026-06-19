@@ -110,6 +110,11 @@ export async function encodeWebp(
 
         totalInputFrames = _frameNum;
 
+        // Yield to browser event loop every frame to prevent UI freezing.
+        // encodeRGB is async (WASM) but the subsequent extractVP8BitstreamFast
+        // and muxer.addFrame are synchronous CPU work that can accumulate.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
         // Encode this frame immediately via wasm-webp
         const webpResult = await encodeRGB(rgbData, w, h, quality);
         if (!webpResult || webpResult.length === 0) {

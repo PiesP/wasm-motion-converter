@@ -101,6 +101,10 @@ export async function handleFileSelected(
 
   if (isStale()) return;
 
+  // Show "analyzing" state before reading the file so the UI reflects
+  // that work is happening (important for large files).
+  setAppState('analyzing');
+
   // Read file once upfront, then share the buffer between metadata extraction and conversion
   const buffer = await file.arrayBuffer();
   if (isStale()) return;
@@ -115,8 +119,6 @@ export async function handleFileSelected(
   setVideoPreviewUrl(URL.createObjectURL(file));
 
   try {
-    setAppState('analyzing');
-
     const metadata = await extractMetadata(file, buffer);
     if (isStale()) return;
 
