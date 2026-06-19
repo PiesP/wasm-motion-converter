@@ -35,41 +35,35 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
-  const [blobVersion, setBlobVersion] = createSignal(0);
 
   // Skip preview for large blobs (>10MB) to prevent stack overflow from
   // synchronous URL.createObjectURL + render cascade. The download button
   // still works correctly.
   const skipPreview = createMemo(() => local.outputBlob.size > 10 * 1024 * 1024);
 
-  // Increment version when blob changes — triggers deferred URL creation
+  // Single createEffect: create blob URL synchronously, revoke previous on cleanup.
+  // This eliminates the timing gap between revoke and create that caused
+  // ERR_FILE_NOT_FOUND errors and "Preview failed to load".
   createEffect(() => {
     void local.outputBlob;
     setLoaded(false);
     setPreviewError(false);
-    const prevUrl = previewUrl();
-    if (prevUrl) URL.revokeObjectURL(prevUrl);
-    setPreviewUrl(null);
-    if (!skipPreview()) {
-      setBlobVersion((v) => v + 1);
-    }
-  });
 
-  // Create object URL in a deferred microtask to avoid stack overflow
-  // from synchronous render → effect → signal → render chains
-  createEffect(() => {
-    const version = blobVersion();
-    if (version === 0) return;
-    const blob = local.outputBlob;
-    // Use requestAnimationFrame to break the synchronous chain
-    let cancelled = false;
-    requestAnimationFrame(() => {
-      if (cancelled) return;
-      const url = URL.createObjectURL(blob);
-      setPreviewUrl(url);
-    });
+    if (skipPreview()) {
+      // Large blob: skip preview entirely, just revoke previous URL
+      const prevUrl = previewUrl();
+      if (prevUrl) URL.revokeObjectURL(prevUrl);
+      setPreviewUrl(null);
+      return;
+    }
+
+    // Small blob: create URL synchronously so <img> gets it in the same render
+    const url = URL.createObjectURL(local.outputBlob);
+    setPreviewUrl(url);
+
     onCleanup(() => {
-      cancelled = true;
+      const current = previewUrl();
+      if (current) URL.revokeObjectURL(current);
     });
   });
 
