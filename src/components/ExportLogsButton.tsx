@@ -10,7 +10,7 @@ type ExportLogsButtonProps = {
 };
 
 const DEFAULT_BUTTON_CLASS =
-  'p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900';
+  'p-2 rounded-lg border border-white/[0.08] bg-white/[0.02] text-[#d0d6e0] hover:bg-white/[0.05] transition-colors focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)]';
 const LOG_FILENAME_PREFIX = 'motion-converter-logs';
 
 const formatTimestampForFilename = (date: Date): string => {

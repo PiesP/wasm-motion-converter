@@ -8,7 +8,6 @@ import LicenseAttribution from '@components/LicenseAttribution';
 import ResultSection from '@components/ResultSection';
 import SettingsPanel from '@components/SettingsPanel';
 import StatusAlerts from '@components/StatusAlerts';
-import ThemeToggle from '@components/ThemeToggle';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@hooks/use-conversion-handlers';
 import { useNetworkState } from '@hooks/use-network-state';
@@ -264,7 +263,7 @@ const App: Component = () => {
     >
       <div class="flex min-h-screen flex-col bg-[#08090a] transition-colors" data-testid="app">
         <a
-          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-blue-600 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
+          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-[#5e6ad2] focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
           href="#main-content"
         >
           Skip to main content
@@ -281,7 +280,6 @@ const App: Component = () => {
 
             <div class="flex items-center gap-2">
               <ExportLogsButton />
-              <ThemeToggle />
             </div>
           </div>
         </header>
@@ -299,11 +297,7 @@ const App: Component = () => {
           <div class="mt-6 grid gap-6 sm:grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-8">
             <div class="space-y-6 order-2 lg:order-1">
               <Show when={memoryWarning()}>
-                <Suspense
-                  fallback={
-                    <div class="h-24 animate-pulse rounded-lg bg-yellow-50 dark:bg-yellow-900/20" />
-                  }
-                >
+                <Suspense fallback={<div class="h-24 animate-pulse rounded-lg bg-[#191a1b]" />}>
                   <MemoryWarning
                     isDuringConversion={appState() === 'converting'}
                     onCancel={handleCancelConversion}
@@ -335,11 +329,7 @@ const App: Component = () => {
 
               {/* Analyzing state: separate progress (not in dropzone) */}
               <Show when={appState() === 'analyzing'}>
-                <Suspense
-                  fallback={
-                    <div class="h-20 animate-pulse rounded-lg bg-blue-50 dark:bg-blue-900/20" />
-                  }
-                >
+                <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-[#191a1b]" />}>
                   <div class="space-y-2">
                     <ConversionProgress
                       progress={0}
@@ -348,7 +338,7 @@ const App: Component = () => {
                     />
                     <button
                       type="button"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900"
+                      class="w-full rounded-md border border-white/[0.08] bg-white/[0.02] px-4 py-2 text-sm font-medium text-[#d0d6e0] transition-all duration-150 hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] focus:ring-offset-2 focus:ring-offset-[#0f1011]"
                       onClick={handleCancelAnalysis}
                     >
                       Cancel
@@ -358,11 +348,7 @@ const App: Component = () => {
               </Show>
 
               <Show when={appState() === 'cancelling'}>
-                <Suspense
-                  fallback={
-                    <div class="h-20 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
-                  }
-                >
+                <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-[#191a1b]" />}>
                   <ConversionProgress progress={0} status="Cancelling..." />
                 </Suspense>
               </Show>

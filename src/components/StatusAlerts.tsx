@@ -28,9 +28,7 @@ const StatusAlerts: Component<StatusAlertsProps> = (props) => {
       </Show>
 
       <Show when={props.errorMessage}>
-        <Suspense
-          fallback={<div class="h-32 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />}
-        >
+        <Suspense fallback={<div class="h-32 animate-pulse rounded-lg bg-[#191a1b]" />}>
           <ErrorDisplay
             message={props.errorMessage!}
             suggestion={props.errorContext?.suggestion}

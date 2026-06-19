@@ -220,9 +220,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       <section class="mt-3" aria-label={ariaLabel()}>
         {/* Primary stats: size reduction + time — prominent */}
         <div class="flex items-center justify-center gap-3 text-sm mb-2">
-          <span class="text-[#8a8f98] font-mono">
-            {formatBytes(local.originalSize)}
-          </span>
+          <span class="text-[#8a8f98] font-mono">{formatBytes(local.originalSize)}</span>
           <svg
             class="h-4 w-4 text-[#5e6ad2]/40"
             fill="none"

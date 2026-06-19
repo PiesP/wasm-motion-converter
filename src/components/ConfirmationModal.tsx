@@ -7,9 +7,9 @@ import type { Component, JSX } from 'solid-js';
 import { createEffect, For, onCleanup, onMount, Show } from 'solid-js';
 
 const SEVERITY_COLORS: Record<ValidationWarning['severity'], string> = {
-  error: 'text-red-600 dark:text-red-400',
-  warning: 'text-yellow-600 dark:text-yellow-400',
-  info: 'text-blue-600 dark:text-blue-400',
+  error: 'text-red-400',
+  warning: 'text-yellow-400',
+  info: 'text-blue-400',
 };
 
 const SEVERITY_ICONS: Record<ValidationWarning['severity'], string> = {
@@ -120,10 +120,10 @@ const ConfirmationModal: Component = () => {
       >
         <div
           ref={modalRef}
-          class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6"
+          class="bg-[#0f1011] border border-white/[0.08] rounded-lg shadow-xl max-w-md w-full mx-4 p-6"
           tabIndex={-1}
         >
-          <h2 id="modal-title" class="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">
+          <h2 id="modal-title" class="text-xl font-semibold mb-4 text-[#f7f8f8]">
             {state().title ?? 'Conversion Warning'}
           </h2>
 
@@ -148,12 +148,10 @@ const ConfirmationModal: Component = () => {
                         {warning.message}
                       </p>
                       <Show when={warning.details}>
-                        <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                          {warning.details}
-                        </p>
+                        <p class="text-sm text-[#d0d6e0] mt-1">{warning.details}</p>
                       </Show>
                       <Show when={warning.suggestedAction}>
-                        <p class="text-sm text-gray-700 dark:text-gray-300 mt-2 font-medium">
+                        <p class="text-sm text-[#d0d6e0] mt-2 font-medium">
                           <span aria-hidden="true">💡</span> {warning.suggestedAction}
                         </p>
                       </Show>
@@ -169,7 +167,7 @@ const ConfirmationModal: Component = () => {
               ref={cancelButtonRef}
               type="button"
               onClick={cancelDialog}
-              class="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-gray-900 dark:text-gray-100"
+              class="px-4 py-2 rounded-lg bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
               aria-label="Cancel conversion and close modal"
               data-testid="modal-cancel-button"
             >
@@ -178,7 +176,7 @@ const ConfirmationModal: Component = () => {
             <button
               type="button"
               onClick={confirmDialog}
-              class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+              class="px-4 py-2 rounded-lg bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
               aria-label="Proceed with conversion despite warnings"
               data-testid="modal-confirm-button"
             >

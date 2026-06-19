@@ -54,7 +54,7 @@ const EnvironmentWarning: Component = () => {
 
   return (
     <div
-      class="bg-yellow-50 dark:bg-yellow-950 border-l-4 border-yellow-400 dark:border-yellow-500 p-4"
+      class="bg-[#191a1b] border-l-4 border-amber-500/60 p-4"
       role="alert"
       aria-live="polite"
       data-testid="environment-warning"
@@ -62,7 +62,7 @@ const EnvironmentWarning: Component = () => {
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
-            class="h-5 w-5 text-yellow-400 dark:text-yellow-500"
+            class="h-5 w-5 text-amber-500/60"
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden="true"
@@ -76,13 +76,11 @@ const EnvironmentWarning: Component = () => {
         </div>
         <div class="ml-3 flex-1">
           <div class="flex items-start justify-between">
-            <h3 class="text-sm font-medium text-yellow-950 dark:text-yellow-300">
-              Environment Not Supported
-            </h3>
+            <h3 class="text-sm font-medium text-[#f7f8f8]">Environment Not Supported</h3>
             <button
               type="button"
               onClick={handleToggleExpanded}
-              class="ml-3 text-sm text-yellow-700 dark:text-yellow-400 hover:text-yellow-900 dark:hover:text-yellow-200 underline focus:outline-none focus:ring-2 focus:ring-yellow-500 rounded"
+              class="ml-3 text-sm text-[#d0d6e0] hover:text-[#f7f8f8] underline focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] rounded"
               aria-expanded={isExpanded()}
               aria-label={isExpanded() ? 'Hide details' : 'Show details'}
             >
@@ -91,7 +89,7 @@ const EnvironmentWarning: Component = () => {
           </div>
 
           <Show when={isExpanded()}>
-            <div class="mt-2 text-sm text-yellow-700 dark:text-yellow-400">
+            <div class="mt-2 text-sm text-[#d0d6e0]">
               <Show
                 when={!hasSharedArrayBuffer()}
                 fallback={
@@ -126,7 +124,7 @@ const EnvironmentWarning: Component = () => {
               <button
                 type="button"
                 onClick={handleTestEnvironment}
-                class="inline-flex items-center px-3 py-1.5 border border-yellow-600 dark:border-yellow-500 text-sm font-medium rounded text-yellow-700 dark:text-yellow-300 bg-yellow-100 dark:bg-yellow-900 hover:bg-yellow-200 dark:hover:bg-yellow-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
+                class="inline-flex items-center px-3 py-1.5 border border-white/[0.08] text-sm font-medium rounded text-[#d0d6e0] bg-white/[0.02] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)]"
                 aria-label="Log environment capabilities to the DevTools console"
               >
                 Log to console

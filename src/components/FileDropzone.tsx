@@ -211,9 +211,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         when={isInteractive()}
         fallback={
           <Show when={!isBusy()}>
-            <div class="text-center text-sm text-[#8a8f98]">
-              {local.status || 'Processing...'}
-            </div>
+            <div class="text-center text-sm text-[#8a8f98]">{local.status || 'Processing...'}</div>
           </Show>
         }
       >
@@ -325,9 +323,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       </Show>
 
       <Show when={justSelected()}>
-        <div class="mt-2 text-center text-sm text-green-400">
-          File selected!
-        </div>
+        <div class="mt-2 text-center text-sm text-green-400">File selected!</div>
       </Show>
     </div>
   );

@@ -9,9 +9,9 @@ import Icon from './ui/Icon';
 const BASE_OPTION_CLASS =
   'relative flex items-center justify-center px-3 py-2 border rounded-lg cursor-pointer transition-colors text-sm';
 const SELECTED_OPTION_CLASS =
-  'bg-blue-50 dark:bg-blue-950 border-blue-500 dark:border-blue-400 text-blue-700 dark:text-blue-100 ring-2 ring-blue-500/30 dark:ring-blue-400/30';
+  'bg-[#5e6ad2]/20 border-[#5e6ad2] text-[#f7f8f8] ring-2 ring-[#5e6ad2]/30';
 const DEFAULT_OPTION_CLASS =
-  'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:border-gray-300 dark:hover:border-gray-500';
+  'bg-white/[0.02] border-white/[0.08] text-[#d0d6e0] hover:border-white/[0.15]';
 const DEFAULT_COLUMNS_MANY = 3;
 const DEFAULT_COLUMNS_FEW = 2;
 
@@ -112,7 +112,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
     >
       <legend
         id={legendId()}
-        class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2 flex items-center gap-1.5"
+        class="block text-xs font-medium text-[#8a8f98] mb-2 flex items-center gap-1.5"
       >
         <span>{local.title}</span>
         <Show when={local.tooltip}>
@@ -124,7 +124,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
               aria-label={`Information about ${local.title}`}
               onKeyDown={handleTooltipKeyDown}
             >
-              <Icon name="info" size="sm" class="text-gray-500 dark:text-gray-600 cursor-help" />
+              <Icon name="info" size="sm" class="text-[#62666d] cursor-help" />
             </button>
           </Tooltip>
         </Show>

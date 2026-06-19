@@ -35,12 +35,12 @@ const Tooltip: Component<TooltipProps> = (props) => {
       <Show when={isVisible()}>
         <div
           id={tooltipId}
-          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-white bg-gray-900 dark:bg-gray-700 rounded-lg shadow-lg ${TOOLTIP_OFFSET_TOP} left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none`}
+          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-[#f7f8f8] bg-[#191a1b] rounded-lg shadow-lg ${TOOLTIP_OFFSET_TOP} left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none`}
           role="tooltip"
         >
           {local.content}
           <div
-            class={`absolute ${TOOLTIP_ARROW_SIZE} bg-gray-900 dark:bg-gray-700 rotate-45 left-1/2 -translate-x-1/2 -bottom-1`}
+            class={`absolute ${TOOLTIP_ARROW_SIZE} bg-[#191a1b] rotate-45 left-1/2 -translate-x-1/2 -bottom-1`}
           />
         </div>
       </Show>
