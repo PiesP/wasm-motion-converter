@@ -1,42 +1,60 @@
 # Third-Party Licenses
 
+> Auto-generated on 2026-06-19 by `scripts/generate-licenses.mjs`.
+> Do not edit manually — run `pnpm build` to regenerate.
+
 This project uses the following open-source libraries.
 
 ## Runtime Dependencies
 
+### ffmpeg.wasm
+
+- **Version:** (CDN)
+- **License:** LGPL-2.1-or-later
+- **Repository:** https://github.com/ffmpegwasm/ffmpeg.wasm
+- **Purpose:** Fallback video decoding/encoding via WebAssembly (loaded via CDN at runtime)
+- **Note:** Dynamically loaded at runtime via CDN, not statically bundled.
+
 ### gifenc
+
 - **Version:** 1.0.3
 - **License:** MIT
 - **Repository:** https://github.com/mattdesl/gifenc
 - **Purpose:** GIF encoding (quantize, applyPalette, GIFEncoder)
 
-### wasm-webp
-- **Version:** 0.1.0
-- **License:** MIT
-- **Repository:** https://github.com/GoogleChromeLabs/wasm-webp
-- **Purpose:** WebP encoding via WebAssembly (encodeRGB)
-
 ### mediabunny
+
 - **Version:** 1.48.1
-- **License:** MPL-2.0 (Mozilla Public License 2.0)
-- **Repository:** https://github.com/w3reality/mediabunny
+- **License:** MPL-2.0
+- **Repository:** https://mediabunny.dev/
 - **Purpose:** Video demuxing (Input, BufferSource, EncodedPacketSink)
 
-### ffmpeg.wasm
-- **Version:** (loaded via CDN at runtime)
-- **License:** LGPL-2.1-or-later / GPL-2.0-or-later (FFmpeg), MIT (emscripten wrapper)
-- **Repository:** https://github.com/ffmpegwasm/ffmpeg.wasm
-- **Purpose:** Fallback video decoding/encoding via WebAssembly
+### solid-js
 
-### SolidJS
 - **Version:** 1.9.13
 - **License:** MIT
-- **Repository:** https://github.com/solidjs/solid
+- **Repository:** https://solidjs.com
 - **Purpose:** UI framework (reactive signals, components)
+
+### wasm-webp
+
+- **Version:** 0.1.0
+- **License:** MIT
+- **Repository:** https://github.com/nieyuyao/webp-wasm/blob/main/README.md
+- **Purpose:** WebP encoding via WebAssembly (encodeRGB)
 
 ## License Texts
 
-### MIT License (gifenc, wasm-webp, SolidJS)
+### LGPL-2.1-or-later (ffmpeg.wasm)
+
+LGPL-2.1-or-later. See https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html for full text.
+
+Key points:
+- ffmpeg.wasm is loaded dynamically at runtime via CDN
+- This project does not statically link or modify FFmpeg source
+- Users can replace the ffmpeg.wasm binary with a modified version
+
+### MIT (gifenc, solid-js, wasm-webp)
 
 ```
 MIT License
@@ -67,15 +85,7 @@ SOFTWARE.
 Mozilla Public License Version 2.0. See https://www.mozilla.org/en-US/MPL/2.0/ for full text.
 
 Key points:
-- Source code modifications to mediabunny itself must be made available under MPL-2.0
+- Source code modifications to the library itself must be made available under MPL-2.0
 - This project (wasm-motion-converter) remains under MIT
 - No patent retaliation clause applies
 
-### LGPL-2.1+ (ffmpeg.wasm / FFmpeg)
-
-GNU Lesser General Public License v2.1 or later. See https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html for full text.
-
-Key points:
-- ffmpeg.wasm is loaded dynamically at runtime via CDN
-- This project does not statically link or modify FFmpeg source
-- Users can replace the ffmpeg.wasm binary with a modified version

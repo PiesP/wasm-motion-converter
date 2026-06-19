@@ -1,0 +1,211 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 PiesP
+//
+// generate-licenses.mjs — Collect license info from all runtime dependencies
+// and generate public/LICENSES.md automatically.
+//
+// Usage: node scripts/generate-licenses.mjs
+// Called automatically during `pnpm build` via the `prebuild` script.
+
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(__dirname, '..');
+
+// Packages that are loaded at runtime via CDN, not bundled
+const CDN_PACKAGES = {
+  'ffmpeg.wasm': {
+    name: 'ffmpeg.wasm',
+    url: 'https://github.com/ffmpegwasm/ffmpeg.wasm',
+    license: 'LGPL-2.1-or-later',
+    licenseUrl: 'https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html',
+    purpose: 'Fallback video decoding/encoding via WebAssembly (loaded via CDN at runtime)',
+    note: 'Dynamically loaded at runtime via CDN, not statically bundled.',
+  },
+};
+
+function readPackageJson(pkgName) {
+  const pkgPath = join(ROOT, 'node_modules', pkgName, 'package.json');
+  if (!existsSync(pkgPath)) {
+    console.warn(`  ⚠ Package not found: ${pkgName} (run pnpm install)`);
+    return null;
+  }
+  return JSON.parse(readFileSync(pkgPath, 'utf-8'));
+}
+
+function extractLicense(pkgJson) {
+  // Handle both string and object license fields
+  if (typeof pkgJson.license === 'string') return pkgJson.license;
+  if (pkgJson.license?.type) return pkgJson.license.type;
+  // Check common alternatives
+  if (Array.isArray(pkgJson.licenses) && pkgJson.licenses.length > 0) {
+    return pkgJson.licenses.map((l) => l.type || l).join(', ');
+  }
+  return 'Unknown';
+}
+
+function extractUrl(pkgJson) {
+  if (pkgJson.homepage) return pkgJson.homepage;
+  if (pkgJson.repository?.url) {
+    return pkgJson.repository.url.replace(/^git\+/, '').replace(/\.git$/, '');
+  }
+  return null;
+}
+
+function collectRuntimeDeps() {
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
+  const deps = pkg.dependencies || {};
+
+  const entries = [];
+
+  for (const [name] of Object.entries(deps)) {
+    const pkgJson = readPackageJson(name);
+    if (!pkgJson) continue;
+
+    const version = pkgJson.version;
+    const license = extractLicense(pkgJson);
+    const url = extractUrl(pkgJson);
+
+    entries.push({
+      name,
+      version,
+      license,
+      url,
+      purpose: inferPurpose(name),
+    });
+  }
+
+  // Add CDN packages
+  for (const [, info] of Object.entries(CDN_PACKAGES)) {
+    entries.push({
+      name: info.name,
+      version: '(CDN)',
+      license: info.license,
+      url: info.url,
+      purpose: info.purpose,
+      note: info.note,
+    });
+  }
+
+  return entries.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function inferPurpose(name) {
+  const purposes = {
+    gifenc: 'GIF encoding (quantize, applyPalette, GIFEncoder)',
+    'wasm-webp': 'WebP encoding via WebAssembly (encodeRGB)',
+    mediabunny: 'Video demuxing (Input, BufferSource, EncodedPacketSink)',
+    'solid-js': 'UI framework (reactive signals, components)',
+  };
+  return purposes[name] || 'Runtime dependency';
+}
+
+function generateLicenseText(entries) {
+  const now = new Date().toISOString().slice(0, 10);
+
+  let md = `# Third-Party Licenses
+
+> Auto-generated on ${now} by \`scripts/generate-licenses.mjs\`.
+> Do not edit manually — run \`pnpm build\` to regenerate.
+
+This project uses the following open-source libraries.
+
+## Runtime Dependencies
+
+`;
+
+  for (const entry of entries) {
+    md += `### ${entry.name}\n\n`;
+    md += `- **Version:** ${entry.version}\n`;
+    md += `- **License:** ${entry.license}\n`;
+    if (entry.url) md += `- **Repository:** ${entry.url}\n`;
+    md += `- **Purpose:** ${entry.purpose}\n`;
+    if (entry.note) md += `- **Note:** ${entry.note}\n`;
+    md += '\n';
+  }
+
+  // Group by license type
+  const byLicense = {};
+  for (const entry of entries) {
+    const key = entry.license;
+    if (!byLicense[key]) byLicense[key] = [];
+    byLicense[key].push(entry);
+  }
+
+  md += '## License Texts\n\n';
+
+  for (const [license, items] of Object.entries(byLicense)) {
+    const names = items.map((i) => i.name).join(', ');
+    md += `### ${license} (${names})\n\n`;
+
+    if (license === 'MIT') {
+      md += `\`\`\`\n${getMitLicense()}\n\`\`\`\n\n`;
+    } else if (license === 'MPL-2.0') {
+      md +=
+        'Mozilla Public License Version 2.0. See https://www.mozilla.org/en-US/MPL/2.0/ for full text.\n\n';
+      md +=
+        'Key points:\n- Source code modifications to the library itself must be made available under MPL-2.0\n';
+      md +=
+        '- This project (wasm-motion-converter) remains under MIT\n- No patent retaliation clause applies\n\n';
+    } else if (license.startsWith('LGPL')) {
+      md += `${license}. See https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html for full text.\n\n`;
+      md += 'Key points:\n';
+      md += '- ffmpeg.wasm is loaded dynamically at runtime via CDN\n';
+      md += '- This project does not statically link or modify FFmpeg source\n';
+      md += '- Users can replace the ffmpeg.wasm binary with a modified version\n\n';
+    } else {
+      md += `See the package repository for full license text.\n\n`;
+    }
+  }
+
+  return md;
+}
+
+function getMitLicense() {
+  return `MIT License
+
+Copyright (c) respective authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.`;
+}
+
+// ── Main ──────────────────────────────────────────────────────────
+
+console.log('📋 Collecting license information...\n');
+
+const entries = collectRuntimeDeps();
+
+if (entries.length === 0) {
+  console.error('❌ No runtime dependencies found. Run `pnpm install` first.');
+  process.exit(1);
+}
+
+console.log(`  Found ${entries.length} runtime dependencies:`);
+for (const entry of entries) {
+  console.log(`    • ${entry.name}@${entry.version} — ${entry.license}`);
+}
+
+const licenseMd = generateLicenseText(entries);
+const outputPath = join(ROOT, 'public', 'LICENSES.md');
+writeFileSync(outputPath, licenseMd, 'utf-8');
+
+console.log(`\n✅ Generated ${outputPath}`);
