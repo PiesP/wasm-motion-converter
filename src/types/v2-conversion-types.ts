@@ -7,7 +7,7 @@
  * Type definitions for the WebCodecs-based conversion pipeline.
  * Reuses canonical format/quality types from conversion-types.ts.
  */
-import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
+import type { ConversionFormat, ConversionQuality, SmartFrameSkipMode } from '@t/conversion-types';
 
 export type { ConversionFormat, ConversionQuality };
 
@@ -23,8 +23,10 @@ export interface ConversionRequest {
   trimStart: number;
   trimEnd: number;
   maxMemoryMB: number;
-  /** Force frame decimation (overrides auto-decimation for GIF) */
+  /** Force frame decimation (overrides auto-decimation) */
   forceDecimation?: number;
+  /** Smart frame skip mode — similarity-based frame deduplication */
+  smartFrameSkip?: SmartFrameSkipMode;
 }
 
 export type ConversionPhase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';

@@ -360,6 +360,9 @@ const App: Component = () => {
                 onTrimChange={(start, end) =>
                   setConversionSettings({ ...conversionSettings(), trimStart: start, trimEnd: end })
                 }
+                onSmartFrameSkipChange={(mode) =>
+                  setConversionSettings({ ...conversionSettings(), smartFrameSkip: mode })
+                }
                 settings={conversionSettings()}
               />
             </div>

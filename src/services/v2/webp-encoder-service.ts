@@ -82,6 +82,7 @@ export async function encodeWebp(
       height: h,
       frameDecimation,
       hwAccel: 'prefer-hardware',
+      smartFrameSkip: opts.smartFrameSkip,
       onFrameDecoded: (_frameNum, total) => {
         totalInputFrames = total;
         if (opts.onFrameDecoded && (encodeIdx % 10 === 0 || encodeIdx === 0)) {

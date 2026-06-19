@@ -8,7 +8,7 @@
  * WebCodecs VideoDecoder requires main thread access in most browsers.
  */
 
-import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
+import type { ConversionFormat, ConversionQuality, SmartFrameSkipMode } from '@t/conversion-types';
 import type { ProgressCallback } from '@t/v2-conversion-types';
 import { logger } from '@utils/logger';
 import { runConversionPipeline } from '@/services/v2/conversion-pipeline';
@@ -19,8 +19,10 @@ export interface V2ConversionOptions {
   scale: number;
   trimStart: number;
   trimEnd: number;
-  /** Force frame decimation (overrides auto-decimation for GIF) */
+  /** Force frame decimation (overrides auto-decimation) */
   forceDecimation?: number;
+  /** Smart frame skip mode — similarity-based frame deduplication */
+  smartFrameSkip?: SmartFrameSkipMode;
 }
 
 class ConversionCancelledError extends Error {
@@ -68,6 +70,7 @@ export async function performConversionV2(
       trimEnd: options.trimEnd,
       maxMemoryMB: 1500,
       forceDecimation: options.forceDecimation,
+      smartFrameSkip: options.smartFrameSkip,
     },
     onProgress,
     signal

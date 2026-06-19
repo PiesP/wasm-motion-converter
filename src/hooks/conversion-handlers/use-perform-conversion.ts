@@ -165,6 +165,7 @@ async function performConversion(
       trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
       trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
       forceDecimation: forcedDecimation,
+      smartFrameSkip: settings.smartFrameSkip,
     };
 
     const abortController = new AbortController();

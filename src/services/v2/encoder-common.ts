@@ -10,7 +10,7 @@
  * - Progress callback types
  */
 
-import type { ConversionQuality } from '@t/conversion-types';
+import type { ConversionQuality, SmartFrameSkipMode } from '@t/conversion-types';
 
 /** Base options shared by all format encoders */
 export interface BaseEncoderOptions {
@@ -24,6 +24,8 @@ export interface BaseEncoderOptions {
   onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
   /** Callback fired after each frame is encoded */
   onFrameEncoded?: (frameIndex: number, totalFrames: number) => void;
+  /** Smart frame skip mode — similarity-based frame deduplication */
+  smartFrameSkip?: SmartFrameSkipMode;
 }
 
 /** Calculate auto-decimation ratio based on source/target FPS and scale */

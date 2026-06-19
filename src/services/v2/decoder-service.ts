@@ -17,7 +17,9 @@
 
 import { logger } from '@utils/logger';
 import type { DemuxResult } from './demuxer-service';
-import { copyFrameToRGB, getFrameDurationMs } from './frame-utils';
+import { copyFrameToRGB, getFrameDurationMs, computeDHash, hammingDistance, getSkipThreshold } from './frame-utils';
+import type { SmartFrameSkipMode } from '@t/conversion-types';
+import { globalBufferPool } from './buffer-pool';
 
 export interface DecodeOptions {
   width: number;
@@ -45,6 +47,13 @@ export interface DecodeOptions {
    * @default 'stream' when onFrameAvailable is provided, 'batch' otherwise
    */
   mode?: 'stream' | 'batch';
+  /**
+   * Smart frame skip mode — enables similarity-based frame deduplication.
+   * When enabled, consecutive similar frames are skipped and their durations
+   * are accumulated into the next kept frame.
+   * @default 'off'
+   */
+  smartFrameSkip?: SmartFrameSkipMode;
 }
 
 export interface DecodedFrame {
@@ -87,6 +96,7 @@ export async function decodeFrames(
     onFrameDecoded,
     onFrameAvailable,
     mode,
+    smartFrameSkip = 'off',
   } = opts;
 
   // Determine streaming mode: explicit flag takes precedence, otherwise infer from callback
@@ -98,6 +108,16 @@ export async function decodeFrames(
   let inputFrameCount = 0;
   let accumulatedDuration = 0;
   let skippedByDecimation = 0;
+
+  // ── Smart frame skip state ──
+  const skipThreshold = getSkipThreshold(smartFrameSkip);
+  let prevDHash: bigint | null = null;
+  let consecutiveSkipMs = 0; // accumulated duration of skipped frames
+  let smartSkippedCount = 0;
+  // Noise floor estimation: collect frame diff stdDev from first N frames
+  const noiseFloorSamples: number[] = [];
+  const NOISE_SAMPLE_COUNT = 30;
+  let noiseFloor = 0; // will be set after sampling phase
 
   // Check codec support (cached per codec+hw combo)
   const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
@@ -130,6 +150,40 @@ export async function decodeFrames(
       const conversion = (async () => {
         try {
           const rgbData = await copyFrameToRGB(frame, width, height);
+
+          // ── Smart frame skip: similarity-based deduplication ──
+          if (streaming && skipThreshold >= 0) {
+            const dHash = computeDHash(rgbData, width, height);
+
+            if (prevDHash !== null) {
+              const dist = hammingDistance(prevDHash, dHash);
+
+              // Noise floor estimation from first N frames
+              if (noiseFloorSamples.length < NOISE_SAMPLE_COUNT) {
+                noiseFloorSamples.push(dist);
+                if (noiseFloorSamples.length === NOISE_SAMPLE_COUNT) {
+                  // Use median as noise floor, scaled by factor k=3.5
+                  const sorted = [...noiseFloorSamples].sort((a, b) => a - b);
+                  const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+                  noiseFloor = median * 3.5;
+                }
+              }
+
+              // Skip if similar AND consecutive skip time < 100ms
+              const effectiveThreshold = Math.max(skipThreshold, Math.floor(noiseFloor));
+              if (dist <= effectiveThreshold && consecutiveSkipMs < 100) {
+                // Skip this frame: accumulate duration, release buffer, return
+                consecutiveSkipMs += totalDuration;
+                smartSkippedCount++;
+                globalBufferPool.release(rgbData);
+                return;
+              }
+            }
+
+            prevDHash = dHash;
+            // Reset consecutive skip counter on kept frame
+            consecutiveSkipMs = 0;
+          }
 
           if (streaming) {
             // Streaming mode: pass frame to callback for immediate processing
@@ -229,6 +283,9 @@ export async function decodeFrames(
     totalInputFrames: inputFrameCount,
     outputFrames: streaming ? inputFrameCount - skippedByDecimation : rgbFrames.length,
     skippedByDecimation,
+    smartSkipped: smartSkippedCount,
+    smartSkipMode: smartFrameSkip,
+    noiseFloor: Math.round(noiseFloor * 100) / 100,
     resolution: `${width}×${height}`,
     streaming,
   });

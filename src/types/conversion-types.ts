@@ -59,6 +59,24 @@ export type ConversionScale = 0.5 | 0.75 | 1.0;
 export const CONVERSION_SCALES: readonly ConversionScale[] = [0.5, 0.75, 1.0] as const;
 
 /**
+ * Smart frame skip mode — controls similarity-based frame deduplication.
+ *
+ * - `off`: No similarity-based skipping (fixed FPS decimation only)
+ * - `low`: Conservative — only skip near-identical frames (hamming ≤ 2)
+ * - `medium`: Balanced — skip noise-level changes (hamming ≤ 3, recommended)
+ * - `high`: Aggressive — skip slow changes too (hamming ≤ 5)
+ *
+ * When enabled, consecutive similar frames are merged and their durations
+ * are accumulated into the next kept frame, preserving timing accuracy.
+ */
+export type SmartFrameSkipMode = 'off' | 'low' | 'medium' | 'high';
+
+/** Runtime-available list of all SmartFrameSkipMode values */
+export const SMART_FRAME_SKIP_MODES: readonly SmartFrameSkipMode[] = [
+  'off', 'low', 'medium', 'high',
+] as const;
+
+/**
  * User-selected conversion settings
  *
  * Complete configuration for video conversion including output format,
@@ -83,6 +101,8 @@ export interface ConversionSettings {
   trimStart: number;
   /** Trim end in seconds (0 = end of video) */
   trimEnd: number;
+  /** Smart frame skip mode — similarity-based frame deduplication */
+  smartFrameSkip: SmartFrameSkipMode;
 }
 
 /**

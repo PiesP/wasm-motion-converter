@@ -238,6 +238,7 @@ export async function encodeGif(
       height: h,
       frameDecimation,
       hwAccel: 'prefer-hardware',
+      smartFrameSkip: opts.smartFrameSkip,
       onFrameDecoded: (_frameNum, total) => {
         totalInputFrames = total;
         // Report decoding progress — throttle to every 10 frames

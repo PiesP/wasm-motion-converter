@@ -4,6 +4,7 @@
 import FormatSelector from '@components/FormatSelector';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
+import SmartFrameSkipSelector from '@components/SmartFrameSkipSelector';
 import TrimSelector from '@components/TrimSelector';
 import Button from '@components/ui/Button';
 import Panel from '@components/ui/Panel';
@@ -23,6 +24,7 @@ interface SettingsPanelProps {
   onQualityChange: (quality: ConversionSettings['quality']) => void;
   onScaleChange: (scale: ConversionSettings['scale']) => void;
   onTrimChange: (start: number, end: number) => void;
+  onSmartFrameSkipChange: (mode: ConversionSettings['smartFrameSkip']) => void;
 }
 
 const SettingsPanel: Component<SettingsPanelProps> = (props) => {
@@ -86,6 +88,12 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         onChange={props.onQualityChange}
         tooltip="Higher quality = larger file size and slower conversion"
         value={props.settings.quality}
+      />
+
+      <SmartFrameSkipSelector
+        disabled={props.isConversionActive}
+        onChange={props.onSmartFrameSkipChange}
+        value={props.settings.smartFrameSkip}
       />
 
       <ScaleSelector

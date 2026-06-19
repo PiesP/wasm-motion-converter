@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { ConversionSettings } from '@t/conversion-types';
-import { CONVERSION_FORMATS, CONVERSION_QUALITIES, CONVERSION_SCALES } from '@t/conversion-types';
+import { CONVERSION_FORMATS, CONVERSION_QUALITIES, CONVERSION_SCALES, SMART_FRAME_SKIP_MODES } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { createSignal } from 'solid-js';
 
@@ -12,6 +12,7 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   scale: 1.0,
   trimStart: 0,
   trimEnd: 0,
+  smartFrameSkip: 'off',
 };
 
 const SETTINGS_STORAGE_KEY = 'conversion-settings';
@@ -34,7 +35,9 @@ const getInitialConversionSettings = (): ConversionSettings => {
         parsed.quality &&
         isInTuple(parsed.quality, CONVERSION_QUALITIES) &&
         typeof parsed.scale === 'number' &&
-        isInTuple(parsed.scale, CONVERSION_SCALES)
+        isInTuple(parsed.scale, CONVERSION_SCALES) &&
+        parsed.smartFrameSkip &&
+        isInTuple(parsed.smartFrameSkip, SMART_FRAME_SKIP_MODES)
       ) {
         const trimStart =
           typeof parsed.trimStart === 'number' && parsed.trimStart >= 0 ? parsed.trimStart : 0;
@@ -47,6 +50,7 @@ const getInitialConversionSettings = (): ConversionSettings => {
           scale: parsed.scale,
           trimStart,
           trimEnd,
+          smartFrameSkip: parsed.smartFrameSkip,
         };
       }
     }
@@ -67,6 +71,7 @@ export const saveConversionSettings = (settings: ConversionSettings): void => {
         scale: settings.scale,
         trimStart: settings.trimStart,
         trimEnd: settings.trimEnd,
+        smartFrameSkip: settings.smartFrameSkip,
       })
     );
   } catch (error) {
