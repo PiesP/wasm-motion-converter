@@ -17,6 +17,7 @@
 
 import { render } from 'solid-js/web';
 import App from './App';
+import { registerServiceWorker } from './sw-register';
 import './index.css';
 
 /**
@@ -36,6 +37,8 @@ if (!root) {
 }
 
 render(() => <App />, root);
+
+registerServiceWorker();
 
 // Terminate worker pool on page unload to prevent dangling workers
 globalThis.addEventListener('pagehide', () => {

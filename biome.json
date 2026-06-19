@@ -10,8 +10,7 @@
     "includes": [
       "src/**",
       "scripts/**",
-      "public/service-worker.ts",
-      "public/sw-register.ts",
+      "public/service-worker.js",
       "vite.config.ts",
       "tailwind.config.ts",
       "postcss.config.ts",
