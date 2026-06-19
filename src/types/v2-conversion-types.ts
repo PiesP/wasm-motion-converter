@@ -39,5 +39,6 @@ export interface ConversionProgress {
   memoryMB: number;
   currentFrame?: number;
   totalFrames?: number;
+  outputFrames?: number;
   elapsedMs?: number;
 }

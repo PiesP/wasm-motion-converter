@@ -11,6 +11,7 @@ const DEFAULT_STATUS = 'Processing';
 
 interface FileDropzoneProps {
   onFileSelected: (file: File) => void;
+  onCancel?: () => void;
   disabled?: boolean;
   progress?: number;
   status?: string;
@@ -21,11 +22,13 @@ interface FileDropzoneProps {
   subPhaseLabel?: string;
   previewUrl?: string | null;
   phase?: 'demuxing' | 'decoding' | 'encoding' | 'assembling';
+  outputFrames?: number;
 }
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [local] = splitProps(props, [
     'onFileSelected',
+    'onCancel',
     'disabled',
     'progress',
     'status',
@@ -36,6 +39,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     'subPhaseLabel',
     'previewUrl',
     'phase',
+    'outputFrames',
   ]);
   const [isDragging, setIsDragging] = createSignal(false);
   const [justSelected, setJustSelected] = createSignal(false);
@@ -129,7 +133,17 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 estimatedSecondsRemaining={local.estimatedSecondsRemaining}
                 layout="vertical"
                 phase={local.phase}
+                outputFrames={local.outputFrames}
               />
+              <Show when={local.onCancel}>
+                <button
+                  type="button"
+                  onClick={local.onCancel}
+                  class="mt-2 w-full rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:focus:ring-blue-400 dark:focus:ring-offset-gray-900"
+                >
+                  Cancel
+                </button>
+              </Show>
             </div>
           </div>
         }

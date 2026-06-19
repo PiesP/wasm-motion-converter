@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { setConversionProgress, setConversionStatusMessage } from '@stores/conversion-store';
+import {
+  setConversionProgress,
+  setConversionStatusMessage,
+  setOutputFrames,
+} from '@stores/conversion-store';
 import type { ConversionPhase } from '@t/v2-conversion-types';
 import { ETACalculator } from '@utils/eta-calculator';
 import { formatDuration } from '@utils/format-utils';
@@ -83,6 +87,7 @@ export class ConversionRuntimeController {
   }
 
   resetTimingState(): void {
+    setOutputFrames(undefined);
     this.deps.setConversionStartTime(0);
     this.deps.setEstimatedSecondsRemaining(null);
     this.deps.setMemoryWarning(false);
@@ -202,12 +207,12 @@ export class ConversionRuntimeController {
     }
   }
 
-  updateProgress(progress: number, phase?: string): void {
+  updateProgress(progress: number, phase?: string, outputFrames?: number): void {
     if (!Number.isFinite(progress)) {
       return;
     }
 
-    const rounded = Math.round(Math.min(100, Math.max(0, progress)));
+    const rounded = Math.min(100, Math.max(0, progress));
     const monotonic = Math.max(rounded, this.lastProgressValue);
 
     if (monotonic === this.lastProgressValue) {
@@ -227,6 +232,9 @@ export class ConversionRuntimeController {
     const now = performance.now();
     batch(() => {
       setConversionProgress(monotonic);
+      if (outputFrames != null) {
+        setOutputFrames(outputFrames);
+      }
       this.etaCalculator.addSample(monotonic);
 
       if (now - this.lastEtaUpdate >= ETA_UPDATE_INTERVAL) {

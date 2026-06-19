@@ -82,7 +82,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                       aria-label="Close memory warning and try again"
                       data-testid="memory-warning-dismiss"
                     >
-                      Close Tabs & Try Again
+                      Dismiss
                     </button>
                   </Show>
                   <Show when={local.onReduceSettings}>

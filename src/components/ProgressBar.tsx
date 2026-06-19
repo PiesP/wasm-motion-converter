@@ -14,10 +14,10 @@ import {
 } from 'solid-js';
 
 const PHASE_SEGMENTS = [
-  { label: 'Prep', colorClass: 'bg-amber-500', phase: 'demuxing' },
-  { label: 'Decode', colorClass: 'bg-purple-500', phase: 'decoding' },
-  { label: 'Encode', colorClass: 'bg-blue-500', phase: 'encoding' },
-  { label: 'Final', colorClass: 'bg-green-500', phase: 'assembling' },
+  { label: 'Demux', colorClass: 'bg-amber-500 dark:bg-amber-400', phase: 'demuxing' },
+  { label: 'Decode', colorClass: 'bg-purple-500 dark:bg-purple-400', phase: 'decoding' },
+  { label: 'Encode', colorClass: 'bg-blue-500 dark:bg-blue-400', phase: 'encoding' },
+  { label: 'Final', colorClass: 'bg-green-500 dark:bg-green-400', phase: 'assembling' },
 ] as const;
 
 interface ProgressBarProps {
@@ -33,6 +33,7 @@ interface ProgressBarProps {
   subPhaseLabel?: string;
   currentFrame?: number;
   totalFrames?: number;
+  outputFrames?: number;
   memoryUsage?: string | null;
   phase?: ConversionPhase;
 }
@@ -51,6 +52,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     'subPhaseLabel',
     'currentFrame',
     'totalFrames',
+    'outputFrames',
     'memoryUsage',
     'phase',
   ]);
@@ -79,6 +81,15 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
   const showFrameCounter = createMemo(
     () => local.currentFrame != null && local.totalFrames != null && local.totalFrames > 0
   );
+
+  const frameCounterLabel = createMemo(() => {
+    if (!showFrameCounter()) return '';
+    const out = local.outputFrames;
+    if (out != null && out !== local.totalFrames) {
+      return `Frame ${local.currentFrame} / ${local.totalFrames} (${out} output)`;
+    }
+    return `Frame ${local.currentFrame} / ${local.totalFrames}`;
+  });
 
   createEffect(() => {
     if (!local.showElapsedTime || !local.startTime) return;
@@ -183,7 +194,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       <div class="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 min-h-[1.25rem]">
         <span class="truncate italic">
           {showFrameCounter()
-            ? `Frame ${local.currentFrame} / ${local.totalFrames}`
+            ? frameCounterLabel()
             : (local.subPhaseLabel ?? local.statusMessage ?? '')}
         </span>
         <div class="flex items-center gap-1.5 shrink-0">

@@ -27,6 +27,7 @@ import {
   errorContext,
   errorMessage,
   inputFile,
+  outputFrames,
   setEnvironmentSupported,
   videoMetadata,
   videoPreviewUrl,
@@ -155,6 +156,7 @@ const App: Component = () => {
         estimatedSecondsRemaining: estimatedSecondsRemaining(),
         phase: conversionPhase(),
         memoryUsage: getMemoryUsageString(),
+        outputFrames: outputFrames(),
       };
     }
     if (state === 'analyzing') {
@@ -290,6 +292,7 @@ const App: Component = () => {
               <FileDropzone
                 disabled={isBusy()}
                 estimatedSecondsRemaining={dropzoneStatus()?.estimatedSecondsRemaining}
+                onCancel={handleCancelConversion}
                 onFileSelected={handleFileSelected}
                 previewUrl={videoPreviewUrl()}
                 progress={dropzoneStatus()?.progress}

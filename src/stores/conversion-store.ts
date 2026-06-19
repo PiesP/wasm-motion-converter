@@ -37,6 +37,7 @@ export const [errorContext, setErrorContext] = createSignal<ErrorContext | null>
 
 export const [conversionProgress, setConversionProgress] = createSignal<number>(0);
 export const [conversionStatusMessage, setConversionStatusMessage] = createSignal<string>('');
+export const [outputFrames, setOutputFrames] = createSignal<number | undefined>(undefined);
 
 // ---------------------------------------------------------------------------
 // Results

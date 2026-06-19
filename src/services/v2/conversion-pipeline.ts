@@ -169,6 +169,9 @@ export async function runConversionPipeline(
   const sourceFps =
     demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
 
+  // Track decimation for output frame count display
+  let decimationRatio = 1;
+
   if (request.format === 'gif') {
     const gifDecimation = calcAutoDecimation(
       sourceFps,
@@ -176,6 +179,7 @@ export async function runConversionPipeline(
       request.scale,
       request.forceDecimation
     );
+    decimationRatio = gifDecimation;
 
     logger.info('conversion', '  ├─ Branch: GIF encoder (streaming decode→encode)', {
       codec: demuxResult.config.codec,
@@ -220,6 +224,7 @@ export async function runConversionPipeline(
       request.scale,
       request.forceDecimation
     );
+    decimationRatio = webpDecimation;
 
     logger.info('conversion', '  ├─ Branch: WebP encoder (streaming encodeRGB + mux)', {
       codec: demuxResult.config.codec,
@@ -278,6 +283,7 @@ export async function runConversionPipeline(
 
   const memMB = getMemoryUsageMB() ?? 0;
   const totalElapsedMs = Math.round(performance.now() - pipelineStart);
+  const outputFrames = Math.max(1, Math.round(demuxResult.totalFrames / decimationRatio));
   onProgress({
     phase: 'assembling',
     progress: 95,
@@ -286,6 +292,7 @@ export async function runConversionPipeline(
     memoryMB: memMB,
     currentFrame: demuxResult.totalFrames,
     totalFrames: demuxResult.totalFrames,
+    outputFrames,
     elapsedMs: totalElapsedMs,
   });
   onProgress({
@@ -296,6 +303,7 @@ export async function runConversionPipeline(
     memoryMB: memMB,
     currentFrame: demuxResult.totalFrames,
     totalFrames: demuxResult.totalFrames,
+    outputFrames,
     elapsedMs: totalElapsedMs,
   });
 

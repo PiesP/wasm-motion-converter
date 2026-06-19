@@ -18,7 +18,9 @@ const ResultSection: Component<ResultSectionProps> = (props) => {
         <For each={props.results}>
           {(result) => (
             <Suspense
-              fallback={<div class="h-96 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />}
+              fallback={
+                <div class="aspect-video animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
+              }
             >
               <ResultPreview
                 conversionDurationSeconds={result.conversionDurationSeconds}

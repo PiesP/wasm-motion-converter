@@ -177,7 +177,7 @@ async function performConversion(
       v2Options,
       (v2Progress) => {
         if (!isActive()) return;
-        runtime.updateProgress(v2Progress.progress, v2Progress.phase);
+        runtime.updateProgress(v2Progress.progress, v2Progress.phase, v2Progress.outputFrames);
 
         // User-friendly phase messages
         const phaseLabel =
@@ -365,6 +365,8 @@ export function handleReset(runtime: ConversionRuntimeController): void {
 export function handleRetry(runtime: ConversionRuntimeController): void {
   const file = inputFile();
   if (file && appState() === 'error') {
+    // Clear previous results immediately to avoid flash of stale content
+    setConversionResults([]);
     void handleFileSelected(file, runtime).catch((error) =>
       logger.error('conversion', 'Retry file selection failed', { error: getErrorMessage(error) })
     );

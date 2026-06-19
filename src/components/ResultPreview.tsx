@@ -104,7 +104,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           data-testid="download-result-button"
           role="button"
         >
-          Download {outputExtension().toUpperCase()}
+          Download {outputExtension().toUpperCase()} · {formatBytes(local.outputBlob.size)}
         </a>
       </div>
 

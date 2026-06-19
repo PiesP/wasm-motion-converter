@@ -48,6 +48,10 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
           </dd>
         </div>
         <div class="flex justify-between gap-3">
+          <dt class="text-gray-500 dark:text-gray-400 shrink-0">FPS</dt>
+          <dd class="text-gray-900 dark:text-white tabular-nums">{local.metadata.framerate}</dd>
+        </div>
+        <div class="flex justify-between gap-3">
           <dt class="text-gray-500 dark:text-gray-400 shrink-0">Codec</dt>
           <dd class="text-gray-900 dark:text-white tabular-nums">{codecDisplay()}</dd>
         </div>
