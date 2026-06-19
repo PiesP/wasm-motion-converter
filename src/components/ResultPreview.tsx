@@ -4,7 +4,15 @@
 import Panel from '@components/ui/Panel';
 import type { ConversionSettings } from '@t/conversion-types';
 import { formatBytes, formatDuration } from '@utils/format-utils';
-import { type Component, createEffect, createMemo, createSignal, Show, splitProps } from 'solid-js';
+import {
+  type Component,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  Show,
+  splitProps,
+} from 'solid-js';
 
 const SCALE_PERCENTAGE_MULTIPLIER = 100;
 
@@ -27,18 +35,39 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
+  const [blobVersion, setBlobVersion] = createSignal(0);
 
+  // Increment version when blob changes — triggers deferred URL creation
   createEffect(() => {
-    const blob = local.outputBlob;
+    // Track blob dependency without using the value directly
+    void local.outputBlob;
     setLoaded(false);
     setPreviewError(false);
-    // Revoke the previous URL immediately before creating a new one
-    // to avoid memory leaks when blob reference changes rapidly.
+    // Revoke previous URL
     const prevUrl = previewUrl();
     if (prevUrl) URL.revokeObjectURL(prevUrl);
-    const url = URL.createObjectURL(blob);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
+    setPreviewUrl(null);
+    // Defer URL creation to break synchronous cascade
+    const currentVersion = blobVersion() + 1;
+    setBlobVersion(currentVersion);
+  });
+
+  // Create object URL in a deferred microtask to avoid stack overflow
+  // from synchronous render → effect → signal → render chains
+  createEffect(() => {
+    const version = blobVersion();
+    if (version === 0) return;
+    const blob = local.outputBlob;
+    // Use requestAnimationFrame to break the synchronous chain
+    let cancelled = false;
+    requestAnimationFrame(() => {
+      if (cancelled) return;
+      const url = URL.createObjectURL(blob);
+      setPreviewUrl(url);
+    });
+    onCleanup(() => {
+      cancelled = true;
+    });
   });
 
   const conversionTimeLabel = createMemo(() => {
