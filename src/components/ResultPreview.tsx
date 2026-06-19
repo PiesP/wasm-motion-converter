@@ -35,44 +35,23 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
-  // Separate download URL — always available regardless of preview skip
-  const [downloadUrl, setDownloadUrl] = createSignal<string | null>(null);
 
-  // Skip preview for large blobs (>10MB)
-  const skipPreview = createMemo(() => local.outputBlob.size > 10 * 1024 * 1024);
-
-  // Preview URL effect — only for small blobs
+  // Single createEffect: preview + download URL from the same blob URL.
+  // Always shows preview regardless of file size — memory is protected
+  // by dynamic decimation in the encoder, not by hiding the preview.
   createEffect(() => {
     void local.outputBlob;
     setLoaded(false);
     setPreviewError(false);
 
-    if (skipPreview()) {
-      const prevUrl = previewUrl();
-      if (prevUrl) URL.revokeObjectURL(prevUrl);
-      setPreviewUrl(null);
-      return;
-    }
+    const prevUrl = previewUrl();
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
 
     const url = URL.createObjectURL(local.outputBlob);
     setPreviewUrl(url);
 
     onCleanup(() => {
       const current = previewUrl();
-      if (current) URL.revokeObjectURL(current);
-    });
-  });
-
-  // Download URL effect — always created, independent of preview
-  createEffect(() => {
-    void local.outputBlob;
-    const prevUrl = downloadUrl();
-    if (prevUrl) URL.revokeObjectURL(prevUrl);
-    const url = URL.createObjectURL(local.outputBlob);
-    setDownloadUrl(url);
-
-    onCleanup(() => {
-      const current = downloadUrl();
       if (current) URL.revokeObjectURL(current);
     });
   });
@@ -140,43 +119,22 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     <Panel class="p-4 bg-[#0f1011] border border-white/[0.08] rounded-lg">
       {/* Preview area */}
       <div class="relative flex justify-center bg-white/[0.02] rounded-lg overflow-hidden">
-        <Show when={!skipPreview()}>
-          <div class={skeletonClass()}>
-            <div class="w-full aspect-video bg-white/[0.05] animate-pulse rounded" />
-          </div>
-        </Show>
-        <Show when={skipPreview()}>
-          <div class="flex flex-col items-center justify-center p-8 text-[#8a8f98] w-full">
-            <svg
-              class="h-10 w-10 mb-2"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.5"
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-              />
-            </svg>
-            <span class="text-xs">
-              Preview skipped for large file ({formatBytes(local.outputBlob.size)})
-            </span>
-          </div>
-        </Show>
-        <Show when={previewUrl() && !skipPreview()}>
+        {/* Skeleton shown while loading */}
+        <div class={skeletonClass()}>
+          <div class="w-full aspect-video bg-white/[0.05] animate-pulse rounded" />
+        </div>
+        <Show when={previewUrl()}>
           <img
             src={previewUrl()!}
             alt="Converted animation"
             class={`w-full h-auto rounded transition-opacity duration-300 ${loaded() ? 'opacity-100' : 'opacity-0'}`}
             onLoad={handlePreviewLoad}
             onError={handlePreviewError}
+            loading="eager"
             data-testid="result-image"
           />
         </Show>
-        <Show when={!previewUrl() && !skipPreview() && previewError()}>
+        <Show when={previewError()}>
           <div class="flex flex-col items-center justify-center p-8 text-[#8a8f98] w-full">
             <svg
               class="h-10 w-10 mb-2"
@@ -241,7 +199,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       {/* Download button — always visible below stats */}
       <div class="mt-3 flex justify-center">
         <a
-          href={downloadUrl() ?? undefined}
+          href={previewUrl() ?? undefined}
           download={downloadFileName()}
           aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
           class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"
