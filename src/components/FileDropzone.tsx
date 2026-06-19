@@ -293,7 +293,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               <button
                 type="button"
                 onClick={openFilePicker}
-                class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-[#5e6ad2] hover:bg-[#7e8ae8] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#5e6ad2]"
+                class="inline-flex items-center px-4 py-3 min-h-[44px] text-sm font-medium rounded-md text-white bg-[#5e6ad2] hover:bg-[#7e8ae8] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#5e6ad2] transition-colors"
                 disabled={!isInteractive()}
                 data-testid="choose-file-button"
               >

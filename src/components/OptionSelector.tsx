@@ -7,7 +7,7 @@ import Tooltip from './Tooltip';
 import Icon from './ui/Icon';
 
 const BASE_OPTION_CLASS =
-  'relative flex items-center justify-center px-3 py-2 border rounded-lg cursor-pointer transition-colors text-sm';
+  'relative flex items-center justify-center px-3 py-3 border rounded-lg cursor-pointer transition-colors text-sm min-h-[44px]';
 const SELECTED_OPTION_CLASS =
   'bg-[#5e6ad2]/20 border-[#5e6ad2] text-[#f7f8f8] ring-2 ring-[#5e6ad2]/30';
 const DEFAULT_OPTION_CLASS =
@@ -120,7 +120,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
             <button
               type="button"
               tabIndex={0}
-              class="inline-flex items-center justify-center w-11 h-11 -m-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+              class="inline-flex items-center justify-center w-11 h-11 -m-2 min-h-[44px] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] rounded-md"
               aria-label={`Information about ${local.title}`}
               onKeyDown={handleTooltipKeyDown}
             >

@@ -167,7 +167,7 @@ const ConfirmationModal: Component = () => {
               ref={cancelButtonRef}
               type="button"
               onClick={cancelDialog}
-              class="px-4 py-2 rounded-lg bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
+              class="px-4 py-2 min-h-[44px] rounded-md bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
               aria-label="Cancel conversion and close modal"
               data-testid="modal-cancel-button"
             >
@@ -176,7 +176,7 @@ const ConfirmationModal: Component = () => {
             <button
               type="button"
               onClick={confirmDialog}
-              class="px-4 py-2 rounded-lg bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
+              class="px-4 py-2 min-h-[44px] rounded-md bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
               aria-label="Proceed with conversion despite warnings"
               data-testid="modal-confirm-button"
             >
