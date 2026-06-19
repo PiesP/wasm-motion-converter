@@ -12,7 +12,6 @@ import {
   appState,
   inputBuffer,
   inputFile,
-  MAX_RESULTS,
   setAppState,
   setConversionResults,
   setConversionStatusMessage,
@@ -269,7 +268,8 @@ async function performConversion(
     // SolidJS's runUpdates ↔ completeUpdates loop overflows the stack.
     // We keep setConversionResults outside batch and defer only
     // setAppState('done') to break the synchronous chain.
-    setConversionResults((results) => [newResult, ...results].slice(0, MAX_RESULTS));
+    // Replace (not append) results to release previous blobs immediately.
+    setConversionResults([newResult]);
 
     await new Promise<void>((resolve) => queueMicrotask(resolve));
 

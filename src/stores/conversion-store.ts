@@ -45,8 +45,9 @@ export const [outputFrames, setOutputFrames] = createSignal<number | undefined>(
 
 /** Maximum number of conversion results to retain in memory.
  *  Each result stores the full output Blob (potentially 10s of MB).
- *  Keep only recent results to limit heap pressure. */
-export const MAX_RESULTS = 3;
+ *  Keep only the latest result to limit heap pressure.
+ *  Previous blobs are explicitly revoked before adding new ones. */
+export const MAX_RESULTS = 1;
 
 export const [conversionResults, setConversionResults] = createSignal<ConversionResult[]>([]);
 
