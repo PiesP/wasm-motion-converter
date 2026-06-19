@@ -35,10 +35,13 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
+  // Separate download URL — always available regardless of preview skip
+  const [downloadUrl, setDownloadUrl] = createSignal<string | null>(null);
 
   // Skip preview for large blobs (>10MB)
   const skipPreview = createMemo(() => local.outputBlob.size > 10 * 1024 * 1024);
 
+  // Preview URL effect — only for small blobs
   createEffect(() => {
     void local.outputBlob;
     setLoaded(false);
@@ -56,6 +59,20 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
     onCleanup(() => {
       const current = previewUrl();
+      if (current) URL.revokeObjectURL(current);
+    });
+  });
+
+  // Download URL effect — always created, independent of preview
+  createEffect(() => {
+    void local.outputBlob;
+    const prevUrl = downloadUrl();
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
+    const url = URL.createObjectURL(local.outputBlob);
+    setDownloadUrl(url);
+
+    onCleanup(() => {
+      const current = downloadUrl();
       if (current) URL.revokeObjectURL(current);
     });
   });
@@ -224,7 +241,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       {/* Download button — always visible below stats */}
       <div class="mt-3 flex justify-center">
         <a
-          href={previewUrl() ?? undefined}
+          href={downloadUrl() ?? undefined}
           download={downloadFileName()}
           aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
           class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"

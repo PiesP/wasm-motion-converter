@@ -25,7 +25,9 @@
 
 import type { ProgressCallback } from '@t/v2-conversion-types';
 import { logger } from '@utils/logger';
+import { getMemoryInfo } from '@utils/memory-monitor';
 import { encodeRGB } from 'wasm-webp';
+import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import type { BaseEncoderOptions } from './encoder-common';
@@ -42,6 +44,10 @@ const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
   medium: 80,
   high: 92,
 };
+
+/** Memory threshold for dynamic decimation (percentage of JS heap limit) */
+const DYNAMIC_DECIMATION_MEM_THRESHOLD = 70;
+const DYNAMIC_DECIMATION_MEM_CRITICAL = 85;
 
 /**
  * Encode demuxed video frames to animated WebP with streaming decode→encode.
@@ -73,6 +79,10 @@ export async function encodeWebp(
   let totalInputFrames = 0;
   let skippedByDecimation = 0;
   let encodeIdx = 0;
+
+  // Dynamic decimation state
+  let dynamicSkipCount = 0;
+  let consecutiveMemWarnings = 0;
 
   // Decode frames with streaming callback — each frame is encoded immediately
   const { totalInputFrames: totalDecoded, skippedByDecimation: totalSkipped } = await decodeFrames(
@@ -110,8 +120,42 @@ export async function encodeWebp(
 
         totalInputFrames = _frameNum;
 
-        // Note: encodeRGB is already async (WASM), so no need for setTimeout(0).
-        // The WASM call itself yields to the browser event loop.
+        // ── Dynamic decimation based on memory pressure ──
+        // Check JS heap usage every 5 frames to avoid per-frame overhead
+        let shouldSkip = false;
+        if (_frameNum % 5 === 0) {
+          const memInfo = getMemoryInfo();
+          if (memInfo && memInfo.usagePercentage > DYNAMIC_DECIMATION_MEM_THRESHOLD) {
+            consecutiveMemWarnings++;
+            if (memInfo.usagePercentage > DYNAMIC_DECIMATION_MEM_CRITICAL) {
+              // Critical: skip every other frame (aggressive)
+              shouldSkip = dynamicSkipCount % 2 === 0;
+              dynamicSkipCount++;
+              logger.warn('encoders', 'WebP: critical memory pressure, dynamic frame skip', {
+                usagePct: Math.round(memInfo.usagePercentage),
+                frameNum: _frameNum,
+                dynamicSkipCount,
+              });
+            } else if (consecutiveMemWarnings >= 3) {
+              // Sustained pressure: skip every 3rd frame
+              shouldSkip = dynamicSkipCount % 3 === 0;
+              dynamicSkipCount++;
+              logger.info('encoders', 'WebP: sustained memory pressure, dynamic frame skip', {
+                usagePct: Math.round(memInfo.usagePercentage),
+                frameNum: _frameNum,
+                dynamicSkipCount,
+              });
+            }
+          } else {
+            consecutiveMemWarnings = 0;
+          }
+        }
+
+        if (shouldSkip) {
+          // Release buffer and skip encoding
+          globalBufferPool.release(rgbData);
+          return;
+        }
 
         // Encode this frame immediately via wasm-webp
         const webpResult = await encodeRGB(rgbData, w, h, quality);
@@ -155,6 +199,7 @@ export async function encodeWebp(
     resolution: `${w}×${h}`,
     quality,
     skippedByDecimation,
+    dynamicSkipCount,
   });
   logger.info('encoders', '  │  └─ WebP: encode finished', {
     keptFrames: muxer.frames,
