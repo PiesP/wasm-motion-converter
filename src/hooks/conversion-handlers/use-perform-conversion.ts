@@ -266,11 +266,8 @@ async function performConversion(
 
     // setConversionResults triggers ResultSection → ResultPreview →
     // createEffect → URL.createObjectURL → setPreviewUrl → render.
-    // Clear previous results first (releasing blobs), then use queueMicrotask
-    // to defer the new result into a separate microtask, breaking the
-    // synchronous signal cascade that could overflow the stack.
-    // For large blobs (>10MB, typically GIF), the preview is skipped
-    // entirely in ResultPreview to avoid URL.createObjectURL overhead.
+    // Use queueMicrotask to defer the new result into a separate microtask,
+    // breaking the synchronous signal cascade that could overflow the stack.
     setConversionResults([]);
 
     queueMicrotask(() => {

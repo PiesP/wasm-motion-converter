@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import ResultPreview from '@components/ResultPreview';
 import type { ConversionResult } from '@t/conversion-types';
 import type { Component } from 'solid-js';
-import { For, lazy, Show, Suspense } from 'solid-js';
-
-const ResultPreview = lazy(() => import('@components/ResultPreview'));
+import { For, Show } from 'solid-js';
 
 interface ResultSectionProps {
   results: ConversionResult[];
@@ -17,15 +16,13 @@ const ResultSection: Component<ResultSectionProps> = (props) => {
       <div class="mt-8 space-y-6 animate-crossfade" data-testid="result-section">
         <For each={props.results}>
           {(result) => (
-            <Suspense fallback={<div class="aspect-video animate-pulse rounded-lg bg-[#191a1b]" />}>
-              <ResultPreview
-                conversionDurationSeconds={result.conversionDurationSeconds}
-                originalName={result.originalName}
-                originalSize={result.originalSize}
-                outputBlob={result.outputBlob}
-                settings={result.settings}
-              />
-            </Suspense>
+            <ResultPreview
+              conversionDurationSeconds={result.conversionDurationSeconds}
+              originalName={result.originalName}
+              originalSize={result.originalSize}
+              outputBlob={result.outputBlob}
+              settings={result.settings}
+            />
           )}
         </For>
       </div>

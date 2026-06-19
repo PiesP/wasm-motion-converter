@@ -35,10 +35,10 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
+  // Stable download URL — created once, never revoked during component lifetime.
+  // Separate from previewUrl which may be recreated by createEffect.
+  const downloadUrl = createMemo(() => URL.createObjectURL(local.outputBlob));
 
-  // Single createEffect: preview + download URL from the same blob URL.
-  // Always shows preview regardless of file size — memory is protected
-  // by dynamic decimation in the encoder, not by hiding the preview.
   createEffect(() => {
     void local.outputBlob;
     setLoaded(false);
@@ -159,7 +159,9 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       <section class="mt-3" aria-label={ariaLabel()}>
         {/* Primary stats: size reduction + time — prominent */}
         <div class="flex items-center justify-center gap-3 text-sm mb-2">
-          <span class="text-[#8a8f98] font-mono">{formatBytes(local.originalSize)}</span>
+          <span class="text-[#8a8f98] font-mono" data-result-original-size>
+            {formatBytes(local.originalSize)}
+          </span>
           <svg
             class="h-4 w-4 text-[#5e6ad2]/40"
             fill="none"
@@ -174,7 +176,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               d="M13 7l5 5m0 0l-5 5m5-5H6"
             />
           </svg>
-          <span class="font-semibold text-[#d0d6e0] font-mono">
+          <span class="font-semibold text-[#d0d6e0] font-mono" data-result-output-size>
             {formatBytes(local.outputBlob.size)}
           </span>
           <Show when={compressionLabel()}>
@@ -188,18 +190,22 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
         {/* Secondary stats: format, quality, scale — subtle */}
         <div class="flex items-center justify-center gap-2 text-[10px] text-[#5e6ad2]/50 uppercase tracking-wide">
-          <span>{outputExtension().toUpperCase()}</span>
+          <span data-result-format>{outputExtension().toUpperCase()}</span>
           <span>·</span>
-          <span class="capitalize">{local.settings.quality}</span>
+          <span class="capitalize" data-result-quality>
+            {local.settings.quality}
+          </span>
           <span>·</span>
-          <span>{(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%</span>
+          <span data-result-scale>
+            {(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%
+          </span>
         </div>
       </section>
 
       {/* Download button — always visible below stats */}
       <div class="mt-3 flex justify-center">
         <a
-          href={previewUrl() ?? undefined}
+          href={downloadUrl()}
           download={downloadFileName()}
           aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
           class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"
