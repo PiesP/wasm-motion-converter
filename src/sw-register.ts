@@ -19,7 +19,7 @@ export async function registerServiceWorker(
   }
 
   // Dev mode: unregister any existing service workers to avoid stale caches
-  if (import.meta.env.DEV) {
+  if (import.meta.env.MODE === 'development') {
     await unregisterAll();
     return { supported: true, registered: false };
   }
