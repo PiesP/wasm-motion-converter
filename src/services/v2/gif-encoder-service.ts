@@ -193,7 +193,7 @@ export async function encodeGif(
   let splitFrames = 0;
   let totalInputFrames = 0;
   let skippedByDecimation = 0;
-  const sourceTotalMs = 0;
+  const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
 
   // T2: Maximum delay per frame — prevents a single frame from displaying too long
   const MAX_FRAME_DELAY = GIF_MAX_FRAME_DELAY_CS;
