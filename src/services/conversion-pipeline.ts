@@ -13,11 +13,10 @@
  * 4. Profiling: per-phase timing, memory, and throughput measurement
  */
 
-import type { ProgressCallback } from '@t/v2-conversion-types';
+import type { ConversionRequest, ProgressCallback } from '@t/conversion-types';
 import { DEFAULT_FPS, GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
-import type { ConversionRequest } from '@/types/v2-conversion-types';
 import { globalBufferPool } from './buffer-pool';
 import { ConversionProfiler } from './conversion-profiler';
 import { demuxVideo } from './demuxer-service';
@@ -100,7 +99,7 @@ export async function runConversionPipeline(
   };
 
   logger.performance('Pipeline started', logCtx);
-  logger.info('conversion', `▶ Pipeline route: V2_MAINTHREAD_${format.toUpperCase()}`, logCtx);
+  logger.info('conversion', `▶ Pipeline route: MAINTHREAD_${format.toUpperCase()}`, logCtx);
 
   // Clear buffer pool from any previous conversion
   globalBufferPool.clear();

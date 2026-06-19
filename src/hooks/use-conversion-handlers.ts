@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import type { ProgressPhase } from '@t/v2-conversion-types';
+import type { ProgressPhase } from '@t/conversion-types';
 import { onCleanup, type Setter } from 'solid-js';
 import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';

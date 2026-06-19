@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import type { ProgressPhase } from '@t/v2-conversion-types';
+import type { ProgressPhase } from '@t/conversion-types';
 import { formatDuration } from '@utils/format-utils';
 import { type Component, createEffect, createMemo, onCleanup, Show, splitProps } from 'solid-js';
 

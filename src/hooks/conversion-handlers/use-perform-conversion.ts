@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { validateOutput } from '@services/v2/error-recovery';
+import { validateOutput } from '@services/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -37,7 +37,10 @@ import { batch } from 'solid-js';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 import { handleFileSelected } from './use-handle-file-selected';
-import { performConversionV2, type V2ConversionOptions } from './use-perform-conversion-v2';
+import {
+  type ConversionOptions,
+  performConversion as performConversionService,
+} from './use-perform-conversion-service';
 
 const MS_PER_SECOND = 1000;
 
@@ -120,7 +123,7 @@ async function performConversion(
       scale: settings.scale,
       durationMs: videoDurationMs,
     });
-    logger.info('conversion', '▶ Conversion handler: use-perform-conversion.ts → V2 pipeline', {
+    logger.info('conversion', '▶ Conversion handler: use-perform-conversion.ts → pipeline', {
       format: settings.format,
       quality: settings.quality,
       scale: settings.scale,
@@ -157,7 +160,7 @@ async function performConversion(
       }
     }
 
-    const v2Options: V2ConversionOptions = {
+    const conversionOptions: ConversionOptions = {
       format: settings.format,
       quality: settings.quality,
       scale: settings.scale,
@@ -171,31 +174,31 @@ async function performConversion(
     const onAbort = () => abortController.abort();
     signal?.addEventListener('abort', onAbort);
 
-    const v2Result = await performConversionV2(
+    const result = await performConversionService(
       file,
-      v2Options,
-      (v2Progress) => {
+      conversionOptions,
+      (progress) => {
         if (!isActive()) return;
-        runtime.updateProgress(v2Progress.progress, v2Progress.phase, v2Progress.outputFrames);
+        runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
 
         // User-friendly phase messages
         const phaseLabel =
-          v2Progress.phase === 'demuxing'
+          progress.phase === 'demuxing'
             ? 'Preparing video data...'
-            : v2Progress.phase === 'decoding'
+            : progress.phase === 'decoding'
               ? 'Decoding...'
-              : v2Progress.phase === 'encoding'
+              : progress.phase === 'encoding'
                 ? `Encoding to ${settings.format.toUpperCase()}...`
                 : 'Finalizing...';
 
         if (
-          v2Progress.currentFrame != null &&
-          v2Progress.totalFrames != null &&
-          v2Progress.currentFrame > 0 &&
-          v2Progress.totalFrames > 0
+          progress.currentFrame != null &&
+          progress.totalFrames != null &&
+          progress.currentFrame > 0 &&
+          progress.totalFrames > 0
         ) {
           runtime.updateStatus(
-            `Frame ${v2Progress.currentFrame}/${v2Progress.totalFrames} — ${phaseLabel}`
+            `Frame ${progress.currentFrame}/${progress.totalFrames} — ${phaseLabel}`
           );
         } else {
           runtime.updateStatus(phaseLabel);
@@ -209,7 +212,7 @@ async function performConversion(
 
     if (!isActive()) return;
 
-    const blob = v2Result.blob;
+    const blob = result.blob;
 
     if (blob.size === 0) {
       throw new Error('Conversion produced an empty output file');

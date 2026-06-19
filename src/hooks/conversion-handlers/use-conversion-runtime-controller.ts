@@ -6,8 +6,8 @@ import {
   setConversionStatusMessage,
   setOutputFrames,
 } from '@stores/conversion-store';
-import type { ConversionPhase, ProgressPhase } from '@t/v2-conversion-types';
-import { toProgressPhase } from '@t/v2-conversion-types';
+import type { ConversionPhase, ProgressPhase } from '@t/conversion-types';
+import { toProgressPhase } from '@t/conversion-types';
 import { ETACalculator } from '@utils/eta-calculator';
 import { formatDuration } from '@utils/format-utils';
 import { logger } from '@utils/logger';

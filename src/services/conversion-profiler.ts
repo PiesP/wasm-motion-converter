@@ -19,7 +19,7 @@
  *   logger.performance('Pipeline profile', report);
  */
 
-import type { ConversionPhase } from '@t/v2-conversion-types';
+import type { ConversionPhase } from '@t/conversion-types';
 
 export interface PhaseMetrics {
   phase: ConversionPhase;

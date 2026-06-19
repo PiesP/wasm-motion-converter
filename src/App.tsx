@@ -31,7 +31,7 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
-import type { ProgressPhase } from '@t/v2-conversion-types';
+import type { ProgressPhase } from '@t/conversion-types';
 import { debounce } from '@utils/debounce';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';

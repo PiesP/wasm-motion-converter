@@ -23,7 +23,7 @@
  *   3. muxAnimatedWebP() → final animated WebP container
  */
 
-import type { ProgressCallback } from '@t/v2-conversion-types';
+import type { ProgressCallback } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { getMemoryInfo } from '@utils/memory-monitor';
 import { encodeRGB } from 'wasm-webp';

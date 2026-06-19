@@ -2,21 +2,26 @@
 // Copyright (c) 2025-2026 PiesP
 
 /**
- * V2 Conversion Service
+ * Conversion Service
  *
  * Runs the full pipeline on the main thread: demux → decode → encode.
  * WebCodecs VideoDecoder requires main thread access in most browsers.
  */
 
-import type { ConversionFormat, ConversionQuality, SmartFrameSkipMode } from '@t/conversion-types';
-import type { ProgressCallback } from '@t/v2-conversion-types';
+import { runConversionPipeline } from '@services/conversion-pipeline';
+import type {
+  ConversionFormat,
+  ConversionQuality,
+  ConversionScale,
+  ProgressCallback,
+  SmartFrameSkipMode,
+} from '@t/conversion-types';
 import { logger } from '@utils/logger';
-import { runConversionPipeline } from '@/services/v2/conversion-pipeline';
 
-export interface V2ConversionOptions {
+export interface ConversionOptions {
   format: ConversionFormat;
   quality: ConversionQuality;
-  scale: number;
+  scale: ConversionScale;
   trimStart: number;
   trimEnd: number;
   /** Force frame decimation (overrides auto-decimation) */
@@ -32,9 +37,9 @@ class ConversionCancelledError extends Error {
   }
 }
 
-export async function performConversionV2(
+export async function performConversion(
   inputFile: File,
-  options: V2ConversionOptions,
+  options: ConversionOptions,
   onProgress: ProgressCallback,
   signal?: AbortSignal,
   existingBuffer?: ArrayBuffer

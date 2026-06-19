@@ -26,8 +26,8 @@
  * 9. eval `__TEST_HELPERS__.resetApp()` — clean up, repeat
  */
 
-import { getLastConversionProfiler } from '@services/v2/conversion-pipeline';
-import type { ConversionProfileReport } from '@services/v2/conversion-profiler';
+import { getLastConversionProfiler } from '@services/conversion-pipeline';
+import type { ConversionProfileReport } from '@services/conversion-profiler';
 import { confirmDialog } from '@stores/confirmation-store';
 import {
   conversionSettings,
