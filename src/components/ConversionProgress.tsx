@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import Panel from '@components/ui/Panel';
-import type { ConversionPhase } from '@t/v2-conversion-types';
+import type { ProgressPhase } from '@t/v2-conversion-types';
 import type { Component } from 'solid-js';
 import { splitProps } from 'solid-js';
 import ProgressBar from './ProgressBar';
@@ -17,7 +17,7 @@ interface ConversionProgressProps {
   currentFrame?: number;
   totalFrames?: number;
   memoryUsage?: string | null;
-  phase?: ConversionPhase;
+  phase?: ProgressPhase;
 }
 
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {

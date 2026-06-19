@@ -29,10 +29,50 @@ export interface ConversionRequest {
   smartFrameSkip?: SmartFrameSkipMode;
 }
 
-export type ConversionPhase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
+/** Pipeline phase identifier (short form for internal use) */
+export type ConversionPhase = 'demux' | 'decode' | 'encode' | 'assemble';
+
+/** Human-readable phase labels for UI display */
+export const PHASE_LABELS: Record<ConversionPhase, string> = {
+  demux: 'Demux',
+  decode: 'Decode',
+  encode: 'Encode',
+  assemble: 'Final',
+} as const;
+
+/** Progress callback phase — maps to the same values but typed separately for UI */
+export type ProgressPhase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
+
+/** Map internal phase to progress display name */
+export function toProgressPhase(phase: ConversionPhase): ProgressPhase {
+  switch (phase) {
+    case 'demux':
+      return 'demuxing';
+    case 'decode':
+      return 'decoding';
+    case 'encode':
+      return 'encoding';
+    case 'assemble':
+      return 'assembling';
+  }
+}
+
+/** Map progress display name to internal phase */
+export function fromProgressPhase(phase: ProgressPhase): ConversionPhase {
+  switch (phase) {
+    case 'demuxing':
+      return 'demux';
+    case 'decoding':
+      return 'decode';
+    case 'encoding':
+      return 'encode';
+    case 'assembling':
+      return 'assemble';
+  }
+}
 
 export interface ConversionProgress {
-  phase: ConversionPhase;
+  phase: ProgressPhase;
   progress: number;
   fps: number;
   etaSeconds: number | null;

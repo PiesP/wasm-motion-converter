@@ -6,7 +6,8 @@ import {
   setConversionStatusMessage,
   setOutputFrames,
 } from '@stores/conversion-store';
-import type { ConversionPhase } from '@t/v2-conversion-types';
+import type { ConversionPhase, ProgressPhase } from '@t/v2-conversion-types';
+import { toProgressPhase } from '@t/v2-conversion-types';
 import { ETACalculator } from '@utils/eta-calculator';
 import { formatDuration } from '@utils/format-utils';
 import { logger } from '@utils/logger';
@@ -48,7 +49,7 @@ interface ConversionRuntimeControllerDeps {
   setConversionStartTime: Setter<number>;
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
-  setConversionPhase?: Setter<ConversionPhase>;
+  setConversionPhase?: Setter<ProgressPhase>;
 }
 
 export class ConversionRuntimeController {
@@ -211,7 +212,7 @@ export class ConversionRuntimeController {
     }
   }
 
-  updateProgress(progress: number, phase?: string, outputFrames?: number): void {
+  updateProgress(progress: number, phase?: ConversionPhase | string, outputFrames?: number): void {
     if (!Number.isFinite(progress)) {
       return;
     }
@@ -225,9 +226,9 @@ export class ConversionRuntimeController {
 
     this.lastProgressValue = monotonic;
 
-    // Update phase if provided
+    // Update phase if provided (internal ConversionPhase → ProgressPhase)
     if (phase && this.deps.setConversionPhase) {
-      this.deps.setConversionPhase(phase as ConversionPhase);
+      this.deps.setConversionPhase(toProgressPhase(phase as ConversionPhase));
     }
 
     // Reset stall timer whenever progress advances

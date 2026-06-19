@@ -4,82 +4,11 @@
 /**
  * Error Recovery
  *
- * Classifies conversion errors into structured codes with user-friendly
- * suggestions. Single-layer classification with structured output.
+ * Output validation utilities.
+ * Error classification is handled by classifyConversionError() in
+ * utils/classify-conversion-error.ts which provides both structured codes
+ * and user-friendly suggestions in a single pass.
  */
-export type ErrorCode =
-  | 'CODEC_NOT_SUPPORTED'
-  | 'OUT_OF_MEMORY'
-  | 'DECODER_ERROR'
-  | 'ENCODER_ERROR'
-  | 'CANCELLED'
-  | 'TIMEOUT'
-  | 'CORRUPT_OUTPUT'
-  | 'UNKNOWN';
-
-export interface ClassifiedError {
-  code: ErrorCode;
-  message: string;
-  recoverable: boolean;
-  suggestion: string;
-}
-
-/** Classify error — single-layer, structured result */
-export function classifyError(err: unknown): ClassifiedError {
-  const msg = err instanceof Error ? err.message : String(err);
-
-  if (err instanceof DOMException && err.name === 'AbortError') {
-    return {
-      code: 'CANCELLED',
-      message: 'Conversion cancelled',
-      recoverable: false,
-      suggestion: '',
-    };
-  }
-
-  if (/NotSupportedError|codec/i.test(msg)) {
-    return {
-      code: 'CODEC_NOT_SUPPORTED',
-      message: msg,
-      recoverable: true,
-      suggestion: 'Try a different video format or use the CPU fallback path.',
-    };
-  }
-
-  if (/memory|OOM|allocation/i.test(msg)) {
-    return {
-      code: 'OUT_OF_MEMORY',
-      message: msg,
-      recoverable: true,
-      suggestion: 'Reduce video resolution, quality, or close other tabs.',
-    };
-  }
-
-  if (/decode|decoder/i.test(msg)) {
-    return {
-      code: 'DECODER_ERROR',
-      message: msg,
-      recoverable: true,
-      suggestion: 'Try the CPU fallback path.',
-    };
-  }
-
-  if (/encode|encoder|webp|gif/i.test(msg)) {
-    return {
-      code: 'ENCODER_ERROR',
-      message: msg,
-      recoverable: false,
-      suggestion: 'Try adjusting quality settings.',
-    };
-  }
-
-  return {
-    code: 'UNKNOWN',
-    message: msg,
-    recoverable: false,
-    suggestion: 'Please try a different video file.',
-  };
-}
 
 import type { ConversionFormat } from '@t/conversion-types';
 

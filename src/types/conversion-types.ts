@@ -156,6 +156,17 @@ export interface ConversionResult {
  */
 export type ConversionErrorType = 'memory' | 'format' | 'codec' | 'timeout' | 'general';
 
+/** Structured error code for programmatic handling */
+export type ErrorCode =
+  | 'CODEC_NOT_SUPPORTED'
+  | 'OUT_OF_MEMORY'
+  | 'DECODER_ERROR'
+  | 'ENCODER_ERROR'
+  | 'CANCELLED'
+  | 'TIMEOUT'
+  | 'CORRUPT_OUTPUT'
+  | 'UNKNOWN';
+
 /**
  * Detailed error context for conversion failures
  *
@@ -167,6 +178,8 @@ export type ConversionErrorType = 'memory' | 'format' | 'codec' | 'timeout' | 'g
 export interface ErrorContext {
   /** Error type classification */
   type: ConversionErrorType;
+  /** Structured error code for programmatic handling */
+  code: ErrorCode;
   /** Original error message */
   originalError: string;
   /** When error occurred (milliseconds since epoch) */

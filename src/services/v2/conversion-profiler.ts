@@ -19,7 +19,7 @@
  *   logger.performance('Pipeline profile', report);
  */
 
-export type ConversionPhase = 'demux' | 'decode' | 'encode' | 'assemble';
+import type { ConversionPhase } from '@t/v2-conversion-types';
 
 export interface PhaseMetrics {
   phase: ConversionPhase;

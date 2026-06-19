@@ -31,7 +31,7 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
-import type { ConversionPhase } from '@t/v2-conversion-types';
+import type { ProgressPhase } from '@t/v2-conversion-types';
 import { debounce } from '@utils/debounce';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
@@ -74,7 +74,7 @@ const App: Component = () => {
 
   const [memoryUsageText, setMemoryUsageText] = createSignal<string | null>(null);
 
-  const [conversionPhase, setConversionPhase] = createSignal<ConversionPhase>('demuxing');
+  const [conversionPhase, setConversionPhase] = createSignal<ProgressPhase>('demuxing');
 
   const {
     handleFileSelected,

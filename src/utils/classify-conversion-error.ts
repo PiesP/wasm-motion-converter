@@ -22,6 +22,15 @@ import type {
 import { MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
 
 // ---------------------------------------------------------------------------
+// Error code type — re-exported from conversion-types.ts for convenience.
+// The canonical definition lives in conversion-types.ts (ErrorContext.code).
+// ---------------------------------------------------------------------------
+
+import type { ErrorCode } from '@t/conversion-types';
+
+export type { ErrorCode };
+
+// ---------------------------------------------------------------------------
 // Error classification rule system
 // ---------------------------------------------------------------------------
 
@@ -30,6 +39,8 @@ type ErrorRule = {
   name: string;
   /** Error type assigned when this rule matches */
   type: ConversionErrorType;
+  /** Structured error code for programmatic handling */
+  code: ErrorCode;
   /** Phase identifier (e.g., 'watchdog_timeout', 'codec_error') */
   phase?: string;
   /** Regex tested against the lowercased error message */
@@ -51,6 +62,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'out-of-memory',
     type: 'memory',
+    code: 'OUT_OF_MEMORY',
     pattern: /out\s*of\s*memory|oom|memory\s*(limit|exhausted|issue)|stack\s*overflow/i,
     suggestion:
       'Your browser ran out of memory. Try using a smaller video file, reducing quality to "low", or scaling down the resolution.',
@@ -58,6 +70,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'memory-abort',
     type: 'memory',
+    code: 'OUT_OF_MEMORY',
     pattern: /\babort\b|aborted|wasm\s.*\bmemory\b/i,
     condition: (msg) => !/cancelled by user|cancelled\s*by/i.test(msg),
     suggestion:
@@ -68,6 +81,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'watchdog-stall',
     type: 'timeout',
+    code: 'TIMEOUT',
     phase: 'watchdog_timeout',
     pattern: /stall|watchdog|no\s*progress/i,
     suggestion:
@@ -76,6 +90,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'conversion-timeout',
     type: 'timeout',
+    code: 'TIMEOUT',
     phase: 'ffmpeg_timeout',
     pattern: /timed?\s*out|took\s*too\s*long/i,
     suggestion:
@@ -86,6 +101,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'worker-init-failure',
     type: 'general',
+    code: 'UNKNOWN',
     phase: 'worker_init_failure',
     pattern: /failed\s*to\s*initiali[sz]e|comlink|worker\s*(init|thread|failed)/i,
     suggestion: 'Worker initialization failed. Reload the page and try again.',
@@ -93,6 +109,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'shared-array-buffer',
     type: 'general',
+    code: 'UNKNOWN',
     phase: 'worker_error',
     pattern: /sharedarraybuffer|coop|coep/i,
     suggestion:
@@ -103,6 +120,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'webcodecs-failure',
     type: 'codec',
+    code: 'CODEC_NOT_SUPPORTED',
     phase: 'webcodecs_decode_failure',
     pattern: /webcodecs|hardware\s*accel|frame\s*callback|media\s*capabilit/i,
     suggestion:
@@ -113,6 +131,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'av1-gif-failure',
     type: 'codec',
+    code: 'CODEC_NOT_SUPPORTED',
     phase: 'av1_gif_conversion_failure',
     pattern: /av1/i,
     condition: (_msg, meta) => meta?.codec === 'av1',
@@ -122,6 +141,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'av1-decode-failure',
     type: 'codec',
+    code: 'CODEC_NOT_SUPPORTED',
     phase: 'av1_decode_failure',
     pattern: /av1|av01/i,
     condition: (_msg, meta) => meta?.codec === 'av1' || meta?.codec === 'av01',
@@ -133,6 +153,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'codec-error',
     type: 'codec',
+    code: 'CODEC_NOT_SUPPORTED',
     phase: 'codec_error',
     pattern: /\bcodec\b|unsupported|not\s*found|function\s*not\s*implemented|\bdecod(?:er|e)\b/i,
     suggestion:
@@ -143,6 +164,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'webp-format',
     type: 'format',
+    code: 'ENCODER_ERROR',
     pattern: /\bwebp\b|libwebp/i,
     suggestion:
       'WebP conversion failed. Try using GIF format instead, or reduce the quality/scale settings.',
@@ -150,6 +172,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
   {
     name: 'avif-format',
     type: 'format',
+    code: 'ENCODER_ERROR',
     pattern: /avif/i,
     suggestion: 'AVIF format is not supported. Use GIF or WebP instead.',
   },
@@ -207,6 +230,7 @@ export function classifyConversionError(
 
     return {
       type: rule.type,
+      code: rule.code,
       ...baseContext,
       phase: rule.phase ?? 'unknown',
       suggestion,
@@ -217,6 +241,7 @@ export function classifyConversionError(
   if (metadata && isVideoTooComplex(metadata)) {
     return {
       type: 'memory',
+      code: 'OUT_OF_MEMORY',
       ...baseContext,
       suggestion:
         'The video is too complex to convert in your browser (very high total pixel count). Try reducing quality to "low", scale to 0.5, or choosing a shorter/lower resolution video.',
@@ -226,6 +251,7 @@ export function classifyConversionError(
   // Default: general error
   return {
     type: 'general',
+    code: 'UNKNOWN',
     ...baseContext,
     suggestion:
       'An unexpected error occurred. Try: 1) Reducing quality to "low" or scale to 0.5, 2) Using a different video file, 3) Reloading the page, or 4) Closing other browser tabs.',

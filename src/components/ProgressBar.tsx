@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import type { ConversionPhase } from '@t/v2-conversion-types';
+import type { ProgressPhase } from '@t/v2-conversion-types';
 import { formatDuration } from '@utils/format-utils';
 import { type Component, createEffect, createMemo, onCleanup, Show, splitProps } from 'solid-js';
 
@@ -11,28 +11,28 @@ const PHASE_CONFIG = [
     icon: '📂',
     doneIcon: '✓',
     colorClass: 'bg-amber-400',
-    phase: 'demuxing',
+    phase: 'demuxing' as ProgressPhase,
   },
   {
     label: 'Decode',
     icon: '🔓',
     doneIcon: '✓',
     colorClass: 'bg-purple-400',
-    phase: 'decoding',
+    phase: 'decoding' as ProgressPhase,
   },
   {
     label: 'Encode',
     icon: '⚙️',
     doneIcon: '✓',
     colorClass: 'bg-[#5e6ad2]',
-    phase: 'encoding',
+    phase: 'encoding' as ProgressPhase,
   },
   {
     label: 'Final',
     icon: '📦',
     doneIcon: '✓',
     colorClass: 'bg-green-400',
-    phase: 'assembling',
+    phase: 'assembling' as ProgressPhase,
   },
 ] as const;
 
@@ -51,7 +51,7 @@ interface ProgressBarProps {
   totalFrames?: number;
   outputFrames?: number;
   memoryUsage?: string | null;
-  phase?: ConversionPhase;
+  phase?: ProgressPhase;
   compact?: boolean;
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { classifyError, validateOutput } from '@services/v2/error-recovery';
+import { validateOutput } from '@services/v2/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -303,14 +303,13 @@ async function performConversion(
       return;
     }
 
-    const classified = classifyError(error);
     const context = classifyConversionError(errorMessage_, videoMetadata(), settings);
 
     logger.error('conversion', 'Conversion failed', {
       error: errorMessage_,
       settings,
       errorType: context.type,
-      errorCode: classified.code,
+      errorCode: context.code,
     });
 
     batch(() => {
