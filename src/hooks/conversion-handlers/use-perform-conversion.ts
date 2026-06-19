@@ -264,12 +264,17 @@ async function performConversion(
     // setConversionResults triggers ResultSection → ResultPreview →
     // createEffect → URL.createObjectURL → setPreviewUrl → render →
     // img onLoad → setLoaded, which can cascade back into further
-    // signal updates. When this happens synchronously inside batch,
+    // signal updates. When this happens synchronously,
     // SolidJS's runUpdates ↔ completeUpdates loop overflows the stack.
-    // Defer the entire result update to break the synchronous chain.
-    const resultToStore = [newResult];
+    //
+    // Strategy: Clear previous results first (releasing blobs), then
+    // use setTimeout to defer the new result into a separate macrotask.
+    // For large blobs (>10MB, typically GIF), the preview is skipped
+    // entirely in ResultPreview to avoid URL.createObjectURL overhead.
+    setConversionResults([]);
+
     setTimeout(() => {
-      setConversionResults(resultToStore);
+      setConversionResults([newResult]);
     }, 0);
 
     batch(() => {

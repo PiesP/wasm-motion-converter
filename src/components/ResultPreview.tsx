@@ -37,19 +37,22 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [previewError, setPreviewError] = createSignal(false);
   const [blobVersion, setBlobVersion] = createSignal(0);
 
+  // Skip preview for large blobs (>10MB) to prevent stack overflow from
+  // synchronous URL.createObjectURL + render cascade. The download button
+  // still works correctly.
+  const skipPreview = createMemo(() => local.outputBlob.size > 10 * 1024 * 1024);
+
   // Increment version when blob changes — triggers deferred URL creation
   createEffect(() => {
-    // Track blob dependency without using the value directly
     void local.outputBlob;
     setLoaded(false);
     setPreviewError(false);
-    // Revoke previous URL
     const prevUrl = previewUrl();
     if (prevUrl) URL.revokeObjectURL(prevUrl);
     setPreviewUrl(null);
-    // Defer URL creation to break synchronous cascade
-    const currentVersion = blobVersion() + 1;
-    setBlobVersion(currentVersion);
+    if (!skipPreview()) {
+      setBlobVersion((v) => v + 1);
+    }
   });
 
   // Create object URL in a deferred microtask to avoid stack overflow
@@ -142,33 +145,34 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       </div>
 
       <div class="mt-3 flex justify-center bg-gray-50 dark:bg-gray-950 rounded-lg p-2 relative overflow-hidden">
-        <div class={skeletonClass()}>
-          <div class="w-full h-full bg-gray-200 dark:bg-gray-800 animate-pulse rounded" />
-        </div>
-        <Show
-          when={previewUrl()}
-          fallback={
-            <Show when={previewError()} fallback={null}>
-              <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500">
-                <svg
-                  class="h-10 w-10 mb-2"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  aria-hidden="true"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="1.5"
-                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-                  />
-                </svg>
-                <span class="text-xs">Preview failed to load</span>
-              </div>
-            </Show>
-          }
-        >
+        <Show when={!skipPreview()}>
+          <div class={skeletonClass()}>
+            <div class="w-full h-full bg-gray-200 dark:bg-gray-800 animate-pulse rounded" />
+          </div>
+        </Show>
+        <Show when={skipPreview()}>
+          <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500">
+            <svg
+              class="h-10 w-10 mb-2"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+              />
+            </svg>
+            <span class="text-xs">
+              Preview skipped for large file ({formatBytes(local.outputBlob.size)})
+            </span>
+            <span class="text-xs mt-1">Click download to save</span>
+          </div>
+        </Show>
+        <Show when={previewUrl() && !skipPreview()}>
           <img
             src={previewUrl()!}
             alt="Converted animation"
@@ -177,6 +181,25 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             onError={handlePreviewError}
             data-testid="result-image"
           />
+        </Show>
+        <Show when={!previewUrl() && !skipPreview() && previewError()}>
+          <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500">
+            <svg
+              class="h-10 w-10 mb-2"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+              />
+            </svg>
+            <span class="text-xs">Preview failed to load</span>
+          </div>
         </Show>
       </div>
 
