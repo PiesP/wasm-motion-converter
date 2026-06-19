@@ -8,6 +8,7 @@ const LINKS = {
   WASM_WEBP: 'https://github.com/GoogleChromeLabs/wasm-webp',
   MEDIABUNNY: 'https://github.com/w3reality/mediabunny',
   FFMPEG_WASM: 'https://github.com/ffmpegwasm/ffmpeg.wasm',
+  SOLIDJS: 'https://github.com/solidjs/solid',
   LICENSES: '/LICENSES.md',
   GITHUB_ISSUES: 'https://github.com/PiesP/wasm-motion-converter/issues',
 } as const;
@@ -30,7 +31,7 @@ const LicenseAttribution: Component = () => (
         >
           gifenc
         </a>
-        {', '}
+        {' (MIT), '}
         <a
           href={LINKS.WASM_WEBP}
           target="_blank"
@@ -40,7 +41,7 @@ const LicenseAttribution: Component = () => (
         >
           wasm-webp
         </a>
-        {', and '}
+        {' (MIT), '}
         <a
           href={LINKS.MEDIABUNNY}
           target="_blank"
@@ -49,8 +50,8 @@ const LicenseAttribution: Component = () => (
           aria-label="mediabunny on GitHub (opens in new tab)"
         >
           mediabunny
-        </a>{' '}
-        , and{' '}
+        </a>
+        {' (MPL-2.0), and '}
         <a
           href={LINKS.FFMPEG_WASM}
           target="_blank"
@@ -59,8 +60,19 @@ const LicenseAttribution: Component = () => (
           aria-label="ffmpeg.wasm on GitHub (opens in new tab)"
         >
           ffmpeg.wasm
-        </a>{' '}
-        — processing happens entirely in your browser via WebCodecs.
+        </a>
+        {' (LGPL-2.1+) — '}
+        <a
+          href={LINKS.SOLIDJS}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-blue-600 dark:text-blue-400 hover:underline"
+          aria-label="SolidJS on GitHub (opens in new tab)"
+        >
+          SolidJS
+        </a>
+        {' (MIT) — '}
+        processing happens entirely in your browser via WebCodecs.
       </p>
       <p>
         <a

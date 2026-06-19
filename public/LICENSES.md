@@ -1,81 +1,81 @@
 # Third-Party Licenses
 
-This project uses the following open-source libraries and components.
+This project uses the following open-source libraries.
 
-## Important Notice
+## Runtime Dependencies
 
-This application uses FFmpeg through ffmpeg.wasm. While the JavaScript wrapper (ffmpeg.wasm)
-is licensed under MIT, the underlying FFmpeg core is licensed under LGPL 2.1 or later.
+### gifenc
+- **Version:** 1.0.3
+- **License:** MIT
+- **Repository:** https://github.com/mattdesl/gifenc
+- **Purpose:** GIF encoding (quantize, applyPalette, GIFEncoder)
 
----
+### wasm-webp
+- **Version:** 0.1.0
+- **License:** MIT
+- **Repository:** https://github.com/GoogleChromeLabs/wasm-webp
+- **Purpose:** WebP encoding via WebAssembly (encodeRGB)
 
-## @ffmpeg/ffmpeg v0.12.15
+### mediabunny
+- **Version:** 1.48.1
+- **License:** MPL-2.0 (Mozilla Public License 2.0)
+- **Repository:** https://github.com/w3reality/mediabunny
+- **Purpose:** Video demuxing (Input, BufferSource, EncodedPacketSink)
 
-**License**: MIT
-**Repository**: https://github.com/ffmpegwasm/ffmpeg.wasm#readme
----
-## @ffmpeg/types v0.12.4
+### ffmpeg.wasm
+- **Version:** (loaded via CDN at runtime)
+- **License:** LGPL-2.1-or-later / GPL-2.0-or-later (FFmpeg), MIT (emscripten wrapper)
+- **Repository:** https://github.com/ffmpegwasm/ffmpeg.wasm
+- **Purpose:** Fallback video decoding/encoding via WebAssembly
 
-**License**: MIT
-**Repository**: https://github.com/ffmpegwasm/ffmpeg.wasm#readme
----
-## @ffmpeg/util v0.12.2
+### SolidJS
+- **Version:** 1.9.13
+- **License:** MIT
+- **Repository:** https://github.com/solidjs/solid
+- **Purpose:** UI framework (reactive signals, components)
 
-**License**: MIT
-**Repository**: https://github.com/ffmpegwasm/ffmpeg.wasm#readme
----
-## @types/dom-mediacapture-transform v0.1.11
+## License Texts
 
-**License**: MIT
-**Repository**: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/dom-mediacapture-transform
----
-## @types/dom-webcodecs v0.1.13
-
-**License**: MIT
-**Repository**: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/dom-webcodecs
----
-## csstype v3.2.3
-
-**License**: MIT
-**Repository**: https://github.com/frenic/csstype#readme
----
-## gif-encoder-2 v1.0.5
-
-**License**: UNLICENSE
-**Repository**: https://github.com/benjaminadk/gif-encoder-2#readme
----
-## mediabunny v1.46.0
-
-**License**: MPL-2.0
-**Repository**: https://mediabunny.dev/
----
-## seroval v1.5.4
-
-**License**: MIT
-**Repository**: https://github.com/lxsmnsyc/seroval/tree/main/packages/seroval
----
-## seroval-plugins v1.5.4
-
-**License**: MIT
-**Repository**: https://github.com/lxsmnsyc/seroval/tree/main/packages/plugins
----
-## solid-js v1.9.13
-
-**License**: MIT
-**Repository**: https://solidjs.com
----
-## wasm-webp v0.1.0
-
-**License**: MIT
-**Repository**: https://github.com/nieyuyao/webp-wasm/blob/main/README.md
-
-## FFmpeg (WebAssembly Core)
-
-**License**: LGPL 2.1+
-**Repository**: https://github.com/FFmpeg/FFmpeg
+### MIT License (gifenc, wasm-webp, SolidJS)
 
 ```
-FFmpeg is licensed under the GNU Lesser General Public License (LGPL) version 2.1 or later.
-This application uses FFmpeg through ffmpeg.wasm, which compiles FFmpeg to WebAssembly.
-Source: https://github.com/ffmpegwasm/ffmpeg.wasm-core
+MIT License
+
+Copyright (c) respective authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
+
+### MPL-2.0 (mediabunny)
+
+Mozilla Public License Version 2.0. See https://www.mozilla.org/en-US/MPL/2.0/ for full text.
+
+Key points:
+- Source code modifications to mediabunny itself must be made available under MPL-2.0
+- This project (wasm-motion-converter) remains under MIT
+- No patent retaliation clause applies
+
+### LGPL-2.1+ (ffmpeg.wasm / FFmpeg)
+
+GNU Lesser General Public License v2.1 or later. See https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html for full text.
+
+Key points:
+- ffmpeg.wasm is loaded dynamically at runtime via CDN
+- This project does not statically link or modify FFmpeg source
+- Users can replace the ffmpeg.wasm binary with a modified version

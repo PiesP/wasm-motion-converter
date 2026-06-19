@@ -14,5 +14,5 @@
   "ignore": ["**/*.d.ts"],
   "ignoreBinaries": ["sha256sum"],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["@types/dom-webcodecs", "node-webpmux"]
+  "ignoreDependencies": ["@types/dom-webcodecs"]
 }
