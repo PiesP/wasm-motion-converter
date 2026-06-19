@@ -26,10 +26,12 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   ]);
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
+  const [previewError, setPreviewError] = createSignal(false);
 
   createEffect(() => {
     const blob = local.outputBlob;
     setLoaded(false);
+    setPreviewError(false);
     const url = URL.createObjectURL(blob);
     setPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
@@ -70,15 +72,32 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       `${outputExtension().toUpperCase()} conversion results: ${downloadFileName()}, ${formatBytes(local.outputBlob.size)}`
   );
 
-  const downloadUrl = createMemo(() => previewUrl());
+  const compressionRatio = createMemo(() => {
+    const orig = local.originalSize;
+    const out = local.outputBlob.size;
+    if (orig <= 0) return null;
+    const ratio = ((orig - out) / orig) * 100;
+    return ratio;
+  });
+
+  const compressionLabel = createMemo(() => {
+    const ratio = compressionRatio();
+    if (ratio === null) return null;
+    if (ratio > 0) return `${ratio.toFixed(0)}% smaller`;
+    return `${Math.abs(ratio).toFixed(0)}% larger`;
+  });
 
   const handlePreviewLoad = () => setLoaded(true);
+  const handlePreviewError = () => {
+    setPreviewError(true);
+    setLoaded(true);
+  };
 
   return (
     <Panel class="p-4">
       <div class="flex gap-2">
         <a
-          href={downloadUrl() ?? undefined}
+          href={previewUrl() ?? undefined}
           download={downloadFileName()}
           aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
           class="flex-1 inline-flex justify-center items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-900"
@@ -93,19 +112,43 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         <div class={skeletonClass()}>
           <div class="w-full h-full bg-gray-200 dark:bg-gray-800 animate-pulse rounded" />
         </div>
-        <Show when={previewUrl()}>
+        <Show
+          when={previewUrl()}
+          fallback={
+            <Show when={previewError()} fallback={null}>
+              <div class="flex flex-col items-center justify-center p-8 text-gray-400 dark:text-gray-500">
+                <svg
+                  class="h-10 w-10 mb-2"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.5"
+                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                  />
+                </svg>
+                <span class="text-xs">Preview failed to load</span>
+              </div>
+            </Show>
+          }
+        >
           <img
             src={previewUrl()!}
             alt="Converted animation"
             class={imageClass()}
             onLoad={handlePreviewLoad}
+            onError={handlePreviewError}
             data-testid="result-image"
           />
         </Show>
       </div>
 
       <section class="mt-3" aria-label={ariaLabel()}>
-        <dl class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+        <dl class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
           <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
             <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Original</dt>
             <dd class="font-medium text-gray-900 dark:text-white" data-result-original-size>
@@ -118,6 +161,14 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               {formatBytes(local.outputBlob.size)}
             </dd>
           </div>
+          <Show when={compressionLabel()}>
+            {(label) => (
+              <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">
+                <dt class="text-gray-500 dark:text-gray-400 text-[10px]">Compression</dt>
+                <dd class="font-medium text-green-600 dark:text-green-400">{label()}</dd>
+              </div>
+            )}
+          </Show>
           <Show when={conversionTimeLabel()}>
             {(label) => (
               <div class="bg-gray-50 dark:bg-gray-950 rounded-lg p-2">

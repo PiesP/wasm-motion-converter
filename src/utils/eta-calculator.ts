@@ -31,16 +31,32 @@ export class ETACalculator {
 
   /**
    * Calculate ETA using weighted linear regression.
-   * Recent samples have higher weight — encoding speed often accelerates near start.
+   * For the first few samples (< 5), uses simple linear extrapolation
+   * from the first sample so the user sees an immediate estimate.
    *
    * @returns Estimated seconds remaining, or null if estimate is unreliable.
    */
   getETA(): number | null {
-    if (this.samples.length < 5) return null;
+    if (this.samples.length < 2) return null;
 
     const n = this.samples.length;
     const lastSample = this.samples[n - 1];
     if (!lastSample || lastSample.progress >= 100) return 0;
+
+    // Fast path: simple linear extrapolation for first few samples
+    if (n < 5) {
+      const firstSample = this.samples[0]!;
+      const elapsedSec = (lastSample.timestamp - firstSample.timestamp) / 1000;
+      const progressDelta = lastSample.progress - firstSample.progress;
+      if (elapsedSec <= 0 || progressDelta <= 0) return null;
+      const rate = progressDelta / elapsedSec; // % per second
+      const remaining = 100 - lastSample.progress;
+      const estimatedSeconds = remaining / rate;
+      if (!Number.isFinite(estimatedSeconds) || estimatedSeconds > 3600 || estimatedSeconds < 0) {
+        return null;
+      }
+      return Math.ceil(estimatedSeconds * 1.1);
+    }
 
     // Weighted linear regression: weight = 1 / (position from end)
     // Recent samples get higher weight

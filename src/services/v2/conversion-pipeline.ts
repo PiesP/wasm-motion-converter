@@ -74,16 +74,28 @@ export async function runConversionPipeline(
   }
 
   // ── Demux Phase (0~10%) ──
+  // Map demux progress to 0~10% range. Since total frames are unknown until
+  // demux completes, we ramp progress based on elapsed time relative to the
+  // overall pipeline start, capped at 10%. This avoids a "stuck at 0%" UX.
   profiler.startPhase('demux');
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
+  const demuxStartMs = performance.now();
   try {
     demuxResult = await demuxVideo(request, (packetsExtracted) => {
       profiler.updatePhase('demux', packetsExtracted);
       const memMB = getMemoryUsageMB() ?? 0;
       const elapsedMs = Math.round(performance.now() - pipelineStart);
+      // Ramp demux progress: assume demux takes ~10% of total time.
+      // Use a soft ramp: 1 - e^(-3t/T) where T is an estimated total time.
+      // Since we don't know T yet, use packet count as a proxy: each packet
+      // nudges progress up, asymptotically approaching 10%.
+      const demuxElapsed = performance.now() - demuxStartMs;
+      // Estimate: ~60ms per packet is typical. Scale progress toward 10%.
+      const estimatedTotalPackets = Math.max(packetsExtracted, Math.ceil(demuxElapsed / 60));
+      const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalPackets) * 10));
       onProgress({
         phase: 'demuxing',
-        progress: 0,
+        progress: demuxPct,
         fps: 0,
         etaSeconds: null,
         memoryMB: memMB,

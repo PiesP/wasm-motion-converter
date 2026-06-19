@@ -161,7 +161,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
 
           return (
             <div
-              class={`h-full transition-all duration-300 ${
+              class={`h-full transition-[width] duration-150 ease-out ${
                 widthPercent > 0 ? seg.colorClass : 'bg-transparent'
               } ${idx === 0 ? 'rounded-l-full' : ''} ${idx === PHASE_SEGMENTS.length - 1 ? 'rounded-r-full' : ''}`}
               style={{ width: `${widthPercent}%` }}
@@ -190,7 +190,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           {showFrameCounter() && subPhaseValue() > 0 && (
             <span class="font-mono tabular-nums">{subPhaseValue()}%</span>
           )}
-          {local.memoryUsage && (
+          {local.memoryUsage && local.memoryUsage !== '0 MB / 0 MB (0%)' && (
             <span class="font-mono tabular-nums text-gray-400 dark:text-gray-600">
               🧠 {local.memoryUsage}
             </span>
