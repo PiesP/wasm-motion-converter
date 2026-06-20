@@ -13,6 +13,8 @@ import {
   inputBuffer,
   inputFile,
   setAppState,
+  setConversionElapsedMs,
+  setConversionFps,
   setConversionResults,
   setConversionStatusMessage,
   setErrorContext,
@@ -180,6 +182,8 @@ async function performConversion(
       (progress) => {
         if (!isActive()) return;
         runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
+        setConversionFps(progress.fps ?? undefined);
+        setConversionElapsedMs(progress.elapsedMs ?? undefined);
 
         // User-friendly phase messages
         const phaseLabel =
@@ -197,8 +201,9 @@ async function performConversion(
           progress.currentFrame > 0 &&
           progress.totalFrames > 0
         ) {
+          const fpsLabel = progress.fps != null && progress.fps > 0 ? ` @ ${progress.fps}fps` : '';
           runtime.updateStatus(
-            `Frame ${progress.currentFrame}/${progress.totalFrames} — ${phaseLabel}`
+            `Frame ${progress.currentFrame}/${progress.totalFrames} — ${phaseLabel}${fpsLabel}`
           );
         } else {
           runtime.updateStatus(phaseLabel);

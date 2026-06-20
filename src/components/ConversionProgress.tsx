@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import Panel from '@components/ui/Panel';
+import { conversionElapsedMs, conversionFps } from '@stores/conversion-store';
 import type { ProgressPhase } from '@t/conversion-types';
 import type { Component } from 'solid-js';
 import { splitProps } from 'solid-js';
@@ -16,8 +17,11 @@ interface ConversionProgressProps {
   estimatedSecondsRemaining?: number | null;
   currentFrame?: number;
   totalFrames?: number;
+  outputFrames?: number;
   memoryUsage?: string | null;
   phase?: ProgressPhase;
+  fps?: number;
+  elapsedMs?: number;
 }
 
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {
@@ -30,8 +34,11 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
     'estimatedSecondsRemaining',
     'currentFrame',
     'totalFrames',
+    'outputFrames',
     'memoryUsage',
     'phase',
+    'fps',
+    'elapsedMs',
   ]);
   const isInProgress = () => local.progress < 100;
   const ariaBusy = () => (isInProgress() ? true : undefined);
@@ -55,8 +62,11 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
         estimatedSecondsRemaining={local.estimatedSecondsRemaining}
         currentFrame={local.currentFrame}
         totalFrames={local.totalFrames}
+        outputFrames={local.outputFrames}
         memoryUsage={local.memoryUsage}
         phase={local.phase}
+        fps={conversionFps()}
+        elapsedMs={conversionElapsedMs()}
         layout="horizontal"
       />
     </Panel>

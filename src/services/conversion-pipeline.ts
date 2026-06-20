@@ -210,17 +210,24 @@ async function _runPipelineInner(
   let output: ArrayBuffer;
   let encodeResult: { frames: number; outputBytes: number } | null = null;
 
+  // Track frame times for FPS calculation
+  const fpsTracker = { current: 0, lastTime: performance.now() };
+
   const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
+    const now = performance.now();
+    const deltaMs = now - fpsTracker.lastTime;
+    fpsTracker.current = deltaMs > 0 ? Math.round((1000 / deltaMs) * 10) / 10 : 0;
+    fpsTracker.lastTime = now;
     const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
     throttledProgress({
       phase: 'decoding',
       progress: 10 + Math.min(40, decodePct),
-      fps: 0,
+      fps: fpsTracker.current,
       etaSeconds: null,
       memoryMB: getMemoryUsageMB() ?? 0,
       currentFrame: frameIdx,
       totalFrames,
-      elapsedMs: Math.round(performance.now() - pipelineStart),
+      elapsedMs: Math.round(now - pipelineStart),
     });
   };
 
@@ -267,7 +274,7 @@ async function _runPipelineInner(
             throttledProgress({
               phase: 'encoding',
               progress: 50 + Math.min(40, encodePct),
-              fps: 0,
+              fps: fpsTracker.current,
               etaSeconds: null,
               memoryMB: getMemoryUsageMB() ?? 0,
               currentFrame: frameIdx,
@@ -316,7 +323,7 @@ async function _runPipelineInner(
         throttledProgress({
           phase: 'encoding',
           progress: Math.min(90, mappedProgress),
-          fps: 0,
+          fps: fpsTracker.current,
           etaSeconds: null,
           memoryMB: getMemoryUsageMB() ?? 0,
           currentFrame: p.currentFrame ?? 0,

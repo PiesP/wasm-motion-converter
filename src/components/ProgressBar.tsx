@@ -53,6 +53,8 @@ interface ProgressBarProps {
   memoryUsage?: string | null;
   phase?: ProgressPhase;
   compact?: boolean;
+  fps?: number;
+  elapsedMs?: number;
 }
 
 const ProgressBar: Component<ProgressBarProps> = (props) => {
@@ -73,6 +75,8 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     'memoryUsage',
     'phase',
     'compact',
+    'fps',
+    'elapsedMs',
   ]);
   let elapsedDisplayRef: HTMLSpanElement | undefined;
 

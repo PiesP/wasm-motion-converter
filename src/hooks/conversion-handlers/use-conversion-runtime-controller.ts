@@ -126,6 +126,32 @@ export class ConversionRuntimeController {
 
   private lastUiStatusLogAtMs = 0;
 
+  /** Update structured status message for detailed progress tracking */
+  updateStatusMessage(msg: {
+    phase?: string;
+    fps?: number;
+    elapsedMs?: number;
+    memoryMB?: number;
+  }): void {
+    this._lastStatusMessage = msg;
+  }
+
+  getLastStatusMessage(): {
+    phase?: string;
+    fps?: number;
+    elapsedMs?: number;
+    memoryMB?: number;
+  } | null {
+    return this._lastStatusMessage;
+  }
+
+  private _lastStatusMessage: {
+    phase?: string;
+    fps?: number;
+    elapsedMs?: number;
+    memoryMB?: number;
+  } | null = null;
+
   updateStatus(message: string): void {
     const safeMessage = message ?? '';
 
