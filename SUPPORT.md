@@ -1,6 +1,6 @@
 # Support
 
-Thanks for using **dropconvert-wasm**! This app converts a single video to GIF/WebP entirely in the browser.
+Thanks for using **dropconvert**! This app converts a single video to GIF/WebP entirely in the browser.
 
 ## Questions
 

@@ -1,4 +1,4 @@
-# dropconvert-wasm
+# dropconvert
 
 SolidJS SPA that converts a single video into GIF or animated WebP entirely in the browser. It prefers WebCodecs when available and falls back to FFmpeg (ffmpeg.wasm) when needed. No uploads, no servers.
 
@@ -14,7 +14,7 @@ Live demo: https://wasm-motion-converter.pages.dev/
 - Environment checks for `crossOriginIsolated` / `SharedArrayBuffer`
 - Offline/network warning banner and downloadable diagnostics logs
 - Runtime dependency loading with CDN fallback and generated integrity metadata
-- Light/dark theme
+- Dark theme (Linear-style)
 
 ## Quick start (dev)
 
@@ -49,6 +49,7 @@ pnpm preview
 - COOP/COEP headers are required for SharedArrayBuffer:
   - Cloudflare Pages: `public/_headers`
   - Local dev/preview: `vite.config.ts`
+- WebCodecs is the preferred conversion path; FFmpeg is the fallback
 - FFmpeg core assets are loaded at runtime with `toBlobURL()` from blob-compatible CDN providers (`jsdelivr`, `unpkg`)
 - Runtime ESM dependencies use the generated import map and CDN fallback configuration from `vite.config.ts`
 - `pnpm build` runs `prebuild`, which generates `public/cdn-integrity.json` and `public/LICENSES.md`
@@ -74,13 +75,3 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 ## License
 
 MIT for app code. FFmpeg core is LGPL 2.1+. See [LICENSE](./LICENSE) and [public/LICENSES.md](./public/LICENSES.md).
-
----
-
-<div align="center">
-
-**🌟 If you find this project useful, please give it a Star! 🌟**
-
-**Made with ❤️ and GitHub Copilot by [PiesP](https://github.com/PiesP)**
-
-</div>

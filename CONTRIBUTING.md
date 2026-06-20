@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for improving **dropconvert-wasm**. This is a Vite + SolidJS + TypeScript SPA that converts a single video to GIF/WebP entirely in the browser (no uploads).
+Thanks for improving **dropconvert**. This is a Vite + SolidJS + TypeScript SPA that converts a single video to GIF/WebP entirely in the browser (no uploads).
 
 ## Communication
 
@@ -53,7 +53,7 @@ pnpm dev
 ```
 
 - COOP/COEP headers are configured in `vite.config.ts` for dev/preview.
-- First run downloads ~30MB ffmpeg core from the CDN.
+- First run downloads ~30MB ffmpeg core from the CDN (fallback path).
 
 ### Quality checks (run before PRs)
 
@@ -68,8 +68,8 @@ pnpm dev
 - SharedArrayBuffer requires COOP/COEP headers:
   - Cloudflare Pages: `public/_headers`
   - Local dev/preview: `vite.config.ts`
+- WebCodecs is the preferred conversion path; FFmpeg is the fallback.
 - FFmpeg core assets are loaded at runtime with `toBlobURL()` from blob-compatible CDN providers.
-- WebCodecs is the preferred path; FFmpeg remains the fallback path.
 
 ## Code style
 

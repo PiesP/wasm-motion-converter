@@ -1,6 +1,6 @@
 # Security Policy
 
-This document explains how to report security issues for **dropconvert-wasm**.
+This document explains how to report security issues for **dropconvert**.
 
 ## Supported versions
 
@@ -24,4 +24,4 @@ Include, where possible:
 
 - All conversion runs locally in the browser.
 - No user file uploads by design.
-- FFmpeg core assets are downloaded from a CDN (unpkg) at runtime.
+- WebCodecs is the primary conversion engine; FFmpeg.wasm is loaded from CDN as fallback.
