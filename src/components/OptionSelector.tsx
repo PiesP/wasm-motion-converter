@@ -7,7 +7,7 @@ import Tooltip from './Tooltip';
 import Icon from './ui/Icon';
 
 const BASE_OPTION_CLASS =
-  'relative flex items-center justify-center px-3 py-3 border rounded-lg cursor-pointer transition-colors text-sm min-h-[44px]';
+  'relative flex items-center justify-center px-3 py-2 sm:py-3 border rounded-lg cursor-pointer transition-colors text-sm min-h-[44px]';
 const SELECTED_OPTION_CLASS =
   'bg-[#5e6ad2]/20 border-[#5e6ad2] text-[#f7f8f8] ring-2 ring-[#5e6ad2]/30';
 const DEFAULT_OPTION_CLASS =
@@ -53,7 +53,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
     `${BASE_OPTION_CLASS} ${selected ? SELECTED_OPTION_CLASS : DEFAULT_OPTION_CLASS}`;
 
   const gridColumnsClass = (): string =>
-    columns() === 3 ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2';
+    columns() === 3 ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-2';
 
   const legendId = (): string => `${local.name}-legend`;
 

@@ -107,7 +107,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           : isInteractive()
             ? 'border-white/[0.08] hover:border-[#5e6ad2] hover:bg-white/[0.04] bg-white/[0.02]'
             : 'border-white/[0.06] bg-white/[0.01]'
-      } ${isBusy() ? 'p-4' : hasFile() ? 'p-4' : 'p-12'}`}
+      } ${isBusy() ? 'p-4' : hasFile() ? 'p-4' : 'p-6 sm:p-12'}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -268,7 +268,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         <Show when={!hasFile()}>
           <div class="text-center">
             <svg
-              class="mx-auto h-12 w-12 text-[#8a8f98]"
+              class="mx-auto h-8 w-8 sm:h-12 sm:w-12 text-[#8a8f98]"
               stroke="currentColor"
               fill="none"
               viewBox="0 0 48 48"
