@@ -35,26 +35,45 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
-  // Stable download URL — created once, never revoked during component lifetime.
-  // Separate from previewUrl which may be recreated by createEffect.
-  const downloadUrl = createMemo(() => URL.createObjectURL(local.outputBlob));
+
+  // Track the current blob URL for cleanup without triggering effect re-entry.
+  // We use a plain let variable closed over by the effect, so that
+  // setPreviewUrl() does NOT cause the effect to re-run.
+  let currentUrl: string | null = null;
 
   createEffect(() => {
-    void local.outputBlob;
+    // React to outputBlob changes
+    const blob = local.outputBlob;
+
+    // Reset state
     setLoaded(false);
     setPreviewError(false);
 
-    const prevUrl = previewUrl();
-    if (prevUrl) URL.revokeObjectURL(prevUrl);
+    // Revoke previous URL (stored in closure variable, not reactive)
+    if (currentUrl) {
+      URL.revokeObjectURL(currentUrl);
+      currentUrl = null;
+    }
 
-    const url = URL.createObjectURL(local.outputBlob);
+    // Create new URL and update both the closure variable and the signal
+    const url = URL.createObjectURL(blob);
+    currentUrl = url;
     setPreviewUrl(url);
-
-    onCleanup(() => {
-      const current = previewUrl();
-      if (current) URL.revokeObjectURL(current);
-    });
   });
+
+  // Cleanup on unmount
+  onCleanup(() => {
+    if (currentUrl) {
+      URL.revokeObjectURL(currentUrl);
+      currentUrl = null;
+    }
+  });
+
+  // Stable download URL — plain function, not createMemo.
+  // Creates a fresh blob URL each call; the browser manages the lifecycle
+  // via the <a download> attribute. No memo needed since Blob is stable
+  // for the component lifetime.
+  const getDownloadUrl = () => URL.createObjectURL(local.outputBlob);
 
   const conversionTimeLabel = createMemo(() => {
     if (typeof local.conversionDurationSeconds !== 'number') return null;
@@ -75,11 +94,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     const safeBaseName = baseName.trim() ? baseName : 'converted';
     return `${safeBaseName}.${outputExtension()}`;
   });
-
-  const skeletonClass = createMemo(
-    () =>
-      `absolute inset-0 transition-opacity duration-300 ${loaded() ? 'opacity-0' : 'opacity-100'}`
-  );
 
   const ariaLabel = createMemo(
     () =>
@@ -119,15 +133,15 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     <Panel class="p-4 bg-[#0f1011] border border-white/[0.08] rounded-lg">
       {/* Preview area */}
       <div class="relative flex justify-center bg-white/[0.02] rounded-lg overflow-hidden">
-        {/* Skeleton shown while loading */}
-        <div class={skeletonClass()}>
+        {/* Skeleton: removed from DOM when loaded */}
+        <Show when={!loaded()}>
           <div class="w-full aspect-video bg-white/[0.05] animate-pulse rounded" />
-        </div>
+        </Show>
         <Show when={previewUrl()}>
           <img
             src={previewUrl()!}
             alt="Converted animation"
-            class={`w-full h-auto rounded transition-opacity duration-300 ${loaded() ? 'opacity-100' : 'opacity-0'}`}
+            class="w-full h-auto max-h-[70vh] object-contain rounded transition-opacity duration-300 opacity-100"
             onLoad={handlePreviewLoad}
             onError={handlePreviewError}
             loading="eager"
@@ -155,9 +169,9 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         </Show>
       </div>
 
-      {/* Stats: 핵심 정보 강조 (아이디어 3) */}
+      {/* Stats */}
       <section class="mt-3" aria-label={ariaLabel()}>
-        {/* Primary stats: size reduction + time — prominent */}
+        {/* Primary stats: size reduction + time */}
         <div class="flex items-center justify-center gap-3 text-sm mb-2">
           <span class="text-[#8a8f98] font-mono" data-result-original-size>
             {formatBytes(local.originalSize)}
@@ -188,7 +202,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           </Show>
         </div>
 
-        {/* Secondary stats: format, quality, scale — subtle */}
+        {/* Secondary stats: format, quality, scale */}
         <div class="flex items-center justify-center gap-2 text-[10px] text-[#5e6ad2]/50 uppercase tracking-wide">
           <span data-result-format>{outputExtension().toUpperCase()}</span>
           <span>·</span>
@@ -202,10 +216,10 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         </div>
       </section>
 
-      {/* Download button — always visible below stats */}
+      {/* Download button */}
       <div class="mt-3 flex justify-center">
         <a
-          href={downloadUrl()}
+          href={getDownloadUrl()}
           download={downloadFileName()}
           aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
           class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"
