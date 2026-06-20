@@ -146,6 +146,11 @@ async function copyFrameCanvas(
   const imageData = ctx.getImageData(0, 0, width, height);
   const rgbaBuf = new Uint8Array(imageData.data);
   const rgb = rgbaToRGBFast(rgbaBuf, width, height, 'RGBA');
+
+  // Explicitly release OffscreenCanvas GPU resources
+  canvas.width = 0;
+  canvas.height = 0;
+
   return rgb;
 }
 

@@ -12,7 +12,7 @@ Follow all rules in this file, plus any newer scoped AGENTS.md files.
 - App: **dropconvert-wasm** (Vite + SolidJS + TypeScript SPA)
 - Purpose: Convert a **single video** to GIF or animated WebP entirely in-browser
 - User-facing output formats: **GIF** and **WebP** only
-- Key constraints: no uploads, cross-origin isolation required for FFmpeg multithreading
+- Key constraints: no uploads, cross-origin isolation required for WebCodecs VideoDecoder
 
 ## Commands (Build/Lint/Test)
 
