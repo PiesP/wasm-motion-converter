@@ -104,7 +104,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
       }
 
       const lines: string[] = [];
-      lines.push('Motion Converter log export');
+      lines.push('dropconvert log export');
       lines.push(`timestamp: ${now.toISOString()}`);
       lines.push(
         `url: ${(() => {

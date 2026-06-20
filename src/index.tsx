@@ -4,7 +4,7 @@
 /**
  * Application Entry Point
  *
- * Initializes and renders the Motion Converter SolidJS application into
+ * Initializes and renders the dropconvert SolidJS application into
  * the DOM. Ensures the root container element exists before rendering
  * to prevent runtime errors.
  *
