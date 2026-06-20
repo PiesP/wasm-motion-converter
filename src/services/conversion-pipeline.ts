@@ -286,7 +286,7 @@ async function _runPipelineInner(
   } else {
     const webpDecimation = calcAutoDecimation(
       sourceFps,
-      WEBP_TARGET_FPS,
+      WEBP_TARGET_FPS[request.quality],
       request.scale,
       request.forceDecimation
     );

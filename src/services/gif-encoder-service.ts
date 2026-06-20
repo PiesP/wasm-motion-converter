@@ -41,7 +41,9 @@ const DYNAMIC_DECIMATION_MEM_THRESHOLD = 70;
 const DYNAMIC_DECIMATION_MEM_CRITICAL = 85;
 
 const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
-  low: 64,
+  low: 128, // 64 → 128: perceptual studies show banding becomes clearly
+  // visible below ~32 colors in gradients; 128 is the minimum
+  // for acceptable quality in most photographic content
   medium: 128,
   high: 256,
 };

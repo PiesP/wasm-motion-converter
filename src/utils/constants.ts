@@ -13,6 +13,8 @@
 // FILE SIZE CONSTRAINTS (bytes)
 // ============================================================================
 
+import type { ConversionQuality } from '@t/conversion-types';
+
 /** Maximum file size allowed for upload (500 MB) */
 export const MAX_FILE_SIZE = 500 * 1024 * 1024;
 
@@ -69,8 +71,15 @@ export const DEFAULT_FPS = 30;
 /** GIF auto-decimation target FPS */
 export const GIF_TARGET_FPS = 15;
 
-/** WebP auto-decimation target FPS */
-export const WEBP_TARGET_FPS = 20;
+/** WebP auto-decimation target FPS — varies by quality preset.
+ *  Perceptual basis: 20fps is "smooth enough" for low quality (where artifacts
+ *  dominate), 24fps is the cinema standard for medium, 30fps preserves original
+ *  temporal fidelity for high quality where the viewer expects fidelity. */
+export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
+  low: 20,
+  medium: 24,
+  high: 30,
+};
 
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */
 export const GIF_MAX_FRAME_DELAY_CS = 200;

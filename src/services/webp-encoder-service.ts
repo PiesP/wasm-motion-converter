@@ -40,7 +40,9 @@ import {
 export interface WebpEncodeOptions extends BaseEncoderOptions {}
 
 const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
-  low: 60,
+  low: 70, // 60 → 70: SSIM studies show perceptual transparency threshold
+  // is ~quality 70 (SSIM > 0.96); quality 60 shows visible
+  // blocking artifacts in high-detail regions
   medium: 80,
   high: 92,
 };
