@@ -3,100 +3,79 @@
 
 import type { Component } from 'solid-js';
 
-const LINKS = {
-  GIFENC: 'https://github.com/mattdesl/gifenc',
-  WASM_WEBP: 'https://github.com/GoogleChromeLabs/wasm-webp',
-  MEDIABUNNY: 'https://github.com/w3reality/mediabunny',
-  FFMPEG_WASM: 'https://github.com/ffmpegwasm/ffmpeg.wasm',
-  SOLIDJS: 'https://github.com/solidjs/solid',
-  LICENSES: '/LICENSES.md',
-  GITHUB_ISSUES: 'https://github.com/PiesP/wasm-motion-converter/issues',
-} as const;
+const LIBRARIES = [
+  { name: 'gifenc', url: 'https://github.com/mattdesl/gifenc', license: 'MIT' },
+  { name: 'wasm-webp', url: 'https://github.com/GoogleChromeLabs/wasm-webp', license: 'MIT' },
+  { name: 'mediabunny', url: 'https://github.com/w3reality/mediabunny', license: 'MPL-2.0' },
+  { name: 'ffmpeg.wasm', url: 'https://github.com/ffmpegwasm/ffmpeg.wasm', license: 'LGPL-2.1+' },
+  { name: 'SolidJS', url: 'https://github.com/solidjs/solid', license: 'MIT' },
+] as const;
+
+const LICENSES_URL = '/LICENSES.md';
+const GITHUB_ISSUES_URL = 'https://github.com/PiesP/wasm-motion-converter/issues';
+
+const linkClass =
+  'text-[#5e6ad2] hover:text-[#828fff] underline underline-offset-2 px-1.5 py-1 inline-flex items-center min-h-[44px]';
 
 const LicenseAttribution: Component = () => (
   <footer
-    class="border-t border-white/[0.06] py-6 mt-8 bg-[#0a0b0c]"
+    class="border-t border-white/[0.06] py-4 sm:py-6 mt-4 sm:mt-8 bg-[#0a0b0c]"
     role="contentinfo"
     aria-label="License attribution and footer"
   >
-    <div class="max-w-6xl mx-auto px-4 text-center text-sm text-[#8a8f98] space-y-3">
+    <div class="max-w-6xl mx-auto px-4 text-center text-xs sm:text-sm text-[#8a8f98] space-y-2 sm:space-y-3">
+      {/* Line 1: Powered by — libraries in a responsive inline list */}
       <p class="leading-relaxed">
         Powered by{' '}
-        <a
-          href={LINKS.GIFENC}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-[#5e6ad2] hover:text-[#828fff] underline underline-offset-2 px-1 py-0.5 inline-block min-h-[32px] leading-8"
-          aria-label="gifenc on GitHub (opens in new tab)"
-        >
-          gifenc
-        </a>
-        {' (MIT), '}
-        <a
-          href={LINKS.WASM_WEBP}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-[#5e6ad2] hover:text-[#828fff] underline underline-offset-2 px-1 py-0.5 inline-block min-h-[32px] leading-8"
-          aria-label="wasm-webp on GitHub (opens in new tab)"
-        >
-          wasm-webp
-        </a>
-        {' (MIT), '}
-        <a
-          href={LINKS.MEDIABUNNY}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-[#5e6ad2] hover:text-[#828fff] underline underline-offset-2 px-1 py-0.5 inline-block min-h-[32px] leading-8"
-          aria-label="mediabunny on GitHub (opens in new tab)"
-        >
-          mediabunny
-        </a>
-        {' (MPL-2.0), and '}
-        <a
-          href={LINKS.FFMPEG_WASM}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-[#5e6ad2] hover:text-[#828fff] underline underline-offset-2 px-1 py-0.5 inline-block min-h-[32px] leading-8"
-          aria-label="ffmpeg.wasm on GitHub (opens in new tab)"
-        >
-          ffmpeg.wasm
-        </a>
-        {' (LGPL-2.1+) — '}
-        <a
-          href={LINKS.SOLIDJS}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-[#5e6ad2] hover:text-[#828fff] underline underline-offset-2 px-1 py-0.5 inline-block min-h-[32px] leading-8"
-          aria-label="SolidJS on GitHub (opens in new tab)"
-        >
-          SolidJS
-        </a>
-        {' (MIT) — '}
-        processing happens entirely in your browser via WebCodecs.
+        <span class="inline-flex flex-wrap justify-center gap-x-0.5 gap-y-1">
+          {LIBRARIES.map((lib, i) => (
+            <span class="inline-flex items-center">
+              <a
+                href={lib.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                class={linkClass}
+                aria-label={`${lib.name} on GitHub (opens in new tab)`}
+              >
+                {lib.name}
+              </a>
+              <span class="text-[#62666d]">({lib.license})</span>
+              {i < LIBRARIES.length - 1 && <span class="text-[#62666d] hidden sm:inline">, </span>}
+            </span>
+          ))}
+        </span>
       </p>
+
+      {/* Line 2: Processing note — hidden on mobile to save space */}
+      <p class="hidden sm:block text-[#62666d]">
+        Processing happens entirely in your browser via WebCodecs.
+      </p>
+
+      {/* Line 3: Licenses link */}
       <p>
         <a
-          href={LINKS.LICENSES}
+          href={LICENSES_URL}
           target="_blank"
           rel="noopener noreferrer"
-          class="text-[#5e6ad2] hover:text-[#828fff] underline underline-offset-2 px-2 py-1 inline-block min-h-[44px] leading-8"
+          class={linkClass}
           aria-label="View third-party licenses (opens in new tab)"
         >
-          View Third-Party Licenses
+          Third-Party Licenses
         </a>
       </p>
+
+      {/* Line 4: GitHub issues */}
       <p>
         Questions or feedback?{' '}
         <a
-          href={LINKS.GITHUB_ISSUES}
+          href={GITHUB_ISSUES_URL}
           target="_blank"
           rel="noopener noreferrer"
-          class="text-[#5e6ad2] hover:text-[#828fff] underline underline-offset-2 px-2 py-1 inline-block min-h-[44px] leading-8"
+          class={linkClass}
           aria-label="Open an issue on GitHub (opens in new tab)"
         >
           Open an issue on GitHub
         </a>
-        .
       </p>
     </div>
   </footer>
