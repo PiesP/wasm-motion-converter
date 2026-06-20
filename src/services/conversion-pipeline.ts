@@ -11,6 +11,7 @@
  * 2. Dynamic decimation: adjusts frame skip ratio based on real-time memory
  * 3. Buffer pooling: reuses Uint8Array allocations across frames
  * 4. Profiling: per-phase timing, memory, and throughput measurement
+ * 5. Resource cleanup: profiler removed from active map on completion/failure
  */
 
 import type { ConversionRequest, ProgressCallback } from '@t/conversion-types';
@@ -115,15 +116,38 @@ export async function runConversionPipeline(
     activeProfilers.delete(oldestKey);
   }
 
-  // Throttle progress callbacks to prevent UI re-render spam.
-  // Without throttling, per-frame callbacks (30+/sec) cause excessive
-  // SolidJS signal writes and jank during conversion.
+  // Ensure profiler is removed from active map on completion or failure
+  let output: ArrayBuffer;
+  try {
+    output = await _runPipelineInner(
+      request,
+      onProgress,
+      signal,
+      pipelineStart,
+      runId,
+      profiler,
+      logCtx
+    );
+  } finally {
+    activeProfilers.delete(runId);
+  }
+
+  return output;
+}
+
+/** Inner pipeline logic — separated so finally block can always clean up */
+async function _runPipelineInner(
+  request: ConversionRequest,
+  onProgress: ProgressCallback,
+  signal: AbortSignal | undefined,
+  pipelineStart: number,
+  _runId: string,
+  profiler: ConversionProfiler,
+  _logCtx: Record<string, unknown>
+): Promise<ArrayBuffer> {
   const throttledProgress = createThrottledProgress(onProgress, 100);
 
   // ── Demux Phase (0~10%) ──
-  // Map demux progress to 0~10% range. Since total frames are unknown until
-  // demux completes, we ramp progress based on elapsed time relative to the
-  // overall pipeline start, capped at 10%. This avoids a "stuck at 0%" UX.
   profiler.startPhase('demux');
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
   const demuxStartMs = performance.now();
@@ -133,12 +157,7 @@ export async function runConversionPipeline(
       profiler.updatePhase('demux', packetsExtracted);
       const memMB = getMemoryUsageMB() ?? 0;
       const elapsedMs = Math.round(performance.now() - pipelineStart);
-      // Ramp demux progress: assume demux takes ~10% of total time.
-      // Use a soft ramp: 1 - e^(-3t/T) where T is an estimated total time.
-      // Since we don't know T yet, use packet count as a proxy: each packet
-      // nudges progress up, asymptotically approaching 10%.
       const demuxElapsed = performance.now() - demuxStartMs;
-      // Estimate: ~60ms per packet is typical. Scale progress toward 10%.
       const estimatedTotalPackets = Math.max(packetsExtracted, Math.ceil(demuxElapsed / 60));
       const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalPackets) * 10));
       demuxProgressThrottled({
@@ -188,13 +207,9 @@ export async function runConversionPipeline(
   });
 
   // ── Decode + Encode Phase (10~90%) ──
-  // Progress split: decoding 10~50%, encoding 50~90%
   let output: ArrayBuffer;
   let encodeResult: { frames: number; outputBytes: number } | null = null;
 
-  // Unified decode progress callback for both GIF and WebP.
-  // Maps decoded frame index to 10~50% progress range.
-  // Throttled to 100ms to prevent per-frame re-render spam.
   const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
     const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
     throttledProgress({
@@ -209,16 +224,12 @@ export async function runConversionPipeline(
     });
   };
 
-  // ── Encode Phase (10~90%) ──
-  // Both GIF and WebP use streaming decode→encode with the same progress model:
-  //   decode progress → 10~50%, encode progress → 50~90%
   profiler.startPhase('decode');
   profiler.startPhase('encode');
 
   const sourceFps =
     demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
 
-  // Track decimation for output frame count display
   let decimationRatio = 1;
 
   if (request.format === 'gif') {
@@ -317,7 +328,7 @@ export async function runConversionPipeline(
     );
     output = encoded.buffer as ArrayBuffer;
     encodeResult = {
-      frames: 0, // WebP encoder doesn't expose frame count directly
+      frames: 0,
       outputBytes: output.byteLength,
     };
   }
