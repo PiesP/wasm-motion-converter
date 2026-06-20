@@ -49,8 +49,8 @@
 
     <script>
       // Suppress Cloudflare Insights MIME-type errors (injected by Cloudflare Pages)
-      window.addEventListener('error', function(e) {
-        if (e.filename && e.filename.includes('cloudflareinsights')) {
+      window.addEventListener('error', (e) => {
+        if (e.filename?.includes('cloudflareinsights')) {
           e.stopImmediatePropagation();
           e.preventDefault();
         }

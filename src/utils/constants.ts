@@ -9,11 +9,11 @@
  * All constants use UPPER_SNAKE_CASE naming convention.
  */
 
+import type { ConversionQuality } from '@t/conversion-types';
+
 // ============================================================================
 // FILE SIZE CONSTRAINTS (bytes)
 // ============================================================================
-
-import type { ConversionQuality } from '@t/conversion-types';
 
 /** Maximum file size allowed for upload (500 MB) */
 export const MAX_FILE_SIZE = 500 * 1024 * 1024;
