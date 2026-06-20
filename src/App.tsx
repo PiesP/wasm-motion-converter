@@ -295,7 +295,7 @@ const App: Component = () => {
           />
 
           <div class="mt-6 grid gap-6 sm:grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-8">
-            <div class="space-y-6 order-2 lg:order-1">
+            <div class="space-y-6 order-1 lg:order-2">
               <Show when={memoryWarning()}>
                 <Suspense fallback={<div class="h-24 animate-pulse rounded-lg bg-[#191a1b]" />}>
                   <MemoryWarning
@@ -363,7 +363,7 @@ const App: Component = () => {
               </Show>
             </div>
 
-            <div class="lg:sticky lg:top-8 order-1 lg:order-2">
+            <div class="lg:sticky lg:top-8 order-2 lg:order-1">
               <SettingsPanel
                 isBusy={isBusy()}
                 isConversionActive={isConversionActive()}
