@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { ValidationWarning } from '@t/validation-types';
+import { logger } from '@utils/logger';
 import { createSignal } from 'solid-js';
 
 interface ConfirmationState {
@@ -60,6 +61,14 @@ export const dismissConfirmation = (): void => {
   if (!state.isVisible) {
     return;
   }
-  state.onCancel?.();
+  try {
+    state.onCancel?.();
+  } catch (err) {
+    // If onCancel throws, still reset the state to avoid a deadlock
+    // where the confirmation modal cannot be dismissed.
+    logger.warn('general', 'dismissConfirmation: onCancel threw', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   setConfirmationState({ isVisible: false, warnings: [] });
 };

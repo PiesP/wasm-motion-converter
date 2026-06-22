@@ -71,11 +71,6 @@ function createThrottledProgress(
 /** Active profilers keyed by run ID — supports concurrent conversions */
 const activeProfilers = new Map<string, ConversionProfiler>();
 
-/** Get the profiler for a specific run, or the most recent one */
-export function getProfilerForRun(runId: string): ConversionProfiler | null {
-  return activeProfilers.get(runId) ?? null;
-}
-
 /** Get the most recent profiler (for test helpers / diagnostics) */
 export function getLastConversionProfiler(): ConversionProfiler | null {
   const lastKey = [...activeProfilers.keys()].pop();

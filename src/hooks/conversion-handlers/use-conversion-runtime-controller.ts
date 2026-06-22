@@ -126,32 +126,7 @@ export class ConversionRuntimeController {
 
   private lastUiStatusLogAtMs = 0;
 
-  /** Update structured status message for detailed progress tracking */
-  updateStatusMessage(msg: {
-    phase?: string;
-    fps?: number;
-    elapsedMs?: number;
-    memoryMB?: number;
-  }): void {
-    this._lastStatusMessage = msg;
-  }
-
-  getLastStatusMessage(): {
-    phase?: string;
-    fps?: number;
-    elapsedMs?: number;
-    memoryMB?: number;
-  } | null {
-    return this._lastStatusMessage;
-  }
-
-  private _lastStatusMessage: {
-    phase?: string;
-    fps?: number;
-    elapsedMs?: number;
-    memoryMB?: number;
-  } | null = null;
-
+  /** Update the status message shown in the UI during conversion. */
   updateStatus(message: string): void {
     const safeMessage = message ?? '';
 
@@ -260,8 +235,11 @@ export class ConversionRuntimeController {
       this.deps.setConversionPhase(toProgressPhase(phase as ConversionPhase));
     }
 
-    // Reset stall timer whenever progress advances
-    this.startStallTimer();
+    // Reset stall timer whenever progress advances — but not at 100%,
+    // since the stall timer would fire 60s after completion with a spurious warning.
+    if (monotonic < 100) {
+      this.startStallTimer();
+    }
 
     const now = performance.now();
     batch(() => {

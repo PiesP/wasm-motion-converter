@@ -108,11 +108,4 @@ export class ETACalculator {
   reset(): void {
     this.samples = [];
   }
-
-  /**
-   * Get number of samples currently stored.
-   */
-  getSampleCount(): number {
-    return this.samples.length;
-  }
 }

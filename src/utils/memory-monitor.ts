@@ -84,7 +84,7 @@ export function getMemoryUsageMB(): number | null {
  * @param format - Output format (gif uses more memory for palette)
  * @returns Estimated peak memory in MB
  */
-export function estimatePeakMemoryMB(
+function estimatePeakMemoryMB(
   width: number,
   height: number,
   totalFrames: number,
