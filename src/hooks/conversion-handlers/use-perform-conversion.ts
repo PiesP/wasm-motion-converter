@@ -173,8 +173,7 @@ async function performConversion(
     };
 
     const abortController = new AbortController();
-    const onAbort = () => abortController.abort();
-    signal?.addEventListener('abort', onAbort);
+    signal?.addEventListener('abort', () => abortController.abort(), { once: true });
 
     const result = await performConversionService(
       file,
@@ -211,9 +210,7 @@ async function performConversion(
       },
       abortController.signal,
       inputBuffer() ?? undefined
-    ).finally(() => {
-      signal?.removeEventListener('abort', onAbort);
-    });
+    );
 
     if (!isActive()) return;
 
@@ -283,6 +280,9 @@ async function performConversion(
       setAppState('done');
       setConversionStatusMessage('');
       runtime.resetTimingState();
+      // Release input buffer — no longer needed after conversion completes.
+      // This allows GC of the original file data (up to 500MB).
+      setInputBuffer(null);
     });
 
     focusDownloadButton();
@@ -304,6 +304,8 @@ async function performConversion(
         setConversionStatusMessage('');
         runtime.resetTimingState();
         setAppState('idle');
+        // Release input buffer on cancellation too
+        setInputBuffer(null);
       });
       return;
     }

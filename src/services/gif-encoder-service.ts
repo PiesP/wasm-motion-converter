@@ -217,33 +217,29 @@ export async function encodeGif(
   let consecutiveMemWarnings = 0;
 
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
+    const pal = globalPalette;
+    if (!pal) return;
+    // Quantize once — applyPalette allocates ~2MB per call at 1080p.
+    // For split frames (delay > MAX_FRAME_DELAY), reuse the same indexed data
+    // instead of re-quantizing for each chunk.
+    const indexed = applyPalette(rgbData, pal, 'rgb565');
+    const requiredSize = indexed.length;
+    if (!indexedBuffer || indexedBuffer.length < requiredSize) {
+      if (indexedBuffer) globalBufferPool.release(indexedBuffer);
+      indexedBuffer = globalBufferPool.acquire(requiredSize);
+    }
+    indexedBuffer.set(indexed);
+
     let remaining = delayMs;
     if (remaining <= MAX_FRAME_DELAY) {
-      const pal = globalPalette;
-      if (!pal) return;
-      const indexed = applyPalette(rgbData, pal, 'rgb565');
-      // Grow reusable buffer on first use or if size increased
-      const requiredSize = indexed.length;
-      if (!indexedBuffer || indexedBuffer.length < requiredSize) {
-        if (indexedBuffer) globalBufferPool.release(indexedBuffer);
-        indexedBuffer = globalBufferPool.acquire(requiredSize);
-      }
-      indexedBuffer.set(indexed);
       encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: remaining });
       outputTotalDelay += remaining;
       return;
     }
+    // Split long-delay frames into multiple writes with the same indexed data.
+    // No re-quantization needed — the pixel content is identical.
     while (remaining > 0) {
       const chunk = Math.min(remaining, MAX_FRAME_DELAY);
-      const pal = globalPalette;
-      if (!pal) return;
-      const indexed = applyPalette(rgbData, pal, 'rgb565');
-      const requiredSize = indexed.length;
-      if (!indexedBuffer || indexedBuffer.length < requiredSize) {
-        if (indexedBuffer) globalBufferPool.release(indexedBuffer);
-        indexedBuffer = globalBufferPool.acquire(requiredSize);
-      }
-      indexedBuffer.set(indexed);
       encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: chunk });
       outputTotalDelay += chunk;
       remaining -= chunk;

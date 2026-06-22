@@ -30,13 +30,6 @@ export interface ConversionOptions {
   smartFrameSkip?: SmartFrameSkipMode;
 }
 
-class ConversionCancelledError extends Error {
-  constructor() {
-    super('Cancelled');
-    this.name = 'AbortError';
-  }
-}
-
 export async function performConversion(
   inputFile: File,
   options: ConversionOptions,
@@ -61,7 +54,7 @@ export async function performConversion(
       fileName: inputFile.name,
       format: options.format,
     });
-    throw new ConversionCancelledError();
+    throw new DOMException('Cancelled', 'AbortError');
   }
 
   const output = await runConversionPipeline(

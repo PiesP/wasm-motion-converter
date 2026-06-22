@@ -117,6 +117,7 @@ export async function encodeWebp(
       // Streaming callback: encode each frame immediately upon decoding
       onFrameAvailable: async (rgbData: Uint8Array, frameDurationMs: number, _frameNum: number) => {
         if (signal?.aborted) {
+          globalBufferPool.release(rgbData);
           throw new DOMException('Cancelled', 'AbortError');
         }
 
@@ -167,10 +168,11 @@ export async function encodeWebp(
           );
         }
 
-        const webpData = webpResult instanceof Uint8Array ? webpResult : new Uint8Array(webpResult);
-        // First frame: full validation. Subsequent frames: fast path (same encoder = same format).
+        // encodeRGB returns a Uint8Array view over WASM memory — no copy needed.
+        // extractVP8BitstreamFast creates a subarray view, keeping the original alive.
+        // The WASM memory is stable during encoding, so this is safe.
         const bitstream =
-          encodeIdx === 0 ? extractVP8Bitstream(webpData) : extractVP8BitstreamFast(webpData);
+          encodeIdx === 0 ? extractVP8Bitstream(webpResult) : extractVP8BitstreamFast(webpResult);
 
         muxer.addFrame(bitstream, frameDurationMs);
         encodeIdx++;

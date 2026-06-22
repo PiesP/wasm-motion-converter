@@ -69,11 +69,19 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     }
   });
 
-  // Stable download URL — plain function, not createMemo.
-  // Creates a fresh blob URL each call; the browser manages the lifecycle
-  // via the <a download> attribute. No memo needed since Blob is stable
-  // for the component lifetime.
-  const getDownloadUrl = () => URL.createObjectURL(local.outputBlob);
+  // Stable download URL — created once per result, revoked on cleanup.
+  // Unlike the preview URL (which is a createEffect), the download URL
+  // is created via createMemo so it's stable across renders.
+  const downloadUrl = createMemo(() => {
+    const result = local.outputBlob;
+    return result.size > 0 ? URL.createObjectURL(result) : null;
+  });
+
+  // Cleanup download URL on unmount or when result changes
+  onCleanup(() => {
+    const url = downloadUrl();
+    if (url) URL.revokeObjectURL(url);
+  });
 
   const conversionTimeLabel = createMemo(() => {
     if (typeof local.conversionDurationSeconds !== 'number') return null;
@@ -219,7 +227,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       {/* Download button */}
       <div class="mt-3 flex justify-center">
         <a
-          href={getDownloadUrl()}
+          href={downloadUrl() ?? undefined}
           download={downloadFileName()}
           aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
           class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"

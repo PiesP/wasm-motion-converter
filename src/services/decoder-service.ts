@@ -139,81 +139,87 @@ export async function decodeFrames(
 
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
-      const frameDuration = getFrameDurationMs(frame);
-      const frameNum = inputFrameCount++;
+      try {
+        const frameDuration = getFrameDurationMs(frame);
+        const frameNum = inputFrameCount++;
 
-      // Frame decimation: skip every Nth frame
-      if (frameDecimation > 1 && frameNum % frameDecimation !== 0) {
-        accumulatedDuration += frameDuration;
-        frame.close();
-        skippedByDecimation++;
-        return;
-      }
+        // Frame decimation: skip every Nth frame
+        if (frameDecimation > 1 && frameNum % frameDecimation !== 0) {
+          accumulatedDuration += frameDuration;
+          frame.close();
+          skippedByDecimation++;
+          return;
+        }
 
-      const totalDuration = frameDuration + accumulatedDuration;
-      accumulatedDuration = 0;
+        const totalDuration = frameDuration + accumulatedDuration;
+        accumulatedDuration = 0;
 
-      const conversion = (async () => {
-        try {
-          const rgbData = await copyFrameToRGB(frame, width, height);
+        const conversion = (async () => {
+          try {
+            const rgbData = await copyFrameToRGB(frame, width, height);
 
-          // ── Smart frame skip: similarity-based deduplication ──
-          if (streaming && skipThreshold >= 0) {
-            const dHash = computeDHash(rgbData, width, height);
+            // ── Smart frame skip: similarity-based deduplication ──
+            if (streaming && skipThreshold >= 0) {
+              const dHash = computeDHash(rgbData, width, height);
 
-            if (prevDHash !== null) {
-              const dist = hammingDistance(prevDHash, dHash);
+              if (prevDHash !== null) {
+                const dist = hammingDistance(prevDHash, dHash);
 
-              // Noise floor estimation from first N frames
-              if (noiseFloorSamples.length < NOISE_SAMPLE_COUNT) {
-                noiseFloorSamples.push(dist);
-                if (noiseFloorSamples.length === NOISE_SAMPLE_COUNT) {
-                  // Use median as noise floor, scaled by factor k=3.5
-                  const sorted = [...noiseFloorSamples].sort((a, b) => a - b);
-                  const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-                  noiseFloor = median * 3.5;
+                // Noise floor estimation from first N frames
+                if (noiseFloorSamples.length < NOISE_SAMPLE_COUNT) {
+                  noiseFloorSamples.push(dist);
+                  if (noiseFloorSamples.length === NOISE_SAMPLE_COUNT) {
+                    // Use median as noise floor, scaled by factor k=3.5
+                    const sorted = [...noiseFloorSamples].sort((a, b) => a - b);
+                    const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+                    noiseFloor = median * 3.5;
+                  }
+                }
+
+                // Skip if similar AND consecutive skip time < 100ms
+                const effectiveThreshold = Math.max(skipThreshold, Math.floor(noiseFloor));
+                if (dist <= effectiveThreshold && consecutiveSkipMs < 100) {
+                  // Skip this frame: accumulate duration, release buffer, return
+                  consecutiveSkipMs += totalDuration;
+                  smartSkippedCount++;
+                  globalBufferPool.release(rgbData);
+                  return;
                 }
               }
 
-              // Skip if similar AND consecutive skip time < 100ms
-              const effectiveThreshold = Math.max(skipThreshold, Math.floor(noiseFloor));
-              if (dist <= effectiveThreshold && consecutiveSkipMs < 100) {
-                // Skip this frame: accumulate duration, release buffer, return
-                consecutiveSkipMs += totalDuration;
-                smartSkippedCount++;
-                globalBufferPool.release(rgbData);
-                return;
-              }
+              prevDHash = dHash;
+              // Reset consecutive skip counter on kept frame
+              consecutiveSkipMs = 0;
             }
 
-            prevDHash = dHash;
-            // Reset consecutive skip counter on kept frame
-            consecutiveSkipMs = 0;
-          }
+            if (streaming) {
+              // Streaming mode: pass frame to callback for immediate processing
+              await onFrameAvailable!(rgbData, totalDuration, frameNum);
+              // Note: onFrameAvailable is responsible for releasing rgbData
+            } else {
+              // Batch mode: collect into array (existing behavior for WebP)
+              rgbFrames.push({ data: rgbData, duration: totalDuration });
+            }
 
-          if (streaming) {
-            // Streaming mode: pass frame to callback for immediate processing
-            await onFrameAvailable!(rgbData, totalDuration, frameNum);
-            // Note: onFrameAvailable is responsible for releasing rgbData
-          } else {
-            // Batch mode: collect into array (existing behavior for WebP)
-            rgbFrames.push({ data: rgbData, duration: totalDuration });
+            // Report decoding progress — throttle to every 10 frames
+            if (
+              onFrameDecoded &&
+              (streaming
+                ? inputFrameCount % 10 === 0
+                : rgbFrames.length % 10 === 0 || rgbFrames.length === 1)
+            ) {
+              onFrameDecoded(streaming ? inputFrameCount : rgbFrames.length, demux.totalFrames);
+            }
+          } finally {
+            frame.close();
           }
-
-          // Report decoding progress — throttle to every 10 frames
-          if (
-            onFrameDecoded &&
-            (streaming
-              ? inputFrameCount % 10 === 0
-              : rgbFrames.length % 10 === 0 || rgbFrames.length === 1)
-          ) {
-            onFrameDecoded(streaming ? inputFrameCount : rgbFrames.length, demux.totalFrames);
-          }
-        } finally {
-          frame.close();
-        }
-      })();
-      pendingConversions.push(conversion);
+        })();
+        pendingConversions.push(conversion);
+      } catch (err) {
+        // Ensure frame is always closed if error occurs before async IIFE
+        frame.close();
+        throw err;
+      }
     },
     error(e: Error) {
       logger.error('encoders', 'VideoDecoder error', {

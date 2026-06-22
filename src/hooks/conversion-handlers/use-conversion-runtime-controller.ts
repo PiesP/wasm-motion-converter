@@ -194,7 +194,10 @@ export class ConversionRuntimeController {
   startMemoryMonitoring(): void {
     this.stopMemoryMonitoring();
     this.memoryCheckTimer = setInterval(() => {
-      if (this.disposed) return;
+      if (this.disposed) {
+        this.stopMemoryMonitoring();
+        return;
+      }
       if (isMemoryCritical()) {
         this.deps.setMemoryWarning(true);
       }
