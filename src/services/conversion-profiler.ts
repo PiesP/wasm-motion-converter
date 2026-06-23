@@ -10,19 +10,19 @@
  *
  * Usage:
  *   const profiler = new ConversionProfiler();
- *   profiler.startPhase('demux');
+ *   profiler.startPhase('demuxing');
  *   // ... demux work ...
- *   profiler.endPhase('demux', { frames: 150 });
+ *   profiler.endPhase('demuxing', { frames: 150 });
  *   // ... decode/encode ...
- *   profiler.endPhase('encode', { frames: 75, outputBytes: 1024000 });
+ *   profiler.endPhase('encoding', { frames: 75, outputBytes: 1024000 });
  *   const report = profiler.finish();
  *   logger.performance('Pipeline profile', report);
  */
 
-import type { ConversionPhase } from '@t/conversion-types';
+import type { ProgressPhase } from '@t/conversion-types';
 
 export interface PhaseMetrics {
-  phase: ConversionPhase;
+  phase: ProgressPhase;
   startMs: number;
   endMs: number;
   durationMs: number;
@@ -54,9 +54,9 @@ export interface ConversionProfileReport {
   /** Phase breakdown */
   phases: PhaseMetrics[];
   /** Percentage of total time per phase */
-  phaseTimePct: Record<ConversionPhase, number>;
+  phaseTimePct: Record<ProgressPhase, number>;
   /** Bottleneck phase (longest duration) */
-  bottleneck: ConversionPhase;
+  bottleneck: ProgressPhase;
   /** Summary string for quick inspection */
   summary: string;
 }
@@ -70,8 +70,8 @@ interface PhaseState {
 }
 
 export class ConversionProfiler {
-  private phases: Map<ConversionPhase, PhaseMetrics> = new Map();
-  private active: Map<ConversionPhase, PhaseState> = new Map();
+  private phases: Map<ProgressPhase, PhaseMetrics> = new Map();
+  private active: Map<ProgressPhase, PhaseState> = new Map();
   private pipelineStartMs: number = 0;
   private heapStartMB: number = 0;
   private heapPeakMB: number = 0;
@@ -88,7 +88,7 @@ export class ConversionProfiler {
   }
 
   /** Mark the beginning of a phase. */
-  startPhase(phase: ConversionPhase): void {
+  startPhase(phase: ProgressPhase): void {
     if (this.active.has(phase)) {
       // Phase already started (shouldn't happen in normal flow)
       return;
@@ -108,7 +108,7 @@ export class ConversionProfiler {
    * Update mid-phase metrics (for long-running phases).
    * Call periodically to track frame progress and heap peaks.
    */
-  updatePhase(phase: ConversionPhase, framesProcessed: number): void {
+  updatePhase(phase: ProgressPhase, framesProcessed: number): void {
     const state = this.active.get(phase);
     if (!state) return;
     state.framesProcessed = framesProcessed;
@@ -120,7 +120,7 @@ export class ConversionProfiler {
   /**
    * Mark the end of a phase with final metrics.
    */
-  endPhase(phase: ConversionPhase, opts?: { frames?: number; outputBytes?: number }): void {
+  endPhase(phase: ProgressPhase, opts?: { frames?: number; outputBytes?: number }): void {
     const state = this.active.get(phase);
     if (!state) return;
 
@@ -188,14 +188,14 @@ export class ConversionProfiler {
     const heapEndMB = ConversionProfiler.getHeapMB();
 
     const phaseList = Array.from(this.phases.values());
-    const phaseTimePct: Record<ConversionPhase, number> = {
-      demux: 0,
-      decode: 0,
-      encode: 0,
-      assemble: 0,
+    const phaseTimePct: Record<ProgressPhase, number> = {
+      demuxing: 0,
+      decoding: 0,
+      encoding: 0,
+      assembling: 0,
     };
 
-    let bottleneck: ConversionPhase = 'demux';
+    let bottleneck: ProgressPhase = 'demuxing';
     let maxDuration = 0;
 
     for (const p of phaseList) {

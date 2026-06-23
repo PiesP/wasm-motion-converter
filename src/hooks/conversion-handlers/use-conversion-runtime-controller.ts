@@ -6,8 +6,7 @@ import {
   setConversionStatusMessage,
   setOutputFrames,
 } from '@stores/conversion-store';
-import type { ConversionPhase, ProgressPhase } from '@t/conversion-types';
-import { toProgressPhase } from '@t/conversion-types';
+import type { ProgressPhase } from '@t/conversion-types';
 import { ETACalculator } from '@utils/eta-calculator';
 import { formatDuration } from '@utils/format-utils';
 import { logger } from '@utils/logger';
@@ -216,7 +215,7 @@ export class ConversionRuntimeController {
     }
   }
 
-  updateProgress(progress: number, phase?: ConversionPhase | string, outputFrames?: number): void {
+  updateProgress(progress: number, phase?: ProgressPhase | string, outputFrames?: number): void {
     if (!Number.isFinite(progress)) {
       return;
     }
@@ -230,9 +229,9 @@ export class ConversionRuntimeController {
 
     this.lastProgressValue = monotonic;
 
-    // Update phase if provided (internal ConversionPhase → ProgressPhase)
+    // Update phase if provided
     if (phase && this.deps.setConversionPhase) {
-      this.deps.setConversionPhase(toProgressPhase(phase as ConversionPhase));
+      this.deps.setConversionPhase(phase as ProgressPhase);
     }
 
     // Reset stall timer whenever progress advances — but not at 100%,

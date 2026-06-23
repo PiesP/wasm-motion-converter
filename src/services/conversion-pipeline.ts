@@ -143,13 +143,13 @@ async function _runPipelineInner(
   const throttledProgress = createThrottledProgress(onProgress, 100);
 
   // ── Demux Phase (0~10%) ──
-  profiler.startPhase('demux');
+  profiler.startPhase('demuxing');
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
   const demuxStartMs = performance.now();
   const demuxProgressThrottled = createThrottledProgress(onProgress, 200);
   try {
     demuxResult = await demuxVideo(request, (packetsExtracted) => {
-      profiler.updatePhase('demux', packetsExtracted);
+      profiler.updatePhase('demuxing', packetsExtracted);
       const memMB = getMemoryUsageMB() ?? 0;
       const elapsedMs = Math.round(performance.now() - pipelineStart);
       const demuxElapsed = performance.now() - demuxStartMs;
@@ -186,7 +186,7 @@ async function _runPipelineInner(
     cfg.displayAspectHeight ?? cfg.displayHeight ?? demuxResult.config.codedHeight;
   if (!codedWidth || !codedHeight) throw new Error('Unable to determine video dimensions');
 
-  profiler.endPhase('demux', { frames: demuxResult.totalFrames });
+  profiler.endPhase('demuxing', { frames: demuxResult.totalFrames });
 
   const demuxElapsedMs = performance.now() - pipelineStart;
   const demuxMemMB = getMemoryUsageMB() ?? 0;
@@ -226,8 +226,8 @@ async function _runPipelineInner(
     });
   };
 
-  profiler.startPhase('decode');
-  profiler.startPhase('encode');
+  profiler.startPhase('decoding');
+  profiler.startPhase('encoding');
 
   const sourceFps =
     demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
@@ -337,11 +337,11 @@ async function _runPipelineInner(
 
   if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
-  profiler.endPhase('decode');
-  profiler.endPhase('encode', encodeResult);
+  profiler.endPhase('decoding');
+  profiler.endPhase('encoding', encodeResult);
 
   // ── Assembly Phase (90~100%) ──
-  profiler.startPhase('assemble');
+  profiler.startPhase('assembling');
 
   // Clear buffer pool after conversion
   globalBufferPool.clear();
@@ -372,7 +372,7 @@ async function _runPipelineInner(
     elapsedMs: totalElapsedMs,
   });
 
-  profiler.endPhase('assemble');
+  profiler.endPhase('assembling');
 
   // ── Profile Report ──
   const profileReport = profiler.finish();

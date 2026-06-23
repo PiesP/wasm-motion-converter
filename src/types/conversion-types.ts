@@ -244,25 +244,8 @@ export interface ConversionRequest {
   smartFrameSkip?: SmartFrameSkipMode;
 }
 
-/** Pipeline phase identifier (short form for internal use) */
-export type ConversionPhase = 'demux' | 'decode' | 'encode' | 'assemble';
-
-/** Progress callback phase — maps to the same values but typed separately for UI */
+/** Progress phase identifier for pipeline operations and UI display */
 export type ProgressPhase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
-
-/** Map internal phase to progress display name */
-export function toProgressPhase(phase: ConversionPhase): ProgressPhase {
-  switch (phase) {
-    case 'demux':
-      return 'demuxing';
-    case 'decode':
-      return 'decoding';
-    case 'encode':
-      return 'encoding';
-    case 'assemble':
-      return 'assembling';
-  }
-}
 
 export interface ConversionProgress {
   phase: ProgressPhase;
