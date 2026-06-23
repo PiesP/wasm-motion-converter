@@ -27,18 +27,14 @@ import {
   GIF_MIN_FRAME_DELAY_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
-import { getMemoryInfo } from '@utils/memory-monitor';
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
+import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
 
 export interface GifEncodeOptions extends BaseEncoderOptions {}
-
-/** Memory threshold for dynamic decimation (percentage of JS heap limit) */
-const DYNAMIC_DECIMATION_MEM_THRESHOLD = 70;
-const DYNAMIC_DECIMATION_MEM_CRITICAL = 85;
 
 const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
   low: 128, // 64 → 128: perceptual studies show banding becomes clearly
@@ -212,9 +208,8 @@ export async function encodeGif(
 
   let accumulatedDuration = 0;
 
-  // Dynamic decimation state
-  let dynamicSkipCount = 0; // Additional frames skipped due to memory pressure
-  let consecutiveMemWarnings = 0;
+  // Dynamic decimation controller — monitors JS heap and skips frames under pressure
+  const decimationController = createDynamicDecimationController();
 
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     const pal = globalPalette;
@@ -281,35 +276,7 @@ export async function encodeGif(
         }
 
         // ── Dynamic decimation based on memory pressure ──
-        // Check JS heap usage every 5 frames to avoid per-frame overhead
-        let shouldSkip = false;
-        if (frameNum % 5 === 0) {
-          const memInfo = getMemoryInfo();
-          if (memInfo && memInfo.usagePercentage > DYNAMIC_DECIMATION_MEM_THRESHOLD) {
-            consecutiveMemWarnings++;
-            if (memInfo.usagePercentage > DYNAMIC_DECIMATION_MEM_CRITICAL) {
-              // Critical: skip every other frame (aggressive)
-              shouldSkip = dynamicSkipCount % 2 === 0;
-              dynamicSkipCount++;
-              logger.warn('encoders', 'GIF: critical memory pressure, dynamic frame skip', {
-                usagePct: Math.round(memInfo.usagePercentage),
-                frameNum,
-                dynamicSkipCount,
-              });
-            } else if (consecutiveMemWarnings >= 3) {
-              // Sustained pressure: skip every 3rd frame
-              shouldSkip = dynamicSkipCount % 3 === 0;
-              dynamicSkipCount++;
-              logger.info('encoders', 'GIF: sustained memory pressure, dynamic frame skip', {
-                usagePct: Math.round(memInfo.usagePercentage),
-                frameNum,
-                dynamicSkipCount,
-              });
-            }
-          } else {
-            consecutiveMemWarnings = 0;
-          }
-        }
+        const shouldSkip = decimationController.shouldSkip(frameNum);
 
         if (shouldSkip) {
           // Skip this frame: accumulate its duration and release buffer
@@ -390,7 +357,7 @@ export async function encodeGif(
     sourceDurationMs: Math.round(sourceTotalMs),
     outputDurationMs: Math.round(outputTotalDelay),
     timingErrorMs: Math.round(outputTotalDelay - sourceTotalMs),
-    dynamicSkipCount,
+    dynamicSkipCount: decimationController.getSkipCount(),
   });
   logger.info('encoders', '  │  └─ GIF: encode finished', {
     keptFrames: encodeIdx,
