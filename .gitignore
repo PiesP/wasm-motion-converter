@@ -85,6 +85,12 @@ test/
 test/node_modules/
 test-results/
 
+# Mutation testing
+.stryker-tmp/
+.stryker-tmp-debug/
+stryker-report/
+stryker.log
+
 # Misc
 *.backup
 *.mp4
