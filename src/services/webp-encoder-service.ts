@@ -37,17 +37,13 @@ import {
   StreamingWebpMuxer,
 } from './streaming-webp-encoder';
 
-export interface WebpEncodeOptions extends BaseEncoderOptions {}
-
-const QUALITY_MAP: Record<WebpEncodeOptions['quality'], number> = {
+const QUALITY_MAP: Record<BaseEncoderOptions['quality'], number> = {
   low: 70, // 60 → 70: SSIM studies show perceptual transparency threshold
   // is ~quality 70 (SSIM > 0.96); quality 60 shows visible
   // blocking artifacts in high-detail regions
   medium: 80,
   high: 92,
 };
-
-export interface WebpEncodeOptions extends BaseEncoderOptions {}
 
 /**
  * Encode demuxed video frames to animated WebP with streaming decode→encode.
@@ -59,7 +55,7 @@ export interface WebpEncodeOptions extends BaseEncoderOptions {}
  */
 export async function encodeWebp(
   demux: DemuxResult,
-  opts: WebpEncodeOptions,
+  opts: BaseEncoderOptions,
   onProgress?: ProgressCallback,
   signal?: AbortSignal
 ): Promise<Uint8Array> {

@@ -12,7 +12,7 @@ import {
   videoPreviewUrl,
 } from '@stores/conversion-store';
 import { DEFAULT_FPS } from '@utils/constants';
-import { focusElement } from '@utils/dom-utils';
+import { focusRetryButton } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
@@ -20,8 +20,6 @@ import { ALL_FORMATS, BufferSource, Input } from 'mediabunny';
 import { batch } from 'solid-js';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
-
-const focusRetryButton = (): void => focusElement('[data-testid="error-retry-button"]');
 
 const resetErrorState = (): void => {
   batch(() => {

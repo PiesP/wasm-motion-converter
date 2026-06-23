@@ -29,7 +29,7 @@ import {
 import type { ConversionResult, ConversionSettings } from '@t/conversion-types';
 import { isCancellationError } from '@utils/cancellation-context';
 import { classifyConversionError } from '@utils/classify-conversion-error';
-import { focusElement } from '@utils/dom-utils';
+import { focusElement, focusRetryButton } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
@@ -47,7 +47,6 @@ import {
 const MS_PER_SECOND = 1000;
 
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
-const focusRetryButton = (): void => focusElement('[data-testid="error-retry-button"]');
 
 export async function handleConvert(runtime: ConversionRuntimeController): Promise<void> {
   const file = inputFile();

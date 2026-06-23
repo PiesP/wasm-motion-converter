@@ -34,9 +34,7 @@ import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
 
-export interface GifEncodeOptions extends BaseEncoderOptions {}
-
-const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
+const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
   low: 128, // 64 → 128: perceptual studies show banding becomes clearly
   // visible below ~32 colors in gradients; 128 is the minimum
   // for acceptable quality in most photographic content
@@ -46,7 +44,7 @@ const QUALITY_COLORS: Record<GifEncodeOptions['quality'], number> = {
 
 // Bayer ordered dithering strength per quality (0-255 range, lower = subtler)
 // low quality: dithering disabled (0) — fewer colors don't benefit from dithering
-const QUALITY_DITHER_STRENGTH: Record<GifEncodeOptions['quality'], number> = {
+const QUALITY_DITHER_STRENGTH: Record<BaseEncoderOptions['quality'], number> = {
   low: 0,
   medium: 8,
   high: 4,
@@ -162,7 +160,7 @@ function bayerDitherRGB(rgb: Uint8Array, width: number, height: number, strength
  */
 export async function encodeGif(
   demux: DemuxResult,
-  opts: GifEncodeOptions,
+  opts: BaseEncoderOptions,
   signal?: AbortSignal
 ): Promise<Uint8Array> {
   const srcW = opts.width;

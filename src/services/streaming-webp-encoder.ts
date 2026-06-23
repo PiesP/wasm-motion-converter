@@ -19,13 +19,6 @@
  */
 
 // ---------------------------------------------------------------------------
-// WebP format constants for muxing
-// ---------------------------------------------------------------------------
-
-const RIFF_MAGIC = 0x52494646; // "RIFF"
-const WEBP_MAGIC = 0x57454250; // "WEBP"
-
-// ---------------------------------------------------------------------------
 // VP8 bitstream extraction
 // ---------------------------------------------------------------------------
 
@@ -51,11 +44,11 @@ export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
   const view = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
 
   // Verify RIFF header (big-endian)
-  if (view.getUint32(0, false) !== RIFF_MAGIC) {
+  if (view.getUint32(0, false) !== StreamingWebpMuxer.RIFF_MAGIC) {
     throw new Error(`Invalid RIFF header: 0x${view.getUint32(0, false).toString(16)}`);
   }
   // Verify WEBP type (big-endian)
-  if (view.getUint32(8, false) !== WEBP_MAGIC) {
+  if (view.getUint32(8, false) !== StreamingWebpMuxer.WEBP_MAGIC) {
     throw new Error(`Invalid WEBP type: 0x${view.getUint32(8, false).toString(16)}`);
   }
 
@@ -119,8 +112,8 @@ export class StreamingWebpMuxer {
   private static readonly VP8X_FOURCC = 0x56503858;
   private static readonly ANIM_MAGIC = 0x414e494d;
   private static readonly ANMF_MAGIC = 0x414e4d46;
-  private static readonly RIFF_MAGIC = 0x52494646;
-  private static readonly WEBP_MAGIC = 0x57454250;
+  public static readonly RIFF_MAGIC = 0x52494646;
+  public static readonly WEBP_MAGIC = 0x57454250;
 
   private static readonly VP8X_OVERHEAD = 18; // FourCC(4) + size(4) + flags(1) + reserved(3) + canvas(6)
   private static readonly ANIM_OVERHEAD = 6; // bg_color(4) + loop_count(2)

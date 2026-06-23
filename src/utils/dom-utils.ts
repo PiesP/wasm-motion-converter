@@ -18,3 +18,7 @@ export function focusElement(selector: string): void {
     document.querySelector<HTMLElement>(selector)?.focus();
   });
 }
+
+/** Focus the retry button after an error — used by both file-selection and conversion error paths. */
+export const focusRetryButton: () => void = () =>
+  focusElement('[data-testid="error-retry-button"]');
