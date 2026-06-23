@@ -11,6 +11,7 @@ import {
   setVideoPreviewUrl,
   videoPreviewUrl,
 } from '@stores/conversion-store';
+import type { MediabunnyVideoDecoderConfig } from '@t/conversion-types';
 import { DEFAULT_FPS } from '@utils/constants';
 import { focusRetryButton } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
@@ -18,7 +19,6 @@ import { validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
 import { ALL_FORMATS, BufferSource, Input } from 'mediabunny';
 import { batch } from 'solid-js';
-
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 
 const resetErrorState = (): void => {
@@ -52,7 +52,7 @@ async function extractMetadata(file: File, existingBuffer?: ArrayBuffer) {
     const duration = await track.computeDuration();
     // displayAspectWidth/Height: present when pixel aspect ratio is non-square (mediabunny v1.40.0+).
     // These represent the display dimensions directly.
-    const cfg = config as unknown as Record<string, number>;
+    const cfg = config as MediabunnyVideoDecoderConfig;
     const width = cfg.displayAspectWidth ?? cfg.displayWidth ?? config.codedWidth ?? 0;
     const height = cfg.displayAspectHeight ?? cfg.displayHeight ?? config.codedHeight ?? 0;
 

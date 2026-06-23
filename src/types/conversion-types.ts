@@ -23,6 +23,21 @@ export type ConversionFormat = 'gif' | 'webp';
 export const CONVERSION_FORMATS: readonly ConversionFormat[] = ['gif', 'webp'] as const;
 
 /**
+ * VideoDecoderConfig as extended by mediabunny at runtime.
+ *
+ * The standard WebCodecs `VideoDecoderConfig` does not include
+ * `displayAspectWidth`/`displayAspectHeight` or `displayWidth`/`displayHeight`,
+ * but mediabunny patches these onto the config object when pixel aspect ratio
+ * information is available in the container.
+ */
+export interface MediabunnyVideoDecoderConfig extends VideoDecoderConfig {
+  displayAspectWidth?: number;
+  displayAspectHeight?: number;
+  displayWidth?: number;
+  displayHeight?: number;
+}
+
+/**
  * Conversion quality levels
  *
  * - `low`: Fastest conversion, lower quality (e.g., fewer colors for GIF)

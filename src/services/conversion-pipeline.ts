@@ -14,16 +14,89 @@
  * 5. Resource cleanup: profiler removed from active map on completion/failure
  */
 
-import type { ConversionRequest, ProgressCallback } from '@t/conversion-types';
+import type {
+  ConversionRequest,
+  MediabunnyVideoDecoderConfig,
+  ProgressCallback,
+  ProgressPhase,
+} from '@t/conversion-types';
 import { DEFAULT_FPS, GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
 import { globalBufferPool } from './buffer-pool';
-import { ConversionProfiler } from './conversion-profiler';
+import type { ConversionProfileReport } from './conversion-profiler';
 import { demuxVideo } from './demuxer-service';
 import { calcAutoDecimation } from './encoder-common';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
+
+/**
+ * Profiler interface — implemented by ConversionProfiler in DEV,
+ * no-op in production. The real class is dynamically imported in DEV
+ * so it tree-shakes out of production bundles.
+ */
+interface Profiler {
+  start(): void;
+  startPhase(phase: ProgressPhase): void;
+  updatePhase(phase: ProgressPhase, framesProcessed: number): void;
+  endPhase(phase: ProgressPhase, opts?: { frames?: number; outputBytes?: number }): void;
+  finish(): ConversionProfileReport;
+  getReport(): ConversionProfileReport;
+  getLastReport(): ConversionProfileReport | null;
+}
+
+const NOOP_REPORT: ConversionProfileReport = {
+  totalDurationMs: 0,
+  heapStartMB: 0,
+  heapEndMB: 0,
+  heapPeakMB: 0,
+  phases: [],
+  phaseTimePct: { demuxing: 0, decoding: 0, encoding: 0, assembling: 0 },
+  bottleneck: 'demuxing',
+  summary: '[profiler disabled in production]',
+};
+
+const createNoopProfiler = (): Profiler => ({
+  start() {},
+  startPhase() {},
+  updatePhase() {},
+  endPhase() {},
+  finish() {
+    return { ...NOOP_REPORT };
+  },
+  getReport() {
+    return { ...NOOP_REPORT };
+  },
+  getLastReport() {
+    return null;
+  },
+});
+
+/**
+ * Cached dynamic import for the real profiler (DEV only).
+ * Null in production — the import.meta.env.DEV guard ensures
+ * this is dead-code eliminated from prod bundles.
+ */
+let profilerModule: typeof import('./conversion-profiler') | null = null;
+
+async function importProfiler(): Promise<void> {
+  if (import.meta.env.DEV && !profilerModule) {
+    profilerModule = await import('./conversion-profiler');
+  }
+}
+
+function createRealProfiler(): Profiler {
+  return new profilerModule!.ConversionProfiler();
+}
+
+/** Active profilers keyed by run ID — supports concurrent conversions */
+const activeProfilers = new Map<string, Profiler>();
+
+/** Get the most recent profiler (for test helpers / diagnostics) */
+export function getLastConversionProfiler(): Profiler | null {
+  const lastKey = [...activeProfilers.keys()].pop();
+  return lastKey ? activeProfilers.get(lastKey)! : null;
+}
 
 /**
  * Throttled progress wrapper — prevents UI re-render spam by enforcing a
@@ -68,15 +141,6 @@ function createThrottledProgress(
   };
 }
 
-/** Active profilers keyed by run ID — supports concurrent conversions */
-const activeProfilers = new Map<string, ConversionProfiler>();
-
-/** Get the most recent profiler (for test helpers / diagnostics) */
-export function getLastConversionProfiler(): ConversionProfiler | null {
-  const lastKey = [...activeProfilers.keys()].pop();
-  return lastKey ? activeProfilers.get(lastKey)! : null;
-}
-
 export async function runConversionPipeline(
   request: ConversionRequest,
   onProgress: ProgressCallback,
@@ -100,9 +164,14 @@ export async function runConversionPipeline(
   // Clear buffer pool from any previous conversion
   globalBufferPool.clear();
 
-  // Initialize profiler
+  // Initialize profiler — in DEV, dynamically import the real profiler
+  // (tree-shaken from production bundles). In prod, use no-op.
+  if (import.meta.env.DEV) {
+    await importProfiler();
+  }
   const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const profiler = new ConversionProfiler();
+  const profiler =
+    import.meta.env.DEV && profilerModule ? createRealProfiler() : createNoopProfiler();
   profiler.start();
   activeProfilers.set(runId, profiler);
   // Clean up old profilers (keep last 5)
@@ -137,7 +206,7 @@ async function _runPipelineInner(
   signal: AbortSignal | undefined,
   pipelineStart: number,
   _runId: string,
-  profiler: ConversionProfiler,
+  profiler: Profiler,
   _logCtx: Record<string, unknown>
 ): Promise<ArrayBuffer> {
   const throttledProgress = createThrottledProgress(onProgress, 100);
@@ -180,7 +249,7 @@ async function _runPipelineInner(
     throw new DOMException('Cancelled', 'AbortError');
   }
 
-  const cfg = demuxResult.config as unknown as Record<string, number>;
+  const cfg = demuxResult.config as MediabunnyVideoDecoderConfig;
   const codedWidth = cfg.displayAspectWidth ?? cfg.displayWidth ?? demuxResult.config.codedWidth;
   const codedHeight =
     cfg.displayAspectHeight ?? cfg.displayHeight ?? demuxResult.config.codedHeight;
