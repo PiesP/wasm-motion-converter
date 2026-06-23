@@ -281,12 +281,3 @@ export class StreamingWebpMuxer {
     return o;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Internal streaming encoder (unused — kept for reference)
-// ---------------------------------------------------------------------------
-// The streaming encode logic is now inline in webp-encoder-service.ts
-// via the onFrameAvailable callback. This function is kept as reference
-// but is no longer imported anywhere.
-
-// encodeStreamingWebP removed — logic merged into webp-encoder-service.ts

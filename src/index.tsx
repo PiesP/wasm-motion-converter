@@ -39,8 +39,3 @@ if (!root) {
 render(() => <App />, root);
 
 registerServiceWorker();
-
-// Terminate worker pool on page unload to prevent dangling workers
-globalThis.addEventListener('pagehide', () => {
-  // Cleanup if needed
-});

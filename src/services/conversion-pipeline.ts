@@ -183,15 +183,7 @@ export async function runConversionPipeline(
   // Ensure profiler is removed from active map on completion or failure
   let output: ArrayBuffer;
   try {
-    output = await _runPipelineInner(
-      request,
-      onProgress,
-      signal,
-      pipelineStart,
-      runId,
-      profiler,
-      logCtx
-    );
+    output = await _runPipelineInner(request, onProgress, signal, pipelineStart, profiler);
   } finally {
     activeProfilers.delete(runId);
   }
@@ -205,9 +197,7 @@ async function _runPipelineInner(
   onProgress: ProgressCallback,
   signal: AbortSignal | undefined,
   pipelineStart: number,
-  _runId: string,
-  profiler: Profiler,
-  _logCtx: Record<string, unknown>
+  profiler: Profiler
 ): Promise<ArrayBuffer> {
   const throttledProgress = createThrottledProgress(onProgress, 100);
 

@@ -116,13 +116,13 @@ export interface TestHelpers {
   getResultBlob(): { size: number; type: string } | null;
 
   /**
-   * Get structured validation info for the most recent result.
-   * Includes magic byte validation without external tools.
+   * Get result file info (size, mime type).
+   * Note: Magic byte validation is done asynchronously in the conversion pipeline
+   * (use-perform-conversion.ts). For sync helpers, use getResultValidationAsync.
    */
   getResultValidation(): {
     sizeBytes: number;
     mimeType: string;
-    magicValid: boolean;
     width?: number;
     height?: number;
   } | null;
@@ -332,13 +332,13 @@ const getResultBlob = (): { size: number; type: string } | null => {
 };
 
 /**
- * Validate result file using magic bytes (no external tools required).
- * Checks GIF89a/GIF87a header for GIF, RIFF....WEBP for WebP.
+ * Get result file info (size, mime type).
+ * Note: Magic byte validation requires async blob reading.
+ * The conversion pipeline already validates output in use-perform-conversion.ts.
  */
 const getResultValidation = (): {
   sizeBytes: number;
   mimeType: string;
-  magicValid: boolean;
   width?: number;
   height?: number;
 } | null => {
@@ -350,15 +350,14 @@ const getResultValidation = (): {
   const sizeBytes = blob.size;
   const mimeType = blob.type;
 
-  // Magic validation is done asynchronously via getResultValidationAsync
-  // Here we just return basic info synchronously
-  const settings = conversionSettings();
-  const magicValid = settings.format === 'gif' || settings.format === 'webp';
+  // Note: Magic byte validation requires async blob reading (blob.slice().arrayBuffer()).
+  // Use getResultValidationAsync for actual validation, or check the download manually.
+  // For synchronous helpers, we skip magic validation — the conversion pipeline already
+  // validates output in use-perform-conversion.ts (line ~274).
 
   return {
     sizeBytes,
     mimeType,
-    magicValid,
   };
 };
 
