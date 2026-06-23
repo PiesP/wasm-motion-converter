@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { runConversionPipeline } from '@services/conversion-pipeline';
 import { validateOutput } from '@services/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
 import {
@@ -26,7 +27,15 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
-import type { ConversionResult, ConversionSettings } from '@t/conversion-types';
+import type {
+  ConversionFormat,
+  ConversionQuality,
+  ConversionResult,
+  ConversionScale,
+  ConversionSettings,
+  ProgressCallback,
+  SmartFrameSkipMode,
+} from '@t/conversion-types';
 import { isCancellationError } from '@utils/cancellation-context';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { focusElement, focusRetryButton } from '@utils/dom-utils';
@@ -39,10 +48,18 @@ import { batch } from 'solid-js';
 
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 import { handleFileSelected } from './use-handle-file-selected';
-import {
-  type ConversionOptions,
-  performConversion as performConversionService,
-} from './use-perform-conversion-service';
+
+export interface ConversionOptions {
+  format: ConversionFormat;
+  quality: ConversionQuality;
+  scale: ConversionScale;
+  trimStart: number;
+  trimEnd: number;
+  /** Force frame decimation (overrides auto-decimation) */
+  forceDecimation?: number;
+  /** Smart frame skip mode — similarity-based frame deduplication */
+  smartFrameSkip?: SmartFrameSkipMode;
+}
 
 const MS_PER_SECOND = 1000;
 
@@ -161,6 +178,9 @@ async function performConversion(
       }
     }
 
+    const abortController = new AbortController();
+    signal?.addEventListener('abort', () => abortController.abort(), { once: true });
+
     const conversionOptions: ConversionOptions = {
       format: settings.format,
       quality: settings.quality,
@@ -171,49 +191,77 @@ async function performConversion(
       smartFrameSkip: settings.smartFrameSkip,
     };
 
-    const abortController = new AbortController();
-    signal?.addEventListener('abort', () => abortController.abort(), { once: true });
+    let buffer: ArrayBuffer;
+    try {
+      buffer = inputBuffer() ?? (await file.arrayBuffer());
+    } catch (err) {
+      logger.error('conversion', 'Failed to read input file buffer', {
+        fileName: file.name,
+        fileSizeBytes: file.size,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
 
-    const result = await performConversionService(
-      file,
-      conversionOptions,
-      (progress) => {
-        if (!isActive()) return;
-        runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
-        setConversionFps(progress.fps ?? undefined);
-        setConversionElapsedMs(progress.elapsedMs ?? undefined);
+    if (abortController.signal.aborted) {
+      logger.info('conversion', 'Conversion cancelled before pipeline start', {
+        fileName: file.name,
+        format: settings.format,
+      });
+      throw new DOMException('Cancelled', 'AbortError');
+    }
 
-        // User-friendly phase messages
-        const phaseLabel =
-          progress.phase === 'demuxing'
-            ? 'Preparing video data...'
-            : progress.phase === 'decoding'
-              ? 'Decoding...'
-              : progress.phase === 'encoding'
-                ? `Encoding to ${settings.format.toUpperCase()}...`
-                : 'Finalizing...';
+    const progressCallback: ProgressCallback = (progress) => {
+      if (!isActive()) return;
+      runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
+      setConversionFps(progress.fps ?? undefined);
+      setConversionElapsedMs(progress.elapsedMs ?? undefined);
 
-        if (
-          progress.currentFrame != null &&
-          progress.totalFrames != null &&
-          progress.currentFrame > 0 &&
-          progress.totalFrames > 0
-        ) {
-          const fpsLabel = progress.fps != null && progress.fps > 0 ? ` @ ${progress.fps}fps` : '';
-          runtime.updateStatus(
-            `Frame ${progress.currentFrame}/${progress.totalFrames} — ${phaseLabel}${fpsLabel}`
-          );
-        } else {
-          runtime.updateStatus(phaseLabel);
-        }
+      const phaseLabel =
+        progress.phase === 'demuxing'
+          ? 'Preparing video data...'
+          : progress.phase === 'decoding'
+            ? 'Decoding...'
+            : progress.phase === 'encoding'
+              ? `Encoding to ${settings.format.toUpperCase()}...`
+              : 'Finalizing...';
+
+      if (
+        progress.currentFrame != null &&
+        progress.totalFrames != null &&
+        progress.currentFrame > 0 &&
+        progress.totalFrames > 0
+      ) {
+        const fpsLabel = progress.fps != null && progress.fps > 0 ? ` @ ${progress.fps}fps` : '';
+        runtime.updateStatus(
+          `Frame ${progress.currentFrame}/${progress.totalFrames} — ${phaseLabel}${fpsLabel}`
+        );
+      } else {
+        runtime.updateStatus(phaseLabel);
+      }
+    };
+
+    const output = await runConversionPipeline(
+      {
+        inputBuffer: buffer,
+        fileName: file.name,
+        format: conversionOptions.format,
+        quality: conversionOptions.quality,
+        scale: conversionOptions.scale,
+        trimStart: conversionOptions.trimStart,
+        trimEnd: conversionOptions.trimEnd,
+        maxMemoryMB: 1500,
+        forceDecimation: conversionOptions.forceDecimation,
+        smartFrameSkip: conversionOptions.smartFrameSkip,
       },
-      abortController.signal,
-      inputBuffer() ?? undefined
+      progressCallback,
+      abortController.signal
     );
 
-    if (!isActive()) return;
+    const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';
+    const blob = new Blob([output], { type: mimeType });
 
-    const blob = result.blob;
+    if (!isActive()) return;
 
     if (blob.size === 0) {
       throw new Error('Conversion produced an empty output file');
