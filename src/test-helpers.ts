@@ -59,7 +59,7 @@ import type { VideoMetadata } from '@t/conversion-types';
 export interface TestHelpers {
   // ── White-box: direct state access (for setup / injection) ──
 
-  /** Current app state ('idle' | 'loading-ffmpeg' | 'analyzing' | 'converting' | 'done' | 'error') */
+  /** Current app state ('idle' | 'analyzing' | 'converting' | 'done' | 'error') */
   getAppState(): AppStateType;
 
   /** Current conversion progress (0-100) */

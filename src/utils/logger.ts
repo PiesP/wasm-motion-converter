@@ -12,7 +12,6 @@
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
 type LogCategory =
-  | 'ffmpeg'
   | 'conversion'
   | 'progress'
   | 'watchdog'
@@ -37,12 +36,11 @@ type LogEntry = {
 
 const MAX_INLINE_CONTEXT_CHARS = 2000;
 const MAX_RECENT_LOG_LINES = 750;
-const MAX_FFMPEG_LOG_LINES = 200;
 const CONVERSION_PROGRESS_STALE_MS = 10 * 60 * 1000;
 
 /**
  * Categories considered important for log buffer eviction priority.
- * When the main buffer is full, non-important entries (ffmpeg) are evicted first.
+ * When the main buffer is full, non-important entries are evicted first.
  */
 const IMPORTANT_CATEGORIES: ReadonlySet<LogCategory> = new Set([
   'conversion',
@@ -81,8 +79,6 @@ class Logger {
   private isDev = import.meta.env.MODE === 'development';
   private recentLines: string[] = [];
   private recentEntries: LogEntry[] = [];
-  private ffmpegRecentLines: string[] = [];
-  private ffmpegRecentEntries: LogEntry[] = [];
   private conversionProgress: number | null = null;
   private conversionProgressUpdatedAtMs = 0;
 
@@ -167,7 +163,7 @@ class Logger {
 
     this.recentLines.push(line);
     if (this.recentLines.length > MAX_RECENT_LOG_LINES) {
-      // Priority eviction: prefer to evict non-important (ffmpeg) entries first
+      // Priority eviction: prefer to evict non-important entries first
       const evictIdx = this.recentEntries.findIndex((e) => !IMPORTANT_CATEGORIES.has(e.category));
       if (evictIdx !== -1) {
         this.recentLines.splice(evictIdx, 1);
@@ -180,7 +176,7 @@ class Logger {
     }
     this.recentEntries.push(entry);
     if (this.recentEntries.length > MAX_RECENT_LOG_LINES) {
-      // Priority eviction: prefer to evict non-important (ffmpeg) entries first
+      // Priority eviction: prefer to evict non-important entries first
       const evictIdx = this.recentEntries.findIndex((e) => !IMPORTANT_CATEGORIES.has(e.category));
       if (evictIdx !== -1) {
         this.recentEntries.splice(evictIdx, 1);
@@ -197,52 +193,9 @@ class Logger {
     return [...this.recentEntries];
   }
 
-  /**
-   * Store a raw FFmpeg stderr/stdout line in a separate ring buffer
-   * to prevent verbose FFmpeg output from evicting important application logs.
-   *
-   * Max 200 lines; oldest FFmpeg lines are evicted when full.
-   */
-  addFfmpegLog(level: LogLevel, message: string, type?: string, context?: unknown): void {
-    const now = new Date();
-    const ts = now.toTimeString().slice(0, 8);
-    const ffType = type ? `[${type}] ` : '';
-    const line = `[${ts}] [ffmpeg] ${ffType}${message}`;
-
-    const entry: LogEntry = {
-      timestampMs: now.getTime(),
-      timestampIso: now.toISOString(),
-      time: ts,
-      level,
-      category: 'ffmpeg',
-      message,
-      conversionProgress: null,
-      contextJson: context !== undefined ? safeJsonStringify(context) : undefined,
-      line,
-    };
-
-    this.ffmpegRecentLines.push(line);
-    if (this.ffmpegRecentLines.length > MAX_FFMPEG_LOG_LINES) {
-      this.ffmpegRecentLines.shift();
-    }
-    this.ffmpegRecentEntries.push(entry);
-    if (this.ffmpegRecentEntries.length > MAX_FFMPEG_LOG_LINES) {
-      this.ffmpegRecentEntries.shift();
-    }
-  }
-
-  getFfmpegLogs(): string[] {
-    return [...this.ffmpegRecentLines];
-  }
-  getFfmpegEntries(): LogEntry[] {
-    return [...this.ffmpegRecentEntries];
-  }
-
   clearRecentLogs(): void {
     this.recentLines = [];
     this.recentEntries = [];
-    this.ffmpegRecentLines = [];
-    this.ffmpegRecentEntries = [];
   }
 
   debug(category: LogCategory, message: string, context?: unknown): void {

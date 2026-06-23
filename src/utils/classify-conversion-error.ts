@@ -91,7 +91,6 @@ const ERROR_RULES: readonly ErrorRule[] = [
     name: 'conversion-timeout',
     type: 'timeout',
     code: 'TIMEOUT',
-    phase: 'ffmpeg_timeout',
     pattern: /timed?\s*out|took\s*too\s*long/i,
     suggestion:
       'The conversion took too long. Try a shorter video, reduce quality to "low", or scale down the resolution.',
@@ -197,14 +196,12 @@ function isVideoTooComplex(metadata: VideoMetadata): boolean {
  * @param errorMessage - The error message from the conversion process
  * @param metadata - Video metadata for context-aware classification
  * @param conversionSettings - The settings used for conversion (optional)
- * @param ffmpegLogs - FFmpeg log lines for debugging (optional)
  * @returns ErrorContext with error type, phase, and user-friendly suggestion
  */
 export function classifyConversionError(
   errorMessage: string,
   metadata: VideoMetadata | null,
-  conversionSettings?: ConversionSettings,
-  ffmpegLogs?: string[]
+  conversionSettings?: ConversionSettings
 ): ErrorContext {
   const msg = errorMessage.toLowerCase();
   const timestamp = performance.now();
@@ -213,7 +210,6 @@ export function classifyConversionError(
     originalError: errorMessage,
     conversionSettings,
     phase: 'unknown' as string,
-    ffmpegLogs,
   };
 
   for (const rule of ERROR_RULES) {
