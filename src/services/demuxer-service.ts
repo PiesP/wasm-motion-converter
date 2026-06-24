@@ -19,7 +19,8 @@ type DemuxProgressCallback = (packetsExtracted: number) => void;
  */
 export async function demuxVideo(
   request: ConversionRequest,
-  onProgress?: DemuxProgressCallback
+  onProgress?: DemuxProgressCallback,
+  signal?: AbortSignal
 ): Promise<DemuxResult> {
   const startTime = performance.now();
   const source = new BufferSource(request.inputBuffer);
@@ -90,6 +91,10 @@ export async function demuxVideo(
     // Yield to browser event loop every 50 packets to prevent UI freezing
     // during demuxing of large files with thousands of packets.
     if (totalFrames % 50 === 0) {
+      if (signal?.aborted) {
+        input.dispose();
+        throw new DOMException('Cancelled', 'AbortError');
+      }
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
   }

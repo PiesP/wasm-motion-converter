@@ -208,6 +208,7 @@ async function _runPipelineInner(
   const demuxProgressThrottled = createThrottledProgress(onProgress, 200);
   try {
     demuxResult = await demuxVideo(request, (packetsExtracted) => {
+      if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
       profiler.updatePhase('demuxing', packetsExtracted);
       const memMB = getMemoryUsageMB() ?? 0;
       const elapsedMs = Math.round(performance.now() - pipelineStart);
@@ -265,13 +266,18 @@ async function _runPipelineInner(
   let encodeResult: { frames: number; outputBytes: number } | null = null;
 
   // Track frame times for FPS calculation
-  const fpsTracker = { current: 0, lastTime: performance.now() };
+  // Progress callback fires every ~10 frames (throttled in decoder-service),
+  // so we count actual frames and compute FPS over the interval.
+  const fpsTracker = { current: 0, lastTime: performance.now(), lastFrame: 0 };
 
   const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
     const now = performance.now();
     const deltaMs = now - fpsTracker.lastTime;
-    fpsTracker.current = deltaMs > 0 ? Math.round((1000 / deltaMs) * 10) / 10 : 0;
+    const framesDelta = frameIdx - fpsTracker.lastFrame;
+    fpsTracker.current =
+      deltaMs > 0 && framesDelta > 0 ? Math.round(((framesDelta * 1000) / deltaMs) * 10) / 10 : 0;
     fpsTracker.lastTime = now;
+    fpsTracker.lastFrame = frameIdx;
     const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
     throttledProgress({
       phase: 'decoding',

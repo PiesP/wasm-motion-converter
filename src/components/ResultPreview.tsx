@@ -69,18 +69,26 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     }
   });
 
-  // Stable download URL — created once per result, revoked on cleanup.
-  // Unlike the preview URL (which is a createEffect), the download URL
-  // is created via createMemo so it's stable across renders.
+  // Stable download URL — revoked when the memo recalculates or on unmount.
+  let currentDownloadUrl: string | null = null;
   const downloadUrl = createMemo(() => {
     const result = local.outputBlob;
-    return result.size > 0 ? URL.createObjectURL(result) : null;
+    // Revoke previous URL before creating a new one
+    if (currentDownloadUrl) {
+      URL.revokeObjectURL(currentDownloadUrl);
+      currentDownloadUrl = null;
+    }
+    const url = result.size > 0 ? URL.createObjectURL(result) : null;
+    currentDownloadUrl = url;
+    return url;
   });
 
-  // Cleanup download URL on unmount or when result changes
+  // Cleanup download URL on unmount
   onCleanup(() => {
-    const url = downloadUrl();
-    if (url) URL.revokeObjectURL(url);
+    if (currentDownloadUrl) {
+      URL.revokeObjectURL(currentDownloadUrl);
+      currentDownloadUrl = null;
+    }
   });
 
   const conversionTimeLabel = createMemo(() => {
