@@ -111,6 +111,14 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openFilePicker();
+        }
+      }}
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: dropzone region is interactive (opens file picker on Enter/Space)
+      tabIndex={0}
       aria-label="Video file dropzone - Press Enter or Space to select a file"
       role="region"
       data-testid="dropzone"

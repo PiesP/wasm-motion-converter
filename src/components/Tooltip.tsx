@@ -21,6 +21,12 @@ const Tooltip: Component<TooltipProps> = (props) => {
   const showTooltip = () => setIsVisible(true);
   const hideTooltip = () => setIsVisible(false);
 
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && isVisible()) {
+      hideTooltip();
+    }
+  };
+
   return (
     <div class="relative inline-block">
       <div
@@ -28,7 +34,9 @@ const Tooltip: Component<TooltipProps> = (props) => {
         onMouseLeave={hideTooltip}
         onFocus={showTooltip}
         onBlur={hideTooltip}
+        onKeyDown={handleKeyDown}
         aria-describedby={tooltipId}
+        aria-expanded={isVisible()}
       >
         {local.children}
       </div>

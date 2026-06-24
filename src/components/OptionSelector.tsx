@@ -71,6 +71,11 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
         for={inputId}
         class={`${optionClass(option.value === local.value)} relative`}
         data-testid={`option-${local.name}-${String(option.value)}`}
+        // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: label acts as radio input via visually-hidden input
+        role="radio"
+        aria-checked={option.value === local.value}
+        aria-label={ariaLabel}
+        tabIndex={0}
       >
         <input
           type="radio"
