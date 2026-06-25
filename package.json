@@ -36,6 +36,7 @@
     "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s knip",
     "quality:fix": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s check && pnpm -s circular && pnpm -s knip",
     "quality:ci": "pnpm -s quality",
+    "verify": "pnpm -s quality && pnpm -s build",
     "mut": "cd test && npx stryker run ../stryker.conf.json --reporters=progress",
     "mut:fast": "cd test && npx stryker run ../stryker.conf.json --reporters=progress --mutators=boolean,arithmetic,conditional-boundary,equality-operator,negate-conditional,string"
   },
