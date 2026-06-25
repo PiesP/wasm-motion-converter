@@ -237,6 +237,8 @@ export interface VideoMetadata {
   framerate: number;
   /** Video bitrate (bits per second) */
   bitrate: number;
+  /** VideoDecoderConfig for WebCodecs (set after successful extraction) */
+  config?: VideoDecoderConfig;
 }
 
 // ---------------------------------------------------------------------------

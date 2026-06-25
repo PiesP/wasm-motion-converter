@@ -46,16 +46,23 @@ interface Profiler {
   getLastReport(): ConversionProfileReport | null;
 }
 
-const NOOP_REPORT: ConversionProfileReport = {
-  totalDurationMs: 0,
-  heapStartMB: 0,
-  heapEndMB: 0,
-  heapPeakMB: 0,
-  phases: [],
-  phaseTimePct: { demuxing: 0, decoding: 0, encoding: 0, assembling: 0 },
-  bottleneck: 'demuxing',
-  summary: '[profiler disabled in production]',
-};
+let _noopReport: ConversionProfileReport | null = null;
+
+function getNoopReport(): ConversionProfileReport {
+  if (!_noopReport) {
+    _noopReport = {
+      totalDurationMs: 0,
+      heapStartMB: 0,
+      heapEndMB: 0,
+      heapPeakMB: 0,
+      phases: [],
+      phaseTimePct: { demuxing: 0, decoding: 0, encoding: 0, assembling: 0 },
+      bottleneck: 'demuxing',
+      summary: '[profiler disabled in production]',
+    };
+  }
+  return _noopReport;
+}
 
 const createNoopProfiler = (): Profiler => ({
   start() {},
@@ -63,10 +70,10 @@ const createNoopProfiler = (): Profiler => ({
   updatePhase() {},
   endPhase() {},
   finish() {
-    return { ...NOOP_REPORT };
+    return getNoopReport();
   },
   getReport() {
-    return { ...NOOP_REPORT };
+    return getNoopReport();
   },
   getLastReport() {
     return null;

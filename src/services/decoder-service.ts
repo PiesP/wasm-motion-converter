@@ -323,10 +323,29 @@ interface CachedConfig {
   hwSupported: boolean;
 }
 
+const CONFIG_CACHE_MAX_SIZE = 20;
 const configCache = new Map<string, CachedConfig>();
 
 function configCacheKey(cfg: VideoDecoderConfig): string {
   return `${cfg.codec}-${cfg.codedWidth}x${cfg.codedHeight}-${cfg.hardwareAcceleration ?? 'default'}`;
+}
+
+/**
+ * LRU-evicting set for configCache.
+ * Map iteration order is insertion order in JS, so deleting + re-inserting
+ * an existing key moves it to the end (most-recently-used).
+ */
+function cacheSet(key: string, value: CachedConfig): void {
+  if (configCache.has(key)) {
+    configCache.delete(key);
+  } else if (configCache.size >= CONFIG_CACHE_MAX_SIZE) {
+    // Evict the oldest (first) entry
+    const oldestKey = configCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      configCache.delete(oldestKey);
+    }
+  }
+  configCache.set(key, value);
 }
 
 async function resolveDecoderConfig(
@@ -334,7 +353,7 @@ async function resolveDecoderConfig(
   hwAccel: 'prefer-hardware' | 'prefer-software'
 ): Promise<VideoDecoderConfig> {
   const key = configCacheKey(baseConfig);
-  let cached = configCache.get(key);
+  const cached = configCache.get(key);
 
   if (!cached) {
     const support = await VideoDecoder.isConfigSupported(baseConfig);
@@ -344,11 +363,14 @@ async function resolveDecoderConfig(
     // Check HW support with a HW-specific config
     const hwConfig = { ...baseConfig, hardwareAcceleration: 'prefer-hardware' as const };
     const hwSupport = await VideoDecoder.isConfigSupported(hwConfig);
-    cached = { config: baseConfig, hwSupported: hwSupport.supported === true };
-    configCache.set(key, cached);
+    cacheSet(key, { config: baseConfig, hwSupported: hwSupport.supported === true });
+  } else {
+    // Move to most-recently-used position
+    cacheSet(key, cached);
   }
 
-  if (hwAccel === 'prefer-hardware' && cached!.hwSupported) {
+  const finalCached = configCache.get(key)!;
+  if (hwAccel === 'prefer-hardware' && finalCached.hwSupported) {
     return { ...baseConfig, hardwareAcceleration: 'prefer-hardware' };
   }
   return { ...baseConfig, hardwareAcceleration: 'prefer-software' };

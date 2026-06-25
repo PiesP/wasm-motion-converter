@@ -130,6 +130,13 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     }
   });
 
+  // Ensure document listeners are cleaned up if component unmounts mid-drag
+  onCleanup(() => {
+    document.body.style.cursor = '';
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup', onPointerUp);
+  });
+
   const handleTrackClick = (e: MouseEvent) => {
     if (props.disabled) return;
     const target = e.target as HTMLElement;

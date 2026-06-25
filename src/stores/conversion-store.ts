@@ -54,6 +54,20 @@ export const [conversionResults, setConversionResults] = createSignal<Conversion
 // ---------------------------------------------------------------------------
 
 export const [inputFile, setInputFile] = createSignal<File | null>(null);
-export const [inputBuffer, setInputBuffer] = createSignal<ArrayBuffer | null>(null);
+
+/**
+ * Input buffer stored as a plain module-level variable (not a reactive signal)
+ * to avoid unnecessary reactivity — the file content can be up to 500MB and
+ * is only read once per conversion. Consumers access getInputBuffer() instead
+ * of subscribing to a signal.
+ */
+let _inputBuffer: ArrayBuffer | null = null;
+export function getInputBuffer(): ArrayBuffer | null {
+  return _inputBuffer;
+}
+export function setInputBuffer(buffer: ArrayBuffer | null): void {
+  _inputBuffer = buffer;
+}
+
 export const [videoMetadata, setVideoMetadata] = createSignal<VideoMetadata | null>(null);
 export const [videoPreviewUrl, setVideoPreviewUrl] = createSignal<string | null>(null);

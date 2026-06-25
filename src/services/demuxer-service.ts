@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { extractVideoMetadata } from '@services/video-metadata';
 import type { ConversionRequest } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from 'mediabunny';
@@ -23,6 +24,15 @@ export async function demuxVideo(
   signal?: AbortSignal
 ): Promise<DemuxResult> {
   const startTime = performance.now();
+
+  // Extract metadata (also validates the video track exists and config is obtainable)
+  const metadata = await extractVideoMetadata(request.inputBuffer);
+  if (!metadata.config) {
+    throw new Error('Unable to obtain VideoDecoderConfig from video track');
+  }
+  const { config, duration } = metadata;
+
+  // Set up source/input for demuxing
   const source = new BufferSource(request.inputBuffer);
   const input = new Input({ formats: ALL_FORMATS, source });
 
@@ -36,18 +46,6 @@ export async function demuxVideo(
     });
     throw new Error('No video track found in input buffer');
   }
-
-  const config = await videoTrack.getDecoderConfig();
-  if (!config) {
-    input.dispose();
-    logger.error('demuxer', 'Unable to obtain VideoDecoderConfig', {
-      fileName: request.fileName,
-      trackCount: videoTracks.length,
-    });
-    throw new Error('Unable to obtain VideoDecoderConfig from video track');
-  }
-
-  const duration = await videoTrack.computeDuration();
   const sink = new EncodedPacketSink(videoTrack);
 
   // Start from first packet (requires keyframe after configure)

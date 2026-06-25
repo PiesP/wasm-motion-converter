@@ -11,7 +11,7 @@ import {
 } from '@stores/conversion-settings-store';
 import {
   appState,
-  inputBuffer,
+  getInputBuffer,
   inputFile,
   setAppState,
   setConversionElapsedMs,
@@ -193,7 +193,7 @@ async function performConversion(
 
     let buffer: ArrayBuffer;
     try {
-      buffer = inputBuffer() ?? (await file.arrayBuffer());
+      buffer = getInputBuffer() ?? (await file.arrayBuffer());
     } catch (err) {
       logger.error('conversion', 'Failed to read input file buffer', {
         fileName: file.name,
