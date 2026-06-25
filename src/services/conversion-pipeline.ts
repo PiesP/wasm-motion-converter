@@ -15,6 +15,7 @@
  */
 
 import type {
+  ConversionProgress,
   ConversionRequest,
   MediabunnyVideoDecoderConfig,
   ProgressCallback,
@@ -107,20 +108,31 @@ export function getLastConversionProfiler(): Profiler | null {
 function createThrottledProgress(
   onProgress: ProgressCallback,
   minIntervalMs = 100
-): ProgressCallback {
+): { callback: ProgressCallback; cleanup: () => void } {
   let lastCallTime = 0;
   let pendingCall: (() => void) | null = null;
   let scheduled = false;
+  let timerId: ReturnType<typeof setTimeout> | null = null;
 
   const flush = () => {
     scheduled = false;
+    timerId = null;
     if (pendingCall) {
       pendingCall();
       pendingCall = null;
     }
   };
 
-  return (update) => {
+  const cleanup = () => {
+    if (timerId !== null) {
+      clearTimeout(timerId);
+      timerId = null;
+    }
+    scheduled = false;
+    pendingCall = null;
+  };
+
+  const callback = (update: ConversionProgress) => {
     const now = performance.now();
     const elapsed = now - lastCallTime;
 
@@ -135,10 +147,12 @@ function createThrottledProgress(
       };
       if (!scheduled) {
         scheduled = true;
-        setTimeout(flush, minIntervalMs - elapsed);
+        timerId = setTimeout(flush, minIntervalMs - elapsed);
       }
     }
   };
+
+  return { callback, cleanup };
 }
 
 export async function runConversionPipeline(
@@ -199,9 +213,31 @@ async function _runPipelineInner(
   pipelineStart: number,
   profiler: Profiler
 ): Promise<ArrayBuffer> {
-  const throttledProgress = createThrottledProgress(onProgress, 100);
+  const throttled = createThrottledProgress(onProgress, 100);
 
-  // ── Demux Phase (0~10%) ──
+  try {
+    return await _runPipelineInnerBody(
+      request,
+      onProgress,
+      signal,
+      pipelineStart,
+      profiler,
+      throttled.callback
+    );
+  } finally {
+    throttled.cleanup();
+  }
+}
+
+/** Inner pipeline body — separated so try/finally can always clean up throttled progress */
+async function _runPipelineInnerBody(
+  request: ConversionRequest,
+  onProgress: ProgressCallback,
+  signal: AbortSignal | undefined,
+  pipelineStart: number,
+  profiler: Profiler,
+  throttledProgress: ProgressCallback
+): Promise<ArrayBuffer> {
   profiler.startPhase('demuxing');
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
   const demuxStartMs = performance.now();
@@ -215,7 +251,7 @@ async function _runPipelineInner(
       const demuxElapsed = performance.now() - demuxStartMs;
       const estimatedTotalPackets = Math.max(packetsExtracted, Math.ceil(demuxElapsed / 60));
       const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalPackets) * 10));
-      demuxProgressThrottled({
+      demuxProgressThrottled.callback({
         phase: 'demuxing',
         progress: demuxPct,
         fps: 0,

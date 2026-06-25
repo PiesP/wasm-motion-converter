@@ -82,24 +82,25 @@ export async function demuxVideo(
     duration: `${duration.toFixed(2)}s`,
   });
 
-  for await (const packet of sink.packets(startPacket, endPacket)) {
-    chunks.push(packet.toEncodedVideoChunk());
-    totalFrames++;
-    if (onProgress && totalFrames % 10 === 0) {
-      onProgress(totalFrames);
-    }
-    // Yield to browser event loop every 50 packets to prevent UI freezing
-    // during demuxing of large files with thousands of packets.
-    if (totalFrames % 50 === 0) {
-      if (signal?.aborted) {
-        input.dispose();
-        throw new DOMException('Cancelled', 'AbortError');
+  try {
+    for await (const packet of sink.packets(startPacket, endPacket)) {
+      chunks.push(packet.toEncodedVideoChunk());
+      totalFrames++;
+      if (onProgress && totalFrames % 10 === 0) {
+        onProgress(totalFrames);
       }
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Yield to browser event loop every 50 packets to prevent UI freezing
+      // during demuxing of large files with thousands of packets.
+      if (totalFrames % 50 === 0) {
+        if (signal?.aborted) {
+          throw new DOMException('Cancelled', 'AbortError');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
     }
+  } finally {
+    input.dispose();
   }
-
-  input.dispose();
 
   const elapsed = performance.now() - startTime;
   logger.info('demuxer', 'Demuxing complete', {

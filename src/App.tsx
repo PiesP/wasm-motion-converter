@@ -126,6 +126,7 @@ const App: Component = () => {
   const debouncedSaveSettings = debounce(saveConversionSettings, SETTINGS_DEBOUNCE_MS);
 
   onCleanup(() => {
+    // Revoke video preview blob URL to prevent memory leak on unmount
     const url = videoPreviewUrl();
     if (url) URL.revokeObjectURL(url);
     debouncedSaveSettings.cancel();

@@ -240,129 +240,141 @@ export async function encodeGif(
     }
   }
 
-  // Decode frames with streaming callback — each frame is encoded immediately
-  const { totalInputFrames: totalDecoded } = await decodeFrames(
-    demux,
-    {
-      width: w,
-      height: h,
+  try {
+    // Decode frames with streaming callback — each frame is encoded immediately
+    const { totalInputFrames: totalDecoded } = await decodeFrames(
+      demux,
+      {
+        width: w,
+        height: h,
+        frameDecimation,
+        hwAccel: 'prefer-hardware',
+        smartFrameSkip: opts.smartFrameSkip,
+        onFrameDecoded: (_frameNum, total) => {
+          totalInputFrames = total;
+          // Report decoding progress — throttle to every 10 frames
+          if (opts.onFrameDecoded && (encodeIdx % 10 === 0 || encodeIdx === 0)) {
+            opts.onFrameDecoded(encodeIdx, total);
+          }
+        },
+        // Streaming callback: encode each frame immediately upon decoding
+        onFrameAvailable: async (
+          rgbData: Uint8Array,
+          frameDurationMs: number,
+          frameNum: number
+        ) => {
+          if (signal?.aborted) {
+            globalBufferPool.release(rgbData);
+            throw new DOMException('Cancelled', 'AbortError');
+          }
+
+          totalInputFrames = frameNum;
+
+          // Yield to browser event loop every 5 frames to prevent UI freezing.
+          // Per-frame setTimeout(0) adds 1-4ms overhead per frame (150-600ms total
+          // for a 150-frame video). Yielding every 5 frames reduces this to ~30-120ms
+          // while still keeping the UI responsive.
+          if (frameNum % 5 === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+
+          // ── Dynamic decimation based on memory pressure ──
+          const shouldSkip = decimationController.shouldSkip(frameNum);
+
+          if (shouldSkip) {
+            // Skip this frame: accumulate its duration and release buffer
+            accumulatedDuration += frameDurationMs;
+            globalBufferPool.release(rgbData);
+            return;
+          }
+
+          // Accumulate duration from skipped frames (both decoder decimation + dynamic skip)
+          const totalDelayWithAccumulated = frameDurationMs + accumulatedDuration;
+          accumulatedDuration = 0;
+
+          const isFirstFrame = encodeIdx === 0;
+
+          // Apply minimum delays
+          let delay: number;
+          if (isFirstFrame) {
+            delay = Math.max(MIN_FIRST_FRAME_DELAY, totalDelayWithAccumulated);
+          } else {
+            delay = Math.max(MIN_FRAME_DELAY, totalDelayWithAccumulated);
+          }
+
+          // Bayer ordered dithering (applied to RGB buffer in-place)
+          if (ditherStrength > 0) {
+            bayerDitherRGB(rgbData, w, h, ditherStrength);
+          }
+
+          // Convert RGB → RGBA for gifenc compatibility (pooled)
+          const rgba = rgbToRgbaPooled(rgbData, w, h);
+          // Release the RGB buffer back to pool immediately
+          globalBufferPool.release(rgbData);
+
+          // Quantize: compute global palette from first frame, reuse for subsequent
+          if (encodeIdx === 0) {
+            globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
+          }
+
+          writeFrameWithDelay(rgba, delay);
+          // Release RGBA buffer after encoding
+          globalBufferPool.release(rgba);
+
+          // Report encoding progress (50~90% range in pipeline)
+          if (opts.onFrameEncoded) {
+            opts.onFrameEncoded(encodeIdx, totalInputFrames);
+          }
+
+          encodeIdx++;
+        },
+      },
+      signal
+    );
+
+    totalInputFrames = totalDecoded;
+    // Compute skippedByDecimation from decoder stats
+    skippedByDecimation = totalInputFrames - encodeIdx;
+
+    if (encodeIdx === 0) {
+      throw new Error('No frames decoded for GIF encoding');
+    }
+
+    encoder.finish();
+    const rawBytes = encoder.bytes();
+    const totalElapsed = (performance.now() - startTime) / 1000;
+
+    logger.info('encoders', 'GIF encoding complete', {
+      decodedFrames: totalInputFrames,
+      keptFrames: encodeIdx,
+      totalFrames: demux.totalFrames,
+      outputBytes: rawBytes.length,
+      fps: Math.round(encodeIdx / totalElapsed),
+      duration: `${totalElapsed.toFixed(2)}s`,
+      resolution: `${w}×${h}`,
+      quality: opts.quality,
+      maxColors,
       frameDecimation,
-      hwAccel: 'prefer-hardware',
-      smartFrameSkip: opts.smartFrameSkip,
-      onFrameDecoded: (_frameNum, total) => {
-        totalInputFrames = total;
-        // Report decoding progress — throttle to every 10 frames
-        if (opts.onFrameDecoded && (encodeIdx % 10 === 0 || encodeIdx === 0)) {
-          opts.onFrameDecoded(encodeIdx, total);
-        }
-      },
-      // Streaming callback: encode each frame immediately upon decoding
-      onFrameAvailable: async (rgbData: Uint8Array, frameDurationMs: number, frameNum: number) => {
-        if (signal?.aborted) {
-          globalBufferPool.release(rgbData);
-          throw new DOMException('Cancelled', 'AbortError');
-        }
+      skippedByDecimation,
+      splitFrames,
+      sourceDurationMs: Math.round(sourceTotalMs),
+      outputDurationMs: Math.round(outputTotalDelay),
+      timingErrorMs: Math.round(outputTotalDelay - sourceTotalMs),
+      dynamicSkipCount: decimationController.getSkipCount(),
+    });
+    logger.info('encoders', '  │  └─ GIF: encode finished', {
+      keptFrames: encodeIdx,
+      outputBytes: rawBytes.length,
+      duration: `${totalElapsed.toFixed(2)}s`,
+      skippedByDecimation,
+    });
 
-        totalInputFrames = frameNum;
-
-        // Yield to browser event loop every 5 frames to prevent UI freezing.
-        // Per-frame setTimeout(0) adds 1-4ms overhead per frame (150-600ms total
-        // for a 150-frame video). Yielding every 5 frames reduces this to ~30-120ms
-        // while still keeping the UI responsive.
-        if (frameNum % 5 === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-
-        // ── Dynamic decimation based on memory pressure ──
-        const shouldSkip = decimationController.shouldSkip(frameNum);
-
-        if (shouldSkip) {
-          // Skip this frame: accumulate its duration and release buffer
-          accumulatedDuration += frameDurationMs;
-          globalBufferPool.release(rgbData);
-          return;
-        }
-
-        // Accumulate duration from skipped frames (both decoder decimation + dynamic skip)
-        const totalDelayWithAccumulated = frameDurationMs + accumulatedDuration;
-        accumulatedDuration = 0;
-
-        const isFirstFrame = encodeIdx === 0;
-
-        // Apply minimum delays
-        let delay: number;
-        if (isFirstFrame) {
-          delay = Math.max(MIN_FIRST_FRAME_DELAY, totalDelayWithAccumulated);
-        } else {
-          delay = Math.max(MIN_FRAME_DELAY, totalDelayWithAccumulated);
-        }
-
-        // Bayer ordered dithering (applied to RGB buffer in-place)
-        if (ditherStrength > 0) {
-          bayerDitherRGB(rgbData, w, h, ditherStrength);
-        }
-
-        // Convert RGB → RGBA for gifenc compatibility (pooled)
-        const rgba = rgbToRgbaPooled(rgbData, w, h);
-        // Release the RGB buffer back to pool immediately
-        globalBufferPool.release(rgbData);
-
-        // Quantize: compute global palette from first frame, reuse for subsequent
-        if (encodeIdx === 0) {
-          globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
-        }
-
-        writeFrameWithDelay(rgba, delay);
-        // Release RGBA buffer after encoding
-        globalBufferPool.release(rgba);
-
-        // Report encoding progress (50~90% range in pipeline)
-        if (opts.onFrameEncoded) {
-          opts.onFrameEncoded(encodeIdx, totalInputFrames);
-        }
-
-        encodeIdx++;
-      },
-    },
-    signal
-  );
-
-  totalInputFrames = totalDecoded;
-  // Compute skippedByDecimation from decoder stats
-  skippedByDecimation = totalInputFrames - encodeIdx;
-
-  if (encodeIdx === 0) {
-    throw new Error('No frames decoded for GIF encoding');
+    return rawBytes;
+  } finally {
+    // Release indexed buffer back to pool if it was allocated
+    if (indexedBuffer) {
+      globalBufferPool.release(indexedBuffer);
+      indexedBuffer = null;
+    }
   }
-
-  encoder.finish();
-  const rawBytes = encoder.bytes();
-  const totalElapsed = (performance.now() - startTime) / 1000;
-
-  logger.info('encoders', 'GIF encoding complete', {
-    decodedFrames: totalInputFrames,
-    keptFrames: encodeIdx,
-    totalFrames: demux.totalFrames,
-    outputBytes: rawBytes.length,
-    fps: Math.round(encodeIdx / totalElapsed),
-    duration: `${totalElapsed.toFixed(2)}s`,
-    resolution: `${w}×${h}`,
-    quality: opts.quality,
-    maxColors,
-    frameDecimation,
-    skippedByDecimation,
-    splitFrames,
-    sourceDurationMs: Math.round(sourceTotalMs),
-    outputDurationMs: Math.round(outputTotalDelay),
-    timingErrorMs: Math.round(outputTotalDelay - sourceTotalMs),
-    dynamicSkipCount: decimationController.getSkipCount(),
-  });
-  logger.info('encoders', '  │  └─ GIF: encode finished', {
-    keptFrames: encodeIdx,
-    outputBytes: rawBytes.length,
-    duration: `${totalElapsed.toFixed(2)}s`,
-    skippedByDecimation,
-  });
-
-  return rawBytes;
 }
