@@ -1,26 +1,9 @@
-# Root - security headers and CSP
 /*
-  X-Content-Type-Options: nosniff
-  X-Frame-Options: DENY
-  Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: camera=(), microphone=(), geolocation=()
-  Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' blob:; media-src 'self' blob:; img-src 'self' blob: data:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
 
-# COOP/COEP — handled by functions/_middleware.ts (more reliable than _headers on pages.dev)
-
-# WebM video files - explicit MIME type
 /*.webm
   Content-Type: video/webm
 
-# MP4 video files - explicit MIME type
-/*.mp4
-  Content-Type: video/mp4
-
-# WASM files - explicit MIME type
 /*.wasm
   Content-Type: application/wasm
-
-# Static assets - immutable caching (overrides root Cache-Control)
-/assets/*
-  Cache-Control: public, max-age=31536000, immutable
