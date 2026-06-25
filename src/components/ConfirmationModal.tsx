@@ -88,12 +88,18 @@ const ConfirmationModal: Component = () => {
   createEffect(() => {
     if (state().isVisible) {
       previouslyFocusedElement = (document.activeElement as HTMLElement | null) ?? null;
+      document.body.inert = true;
       scheduleCancelFocus();
       return;
     }
 
+    document.body.inert = false;
     scheduleRestoreFocus(previouslyFocusedElement);
     previouslyFocusedElement = null;
+  });
+
+  onCleanup(() => {
+    document.body.inert = false;
   });
 
   onCleanup(() => {
