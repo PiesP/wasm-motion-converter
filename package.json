@@ -10,7 +10,7 @@
     "node": ">=22.0.0"
   },
   "volta": {
-    "node": "26.3.1",
+    "node": "26.4.0",
     "pnpm": "11.2.2"
   },
   "scripts": {
@@ -46,7 +46,8 @@
     "wasm-webp": "^0.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.0",
+    "@biomejs/biome": "2.5.1",
+    "@tailwindcss/vite": "4.3.1",
     "@types/dom-webcodecs": "^0.1.18",
     "@types/node": "26.0.0",
     "esbuild": "0.28.1",
@@ -54,7 +55,7 @@
     "rollup-plugin-visualizer": "7.0.1",
     "tsx": "^4.22.4",
     "typescript": "6.0.3",
-    "vite": "8.0.16",
+    "vite": "8.1.0",
     "vite-plugin-solid": "2.11.12"
   }
 }

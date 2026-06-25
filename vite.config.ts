@@ -1,4 +1,5 @@
 import path from 'node:path';
+import tailwindcss from '@tailwindcss/vite';
 import { visualizer } from 'rollup-plugin-visualizer';
 import type { Plugin, PluginOption } from 'vite';
 import { defineConfig, loadEnv } from 'vite';
@@ -35,6 +36,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       solid(),
+      tailwindcss(),
       ...(env.VITE_ANALYZE_BUNDLE === 'true'
         ? [
             visualizer({
@@ -86,7 +88,7 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 1000,
       cssCodeSplit: true,
       sourcemap: false,
-      rollupOptions: {
+      rolldownOptions: {
         output: {
           format: 'es',
           entryFileNames: 'assets/[name].[hash].js',
