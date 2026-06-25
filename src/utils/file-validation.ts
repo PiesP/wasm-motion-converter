@@ -182,6 +182,11 @@ async function extractVideoDuration(file: File): Promise<number> {
     // This fires when video duration and dimensions are readable from metadata
     video.onloadedmetadata = () => {
       // Duration from video.duration is in seconds, convert to milliseconds
+      if (!Number.isFinite(video.duration) || video.duration <= 0) {
+        cleanup();
+        reject(new Error('Invalid video duration'));
+        return;
+      }
       const duration = video.duration * 1000;
       cleanup();
       resolve(duration);

@@ -272,10 +272,11 @@ export async function decodeFrames(
   } catch (e) {
     if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
   }
-  decoder.close();
-
-  // Always await pending conversions before throwing to avoid VideoFrame leak
+  // Always await pending conversions before closing decoder to avoid VideoFrame leak
   await Promise.all(pendingConversions);
+
+  // Close decoder only after all pending frames have been processed
+  decoder.close();
 
   if (decodeError) throw decodeError;
 
