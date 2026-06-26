@@ -53,7 +53,7 @@ function main(): void {
   }
 
   // Use en as reference
-  const reference = localeKeys['en'];
+  const reference = localeKeys.en;
   if (!reference) {
     console.error('\n❌ Reference locale (en) not found!');
     process.exit(1);
