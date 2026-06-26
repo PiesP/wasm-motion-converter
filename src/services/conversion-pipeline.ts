@@ -245,6 +245,20 @@ async function _runPipelineInnerBody(
   profiler: Profiler,
   throttledProgress: ProgressCallback
 ): Promise<ArrayBuffer> {
+  // ── Throttled memory sampling (PERF-H1) ──
+  // getMemoryUsageMB() reads performance.memory which is expensive.
+  // Sample at most once per second instead of every progress callback.
+  let lastMemSampleTime = 0;
+  let lastMemMB = 0;
+  const sampleMemory = (): number => {
+    const now = performance.now();
+    if (now - lastMemSampleTime >= 1000) {
+      lastMemSampleTime = now;
+      lastMemMB = getMemoryUsageMB() ?? 0;
+    }
+    return lastMemMB;
+  };
+
   profiler.startPhase('demuxing');
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
   const demuxStartMs = performance.now();
@@ -253,7 +267,7 @@ async function _runPipelineInnerBody(
     demuxResult = await demuxVideo(request, (packetsExtracted) => {
       if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
       profiler.updatePhase('demuxing', packetsExtracted);
-      const memMB = getMemoryUsageMB() ?? 0;
+      const memMB = sampleMemory();
       const elapsedMs = Math.round(performance.now() - pipelineStart);
       const demuxElapsed = performance.now() - demuxStartMs;
       const estimatedTotalPackets = Math.max(packetsExtracted, Math.ceil(demuxElapsed / 60));
@@ -292,7 +306,7 @@ async function _runPipelineInnerBody(
   profiler.endPhase('demuxing', { frames: demuxResult.totalFrames });
 
   const demuxElapsedMs = performance.now() - pipelineStart;
-  const demuxMemMB = getMemoryUsageMB() ?? 0;
+  const demuxMemMB = sampleMemory();
   onProgress({
     phase: 'demuxing',
     progress: 10,
@@ -327,7 +341,7 @@ async function _runPipelineInnerBody(
       progress: 10 + Math.min(40, decodePct),
       fps: fpsTracker.current,
       etaSeconds: null,
-      memoryMB: getMemoryUsageMB() ?? 0,
+      memoryMB: sampleMemory(),
       currentFrame: frameIdx,
       totalFrames,
       elapsedMs: Math.round(now - pipelineStart),
@@ -379,7 +393,7 @@ async function _runPipelineInnerBody(
               progress: 50 + Math.min(40, encodePct),
               fps: fpsTracker.current,
               etaSeconds: null,
-              memoryMB: getMemoryUsageMB() ?? 0,
+              memoryMB: sampleMemory(),
               currentFrame: frameIdx,
               totalFrames,
               elapsedMs: Math.round(performance.now() - pipelineStart),
@@ -428,7 +442,7 @@ async function _runPipelineInnerBody(
           progress: Math.min(90, mappedProgress),
           fps: fpsTracker.current,
           etaSeconds: null,
-          memoryMB: getMemoryUsageMB() ?? 0,
+          memoryMB: sampleMemory(),
           currentFrame: p.currentFrame ?? 0,
           totalFrames: demuxResult.totalFrames,
           elapsedMs: Math.round(performance.now() - pipelineStart),
@@ -454,7 +468,7 @@ async function _runPipelineInnerBody(
   // Clear buffer pool after conversion
   globalBufferPool.clear();
 
-  const memMB = getMemoryUsageMB() ?? 0;
+  const memMB = sampleMemory();
   const totalElapsedMs = Math.round(performance.now() - pipelineStart);
   const outputFrames = Math.max(1, Math.round(demuxResult.totalFrames / decimationRatio));
   onProgress({
