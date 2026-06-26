@@ -29,6 +29,10 @@ export class ConversionRuntimeController {
     this.activeConversionSeq += 1;
   }
 
+  getActiveConversionSeq(): number {
+    return this.activeConversionSeq;
+  }
+
   startNewRun(): { isActive: () => boolean; runId: string } {
     const seq = (this.activeConversionSeq += 1);
     const runId = `run-${seq}-${performance.now().toString(36)}`;
