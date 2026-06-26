@@ -232,85 +232,87 @@ export async function decodeFrames(
 
   decoder.configure(activeConfig);
 
-  // Feed all chunks with backpressure — prevent decode queue from growing unbounded.
-  // VideoDecoder internally queues decoded frames; if we feed chunks faster than
-  // they can be decoded, memory grows and GC pressure increases.
-  // We pause when queue size exceeds a threshold and resume when it drains.
-  const MAX_DECODE_QUEUE = 8;
-  const chunks = demux.chunks;
-  let chunkIdx = 0;
-
-  while (chunkIdx < chunks.length) {
-    if (signal?.aborted) {
-      decoder.close();
-      throw new DOMException('Cancelled', 'AbortError');
-    }
-    if (decodeError) break;
-
-    // Backpressure: wait if decode queue is full.
-    // Use requestAnimationFrame + setTimeout(0) to yield to the browser's
-    // rendering loop, avoiding busy-wait CPU usage from setTimeout(1).
-    while (decoder.decodeQueueSize > MAX_DECODE_QUEUE && !signal?.aborted && !decodeError) {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => setTimeout(resolve, 0));
-      });
-    }
-
-    if (signal?.aborted) {
-      decoder.close();
-      throw new DOMException('Cancelled', 'AbortError');
-    }
-    if (decodeError) break;
-
-    decoder.decode(chunks[chunkIdx]!);
-    chunkIdx++;
-  }
-
-  // Flush decoder
   try {
-    await decoder.flush();
-  } catch (e) {
-    if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
+    // Feed all chunks with backpressure — prevent decode queue from growing unbounded.
+    // VideoDecoder internally queues decoded frames; if we feed chunks faster than
+    // they can be decoded, memory grows and GC pressure increases.
+    // We pause when queue size exceeds a threshold and resume when it drains.
+    const MAX_DECODE_QUEUE = 8;
+    const chunks = demux.chunks;
+    let chunkIdx = 0;
+
+    while (chunkIdx < chunks.length) {
+      if (signal?.aborted) {
+        throw new DOMException('Cancelled', 'AbortError');
+      }
+      if (decodeError) break;
+
+      // Backpressure: wait if decode queue is full.
+      // Use requestAnimationFrame + setTimeout(0) to yield to the browser's
+      // rendering loop, avoiding busy-wait CPU usage from setTimeout(1).
+      while (decoder.decodeQueueSize > MAX_DECODE_QUEUE && !signal?.aborted && !decodeError) {
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => setTimeout(resolve, 0));
+        });
+      }
+
+      if (signal?.aborted) {
+        throw new DOMException('Cancelled', 'AbortError');
+      }
+      if (decodeError) break;
+
+      decoder.decode(chunks[chunkIdx]!);
+      chunkIdx++;
+    }
+
+    // Flush decoder
+    try {
+      await decoder.flush();
+    } catch (e) {
+      if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
+    }
+    // Always await pending conversions before closing decoder to avoid VideoFrame leak
+    await Promise.all(pendingConversions);
+
+    if (decodeError) throw decodeError;
+
+    // Add any remaining accumulated duration to the last frame (batch mode only)
+    if (!streaming && accumulatedDuration > 0 && rgbFrames.length > 0) {
+      const last = rgbFrames[rgbFrames.length - 1];
+      if (last) last.duration += accumulatedDuration;
+    }
+
+    // Compute timing summary
+    const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
+    // Streaming mode: encoder handles frame timing internally, so outputTotalMs is not
+    // tracked here. GIF/WebP encoders compute their own timing from frame durations.
+    // Non-streaming: sum of all RGB frame durations.
+    const outputTotalMs = streaming ? 0 : rgbFrames.reduce((sum, f) => sum + f.duration, 0);
+
+    logger.info('encoders', 'Decoding complete', {
+      totalInputFrames: inputFrameCount,
+      outputFrames: streaming ? inputFrameCount - skippedByDecimation : rgbFrames.length,
+      skippedByDecimation,
+      smartSkipped: smartSkippedCount,
+      smartSkipMode: smartFrameSkip,
+      noiseFloor: Math.round(noiseFloor * 100) / 100,
+      resolution: `${width}×${height}`,
+      streaming,
+    });
+
+    return {
+      frames: rgbFrames,
+      totalInputFrames: inputFrameCount,
+      skippedByDecimation,
+      sourceTotalMs,
+      outputTotalMs,
+    };
+  } finally {
+    // Close decoder only after all pending frames have been processed.
+    // This guarantees VideoDecoder resources are released even if an error
+    // occurs during decode (decodeError path) or cancellation (abort signal).
+    decoder.close();
   }
-  // Always await pending conversions before closing decoder to avoid VideoFrame leak
-  await Promise.all(pendingConversions);
-
-  // Close decoder only after all pending frames have been processed
-  decoder.close();
-
-  if (decodeError) throw decodeError;
-
-  // Add any remaining accumulated duration to the last frame (batch mode only)
-  if (!streaming && accumulatedDuration > 0 && rgbFrames.length > 0) {
-    const last = rgbFrames[rgbFrames.length - 1];
-    if (last) last.duration += accumulatedDuration;
-  }
-
-  // Compute timing summary
-  const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
-  // Streaming mode: encoder handles frame timing internally, so outputTotalMs is not
-  // tracked here. GIF/WebP encoders compute their own timing from frame durations.
-  // Non-streaming: sum of all RGB frame durations.
-  const outputTotalMs = streaming ? 0 : rgbFrames.reduce((sum, f) => sum + f.duration, 0);
-
-  logger.info('encoders', 'Decoding complete', {
-    totalInputFrames: inputFrameCount,
-    outputFrames: streaming ? inputFrameCount - skippedByDecimation : rgbFrames.length,
-    skippedByDecimation,
-    smartSkipped: smartSkippedCount,
-    smartSkipMode: smartFrameSkip,
-    noiseFloor: Math.round(noiseFloor * 100) / 100,
-    resolution: `${width}×${height}`,
-    streaming,
-  });
-
-  return {
-    frames: rgbFrames,
-    totalInputFrames: inputFrameCount,
-    skippedByDecimation,
-    sourceTotalMs,
-    outputTotalMs,
-  };
 }
 
 // ─── Codec support cache ──────────────────────────────────────────
