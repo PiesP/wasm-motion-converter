@@ -3,6 +3,7 @@
 
 import type { Component, JSX } from 'solid-js';
 import { Match, Switch, splitProps } from 'solid-js';
+import { useLocale } from '@hooks/use-locale';
 
 const ICON_SIZES = {
   xs: 'h-3 w-3',
@@ -36,6 +37,7 @@ interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'name'> {
 }
 
 const Icon: Component<IconProps> = (props) => {
+  const { t } = useLocale();
   const [local, others] = splitProps(props, ['name', 'size', 'class', 'aria-hidden']);
 
   const sizeClass = () => ICON_SIZES[local.size ?? 'md'];
@@ -44,21 +46,21 @@ const Icon: Component<IconProps> = (props) => {
   const ariaHidden = () => local['aria-hidden'] ?? true;
 
   const ariaLabel = () => {
-    const labels: Record<IconName, string> = {
-      info: 'Information',
-      warning: 'Warning',
-      error: 'Error',
-      success: 'Success',
-      download: 'Download',
-      upload: 'Upload',
-      spinner: 'Loading',
-      check: 'Check',
-      x: 'Close',
-      'chevron-down': 'Expand',
-      moon: 'Dark mode',
-      sun: 'Light mode',
+    const labels: Record<IconName, () => string> = {
+      info: () => t('app.error.title'),
+      warning: () => t('memory.title'),
+      error: () => t('error.unknown'),
+      success: () => t('result.download'),
+      download: () => t('result.download'),
+      upload: () => t('dropzone.selectFile'),
+      spinner: () => t('dropzone.processing'),
+      check: () => t('result.download'),
+      x: () => t('error.dismiss'),
+      'chevron-down': () => t('lang.select'),
+      moon: () => 'Dark mode',
+      sun: () => 'Light mode',
     };
-    return labels[local.name] ?? local.name;
+    return labels[local.name]?.() ?? local.name;
   };
 
   return (
