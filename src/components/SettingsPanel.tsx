@@ -104,7 +104,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
       <FormatSelector
         disabled={local.isConversionActive}
         onChange={local.onFormatChange}
-        tooltip={t('settings.tooltip.quality')}
+        tooltip={t('settings.tooltip.format')}
         value={local.settings.format}
       />
 
