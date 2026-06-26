@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
 import { Show, splitProps } from 'solid-js';
@@ -40,6 +41,7 @@ const downloadText = (params: { filename: string; text: string; mimeType?: strin
 
 const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
   const [local] = splitProps(props, ['class']);
+  const { t } = useLocale();
 
   const handleExport = (event: MouseEvent): void => {
     try {
@@ -154,8 +156,8 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
         type="button"
         onClick={handleExport}
         class={buttonClass()}
-        aria-label="Export logs"
-        title="Export logs (Alt: JSONL format)"
+        aria-label={t('header.exportLogs')}
+        title={t('header.exportLogsTooltip')}
         data-testid="export-logs-button"
       >
         <svg

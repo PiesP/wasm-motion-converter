@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
 import { createMemo, createSignal, onMount, Show } from 'solid-js';
@@ -8,6 +9,7 @@ import { createMemo, createSignal, onMount, Show } from 'solid-js';
 const STORAGE_KEY = 'envWarningExpanded';
 
 const EnvironmentWarning: Component = () => {
+  const { t } = useLocale();
   const [isExpanded, setIsExpanded] = createSignal(true);
 
   const hasSharedArrayBuffer = createMemo(() => typeof SharedArrayBuffer !== 'undefined');
@@ -82,9 +84,9 @@ const EnvironmentWarning: Component = () => {
               onClick={handleToggleExpanded}
               class="ml-3 text-sm text-[#d0d6e0] hover:text-[#f7f8f8] underline focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] rounded"
               aria-expanded={isExpanded()}
-              aria-label={isExpanded() ? 'Hide details' : 'Show details'}
+              aria-label={isExpanded() ? t('env.hideDetails') : t('env.showDetails')}
             >
-              {isExpanded() ? 'Hide details' : 'Show details'}
+              {isExpanded() ? t('env.hideDetails') : t('env.showDetails')}
             </button>
           </div>
 
@@ -125,9 +127,9 @@ const EnvironmentWarning: Component = () => {
                 type="button"
                 onClick={handleTestEnvironment}
                 class="inline-flex items-center px-3 py-1.5 border border-white/[0.08] text-sm font-medium rounded text-[#d0d6e0] bg-white/[0.02] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)]"
-                aria-label="Log environment capabilities to the DevTools console"
+                aria-label={t('env.logCapabilities')}
               >
-                Log to console
+                {t('env.logCapabilities')}
               </button>
             </div>
           </Show>

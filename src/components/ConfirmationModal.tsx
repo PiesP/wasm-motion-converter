@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import { cancelDialog, confirmDialog, getConfirmationState } from '@stores/confirmation-store';
 import type { ValidationWarning } from '@t/validation-types';
 import type { Component, JSX } from 'solid-js';
@@ -19,6 +20,7 @@ const SEVERITY_ICONS: Record<ValidationWarning['severity'], string> = {
 };
 
 const ConfirmationModal: Component = () => {
+  const { t } = useLocale();
   const state = getConfirmationState;
   let modalRef: HTMLDivElement | undefined;
   let cancelButtonRef: HTMLButtonElement | undefined;
@@ -174,7 +176,7 @@ const ConfirmationModal: Component = () => {
               type="button"
               onClick={cancelDialog}
               class="px-4 py-2 min-h-[44px] rounded-md bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
-              aria-label="Cancel conversion and close modal"
+              aria-label={t('modal.cancel')}
               data-testid="modal-cancel-button"
             >
               {state().cancelLabel ?? 'Cancel'}
@@ -183,7 +185,7 @@ const ConfirmationModal: Component = () => {
               type="button"
               onClick={confirmDialog}
               class="px-4 py-2 min-h-[44px] rounded-md bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
-              aria-label="Proceed with conversion despite warnings"
+              aria-label={t('modal.confirm')}
               data-testid="modal-confirm-button"
             >
               {state().confirmLabel ?? 'Proceed Anyway'}

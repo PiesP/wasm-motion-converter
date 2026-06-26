@@ -25,7 +25,7 @@ const LicenseAttribution: Component = () => {
     <footer
       class="border-t border-white/[0.06] py-4 sm:py-6 mt-4 sm:mt-8 bg-[#0a0b0c]"
       role="contentinfo"
-      aria-label="License attribution and footer"
+      aria-label={t('footer.licenseAttribution')}
     >
       <div class="max-w-6xl mx-auto px-4 text-center text-xs sm:text-sm text-[#8a8f98] space-y-2 sm:space-y-3">
         {/* Line 1: Powered by — libraries in a responsive inline list */}
@@ -39,7 +39,7 @@ const LicenseAttribution: Component = () => {
                   target="_blank"
                   rel="noopener noreferrer"
                   class={linkClass}
-                  aria-label={`${lib.name} on GitHub (opens in new tab)`}
+                  aria-label={t('footer.linkGitHub', { name: lib.name })}
                 >
                   {lib.name}
                 </a>

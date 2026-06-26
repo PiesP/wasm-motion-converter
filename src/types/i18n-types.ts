@@ -47,6 +47,8 @@ export interface TranslationKeys {
   'header.exportLogsTooltip': string;
   'footer.viewLicenses': string;
   'footer.openIssue': string;
+  'footer.licenseAttribution': string;
+  'footer.linkGitHub': string;
 
   // Dropzone
   'dropzone.dropHere': string;
@@ -138,6 +140,7 @@ export interface TranslationKeys {
   'result.quality': string;
   'result.scale': string;
   'result.convertedAnimation': string;
+  'result.downloadFile': string;
 
   // Errors
   'error.format': string;

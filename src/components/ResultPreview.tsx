@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import Panel from '@components/ui/Panel';
+import { useLocale } from '@hooks/use-locale';
 import type { ConversionSettings } from '@t/conversion-types';
 import { formatBytes, formatDuration } from '@utils/format-utils';
 import {
@@ -25,6 +26,7 @@ interface ResultPreviewProps {
 }
 
 const ResultPreview: Component<ResultPreviewProps> = (props) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, [
     'outputBlob',
     'originalName',
@@ -239,7 +241,10 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         <a
           href={downloadUrl() ?? undefined}
           download={downloadFileName()}
-          aria-label={`Download ${outputExtension().toUpperCase()} file — ${downloadFileName()}`}
+          aria-label={t('result.downloadFile', {
+            format: outputExtension().toUpperCase(),
+            fileName: downloadFileName(),
+          })}
           class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"
           data-testid="download-result-button"
           role="button"
