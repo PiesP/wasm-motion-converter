@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import { runConversionPipeline } from '@services/conversion-pipeline';
 import { validateOutput } from '@services/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
@@ -66,6 +67,7 @@ const MS_PER_SECOND = 1000;
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
 
 export async function handleConvert(runtime: ConversionRuntimeController): Promise<void> {
+  const { t } = useLocale();
   const file = inputFile();
   if (!file) {
     logger.warn('conversion', 'Convert called but no file loaded — conversion skipped', {
@@ -78,7 +80,7 @@ export async function handleConvert(runtime: ConversionRuntimeController): Promi
   const settings = conversionSettings();
 
   try {
-    const durationValidation = await validateVideoDuration(file, settings.format);
+    const durationValidation = await validateVideoDuration(file, settings.format, t);
     const needsConfirmation = durationValidation.warnings.some(
       (warning) => warning.requiresConfirmation
     );
@@ -98,9 +100,11 @@ export async function handleConvert(runtime: ConversionRuntimeController): Promi
                   setConversionStatusMessage('');
                   runtime.resetTimingState();
                   const context = classifyConversionError(
-                    getErrorMessage(error) || 'Conversion failed',
+                    getErrorMessage(error) || t('error.conversionFailed'),
                     videoMetadata(),
-                    settings
+                    settings,
+                    undefined,
+                    t
                   );
                   setErrorMessage(context.originalError);
                   setErrorContext(context);
@@ -134,6 +138,7 @@ async function performConversion(
   videoDurationMs?: number,
   signal?: AbortSignal
 ): Promise<void> {
+  const { t } = useLocale();
   const { isActive, runId } = runtime.startNewRun();
 
   try {
@@ -233,12 +238,12 @@ async function performConversion(
 
       const phaseLabel =
         progress.phase === 'demuxing'
-          ? 'Preparing video data...'
+          ? t('progress.preparing')
           : progress.phase === 'decoding'
-            ? 'Decoding...'
+            ? t('progress.decoding')
             : progress.phase === 'encoding'
-              ? `Encoding to ${settings.format.toUpperCase()}...`
-              : 'Finalizing...';
+              ? t('progress.encoding')
+              : t('progress.finalizing');
 
       if (
         progress.currentFrame != null &&
@@ -358,7 +363,7 @@ async function performConversion(
       });
     }
 
-    const errorMessage_ = getErrorMessage(error) || 'Conversion failed';
+    const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
 
     if (isCancellationError(error)) {
       batch(() => {
@@ -371,7 +376,7 @@ async function performConversion(
       return;
     }
 
-    const context = classifyConversionError(errorMessage_, videoMetadata(), settings);
+    const context = classifyConversionError(errorMessage_, videoMetadata(), settings, undefined, t);
 
     logger.error('conversion', 'Conversion failed', {
       error: errorMessage_,

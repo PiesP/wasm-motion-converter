@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import { extractVideoMetadata } from '@services/video-metadata';
 import {
   setAppState,
@@ -35,6 +36,7 @@ export async function handleFileSelected(
   file: File,
   runtime: ConversionRuntimeController
 ): Promise<void> {
+  const { t } = useLocale();
   const run = runtime.startNewRun();
   const isStale = () => !run.isActive();
 
@@ -42,7 +44,7 @@ export async function handleFileSelected(
   resetErrorState();
   resetAnalysisState();
 
-  const validation = await validateVideoFile(file);
+  const validation = await validateVideoFile(file, t);
   if (!validation.valid) {
     logger.warn('conversion', 'File validation failed — conversion blocked', {
       fileName: file.name,

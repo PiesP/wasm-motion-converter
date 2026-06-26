@@ -87,12 +87,17 @@ export function useI18n(): UseI18nReturn {
   const [locale, setLocaleSignal] = createSignal<Locale>(detectInitialLocale());
   const [isLoading, setIsLoading] = createSignal(true);
 
-  // Load translations when locale changes
-  createEffect(async () => {
+  // Load translations when locale changes (SolidJS createEffect doesn't support async)
+  createEffect(() => {
     const currentLocale = locale();
     setIsLoading(true);
-    await loadTranslations(currentLocale);
-    setIsLoading(false);
+    loadTranslations(currentLocale)
+      .then(() => {
+        setIsLoading(false);
+      })
+      .catch(() => {
+        setIsLoading(false);
+      });
   });
 
   // Update documentElement lang on locale change

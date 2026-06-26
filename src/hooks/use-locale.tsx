@@ -8,14 +8,17 @@ import {
 } from '@t/i18n-types';
 import { updateDocumentLang } from '@utils/intl-utils';
 import type { Component, JSX } from 'solid-js';
-import { createContext, createEffect, createSignal, useContext } from 'solid-js';
+import { createContext, createEffect, createSignal, Show, useContext } from 'solid-js';
 
 const LOCALE_STORAGE_KEY = 'dropconvert.locale';
 
 export interface LocaleContextValue {
   locale: () => Locale;
   setLocale: (locale: Locale) => void;
-  t: <K extends keyof TranslationKeys>(key: K) => TranslationKeys[K];
+  t: <K extends keyof TranslationKeys>(
+    key: K,
+    params?: Record<string, string | number>
+  ) => TranslationKeys[K];
   localeInfo: () => LocaleInfo;
   isRTL: () => boolean;
   supportedLocales: typeof LOCALES;
@@ -94,13 +97,22 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
     props.initialLocale ?? detectInitialLocale()
   );
   const [translations, setTranslations] = createSignal<Translations | null>(null);
+  const [isReady, setIsReady] = createSignal(false);
 
-  createEffect(async () => {
+  // Load translations when locale changes (SolidJS createEffect doesn't support async)
+  createEffect(() => {
     const currentLocaleValue = locale();
     const info = LOCALES.find((l) => l.code === currentLocaleValue)!;
     updateDocumentLang(currentLocaleValue, info.dir);
-    const loaded = await loadTranslations(currentLocaleValue);
-    setTranslations(loaded);
+    setIsReady(false);
+    loadTranslations(currentLocaleValue)
+      .then((loaded) => {
+        setTranslations(loaded);
+        setIsReady(true);
+      })
+      .catch(() => {
+        setIsReady(true);
+      });
   });
 
   const setLocale = (newLocale: Locale): void => {
@@ -108,9 +120,20 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
     saveLocale(newLocale);
   };
 
-  const t = <K extends keyof TranslationKeys>(key: K): TranslationKeys[K] => {
+  const t = <K extends keyof TranslationKeys>(
+    key: K,
+    params?: Record<string, string | number>
+  ): TranslationKeys[K] => {
     const loaded = translations();
-    if (loaded) return loaded[key];
+    if (loaded) {
+      let value = loaded[key];
+      if (params && typeof value === 'string') {
+        for (const [k, v] of Object.entries(params)) {
+          value = value.replace(`{${k}}`, String(v)) as TranslationKeys[K];
+        }
+      }
+      return value;
+    }
     return key as unknown as TranslationKeys[K];
   };
 
@@ -126,7 +149,18 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
     supportedLocales: LOCALES,
   };
 
-  return <Provider value={value}>{props.children}</Provider>;
+  return (
+    <Show
+      when={isReady()}
+      fallback={
+        <div class="flex min-h-screen items-center justify-center bg-[#08090a]">
+          <div class="animate-pulse text-[#5e6ad2]">Loading...</div>
+        </div>
+      }
+    >
+      <Provider value={value}>{props.children}</Provider>
+    </Show>
+  );
 };
 
 export function useLocale(): LocaleContextValue {

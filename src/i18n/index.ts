@@ -51,6 +51,7 @@ export {
   formatTime,
 } from './intl-utils';
 // ─── Locale Store ───────────────────────────────────────────────────────────
+// Re-export detectInitialLocale as a local function for use in `locale` constant
 export {
   createLocaleStore,
   DEFAULT_LOCALE,
@@ -60,6 +61,25 @@ export {
   LOCALES,
   setLocale,
 } from './locale-store';
+
+import type { Locale } from './types';
+
+/**
+ * Get the initial locale (synchronous, for use in entry point).
+ * For reactive locale management in components, use `useI18n()` hook.
+ */
+export function getLocale(): Locale {
+  if (typeof navigator === 'undefined') return 'en';
+  const browserLangs = navigator.languages ?? (navigator.language ? [navigator.language] : []);
+  if (browserLangs.length === 0) return 'en';
+  for (const lang of browserLangs) {
+    if (!lang) continue;
+    const base = lang.split('-')[0]?.toLowerCase() ?? '';
+    if (base === 'ko') return 'ko';
+    if (base === 'en') return 'en';
+  }
+  return 'en';
+}
 // ─── Types ──────────────────────────────────────────────────────────────────
 export type {
   Locale,

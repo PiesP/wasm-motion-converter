@@ -22,6 +22,7 @@
  * 3. Check duration warnings to inform or block conversion attempts
  */
 
+import type { TranslationKeys } from '@t/i18n-types';
 import type { DurationValidationResult, ValidationWarning } from '@t/validation-types';
 import {
   MAX_FILE_SIZE,
@@ -33,6 +34,11 @@ import {
 import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
 
+type TFunction = <K extends keyof TranslationKeys>(
+  key: K,
+  params?: Record<string, string | number>
+) => TranslationKeys[K];
+
 /**
  * Result of file validation with error message if invalid
  *
@@ -43,7 +49,7 @@ import { logger } from './logger';
  * @property error - User-friendly error message if validation failed (undefined if valid)
  *
  * @example
- * const result = validateVideoFile(file);
+ * const result = validateVideoFile(file, t);
  * if (!result.valid) {
  *   displayError(result.error); // e.g., "Unsupported format..."
  * }
@@ -124,27 +130,28 @@ async function detectVideoMagicBytes(file: File): Promise<boolean> {
  * and platform differences in MIME reporting.
  *
  * @param file - The File object to validate (from file input or drag-drop)
+ * @param t - Translation function for error messages
  * @returns Validation result with error message if validation fails
  *
  * @example
  * // Valid MP4 file
  * const file = new File([...], 'video.mp4', { type: 'video/mp4' });
- * const result = validateVideoFile(file);
+ * const result = validateVideoFile(file, t);
  * // Result: { valid: true }
  *
  * @example
  * // Unsupported format (.flv)
  * const file = new File([...], 'video.flv', { type: 'video/x-flv' });
- * const result = validateVideoFile(file);
+ * const result = validateVideoFile(file, t);
  * // Result: { valid: false, error: 'Unsupported format...' }
  */
-export async function validateVideoFile(file: File): Promise<FileValidationResult> {
+export async function validateVideoFile(file: File, t: TFunction): Promise<FileValidationResult> {
   // CHECK 1: File size limit (500MB)
   // Prevents out-of-memory issues and browser crashes on large files
   if (file.size > MAX_FILE_SIZE) {
     return {
       valid: false,
-      error: 'File too large (max 500MB). Please trim or compress your video.',
+      error: t('validation.fileTooLarge'),
     };
   }
 
@@ -183,15 +190,14 @@ export async function validateVideoFile(file: File): Promise<FileValidationResul
   if (mimeType?.startsWith('video/')) {
     return {
       valid: false,
-      error: `Unsupported video format (${mimeType}). Please choose a common video format (MP4, MOV, WebM, MKV, AVI) or convert your file first.`,
+      error: t('validation.unsupportedMimeType', { mimeType }),
     };
   }
 
   // All validation checks failed - format not supported
   return {
     valid: false,
-    error:
-      'Unsupported format. Please choose a common video format (MP4, MOV, WebM, MKV, AVI) or a file with a video extension.',
+    error: t('validation.unsupportedFormat'),
   };
 }
 
@@ -310,17 +316,19 @@ function estimateFrameCount(durationMs: number, fps = 30): number {
  *
  * @param file - The video File object
  * @param targetFormat - Target conversion format ('gif', 'webp', or other)
+ * @param t - Translation function for warning messages
  * @returns Promise with duration, frame estimate, warnings, and valid flag
  *
  * @example
  * // WebP exceeds maximum duration
- * const result = await validateVideoDuration(file, 'webp');
+ * const result = await validateVideoDuration(file, 'webp', t);
  * // result.valid = true (warnings don't block)
  * // result.warnings[0].severity = 'warning'
  */
 export async function validateVideoDuration(
   file: File,
-  targetFormat: string
+  targetFormat: string,
+  t: TFunction
 ): Promise<DurationValidationResult> {
   try {
     // STEP 1: Extract video metadata
@@ -383,8 +391,8 @@ export async function validateVideoDuration(
       warnings: [
         {
           severity: 'info', // Informational - no action required
-          message: 'Unable to validate video duration',
-          details: 'Conversion will proceed with default settings',
+          message: t('validation.noValidation'),
+          details: t('validation.noValidationDetail'),
           requiresConfirmation: false, // No user interaction needed
         },
       ],

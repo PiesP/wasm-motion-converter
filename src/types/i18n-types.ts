@@ -191,7 +191,10 @@ export interface TranslationKeys {
 }
 
 /** Type-safe translation accessor */
-export type TFunction = <K extends keyof TranslationKeys>(key: K) => TranslationKeys[K];
+export type TFunction = <K extends keyof TranslationKeys>(
+  key: K,
+  params?: Record<string, string | number>
+) => TranslationKeys[K];
 
 /** Individual translation key */
 export type TranslationKey = keyof TranslationKeys;

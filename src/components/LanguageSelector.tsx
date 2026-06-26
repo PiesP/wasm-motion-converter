@@ -14,6 +14,8 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
   const handleChange = (event: Event) => {
     const target = event.target as HTMLSelectElement;
     setLocale(target.value as Parameters<typeof setLocale>[0]);
+    // Reload to load translations (SPA without SSR)
+    window.location.reload();
   };
 
   return (
