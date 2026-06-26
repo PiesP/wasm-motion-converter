@@ -97,9 +97,8 @@ export async function handleConvert(
         showConfirmation(
           durationValidation.warnings,
           () => {
-            resolve();
-            void performConversion(file, settings, runtime, t, durationValidation.duration).catch(
-              (error) => {
+            void performConversion(file, settings, runtime, t, durationValidation.duration)
+              .catch((error) => {
                 logger.error('conversion', 'Post-confirmation conversion failed', {
                   error: getErrorMessage(error),
                 });
@@ -118,8 +117,8 @@ export async function handleConvert(
                   setAppState('error');
                 });
                 focusRetryButton();
-              }
-            );
+              })
+              .finally(() => resolve());
           },
           () => {
             logger.info('conversion', 'User cancelled conversion after duration warning');
@@ -324,7 +323,7 @@ async function performConversion(
       duration: `${durationSeconds.toFixed(2)}s`,
       outputSize: blob.size,
       outputSizeFormatted: formatBytes(blob.size),
-      compressionRatio: `${((blob.size / file.size) * 100).toFixed(1)}%`,
+      outputSizePercent: `${((blob.size / file.size) * 100).toFixed(1)}%`,
       memoryMB: memMB ?? 'N/A',
     });
 
