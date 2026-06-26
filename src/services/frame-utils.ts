@@ -5,11 +5,12 @@
  * Frame Processing Utilities
  *
  * Zero-copy frame processing where possible:
- * - VideoFrame.copyTo() for RGB-compatible formats (primary path)
+ * - VideoFrame.copyTo() for standard 4-channel formats (RGBA/BGRA/RGBX/BGRX)
  * - createImageBitmap fallback only for unsupported formats
  *
  * H3: Optimized to avoid unnecessary RGBA→RGB intermediate buffer.
- *     Direct copyTo to RGB format when supported.
+ *     Uses standard 4-channel copyTo formats (RGBA tried first) with
+ *     fast Uint32Array RGBA→RGB conversion.
  *
  * BufferPool: Reuses Uint8Array allocations across frames to reduce GC.
  */
@@ -19,19 +20,21 @@ import { globalBufferPool } from './buffer-pool';
 // ─── Cached copyTo path ───────────────────────────────────────────
 // Strategy detection result cached after first frame to avoid repeated
 // try/catch fallback attempts on every frame.
-let cachedCopyPath: 'rgb' | 'four-channel' | 'canvas' | null = null;
+let cachedCopyPath: 'four-channel' | 'canvas' | null = null;
 
 /**
  * Copy VideoFrame pixels directly to RGB Uint8Array.
  *
  * Strategy:
- * 1. Try native RGB output via copyTo({ format: 'RGB' }) — zero-conversion path.
- *    Supported in Chrome 114+, Firefox 130+.
- * 2. Fall back to 4-channel formats (RGBX/BGRX/RGBA/BGRA) + fast Uint32Array RGBA→RGB.
- * 3. Last resort: OffscreenCanvas for exotic YUV/NV12 formats.
+ * 1. Try 4-channel formats (RGBA/BGRA/RGBX/BGRX) + fast Uint32Array RGBA→RGB.
+ *    'RGBA' is tried first as it is the most widely supported.
+ * 2. Last resort: OffscreenCanvas for exotic YUV/NV12 formats.
  *
  * The detected path is cached after the first frame to avoid repeated
  * try/catch overhead on subsequent frames.
+ *
+ * Note: The non-standard 'RGB' format was removed because it is not part of the
+ * VideoFrameCopyToOptions spec and not reliably supported by browsers.
  */
 export async function copyFrameToRGB(
   frame: VideoFrame,
@@ -39,24 +42,12 @@ export async function copyFrameToRGB(
   height: number
 ): Promise<Uint8Array> {
   // Use cached path from first frame detection
-  if (cachedCopyPath === 'rgb') {
-    return copyFrameRGB(frame, width, height);
-  }
   if (cachedCopyPath === 'four-channel') {
     return copyFrameFourChannel(frame, width, height);
   }
 
-  // ── Strategy 1: Native RGB output (zero-conversion path) ──
-  // Chrome 114+ / Firefox 130+ support format:'RGB' in copyTo options.
-  try {
-    const result = await copyFrameRGB(frame, width, height);
-    cachedCopyPath = 'rgb';
-    return result;
-  } catch {
-    // format:'RGB' not supported, fall through to 4-channel path
-  }
-
-  // ── Strategy 2: 4-channel formats + fast Uint32Array RGBA→RGB ──
+  // ── Strategy 1: 4-channel formats + fast Uint32Array RGBA→RGB ──
+  // RGBA is tried first (most widely supported), then BGRA, RGBX, BGRX.
   try {
     const result = await copyFrameFourChannel(frame, width, height);
     cachedCopyPath = 'four-channel';
@@ -65,39 +56,22 @@ export async function copyFrameToRGB(
     // Fall through to canvas fallback
   }
 
-  // ── Strategy 3: Canvas fallback (cached for subsequent frames) ──
+  // ── Strategy 2: Canvas fallback (cached for subsequent frames) ──
   cachedCopyPath = 'canvas';
   return copyFrameCanvas(frame, width, height);
 }
 
-/** Strategy 1: Native RGB copyTo */
-async function copyFrameRGB(frame: VideoFrame, width: number, height: number): Promise<Uint8Array> {
-  const size = width * height * 3;
-  const buffer = globalBufferPool.acquire(size);
-  const layout = await frame.copyTo(buffer, {
-    rect: { x: 0, y: 0, width, height },
-    layout: [{ offset: 0, stride: width * 3 }],
-    format: 'RGB' as VideoFrameCopyToOptions['format'],
-  });
-  // Verify we actually got RGB data (3 bytes per pixel)
-  if (layout && layout[0]?.stride === width * 3) {
-    return buffer;
-  }
-  globalBufferPool.release(buffer);
-  throw new Error('RGB layout unexpected');
-}
-
-/** Strategy 2: 4-channel copyTo + fast RGBA→RGB */
+/** Strategy 1: 4-channel copyTo + fast RGBA→RGB */
 async function copyFrameFourChannel(
   frame: VideoFrame,
   width: number,
   height: number
 ): Promise<Uint8Array> {
-  const fourChannelFormats: Array<'RGBX' | 'BGRX' | 'RGBA' | 'BGRA'> = [
-    'RGBX',
-    'BGRX',
+  const fourChannelFormats: Array<'RGBA' | 'BGRA' | 'RGBX' | 'BGRX'> = [
     'RGBA',
     'BGRA',
+    'RGBX',
+    'BGRX',
   ];
 
   for (const fmt of fourChannelFormats) {
@@ -122,7 +96,7 @@ async function copyFrameFourChannel(
   throw new Error('No 4-channel format supported');
 }
 
-/** Strategy 3: Canvas fallback for exotic formats */
+/** Strategy 2: Canvas fallback for exotic formats */
 async function copyFrameCanvas(
   frame: VideoFrame,
   width: number,
