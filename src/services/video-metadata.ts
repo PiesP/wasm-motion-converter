@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { VideoMetadata } from '@t/conversion-types';
-import { ALL_FORMATS, BufferSource, Input } from 'mediabunny';
+import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 
 interface MediabunnyVideoDecoderConfig extends VideoDecoderConfig {
   displayAspectWidth?: number;
@@ -26,8 +26,7 @@ export async function extractVideoMetadata(
   buffer: ArrayBuffer,
   defaultFps = 30
 ): Promise<VideoMetadata> {
-  const source = new BufferSource(buffer);
-  const input = new Input({ formats: ALL_FORMATS, source });
+  const input = createMediaBunnyInput(buffer);
 
   try {
     const videoTracks = await input.getVideoTracks();

@@ -162,25 +162,16 @@ class Logger {
     console[method](line);
 
     this.recentLines.push(line);
-    if (this.recentLines.length > MAX_RECENT_LOG_LINES) {
-      // Priority eviction: prefer to evict non-important entries first
-      const evictIdx = this.recentEntries.findIndex((e) => !IMPORTANT_CATEGORIES.has(e.category));
-      if (evictIdx !== -1) {
-        this.recentLines.splice(evictIdx, 1);
-        this.recentEntries.splice(evictIdx, 1);
-        // No size reduction needed — we removed one, added one
-      } else {
-        // All entries are important; evict oldest
-        this.recentLines.shift();
-      }
-    }
     this.recentEntries.push(entry);
     if (this.recentEntries.length > MAX_RECENT_LOG_LINES) {
       // Priority eviction: prefer to evict non-important entries first
       const evictIdx = this.recentEntries.findIndex((e) => !IMPORTANT_CATEGORIES.has(e.category));
       if (evictIdx !== -1) {
+        this.recentLines.splice(evictIdx, 1);
         this.recentEntries.splice(evictIdx, 1);
       } else {
+        // All entries are important; evict oldest
+        this.recentLines.shift();
         this.recentEntries.shift();
       }
     }

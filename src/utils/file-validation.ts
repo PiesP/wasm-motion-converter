@@ -54,6 +54,61 @@ interface FileValidationResult {
 }
 
 /**
+ * Detects video file format by inspecting magic bytes.
+ *
+ * Checks for common container signatures (MP4/ISOBMFF, WebM/Matroska, AVI).
+ * Returns true if a known video signature is detected.
+ *
+ * @param file - The File object to inspect
+ * @returns true if the file matches a known video signature
+ */
+async function detectVideoMagicBytes(file: File): Promise<boolean> {
+  try {
+    const header = file.slice(0, 12);
+    const buffer = await header.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    if (bytes.length < 8) return false;
+
+    // MP4/ISOBMFF: ftyp at offset 4, or general ISO base media header
+    const ftypSignature =
+      bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70;
+    if (ftypSignature) return true;
+
+    // Some MP4s start with 'moov' at offset 4
+    const moovSignature =
+      bytes[4] === 0x6d && bytes[5] === 0x6f && bytes[6] === 0x6f && bytes[7] === 0x76;
+    if (moovSignature) return true;
+
+    // Matroska/WebM: EBML header 0x1A 0x45 0xDF 0xA3
+    const ebmlSignature =
+      bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3;
+    if (ebmlSignature) return true;
+
+    // AVI: RIFF at offset 0, AVI at offset 8
+    const riffSignature =
+      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    const aviSignature =
+      bytes[8] === 0x41 && bytes[9] === 0x56 && bytes[10] === 0x49 && bytes[11] === 0x20;
+    if (riffSignature && aviSignature) return true;
+
+    // OGG: 'OggS' at offset 0
+    const oggSignature =
+      bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53;
+    if (oggSignature) return true;
+
+    // MPEG-TS: sync byte 0x47 at offset 0
+    const mpegTsSignature = bytes[0] === 0x47;
+    if (mpegTsSignature) return true;
+
+    return false;
+  } catch {
+    // File read failed — don't block, let downstream handle
+    return false;
+  }
+}
+
+/**
  * Validate a video file for size and format compatibility
  *
  * Performs two validation checks in order:
@@ -83,7 +138,7 @@ interface FileValidationResult {
  * const result = validateVideoFile(file);
  * // Result: { valid: false, error: 'Unsupported format...' }
  */
-export function validateVideoFile(file: File): FileValidationResult {
+export async function validateVideoFile(file: File): Promise<FileValidationResult> {
   // CHECK 1: File size limit (500MB)
   // Prevents out-of-memory issues and browser crashes on large files
   if (file.size > MAX_FILE_SIZE) {
@@ -109,6 +164,17 @@ export function validateVideoFile(file: File): FileValidationResult {
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
   if (extension && SUPPORTED_VIDEO_EXTENSIONS.includes(extension)) {
     return { valid: true };
+  }
+
+  // CHECK 3b: Magic bytes validation — defense-in-depth against extension spoofing.
+  // If MIME is empty and extension check failed, inspect file signature
+  // to detect video files that were renamed or have missing/invalid extensions.
+  // This prevents malicious files with renamed extensions from passing validation.
+  if (!mimeType) {
+    const detected = await detectVideoMagicBytes(file);
+    if (detected) {
+      return { valid: true };
+    }
   }
 
   // CHECK 4: Reject files with a video/* MIME type but unsupported extension.

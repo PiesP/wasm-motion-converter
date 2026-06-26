@@ -78,7 +78,7 @@ export interface TestHelpers {
   getError(): string | null;
 
   /** Inject a video File directly into the app store (bypasses file dialog) */
-  injectFile(file: File, metadata?: VideoMetadata): void;
+  injectFile(file: File, metadata?: VideoMetadata): Promise<void>;
 
   /** Reset the entire app to idle state */
   resetApp(): void;
@@ -177,18 +177,16 @@ const autoConfirm = (): void => {
   confirmDialog();
 };
 
-const injectFile = (file: File, metadata?: VideoMetadata): void => {
+const injectFile = async (file: File, metadata?: VideoMetadata): Promise<void> => {
   const prevUrl = videoPreviewUrl();
   if (prevUrl) URL.revokeObjectURL(prevUrl);
 
   setInputFile(file);
   // Read file into buffer so conversion can proceed without re-reading
-  file
-    .arrayBuffer()
-    .then((buf) => {
-      setInputBuffer(buf);
-    })
-    .catch(() => {});
+  try {
+    const buf = await file.arrayBuffer();
+    setInputBuffer(buf);
+  } catch {}
   const previewUrl = URL.createObjectURL(file);
   setVideoPreviewUrl(previewUrl);
 

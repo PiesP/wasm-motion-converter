@@ -275,7 +275,7 @@ export async function encodeGif(
           // for a 150-frame video). Yielding every 5 frames reduces this to ~30-120ms
           // while still keeping the UI responsive.
           if (frameNum % 5 === 0) {
-            await new Promise((resolve) => setTimeout(resolve, 0));
+            await Promise.resolve();
           }
 
           // ── Dynamic decimation based on memory pressure ──

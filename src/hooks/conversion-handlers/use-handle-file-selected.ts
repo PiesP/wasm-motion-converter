@@ -42,7 +42,7 @@ export async function handleFileSelected(
   resetErrorState();
   resetAnalysisState();
 
-  const validation = validateVideoFile(file);
+  const validation = await validateVideoFile(file);
   if (!validation.valid) {
     logger.warn('conversion', 'File validation failed — conversion blocked', {
       fileName: file.name,

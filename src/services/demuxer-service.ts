@@ -4,7 +4,8 @@
 import { extractVideoMetadata } from '@services/video-metadata';
 import type { ConversionRequest } from '@t/conversion-types';
 import { logger } from '@utils/logger';
-import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from 'mediabunny';
+import { createMediaBunnyInput } from '@utils/mediabunny-utils';
+import { EncodedPacketSink } from 'mediabunny';
 
 export interface DemuxResult {
   chunks: EncodedVideoChunk[];
@@ -33,8 +34,7 @@ export async function demuxVideo(
   const { config, duration } = metadata;
 
   // Set up source/input for demuxing
-  const source = new BufferSource(request.inputBuffer);
-  const input = new Input({ formats: ALL_FORMATS, source });
+  const input = createMediaBunnyInput(request.inputBuffer);
 
   const videoTracks = await input.getVideoTracks();
   const videoTrack = videoTracks[0];

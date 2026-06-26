@@ -59,6 +59,11 @@ if (import.meta.env.DEV) {
     .catch(() => {});
 }
 
+declare global {
+  // eslint-disable-next-line no-var
+  var cleanupServiceWorkerUpdateCheck: (() => void) | undefined;
+}
+
 const SETTINGS_DEBOUNCE_MS = 500;
 const MEMORY_REDUCTION_SCALE = 0.5;
 
@@ -116,7 +121,11 @@ const App: Component = () => {
       return;
     }
     const update = () => {
-      setMemoryUsageText(getMemoryUsageString());
+      const next = getMemoryUsageString();
+      const prev = memoryUsageText();
+      if (next !== prev) {
+        setMemoryUsageText(next);
+      }
     };
     update();
     const interval = setInterval(update, 2000);
@@ -131,11 +140,7 @@ const App: Component = () => {
     if (url) URL.revokeObjectURL(url);
     debouncedSaveSettings.cancel();
     dismissConfirmation();
-    (
-      (globalThis as Record<string, unknown>).cleanupServiceWorkerUpdateCheck as
-        | (() => void)
-        | undefined
-    )?.();
+    cleanupServiceWorkerUpdateCheck?.();
   });
 
   createEffect(() => {

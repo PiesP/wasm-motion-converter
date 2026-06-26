@@ -105,9 +105,20 @@ export async function decodeFrames(
     smartFrameSkip = 'off',
   } = opts;
 
-  // Determine streaming mode: explicit flag takes precedence, otherwise infer from callback
+  // Determine streaming mode: explicit 'stream' mode or infer from callback
   const streaming =
     mode === 'stream' || (mode !== 'batch' && typeof onFrameAvailable === 'function');
+
+  // Warn if onFrameAvailable is provided but mode is explicitly 'batch'
+  if (mode === 'batch' && typeof onFrameAvailable === 'function') {
+    logger.warn(
+      'encoders',
+      'onFrameAvailable provided but mode is "batch" — streaming callback will be ignored',
+      {
+        mode,
+      }
+    );
+  }
   const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
   const pendingConversions: Promise<void>[] = [];
   let decodeError: Error | null = null;
@@ -156,6 +167,12 @@ export async function decodeFrames(
 
         const conversion = (async () => {
           try {
+            // Validate frame before attempting copy — frame may be invalid
+            // if the decoder encountered an error or was flushed concurrently.
+            if (!frame.codedWidth || !frame.codedHeight) {
+              frame.close();
+              return;
+            }
             const rgbData = await copyFrameToRGB(frame, width, height);
 
             // ── Smart frame skip: similarity-based deduplication ──
@@ -252,7 +269,7 @@ export async function decodeFrames(
       // rendering loop, avoiding busy-wait CPU usage from setTimeout(1).
       while (decoder.decodeQueueSize > MAX_DECODE_QUEUE && !signal?.aborted && !decodeError) {
         await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => setTimeout(resolve, 0));
+          requestAnimationFrame(() => resolve());
         });
       }
 

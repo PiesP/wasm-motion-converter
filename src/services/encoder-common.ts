@@ -22,7 +22,10 @@ export interface BaseEncoderOptions {
   frameDecimation?: number;
   /** Callback fired after each frame is decoded */
   onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
-  /** Callback fired after each frame is encoded */
+  /**
+   * Callback fired after each frame is encoded.
+   * @note Currently only used by the GIF encoder; WebP does not invoke this.
+   */
   onFrameEncoded?: (frameIndex: number, totalFrames: number) => void;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode;
