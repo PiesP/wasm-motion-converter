@@ -16,7 +16,7 @@ interface TooltipProps {
 const Tooltip: Component<TooltipProps> = (props) => {
   const [local] = splitProps(props, ['content', 'children']);
   const [isVisible, setIsVisible] = createSignal(false);
-  const tooltipId = `tooltip-${Math.random().toString(36).slice(2, 10)}`;
+  const tooltipId = `tooltip-${crypto.randomUUID()}`;
 
   const showTooltip = () => setIsVisible(true);
   const hideTooltip = () => setIsVisible(false);

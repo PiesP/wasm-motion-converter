@@ -190,7 +190,7 @@ export async function runConversionPipeline(
   if (import.meta.env.DEV) {
     await importProfiler();
   }
-  const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const runId = crypto.randomUUID();
   const profiler =
     import.meta.env.DEV && profilerModule ? createRealProfiler() : createNoopProfiler();
   profiler.start();
