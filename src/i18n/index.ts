@@ -42,9 +42,9 @@
 export type { Locale as LocaleCode } from '@t/i18n-types';
 // ─── Intl Utilities ─────────────────────────────────────────────────────────
 export {
-  formatBytes,
   formatDate,
   formatDuration,
+  formatFileSize as formatBytes,
   formatNumber,
   formatPercent,
   formatRelativeTime,
@@ -62,7 +62,7 @@ export {
   setLocale,
 } from './locale-store';
 
-import type { Locale } from './types';
+import { LOCALES, type Locale } from '@t/i18n-types';
 
 /**
  * Get the initial locale (synchronous, for use in entry point).
@@ -75,8 +75,10 @@ export function getLocale(): Locale {
   for (const lang of browserLangs) {
     if (!lang) continue;
     const base = lang.split('-')[0]?.toLowerCase() ?? '';
-    if (base === 'ko') return 'ko';
-    if (base === 'en') return 'en';
+    const match = LOCALES.find(
+      (l) => l.code.toLowerCase() === lang.toLowerCase() || l.code.toLowerCase().startsWith(base)
+    );
+    if (match) return match.code;
   }
   return 'en';
 }

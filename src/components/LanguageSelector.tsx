@@ -9,13 +9,11 @@ interface LanguageSelectorProps {
 }
 
 const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
-  const { locale, setLocale, supportedLocales } = useLocale();
+  const { locale, setLocale, t, supportedLocales } = useLocale();
 
   const handleChange = (event: Event) => {
     const target = event.target as HTMLSelectElement;
     setLocale(target.value as Parameters<typeof setLocale>[0]);
-    // Reload to load translations (SPA without SSR)
-    window.location.reload();
   };
 
   return (
@@ -26,7 +24,7 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
         props.class ??
         'rounded-md border border-white/[0.08] bg-white/[0.02] px-2 py-1.5 text-xs text-[#d0d6e0] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] cursor-pointer'
       }
-      aria-label="Select language"
+      aria-label={t('lang.select')}
       data-testid="language-selector"
     >
       {supportedLocales.map((loc) => (

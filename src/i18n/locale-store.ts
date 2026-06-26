@@ -14,7 +14,7 @@ import { createEffect, createSignal } from 'solid-js';
 const LOCALE_STORAGE_KEY = 'app-locale';
 
 /** Supported locale codes (extensible) */
-export const SUPPORTED_LOCALES: readonly Locale[] = ['en', 'ko'] as const;
+export const SUPPORTED_LOCALES: readonly Locale[] = LOCALES.map((l) => l.code);
 
 /**
  * Detect user's preferred locale from browser settings.

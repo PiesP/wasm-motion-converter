@@ -29,10 +29,10 @@ const LocaleContext = createContext<LocaleContextValue | undefined>(undefined);
 const translationCache = new Map<Locale, Translations>();
 
 async function importLocale(locale: Locale): Promise<Translations> {
-  if (locale === 'ko') {
-    return (await import('@i18n/ko.json')).default as Translations;
-  }
-  return (await import('@i18n/en.json')).default as Translations;
+  const translations = (await import(`@i18n/${locale}.json`)) as {
+    default: Translations;
+  };
+  return translations.default;
 }
 
 async function loadTranslations(locale: Locale): Promise<Translations> {
