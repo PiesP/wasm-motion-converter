@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { MEMORY_CRITICAL_THRESHOLD } from '@utils/memory-monitor';
+import { useLocale } from '@hooks/use-locale';
 import type { Component } from 'solid-js';
 import { createMemo, Show, splitProps } from 'solid-js';
 
@@ -13,6 +13,7 @@ interface MemoryWarningProps {
 }
 
 const MemoryWarning: Component<MemoryWarningProps> = (props) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, [
     'isDuringConversion',
     'onReduceSettings',
@@ -21,13 +22,11 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
   ]);
 
   const warningTitle = createMemo(() =>
-    local.isDuringConversion ? 'High Memory Usage Detected' : 'High Memory Warning'
+    local.isDuringConversion ? t('memory.titleActive') : t('memory.title')
   );
 
   const warningMessage = createMemo(() =>
-    local.isDuringConversion
-      ? `Browser memory usage is critically high (>${MEMORY_CRITICAL_THRESHOLD}% of JS heap). This could cause the conversion to fail or the browser to crash.`
-      : `Your browser memory usage is already high (>${MEMORY_CRITICAL_THRESHOLD}% of JS heap). Starting conversion now may cause failures or crashes.`
+    local.isDuringConversion ? t('memory.descriptionActive') : t('memory.description')
   );
 
   const handleReduceSettings = () => local.onReduceSettings?.();
@@ -79,10 +78,10 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                       type="button"
                       onClick={handleDismiss}
                       class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-[#d0d6e0] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
-                      aria-label="Close memory warning and try again"
+                      aria-label={t('memory.cancelRetry')}
                       data-testid="memory-warning-dismiss"
                     >
-                      Dismiss
+                      {t('memory.dismiss')}
                     </button>
                   </Show>
                   <Show when={local.onReduceSettings}>
@@ -90,10 +89,10 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                       type="button"
                       onClick={handleReduceSettings}
                       class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
-                      aria-label="Reduce quality settings and start conversion"
+                      aria-label={t('memory.reduceStart')}
                       data-testid="memory-warning-reduce"
                     >
-                      Use Low Quality & Convert
+                      {t('memory.reduceStart')}
                     </button>
                   </Show>
                 </>
@@ -104,10 +103,10 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                   type="button"
                   onClick={handleCancel}
                   class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
-                  aria-label="Cancel ongoing conversion"
+                  aria-label={t('memory.cancel')}
                   data-testid="memory-warning-cancel"
                 >
-                  Cancel Conversion
+                  {t('memory.cancel')}
                 </button>
               </Show>
               <Show when={local.onDismiss}>
@@ -115,10 +114,10 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                   type="button"
                   onClick={handleDismiss}
                   class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-[#d0d6e0] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
-                  aria-label="Dismiss warning and continue conversion"
+                  aria-label={t('memory.dismiss')}
                   data-testid="memory-warning-continue"
                 >
-                  Continue Anyway
+                  {t('memory.dismiss')}
                 </button>
               </Show>
             </Show>

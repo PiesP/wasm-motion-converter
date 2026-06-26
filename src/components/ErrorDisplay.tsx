@@ -2,17 +2,11 @@
 // Copyright (c) 2025-2026 PiesP
 
 import Panel from '@components/ui/Panel';
+import { useLocale } from '@hooks/use-locale';
 import type { ConversionErrorType } from '@t/conversion-types';
+import type { TranslationKey } from '@t/i18n-types';
 import type { Component } from 'solid-js';
 import { createMemo, onMount, Show, splitProps } from 'solid-js';
-
-const ERROR_MESSAGES: Record<ConversionErrorType, string> = {
-  format: 'This video format is not supported. Please try a different file.',
-  codec: 'This video codec cannot be processed. Please try a different file.',
-  timeout: 'The conversion took too long. Try a shorter video or lower quality settings.',
-  memory: 'Ran out of memory. Close other browser tabs or use lower quality settings.',
-  general: '',
-};
 
 const ERROR_ICONS: Partial<Record<ConversionErrorType, string>> = {
   memory: '💾',
@@ -30,6 +24,7 @@ interface ErrorDisplayProps {
 }
 
 const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, [
     'message',
     'suggestion',
@@ -48,12 +43,13 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
 
   const canRetry = createMemo(() => local.errorType !== 'format' && local.errorType !== 'codec');
 
-  const userFriendlyMessage = createMemo(() => {
+  const userFriendlyMessage = createMemo((): string => {
     if (!local.errorType || local.errorType === 'general') {
-      return 'Conversion failed unexpectedly';
+      return t('error.unknown');
     }
 
-    return ERROR_MESSAGES[local.errorType] ?? local.message;
+    const key = `error.${local.errorType}` as TranslationKey;
+    return t(key);
   });
 
   const errorIcon = createMemo(() => ERROR_ICONS[local.errorType ?? 'general'] ?? '');
@@ -81,7 +77,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
           type="button"
           onClick={handleDismiss}
           class="absolute top-4 right-4 p-2 text-[#d0d6e0] hover:text-[#f7f8f8] transition-colors rounded-md hover:bg-white/[0.05]"
-          aria-label="Dismiss error message"
+          aria-label={t('error.dismiss')}
           data-testid="error-dismiss-button"
         >
           <svg
@@ -117,7 +113,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
         </div>
         <div class="ml-3 flex-1">
           <h3 class="text-sm font-medium text-[#f7f8f8]">
-            Conversion Failed{' '}
+            {t('error.conversionFailed')}{' '}
             {errorIcon() && (
               <span class="ml-1" aria-hidden="true">
                 {errorIcon()}
@@ -149,9 +145,9 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                   data-testid="error-select-different-fallback-button"
                   class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                   onClick={handleSelectNewFile}
-                  aria-label="Select a different video file to convert"
+                  aria-label={t('error.selectDifferent')}
                 >
-                  Select Different File
+                  {t('error.selectDifferentFallback')}
                 </button>
               }
             >
@@ -161,18 +157,18 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 data-testid="error-retry-button"
                 class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                 onClick={handleRetry}
-                aria-label="Retry conversion with the same file"
+                aria-label={t('error.retry')}
               >
-                Retry with Same File
+                {t('error.retry')}
               </button>
               <button
                 type="button"
                 data-testid="error-select-different-button"
                 class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-[#d0d6e0] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                 onClick={handleSelectNewFile}
-                aria-label="Select a different video file to convert"
+                aria-label={t('error.selectDifferent')}
               >
-                Select Different File
+                {t('error.selectDifferent')}
               </button>
             </Show>
           </div>

@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
+
+import { useLocale } from '@hooks/use-locale';
 import type { ConversionFormat } from '@t/conversion-types';
 import type { Component } from 'solid-js';
 import { splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
-
-const FORMAT_OPTIONS: OptionSelectorOption<ConversionFormat>[] = [
-  { value: 'gif', label: 'GIF', description: 'Universal support' },
-  { value: 'webp', label: 'WebP', description: 'Smaller file size' },
-];
 
 const FORMAT_COLUMNS = 2;
 
@@ -21,11 +18,17 @@ interface FormatSelectorProps {
 }
 
 const FormatSelector: Component<FormatSelectorProps> = (props) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, ['value', 'onChange', 'disabled', 'tooltip']);
+
+  const FORMAT_OPTIONS: OptionSelectorOption<ConversionFormat>[] = [
+    { value: 'gif', label: t('format.gif'), description: t('format.gifDesc') },
+    { value: 'webp', label: t('format.webp'), description: t('format.webpDesc') },
+  ];
 
   return (
     <OptionSelector
-      title="Output Format"
+      title={t('format.title')}
       name="format"
       value={local.value}
       options={FORMAT_OPTIONS}

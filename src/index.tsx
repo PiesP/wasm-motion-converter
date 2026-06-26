@@ -17,6 +17,7 @@
 
 import { render } from 'solid-js/web';
 import App from './App';
+import { LocaleProvider } from './hooks/use-locale.tsx';
 import { registerServiceWorker } from './sw-register';
 import './index.css';
 
@@ -36,6 +37,13 @@ if (!root) {
   );
 }
 
-render(() => <App />, root);
+render(
+  () => (
+    <LocaleProvider>
+      <App />
+    </LocaleProvider>
+  ),
+  root
+);
 
 registerServiceWorker();

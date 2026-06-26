@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import type { Component } from 'solid-js';
 import { createMemo, createSignal, Show, splitProps } from 'solid-js';
 
@@ -30,6 +31,7 @@ interface FileDropzoneProps {
 }
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, [
     'onFileSelected',
     'onCancel',
@@ -119,7 +121,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       }}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: dropzone region is interactive (opens file picker on Enter/Space)
       tabIndex={0}
-      aria-label="Video file dropzone - Press Enter or Space to select a file"
+      aria-label={t('dropzone.selectFile')}
       role="region"
       data-testid="dropzone"
     >
@@ -129,8 +131,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           type="button"
           onClick={local.onCancel}
           class="absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full bg-red-500/10 text-red-400 transition-colors hover:bg-red-500/20"
-          aria-label="Cancel conversion"
-          title="Cancel conversion"
+          aria-label={t('dropzone.cancelConversion')}
+          title={t('dropzone.cancelConversion')}
         >
           <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <rect x="6" y="6" width="12" height="12" rx="1" />
@@ -183,7 +185,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 muted
                 playsinline
                 preload="metadata"
-                aria-label="Selected video preview"
+                aria-label={t('dropzone.preview')}
               />
               {/* Progress overlay on video */}
               <div class="absolute inset-0 flex items-center justify-center">
@@ -219,7 +221,9 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         when={isInteractive()}
         fallback={
           <Show when={!isBusy()}>
-            <div class="text-center text-sm text-[#8a8f98]">{local.status || 'Processing...'}</div>
+            <div class="text-center text-sm text-[#8a8f98]">
+              {local.status || t('dropzone.processing')}
+            </div>
           </Show>
         }
       >
@@ -266,7 +270,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 muted
                 playsinline
                 preload="metadata"
-                aria-label="Selected video preview"
+                aria-label={t('dropzone.preview')}
               />
             </Show>
           </div>
@@ -305,7 +309,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 disabled={!isInteractive()}
                 data-testid="choose-file-button"
               >
-                Choose a video file
+                {t('dropzone.dropHere')}
               </button>
               <input
                 ref={(el) => {
@@ -318,11 +322,11 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 onChange={handleFileInput}
                 disabled={local.disabled}
                 tabIndex={-1}
-                aria-label="Select video file for conversion"
+                aria-label={t('dropzone.selectFile')}
                 data-testid="file-input"
               />
             </div>
-            <p class="mt-2 text-sm text-[#8a8f98]">or drag and drop</p>
+            <p class="mt-2 text-sm text-[#8a8f98]">{t('dropzone.clickSelect')}</p>
             <p class="mt-1 text-xs text-[#5e6ad2]/60">
               Most video formats (MP4, MOV, WebM, MKV, AVI) - max 500MB
             </p>
@@ -331,7 +335,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       </Show>
 
       <Show when={justSelected()}>
-        <div class="mt-2 text-center text-sm text-green-400">File selected!</div>
+        <div class="mt-2 text-center text-sm text-green-400">{t('dropzone.dropHere')}</div>
       </Show>
     </div>
   );

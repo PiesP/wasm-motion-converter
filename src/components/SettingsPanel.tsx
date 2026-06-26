@@ -8,6 +8,7 @@ import SmartFrameSkipSelector from '@components/SmartFrameSkipSelector';
 import TrimSelector from '@components/TrimSelector';
 import Button from '@components/ui/Button';
 import Panel from '@components/ui/Panel';
+import { useLocale } from '@hooks/use-locale';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
 import type { Component } from 'solid-js';
 import { createMemo, Show, splitProps } from 'solid-js';
@@ -28,6 +29,7 @@ interface SettingsPanelProps {
 }
 
 const SettingsPanel: Component<SettingsPanelProps> = (props) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, [
     'isBusy',
     'isConverting',
@@ -44,14 +46,16 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   ]);
 
   const ariaLabel = createMemo(() =>
-    !local.metadata ? 'Select a video to start conversion' : 'Convert video to animated image'
+    !local.metadata ? t('settings.selectVideo') : t('settings.convert')
   );
 
   const convertVariant = createMemo(() => (!local.metadata ? 'ghost' : ('primary' as const)));
 
   const convertDisabled = createMemo(() => !local.metadata || local.isBusy);
 
-  const convertText = createMemo(() => (!local.metadata ? 'Select a video to start' : 'Convert'));
+  const convertText = createMemo(() =>
+    !local.metadata ? t('settings.selectVideo') : t('settings.convert')
+  );
 
   return (
     <Panel class="p-4">
@@ -73,13 +77,13 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
             }
           >
             <Button
-              ariaLabel="Stop video conversion"
+              ariaLabel={t('settings.stopConversion')}
               class="flex-1"
               onClick={local.onCancel}
               variant="danger"
               data-testid="stop-conversion-button"
             >
-              Stop Conversion
+              {t('settings.stopConversion')}
             </Button>
           </Show>
         </div>
@@ -100,14 +104,14 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
       <FormatSelector
         disabled={local.isConversionActive}
         onChange={local.onFormatChange}
-        tooltip="GIF works everywhere, WebP is smaller but requires modern browsers"
+        tooltip={t('settings.tooltip.quality')}
         value={local.settings.format}
       />
 
       <QualitySelector
         disabled={local.isConversionActive}
         onChange={local.onQualityChange}
-        tooltip="Higher quality = larger file size and slower conversion"
+        tooltip={t('settings.tooltip.quality')}
         value={local.settings.quality}
       />
 
@@ -121,7 +125,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         disabled={local.isConversionActive}
         inputMetadata={local.metadata}
         onChange={local.onScaleChange}
-        tooltip="Reduce dimensions to decrease file size and speed up conversion"
+        tooltip={t('settings.tooltip.scale')}
         value={local.settings.scale}
       />
     </Panel>

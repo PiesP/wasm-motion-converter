@@ -4,12 +4,14 @@
 import ConfirmationModal from '@components/ConfirmationModal';
 import ExportLogsButton from '@components/ExportLogsButton';
 import FileDropzone from '@components/FileDropzone';
+import LanguageSelector from '@components/LanguageSelector';
 import LicenseAttribution from '@components/LicenseAttribution';
 import ResultSection from '@components/ResultSection';
 import SettingsPanel from '@components/SettingsPanel';
 import StatusAlerts from '@components/StatusAlerts';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import { useConversionHandlers } from '@hooks/use-conversion-handlers';
+import { useLocale } from '@hooks/use-locale';
 import { useNetworkState } from '@hooks/use-network-state';
 import { dismissConfirmation } from '@stores/confirmation-store';
 import {
@@ -71,6 +73,7 @@ const ConversionProgress = lazy(() => import('@components/ConversionProgress'));
 const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
 
 const App: Component = () => {
+  const { t } = useLocale();
   const [conversionStartTime, setConversionStartTime] = createSignal(0);
   const [estimatedSecondsRemaining, setEstimatedSecondsRemaining] = createSignal<number | null>(
     null
@@ -167,7 +170,7 @@ const App: Component = () => {
     const state = appState();
     if (state === 'converting') {
       return {
-        label: 'Converting...',
+        label: t('progress.converting'),
         progress: conversionProgress(),
         message: conversionStatusMessage(),
         subPhaseLabel: undefined,
@@ -181,10 +184,10 @@ const App: Component = () => {
     }
     if (state === 'analyzing') {
       return {
-        label: 'Analyzing video...',
+        label: t('progress.analyzing'),
         progress: 0,
-        message: 'Reading video metadata...',
-        subPhaseLabel: 'Reading video metadata...',
+        message: t('progress.readingMetadata'),
+        subPhaseLabel: t('progress.readingMetadata'),
       };
     }
     return null;
@@ -253,12 +256,10 @@ const App: Component = () => {
       fallback={(error) => (
         <div class="flex min-h-screen items-center justify-center bg-[#08090a] p-4">
           <div class="max-w-2xl border-l-4 border-red-500/60 bg-[#191a1b] p-6 rounded-lg">
-            <h2 class="mb-2 text-lg font-semibold text-[#f7f8f8]">Application Error</h2>
-            <p class="mb-4 text-sm text-[#d0d6e0]">
-              An unexpected error occurred. Please refresh the page to try again.
-            </p>
+            <h2 class="mb-2 text-lg font-semibold text-[#f7f8f8]">{t('app.error.title')}</h2>
+            <p class="mb-4 text-sm text-[#d0d6e0]">{t('app.error.description')}</p>
             <details class="text-xs text-[#d0d6e0]">
-              <summary class="cursor-pointer hover:underline">Error details</summary>
+              <summary class="cursor-pointer hover:underline">{t('app.error.details')}</summary>
               <pre class="mt-2 overflow-auto rounded bg-white/[0.02] border border-white/[0.08] p-3">
                 {String(error)}
               </pre>
@@ -272,19 +273,18 @@ const App: Component = () => {
           class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-[#5e6ad2] focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
           href="#main-content"
         >
-          Skip to main content
+          {t('app.skipToMain')}
         </a>
 
         <header class="border-b border-white/[0.08] bg-[#08090a]">
           <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
             <div class="flex-1">
-              <h1 class="text-xl font-bold text-[#f7f8f8] sm:text-2xl">dropconvert</h1>
-              <p class="mt-1 text-xs text-[#d0d6e0] sm:text-sm">
-                Convert videos to animated GIF or WebP images
-              </p>
+              <h1 class="text-xl font-bold text-[#f7f8f8] sm:text-2xl">{t('app.title')}</h1>
+              <p class="mt-1 text-xs text-[#d0d6e0] sm:text-sm">{t('app.subtitle')}</p>
             </div>
 
             <div class="flex items-center gap-2">
+              <LanguageSelector />
               <ExportLogsButton />
             </div>
           </div>
@@ -340,15 +340,15 @@ const App: Component = () => {
                   <div class="space-y-2">
                     <ConversionProgress
                       progress={0}
-                      status="Analyzing video..."
-                      statusMessage="Reading video metadata..."
+                      status={t('progress.analyzing')}
+                      statusMessage={t('progress.readingMetadata')}
                     />
                     <button
                       type="button"
                       class="w-full rounded-md border border-white/[0.08] bg-white/[0.02] px-4 py-2 text-sm font-medium text-[#d0d6e0] transition-all duration-150 hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] focus:ring-offset-2 focus:ring-offset-[#0f1011]"
                       onClick={handleCancelAnalysis}
                     >
-                      Cancel
+                      {t('dropzone.cancelConversion')}
                     </button>
                   </div>
                 </Suspense>
@@ -356,7 +356,7 @@ const App: Component = () => {
 
               <Show when={appState() === 'cancelling'}>
                 <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-[#191a1b]" />}>
-                  <ConversionProgress progress={0} status="Cancelling..." />
+                  <ConversionProgress progress={0} status={t('progress.cancelling')} />
                 </Suspense>
               </Show>
 

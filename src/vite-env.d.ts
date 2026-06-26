@@ -15,6 +15,18 @@
 
 /// <reference types="vite/client" />
 
+declare module '*.json' {
+  const value: Record<string, string>;
+  export default value;
+}
+
+declare module './i18n/*.json' {
+  import type { Translations } from '@t/i18n-types';
+
+  const value: Translations;
+  export default value;
+}
+
 /* ============================================================================
    Video Pipeline Types (defined inline — @t/video-pipeline-types was stale)
    ============================================================================ */

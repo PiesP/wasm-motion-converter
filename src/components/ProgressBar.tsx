@@ -1,34 +1,35 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import type { ProgressPhase } from '@t/conversion-types';
 import { formatDuration } from '@utils/format-utils';
 import { type Component, createEffect, createMemo, onCleanup, Show, splitProps } from 'solid-js';
 
 const PHASE_CONFIG = [
   {
-    label: 'Demux',
+    labelKey: 'progress.demux',
     icon: '📂',
     doneIcon: '✓',
     colorClass: 'bg-amber-400',
     phase: 'demuxing' as ProgressPhase,
   },
   {
-    label: 'Decode',
+    labelKey: 'progress.decode',
     icon: '🔓',
     doneIcon: '✓',
     colorClass: 'bg-purple-400',
     phase: 'decoding' as ProgressPhase,
   },
   {
-    label: 'Encode',
+    labelKey: 'progress.encode',
     icon: '⚙️',
     doneIcon: '✓',
     colorClass: 'bg-[#5e6ad2]',
     phase: 'encoding' as ProgressPhase,
   },
   {
-    label: 'Final',
+    labelKey: 'progress.final',
     icon: '📦',
     doneIcon: '✓',
     colorClass: 'bg-green-400',
@@ -58,6 +59,7 @@ interface ProgressBarProps {
 }
 
 const ProgressBar: Component<ProgressBarProps> = (props) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, [
     'progress',
     'status',
@@ -147,7 +149,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       return (
         <span class={`inline-flex items-center gap-0.5 ${markerClass}`}>
           <span class="text-[10px]">{marker}</span>
-          <span>{seg.label}</span>
+          <span>{t(seg.labelKey)}</span>
         </span>
       );
     });
@@ -333,7 +335,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
               }`}
             >
               <span>{isPast ? '✓' : seg.icon}</span>
-              <span>{seg.label}</span>
+              <span>{t(seg.labelKey)}</span>
             </span>
           );
         })}

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import type { Component } from 'solid-js';
 import { createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 
@@ -60,6 +61,7 @@ const parseTimeInput = (input: string): number | null => {
 const clampToStep = (value: number): number => Math.round(value / STEP) * STEP;
 
 const TrimSelector: Component<TrimSelectorProps> = (props) => {
+  const { t } = useLocale();
   const fps = (): number => props.estimatedFps ?? 15;
 
   const effectiveEnd = createMemo(() => {
@@ -194,23 +196,35 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   const presets = createMemo(() => {
     const d = props.duration;
     const list: Array<{ label: string; start: number; end: number }> = [
-      { label: 'Full', start: 0, end: TRIM_END_FULL_DURATION },
+      { label: t('trim.full'), start: 0, end: TRIM_END_FULL_DURATION },
     ];
     if (d > 5) {
-      list.push({ label: 'First 5s', start: 0, end: Math.min(5, d) });
-      list.push({ label: 'Last 5s', start: Math.max(0, d - 5), end: TRIM_END_FULL_DURATION });
+      list.push({ label: t('trim.first5s'), start: 0, end: Math.min(5, d) });
+      list.push({
+        label: t('trim.last5s'),
+        start: Math.max(0, d - 5),
+        end: TRIM_END_FULL_DURATION,
+      });
     }
     if (d > 15) {
-      list.push({ label: 'First 15s', start: 0, end: Math.min(15, d) });
-      list.push({ label: 'Last 15s', start: Math.max(0, d - 15), end: TRIM_END_FULL_DURATION });
+      list.push({ label: t('trim.first15s'), start: 0, end: Math.min(15, d) });
+      list.push({
+        label: t('trim.last15s'),
+        start: Math.max(0, d - 15),
+        end: TRIM_END_FULL_DURATION,
+      });
     }
     if (d > 30) {
-      list.push({ label: 'First 30s', start: 0, end: Math.min(30, d) });
-      list.push({ label: 'Last 30s', start: Math.max(0, d - 30), end: TRIM_END_FULL_DURATION });
+      list.push({ label: t('trim.first30s'), start: 0, end: Math.min(30, d) });
+      list.push({
+        label: t('trim.last30s'),
+        start: Math.max(0, d - 30),
+        end: TRIM_END_FULL_DURATION,
+      });
     }
     if (d >= 2) {
-      list.push({ label: 'First Half', start: 0, end: d / 2 });
-      list.push({ label: 'Second Half', start: d / 2, end: TRIM_END_FULL_DURATION });
+      list.push({ label: t('trim.firstHalf'), start: 0, end: d / 2 });
+      list.push({ label: t('trim.secondHalf'), start: d / 2, end: TRIM_END_FULL_DURATION });
     }
     return list;
   });
@@ -301,7 +315,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     <div class="space-y-2" data-testid="trim-selector">
       {/* Header */}
       <div class="flex items-center justify-between">
-        <span class="text-xs font-medium text-[#d0d6e0]">Trim Range</span>
+        <span class="text-xs font-medium text-[#d0d6e0]">{t('trim.range')}</span>
         {!isDefault() && (
           <button
             type="button"
@@ -314,7 +328,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
                 : 'border-white/[0.08] hover:bg-white/[0.05] cursor-pointer'
             }`}
           >
-            Reset
+            {t('trim.reset')}
           </button>
         )}
       </div>
@@ -332,7 +346,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         }}
         tabIndex={props.disabled ? -1 : 0}
         role="slider"
-        aria-label="Trim range"
+        aria-label={t('trim.range')}
         aria-valuemin={0}
         aria-valuemax={props.duration}
         aria-valuenow={effectiveEnd() - props.trimStart}
@@ -350,7 +364,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           onPointerDown={(e) => startDrag(e, 'start')}
           role="slider"
           tabIndex={props.disabled ? -1 : 0}
-          aria-label="Trim start"
+          aria-label={t('trim.start')}
           aria-valuemin={0}
           aria-valuemax={props.duration}
           aria-valuenow={props.trimStart}
@@ -373,7 +387,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           onPointerDown={(e) => startDrag(e, 'end')}
           role="slider"
           tabIndex={props.disabled ? -1 : 0}
-          aria-label="Trim end"
+          aria-label={t('trim.end')}
           aria-valuemin={0}
           aria-valuemax={props.duration}
           aria-valuenow={effectiveEnd()}
