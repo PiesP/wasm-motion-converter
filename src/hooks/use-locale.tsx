@@ -97,22 +97,19 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
     props.initialLocale ?? detectInitialLocale()
   );
   const [translations, setTranslations] = createSignal<Translations | null>(null);
-  const [isReady, setIsReady] = createSignal(false);
 
-  // Load translations when locale changes (SolidJS createEffect doesn't support async)
+  // Load translations when locale changes.
+  // The effect tracks locale() so it re-runs on language switch.
+  // On re-run: sync document attr update, async load translations, then
+  // update the translations signal — which triggers re-renders in every
+  // component that calls t() (because t() reads translations()).
+  // We do NOT unmount children mid-switch; <Show when={translations()}>
+  // keeps them mounted once translations are first loaded.
   createEffect(() => {
     const currentLocaleValue = locale();
     const info = LOCALES.find((l) => l.code === currentLocaleValue)!;
     updateDocumentLang(currentLocaleValue, info.dir);
-    setIsReady(false);
-    loadTranslations(currentLocaleValue)
-      .then((loaded) => {
-        setTranslations(loaded);
-        setIsReady(true);
-      })
-      .catch(() => {
-        setIsReady(true);
-      });
+    loadTranslations(currentLocaleValue).then(setTranslations);
   });
 
   const setLocale = (newLocale: Locale): void => {
@@ -151,7 +148,7 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
 
   return (
     <Show
-      when={isReady()}
+      when={translations()}
       fallback={
         <div class="flex min-h-screen items-center justify-center bg-[#08090a]">
           <div class="animate-pulse text-[#5e6ad2]">Loading...</div>
