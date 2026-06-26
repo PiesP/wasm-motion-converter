@@ -281,14 +281,16 @@ async function extractVideoDuration(file: File): Promise<number> {
  *
  * Calculates estimated frame count using the formula: frames = (duration / 1000) * fps
  * Uses conservative 30fps estimate for unknown framerates (typical default across platforms).
+ * Note: The 30fps fallback may underestimate frame count for 60fps sources.
+ *       Pass the actual fps from VideoMetadata when available for accurate estimation.
  * Frame count is useful for memory planning and performance estimation in conversion pipeline.
  *
  * @param durationMs - Duration in milliseconds (e.g., 5000ms for 5 second video)
- * @param fps - Optional known framerate (default: 30fps for unknown videos)
+ * @param fps - Known framerate from video metadata, or 30fps fallback for unknown videos
  * @returns Estimated frame count (rounded up to nearest integer with Math.ceil)
  *
  * @example
- * // 5 second video at unknown framerate
+ * // 5 second video at unknown framerate (30fps fallback)
  * estimateFrameCount(5000); // (5000 / 1000) * 30 = 150 frames
  *
  * @example
@@ -317,6 +319,7 @@ function estimateFrameCount(durationMs: number, fps = 30): number {
  * @param file - The video File object
  * @param targetFormat - Target conversion format ('gif', 'webp', or other)
  * @param t - Translation function for warning messages
+ * @param fps - Known framerate from video metadata (default: 30fps fallback)
  * @returns Promise with duration, frame estimate, warnings, and valid flag
  *
  * @example
@@ -328,12 +331,13 @@ function estimateFrameCount(durationMs: number, fps = 30): number {
 export async function validateVideoDuration(
   file: File,
   targetFormat: string,
-  t: TFunction
+  t: TFunction,
+  fps?: number
 ): Promise<DurationValidationResult> {
   try {
     // STEP 1: Extract video metadata
     const duration = await extractVideoDuration(file);
-    const estimatedFrames = estimateFrameCount(duration);
+    const estimatedFrames = estimateFrameCount(duration, fps);
     const warnings: ValidationWarning[] = [];
 
     // STEP 2a: WebP validation (soft warnings - user can proceed despite warnings)

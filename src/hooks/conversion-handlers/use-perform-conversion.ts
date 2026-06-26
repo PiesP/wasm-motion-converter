@@ -82,7 +82,12 @@ export async function handleConvert(
   // Note: t parameter added by caller
 
   try {
-    const durationValidation = await validateVideoDuration(file, settings.format, t);
+    const durationValidation = await validateVideoDuration(
+      file,
+      settings.format,
+      t,
+      videoMetadata()?.framerate
+    );
     const needsConfirmation = durationValidation.warnings.some(
       (warning) => warning.requiresConfirmation
     );
