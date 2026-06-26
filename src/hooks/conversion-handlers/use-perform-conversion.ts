@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { useLocale } from '@hooks/use-locale';
 import { runConversionPipeline } from '@services/conversion-pipeline';
 import { validateOutput } from '@services/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
@@ -37,6 +36,7 @@ import type {
   ProgressCallback,
   SmartFrameSkipMode,
 } from '@t/conversion-types';
+import type { TFunction } from '@t/i18n-types';
 import { isCancellationError } from '@utils/cancellation-context';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { focusElement, focusRetryButton } from '@utils/dom-utils';
@@ -46,7 +46,6 @@ import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { checkMemoryForConversion, getMemoryUsageMB } from '@utils/memory-monitor';
 import { batch } from 'solid-js';
-
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 import { handleFileSelected } from './use-handle-file-selected';
 
@@ -66,8 +65,10 @@ const MS_PER_SECOND = 1000;
 
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
 
-export async function handleConvert(runtime: ConversionRuntimeController): Promise<void> {
-  const { t } = useLocale();
+export async function handleConvert(
+  runtime: ConversionRuntimeController,
+  t: TFunction
+): Promise<void> {
   const file = inputFile();
   if (!file) {
     logger.warn('conversion', 'Convert called but no file loaded — conversion skipped', {
@@ -78,6 +79,7 @@ export async function handleConvert(runtime: ConversionRuntimeController): Promi
   }
 
   const settings = conversionSettings();
+  // Note: t parameter added by caller
 
   try {
     const durationValidation = await validateVideoDuration(file, settings.format, t);
@@ -91,7 +93,7 @@ export async function handleConvert(runtime: ConversionRuntimeController): Promi
           durationValidation.warnings,
           () => {
             resolve();
-            void performConversion(file, settings, runtime, durationValidation.duration).catch(
+            void performConversion(file, settings, runtime, t, durationValidation.duration).catch(
               (error) => {
                 logger.error('conversion', 'Post-confirmation conversion failed', {
                   error: getErrorMessage(error),
@@ -122,12 +124,12 @@ export async function handleConvert(runtime: ConversionRuntimeController): Promi
       });
     }
 
-    await performConversion(file, settings, runtime, durationValidation.duration);
+    await performConversion(file, settings, runtime, t, durationValidation.duration);
   } catch (validationError) {
     logger.warn('conversion', 'Duration validation failed, proceeding anyway', {
       error: getErrorMessage(validationError),
     });
-    await performConversion(file, settings, runtime);
+    await performConversion(file, settings, runtime, t);
   }
 }
 
@@ -135,10 +137,10 @@ async function performConversion(
   file: File,
   settings: ConversionSettings,
   runtime: ConversionRuntimeController,
+  t: TFunction,
   videoDurationMs?: number,
   signal?: AbortSignal
 ): Promise<void> {
-  const { t } = useLocale();
   const { isActive, runId } = runtime.startNewRun();
 
   try {

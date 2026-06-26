@@ -98,6 +98,7 @@ const App: Component = () => {
     setEstimatedSecondsRemaining,
     setMemoryWarning,
     setConversionPhase,
+    t,
   });
 
   useNetworkState();

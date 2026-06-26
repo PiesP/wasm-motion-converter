@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { ProgressPhase } from '@t/conversion-types';
+import type { TFunction } from '@t/i18n-types';
 import { onCleanup, type Setter } from 'solid-js';
 import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';
@@ -20,6 +21,7 @@ interface ConversionHandlersOptions {
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
   setConversionPhase?: Setter<ProgressPhase>;
+  t: TFunction;
 }
 
 export function useConversionHandlers(options: ConversionHandlersOptions): {
@@ -44,7 +46,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
 
   return {
     handleFileSelected: (file: File) => handleFileSelected(file, runtime),
-    handleConvert: () => handleConvert(runtime),
+    handleConvert: () => handleConvert(runtime, options.t),
     handleReset: () => handleReset(runtime),
     handleCancelConversion: () => handleCancelConversion(runtime),
     handleCancelAnalysis,
