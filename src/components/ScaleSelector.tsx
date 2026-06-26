@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import type { ConversionScale, VideoMetadata } from '@t/conversion-types';
 import type { Component } from 'solid-js';
 import { createMemo, splitProps } from 'solid-js';
@@ -21,6 +22,7 @@ interface ScaleSelectorProps {
 }
 
 const ScaleSelector: Component<ScaleSelectorProps> = (props) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, ['value', 'onChange', 'disabled', 'tooltip', 'inputMetadata']);
 
   const getOutputResolution = (scale: ConversionScale): string | undefined => {
@@ -44,7 +46,7 @@ const ScaleSelector: Component<ScaleSelectorProps> = (props) => {
 
   return (
     <OptionSelector
-      title="Output Scale"
+      title={t('scale.title')}
       name="scale"
       value={local.value}
       options={options()}

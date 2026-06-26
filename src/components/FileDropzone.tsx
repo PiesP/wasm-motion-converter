@@ -8,7 +8,6 @@ import { createMemo, createSignal, Show, splitProps } from 'solid-js';
 import ProgressBar from './ProgressBar';
 
 const SELECTION_FEEDBACK_DURATION_MS = 500;
-const DEFAULT_STATUS = 'Processing';
 
 interface FileDropzoneProps {
   onFileSelected: (file: File) => void;
@@ -170,7 +169,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                   onClick={local.onClear}
                   class="ml-auto shrink-0 text-[#5e6ad2] hover:text-[#7e8ae8]"
                 >
-                  Change
+                  {t('dropzone.changeFile')}
                 </button>
               </Show>
             </div>
@@ -201,7 +200,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           <div class="max-w-md mx-auto">
             <ProgressBar
               progress={progressValue()}
-              status={local.status || DEFAULT_STATUS}
+              status={local.status || t('dropzone.processing')}
               statusMessage={local.statusMessage}
               showSpinner={false}
               showElapsedTime={local.showElapsedTime}
@@ -258,7 +257,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 }}
                 class="ml-auto shrink-0 text-[#5e6ad2] hover:text-[#7e8ae8]"
               >
-                Change
+                {t('dropzone.changeFile')}
               </button>
             </div>
 
@@ -327,9 +326,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               />
             </div>
             <p class="mt-2 text-sm text-[#8a8f98]">{t('dropzone.clickSelect')}</p>
-            <p class="mt-1 text-xs text-[#5e6ad2]/60">
-              Most video formats (MP4, MOV, WebM, MKV, AVI) - max 500MB
-            </p>
+            <p class="mt-1 text-xs text-[#5e6ad2]/60">{t('dropzone.formats')}</p>
           </div>
         </Show>
       </Show>

@@ -4,7 +4,7 @@
 import { useLocale } from '@hooks/use-locale';
 import type { ConversionFormat } from '@t/conversion-types';
 import type { Component } from 'solid-js';
-import { splitProps } from 'solid-js';
+import { createMemo, splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
@@ -21,17 +21,17 @@ const FormatSelector: Component<FormatSelectorProps> = (props) => {
   const { t } = useLocale();
   const [local] = splitProps(props, ['value', 'onChange', 'disabled', 'tooltip']);
 
-  const FORMAT_OPTIONS: OptionSelectorOption<ConversionFormat>[] = [
+  const FORMAT_OPTIONS = createMemo<OptionSelectorOption<ConversionFormat>[]>(() => [
     { value: 'gif', label: t('format.gif'), description: t('format.gifDesc') },
     { value: 'webp', label: t('format.webp'), description: t('format.webpDesc') },
-  ];
+  ]);
 
   return (
     <OptionSelector
       title={t('format.title')}
       name="format"
       value={local.value}
-      options={FORMAT_OPTIONS}
+      options={FORMAT_OPTIONS()}
       onChange={local.onChange}
       disabled={local.disabled}
       columns={FORMAT_COLUMNS}

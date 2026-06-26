@@ -58,6 +58,8 @@ export interface TranslationKeys {
   'dropzone.cancelConversion': string;
   'dropzone.preview': string;
   'dropzone.processing': string;
+  'dropzone.changeFile': string;
+  'dropzone.formats': string;
 
   // Metadata
   'metadata.detecting': string;
@@ -115,6 +117,9 @@ export interface TranslationKeys {
   'trim.start': string;
   'trim.end': string;
   'trim.reset': string;
+  'trim.tooShort': string;
+  'trim.startLabel': string;
+  'trim.endLabel': string;
 
   // Progress
   'progress.demux': string;

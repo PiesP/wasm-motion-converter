@@ -4,7 +4,7 @@
 import { useLocale } from '@hooks/use-locale';
 import type { SmartFrameSkipMode } from '@t/conversion-types';
 import type { Component } from 'solid-js';
-import { splitProps } from 'solid-js';
+import { createMemo, splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
@@ -18,19 +18,19 @@ const SmartFrameSkipSelector: Component<SmartFrameSkipSelectorProps> = (props) =
   const { t } = useLocale();
   const [local] = splitProps(props, ['value', 'onChange', 'disabled']);
 
-  const SKIP_OPTIONS: OptionSelectorOption<SmartFrameSkipMode>[] = [
+  const SKIP_OPTIONS = createMemo<OptionSelectorOption<SmartFrameSkipMode>[]>(() => [
     { value: 'off', label: t('frameSkip.off'), description: t('frameSkip.offDesc') },
     { value: 'low', label: t('frameSkip.low'), description: t('frameSkip.lowDesc') },
     { value: 'medium', label: t('frameSkip.medium'), description: t('frameSkip.mediumDesc') },
     { value: 'high', label: t('frameSkip.high'), description: t('frameSkip.highDesc') },
-  ];
+  ]);
 
   return (
     <OptionSelector
       title={t('frameSkip.title')}
       name="smart-frame-skip"
       value={local.value}
-      options={SKIP_OPTIONS}
+      options={SKIP_OPTIONS()}
       onChange={local.onChange}
       disabled={local.disabled}
       columns={2}

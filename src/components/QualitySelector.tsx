@@ -4,7 +4,7 @@
 import { useLocale } from '@hooks/use-locale';
 import type { ConversionQuality } from '@t/conversion-types';
 import type { Component } from 'solid-js';
-import { splitProps } from 'solid-js';
+import { createMemo, splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
@@ -21,18 +21,18 @@ const QualitySelector: Component<QualitySelectorProps> = (props) => {
   const { t } = useLocale();
   const [local] = splitProps(props, ['value', 'onChange', 'disabled', 'tooltip']);
 
-  const QUALITY_OPTIONS: OptionSelectorOption<ConversionQuality>[] = [
+  const QUALITY_OPTIONS = createMemo<OptionSelectorOption<ConversionQuality>[]>(() => [
     { value: 'low', label: t('quality.low'), description: t('quality.lowDesc') },
     { value: 'medium', label: t('quality.medium'), description: t('quality.mediumDesc') },
     { value: 'high', label: t('quality.high'), description: t('quality.highDesc') },
-  ];
+  ]);
 
   return (
     <OptionSelector
       title={t('quality.title')}
       name="quality"
       value={local.value}
-      options={QUALITY_OPTIONS}
+      options={QUALITY_OPTIONS()}
       onChange={local.onChange}
       disabled={local.disabled}
       columns={QUALITY_COLUMNS}

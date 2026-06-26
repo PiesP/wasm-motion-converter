@@ -308,7 +308,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     'text-[10px] border border-white/[0.08] rounded px-1 py-0.5 bg-[#191a1b] text-right font-mono w-[4.5rem]';
 
   if (props.duration < MIN_DURATION) {
-    return <p class="text-xs text-[#8a8f98]">Video too short for trimming</p>;
+    return <p class="text-xs text-[#8a8f98]">{t('trim.tooShort')}</p>;
   }
 
   return (
@@ -437,7 +437,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       {/* Text inputs + summary */}
       <div class="flex items-center gap-1.5 justify-between flex-wrap">
         <div class="flex items-center gap-1.5">
-          <span class="text-[10px] text-[#8a8f98]">Start</span>
+          <span class="text-[10px] text-[#8a8f98]">{t('trim.startLabel')}</span>
           <input
             type="text"
             value={startText()}
@@ -449,7 +449,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             class={textClass}
           />
           <span class="text-[10px] text-[#8a8f98]">–</span>
-          <span class="text-[10px] text-[#8a8f98]">End</span>
+          <span class="text-[10px] text-[#8a8f98]">{t('trim.endLabel')}</span>
           <input
             type="text"
             value={endText()}
