@@ -19,9 +19,5 @@ export function isCancellationError(error: unknown): boolean {
       ? String((error as { message: unknown }).message).toLowerCase()
       : String(error).toLowerCase();
 
-  return (
-    message.includes('cancelled') ||
-    message.includes('canceled') ||
-    message.includes('abort')
-  );
+  return message.includes('cancelled') || message.includes('canceled') || message.includes('abort');
 }
