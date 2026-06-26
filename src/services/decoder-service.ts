@@ -121,6 +121,14 @@ export async function decodeFrames(
   }
   const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
   const pendingConversions: Promise<void>[] = [];
+
+  // ── Backpressure for pendingConversions (RES-H2) ──
+  // Limit the number of in-flight frame conversion promises to prevent
+  // unbounded memory growth when decoding outpaces encoding.
+  // The chunk-feeding loop checks this limit and waits for pending conversions
+  // to drain before feeding more chunks to the decoder.
+  const MAX_PENDING_CONVERSIONS = 10;
+
   let decodeError: Error | null = null;
   let inputFrameCount = 0;
   let accumulatedDuration = 0;
@@ -231,6 +239,8 @@ export async function decodeFrames(
             frame.close();
           }
         })();
+
+        // Track pending conversion for backpressure and final flush.
         pendingConversions.push(conversion);
       } catch (err) {
         // Ensure frame is always closed if error occurs before async IIFE
@@ -271,6 +281,14 @@ export async function decodeFrames(
         await new Promise<void>((resolve) => {
           requestAnimationFrame(() => resolve());
         });
+      }
+
+      // Backpressure on output processing (RES-H2): wait if too many
+      // frame conversion promises are in flight. This prevents unbounded
+      // memory growth when decoded frames accumulate faster than they
+      // can be processed (e.g., copyToRGB + encoding).
+      if (pendingConversions.length >= MAX_PENDING_CONVERSIONS) {
+        await Promise.race(pendingConversions);
       }
 
       if (signal?.aborted) {
