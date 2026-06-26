@@ -27,6 +27,7 @@
   "settings.stopConversion": "停止视频转换",
   "settings.tooltip.quality": "质量越高 = 文件越大、转换越慢",
   "settings.tooltip.scale": "缩小尺寸以减小文件大小并加快转换速度",
+  "settings.tooltip.format": "GIF 兼容性广，WebP 文件更小",
   "format.title": "输出格式",
   "format.gif": "GIF",
   "format.gifDesc": "通用支持",

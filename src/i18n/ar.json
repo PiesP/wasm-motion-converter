@@ -27,6 +27,7 @@
   "settings.stopConversion": "إيقاف تحويل الفيديو",
   "settings.tooltip.quality": "جودة أعلى = حجم ملف أكبر وتحويل أبطأ",
   "settings.tooltip.scale": "تقليل الأبعاد لتقليل حجم الملف وتسريع التحويل",
+  "settings.tooltip.format": "اختر GIF لدعم عالمي أو WebP لحجم ملف أصغر",
   "format.title": "تنسيق الإخراج",
   "format.gif": "GIF",
   "format.gifDesc": "دعم شامل",

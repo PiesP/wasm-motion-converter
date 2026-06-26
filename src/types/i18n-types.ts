@@ -71,6 +71,7 @@ export interface TranslationKeys {
   'settings.stopConversion': string;
   'settings.tooltip.quality': string;
   'settings.tooltip.scale': string;
+  'settings.tooltip.format': string;
 
   // Format Selector
   'format.title': string;

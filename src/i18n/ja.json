@@ -27,6 +27,7 @@
   "settings.stopConversion": "動画変換を停止",
   "settings.tooltip.quality": "品質が高いほどファイルサイズが大きくなり、変換が遅くなります",
   "settings.tooltip.scale": "サイズを小さくするとファイルサイズが小さくなり、変換が速くなります",
+  "settings.tooltip.format": "GIF は互換性が広い、WebP はファイルサイズが小さい",
   "format.title": "出力形式",
   "format.gif": "GIF",
   "format.gifDesc": "汎用性あり",

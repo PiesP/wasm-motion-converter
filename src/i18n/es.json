@@ -27,6 +27,7 @@
   "settings.stopConversion": "Detener conversión de vídeo",
   "settings.tooltip.quality": "Mayor calidad = mayor tamaño de archivo y conversión más lenta",
   "settings.tooltip.scale": "Reduce las dimensiones para disminuir el tamaño del archivo y acelerar la conversión",
+  "settings.tooltip.format": "Elige GIF para soporte universal o WebP para un archivo más pequeño",
   "format.title": "Formato de salida",
   "format.gif": "GIF",
   "format.gifDesc": "Compatibilidad universal",
