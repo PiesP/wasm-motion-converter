@@ -90,10 +90,24 @@ export async function handleConvert(runtime: ConversionRuntimeController): Promi
           () => {
             resolve();
             void performConversion(file, settings, runtime, durationValidation.duration).catch(
-              (error) =>
+              (error) => {
                 logger.error('conversion', 'Post-confirmation conversion failed', {
                   error: getErrorMessage(error),
-                })
+                });
+                batch(() => {
+                  setConversionStatusMessage('');
+                  runtime.resetTimingState();
+                  const context = classifyConversionError(
+                    getErrorMessage(error) || 'Conversion failed',
+                    videoMetadata(),
+                    settings
+                  );
+                  setErrorMessage(context.originalError);
+                  setErrorContext(context);
+                  setAppState('error');
+                });
+                focusRetryButton();
+              }
             );
           },
           () => {
@@ -443,5 +457,12 @@ export function handleDismissError(): void {
   logger.info('general', 'User dismissed error message');
   setErrorMessage(null);
   setErrorContext(null);
+
+  const previousPreviewUrl = videoPreviewUrl();
+  if (previousPreviewUrl) {
+    URL.revokeObjectURL(previousPreviewUrl);
+  }
+  setVideoPreviewUrl(null);
+
   setAppState('idle');
 }
