@@ -5,7 +5,10 @@
  * use-i18n Hook
  *
  * Provides reactive i18n functionality to SolidJS components.
- * Reads locale from localStorage (key: 'app-locale'), defaults to browser language.
+ * Uses locale-store singleton as the single source of truth for locale state,
+ * eliminating duplicate locale signal management (UNN-M1).
+ *
+ * Reads locale from the locale-store singleton (initialized at app startup).
  * Supports: 'en', 'ko' (extensible).
  */
 
@@ -17,10 +20,7 @@ import {
   type TranslationKeys,
 } from '@t/i18n-types';
 import { type Accessor, createEffect, createMemo, createSignal } from 'solid-js';
-import { detectInitialLocale } from './locale-store';
-
-/** Storage key for locale preference */
-const LOCALE_STORAGE_KEY = 'app-locale';
+import { getLocaleSignal, initLocaleStore, setLocale as setLocaleInStore } from './locale-store';
 
 /** Translation cache to avoid re-loading */
 const translationCache = new Map<Locale, PartialTranslations>();
@@ -70,6 +70,10 @@ export interface UseI18nReturn {
 /**
  * useI18n hook for reactive internationalization.
  *
+ * Uses the locale-store singleton as the single source of truth for locale,
+ * instead of maintaining a separate createSignal. This prevents the two
+ * locale states from diverging (UNN-M1).
+ *
  * @example
  * ```tsx
  * function MyComponent() {
@@ -84,12 +88,16 @@ export interface UseI18nReturn {
  * ```
  */
 export function useI18n(): UseI18nReturn {
-  const [locale, setLocaleSignal] = createSignal<Locale>(detectInitialLocale());
+  // Ensure locale store is initialized (idempotent)
+  initLocaleStore();
+
+  // Read locale from the singleton store — no duplicate signal
+  const [localeStore, _] = getLocaleSignal();
   const [isLoading, setIsLoading] = createSignal(true);
 
   // Load translations when locale changes (SolidJS createEffect doesn't support async)
   createEffect(() => {
-    const currentLocale = locale();
+    const currentLocale = localeStore();
     setIsLoading(true);
     loadTranslations(currentLocale)
       .then(() => {
@@ -102,7 +110,7 @@ export function useI18n(): UseI18nReturn {
 
   // Update documentElement lang on locale change
   createEffect(() => {
-    const currentLocale = locale();
+    const currentLocale = localeStore();
     document.documentElement.lang = currentLocale;
     const info = LOCALES.find((l) => l.code === currentLocale);
     if (info) {
@@ -115,7 +123,7 @@ export function useI18n(): UseI18nReturn {
    * Falls back to the key value if translation is missing.
    */
   const t = <K extends keyof TranslationKeys>(key: K): TranslationKeys[K] => {
-    const currentLocale = locale();
+    const currentLocale = localeStore();
     const cache = translationCache.get(currentLocale);
     if (cache) {
       return cache[key] as TranslationKeys[K];
@@ -129,25 +137,15 @@ export function useI18n(): UseI18nReturn {
     return key as unknown as TranslationKeys[K];
   };
 
-  /** Set locale and persist */
-  const setLocaleWithPersistence = (newLocale: Locale): void => {
-    setLocaleSignal(newLocale);
-    try {
-      localStorage.setItem(LOCALE_STORAGE_KEY, newLocale);
-    } catch {
-      /* localStorage unavailable */
-    }
-  };
-
   /** Current locale info */
-  const localeInfo = createMemo(() => LOCALES.find((l) => l.code === locale()));
+  const localeInfo = createMemo(() => LOCALES.find((l) => l.code === localeStore()));
 
   /** Is RTL */
   const isRTL = createMemo(() => localeInfo()?.dir === 'rtl');
 
   return {
-    locale,
-    setLocale: setLocaleWithPersistence,
+    locale: localeStore,
+    setLocale: setLocaleInStore,
     t,
     locales: LOCALES,
     isLoading,
