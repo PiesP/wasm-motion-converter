@@ -36,6 +36,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   ]);
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
+  const [downloadUrl, setDownloadUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
 
   // Track the current blob URL for cleanup without triggering effect re-entry.
@@ -57,10 +58,11 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       currentUrl = null;
     }
 
-    // Create new URL and update both the closure variable and the signal
+    // Create a single shared URL for both preview and download
     const url = URL.createObjectURL(blob);
     currentUrl = url;
     setPreviewUrl(url);
+    setDownloadUrl(url);
   });
 
   // Cleanup on unmount
@@ -68,30 +70,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     if (currentUrl) {
       URL.revokeObjectURL(currentUrl);
       currentUrl = null;
-    }
-  });
-
-  // Stable download URL — revoked when the effect re-runs or on unmount.
-  let currentDownloadUrl: string | null = null;
-  const [downloadUrl, setDownloadUrl] = createSignal<string | null>(null);
-
-  createEffect(() => {
-    const result = local.outputBlob;
-    // Revoke previous URL
-    if (currentDownloadUrl) {
-      URL.revokeObjectURL(currentDownloadUrl);
-      currentDownloadUrl = null;
-    }
-    const url = result.size > 0 ? URL.createObjectURL(result) : null;
-    currentDownloadUrl = url;
-    setDownloadUrl(url);
-  });
-
-  // Cleanup download URL on unmount
-  onCleanup(() => {
-    if (currentDownloadUrl) {
-      URL.revokeObjectURL(currentDownloadUrl);
-      currentDownloadUrl = null;
     }
   });
 
