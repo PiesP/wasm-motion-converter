@@ -71,7 +71,6 @@ export async function handleFileSelected(
   if (isStale()) return;
 
   setInputFile(file);
-  setInputBuffer(buffer);
 
   const previousPreviewUrl = videoPreviewUrl();
   if (previousPreviewUrl) {
@@ -83,6 +82,8 @@ export async function handleFileSelected(
     const metadata = await extractVideoMetadata(buffer, DEFAULT_FPS);
     if (isStale()) return;
 
+    // Store buffer only after successful metadata extraction so performConversion can reuse it
+    setInputBuffer(buffer);
     setVideoMetadata(metadata);
     setAppState('idle');
   } catch (error) {
