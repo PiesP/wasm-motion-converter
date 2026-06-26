@@ -69,18 +69,20 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     }
   });
 
-  // Stable download URL — revoked when the memo recalculates or on unmount.
+  // Stable download URL — revoked when the effect re-runs or on unmount.
   let currentDownloadUrl: string | null = null;
-  const downloadUrl = createMemo(() => {
+  const [downloadUrl, setDownloadUrl] = createSignal<string | null>(null);
+
+  createEffect(() => {
     const result = local.outputBlob;
-    // Revoke previous URL before creating a new one
+    // Revoke previous URL
     if (currentDownloadUrl) {
       URL.revokeObjectURL(currentDownloadUrl);
       currentDownloadUrl = null;
     }
     const url = result.size > 0 ? URL.createObjectURL(result) : null;
     currentDownloadUrl = url;
-    return url;
+    setDownloadUrl(url);
   });
 
   // Cleanup download URL on unmount
