@@ -18,6 +18,7 @@ import type {
   ErrorContext,
   VideoMetadata,
 } from '@t/conversion-types';
+import type { TranslationKeys } from '@t/i18n-types';
 
 import { MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
 
@@ -33,6 +34,8 @@ export type { ErrorCode };
 // ---------------------------------------------------------------------------
 // Error classification rule system
 // ---------------------------------------------------------------------------
+
+type TFunction = <K extends keyof TranslationKeys>(key: K) => TranslationKeys[K];
 
 type ErrorRule = {
   /** Human-readable name for debugging */
@@ -205,13 +208,16 @@ function isVideoTooComplex(metadata: VideoMetadata): boolean {
  * @param errorMessage - The error message from the conversion process
  * @param metadata - Video metadata for context-aware classification
  * @param conversionSettings - The settings used for conversion (optional)
+ * @param ffmpegLogs - Optional FFmpeg logs for context
+ * @param t - Translation function for localized suggestions
  * @returns ErrorContext with error type, phase, and user-friendly suggestion
  */
 export function classifyConversionError(
   errorMessage: string,
   metadata: VideoMetadata | null,
   conversionSettings?: ConversionSettings,
-  ffmpegLogs?: string[]
+  ffmpegLogs?: string[],
+  t?: TFunction
 ): ErrorContext {
   const msg = errorMessage.toLowerCase();
   const timestamp = performance.now();
@@ -260,7 +266,8 @@ export function classifyConversionError(
     type: 'general',
     code: 'UNKNOWN',
     ...baseContext,
-    suggestion:
-      'An unexpected error occurred. Try: 1) Reducing quality to "low" or scale to 0.5, 2) Using a different video file, 3) Reloading the page, or 4) Closing other browser tabs.',
+    suggestion: t
+      ? t('error.unknown')
+      : 'An unexpected error occurred. Try: 1) Reducing quality to "low" or scale to 0.5, 2) Using a different video file, 3) Reloading the page, or 4) Closing other browser tabs.',
   };
 }
