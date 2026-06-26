@@ -233,6 +233,7 @@ async function _runPipelineInner(
     );
   } finally {
     throttled.cleanup();
+    globalBufferPool.clear();
   }
 }
 
