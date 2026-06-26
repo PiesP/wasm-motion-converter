@@ -59,13 +59,11 @@ export async function registerServiceWorker(
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
-    // Expose cleanup for App onCleanup
     const cleanup = (): void => {
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-    (globalThis as Record<string, unknown>).cleanupServiceWorkerUpdateCheck = cleanup;
 
-    return { supported: true, registered: true };
+    return { supported: true, registered: true, cleanup };
   } catch (error) {
     console.error('[SW] Registration failed:', error);
     return { supported: true, registered: false };

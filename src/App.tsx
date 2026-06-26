@@ -51,6 +51,8 @@ import {
   Suspense,
 } from 'solid-js';
 
+import { registerServiceWorker } from './sw-register';
+
 // Lazy import for test helpers (dev only)
 let attachTestHelpers: (() => void) | null = null;
 if (import.meta.env.DEV) {
@@ -61,11 +63,6 @@ if (import.meta.env.DEV) {
     .catch(() => {});
 }
 
-declare global {
-  // eslint-disable-next-line no-var
-  var cleanupServiceWorkerUpdateCheck: (() => void) | undefined;
-}
-
 const SETTINGS_DEBOUNCE_MS = 500;
 const MEMORY_REDUCTION_SCALE = 0.5;
 
@@ -74,6 +71,7 @@ const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
 
 const App: Component = () => {
   const { t } = useLocale();
+  let swCleanup: (() => void) | undefined;
   const [conversionStartTime, setConversionStartTime] = createSignal(0);
   const [estimatedSecondsRemaining, setEstimatedSecondsRemaining] = createSignal<number | null>(
     null
@@ -111,6 +109,11 @@ const App: Component = () => {
 
     setEnvironmentSupported(isSupported);
 
+    // Register service worker and capture cleanup
+    registerServiceWorker().then((state) => {
+      swCleanup = state.cleanup;
+    });
+
     // Attach test helpers in dev mode (AI-driven browser testing)
     if (attachTestHelpers) {
       attachTestHelpers();
@@ -144,7 +147,7 @@ const App: Component = () => {
     if (url) URL.revokeObjectURL(url);
     debouncedSaveSettings.cancel();
     dismissConfirmation();
-    cleanupServiceWorkerUpdateCheck?.();
+    swCleanup?.();
   });
 
   createEffect(() => {

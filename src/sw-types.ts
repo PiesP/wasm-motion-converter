@@ -19,4 +19,6 @@ export interface SWRegistrationState {
   supported: boolean;
   /** Whether the service worker is currently registered (false in dev mode). */
   registered: boolean;
+  /** Cleanup function to remove event listeners. */
+  cleanup?: () => void;
 }
