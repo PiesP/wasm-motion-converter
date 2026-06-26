@@ -45,12 +45,12 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   });
 
   return {
-    handleFileSelected: (file: File) => handleFileSelected(file, runtime),
+    handleFileSelected: (file: File) => handleFileSelected(file, runtime, options.t),
     handleConvert: () => handleConvert(runtime, options.t),
     handleReset: () => handleReset(runtime),
     handleCancelConversion: () => handleCancelConversion(runtime),
     handleCancelAnalysis,
-    handleRetry: () => handleRetry(runtime),
+    handleRetry: () => handleRetry(runtime, options.t),
     handleDismissError,
   };
 }

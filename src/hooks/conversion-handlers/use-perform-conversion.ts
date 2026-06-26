@@ -447,12 +447,12 @@ export function handleReset(runtime: ConversionRuntimeController): void {
   });
 }
 
-export function handleRetry(runtime: ConversionRuntimeController): void {
+export function handleRetry(runtime: ConversionRuntimeController, t: TFunction): void {
   const file = inputFile();
   if (file && appState() === 'error') {
     // Clear previous results immediately to avoid flash of stale content
     setConversionResults([]);
-    void handleFileSelected(file, runtime).catch((error) =>
+    void handleFileSelected(file, runtime, t).catch((error) =>
       logger.error('conversion', 'Retry file selection failed', { error: getErrorMessage(error) })
     );
   } else {

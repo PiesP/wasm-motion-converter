@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { useLocale } from '@hooks/use-locale';
 import { extractVideoMetadata } from '@services/video-metadata';
 import {
   setAppState,
@@ -13,6 +12,7 @@ import {
   setVideoPreviewUrl,
   videoPreviewUrl,
 } from '@stores/conversion-store';
+import type { TFunction } from '@t/i18n-types';
 import { DEFAULT_FPS } from '@utils/constants';
 import { focusRetryButton } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
@@ -34,9 +34,9 @@ const resetAnalysisState = (): void => {
 
 export async function handleFileSelected(
   file: File,
-  runtime: ConversionRuntimeController
+  runtime: ConversionRuntimeController,
+  t: TFunction
 ): Promise<void> {
-  const { t } = useLocale();
   const run = runtime.startNewRun();
   const isStale = () => !run.isActive();
 
