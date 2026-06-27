@@ -90,7 +90,9 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     const baseName =
       originalName && lastDotIndex > 0 ? originalName.slice(0, lastDotIndex) : originalName;
     const safeBaseName = baseName.trim() ? baseName : 'converted';
-    return `${safeBaseName}.${outputExtension()}`;
+    // Sanitize path separators and control characters to prevent directory traversal
+    const sanitized = safeBaseName.replace(/[/\\]/g, '_').replace(/[\x00-\x1f\x7f]/g, '');
+    return `${sanitized || 'converted'}.${outputExtension()}`;
   });
 
   const ariaLabel = createMemo(
@@ -175,7 +177,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             {formatBytes(local.originalSize)}
           </span>
           <svg
-            class="h-4 w-4 text-[#5e6ad2]/40"
+            class="h-4 w-4 text-[#5e6ad2]/60"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -195,13 +197,13 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             <span class={`font-semibold ${compressionColorClass()}`}>{compressionLabel()}</span>
           </Show>
           <Show when={conversionTimeLabel()}>
-            <span class="text-[#5e6ad2]/40">·</span>
+            <span class="text-[#5e6ad2]/60">·</span>
             <span class="text-[#8a8f98]">⚡ {conversionTimeLabel()}</span>
           </Show>
         </div>
 
         {/* Secondary stats: format, quality, scale */}
-        <div class="flex items-center justify-center gap-2 text-[10px] text-[#5e6ad2]/50 uppercase tracking-wide">
+        <div class="flex items-center justify-center gap-2 text-[10px] text-[#5e6ad2]/70 uppercase tracking-wide">
           <span data-result-format>{outputExtension().toUpperCase()}</span>
           <span>·</span>
           <span class="capitalize" data-result-quality>

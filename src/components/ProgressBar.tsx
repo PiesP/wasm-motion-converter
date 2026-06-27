@@ -264,7 +264,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
               <span class="font-mono tabular-nums text-[#d0d6e0]">{subPhaseValue()}%</span>
             )}
             {local.memoryUsage && local.memoryUsage !== '0 MB / 0 MB (0%)' && (
-              <span class="font-mono tabular-nums text-[#5e6ad2]/50">🧠 {local.memoryUsage}</span>
+              <span class="font-mono tabular-nums text-[#5e6ad2]/70">🧠 {local.memoryUsage}</span>
             )}
           </div>
         </div>
@@ -360,7 +360,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
             <span class="font-mono tabular-nums text-[#d0d6e0]">{subPhaseValue()}%</span>
           )}
           {local.memoryUsage && local.memoryUsage !== '0 MB / 0 MB (0%)' && (
-            <span class="font-mono tabular-nums text-[#5e6ad2]/50">🧠 {local.memoryUsage}</span>
+            <span class="font-mono tabular-nums text-[#5e6ad2]/70">🧠 {local.memoryUsage}</span>
           )}
         </div>
       </div>
@@ -372,7 +372,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
-            <span class="text-[#5e6ad2]/40">·</span>
+            <span class="text-[#5e6ad2]/60">·</span>
             <span class="text-[#5e6ad2]/60">
               ETA {formatDurationSeconds(local.estimatedSecondsRemaining!)}
             </span>
@@ -380,8 +380,8 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           <Show
             when={local.estimatedSecondsRemaining == null || local.estimatedSecondsRemaining <= 0}
           >
-            <span class="text-[#5e6ad2]/40">·</span>
-            <span class="text-[#5e6ad2]/40 italic">calculating…</span>
+            <span class="text-[#5e6ad2]/60">·</span>
+            <span class="text-[#5e6ad2]/60 italic">calculating…</span>
           </Show>
         </div>
       </Show>
