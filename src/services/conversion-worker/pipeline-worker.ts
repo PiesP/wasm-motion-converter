@@ -1,0 +1,258 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 PiesP
+
+/**
+ * Pipeline Worker — runs the full conversion pipeline inside a Web Worker.
+ *
+ * This module is the entry point for worker-side conversion logic.
+ * It reuses the existing decoder-service, encoder-service, and frame-utils
+ * but replaces requestAnimationFrame with setTimeout(0) and handles the
+ * fact that performance.memory is unavailable in Workers.
+ */
+
+import type { ConversionRequest } from '@t/conversion-types.js';
+import { logger } from '@utils/logger.js';
+import { globalBufferPool } from '../buffer-pool.js';
+import { demuxVideo } from '../demuxer-service.js';
+import { encodeGif } from '../gif-encoder-service.js';
+import { encodeWebp } from '../webp-encoder-service.js';
+import { restoreVideoDecoderConfig } from './protocol.js';
+import type {
+  SerializedConversionOptions,
+  SerializedDecoderConfig,
+  WorkerResponse,
+} from './types.js';
+
+interface WorkerProgressState {
+  lastPostTime: number;
+  fpsTracker: { current: number; lastTime: number; lastFrame: number };
+}
+
+function createWorkerProgressTracker(): WorkerProgressState {
+  return {
+    lastPostTime: 0,
+    fpsTracker: { current: 0, lastTime: performance.now(), lastFrame: 0 },
+  };
+}
+
+// ─── Main Worker Pipeline ────────────────────────────────────────────────
+
+/**
+ * Runs the full conversion pipeline in a worker.
+ * This mirrors the main-thread conversion-pipeline.ts but adapted for worker context.
+ */
+export async function runWorkerPipeline(
+  inputBuffer: ArrayBuffer,
+  config: SerializedDecoderConfig,
+  options: SerializedConversionOptions,
+  postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
+  _signal?: AbortSignal
+): Promise<ArrayBuffer> {
+  const pipelineStart = performance.now();
+
+  // Restore VideoDecoderConfig from serialized form
+  restoreVideoDecoderConfig(config);
+
+  // Build a ConversionRequest for the existing pipeline code
+  const request: ConversionRequest = {
+    inputBuffer,
+    fileName: 'input.webm', // Worker doesn't have original filename
+    format: options.format,
+    quality: options.quality,
+    scale: options.scale,
+    trimStart: options.trimStart,
+    trimEnd: options.trimEnd,
+    maxMemoryMB: 512, // Default for worker
+    forceDecimation: 1,
+    smartFrameSkip: 'off',
+  };
+
+  const progressState = createWorkerProgressTracker();
+
+  // Post initial log
+  postMessage({
+    type: 'log',
+    requestId: '',
+    level: 'info',
+    message: `Worker pipeline started: ${options.format} ${options.quality} ${options.scale}x`,
+  });
+
+  // ── Demux Phase ────────────────────────────────────────────
+  let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
+  try {
+    demuxResult = await demuxVideo(request, (packetsExtracted) => {
+      const now = performance.now();
+      if (now - progressState.lastPostTime >= 100) {
+        progressState.lastPostTime = now;
+        postMessage({
+          type: 'progress',
+          requestId: '',
+          phase: 'demuxing',
+          percent: Math.min(
+            10,
+            Math.round((packetsExtracted / Math.max(packetsExtracted, 100)) * 10)
+          ),
+          fps: 0,
+          memoryMB: 0,
+          currentFrame: packetsExtracted,
+          totalFrames: 0,
+        });
+      }
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    postMessage({
+      type: 'error',
+      requestId: '',
+      message: `Demux failed: ${msg}`,
+      code: 'DECODER_ERROR',
+    });
+    throw err;
+  }
+
+  const cfg = demuxResult.config;
+  const codedWidth =
+    (cfg as VideoDecoderConfig & { displayAspectWidth?: number }).displayAspectWidth ??
+    cfg.codedWidth;
+  const codedHeight =
+    (cfg as VideoDecoderConfig & { displayAspectHeight?: number }).displayAspectHeight ??
+    cfg.codedHeight;
+  if (!codedWidth || !codedHeight) {
+    postMessage({
+      type: 'error',
+      requestId: '',
+      message: 'Unable to determine video dimensions',
+      code: 'DECODER_ERROR',
+    });
+    throw new Error('Unable to determine video dimensions');
+  }
+
+  // ── Decode + Encode Phase ──────────────────────────────────────
+  let output: ArrayBuffer;
+
+  const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
+    const now = performance.now();
+    const deltaMs = now - progressState.fpsTracker.lastTime;
+    const framesDelta = frameIdx - progressState.fpsTracker.lastFrame;
+    progressState.fpsTracker.current =
+      deltaMs > 0 && framesDelta > 0 ? Math.round(((framesDelta * 1000) / deltaMs) * 10) / 10 : 0;
+    progressState.fpsTracker.lastTime = now;
+    progressState.fpsTracker.lastFrame = frameIdx;
+
+    // Throttle progress posts to ~100ms
+    if (now - progressState.lastPostTime >= 100) {
+      progressState.lastPostTime = now;
+      const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
+      postMessage({
+        type: 'progress',
+        requestId: '',
+        phase: 'decoding',
+        percent: 10 + Math.min(40, decodePct),
+        fps: progressState.fpsTracker.current,
+        memoryMB: 0,
+        currentFrame: frameIdx,
+        totalFrames,
+      });
+    }
+  };
+
+  if (options.format === 'gif') {
+    logger.info('encoders', 'GIF encoder (streaming decode→encode)', {
+      codec: demuxResult.config.codec,
+      codedWidth,
+      codedHeight,
+      totalFrames: demuxResult.totalFrames,
+    });
+
+    let gifEncodeFrames = 0;
+    const gifResult = await encodeGif(
+      demuxResult,
+      {
+        width: codedWidth,
+        height: codedHeight,
+        quality: options.quality,
+        scale: options.scale,
+        frameDecimation: 1,
+        onFrameDecoded: decodeProgressCb,
+        onFrameEncoded: (frameIdx: number, totalFrames: number) => {
+          gifEncodeFrames = frameIdx;
+          const now = performance.now();
+          if (now - progressState.lastPostTime >= 100) {
+            progressState.lastPostTime = now;
+            const encodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
+            postMessage({
+              type: 'progress',
+              requestId: '',
+              phase: 'encoding',
+              percent: 50 + Math.min(40, encodePct),
+              fps: progressState.fpsTracker.current,
+              memoryMB: 0,
+              currentFrame: frameIdx,
+              totalFrames,
+            });
+          }
+        },
+      },
+      _signal
+    );
+    output = gifResult.buffer as ArrayBuffer;
+    // Use gifEncodeFrames to avoid lint error
+    void gifEncodeFrames;
+  } else {
+    logger.info('encoders', 'WebP encoder (streaming encodeRGB + mux)', {
+      codec: demuxResult.config.codec,
+      codedWidth,
+      codedHeight,
+      totalFrames: demuxResult.totalFrames,
+    });
+
+    const webpResult = await encodeWebp(
+      demuxResult,
+      {
+        width: codedWidth,
+        height: codedHeight,
+        quality: options.quality,
+        scale: options.scale,
+        frameDecimation: 1,
+        onFrameDecoded: decodeProgressCb,
+      },
+      (p: { progress: number; currentFrame?: number }) => {
+        const now = performance.now();
+        if (now - progressState.lastPostTime >= 100) {
+          progressState.lastPostTime = now;
+          const mappedProgress = 50 + Math.round(p.progress * 0.4);
+          postMessage({
+            type: 'progress',
+            requestId: '',
+            phase: 'encoding',
+            percent: Math.min(90, mappedProgress),
+            fps: progressState.fpsTracker.current,
+            memoryMB: 0,
+            currentFrame: p.currentFrame ?? 0,
+            totalFrames: demuxResult.totalFrames,
+          });
+        }
+      },
+      _signal
+    );
+    output = webpResult.buffer as ArrayBuffer;
+  }
+
+  // ── Assembly Phase ─────────────────────────────────────────────
+  globalBufferPool.clear();
+
+  const totalElapsedMs = Math.round(performance.now() - pipelineStart);
+  postMessage({
+    type: 'progress',
+    requestId: '',
+    phase: 'assembling',
+    percent: 100,
+    fps: 0,
+    memoryMB: 0,
+    currentFrame: demuxResult.totalFrames,
+    totalFrames: demuxResult.totalFrames,
+    elapsedMs: totalElapsedMs,
+  });
+
+  return output;
+}
