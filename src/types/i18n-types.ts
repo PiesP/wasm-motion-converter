@@ -41,6 +41,8 @@ export interface TranslationKeys {
   'app.error.title': string;
   'app.error.description': string;
   'app.error.details': string;
+  'app.error.retry': string;
+  'app.error.reload': string;
 
   // Header / Footer
   'header.exportLogs': string;

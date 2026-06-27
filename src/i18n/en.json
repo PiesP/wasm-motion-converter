@@ -5,6 +5,8 @@
   "app.error.title": "Application Error",
   "app.error.description": "An unexpected error occurred. Please refresh the page to try again.",
   "app.error.details": "Error details",
+  "app.error.retry": "Try again",
+  "app.error.reload": "Reload page",
   "header.exportLogs": "Export logs",
   "header.exportLogsTooltip": "Export logs (Alt: JSONL format)",
   "footer.viewLicenses": "View third-party licenses (opens in new tab)",

@@ -5,6 +5,8 @@
   "app.error.title": "应用程序错误",
   "app.error.description": "发生意外错误。请刷新页面重试。",
   "app.error.details": "错误详情",
+  "app.error.retry": "重试",
+  "app.error.reload": "重新加载页面",
   "header.exportLogs": "导出日志",
   "header.exportLogsTooltip": "导出日志（替代格式：JSONL）",
   "footer.viewLicenses": "查看第三方许可证（新标签页打开）",

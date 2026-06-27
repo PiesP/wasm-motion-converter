@@ -226,7 +226,12 @@ export async function decodeFrames(
               rgbFrames.push({ data: rgbData, duration: totalDuration });
             }
 
-            // Report decoding progress — throttle to every 10 frames
+            // Report decoding progress — throttle to every 10 frames.
+            // The modulo check has negligible overhead (~1ns per frame) and
+            // avoids excessive callback invocations that would flood the
+            // progress store and trigger unnecessary SolidJS re-renders.
+            // At 60fps source, this fires ~6 times/second — smooth enough
+            // for the UI progress bar without overwhelming the reactive system.
             if (
               onFrameDecoded &&
               (streaming

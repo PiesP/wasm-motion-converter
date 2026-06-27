@@ -257,11 +257,27 @@ const App: Component = () => {
 
   return (
     <ErrorBoundary
-      fallback={(error) => (
+      fallback={(error, reset) => (
         <div class="flex min-h-screen items-center justify-center bg-[#08090a] p-4">
           <div class="max-w-2xl border-l-4 border-red-500/60 bg-[#191a1b] p-6 rounded-lg">
             <h2 class="mb-2 text-lg font-semibold text-[#f7f8f8]">{t('app.error.title')}</h2>
             <p class="mb-4 text-sm text-[#d0d6e0]">{t('app.error.description')}</p>
+            <div class="mb-4 flex gap-3">
+              <button
+                type="button"
+                onClick={reset}
+                class="inline-flex items-center rounded-md bg-[#5e6ad2] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#7170ff] focus:outline-none focus:ring-2 focus:ring-[#5e6ad2] focus:ring-offset-2 focus:ring-offset-[#191a1b]"
+              >
+                {t('app.error.retry')}
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                class="inline-flex items-center rounded-md border border-white/[0.08] bg-white/[0.02] px-4 py-2 text-sm font-medium text-[#d0d6e0] transition-colors hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-white/[0.2] focus:ring-offset-2 focus:ring-offset-[#191a1b]"
+              >
+                {t('app.error.reload')}
+              </button>
+            </div>
             <details class="text-xs text-[#d0d6e0]">
               <summary class="cursor-pointer hover:underline">{t('app.error.details')}</summary>
               <pre class="mt-2 overflow-auto rounded bg-white/[0.02] border border-white/[0.08] p-3">

@@ -5,6 +5,8 @@
   "app.error.title": "Error de la aplicación",
   "app.error.description": "Se ha producido un error inesperado. Actualiza la página para volver a intentarlo.",
   "app.error.details": "Detalles del error",
+  "app.error.retry": "Intentar de nuevo",
+  "app.error.reload": "Recargar página",
   "header.exportLogs": "Exportar registros",
   "header.exportLogsTooltip": "Exportar registros (formato JSONL)",
   "footer.viewLicenses": "Ver licencias de terceros (se abre en una nueva pestaña)",

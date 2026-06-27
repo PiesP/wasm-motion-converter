@@ -5,6 +5,8 @@
   "app.error.title": "애플리케이션 오류",
   "app.error.description": "예기치 않은 오류가 발생했습니다. 페이지를 새로고침하여 다시 시도해 주세요.",
   "app.error.details": "오류 세부 정보",
+  "app.error.retry": "다시 시도",
+  "app.error.reload": "페이지 새로고침",
   "header.exportLogs": "로그 내보내기",
   "header.exportLogsTooltip": "로그 내보내기 (대체: JSONL 형식)",
   "footer.viewLicenses": "타사 라이선스 보기 (새 탭에서 열기)",

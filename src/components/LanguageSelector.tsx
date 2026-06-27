@@ -25,6 +25,7 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
         'rounded-md border border-white/[0.08] bg-white/[0.02] px-2 py-1.5 text-xs text-[#d0d6e0] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] cursor-pointer'
       }
       aria-label={t('lang.select')}
+      aria-live="polite"
       data-testid="language-selector"
     >
       {supportedLocales.map((loc) => (

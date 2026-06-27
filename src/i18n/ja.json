@@ -5,6 +5,8 @@
   "app.error.title": "アプリケーションエラー",
   "app.error.description": "予期しないエラーが発生しました。ページを再読み込みしてお試しください。",
   "app.error.details": "エラーの詳細",
+  "app.error.retry": "もう一度試す",
+  "app.error.reload": "ページを再読み込み",
   "header.exportLogs": "ログをエクスポート",
   "header.exportLogsTooltip": "ログをエクスポート（代替：JSONL形式）",
   "footer.viewLicenses": "サードパーティライセンスを表示（新しいタブで開く）",

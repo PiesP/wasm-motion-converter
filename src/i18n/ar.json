@@ -5,6 +5,8 @@
   "app.error.title": "خطأ في التطبيق",
   "app.error.description": "حدث خطأ غير متوقع. يرجى تحديث الصفحة للمحاولة مرة أخرى.",
   "app.error.details": "تفاصيل الخطأ",
+  "app.error.retry": "حاول مرة أخرى",
+  "app.error.reload": "إعادة تحميل الصفحة",
   "header.exportLogs": "تصدير السجلات",
   "header.exportLogsTooltip": "تصدير السجلات (تنسيق JSONL)",
   "footer.viewLicenses": "عرض تراخيص الطرف الثالث (يفتح في تبويب جديد)",
