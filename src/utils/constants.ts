@@ -88,3 +88,28 @@ export const GIF_LZW_RATIO = 0.1;
 
 /** GIF encoder maximum buffer size (32 MB) */
 export const GIF_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+
+// ============================================================================
+// MEMORY THRESHOLD CONSTANTS
+// ============================================================================
+
+/** Memory usage percentage considered critical (>80%) */
+export const MEMORY_CRITICAL_THRESHOLD = 80;
+
+/** Ratio of estimated-to-available memory that triggers critical warning (90%) */
+export const MEMORY_CRITICAL_RATIO = 0.9;
+
+/** Ratio of estimated-to-available memory that triggers standard warning (60%) */
+export const MEMORY_WARNING_RATIO = 0.6;
+
+/** Default available memory assumption when detection fails (1024 MB) */
+export const MEMORY_DEFAULT_AVAILABLE_MB = 1024;
+
+/** Default max memory allocation for worker pipeline (MB) */
+export const WORKER_MAX_MEMORY_MB = 512;
+
+/** Minimum allowed maxMemoryMB for worker pipeline */
+export const WORKER_MIN_MEMORY_MB = 128;
+
+/** Maximum allowed maxMemoryMB for worker pipeline */
+export const WORKER_MAX_MEMORY_LIMIT_MB = 2048;

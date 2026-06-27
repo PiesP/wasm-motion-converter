@@ -120,8 +120,10 @@ function createThrottledProgress(
   let pendingCall: (() => void) | null = null;
   let scheduled = false;
   let timerId: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
 
   const flush = () => {
+    if (disposed) return;
     scheduled = false;
     timerId = null;
     if (pendingCall) {
@@ -131,6 +133,7 @@ function createThrottledProgress(
   };
 
   const cleanup = () => {
+    disposed = true;
     if (timerId !== null) {
       clearTimeout(timerId);
       timerId = null;
@@ -140,6 +143,7 @@ function createThrottledProgress(
   };
 
   const callback = (update: ConversionProgress) => {
+    if (disposed) return;
     const now = performance.now();
     const elapsed = now - lastCallTime;
 

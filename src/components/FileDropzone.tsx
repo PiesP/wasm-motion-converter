@@ -57,6 +57,11 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const isBusy = createMemo(() => !!local.status);
   const isInteractive = createMemo(() => !local.disabled && !isBusy());
   const hasFile = createMemo(() => !!local.previewUrl);
+  const ariaLabel = createMemo(() => {
+    if (local.disabled) return t('dropzone.selectFile');
+    if (hasFile() && !isBusy()) return t('dropzone.changeFile');
+    return t('dropzone.selectFile');
+  });
   const progressValue = createMemo(() => {
     const raw = local.progress ?? 0;
     if (!Number.isFinite(raw)) return 0;
@@ -120,7 +125,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       }}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: dropzone region is interactive (opens file picker on Enter/Space)
       tabIndex={0}
-      aria-label={t('dropzone.selectFile')}
+      aria-label={ariaLabel()}
       role="region"
       data-testid="dropzone"
     >
@@ -321,7 +326,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 onChange={handleFileInput}
                 disabled={local.disabled}
                 tabIndex={-1}
-                aria-label={t('dropzone.selectFile')}
+                aria-hidden="true"
                 data-testid="file-input"
               />
             </div>

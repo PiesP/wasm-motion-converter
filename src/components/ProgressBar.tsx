@@ -220,7 +220,14 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
             </svg>
           </Show>
           <span class="truncate font-medium text-[#d0d6e0]">{local.status}</span>
-          <div class="flex-1 h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
+          <div
+            class="flex-1 h-1.5 rounded-full bg-white/[0.05] overflow-hidden"
+            role="progressbar"
+            aria-valuenow={progressValue()}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={local.status}
+          >
             <div
               class="h-full rounded-full bg-[#5e6ad2] transition-[width] duration-150 ease-out"
               style={{ width: `${progressValue()}%` }}

@@ -28,7 +28,11 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
       data-testid="language-selector"
     >
       {supportedLocales.map((loc) => (
-        <option value={loc.code} class="bg-[#191a1b] text-[#d0d6e0]">
+        <option
+          value={loc.code}
+          class="bg-[#191a1b] text-[#d0d6e0]"
+          aria-current={locale() === loc.code ? 'true' : undefined}
+        >
           {loc.name}
         </option>
       ))}

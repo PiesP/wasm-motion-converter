@@ -11,6 +11,11 @@
  */
 
 import type { ConversionRequest } from '@t/conversion-types.js';
+import {
+  WORKER_MAX_MEMORY_LIMIT_MB,
+  WORKER_MAX_MEMORY_MB,
+  WORKER_MIN_MEMORY_MB,
+} from '@utils/constants.js';
 import { logger } from '@utils/logger.js';
 import { globalBufferPool } from '../buffer-pool.js';
 import { demuxVideo } from '../demuxer-service.js';
@@ -33,6 +38,15 @@ function createWorkerProgressTracker(): WorkerProgressState {
     lastPostTime: 0,
     fpsTracker: { current: 0, lastTime: performance.now(), lastFrame: 0 },
   };
+}
+
+/**
+ * Clamps maxMemoryMB to valid bounds.
+ * Ensures the value is within [WORKER_MIN_MEMORY_MB, WORKER_MAX_MEMORY_LIMIT_MB].
+ */
+function clampMaxMemoryMB(value: number): number {
+  if (!Number.isFinite(value)) return WORKER_MAX_MEMORY_MB;
+  return Math.min(WORKER_MAX_MEMORY_LIMIT_MB, Math.max(WORKER_MIN_MEMORY_MB, value));
 }
 
 // ─── Main Worker Pipeline ────────────────────────────────────────────────
@@ -62,9 +76,9 @@ export async function runWorkerPipeline(
     scale: options.scale,
     trimStart: options.trimStart,
     trimEnd: options.trimEnd,
-    maxMemoryMB: 512, // Default for worker
-    forceDecimation: 1,
-    smartFrameSkip: 'off',
+    maxMemoryMB: clampMaxMemoryMB(WORKER_MAX_MEMORY_MB),
+    forceDecimation: options.forceDecimation ?? 1,
+    smartFrameSkip: options.smartFrameSkip ?? 'off',
   };
 
   const progressState = createWorkerProgressTracker();
@@ -164,7 +178,6 @@ export async function runWorkerPipeline(
       totalFrames: demuxResult.totalFrames,
     });
 
-    let gifEncodeFrames = 0;
     const gifResult = await encodeGif(
       demuxResult,
       {
@@ -175,7 +188,6 @@ export async function runWorkerPipeline(
         frameDecimation: 1,
         onFrameDecoded: decodeProgressCb,
         onFrameEncoded: (frameIdx: number, totalFrames: number) => {
-          gifEncodeFrames = frameIdx;
           const now = performance.now();
           if (now - progressState.lastPostTime >= 100) {
             progressState.lastPostTime = now;
@@ -196,8 +208,6 @@ export async function runWorkerPipeline(
       _signal
     );
     output = gifResult.buffer as ArrayBuffer;
-    // Use gifEncodeFrames to avoid lint error
-    void gifEncodeFrames;
   } else {
     logger.info('encoders', 'WebP encoder (streaming encodeRGB + mux)', {
       codec: demuxResult.config.codec,

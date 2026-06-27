@@ -208,6 +208,15 @@ html.dark :focus-visible {
     /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
     scroll-behavior: auto !important;
   }
+
+  /* Disable Tailwind animate-* classes for reduced motion */
+  /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
+  .animate-spin,
+  .animate-pulse,
+  .animate-bounce,
+  .animate-ping {
+    animation: none !important;
+  }
 }
 
 /* ============================================================================

@@ -114,6 +114,8 @@ export function useProgressState(deps: ProgressStateDeps) {
     // since the stall timer would fire 60s after completion with a spurious warning.
     if (monotonic < 100) {
       startStallTimer();
+    } else {
+      clearStallTimer();
     }
 
     const now = performance.now();

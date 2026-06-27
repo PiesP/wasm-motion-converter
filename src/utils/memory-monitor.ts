@@ -3,11 +3,16 @@
 
 import type { ConversionFormat } from '@t/conversion-types';
 
+import {
+  MEMORY_CRITICAL_RATIO,
+  MEMORY_CRITICAL_THRESHOLD,
+  MEMORY_DEFAULT_AVAILABLE_MB,
+  MEMORY_WARNING_RATIO,
+} from './constants.js';
+
 /**
  * Memory monitoring utilities for tracking browser memory usage during conversions.
  */
-
-export const MEMORY_CRITICAL_THRESHOLD = 80; // 80% - critical
 
 export interface MemoryInfo {
   usedJSHeapSize: number;
@@ -118,12 +123,12 @@ export function checkMemoryForConversion(
   const memInfo = getMemoryInfo();
   const availableMB = memInfo
     ? Math.round((memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize) / (1024 * 1024))
-    : 1024; // Default 1GB if unknown
+    : MEMORY_DEFAULT_AVAILABLE_MB;
 
-  if (estimatedMB > availableMB * 0.9) {
+  if (estimatedMB > availableMB * MEMORY_CRITICAL_RATIO) {
     return { level: 'critical', estimatedMB, availableMB };
   }
-  if (estimatedMB > availableMB * 0.6) {
+  if (estimatedMB > availableMB * MEMORY_WARNING_RATIO) {
     return { level: 'warning', estimatedMB, availableMB };
   }
   return { level: 'ok', estimatedMB, availableMB };

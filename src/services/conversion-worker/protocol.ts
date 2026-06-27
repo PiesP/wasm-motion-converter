@@ -10,12 +10,7 @@
  * (EncodedVideoChunk cannot be structured-cloned, so we use copyTo() pattern)
  */
 
-import type {
-  SerializedConversionOptions,
-  SerializedDecoderConfig,
-  WorkerRequest,
-  WorkerResponse,
-} from './types.js';
+import type { SerializedDecoderConfig, WorkerRequest, WorkerResponse } from './types.js';
 
 // ─── Transferable helpers ────────────────────────────────────────────────
 
@@ -62,6 +57,12 @@ export function arrayBufferToHex(buffer: ArrayBuffer): string {
 
 /** Decode a hex string back to an ArrayBuffer */
 export function hexToArrayBuffer(hex: string): ArrayBuffer {
+  if (hex.length % 2 !== 0) {
+    throw new Error(`Invalid hex string: odd length (${hex.length})`);
+  }
+  if (!/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error('Invalid hex string: contains non-hexadecimal characters');
+  }
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
     bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16) as number;
@@ -187,30 +188,4 @@ export function restoreVideoDecoderConfig(serialized: SerializedDecoderConfig): 
     extended.displayAspectHeight = serialized.displayAspectHeight;
   }
   return config;
-}
-
-// ─── ConversionOptions from Serialized form ─────────────────────────────
-
-/**
- * Restores full conversion options from the worker request.
- * Maps the SerializedConversionOptions back to request fields.
- */
-export function restoreConversionOptions(options: SerializedConversionOptions): {
-  format: 'gif' | 'webp';
-  quality: 'low' | 'medium' | 'high';
-  scale: number;
-  trimStart: number;
-  trimEnd: number;
-  forceDecimation: number;
-  smartFrameSkip: 'off' | 'low' | 'medium' | 'high';
-} {
-  return {
-    format: options.format,
-    quality: options.quality,
-    scale: options.scale,
-    trimStart: options.trimStart,
-    trimEnd: options.trimEnd,
-    forceDecimation: 1, // fps is already baked into decimation, no need for separate
-    smartFrameSkip: 'off',
-  };
 }

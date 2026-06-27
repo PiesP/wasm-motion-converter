@@ -303,6 +303,8 @@ async function performConversion(
       trimStart: conversionOptions.trimStart,
       trimEnd: conversionOptions.trimEnd,
       maxFrames: 0, // 0 = no limit
+      forceDecimation: conversionOptions.forceDecimation,
+      smartFrameSkip: conversionOptions.smartFrameSkip,
     };
 
     // Run via Worker with automatic fallback to main thread on error
@@ -455,10 +457,13 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
 export function handleCancelAnalysis(): void {
   setAppState('cancelling');
 
+  // Revoke blob URL immediately (not deferred) to prevent race condition
+  // where a new file's preview URL could be revoked by a queued microtask.
+  const url = videoPreviewUrl();
+  if (url) URL.revokeObjectURL(url);
+
   queueMicrotask(() => {
     setInputFile(null);
-    const url = videoPreviewUrl();
-    if (url) URL.revokeObjectURL(url);
     setVideoPreviewUrl(null);
     setVideoMetadata(null);
     setAppState('idle');

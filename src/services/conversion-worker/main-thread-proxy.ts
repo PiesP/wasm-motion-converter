@@ -16,6 +16,7 @@
  */
 
 import type { ConversionProgress } from '@t/conversion-types';
+import { WORKER_MAX_MEMORY_MB } from '@utils/constants.js';
 
 import type {
   SerializedConversionOptions,
@@ -111,12 +112,15 @@ export async function runPipelineViaWorker(
           if (signal) {
             signal.removeEventListener('abort', onAbort);
           }
-          worker.terminate();
+          // Defer terminate() to next microtask to ensure the transferred
+          // outputBuffer is fully received before the worker is terminated.
+          // Calling terminate() synchronously can race with buffer transfer.
+          queueMicrotask(() => {
+            worker.terminate();
+          });
 
-          // The response.outputBuffer is already transferred back
-          // by the worker via postMessage transferables
-          // However since we're inside a promise and the buffer was transferred,
-          // the main thread proxy receives a fresh copy via structured clone fallback
+          // The response.outputBuffer is transferred back by the worker
+          // via postMessage transferables — ownership moves to main thread.
           resolve(response.outputBuffer);
           break;
         }
@@ -211,9 +215,9 @@ export async function runPipelineWithFallback(
       scale: options.scale,
       trimStart: options.trimStart,
       trimEnd: options.trimEnd,
-      maxMemoryMB: 512,
-      forceDecimation: 1,
-      smartFrameSkip: 'off' as const,
+      maxMemoryMB: WORKER_MAX_MEMORY_MB,
+      forceDecimation: options.forceDecimation ?? 1,
+      smartFrameSkip: options.smartFrameSkip ?? 'off',
     };
 
     return runConversionPipeline(request, onProgress, signal);

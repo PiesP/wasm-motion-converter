@@ -95,9 +95,12 @@ const ConfirmationModal: Component = () => {
       return;
     }
 
-    document.body.inert = false;
-    scheduleRestoreFocus(previouslyFocusedElement);
-    previouslyFocusedElement = null;
+    try {
+      document.body.inert = false;
+      scheduleRestoreFocus(previouslyFocusedElement);
+    } finally {
+      previouslyFocusedElement = null;
+    }
   });
 
   onCleanup(() => {
