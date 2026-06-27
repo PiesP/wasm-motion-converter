@@ -3,7 +3,7 @@
 
 import { useLocale } from '@hooks/use-locale';
 import type { ProgressPhase } from '@t/conversion-types';
-import { formatDuration } from '@utils/format-utils';
+import { formatDurationSeconds } from '@utils/format-utils';
 import { type Component, createEffect, createMemo, onCleanup, Show, splitProps } from 'solid-js';
 
 const PHASE_CONFIG = [
@@ -175,7 +175,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       if (!elapsedDisplayRef) return;
       const now = performance.now();
       const secs = Math.floor(Math.max(0, now - local.startTime!) / 1000);
-      elapsedDisplayRef.textContent = formatDuration(secs);
+      elapsedDisplayRef.textContent = formatDurationSeconds(secs);
     };
 
     updateElapsed();
@@ -233,7 +233,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
             <span class="font-mono text-[10px] tabular-nums text-[#5e6ad2]/60 shrink-0">
-              ETA {formatDuration(local.estimatedSecondsRemaining!)}
+              ETA {formatDurationSeconds(local.estimatedSecondsRemaining!)}
             </span>
           </Show>
         </div>
@@ -367,7 +367,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           >
             <span class="text-[#5e6ad2]/40">·</span>
             <span class="text-[#5e6ad2]/60">
-              ETA {formatDuration(local.estimatedSecondsRemaining!)}
+              ETA {formatDurationSeconds(local.estimatedSecondsRemaining!)}
             </span>
           </Show>
           <Show

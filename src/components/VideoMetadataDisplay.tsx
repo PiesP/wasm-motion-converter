@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { VideoMetadata } from '@t/conversion-types';
-import { formatBytes, formatDuration } from '@utils/format-utils';
+import { formatBytes, formatDurationSeconds } from '@utils/format-utils';
 import type { Component } from 'solid-js';
 import { createMemo, splitProps } from 'solid-js';
 
@@ -41,7 +41,9 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
         </div>
         <div class="flex justify-between gap-3">
           <dt class="text-[#8a8f98] shrink-0">Duration</dt>
-          <dd class="text-[#f7f8f8] tabular-nums">{formatDuration(local.metadata.duration)}</dd>
+          <dd class="text-[#f7f8f8] tabular-nums">
+            {formatDurationSeconds(local.metadata.duration)}
+          </dd>
         </div>
         <div class="flex justify-between gap-3">
           <dt class="text-[#8a8f98] shrink-0">FPS</dt>

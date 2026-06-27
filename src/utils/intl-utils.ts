@@ -7,10 +7,13 @@
  * Core i18n helpers: locale detection, Intl API wrappers, lang attribute management.
  */
 
-import { DEFAULT_LOCALE, type Locale } from '@t/i18n-types';
+import { DEFAULT_LOCALE, LOCALES, type Locale } from '@t/i18n-types';
 
 /**
  * Detect user's preferred locale from browser settings.
+ *
+ * Tries exact match first, then base-language match (e.g. "en-GB" → "en").
+ * Falls back to `defaultLocale` if nothing matches.
  */
 export function detectUserLocale(
   supportedLocales: Locale[],
@@ -36,6 +39,33 @@ export function detectUserLocale(
 }
 
 /**
+ * Detect the initial locale using the app's configured LOCALES.
+ *
+ * Checks localStorage first, then browser language preference via
+ * `detectUserLocale()`, then falls back to DEFAULT_LOCALE.
+ *
+ * This is the single canonical implementation — all other locale-detection
+ * functions (the former `getLocale()` in `i18n/index.ts`,
+ * `detectBrowserLocale()` / `detectInitialLocale()` in `i18n/locale-store.ts`)
+ * have been removed in favour of this one.
+ */
+export function detectInitialLocale(storageKey = 'dropconvert.locale'): Locale {
+  // 1. Stored preference
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored && LOCALES.some((l) => l.code === stored)) return stored as Locale;
+  } catch {
+    /* localStorage unavailable */
+  }
+
+  // 2. Browser language → LOCALES match
+  const matched = detectUserLocale(LOCALES.map((l) => l.code));
+  if (matched) return matched;
+
+  return DEFAULT_LOCALE;
+}
+
+/**
  * Update document-level language attributes.
  */
 export function updateDocumentLang(locale: Locale, dir: 'ltr' | 'rtl'): void {
@@ -58,6 +88,10 @@ export function formatFileSize(bytes: number, locale: Locale): string {
 
 /**
  * Format duration with locale-aware units.
+ *
+ * @param ms - Duration in **milliseconds** (not seconds).
+ *             For a seconds-based formatter, see `formatDurationSeconds()` in format-utils.
+ * @param locale - BCP 47 locale identifier
  */
 export function formatDuration(ms: number, locale: Locale): string {
   if (ms < 1000) return `${new Intl.NumberFormat(locale).format(Math.round(ms))}ms`;

@@ -16,7 +16,7 @@ export function createId(): string {
  * @param seconds - Duration in seconds
  * @returns Formatted time string (e.g., "1:23" for MM:SS or "1:02:34" for HH:MM:SS)
  */
-export function formatDuration(seconds: number): string {
+export function formatDurationSeconds(seconds: number): string {
   const totalSeconds = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(totalSeconds / 3600);
   const mins = Math.floor((totalSeconds % 3600) / 60);
@@ -32,10 +32,13 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
- * Format bytes to human-readable string
+ * Format bytes to human-readable string (locale-unaware)
  *
  * Converts a byte count into a human-friendly format with appropriate unit
  * (B, KB, MB, GB). Uses binary units (1 KB = 1024 bytes).
+ *
+ * For locale-aware formatting (e.g. "1,024 KB" in en), use
+ * `formatFileSize(bytes, locale)` from `@utils/intl-utils` instead.
  *
  * @param bytes - Number of bytes to format (must be non-negative)
  * @returns Formatted file size string with appropriate unit

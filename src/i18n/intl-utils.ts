@@ -13,6 +13,7 @@ import { formatFileSize } from '@utils/intl-utils';
 
 export type { Locale } from '@t/i18n-types';
 export {
+  detectInitialLocale,
   detectUserLocale,
   formatDuration,
   formatFileSize,

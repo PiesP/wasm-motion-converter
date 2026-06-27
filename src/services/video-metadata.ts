@@ -1,15 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import type { VideoMetadata } from '@t/conversion-types';
+import type { MediabunnyVideoDecoderConfig, VideoMetadata } from '@t/conversion-types';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
-
-interface MediabunnyVideoDecoderConfig extends VideoDecoderConfig {
-  displayAspectWidth?: number;
-  displayAspectHeight?: number;
-  displayWidth?: number;
-  displayHeight?: number;
-}
 
 /**
  * Extract video metadata from an ArrayBuffer using MediaBunny.

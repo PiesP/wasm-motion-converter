@@ -32,6 +32,21 @@ function stripDataTestIdPlugin(): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
+  const isDev = mode === 'development';
+
+  // CSP: 'unsafe-inline' for styles is only needed in dev mode where Vite HMR
+  // injects <style> tags. In production all CSS is bundled into a single file
+  // served from 'self', so a strict hash/self policy suffices.
+  const styleSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
+
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self'",
+    `style-src ${styleSrc}`,
+    "img-src 'self' blob: data:",
+    "connect-src 'self' blob:",
+    "worker-src 'self' blob:",
+  ].join('; ');
 
   return {
     plugins: [
@@ -68,8 +83,7 @@ export default defineConfig(({ mode }) => {
 
     server: {
       headers: {
-        'Content-Security-Policy':
-          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' blob:; worker-src 'self' blob:;",
+        'Content-Security-Policy': csp,
         'Cross-Origin-Embedder-Policy': 'require-corp',
         'Cross-Origin-Opener-Policy': 'same-origin',
       },
@@ -77,8 +91,7 @@ export default defineConfig(({ mode }) => {
 
     preview: {
       headers: {
-        'Content-Security-Policy':
-          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' blob:; worker-src 'self' blob:;",
+        'Content-Security-Policy': csp,
         'Cross-Origin-Embedder-Policy': 'require-corp',
         'Cross-Origin-Opener-Policy': 'same-origin',
       },

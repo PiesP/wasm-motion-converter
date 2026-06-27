@@ -4,7 +4,7 @@
 import Panel from '@components/ui/Panel';
 import { useLocale } from '@hooks/use-locale';
 import type { ConversionSettings } from '@t/conversion-types';
-import { formatBytes, formatDuration } from '@utils/format-utils';
+import { formatBytes, formatDurationSeconds } from '@utils/format-utils';
 import {
   type Component,
   createEffect,
@@ -75,7 +75,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   const conversionTimeLabel = createMemo(() => {
     if (typeof local.conversionDurationSeconds !== 'number') return null;
-    return formatDuration(local.conversionDurationSeconds);
+    return formatDurationSeconds(local.conversionDurationSeconds);
   });
 
   const outputExtension = createMemo(() => {

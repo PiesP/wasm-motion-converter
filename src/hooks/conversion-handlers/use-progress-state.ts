@@ -8,7 +8,7 @@ import {
 } from '@stores/conversion-store';
 import type { ProgressPhase } from '@t/conversion-types';
 import { ETACalculator } from '@utils/eta-calculator';
-import { formatDuration } from '@utils/format-utils';
+import { formatDurationSeconds } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import type { Setter } from 'solid-js';
 import { batch } from 'solid-js';
@@ -138,7 +138,7 @@ export function useProgressState(deps: ProgressStateDeps) {
       lastUiProgressLogAtMs = now;
       const elapsedMs = currentStartTimeMs > 0 ? Math.max(0, now - currentStartTimeMs) : 0;
       const elapsedSeconds = Math.floor(elapsedMs / 1000);
-      const elapsed = formatDuration(elapsedSeconds);
+      const elapsed = formatDurationSeconds(elapsedSeconds);
       const etaSeconds = etaCalculator.getETA();
 
       logger.info('progress', 'UI progress update', {
@@ -151,7 +151,9 @@ export function useProgressState(deps: ProgressStateDeps) {
         elapsedMs,
         etaSeconds,
         etaLabel:
-          etaSeconds !== null && etaSeconds > 0 ? `ETA: ${formatDuration(etaSeconds)}` : null,
+          etaSeconds !== null && etaSeconds > 0
+            ? `ETA: ${formatDurationSeconds(etaSeconds)}`
+            : null,
       });
     }
   };
@@ -178,7 +180,7 @@ export function useProgressState(deps: ProgressStateDeps) {
     lastUiStatusLogAtMs = now;
     const elapsedMs = currentStartTimeMs > 0 ? Math.max(0, now - currentStartTimeMs) : 0;
     const elapsedSeconds = Math.floor(elapsedMs / 1000);
-    const elapsed = formatDuration(elapsedSeconds);
+    const elapsed = formatDurationSeconds(elapsedSeconds);
     const parsed = parseStatusCounter(safeMessage);
 
     logger.info('progress', 'UI status update', {

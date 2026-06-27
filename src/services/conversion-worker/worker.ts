@@ -19,6 +19,13 @@ const activeControllers = new Map<string, AbortController>();
 // ─── Message handler ────────────────────────────────────────────────────
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
+  // Defense-in-depth: reject messages from unexpected origins.
+  // In same-origin Worker contexts event.origin is typically empty string,
+  // but postMessage from a compromised parent could differ.
+  if (event.origin !== '' && event.origin !== self.location.origin) {
+    return;
+  }
+
   const request = event.data;
 
   switch (request.type) {

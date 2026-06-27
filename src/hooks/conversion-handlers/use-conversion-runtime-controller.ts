@@ -54,6 +54,16 @@ export class ConversionRuntimeController {
     this.stopMemoryMonitoring();
   }
 
+  /**
+   * Full teardown — called by SolidJS onCleanup when the owner scope is disposed.
+   * Stops memory monitoring and marks progress state as disposed so any
+   * lingering interval callbacks become no-ops.
+   */
+  dispose(): void {
+    this.stopMemoryMonitoring();
+    this.progress.disposed = true;
+  }
+
   prepareForNewConversion(startTimeMs: number): void {
     this.progress.prepareForConversion(startTimeMs);
   }

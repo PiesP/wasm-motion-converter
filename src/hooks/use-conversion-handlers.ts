@@ -41,7 +41,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   });
 
   onCleanup(() => {
-    runtime.resetTimingState();
+    runtime.dispose();
   });
 
   return {

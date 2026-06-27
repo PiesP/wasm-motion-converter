@@ -6,7 +6,7 @@ import {
   type TranslationKeys,
   type Translations,
 } from '@t/i18n-types';
-import { updateDocumentLang } from '@utils/intl-utils';
+import { detectInitialLocale, updateDocumentLang } from '@utils/intl-utils';
 import type { Component, JSX } from 'solid-js';
 import { createContext, createEffect, createSignal, Show, useContext } from 'solid-js';
 
@@ -49,40 +49,12 @@ async function loadTranslations(locale: Locale): Promise<Translations> {
   }
 }
 
-function getStoredLocale(): Locale | null {
-  try {
-    const stored = localStorage.getItem(LOCALE_STORAGE_KEY);
-    if (stored && LOCALES.some((l) => l.code === stored)) return stored as Locale;
-  } catch {
-    /* noop */
-  }
-  return null;
-}
-
 function saveLocale(locale: Locale): void {
   try {
     localStorage.setItem(LOCALE_STORAGE_KEY, locale);
   } catch {
     /* noop */
   }
-}
-
-function detectInitialLocale(): Locale {
-  const stored = getStoredLocale();
-  if (stored) return stored;
-  if (typeof navigator !== 'undefined') {
-    const browserLangs = navigator.languages ?? (navigator.language ? [navigator.language] : []);
-    for (const lang of browserLangs) {
-      if (!lang) continue;
-      const baseLang = lang.split('-')[0]?.toLowerCase() ?? lang.toLowerCase();
-      const match = LOCALES.find(
-        (l) =>
-          l.code.toLowerCase() === lang.toLowerCase() || l.code.toLowerCase().startsWith(baseLang)
-      );
-      if (match) return match.code;
-    }
-  }
-  return DEFAULT_LOCALE;
 }
 
 export interface LocaleProviderProps {
@@ -94,7 +66,7 @@ const Provider = LocaleContext.Provider;
 
 export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
   const [locale, setLocaleSignal] = createSignal<Locale>(
-    props.initialLocale ?? detectInitialLocale()
+    props.initialLocale ?? detectInitialLocale(LOCALE_STORAGE_KEY)
   );
   const [translations, setTranslations] = createSignal<Translations | null>(null);
 
