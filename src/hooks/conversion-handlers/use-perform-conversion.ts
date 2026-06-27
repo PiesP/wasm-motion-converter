@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { runConversionPipeline } from '@services/conversion-pipeline';
+import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
+import { arrayBufferToHex } from '@services/conversion-worker/protocol';
 import { validateOutput } from '@services/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
 import {
@@ -266,19 +267,49 @@ async function performConversion(
       }
     };
 
-    const output = await runConversionPipeline(
-      {
-        inputBuffer: buffer,
-        fileName: file.name,
-        format: conversionOptions.format,
-        quality: conversionOptions.quality,
-        scale: conversionOptions.scale,
-        trimStart: conversionOptions.trimStart,
-        trimEnd: conversionOptions.trimEnd,
-        maxMemoryMB: 1500,
-        forceDecimation: conversionOptions.forceDecimation,
-        smartFrameSkip: conversionOptions.smartFrameSkip,
-      },
+    // Build SerializedDecoderConfig from video metadata (needed for Worker path)
+    const decoderConfig = md?.config;
+    const serializedConfig = decoderConfig
+      ? {
+          codec: decoderConfig.codec,
+          codedWidth: decoderConfig.codedWidth ?? 0,
+          codedHeight: decoderConfig.codedHeight ?? 0,
+          ...(decoderConfig.displayAspectWidth && decoderConfig.displayAspectHeight
+            ? {
+                displayAspectWidth: decoderConfig.displayAspectWidth,
+                displayAspectHeight: decoderConfig.displayAspectHeight,
+              }
+            : {}),
+          ...(decoderConfig.hardwareAcceleration
+            ? { hardwareAcceleration: decoderConfig.hardwareAcceleration }
+            : {}),
+          ...(decoderConfig.description
+            ? { description: arrayBufferToHex(decoderConfig.description as ArrayBuffer) }
+            : {}),
+        }
+      : null;
+
+    if (!serializedConfig) {
+      throw new Error('Unable to extract VideoDecoderConfig — cannot run conversion pipeline');
+    }
+
+    // Build SerializedConversionOptions (Worker-compatible format)
+    const fps = md?.framerate ?? 30;
+    const serializedOptions = {
+      format: conversionOptions.format,
+      quality: conversionOptions.quality,
+      fps,
+      scale: conversionOptions.scale,
+      trimStart: conversionOptions.trimStart,
+      trimEnd: conversionOptions.trimEnd,
+      maxFrames: 0, // 0 = no limit
+    };
+
+    // Run via Worker with automatic fallback to main thread on error
+    const output = await runPipelineWithFallback(
+      buffer,
+      serializedConfig,
+      serializedOptions,
       progressCallback,
       abortController.signal
     );
