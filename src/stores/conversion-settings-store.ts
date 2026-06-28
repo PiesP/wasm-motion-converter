@@ -14,7 +14,9 @@ import { createSignal } from 'solid-js';
 export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   format: 'gif',
   quality: 'medium',
-  scale: 1.0,
+  scale: 0.75, // 1.0 → 0.75: GIF files are inherently large;
+  // defaulting to 75% scale reduces output ~44% (75%×75% = 56% pixels)
+  // while still producing good quality for typical screen viewing
   trimStart: 0,
   trimEnd: 0,
   smartFrameSkip: 'medium',

@@ -61,8 +61,11 @@ export const WEBP_MAX_FRAMES = 9000;
 /** Default FPS used when video metadata doesn't provide frame rate */
 export const DEFAULT_FPS = 30;
 
-/** GIF auto-decimation target FPS */
-export const GIF_TARGET_FPS = 15;
+/** GIF auto-decimation target FPS.
+ *  GIF is significantly larger than WebP at the same quality.
+ *  5fps with scaleBoost=3 gives ~2fps for 60fps sources (1080p → ~40MB).
+ *  This is the practical limit before motion becomes choppy. */
+export const GIF_TARGET_FPS = 5;
 
 /** WebP auto-decimation target FPS — varies by quality preset.
  *  Perceptual basis: 15fps is acceptable for low quality (where artifacts

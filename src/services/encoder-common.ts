@@ -69,10 +69,10 @@ export function calcAutoDecimation(
   const baseDecimation = sourceFps > targetFps ? Math.max(1, Math.round(sourceFps / targetFps)) : 1;
   // Scale boost: larger output scales need more decimation to keep
   // file sizes and encoding time reasonable (see JSDoc rationale above).
-  // Reduced from 4/2/1 to 2/1.5/1: the old 4x boost was too aggressive,
+  // Reduced from 4/2/1 to 3/2/1: the old 4x boost was too aggressive,
   // producing ~4fps for 60fps sources at scale=1.0 (unwatchable).
-  // 2x gives 30fps which is smooth enough for preview; users can
-  // manually reduce FPS further if needed.
-  const scaleBoost = scale >= 1.0 ? 2 : scale > 0.5 ? 1.5 : 1;
+  // 3x gives 20fps which is smooth enough for preview; GIF needs extra
+  // decimation since it lacks WebP's compression efficiency.
+  const scaleBoost = scale >= 1.0 ? 3 : scale > 0.5 ? 2 : 1;
   return Math.max(1, Math.round(baseDecimation * scaleBoost));
 }
