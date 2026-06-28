@@ -216,7 +216,7 @@ export async function runConversionPipeline(
   return output;
 }
 
-/** Inner pipeline logic — separated so finally block can always clean up */
+/** Inner pipeline logic — demux → decode → encode with throttled progress cleanup */
 async function _runPipelineInner(
   request: ConversionRequest,
   onProgress: ProgressCallback,
@@ -227,46 +227,23 @@ async function _runPipelineInner(
   const throttled = createThrottledProgress(onProgress, 100);
 
   try {
-    return await _runPipelineInnerBody(
-      request,
-      throttled.callback,
-      signal,
-      pipelineStart,
-      profiler,
-      throttled.callback
-    );
-  } finally {
-    throttled.cleanup();
-    globalBufferPool.clear();
-  }
-}
+    // ── Throttled memory sampling (PERF-H1) ──
+    // getMemoryUsageMB() reads performance.memory which is expensive.
+    // Sample at most once per second instead of every progress callback.
+    let lastMemSampleTime = 0;
+    let lastMemMB = 0;
+    const sampleMemory = (): number => {
+      const now = performance.now();
+      if (now - lastMemSampleTime >= 1000) {
+        lastMemSampleTime = now;
+        lastMemMB = getMemoryUsageMB() ?? 0;
+      }
+      return lastMemMB;
+    };
 
-/** Inner pipeline body — separated so try/finally can always clean up throttled progress */
-async function _runPipelineInnerBody(
-  request: ConversionRequest,
-  onProgress: ProgressCallback,
-  signal: AbortSignal | undefined,
-  pipelineStart: number,
-  profiler: Profiler,
-  throttledProgress: ProgressCallback
-): Promise<ArrayBuffer> {
-  // ── Throttled memory sampling (PERF-H1) ──
-  // getMemoryUsageMB() reads performance.memory which is expensive.
-  // Sample at most once per second instead of every progress callback.
-  let lastMemSampleTime = 0;
-  let lastMemMB = 0;
-  const sampleMemory = (): number => {
-    const now = performance.now();
-    if (now - lastMemSampleTime >= 1000) {
-      lastMemSampleTime = now;
-      lastMemMB = getMemoryUsageMB() ?? 0;
-    }
-    return lastMemMB;
-  };
-
-  profiler.startPhase('demuxing');
+    profiler.startPhase('demuxing');
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
-  const demuxProgressThrottled = throttledProgress;
+  const demuxProgressThrottled = throttled.callback;
   try {
     demuxResult = await demuxVideo(request, (packetsExtracted, estimatedTotalFrames) => {
       if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -342,7 +319,7 @@ async function _runPipelineInnerBody(
     fpsTracker.lastTime = now;
     fpsTracker.lastFrame = frameIdx;
     const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
-    throttledProgress({
+    throttled.callback({
       phase: 'decoding',
       progress: 10 + Math.min(40, decodePct),
       fps: fpsTracker.current,
@@ -394,7 +371,7 @@ async function _runPipelineInnerBody(
           onFrameEncoded: (frameIdx: number, totalFrames: number) => {
             gifEncodeFrames = frameIdx;
             const encodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
-            throttledProgress({
+            throttled.callback({
               phase: 'encoding',
               progress: 50 + Math.min(40, encodePct),
               fps: fpsTracker.current,
@@ -445,7 +422,7 @@ async function _runPipelineInnerBody(
       (p: { progress: number; currentFrame?: number }) => {
         encodedFrames = p.currentFrame ?? encodedFrames;
         const mappedProgress = 50 + Math.round(p.progress * 0.4);
-        throttledProgress({
+        throttled.callback({
           phase: 'encoding',
           progress: Math.min(90, mappedProgress),
           fps: fpsTracker.current,
@@ -520,4 +497,8 @@ async function _runPipelineInnerBody(
   });
 
   return output;
+  } finally {
+    throttled.cleanup();
+    globalBufferPool.clear();
+  }
 }
