@@ -14,7 +14,7 @@ export interface DemuxResult {
   duration: number;
 }
 
-type DemuxProgressCallback = (packetsExtracted: number) => void;
+type DemuxProgressCallback = (packetsExtracted: number, estimatedTotalFrames: number) => void;
 
 /**
  * Demux a video buffer using MediaBunny, extracting encoded video chunks.
@@ -34,6 +34,11 @@ export async function demuxVideo(
     throw new Error('Unable to obtain VideoDecoderConfig from video track');
   }
   const { config, duration } = metadata;
+
+  // Estimate total frames from duration and frame rate for progress reporting.
+  // This is an estimate — actual packet count may differ due to variable frame rate
+  // or container-level vs stream-level duration mismatch.
+  const estimatedTotalFrames = Math.max(1, Math.round(duration * (metadata.framerate || 30)));
 
   // Set up source/input for demuxing
   const input = createMediaBunnyInput(request.inputBuffer);
@@ -87,7 +92,7 @@ export async function demuxVideo(
       chunks.push(packet.toEncodedVideoChunk());
       totalFrames++;
       if (onProgress && totalFrames % 10 === 0) {
-        onProgress(totalFrames);
+        onProgress(totalFrames, estimatedTotalFrames);
       }
       // Yield to browser event loop every 50 packets to prevent UI freezing
       // during demuxing of large files with thousands of packets.

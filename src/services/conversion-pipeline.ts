@@ -266,17 +266,14 @@ async function _runPipelineInnerBody(
 
   profiler.startPhase('demuxing');
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
-  const demuxStartMs = performance.now();
   const demuxProgressThrottled = throttledProgress;
   try {
-    demuxResult = await demuxVideo(request, (packetsExtracted) => {
+    demuxResult = await demuxVideo(request, (packetsExtracted, estimatedTotalFrames) => {
       if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
       profiler.updatePhase('demuxing', packetsExtracted);
       const memMB = sampleMemory();
       const elapsedMs = Math.round(performance.now() - pipelineStart);
-      const demuxElapsed = performance.now() - demuxStartMs;
-      const estimatedTotalPackets = Math.max(packetsExtracted, Math.ceil(demuxElapsed / 60));
-      const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalPackets) * 10));
+      const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalFrames) * 10));
       demuxProgressThrottled({
         phase: 'demuxing',
         progress: demuxPct,
