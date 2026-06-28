@@ -280,11 +280,12 @@ export async function decodeFrames(
       if (decodeError) break;
 
       // Backpressure: wait if decode queue is full.
-      // Use requestAnimationFrame + setTimeout(0) to yield to the browser's
-      // rendering loop, avoiding busy-wait CPU usage from setTimeout(1).
+      // Use setTimeout(0) as primary yield mechanism because
+      // requestAnimationFrame pauses in background tabs, causing deadlock
+      // when the decoder still queues frames but rAF never fires.
       while (decoder.decodeQueueSize > MAX_DECODE_QUEUE && !signal?.aborted && !decodeError) {
         await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => resolve());
+          setTimeout(() => resolve(), 0);
         });
       }
 

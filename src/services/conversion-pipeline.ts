@@ -431,6 +431,7 @@ async function _runPipelineInnerBody(
       webpDecimation,
     });
 
+    let encodedFrames = 0;
     const encoded = await encodeWebp(
       demuxResult,
       {
@@ -442,6 +443,7 @@ async function _runPipelineInnerBody(
         onFrameDecoded: decodeProgressCb,
       },
       (p: { progress: number; currentFrame?: number }) => {
+        encodedFrames = p.currentFrame ?? encodedFrames;
         const mappedProgress = 50 + Math.round(p.progress * 0.4);
         throttledProgress({
           phase: 'encoding',
@@ -458,7 +460,7 @@ async function _runPipelineInnerBody(
     );
     output = encoded.buffer as ArrayBuffer;
     encodeResult = {
-      frames: 0,
+      frames: encodedFrames,
       outputBytes: output.byteLength,
     };
   }
