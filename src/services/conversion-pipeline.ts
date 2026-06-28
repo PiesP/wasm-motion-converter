@@ -15,7 +15,6 @@
  */
 
 import type {
-  ConversionProgress,
   ConversionRequest,
   MediabunnyVideoDecoderConfig,
   ProgressCallback,
@@ -24,6 +23,7 @@ import type {
 import { DEFAULT_FPS, GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
+import { createThrottledProgress } from '@utils/throttled-progress';
 import { globalBufferPool } from './buffer-pool';
 import type { ConversionProfileReport } from './conversion-profiler';
 import { demuxVideo } from './demuxer-service';
@@ -95,69 +95,6 @@ const activeProfilers = new Map<string, Profiler>();
 export function getLastConversionProfiler(): Profiler | null {
   const lastKey = [...activeProfilers.keys()].pop();
   return lastKey ? activeProfilers.get(lastKey)! : null;
-}
-
-/**
- * Throttled progress wrapper — prevents UI re-render spam by enforcing a
- * minimum interval between onProgress calls. Without throttling, the encode
- * progress callbacks fire on every frame (30+/sec), causing excessive SolidJS
- * signal writes and re-renders during conversion.
- *
- * Extracted as a standalone utility so it can be reused by any long-running
- * async operation that needs to throttle progress updates.
- */
-export function createThrottledProgress(
-  onProgress: ProgressCallback,
-  minIntervalMs = 100
-): { callback: ProgressCallback; cleanup: () => void } {
-  let lastCallTime = 0;
-  let pendingCall: (() => void) | null = null;
-  let scheduled = false;
-  let timerId: ReturnType<typeof setTimeout> | null = null;
-  let disposed = false;
-
-  const flush = () => {
-    if (disposed) return;
-    scheduled = false;
-    timerId = null;
-    if (pendingCall) {
-      pendingCall();
-      pendingCall = null;
-    }
-  };
-
-  const cleanup = () => {
-    disposed = true;
-    if (timerId !== null) {
-      clearTimeout(timerId);
-      timerId = null;
-    }
-    scheduled = false;
-    pendingCall = null;
-  };
-
-  const callback = (update: ConversionProgress) => {
-    if (disposed) return;
-    const now = performance.now();
-    const elapsed = now - lastCallTime;
-
-    if (elapsed >= minIntervalMs) {
-      lastCallTime = now;
-      onProgress(update);
-    } else {
-      // Schedule a trailing call so the final state is not lost
-      pendingCall = () => {
-        lastCallTime = performance.now();
-        onProgress(update);
-      };
-      if (!scheduled) {
-        scheduled = true;
-        timerId = setTimeout(flush, minIntervalMs - elapsed);
-      }
-    }
-  };
-
-  return { callback, cleanup };
 }
 
 export async function runConversionPipeline(
@@ -266,7 +203,7 @@ async function _runPipelineInner(
           etaSeconds: null,
           memoryMB: memMB,
           currentFrame: packetsExtracted,
-          totalFrames: 0,
+          totalFrames: estimatedTotalFrames,
           elapsedMs,
         });
       });
@@ -464,7 +401,7 @@ async function _runPipelineInner(
     const memMB = sampleMemory();
     const totalElapsedMs = Math.round(performance.now() - pipelineStart);
     const outputFrames = Math.max(1, Math.round(demuxResult.totalFrames / decimationRatio));
-    onProgress({
+    throttled.callback({
       phase: 'assembling',
       progress: 95,
       fps: 0,
@@ -475,7 +412,7 @@ async function _runPipelineInner(
       outputFrames,
       elapsedMs: totalElapsedMs,
     });
-    onProgress({
+    throttled.callback({
       phase: 'assembling',
       progress: 100,
       fps: 0,

@@ -45,17 +45,27 @@ export function createDynamicDecimationController(
 ): DynamicDecimationController {
   let dynamicSkipCount = 0;
   let consecutiveMemWarnings = 0;
+  let cachedFrameNum = -1;
+  let cachedMemInfo: DecimationMemoryInfo | null = null;
 
-  const checkMemory = memoryCheck ?? (() => {
-    const info = getMemoryInfo();
-    return info ? { usagePercentage: info.usagePercentage } : null;
-  });
+  const checkMemory =
+    memoryCheck ??
+    (() => {
+      const info = getMemoryInfo();
+      return info ? { usagePercentage: info.usagePercentage } : null;
+    });
 
   function shouldSkip(frameNum: number): boolean {
     // Check JS heap usage every 5 frames to avoid per-frame overhead
     if (frameNum % 5 !== 0) return false;
 
-    const memInfo = checkMemory();
+    // Cache memory result within the same 5-frame window
+    if (frameNum !== cachedFrameNum) {
+      cachedFrameNum = frameNum;
+      cachedMemInfo = checkMemory();
+    }
+
+    const memInfo = cachedMemInfo;
     if (!memInfo || memInfo.usagePercentage <= DYNAMIC_DECIMATION_MEM_THRESHOLD) {
       consecutiveMemWarnings = 0;
       return false;
