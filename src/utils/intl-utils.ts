@@ -74,16 +74,24 @@ export function updateDocumentLang(locale: Locale, dir: 'ltr' | 'rtl'): void {
 }
 
 /**
- * Format file size with locale-aware separators.
+ * Format file size with locale-aware separators and units.
  */
 export function formatFileSize(bytes: number, locale: Locale): string {
-  if (bytes === 0) return `${new Intl.NumberFormat(locale).format(0)} B`;
-  const units = ['B', 'KB', 'MB', 'GB'] as const;
+  if (bytes === 0) return `${new Intl.NumberFormat(locale).format(0)} ${fileUnit(0, locale)}`;
   const k = 1024;
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), units.length - 1);
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), 3);
   const value = bytes / k ** i;
-  const unit = units[i] ?? 'B';
-  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: i === 0 ? 0 : 2 }).format(value)} ${unit}`;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: i === 0 ? 0 : 2 }).format(value)} ${fileUnit(i, locale)}`;
+}
+
+const FILE_UNITS: Record<string, readonly string[]> = {
+  en: ['B', 'KB', 'MB', 'GB'],
+  ko: ['바이트', 'KB', 'MB', 'GB'],
+};
+
+function fileUnit(index: number, locale: Locale): string {
+  const units = FILE_UNITS[locale] ?? FILE_UNITS['en']!;
+  return units[index] ?? 'B';
 }
 
 /**
@@ -94,13 +102,25 @@ export function formatFileSize(bytes: number, locale: Locale): string {
  * @param locale - BCP 47 locale identifier
  */
 export function formatDuration(ms: number, locale: Locale): string {
-  if (ms < 1000) return `${new Intl.NumberFormat(locale).format(Math.round(ms))}ms`;
+  const units = DURATION_UNITS[locale] ?? DURATION_UNITS['en']!;
+  if (ms < 1000) return `${new Intl.NumberFormat(locale).format(Math.round(ms))}${units.ms}`;
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  if (minutes > 0) return `${minutes}${units.min} ${seconds}${units.sec}`;
+  return `${(ms / 1000).toFixed(1)}${units.sec}`;
 }
+
+interface DurationUnits {
+  readonly ms: string;
+  readonly sec: string;
+  readonly min: string;
+}
+
+const DURATION_UNITS: Record<string, DurationUnits> = {
+  en: { ms: 'ms', sec: 's', min: 'm' },
+  ko: { ms: 'ms', sec: '초', min: '분' },
+};
 
 /**
  * Format number with locale-aware grouping.
