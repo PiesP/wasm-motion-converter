@@ -37,11 +37,7 @@ const getInitialConversionSettings = (): ConversionSettings => {
     if (stored) {
       const parsed: unknown = JSON.parse(stored);
       // Type guard: ensure parsed is a non-null object before accessing properties
-      if (
-        typeof parsed !== 'object' ||
-        parsed === null ||
-        Array.isArray(parsed)
-      ) {
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         return DEFAULT_CONVERSION_SETTINGS;
       }
       const obj = parsed as Record<string, unknown>;
@@ -57,8 +53,7 @@ const getInitialConversionSettings = (): ConversionSettings => {
       ) {
         const trimStart =
           typeof obj.trimStart === 'number' && obj.trimStart >= 0 ? obj.trimStart : 0;
-        const trimEnd =
-          typeof obj.trimEnd === 'number' && obj.trimEnd >= 0 ? obj.trimEnd : 0;
+        const trimEnd = typeof obj.trimEnd === 'number' && obj.trimEnd >= 0 ? obj.trimEnd : 0;
         return {
           ...DEFAULT_CONVERSION_SETTINGS,
           format: obj.format,
