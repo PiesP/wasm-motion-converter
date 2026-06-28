@@ -154,7 +154,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         <Show when={previewUrl()}>
           <img
             src={previewUrl()!}
-            alt="Converted animation"
+            alt={`${outputExtension().toUpperCase()} preview: ${downloadFileName()}`}
             class="w-full h-auto max-h-[70vh] object-contain rounded transition-opacity duration-300 opacity-100"
             onLoad={handlePreviewLoad}
             onError={handlePreviewError}

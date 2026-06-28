@@ -144,7 +144,7 @@ const App: Component = () => {
     const el = document.createElement('div');
     el.id = 'app-state';
     el.setAttribute('role', 'status');
-    el.setAttribute('aria-hidden', 'true');
+    el.setAttribute('aria-live', 'polite');
     el.style.cssText =
       'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0';
     document.body.appendChild(el);

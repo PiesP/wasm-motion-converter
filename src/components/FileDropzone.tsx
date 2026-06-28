@@ -327,7 +327,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 onChange={handleFileInput}
                 disabled={local.disabled}
                 tabIndex={-1}
-                aria-hidden="true"
+                aria-label={t('dropzone.selectFile')}
                 data-testid="file-input"
               />
             </div>

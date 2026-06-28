@@ -347,10 +347,6 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         tabIndex={props.disabled ? -1 : 0}
         role="group"
         aria-label={t('trim.range')}
-        aria-valuemin={0}
-        aria-valuemax={props.duration}
-        aria-valuenow={effectiveEnd() - props.trimStart}
-        aria-valuetext={`${formatTime(props.trimStart)} to ${formatTime(effectiveEnd())}, ${trimDuration().toFixed(1)}s selected`}
         aria-disabled={!!props.disabled}
       >
         <div

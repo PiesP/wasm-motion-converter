@@ -69,7 +69,8 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     <Panel
       class="relative border-l-4 border-red-500/60 p-4 bg-[#191a1b] rounded-lg"
       role="alert"
-      ariaLive="assertive"
+      aria-live="assertive"
+      aria-atomic="true"
       data-testid="error-display"
     >
       <Show when={local.onDismiss}>
