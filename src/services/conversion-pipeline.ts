@@ -242,261 +242,261 @@ async function _runPipelineInner(
     };
 
     profiler.startPhase('demuxing');
-  let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
-  const demuxProgressThrottled = throttled.callback;
-  try {
-    demuxResult = await demuxVideo(request, (packetsExtracted, estimatedTotalFrames) => {
-      if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-      profiler.updatePhase('demuxing', packetsExtracted);
-      const memMB = sampleMemory();
-      const elapsedMs = Math.round(performance.now() - pipelineStart);
-      const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalFrames) * 10));
-      demuxProgressThrottled({
-        phase: 'demuxing',
-        progress: demuxPct,
-        fps: 0,
-        etaSeconds: null,
-        memoryMB: memMB,
-        currentFrame: packetsExtracted,
-        totalFrames: 0,
-        elapsedMs,
+    let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
+    const demuxProgressThrottled = throttled.callback;
+    try {
+      demuxResult = await demuxVideo(request, (packetsExtracted, estimatedTotalFrames) => {
+        if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+        profiler.updatePhase('demuxing', packetsExtracted);
+        const memMB = sampleMemory();
+        const elapsedMs = Math.round(performance.now() - pipelineStart);
+        const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalFrames) * 10));
+        demuxProgressThrottled({
+          phase: 'demuxing',
+          progress: demuxPct,
+          fps: 0,
+          etaSeconds: null,
+          memoryMB: memMB,
+          currentFrame: packetsExtracted,
+          totalFrames: 0,
+          elapsedMs,
+        });
       });
-    });
-  } catch (err) {
-    logger.error('conversion', 'Demux failed', {
-      fileName: request.fileName,
-      format: request.format,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
+    } catch (err) {
+      logger.error('conversion', 'Demux failed', {
+        fileName: request.fileName,
+        format: request.format,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
 
-  if (signal?.aborted) {
-    logger.info('conversion', 'Conversion aborted after demux');
-    throw new DOMException('Cancelled', 'AbortError');
-  }
+    if (signal?.aborted) {
+      logger.info('conversion', 'Conversion aborted after demux');
+      throw new DOMException('Cancelled', 'AbortError');
+    }
 
-  const cfg = demuxResult.config as MediabunnyVideoDecoderConfig;
-  // Prioritize codedWidth/codedHeight — these are the actual pixel dimensions
-  // from the VideoDecoderConfig and are always present for valid configs.
-  // displayAspectWidth/Height are only used as fallbacks when coded dimensions
-  // are unavailable (extremely rare, indicates a malformed config).
-  const codedWidth = demuxResult.config.codedWidth ?? cfg.displayAspectWidth ?? cfg.displayWidth;
-  const codedHeight =
-    demuxResult.config.codedHeight ?? cfg.displayAspectHeight ?? cfg.displayHeight;
-  if (!codedWidth || !codedHeight) throw new Error('Unable to determine video dimensions');
+    const cfg = demuxResult.config as MediabunnyVideoDecoderConfig;
+    // Prioritize codedWidth/codedHeight — these are the actual pixel dimensions
+    // from the VideoDecoderConfig and are always present for valid configs.
+    // displayAspectWidth/Height are only used as fallbacks when coded dimensions
+    // are unavailable (extremely rare, indicates a malformed config).
+    const codedWidth = demuxResult.config.codedWidth ?? cfg.displayAspectWidth ?? cfg.displayWidth;
+    const codedHeight =
+      demuxResult.config.codedHeight ?? cfg.displayAspectHeight ?? cfg.displayHeight;
+    if (!codedWidth || !codedHeight) throw new Error('Unable to determine video dimensions');
 
-  profiler.endPhase('demuxing', { frames: demuxResult.totalFrames });
+    profiler.endPhase('demuxing', { frames: demuxResult.totalFrames });
 
-  const demuxElapsedMs = performance.now() - pipelineStart;
-  const demuxMemMB = sampleMemory();
-  onProgress({
-    phase: 'demuxing',
-    progress: 10,
-    fps: 0,
-    etaSeconds: null,
-    memoryMB: demuxMemMB,
-    currentFrame: demuxResult.totalFrames,
-    totalFrames: demuxResult.totalFrames,
-    elapsedMs: Math.round(demuxElapsedMs),
-  });
-
-  // ── Decode + Encode Phase (10~90%) ──
-  let output: ArrayBuffer;
-  let encodeResult: { frames: number; outputBytes: number } | null = null;
-
-  // Track frame times for FPS calculation
-  // Progress callback fires every ~10 frames (throttled in decoder-service),
-  // so we count actual frames and compute FPS over the interval.
-  const fpsTracker = { current: 0, lastTime: performance.now(), lastFrame: 0 };
-
-  const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
-    const now = performance.now();
-    const deltaMs = now - fpsTracker.lastTime;
-    const framesDelta = frameIdx - fpsTracker.lastFrame;
-    fpsTracker.current =
-      deltaMs > 0 && framesDelta > 0 ? Math.round(((framesDelta * 1000) / deltaMs) * 10) / 10 : 0;
-    fpsTracker.lastTime = now;
-    fpsTracker.lastFrame = frameIdx;
-    const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
-    throttled.callback({
-      phase: 'decoding',
-      progress: 10 + Math.min(40, decodePct),
-      fps: fpsTracker.current,
+    const demuxElapsedMs = performance.now() - pipelineStart;
+    const demuxMemMB = sampleMemory();
+    onProgress({
+      phase: 'demuxing',
+      progress: 10,
+      fps: 0,
       etaSeconds: null,
-      memoryMB: sampleMemory(),
-      currentFrame: frameIdx,
-      totalFrames,
-      elapsedMs: Math.round(now - pipelineStart),
-    });
-  };
-
-  profiler.startPhase('decoding');
-  profiler.startPhase('encoding');
-
-  const sourceFps =
-    demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
-
-  let decimationRatio = 1;
-
-  if (request.format === 'gif') {
-    const gifDecimation = calcAutoDecimation(
-      sourceFps,
-      GIF_TARGET_FPS,
-      request.scale,
-      request.forceDecimation
-    );
-    decimationRatio = gifDecimation;
-
-    logger.info('conversion', '  ├─ Branch: GIF encoder (streaming decode→encode)', {
-      codec: demuxResult.config.codec,
-      codedWidth: demuxResult.config.codedWidth,
-      codedHeight: demuxResult.config.codedHeight,
+      memoryMB: demuxMemMB,
+      currentFrame: demuxResult.totalFrames,
       totalFrames: demuxResult.totalFrames,
-      sourceFps: Math.round(sourceFps),
-      gifDecimation,
+      elapsedMs: Math.round(demuxElapsedMs),
     });
 
-    let gifEncodeFrames = 0;
-    output = (
-      await encodeGif(
+    // ── Decode + Encode Phase (10~90%) ──
+    let output: ArrayBuffer;
+    let encodeResult: { frames: number; outputBytes: number } | null = null;
+
+    // Track frame times for FPS calculation
+    // Progress callback fires every ~10 frames (throttled in decoder-service),
+    // so we count actual frames and compute FPS over the interval.
+    const fpsTracker = { current: 0, lastTime: performance.now(), lastFrame: 0 };
+
+    const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
+      const now = performance.now();
+      const deltaMs = now - fpsTracker.lastTime;
+      const framesDelta = frameIdx - fpsTracker.lastFrame;
+      fpsTracker.current =
+        deltaMs > 0 && framesDelta > 0 ? Math.round(((framesDelta * 1000) / deltaMs) * 10) / 10 : 0;
+      fpsTracker.lastTime = now;
+      fpsTracker.lastFrame = frameIdx;
+      const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
+      throttled.callback({
+        phase: 'decoding',
+        progress: 10 + Math.min(40, decodePct),
+        fps: fpsTracker.current,
+        etaSeconds: null,
+        memoryMB: sampleMemory(),
+        currentFrame: frameIdx,
+        totalFrames,
+        elapsedMs: Math.round(now - pipelineStart),
+      });
+    };
+
+    profiler.startPhase('decoding');
+    profiler.startPhase('encoding');
+
+    const sourceFps =
+      demuxResult.duration > 0 ? demuxResult.totalFrames / demuxResult.duration : DEFAULT_FPS;
+
+    let decimationRatio = 1;
+
+    if (request.format === 'gif') {
+      const gifDecimation = calcAutoDecimation(
+        sourceFps,
+        GIF_TARGET_FPS,
+        request.scale,
+        request.forceDecimation
+      );
+      decimationRatio = gifDecimation;
+
+      logger.info('conversion', '  ├─ Branch: GIF encoder (streaming decode→encode)', {
+        codec: demuxResult.config.codec,
+        codedWidth: demuxResult.config.codedWidth,
+        codedHeight: demuxResult.config.codedHeight,
+        totalFrames: demuxResult.totalFrames,
+        sourceFps: Math.round(sourceFps),
+        gifDecimation,
+      });
+
+      let gifEncodeFrames = 0;
+      output = (
+        await encodeGif(
+          demuxResult,
+          {
+            width: codedWidth,
+            height: codedHeight,
+            quality: request.quality,
+            scale: request.scale,
+            frameDecimation: gifDecimation,
+            onFrameDecoded: decodeProgressCb,
+            onFrameEncoded: (frameIdx: number, totalFrames: number) => {
+              gifEncodeFrames = frameIdx;
+              const encodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
+              throttled.callback({
+                phase: 'encoding',
+                progress: 50 + Math.min(40, encodePct),
+                fps: fpsTracker.current,
+                etaSeconds: null,
+                memoryMB: sampleMemory(),
+                currentFrame: frameIdx,
+                totalFrames,
+                elapsedMs: Math.round(performance.now() - pipelineStart),
+              });
+            },
+          },
+          signal
+        )
+      ).buffer as ArrayBuffer;
+      encodeResult = {
+        frames: gifEncodeFrames,
+        outputBytes: output.byteLength,
+      };
+    } else {
+      const webpDecimation = calcAutoDecimation(
+        sourceFps,
+        WEBP_TARGET_FPS[request.quality],
+        request.scale,
+        request.forceDecimation
+      );
+      decimationRatio = webpDecimation;
+
+      logger.info('conversion', '  ├─ Branch: WebP encoder (streaming encodeRGB + mux)', {
+        codec: demuxResult.config.codec,
+        codedWidth: demuxResult.config.codedWidth,
+        codedHeight: demuxResult.config.codedHeight,
+        totalFrames: demuxResult.totalFrames,
+        sourceFps: Math.round(sourceFps),
+        webpDecimation,
+      });
+
+      let encodedFrames = 0;
+      const encoded = await encodeWebp(
         demuxResult,
         {
           width: codedWidth,
           height: codedHeight,
           quality: request.quality,
           scale: request.scale,
-          frameDecimation: gifDecimation,
+          frameDecimation: webpDecimation,
           onFrameDecoded: decodeProgressCb,
-          onFrameEncoded: (frameIdx: number, totalFrames: number) => {
-            gifEncodeFrames = frameIdx;
-            const encodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
-            throttled.callback({
-              phase: 'encoding',
-              progress: 50 + Math.min(40, encodePct),
-              fps: fpsTracker.current,
-              etaSeconds: null,
-              memoryMB: sampleMemory(),
-              currentFrame: frameIdx,
-              totalFrames,
-              elapsedMs: Math.round(performance.now() - pipelineStart),
-            });
-          },
+        },
+        (p: { progress: number; currentFrame?: number }) => {
+          encodedFrames = p.currentFrame ?? encodedFrames;
+          const mappedProgress = 50 + Math.round(p.progress * 0.4);
+          throttled.callback({
+            phase: 'encoding',
+            progress: Math.min(90, mappedProgress),
+            fps: fpsTracker.current,
+            etaSeconds: null,
+            memoryMB: sampleMemory(),
+            currentFrame: p.currentFrame ?? 0,
+            totalFrames: demuxResult.totalFrames,
+            elapsedMs: Math.round(performance.now() - pipelineStart),
+          });
         },
         signal
-      )
-    ).buffer as ArrayBuffer;
-    encodeResult = {
-      frames: gifEncodeFrames,
-      outputBytes: output.byteLength,
-    };
-  } else {
-    const webpDecimation = calcAutoDecimation(
-      sourceFps,
-      WEBP_TARGET_FPS[request.quality],
-      request.scale,
-      request.forceDecimation
-    );
-    decimationRatio = webpDecimation;
+      );
+      output = encoded.buffer as ArrayBuffer;
+      encodeResult = {
+        frames: encodedFrames,
+        outputBytes: output.byteLength,
+      };
+    }
 
-    logger.info('conversion', '  ├─ Branch: WebP encoder (streaming encodeRGB + mux)', {
-      codec: demuxResult.config.codec,
-      codedWidth: demuxResult.config.codedWidth,
-      codedHeight: demuxResult.config.codedHeight,
+    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+
+    profiler.endPhase('decoding');
+    profiler.endPhase('encoding', encodeResult);
+
+    // ── Assembly Phase (90~100%) ──
+    profiler.startPhase('assembling');
+
+    // Clear buffer pool after conversion
+    globalBufferPool.clear();
+
+    const memMB = sampleMemory();
+    const totalElapsedMs = Math.round(performance.now() - pipelineStart);
+    const outputFrames = Math.max(1, Math.round(demuxResult.totalFrames / decimationRatio));
+    onProgress({
+      phase: 'assembling',
+      progress: 95,
+      fps: 0,
+      etaSeconds: 0,
+      memoryMB: memMB,
+      currentFrame: demuxResult.totalFrames,
       totalFrames: demuxResult.totalFrames,
-      sourceFps: Math.round(sourceFps),
-      webpDecimation,
+      outputFrames,
+      elapsedMs: totalElapsedMs,
+    });
+    onProgress({
+      phase: 'assembling',
+      progress: 100,
+      fps: 0,
+      etaSeconds: 0,
+      memoryMB: memMB,
+      currentFrame: demuxResult.totalFrames,
+      totalFrames: demuxResult.totalFrames,
+      outputFrames,
+      elapsedMs: totalElapsedMs,
     });
 
-    let encodedFrames = 0;
-    const encoded = await encodeWebp(
-      demuxResult,
-      {
-        width: codedWidth,
-        height: codedHeight,
-        quality: request.quality,
-        scale: request.scale,
-        frameDecimation: webpDecimation,
-        onFrameDecoded: decodeProgressCb,
-      },
-      (p: { progress: number; currentFrame?: number }) => {
-        encodedFrames = p.currentFrame ?? encodedFrames;
-        const mappedProgress = 50 + Math.round(p.progress * 0.4);
-        throttled.callback({
-          phase: 'encoding',
-          progress: Math.min(90, mappedProgress),
-          fps: fpsTracker.current,
-          etaSeconds: null,
-          memoryMB: sampleMemory(),
-          currentFrame: p.currentFrame ?? 0,
-          totalFrames: demuxResult.totalFrames,
-          elapsedMs: Math.round(performance.now() - pipelineStart),
-        });
-      },
-      signal
-    );
-    output = encoded.buffer as ArrayBuffer;
-    encodeResult = {
-      frames: encodedFrames,
+    profiler.endPhase('assembling');
+
+    // ── Profile Report ──
+    const profileReport = profiler.finish();
+    logger.performance('Pipeline profile', profileReport);
+    logger.info('conversion', `◀ Pipeline complete: ${profileReport.summary}`, {
+      format: request.format,
+      quality: request.quality,
+      scale: request.scale,
+      totalFrames: demuxResult.totalFrames,
       outputBytes: output.byteLength,
-    };
-  }
+      duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
+      peakMemoryMB: profileReport.heapPeakMB,
+      bottleneck: profileReport.bottleneck,
+      phaseTimePct: profileReport.phaseTimePct,
+    });
 
-  if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-
-  profiler.endPhase('decoding');
-  profiler.endPhase('encoding', encodeResult);
-
-  // ── Assembly Phase (90~100%) ──
-  profiler.startPhase('assembling');
-
-  // Clear buffer pool after conversion
-  globalBufferPool.clear();
-
-  const memMB = sampleMemory();
-  const totalElapsedMs = Math.round(performance.now() - pipelineStart);
-  const outputFrames = Math.max(1, Math.round(demuxResult.totalFrames / decimationRatio));
-  onProgress({
-    phase: 'assembling',
-    progress: 95,
-    fps: 0,
-    etaSeconds: 0,
-    memoryMB: memMB,
-    currentFrame: demuxResult.totalFrames,
-    totalFrames: demuxResult.totalFrames,
-    outputFrames,
-    elapsedMs: totalElapsedMs,
-  });
-  onProgress({
-    phase: 'assembling',
-    progress: 100,
-    fps: 0,
-    etaSeconds: 0,
-    memoryMB: memMB,
-    currentFrame: demuxResult.totalFrames,
-    totalFrames: demuxResult.totalFrames,
-    outputFrames,
-    elapsedMs: totalElapsedMs,
-  });
-
-  profiler.endPhase('assembling');
-
-  // ── Profile Report ──
-  const profileReport = profiler.finish();
-  logger.performance('Pipeline profile', profileReport);
-  logger.info('conversion', `◀ Pipeline complete: ${profileReport.summary}`, {
-    format: request.format,
-    quality: request.quality,
-    scale: request.scale,
-    totalFrames: demuxResult.totalFrames,
-    outputBytes: output.byteLength,
-    duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
-    peakMemoryMB: profileReport.heapPeakMB,
-    bottleneck: profileReport.bottleneck,
-    phaseTimePct: profileReport.phaseTimePct,
-  });
-
-  return output;
+    return output;
   } finally {
     throttled.cleanup();
     globalBufferPool.clear();
