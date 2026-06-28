@@ -79,7 +79,9 @@ export async function handleFileSelected(
   setVideoPreviewUrl(URL.createObjectURL(file));
 
   try {
-    const metadata = await extractVideoMetadata(buffer, DEFAULT_FPS);
+    // Pass a copy of the buffer to extractVideoMetadata so the original
+    // stays intact (mediabunny's BufferSource may detach the buffer on dispose).
+    const metadata = await extractVideoMetadata(buffer.slice(0), DEFAULT_FPS);
     if (isStale()) return;
 
     // Store buffer only after successful metadata extraction so performConversion can reuse it

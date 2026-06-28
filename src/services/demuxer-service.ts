@@ -26,8 +26,10 @@ export async function demuxVideo(
 ): Promise<DemuxResult> {
   const startTime = performance.now();
 
-  // Extract metadata (also validates the video track exists and config is obtainable)
-  const metadata = await extractVideoMetadata(request.inputBuffer);
+  // Extract metadata (also validates the video track exists and config is obtainable).
+  // Pass a copy so the original buffer stays intact for demuxing below —
+  // mediabunny's BufferSource may detach the buffer on dispose.
+  const metadata = await extractVideoMetadata(request.inputBuffer.slice(0));
   if (!metadata.config) {
     throw new Error('Unable to obtain VideoDecoderConfig from video track');
   }

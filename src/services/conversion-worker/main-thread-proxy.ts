@@ -191,6 +191,11 @@ export async function runPipelineWithFallback(
   onProgress: MainThreadPipelineCallback,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
+  // Keep a copy of the buffer in case the worker path fails and the main-thread
+  // fallback needs it. Transferring inputBuffer to the worker detaches it on the
+  // main thread, so we cannot reuse it after the postMessage call.
+  const fallbackBuffer = inputBuffer.slice(0);
+
   try {
     return await runPipelineViaWorker(inputBuffer, config, options, onProgress, signal);
   } catch (workerError) {
@@ -205,10 +210,9 @@ export async function runPipelineWithFallback(
     // Dynamic import to avoid circular dependencies
     const { runConversionPipeline } = await import('../conversion-pipeline.js');
 
-    // We need to reconstruct a full ConversionRequest for the main thread pipeline
-    // This is a simplified version — the worker path should handle most cases
+    // Use the preserved copy of the buffer (the original was transferred to the worker)
     const request = {
-      inputBuffer,
+      inputBuffer: fallbackBuffer,
       fileName: 'input.webm',
       format: options.format,
       quality: options.quality,
