@@ -300,9 +300,13 @@ async function _runPipelineInnerBody(
   }
 
   const cfg = demuxResult.config as MediabunnyVideoDecoderConfig;
-  const codedWidth = cfg.displayAspectWidth ?? cfg.displayWidth ?? demuxResult.config.codedWidth;
+  // Prioritize codedWidth/codedHeight — these are the actual pixel dimensions
+  // from the VideoDecoderConfig and are always present for valid configs.
+  // displayAspectWidth/Height are only used as fallbacks when coded dimensions
+  // are unavailable (extremely rare, indicates a malformed config).
+  const codedWidth = demuxResult.config.codedWidth ?? cfg.displayAspectWidth ?? cfg.displayWidth;
   const codedHeight =
-    cfg.displayAspectHeight ?? cfg.displayHeight ?? demuxResult.config.codedHeight;
+    demuxResult.config.codedHeight ?? cfg.displayAspectHeight ?? cfg.displayHeight;
   if (!codedWidth || !codedHeight) throw new Error('Unable to determine video dimensions');
 
   profiler.endPhase('demuxing', { frames: demuxResult.totalFrames });
