@@ -370,28 +370,47 @@ interface CachedConfig {
 }
 
 const CONFIG_CACHE_MAX_SIZE = 20;
-const configCache = new Map<string, CachedConfig>();
+
+/**
+ * LRU-evicting cache for VideoDecoder config support checks.
+ * Map iteration order is insertion order in JS, so deleting + re-inserting
+ * an existing key moves it to the most-recently-used position.
+ */
+class LruConfigCache {
+  private cache = new Map<string, CachedConfig>();
+
+  get(key: string): CachedConfig | undefined {
+    const entry = this.cache.get(key);
+    if (entry) {
+      // Move to most-recently-used position
+      this.cache.delete(key);
+      this.cache.set(key, entry);
+    }
+    return entry;
+  }
+
+  set(key: string, value: CachedConfig): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= CONFIG_CACHE_MAX_SIZE) {
+      // Evict the oldest (first) entry
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      }
+    }
+    this.cache.set(key, value);
+  }
+
+  has(key: string): boolean {
+    return this.cache.get(key) !== undefined;
+  }
+}
+
+const configCache = new LruConfigCache();
 
 function configCacheKey(cfg: VideoDecoderConfig): string {
   return `${cfg.codec}-${cfg.codedWidth}x${cfg.codedHeight}-${cfg.hardwareAcceleration ?? 'default'}`;
-}
-
-/**
- * LRU-evicting set for configCache.
- * Map iteration order is insertion order in JS, so deleting + re-inserting
- * an existing key moves it to the end (most-recently-used).
- */
-function cacheSet(key: string, value: CachedConfig): void {
-  if (configCache.has(key)) {
-    configCache.delete(key);
-  } else if (configCache.size >= CONFIG_CACHE_MAX_SIZE) {
-    // Evict the oldest (first) entry
-    const oldestKey = configCache.keys().next().value;
-    if (oldestKey !== undefined) {
-      configCache.delete(oldestKey);
-    }
-  }
-  configCache.set(key, value);
 }
 
 async function resolveDecoderConfig(
@@ -409,10 +428,7 @@ async function resolveDecoderConfig(
     // Check HW support with a HW-specific config
     const hwConfig = { ...baseConfig, hardwareAcceleration: 'prefer-hardware' as const };
     const hwSupport = await VideoDecoder.isConfigSupported(hwConfig);
-    cacheSet(key, { config: baseConfig, hwSupported: hwSupport.supported === true });
-  } else {
-    // Move to most-recently-used position
-    cacheSet(key, cached);
+    configCache.set(key, { config: baseConfig, hwSupported: hwSupport.supported === true });
   }
 
   const finalCached = configCache.get(key)!;

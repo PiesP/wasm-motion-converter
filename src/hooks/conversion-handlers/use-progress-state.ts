@@ -32,19 +32,28 @@ type ParsedStatusCounter = {
 } | null;
 
 const parseStatusCounter = (status: string): ParsedStatusCounter => {
-  const match = status.match(/^(.*)\s+\((\d+)\s*\/\s*(\d+)\)\s*$/);
-  if (!match) {
-    return null;
-  }
+  // Match pattern: "prefix (N/M)" at end of string
+  // Use lastIndexOf to find the final " (" which precedes the counter
+  const openParen = status.lastIndexOf(' (');
+  if (openParen < 0) return null;
 
-  const prefix = (match[1] ?? '').trim();
-  const current = Number.parseInt(match[2] ?? '0', 10);
-  const total = Number.parseInt(match[3] ?? '0', 10);
+  const closeParen = status.indexOf(')', openParen);
+  if (closeParen < 0) return null;
+
+  const counter = status.slice(openParen + 2, closeParen);
+  const slashIdx = counter.indexOf('/');
+  if (slashIdx < 0) return null;
+
+  const currentStr = counter.slice(0, slashIdx).trim();
+  const totalStr = counter.slice(slashIdx + 1).trim();
+  const current = Number.parseInt(currentStr, 10);
+  const total = Number.parseInt(totalStr, 10);
 
   if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
     return null;
   }
 
+  const prefix = status.slice(0, openParen).trim();
   return { prefix, current, total };
 };
 

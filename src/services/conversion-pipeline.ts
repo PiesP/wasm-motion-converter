@@ -46,11 +46,13 @@ interface Profiler {
   getLastReport(): ConversionProfileReport | null;
 }
 
-let _noopReport: ConversionProfileReport | null = null;
-
-function getNoopReport(): ConversionProfileReport {
-  if (!_noopReport) {
-    _noopReport = {
+const createNoopProfiler = (): Profiler => ({
+  start() {},
+  startPhase() {},
+  updatePhase() {},
+  endPhase() {},
+  finish() {
+    return {
       totalDurationMs: 0,
       heapStartMB: 0,
       heapEndMB: 0,
@@ -60,20 +62,9 @@ function getNoopReport(): ConversionProfileReport {
       bottleneck: 'demuxing',
       summary: '[profiler disabled in production]',
     };
-  }
-  return _noopReport;
-}
-
-const createNoopProfiler = (): Profiler => ({
-  start() {},
-  startPhase() {},
-  updatePhase() {},
-  endPhase() {},
-  finish() {
-    return getNoopReport();
   },
   getReport() {
-    return getNoopReport();
+    return this.finish();
   },
   getLastReport() {
     return null;
@@ -111,8 +102,11 @@ export function getLastConversionProfiler(): Profiler | null {
  * minimum interval between onProgress calls. Without throttling, the encode
  * progress callbacks fire on every frame (30+/sec), causing excessive SolidJS
  * signal writes and re-renders during conversion.
+ *
+ * Extracted as a standalone utility so it can be reused by any long-running
+ * async operation that needs to throttle progress updates.
  */
-function createThrottledProgress(
+export function createThrottledProgress(
   onProgress: ProgressCallback,
   minIntervalMs = 100
 ): { callback: ProgressCallback; cleanup: () => void } {

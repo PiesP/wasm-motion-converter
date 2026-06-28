@@ -27,15 +27,35 @@ export interface DynamicDecimationController {
   getSkipCount(): number;
 }
 
-export function createDynamicDecimationController(): DynamicDecimationController {
+export interface DecimationMemoryInfo {
+  usagePercentage: number;
+}
+
+/**
+ * Creates a DynamicDecimationController that monitors memory and skips frames
+ * under pressure. Reusable across any encoder that needs memory-adaptive frame
+ * skipping.
+ *
+ * @param memoryCheck - Function returning current memory usage percentage, or
+ *                      null if memory info is unavailable. Defaults to
+ *                      performance.memory-based check.
+ */
+export function createDynamicDecimationController(
+  memoryCheck?: () => DecimationMemoryInfo | null
+): DynamicDecimationController {
   let dynamicSkipCount = 0;
   let consecutiveMemWarnings = 0;
+
+  const checkMemory = memoryCheck ?? (() => {
+    const info = getMemoryInfo();
+    return info ? { usagePercentage: info.usagePercentage } : null;
+  });
 
   function shouldSkip(frameNum: number): boolean {
     // Check JS heap usage every 5 frames to avoid per-frame overhead
     if (frameNum % 5 !== 0) return false;
 
-    const memInfo = getMemoryInfo();
+    const memInfo = checkMemory();
     if (!memInfo || memInfo.usagePercentage <= DYNAMIC_DECIMATION_MEM_THRESHOLD) {
       consecutiveMemWarnings = 0;
       return false;

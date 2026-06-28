@@ -35,29 +35,38 @@ const getInitialConversionSettings = (): ConversionSettings => {
   try {
     const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored) as Partial<ConversionSettings>;
+      const parsed: unknown = JSON.parse(stored);
+      // Type guard: ensure parsed is a non-null object before accessing properties
       if (
-        parsed.format &&
-        isInTuple(parsed.format, CONVERSION_FORMATS) &&
-        parsed.quality &&
-        isInTuple(parsed.quality, CONVERSION_QUALITIES) &&
-        typeof parsed.scale === 'number' &&
-        isInTuple(parsed.scale, CONVERSION_SCALES) &&
-        parsed.smartFrameSkip &&
-        isInTuple(parsed.smartFrameSkip, SMART_FRAME_SKIP_MODES)
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
+        return DEFAULT_CONVERSION_SETTINGS;
+      }
+      const obj = parsed as Record<string, unknown>;
+      if (
+        typeof obj.format === 'string' &&
+        isInTuple(obj.format, CONVERSION_FORMATS) &&
+        typeof obj.quality === 'string' &&
+        isInTuple(obj.quality, CONVERSION_QUALITIES) &&
+        typeof obj.scale === 'number' &&
+        isInTuple(obj.scale, CONVERSION_SCALES) &&
+        typeof obj.smartFrameSkip === 'string' &&
+        isInTuple(obj.smartFrameSkip, SMART_FRAME_SKIP_MODES)
       ) {
         const trimStart =
-          typeof parsed.trimStart === 'number' && parsed.trimStart >= 0 ? parsed.trimStart : 0;
+          typeof obj.trimStart === 'number' && obj.trimStart >= 0 ? obj.trimStart : 0;
         const trimEnd =
-          typeof parsed.trimEnd === 'number' && parsed.trimEnd >= 0 ? parsed.trimEnd : 0;
+          typeof obj.trimEnd === 'number' && obj.trimEnd >= 0 ? obj.trimEnd : 0;
         return {
           ...DEFAULT_CONVERSION_SETTINGS,
-          format: parsed.format,
-          quality: parsed.quality,
-          scale: parsed.scale,
+          format: obj.format,
+          quality: obj.quality,
+          scale: obj.scale,
           trimStart,
           trimEnd,
-          smartFrameSkip: parsed.smartFrameSkip,
+          smartFrameSkip: obj.smartFrameSkip,
         };
       }
     }

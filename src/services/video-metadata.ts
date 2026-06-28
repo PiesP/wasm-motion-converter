@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { MediabunnyVideoDecoderConfig, VideoMetadata } from '@t/conversion-types';
+import { DEFAULT_FPS } from '@utils/constants';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 
 /**
@@ -11,13 +12,13 @@ import { createMediaBunnyInput } from '@utils/mediabunny-utils';
  * → getDecoderConfig() pipeline across demuxer-service and file-selected handler.
  *
  * @param buffer - The video file's ArrayBuffer
- * @param defaultFps - Fallback frame rate if not derivable from config (default: 30)
+ * @param defaultFps - Fallback frame rate if not derivable from config (default: DEFAULT_FPS)
  * @returns VideoMetadata including the VideoDecoderConfig for WebCodecs
  * @throws Error if no video track found or decoder config unavailable
  */
 export async function extractVideoMetadata(
   buffer: ArrayBuffer,
-  defaultFps = 30
+  defaultFps: number = DEFAULT_FPS
 ): Promise<VideoMetadata> {
   const input = createMediaBunnyInput(buffer);
 
