@@ -189,6 +189,8 @@ export async function encodeGif(
   let encodeIdx = 0;
   let splitFrames = 0;
   let totalInputFrames = 0;
+  /** Estimated total frames from demuxer — used for progress reporting only */
+  let estimatedTotalFrames = 0;
   let skippedByDecimation = 0;
   const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
 
@@ -252,7 +254,7 @@ export async function encodeGif(
         hwAccel: 'prefer-hardware',
         smartFrameSkip: opts.smartFrameSkip,
         onFrameDecoded: (_frameNum, total) => {
-          totalInputFrames = total;
+          estimatedTotalFrames = total;
           // Report decoding progress — throttle to every 10 frames
           if (opts.onFrameDecoded && (encodeIdx % 10 === 0 || encodeIdx === 0)) {
             opts.onFrameDecoded(encodeIdx, total);
@@ -324,7 +326,7 @@ export async function encodeGif(
 
           // Report encoding progress (50~90% range in pipeline)
           if (opts.onFrameEncoded) {
-            opts.onFrameEncoded(encodeIdx, totalInputFrames);
+            opts.onFrameEncoded(encodeIdx, estimatedTotalFrames);
           }
 
           encodeIdx++;
