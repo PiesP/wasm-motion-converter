@@ -37,7 +37,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
     <div
       class="bg-[#191a1b] border-l-4 border-amber-500/60 rounded-lg p-4"
       role="alert"
-      aria-live="assertive"
+      aria-live="polite"
       aria-atomic="true"
       data-testid="memory-warning"
     >

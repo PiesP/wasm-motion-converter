@@ -127,7 +127,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       tabIndex={0}
       aria-label={ariaLabel()}
       aria-busy={isBusy()}
-      role="region"
+      role="button"
       data-testid="dropzone"
     >
       {/* Cancel button — fixed top-right during conversion (아이디어 5) */}

@@ -345,7 +345,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           }
         }}
         tabIndex={props.disabled ? -1 : 0}
-        role="slider"
+        role="group"
         aria-label={t('trim.range')}
         aria-valuemin={0}
         aria-valuemax={props.duration}
