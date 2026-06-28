@@ -214,13 +214,25 @@ export async function encodeGif(
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController();
 
+  // Cache for applyPalette reuse: store reference to the last RGBA data quantized.
+  // If the same data is passed again (e.g., re-quantization after a pool release/reacquire),
+  // we can skip re-quantization. This also avoids redundant work for split frames.
+  let lastQuantizedData: Uint8Array | null = null;
+  let lastIndexedData: Uint8Array | null = null;
+
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     const pal = globalPalette;
     if (!pal) return;
     // Quantize once — applyPalette allocates ~2MB per call at 1080p.
-    // For split frames (delay > MAX_FRAME_DELAY_CS), reuse the same indexed data
-    // instead of re-quantizing for each chunk.
-    const indexed = applyPalette(rgbData, pal, 'rgb565');
+    // Reuse the cached indexed data if the source data hasn't changed.
+    let indexed: Uint8Array;
+    if (lastQuantizedData === rgbData && lastIndexedData) {
+      indexed = lastIndexedData;
+    } else {
+      indexed = applyPalette(rgbData, pal, 'rgb565');
+      lastQuantizedData = rgbData;
+      lastIndexedData = indexed;
+    }
     const requiredSize = indexed.length;
     if (!indexedBuffer || indexedBuffer.length < requiredSize) {
       if (indexedBuffer) globalBufferPool.release(indexedBuffer);
@@ -325,6 +337,11 @@ export async function encodeGif(
 
           writeFrameWithDelay(rgba, delay);
           // Release RGBA buffer after encoding
+          // Invalidate cache since this buffer may be reused by the pool
+          if (lastQuantizedData === rgba) {
+            lastQuantizedData = null;
+            lastIndexedData = null;
+          }
           globalBufferPool.release(rgba);
 
           // Report encoding progress (50~90% range in pipeline)

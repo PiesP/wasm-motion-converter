@@ -195,8 +195,9 @@ export async function decodeFrames(
                   noiseFloorSamples.push(dist);
                   if (noiseFloorSamples.length === NOISE_SAMPLE_COUNT) {
                     // Use median as noise floor, scaled by factor k=3.5
-                    const sorted = [...noiseFloorSamples].sort((a, b) => a - b);
-                    const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+                    // Sort in-place to avoid per-call array allocation
+                    noiseFloorSamples.sort((a, b) => a - b);
+                    const median = noiseFloorSamples[Math.floor(noiseFloorSamples.length / 2)] ?? 0;
                     noiseFloor = median * 3.5;
                   }
                 }
