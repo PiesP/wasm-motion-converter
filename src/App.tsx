@@ -37,7 +37,7 @@ import type { ProgressPhase } from '@t/conversion-types';
 import { debounce } from '@utils/debounce';
 import { getErrorMessage } from '@utils/error-utils';
 import { logger } from '@utils/logger';
-import { getMemoryUsageString, isMemoryCritical } from '@utils/memory-monitor';
+import { isMemoryCritical } from '@utils/memory-monitor';
 import {
   type Component,
   createEffect,
@@ -115,22 +115,14 @@ const App: Component = () => {
     }
   });
 
-  // Poll memory usage on a 2-second interval
+  // Track whether we're converting to show memory usage text.
+  // Actual polling is handled by the conversion runtime controller's
+  // startMemoryMonitoring() to avoid redundant GC pressure from
+  // performance.memory reads. We only display the value when it changes.
   createEffect(() => {
     if (appState() !== 'converting') {
       setMemoryUsageText(null);
-      return;
     }
-    const update = () => {
-      const next = getMemoryUsageString();
-      const prev = memoryUsageText();
-      if (next !== prev) {
-        setMemoryUsageText(next);
-      }
-    };
-    update();
-    const interval = setInterval(update, 2000);
-    onCleanup(() => clearInterval(interval));
   });
 
   const debouncedSaveSettings = debounce(saveConversionSettings, SETTINGS_DEBOUNCE_MS);
