@@ -219,9 +219,10 @@ export class StreamingWebpMuxer {
     off = StreamingWebpMuxer.writeUint24(chunk, off, 0);
     off = StreamingWebpMuxer.writeUint24(chunk, off, 0);
 
-    // Frame Width, Height (value - 1 per WebP spec)
-    off = StreamingWebpMuxer.writeUint24(chunk, off, this.width > 1 ? this.width - 1 : 0);
-    off = StreamingWebpMuxer.writeUint24(chunk, off, this.height > 1 ? this.height - 1 : 0);
+    // Frame Width, Height (value - 1 per WebP spec; minimum 1px → value 0)
+    // Clamp to ≥1 before subtracting 1 to prevent underflow for 0-dimension edge case.
+    off = StreamingWebpMuxer.writeUint24(chunk, off, Math.max(0, this.width - 1));
+    off = StreamingWebpMuxer.writeUint24(chunk, off, Math.max(0, this.height - 1));
 
     // Frame Duration (ms) — clamped to 24-bit max (16,777,215ms ≈ 4.6 hours)
     // to prevent ANMF chunk overflow for very long videos

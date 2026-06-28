@@ -177,16 +177,33 @@ function rgbaToRGBFast(
   return dst;
 }
 
+// ─── Duration accumulation state ──────────────────────────────────
+// Track fractional duration remainders to prevent rounding drift.
+// E.g., at 30fps each frame is ~33.33ms. Rounding to 33ms loses 0.33ms/frame,
+// which accumulates to ~500ms over 1500 frames. We carry the fractional
+// remainder across frames so total timing matches source.
+let durationCarryUs = 0;
+
 /**
- * Get frame duration in milliseconds — preserves original timing.
+ * Get frame duration in milliseconds — preserves original timing by
+ * accumulating fractional remainders across frames to prevent drift.
+ *
  * No clamping: the original video frame duration is used as-is to maintain
  * accurate playback speed. Clamping is applied only at the output stage
  * when writing frames (see writeFrameWithDelay in gif-encoder-service).
  */
 export function getFrameDurationMs(frame: VideoFrame): number {
   const raw = frame.duration as number | null;
-  // VideoFrame.duration is in microseconds → convert to milliseconds
-  return raw != null && raw > 0 ? Math.max(1, Math.round(raw / 1000)) : 100;
+  if (raw == null || raw <= 0) {
+    durationCarryUs = 0;
+    return 100;
+  }
+  // Add any fractional remainder from previous frames
+  const totalUs = raw + durationCarryUs;
+  const ms = Math.round(totalUs / 1000);
+  // Save the sub-millisecond remainder for next frame
+  durationCarryUs = totalUs - ms * 1000;
+  return Math.max(1, ms);
 }
 
 // ─── dHash (Difference Hash) for Frame Similarity ──────────────────

@@ -115,8 +115,6 @@ export async function encodeWebp(
           throw new DOMException('Cancelled', 'AbortError');
         }
 
-        totalInputFrames = _frameNum;
-
         // ── Dynamic decimation based on memory pressure ──
         const shouldSkip = decimationController.shouldSkip(_frameNum);
 

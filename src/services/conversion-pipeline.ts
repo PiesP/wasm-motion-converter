@@ -199,11 +199,6 @@ export async function runConversionPipeline(
     import.meta.env.DEV && profilerModule ? createRealProfiler() : createNoopProfiler();
   profiler.start();
   activeProfilers.set(runId, profiler);
-  // Clean up old profilers (keep last 5)
-  if (activeProfilers.size > 5) {
-    const oldestKey = activeProfilers.keys().next().value!;
-    activeProfilers.delete(oldestKey);
-  }
 
   // Ensure profiler is removed from active map on completion or failure
   let output: ArrayBuffer;
@@ -211,6 +206,25 @@ export async function runConversionPipeline(
     output = await _runPipelineInner(request, onProgress, signal, pipelineStart, profiler);
   } finally {
     activeProfilers.delete(runId);
+  }
+
+  // Proactive cleanup: evict stale profilers from previous failed/aborted runs.
+  // Without this, profilers for crashed runs accumulate until the next successful
+  // conversion triggers the size-check above. Scan and remove any profiler whose
+  // report is already finished (indicating the run completed or failed).
+  if (activeProfilers.size > 5) {
+    for (const [key, p] of activeProfilers) {
+      // getLastReport() is non-null only after finish() has been called
+      if (p.getLastReport() !== null) {
+        activeProfilers.delete(key);
+      }
+    }
+    // Hard cap: if still over limit (all profilers are active), evict oldest
+    while (activeProfilers.size > 10) {
+      const oldestKey = activeProfilers.keys().next().value;
+      if (oldestKey === undefined) break;
+      activeProfilers.delete(oldestKey);
+    }
   }
 
   return output;

@@ -201,11 +201,13 @@ export async function encodeGif(
   let indexedBuffer: Uint8Array | null = null;
 
   // T2: Maximum delay per frame — prevents a single frame from displaying too long
-  const MAX_FRAME_DELAY = GIF_MAX_FRAME_DELAY_CS;
+  // gifenc's writeFrame delay is in centiseconds (cs), so convert from ms.
+  const MAX_FRAME_DELAY_CS = GIF_MAX_FRAME_DELAY_CS;
   // Minimum delay for the first frame — ensures it's visible to human eyes
-  const MIN_FIRST_FRAME_DELAY = GIF_MIN_FIRST_FRAME_DELAY_MS;
+  // Converted from ms to centiseconds (÷10) for gifenc API.
+  const MIN_FIRST_FRAME_DELAY_CS = Math.round(GIF_MIN_FIRST_FRAME_DELAY_MS / 10);
   // Minimum delay for any frame — frames shorter than this are perceptually instant
-  const MIN_FRAME_DELAY = GIF_MIN_FRAME_DELAY_MS;
+  const MIN_FRAME_DELAY_CS = Math.round(GIF_MIN_FRAME_DELAY_MS / 10);
 
   let accumulatedDuration = 0;
 
@@ -216,7 +218,7 @@ export async function encodeGif(
     const pal = globalPalette;
     if (!pal) return;
     // Quantize once — applyPalette allocates ~2MB per call at 1080p.
-    // For split frames (delay > MAX_FRAME_DELAY), reuse the same indexed data
+    // For split frames (delay > MAX_FRAME_DELAY_CS), reuse the same indexed data
     // instead of re-quantizing for each chunk.
     const indexed = applyPalette(rgbData, pal, 'rgb565');
     const requiredSize = indexed.length;
@@ -226,20 +228,21 @@ export async function encodeGif(
     }
     indexedBuffer.set(indexed);
 
-    let remaining = delayMs;
-    if (remaining <= MAX_FRAME_DELAY) {
-      encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: remaining });
-      outputTotalDelay += remaining;
+    // Convert ms → centiseconds for gifenc writeFrame API
+    let remainingCs = Math.round(delayMs / 10);
+    if (remainingCs <= MAX_FRAME_DELAY_CS) {
+      encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: remainingCs });
+      outputTotalDelay += remainingCs;
       return;
     }
     // Split long-delay frames into multiple writes with the same indexed data.
     // No re-quantization needed — the pixel content is identical.
-    while (remaining > 0) {
-      const chunk = Math.min(remaining, MAX_FRAME_DELAY);
+    while (remainingCs > 0) {
+      const chunk = Math.min(remainingCs, MAX_FRAME_DELAY_CS);
       encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: chunk });
       outputTotalDelay += chunk;
-      remaining -= chunk;
-      if (remaining > 0) splitFrames++;
+      remainingCs -= chunk;
+      if (remainingCs > 0) splitFrames++;
     }
   }
 
@@ -297,12 +300,12 @@ export async function encodeGif(
 
           const isFirstFrame = encodeIdx === 0;
 
-          // Apply minimum delays
+          // Apply minimum delays (in ms, will be converted to cs in writeFrameWithDelay)
           let delay: number;
           if (isFirstFrame) {
-            delay = Math.max(MIN_FIRST_FRAME_DELAY, totalDelayWithAccumulated);
+            delay = Math.max(GIF_MIN_FIRST_FRAME_DELAY_MS, totalDelayWithAccumulated);
           } else {
-            delay = Math.max(MIN_FRAME_DELAY, totalDelayWithAccumulated);
+            delay = Math.max(GIF_MIN_FRAME_DELAY_MS, totalDelayWithAccumulated);
           }
 
           // Bayer ordered dithering (applied to RGB buffer in-place)
@@ -361,8 +364,8 @@ export async function encodeGif(
       skippedByDecimation,
       splitFrames,
       sourceDurationMs: Math.round(sourceTotalMs),
-      outputDurationMs: Math.round(outputTotalDelay),
-      timingErrorMs: Math.round(outputTotalDelay - sourceTotalMs),
+      outputDurationCs: Math.round(outputTotalDelay),
+      timingErrorCs: Math.round(outputTotalDelay - Math.round(sourceTotalMs / 10)),
       dynamicSkipCount: decimationController.getSkipCount(),
     });
     logger.info('encoders', '  │  └─ GIF: encode finished', {
