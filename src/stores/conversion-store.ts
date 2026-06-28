@@ -56,17 +56,18 @@ export const [conversionResults, setConversionResults] = createSignal<Conversion
 export const [inputFile, setInputFile] = createSignal<File | null>(null);
 
 /**
- * Input buffer stored as a plain module-level variable (not a reactive signal)
- * to avoid unnecessary reactivity — the file content can be up to 500MB and
- * is only read once per conversion. Consumers access getInputBuffer() instead
- * of subscribing to a signal.
+ * Input buffer stored as a reactive signal. Although the buffer can be up to
+ * 500MB, Solid's signal provides predictable read/write semantics and
+ * integrates with the reactive system — callers that need the buffer
+ * subscribe via getInputBuffer() if they want reactivity, or read it directly
+ * via getInputBuffer() for one-shot access during conversion.
  */
-let _inputBuffer: ArrayBuffer | null = null;
+const [inputBuffer, setInputBufferSignal] = createSignal<ArrayBuffer | null>(null);
 export function getInputBuffer(): ArrayBuffer | null {
-  return _inputBuffer;
+  return inputBuffer();
 }
 export function setInputBuffer(buffer: ArrayBuffer | null): void {
-  _inputBuffer = buffer;
+  setInputBufferSignal(buffer);
 }
 
 export const [videoMetadata, setVideoMetadata] = createSignal<VideoMetadata | null>(null);
