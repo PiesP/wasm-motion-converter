@@ -112,15 +112,13 @@ export async function runPipelineViaWorker(
           if (signal) {
             signal.removeEventListener('abort', onAbort);
           }
-          // Defer terminate() to next microtask to ensure the transferred
-          // outputBuffer is fully received before the worker is terminated.
-          // Calling terminate() synchronously can race with buffer transfer.
-          queueMicrotask(() => {
-            worker.terminate();
-          });
-
           // The response.outputBuffer is transferred back by the worker
           // via postMessage transferables — ownership moves to main thread.
+          // Terminate immediately — the transfer is complete once we receive
+          // the message, so no need to defer. Deferring with queueMicrotask
+          // can race with consumer .then() handlers that expect the buffer
+          // to still be valid.
+          worker.terminate();
           resolve(response.outputBuffer);
           break;
         }
@@ -163,15 +161,19 @@ export async function runPipelineViaWorker(
       reject(new Error(`Worker error: ${error.message}`));
     };
 
-    // Send the start message with transferable inputBuffer
+    // Send the start message with a copy of inputBuffer to the worker.
+    // We intentionally copy (not transfer) the buffer to avoid duplicating
+    // memory via a separate fallbackBuffer — the worker gets its own copy,
+    // and the original inputBuffer remains valid on the main thread.
+    const bufferCopy = inputBuffer.slice(0);
     const startMsg: WorkerRequest = {
       type: 'start',
       requestId,
-      inputBuffer,
+      inputBuffer: bufferCopy,
       config,
       options,
     };
-    worker.postMessage(startMsg, [inputBuffer]);
+    worker.postMessage(startMsg, [bufferCopy]);
   });
 }
 
@@ -191,11 +193,6 @@ export async function runPipelineWithFallback(
   onProgress: MainThreadPipelineCallback,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
-  // Keep a copy of the buffer in case the worker path fails and the main-thread
-  // fallback needs it. Transferring inputBuffer to the worker detaches it on the
-  // main thread, so we cannot reuse it after the postMessage call.
-  const fallbackBuffer = inputBuffer.slice(0);
-
   try {
     return await runPipelineViaWorker(inputBuffer, config, options, onProgress, signal);
   } catch (workerError) {
@@ -204,15 +201,16 @@ export async function runPipelineWithFallback(
       throw workerError;
     }
 
-    // Fall back to main thread
+    // Fall back to main thread.
+    // Since runPipelineViaWorker copies the buffer to the worker (not transfers),
+    // the original inputBuffer remains valid here for fallback use.
     console.warn('[WorkerPipeline] Worker failed, falling back to main thread:', workerError);
 
     // Dynamic import to avoid circular dependencies
     const { runConversionPipeline } = await import('../conversion-pipeline.js');
 
-    // Use the preserved copy of the buffer (the original was transferred to the worker)
     const request = {
-      inputBuffer: fallbackBuffer,
+      inputBuffer,
       fileName: 'input.webm',
       format: options.format,
       quality: options.quality,
