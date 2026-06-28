@@ -141,7 +141,7 @@ export async function decodeFrames(
   let smartSkippedCount = 0;
   // Noise floor estimation: collect frame diff stdDev from first N frames
   const noiseFloorSamples: number[] = [];
-  const NOISE_SAMPLE_COUNT = 30;
+  const NOISE_SAMPLE_COUNT = 15; // reduced from 30 → faster adaptation for short videos
   let noiseFloor = 0; // will be set after sampling phase
 
   // Check codec support (cached per codec+hw combo)
@@ -201,9 +201,9 @@ export async function decodeFrames(
                   }
                 }
 
-                // Skip if similar AND consecutive skip time < 100ms
+                // Skip if similar AND consecutive skip time < 500ms
                 const effectiveThreshold = Math.max(skipThreshold, Math.floor(noiseFloor));
-                if (dist <= effectiveThreshold && consecutiveSkipMs < 100) {
+                if (dist <= effectiveThreshold && consecutiveSkipMs < 500) {
                   // Skip this frame: accumulate duration, release buffer, return
                   consecutiveSkipMs += totalDuration;
                   smartSkippedCount++;

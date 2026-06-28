@@ -65,13 +65,14 @@ export const DEFAULT_FPS = 30;
 export const GIF_TARGET_FPS = 15;
 
 /** WebP auto-decimation target FPS — varies by quality preset.
- *  Perceptual basis: 20fps is "smooth enough" for low quality (where artifacts
- *  dominate), 24fps is the cinema standard for medium, 30fps preserves original
- *  temporal fidelity for high quality where the viewer expects fidelity. */
+ *  Perceptual basis: 15fps is acceptable for low quality (where artifacts
+ *  dominate), 20fps is smooth enough for medium, 24fps preserves original
+ *  temporal fidelity for high quality where the viewer expects fidelity.
+ *  Reduced from 20/24/30 to 15/20/24 to reduce output file sizes. */
 export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
-  low: 20,
-  medium: 24,
-  high: 30,
+  low: 15,
+  medium: 20,
+  high: 24,
 };
 
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */

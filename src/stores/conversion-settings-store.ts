@@ -17,7 +17,7 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   scale: 1.0,
   trimStart: 0,
   trimEnd: 0,
-  smartFrameSkip: 'off',
+  smartFrameSkip: 'medium',
 };
 
 const SETTINGS_STORAGE_KEY = 'conversion-settings';

@@ -35,9 +35,9 @@ import { createDynamicDecimationController } from './dynamic-decimation-controll
 import type { BaseEncoderOptions } from './encoder-common';
 
 const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
-  low: 128, // 64 → 128: perceptual studies show banding becomes clearly
-  // visible below ~32 colors in gradients; 128 is the minimum
-  // for acceptable quality in most photographic content
+  low: 64, // 128 → 64: perceptual studies show banding is visible below ~32 colors,
+  // but 64 colors provides acceptable quality for "low" preset while
+  // reducing palette computation time and file size
   medium: 128,
   high: 256,
 };
@@ -47,7 +47,8 @@ const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
 const QUALITY_DITHER_STRENGTH: Record<BaseEncoderOptions['quality'], number> = {
   low: 0,
   medium: 8,
-  high: 4,
+  high: 12, // 4 → 12: high quality needs stronger dithering to produce
+  // smooth gradients with full 256-color palette; 4 was too subtle
 };
 
 /**
