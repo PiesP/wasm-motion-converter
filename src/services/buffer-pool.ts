@@ -19,8 +19,31 @@
  *   pool.release(buf);
  */
 
-/** Default maximum total pooled memory: 512 MB */
+/**
+ * Default maximum total pooled memory: 512 MB.
+ *
+ * Note: this is a conservative default. For large-video conversions on
+ * memory-constrained devices, the pool can hold too much if uncapped.
+ * Consider lowering this based on deviceMemory or jsHeapSizeLimit.
+ */
 const DEFAULT_MAX_TOTAL_MEMORY = 512 * 1024 * 1024;
+
+/**
+ * Determine a reasonable default maxTotalMemory based on available JS heap.
+ * Uses 25% of jsHeapSizeLimit (capped at 512MB) so the pool adapts to the
+ * browser's actual memory budget. Falls back to 512MB if heap info unavailable.
+ */
+function getDefaultMaxTotalMemory(): number {
+  const perf = performance as Performance & {
+    memory?: { jsHeapSizeLimit: number };
+  };
+  const limit = perf.memory?.jsHeapSizeLimit;
+  if (limit && limit > 0) {
+    // Use 25% of total JS heap limit, capped at 512MB
+    return Math.min(Math.round(limit * 0.25), DEFAULT_MAX_TOTAL_MEMORY);
+  }
+  return DEFAULT_MAX_TOTAL_MEMORY;
+}
 
 export class BufferPool {
   private pools: Map<number, Uint8Array[]> = new Map();
@@ -30,9 +53,9 @@ export class BufferPool {
 
   /**
    * @param maxPerBucket - Max buffers to retain per size bucket (default: 4)
-   * @param maxTotalMemory - Max total bytes across all pooled buffers (default: 512MB)
+   * @param maxTotalMemory - Max total bytes across all pooled buffers (default: auto-detect from heap limit)
    */
-  constructor(maxPerBucket = 4, maxTotalMemory = DEFAULT_MAX_TOTAL_MEMORY) {
+  constructor(maxPerBucket = 4, maxTotalMemory: number = getDefaultMaxTotalMemory()) {
     this.maxPerBucket = maxPerBucket;
     this.maxTotalMemory = maxTotalMemory;
   }

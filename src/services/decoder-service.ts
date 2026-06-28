@@ -313,8 +313,10 @@ export async function decodeFrames(
     } catch (e) {
       if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
     }
-    // Always await pending conversions before closing decoder to avoid VideoFrame leak
-    await Promise.all(pendingConversions);
+    // Always await pending conversions before closing decoder to avoid VideoFrame leak.
+    // Use Promise.allSettled so that even if some conversions fail (e.g., due to abort),
+    // we still drain all pending work and close frames properly.
+    await Promise.allSettled(pendingConversions);
 
     if (decodeError) throw decodeError;
 
