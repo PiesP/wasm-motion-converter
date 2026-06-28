@@ -203,12 +203,6 @@ export async function encodeGif(
   // T2: Maximum delay per frame — prevents a single frame from displaying too long
   // gifenc's writeFrame delay is in centiseconds (cs), so convert from ms.
   const MAX_FRAME_DELAY_CS = GIF_MAX_FRAME_DELAY_CS;
-  // Minimum delay for the first frame — ensures it's visible to human eyes
-  // Converted from ms to centiseconds (÷10) for gifenc API.
-  const MIN_FIRST_FRAME_DELAY_CS = Math.round(GIF_MIN_FIRST_FRAME_DELAY_MS / 10);
-  // Minimum delay for any frame — frames shorter than this are perceptually instant
-  const MIN_FRAME_DELAY_CS = Math.round(GIF_MIN_FRAME_DELAY_MS / 10);
-
   let accumulatedDuration = 0;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
