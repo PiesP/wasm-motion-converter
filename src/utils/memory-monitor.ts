@@ -96,9 +96,9 @@ function estimatePeakMemoryMB(
   format: ConversionFormat
 ): number {
   const bytesPerFrame = width * height * 3; // RGB
-  // GIF: all frames held in memory before encoding (worst case)
+  // GIF: streaming encoder processes one frame at a time (~2 in flight)
   // WebP: frames streamed to encoder, ~10 frames in flight
-  const inFlightFrames = format === 'gif' ? totalFrames : Math.min(10, totalFrames);
+  const inFlightFrames = format === 'gif' ? 2 : Math.min(10, totalFrames);
   const frameMemory = inFlightFrames * bytesPerFrame;
   // Encoder output buffer: ~20% of raw frame data for GIF, ~5% for WebP
   const outputRatio = format === 'gif' ? 0.2 : 0.05;
