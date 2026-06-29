@@ -26,7 +26,7 @@ export async function registerServiceWorker(
 
   try {
     const registration = await navigator.serviceWorker.register(SW_PATH, {
-      type: 'classic',
+      type: 'module',
     });
 
     console.log('[SW] Registered, scope:', registration.scope);

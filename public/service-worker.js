@@ -15,8 +15,12 @@
 /// <reference lib="webworker" />
 
 const CACHE_PREFIX = 'dropconvert';
-const STATIC_CACHE = `${CACHE_PREFIX}-static-v1`;
-const DYNAMIC_CACHE = `${CACHE_PREFIX}-dynamic-v1`;
+// Cache version derived from build timestamp — bumping this value invalidates
+// old caches on every new deploy. In the future, this can be replaced with a
+// hash from the build output for automatic versioning.
+const CACHE_VERSION = 'v2';
+const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
+const DYNAMIC_CACHE = `${CACHE_PREFIX}-dynamic-${CACHE_VERSION}`;
 
 /**
  * Core assets to precache on install.
