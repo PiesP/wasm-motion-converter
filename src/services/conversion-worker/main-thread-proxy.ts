@@ -27,7 +27,9 @@ import type {
 } from './types.js';
 
 // ─── Timeout configuration ──────────────────────────────────────────────
-const WORKER_TIMEOUT_MS = 30_000; // 30 seconds
+// Worker timeout: allow up to 5 minutes for large videos at high quality.
+// The worker is terminated if it produces no result within this window.
+const WORKER_TIMEOUT_MS = Number(process.env.WORKER_TIMEOUT_MS ?? 5 * 60 * 1000);
 
 /**
  * Error thrown when a worker operation exceeds the timeout.

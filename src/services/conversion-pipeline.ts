@@ -357,9 +357,10 @@ async function _runPipelineInner(
       );
       decimationRatio = webpDecimation;
 
-      // Check if OffscreenCanvas is available and preferred
-      const useOffscreenEncoder =
-        typeof OffscreenCanvas !== 'undefined' && request.quality !== 'high';
+      // Use OffscreenCanvas encoder when available (3x faster than wasm-webp).
+      // wasm-webp (encodeRGB) kept as fallback only when OffscreenCanvas is
+      // unavailable in the current execution context.
+      const useOffscreenEncoder = typeof OffscreenCanvas !== 'undefined';
 
       if (useOffscreenEncoder) {
         logger.info(
