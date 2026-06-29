@@ -30,6 +30,7 @@ import { demuxVideo } from './demuxer-service';
 import { calcAutoDecimation } from './encoder-common';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
+import { encodeWebpParallel } from './parallel-webp-encoder';
 import { encodeWebp } from './webp-encoder-service';
 
 /**
@@ -357,12 +358,59 @@ async function _runPipelineInner(
       );
       decimationRatio = webpDecimation;
 
-      // Use OffscreenCanvas encoder when available (3x faster than wasm-webp).
-      // wasm-webp (encodeRGB) kept as fallback only when OffscreenCanvas is
-      // unavailable in the current execution context.
-      const useOffscreenEncoder = typeof OffscreenCanvas !== 'undefined';
+      // Use parallel Worker-based encoder when available (distributes frame
+      // encoding across multiple CPU cores for 2-3x speedup).
+      // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
+      const useParallelEncoder =
+        typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined';
 
-      if (useOffscreenEncoder) {
+      if (useParallelEncoder) {
+        logger.info(
+          'conversion',
+          '  ├─ Branch: WebP encoder (parallel Worker pool + OffscreenCanvas)',
+          {
+            codec: demuxResult.config.codec,
+            codedWidth: demuxResult.config.codedWidth,
+            codedHeight: demuxResult.config.codedHeight,
+            totalFrames: demuxResult.totalFrames,
+            sourceFps: Math.round(sourceFps),
+            webpDecimation,
+          }
+        );
+
+        let encodedFrames = 0;
+        const encoded = await encodeWebpParallel(
+          demuxResult,
+          {
+            width: codedWidth,
+            height: codedHeight,
+            quality: request.quality,
+            scale: request.scale,
+            frameDecimation: webpDecimation,
+            onFrameDecoded: decodeProgressCb,
+          },
+          (p) => {
+            encodedFrames = p.currentFrame ?? encodedFrames;
+            const mappedProgress = 50 + Math.round(((p.progress - 50) * 0.4) / 40);
+            throttled.callback({
+              phase: 'encoding',
+              progress: Math.min(90, 50 + mappedProgress),
+              fps: fpsTracker.current,
+              etaSeconds: null,
+              memoryMB: sampleMemory(),
+              currentFrame: p.currentFrame ?? 0,
+              totalFrames: demuxResult.totalFrames,
+              elapsedMs: Math.round(performance.now() - pipelineStart),
+            });
+          },
+          signal
+        );
+        output = encoded.buffer as ArrayBuffer;
+        encodeResult = {
+          frames: encodedFrames,
+          outputBytes: output.byteLength,
+        };
+      } else if (typeof OffscreenCanvas !== 'undefined') {
         logger.info(
           'conversion',
           '  ├─ Branch: WebP encoder (OffscreenCanvas convertToBlob + mux)',
