@@ -14,9 +14,17 @@ export function createId(): string {
  * Format duration in seconds to human-readable time string
  *
  * @param seconds - Duration in seconds
- * @returns Formatted time string (e.g., "1:23" for MM:SS or "1:02:34" for HH:MM:SS)
+ * @param locale - Optional BCP 47 locale for locale-aware formatting.
+ *                 When provided, delegates to the locale-aware formatter
+ *                 from `@utils/intl-utils` (e.g. "1분 30초" for ko).
+ *                 When omitted, falls back to H:MM:SS format (e.g. "1:30").
+ * @returns Formatted time string
  */
-export function formatDurationSeconds(seconds: number): string {
+export function formatDurationSeconds(seconds: number, locale?: string): string {
+  if (locale) {
+    return formatDurationLocale(seconds * 1000, locale as Locale);
+  }
+
   const totalSeconds = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(totalSeconds / 3600);
   const mins = Math.floor((totalSeconds % 3600) / 60);
@@ -32,18 +40,20 @@ export function formatDurationSeconds(seconds: number): string {
 }
 
 /**
- * Format bytes to human-readable string (locale-unaware)
- *
- * Converts a byte count into a human-friendly format with appropriate unit
- * (B, KB, MB, GB). Uses binary units (1 KB = 1024 bytes).
- *
- * For locale-aware formatting (e.g. "1,024 KB" in en), use
- * `formatFileSize(bytes, locale)` from `@utils/intl-utils` instead.
+ * Format bytes to human-readable string
  *
  * @param bytes - Number of bytes to format (must be non-negative)
+ * @param locale - Optional BCP 47 locale for locale-aware formatting.
+ *                 When provided, delegates to `formatFileSize()` from
+ *                 `@utils/intl-utils` (e.g. "1,024 KB" in en).
+ *                 When omitted, falls back to locale-unaware format (e.g. "1024.0 KB").
  * @returns Formatted file size string with appropriate unit
  */
-export function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number, locale?: string): string {
+  if (locale) {
+    return formatFileSizeLocale(bytes, locale as Locale);
+  }
+
   if (bytes === 0) return '0 B';
 
   const k = 1024;
@@ -52,3 +62,12 @@ export function formatBytes(bytes: number): string {
 
   return `${(bytes / k ** i).toFixed(1)} ${sizes[i]}`;
 }
+
+// ─── Locale-aware delegates (imported from intl-utils) ──────────────────
+// intl-utils does not import from format-utils, so this is safe.
+
+import type { Locale } from '@t/i18n-types';
+import {
+  formatDuration as formatDurationLocale,
+  formatFileSize as formatFileSizeLocale,
+} from './intl-utils';

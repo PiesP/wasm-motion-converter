@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import type { VideoMetadata } from '@t/conversion-types';
 import { formatBytes, formatDurationSeconds } from '@utils/format-utils';
 import type { Component } from 'solid-js';
@@ -16,6 +17,7 @@ interface VideoMetadataDisplayProps {
 }
 
 const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
+  const { locale } = useLocale();
   const [local] = splitProps(props, ['metadata', 'fileName', 'fileSize']);
 
   const codecDisplay = createMemo(() =>
@@ -42,7 +44,7 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
         <div class="flex justify-between gap-3">
           <dt class="text-[#8a8f98] shrink-0">Duration</dt>
           <dd class="text-[#f7f8f8] tabular-nums">
-            {formatDurationSeconds(local.metadata.duration)}
+            {formatDurationSeconds(local.metadata.duration, locale())}
           </dd>
         </div>
         <div class="flex justify-between gap-3">
@@ -55,7 +57,7 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
         </div>
         <div class="flex justify-between gap-3">
           <dt class="text-[#8a8f98] shrink-0">Size</dt>
-          <dd class="text-[#f7f8f8] tabular-nums">{formatBytes(local.fileSize)}</dd>
+          <dd class="text-[#f7f8f8] tabular-nums">{formatBytes(local.fileSize, locale())}</dd>
         </div>
       </dl>
     </div>

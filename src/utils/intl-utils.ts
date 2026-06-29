@@ -98,7 +98,8 @@ function fileUnit(index: number, locale: Locale): string {
  * Format duration with locale-aware units.
  *
  * @param ms - Duration in **milliseconds** (not seconds).
- *             For a seconds-based formatter, see `formatDurationSeconds()` in format-utils.
+ *             For a seconds-based formatter with locale support,
+ *             see `formatDurationSeconds(seconds, locale)` in format-utils.
  * @param locale - BCP 47 locale identifier
  */
 export function formatDuration(ms: number, locale: Locale): string {

@@ -25,6 +25,10 @@ export {
 /**
  * Format file size in bytes to locale-aware string.
  *
+ * @deprecated Use `formatBytes(bytes, locale)` from `@utils/format-utils` instead.
+ *   Both functions delegate to `formatFileSize` — the `format-utils` version
+ *   additionally supports a locale-unaware fallback when no locale is given.
+ *
  * @param bytes - Number of bytes
  * @param locale - BCP 47 locale identifier
  * @returns Formatted file size string

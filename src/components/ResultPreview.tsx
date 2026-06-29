@@ -26,7 +26,7 @@ interface ResultPreviewProps {
 }
 
 const ResultPreview: Component<ResultPreviewProps> = (props) => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [local] = splitProps(props, [
     'outputBlob',
     'originalName',
@@ -75,7 +75,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   const conversionTimeLabel = createMemo(() => {
     if (typeof local.conversionDurationSeconds !== 'number') return null;
-    return formatDurationSeconds(local.conversionDurationSeconds);
+    return formatDurationSeconds(local.conversionDurationSeconds, locale());
   });
 
   const outputExtension = createMemo(() => {
@@ -100,7 +100,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   const ariaLabel = createMemo(
     () =>
-      `${outputExtension().toUpperCase()} conversion results: ${downloadFileName()}, ${formatBytes(local.outputBlob.size)}`
+      `${outputExtension().toUpperCase()} conversion results: ${downloadFileName()}, ${formatBytes(local.outputBlob.size, locale())}`
   );
 
   const compressionRatio = createMemo(() => {
@@ -177,7 +177,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         {/* Primary stats: size reduction + time */}
         <div class="flex items-center justify-center gap-3 text-sm mb-2">
           <span class="text-[#8a8f98] font-mono" data-result-original-size>
-            {formatBytes(local.originalSize)}
+            {formatBytes(local.originalSize, locale())}
           </span>
           <svg
             class="h-4 w-4 text-[#5e6ad2]/60"
@@ -194,7 +194,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             />
           </svg>
           <span class="font-semibold text-[#d0d6e0] font-mono" data-result-output-size>
-            {formatBytes(local.outputBlob.size)}
+            {formatBytes(local.outputBlob.size, locale())}
           </span>
           <Show when={compressionLabel()}>
             <span class={`font-semibold ${compressionColorClass()}`}>{compressionLabel()}</span>
@@ -246,7 +246,8 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
             />
           </svg>
-          Download {outputExtension().toUpperCase()} · {formatBytes(local.outputBlob.size)}
+          Download {outputExtension().toUpperCase()} ·{' '}
+          {formatBytes(local.outputBlob.size, locale())}
         </a>
       </div>
     </Panel>
