@@ -432,23 +432,35 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       {/* Text inputs + summary */}
       <div class="flex items-center gap-1.5 justify-between flex-wrap">
         <div class="flex items-center gap-1.5">
-          <span class="text-[10px] text-[#8a8f98]">{t('trim.startLabel')}</span>
+          <label for="trim-start-input" class="text-[10px] text-[#8a8f98]">
+            {t('trim.startLabel')}
+          </label>
           <input
+            id="trim-start-input"
+            name="trim-start"
             type="text"
             value={startText()}
             disabled={props.disabled}
+            autocomplete="off"
             onInput={(e) => setStartText((e.target as HTMLInputElement).value)}
             onFocus={() => setStartFocused(true)}
             onBlur={commitStartText}
             onKeyDown={handleStartTextKeyDown}
             class={textClass}
           />
-          <span class="text-[10px] text-[#8a8f98]">–</span>
-          <span class="text-[10px] text-[#8a8f98]">{t('trim.endLabel')}</span>
+          <span class="text-[10px] text-[#8a8f98]" aria-hidden="true">
+            –
+          </span>
+          <label for="trim-end-input" class="text-[10px] text-[#8a8f98]">
+            {t('trim.endLabel')}
+          </label>
           <input
+            id="trim-end-input"
+            name="trim-end"
             type="text"
             value={endText()}
             disabled={props.disabled}
+            autocomplete="off"
             onInput={(e) => setEndText((e.target as HTMLInputElement).value)}
             onFocus={() => setEndFocused(true)}
             onBlur={commitEndText}
