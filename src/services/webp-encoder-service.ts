@@ -91,10 +91,8 @@ export async function encodeWebp(
       smartFrameSkip: opts.smartFrameSkip,
       onFrameDecoded: (_frameNum, total) => {
         totalInputFrames = total;
-        if (opts.onFrameDecoded && (encodeIdx % 10 === 0 || encodeIdx === 0)) {
-          opts.onFrameDecoded(encodeIdx, total);
-        }
-        // Report encoding progress during streaming
+        // Report encoding progress during streaming (onFrameDecoded is already
+        // called by decodeFrames internally — no duplicate call here)
         if (onProgress && encodeIdx > 0) {
           const encodePct = total > 0 ? Math.round((encodeIdx / total) * 40) : 0;
           onProgress({
