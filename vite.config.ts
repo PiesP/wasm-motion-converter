@@ -116,6 +116,17 @@ export default defineConfig(({ mode }) => {
           assetFileNames: 'assets/[name].[hash].[ext]',
           preserveModules: false,
           exports: 'auto',
+          manualChunks(id): string | undefined {
+            // Keep wasm-webp out of the worker chunk — it's only needed for
+            // the main-thread fallback path, not the OffscreenCanvas worker path.
+            if (id.includes('wasm-webp')) {
+              return 'wasm-webp';
+            }
+            if (id.includes('gifenc')) {
+              return 'gifenc';
+            }
+            return undefined;
+          },
         },
         onwarn(warning, defaultHandler) {
           // Suppress "module" externalization warning from wasm-webp

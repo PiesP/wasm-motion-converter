@@ -26,7 +26,9 @@ import { getMemoryUsageMB } from '@utils/memory-monitor';
 import { createThrottledProgress } from '@utils/throttled-progress';
 import { globalBufferPool } from './buffer-pool';
 import type { ConversionProfileReport } from './conversion-profiler';
+import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
+import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import { calcAutoDecimation } from './encoder-common';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
@@ -378,36 +380,71 @@ async function _runPipelineInner(
           }
         );
 
-        let encodedFrames = 0;
-        const encoded = await encodeWebpParallel(
+        // Decode on main thread, collect RGB frames, then send to worker pool
+        const w = Math.floor(codedWidth * request.scale);
+        const h = Math.floor(codedHeight * request.scale);
+        const rgbFrames: Array<{ rgbData: Uint8Array; durationMs: number }> = [];
+        const decimationController = createDynamicDecimationController();
+
+        await decodeFrames(
           demuxResult,
           {
-            width: codedWidth,
-            height: codedHeight,
-            quality: request.quality,
-            scale: request.scale,
+            width: w,
+            height: h,
             frameDecimation: webpDecimation,
-            onFrameDecoded: decodeProgressCb,
-          },
-          (p) => {
-            encodedFrames = p.currentFrame ?? encodedFrames;
-            const mappedProgress = 50 + Math.round(((p.progress - 50) * 0.4) / 40);
-            throttled.callback({
-              phase: 'encoding',
-              progress: Math.min(90, 50 + mappedProgress),
-              fps: fpsTracker.current,
-              etaSeconds: null,
-              memoryMB: sampleMemory(),
-              currentFrame: p.currentFrame ?? 0,
-              totalFrames: demuxResult.totalFrames,
-              elapsedMs: Math.round(performance.now() - pipelineStart),
-            });
+            hwAccel: 'prefer-hardware',
+            smartFrameSkip: request.smartFrameSkip,
+            onFrameDecoded: (frameIdx, total) => {
+              const decodePct = total > 0 ? Math.round((frameIdx / total) * 40) : 0;
+              throttled.callback({
+                phase: 'decoding',
+                progress: 10 + Math.min(40, decodePct),
+                fps: fpsTracker.current,
+                etaSeconds: null,
+                memoryMB: sampleMemory(),
+                currentFrame: frameIdx,
+                totalFrames: total,
+                elapsedMs: Math.round(performance.now() - pipelineStart),
+              });
+            },
+            onFrameAvailable: async (
+              rgbData: Uint8Array,
+              frameDurationMs: number,
+              frameNum: number
+            ) => {
+              if (signal?.aborted) {
+                globalBufferPool.release(rgbData);
+                throw new DOMException('Cancelled', 'AbortError');
+              }
+              const shouldSkip = decimationController.shouldSkip(frameNum);
+              if (shouldSkip) {
+                globalBufferPool.release(rgbData);
+                return;
+              }
+              rgbFrames.push({ rgbData: new Uint8Array(rgbData), durationMs: frameDurationMs });
+              globalBufferPool.release(rgbData);
+            },
           },
           signal
         );
+
+        // Encode via worker pool
+        const encoded = await encodeWebpParallel(rgbFrames, w, h, request.quality, (p) => {
+          const mappedProgress = 50 + Math.round(((p.progress - 50) * 0.4) / 40);
+          throttled.callback({
+            phase: 'encoding',
+            progress: Math.min(90, mappedProgress),
+            fps: fpsTracker.current,
+            etaSeconds: null,
+            memoryMB: sampleMemory(),
+            currentFrame: p.currentFrame ?? 0,
+            totalFrames: demuxResult.totalFrames,
+            elapsedMs: Math.round(performance.now() - pipelineStart),
+          });
+        });
         output = encoded.buffer as ArrayBuffer;
         encodeResult = {
-          frames: encodedFrames,
+          frames: rgbFrames.length,
           outputBytes: output.byteLength,
         };
       } else if (typeof OffscreenCanvas !== 'undefined') {
