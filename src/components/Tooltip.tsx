@@ -36,7 +36,6 @@ const Tooltip: Component<TooltipProps> = (props) => {
         onBlur={hideTooltip}
         onKeyDown={handleKeyDown}
         aria-describedby={tooltipId}
-        aria-expanded={isVisible()}
       >
         {local.children}
       </div>
