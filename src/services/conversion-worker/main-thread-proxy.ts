@@ -29,7 +29,8 @@ import type {
 // ─── Timeout configuration ──────────────────────────────────────────────
 // Worker timeout: allow up to 5 minutes for large videos at high quality.
 // The worker is terminated if it produces no result within this window.
-const WORKER_TIMEOUT_MS = Number(process.env.WORKER_TIMEOUT_MS ?? 5 * 60 * 1000);
+// (Browser-safe: import.meta.env.VITE_WORKER_TIMEOUT_MS or default)
+const WORKER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Error thrown when a worker operation exceeds the timeout.
