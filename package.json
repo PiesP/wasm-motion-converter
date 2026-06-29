@@ -52,7 +52,7 @@
     "@types/dom-webcodecs": "^0.1.18",
     "@types/node": "26.0.1",
     "esbuild": "0.28.1",
-    "knip": "6.22.0",
+    "knip": "6.23.0",
     "rollup-plugin-visualizer": "7.0.1",
     "tsx": "^4.22.4",
     "typescript": "6.0.3",
