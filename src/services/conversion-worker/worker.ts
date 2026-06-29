@@ -19,10 +19,15 @@ const activeControllers = new Map<string, AbortController>();
 // ─── Message handler ────────────────────────────────────────────────────
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
-  // Defense-in-depth: reject messages from unexpected origins.
-  // In same-origin Worker contexts event.origin is typically empty string,
-  // but postMessage from a compromised parent could differ.
-  if (event.origin !== '' && event.origin !== self.location.origin) {
+  // Defense-in-depth: validate the message source.
+  // Same-origin Workers have event.origin === '' and event.source === null
+  // (the worker receives messages via its own MessagePort, not a cross-origin
+  // postMessage). A non-null event.source would indicate a cross-context
+  // message (e.g., from a different window or iframe), which we reject.
+  // The old check (event.origin !== '' && event.origin !== self.location.origin)
+  // was ineffective because same-origin workers always have empty origin,
+  // making the first condition always false and the check always pass.
+  if (event.source !== null && event.source !== self) {
     return;
   }
 
