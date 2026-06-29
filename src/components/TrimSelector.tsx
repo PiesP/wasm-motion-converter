@@ -7,6 +7,8 @@ import { createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 
 const TRIM_END_FULL_DURATION = 0;
 
+const isFullDuration = (trimEnd: number): boolean => trimEnd === TRIM_END_FULL_DURATION;
+
 interface TrimSelectorProps {
   duration: number;
   trimStart: number;
@@ -65,8 +67,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   const fps = (): number => props.estimatedFps ?? 15;
 
   const effectiveEnd = createMemo(() => {
-    if (props.trimEnd === TRIM_END_FULL_DURATION || props.trimEnd > props.duration)
-      return props.duration;
+    if (isFullDuration(props.trimEnd) || props.trimEnd > props.duration) return props.duration;
     return props.trimEnd;
   });
 
@@ -79,9 +80,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     props.duration <= 0 ? 100 : (effectiveEnd() / props.duration) * 100
   );
 
-  const isDefault = createMemo(
-    () => props.trimStart === 0 && props.trimEnd === TRIM_END_FULL_DURATION
-  );
+  const isDefault = createMemo(() => props.trimStart === 0 && isFullDuration(props.trimEnd));
   const frameCount = createMemo(() => Math.round(trimDuration() * fps()));
 
   const [dragging, setDragging] = createSignal<'start' | 'end' | null>(null);

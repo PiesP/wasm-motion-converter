@@ -3,6 +3,12 @@
 
 // Message protocol types for the conversion worker
 
+import type {
+  ConversionFormat,
+  ConversionQuality,
+  SmartFrameSkipMode,
+} from '../../types/conversion-types';
+
 export type WorkerRequest =
   | {
       type: 'start';
@@ -45,8 +51,8 @@ export interface SerializedDecoderConfig {
 }
 
 export interface SerializedConversionOptions {
-  format: 'gif' | 'webp';
-  quality: 'low' | 'medium' | 'high';
+  format: ConversionFormat;
+  quality: ConversionQuality;
   fps: number;
   scale: number;
   trimStart: number;
@@ -55,5 +61,5 @@ export interface SerializedConversionOptions {
   /** Force frame decimation (overrides auto-decimation) */
   forceDecimation?: number;
   /** Smart frame skip mode — similarity-based frame deduplication */
-  smartFrameSkip?: 'off' | 'low' | 'medium' | 'high';
+  smartFrameSkip?: SmartFrameSkipMode;
 }
