@@ -13,6 +13,7 @@
  * - Throttled progress callbacks to the main thread
  * - Graceful fallback to main-thread pipeline on worker errors
  * - AbortController propagation to the worker
+ * - Timeout protection: terminates worker and rejects if conversion hangs
  */
 
 import type { ConversionProgress } from '@t/conversion-types';
@@ -24,6 +25,19 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from './types.js';
+
+// ─── Timeout configuration ──────────────────────────────────────────────
+const WORKER_TIMEOUT_MS = 30_000; // 30 seconds
+
+/**
+ * Error thrown when a worker operation exceeds the timeout.
+ */
+export class WorkerTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Worker timed out after ${ms}ms`);
+    this.name = 'WorkerTimeoutError';
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -59,6 +73,32 @@ export async function runPipelineViaWorker(
     // Create the worker
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
 
+    // ── Timeout guard ──────────────────────────────────────────────────
+    // If the worker hangs (e.g. infinite loop, deadlock in WASM), this
+    // timer fires, terminates the worker, and rejects the promise.
+    // The timer is cleared on any terminal message or external abort.
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      // Forward abort to the worker so it can clean up internal state
+      const abortMsg: WorkerRequest = { type: 'abort', requestId };
+      try {
+        worker.postMessage(abortMsg);
+      } catch {
+        // Worker may already be in a bad state; terminate below regardless
+      }
+      worker.terminate();
+      reject(new WorkerTimeoutError(WORKER_TIMEOUT_MS));
+    }, WORKER_TIMEOUT_MS);
+
+    // Clear timeout and remove abort listener — shared cleanup for all terminal paths
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+    };
+
     // Throttle progress callbacks to ~100ms
     let lastProgressTime = 0;
     const throttledProgress = (update: ConversionProgress) => {
@@ -71,6 +111,8 @@ export async function runPipelineViaWorker(
 
     // Set up abort signal forwarding
     const onAbort = () => {
+      // External abort — clear the timeout since we're handling termination
+      clearTimeout(timeoutId);
       const abortMsg: WorkerRequest = {
         type: 'abort',
         requestId,
@@ -81,6 +123,7 @@ export async function runPipelineViaWorker(
     if (signal) {
       if (signal.aborted) {
         // Already aborted
+        clearTimeout(timeoutId);
         worker.terminate();
         reject(new DOMException('Cancelled', 'AbortError'));
         return;
@@ -90,6 +133,8 @@ export async function runPipelineViaWorker(
 
     // Handle messages from the worker
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      // Ignore messages after timeout — worker is already terminated
+      if (timedOut) return;
       const response = event.data;
 
       switch (response.type) {
@@ -108,10 +153,8 @@ export async function runPipelineViaWorker(
         }
 
         case 'complete': {
-          // Clean up
-          if (signal) {
-            signal.removeEventListener('abort', onAbort);
-          }
+          // Clear timeout — conversion finished successfully
+          cleanup();
           // The response.outputBuffer is transferred back by the worker
           // via postMessage transferables — ownership moves to main thread.
           // Terminate immediately — the transfer is complete once we receive
@@ -124,9 +167,7 @@ export async function runPipelineViaWorker(
         }
 
         case 'error': {
-          if (signal) {
-            signal.removeEventListener('abort', onAbort);
-          }
+          cleanup();
           worker.terminate();
 
           if (response.code === 'CANCELLED') {
@@ -154,9 +195,8 @@ export async function runPipelineViaWorker(
 
     // Handle worker errors
     worker.onerror = (error) => {
-      if (signal) {
-        signal.removeEventListener('abort', onAbort);
-      }
+      if (timedOut) return;
+      cleanup();
       worker.terminate();
       reject(new Error(`Worker error: ${error.message}`));
     };
