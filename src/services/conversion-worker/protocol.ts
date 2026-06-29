@@ -48,11 +48,7 @@ export function extractDescriptionFromConfig(config: SerializedDecoderConfig): A
 /** Encode a DataView/ArrayBuffer to a hex string for structured clone compatibility */
 export function arrayBufferToHex(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
-  let result = '';
-  for (let i = 0; i < bytes.length; i++) {
-    result += bytes[i]!.toString(16).padStart(2, '0');
-  }
-  return result;
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Decode a hex string back to an ArrayBuffer */
