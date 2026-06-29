@@ -20,7 +20,7 @@ import { globalBufferPool } from './buffer-pool';
 // ─── Cached copyTo path ───────────────────────────────────────────
 // Strategy detection result cached after first frame to avoid repeated
 // try/catch fallback attempts on every frame.
-let cachedCopyPath: 'four-channel' | 'canvas' | null = null;
+// Now stored in per-conversion context to prevent cross-conversion bleed.
 
 /**
  * Copy VideoFrame pixels directly to RGB Uint8Array.
@@ -30,19 +30,22 @@ let cachedCopyPath: 'four-channel' | 'canvas' | null = null;
  *    'RGBA' is tried first as it is the most widely supported.
  * 2. Last resort: OffscreenCanvas for exotic YUV/NV12 formats.
  *
- * The detected path is cached after the first frame to avoid repeated
- * try/catch overhead on subsequent frames.
+ * The detected path is cached in the per-conversion context after the first
+ * frame to avoid repeated try/catch overhead on subsequent frames.
  *
- * Note: The non-standard 'RGB' format was removed because it is not part of the
- * VideoFrameCopyToOptions spec and not reliably supported by browsers.
+ * @param frame - The VideoFrame to copy
+ * @param width - Target width
+ * @param height - Target height
+ * @param ctx - Per-conversion context for caching the detected path
  */
 export async function copyFrameToRGB(
   frame: VideoFrame,
   width: number,
-  height: number
+  height: number,
+  ctx: FrameProcessingContext
 ): Promise<Uint8Array> {
   // Use cached path from first frame detection
-  if (cachedCopyPath === 'four-channel') {
+  if (ctx.copyPath === 'four-channel') {
     return copyFrameFourChannel(frame, width, height);
   }
 
@@ -50,14 +53,14 @@ export async function copyFrameToRGB(
   // RGBA is tried first (most widely supported), then BGRA, RGBX, BGRX.
   try {
     const result = await copyFrameFourChannel(frame, width, height);
-    cachedCopyPath = 'four-channel';
+    ctx.copyPath = 'four-channel';
     return result;
   } catch {
     // Fall through to canvas fallback
   }
 
   // ── Strategy 2: Canvas fallback (cached for subsequent frames) ──
-  cachedCopyPath = 'canvas';
+  ctx.copyPath = 'canvas';
   return copyFrameCanvas(frame, width, height);
 }
 
@@ -182,7 +185,27 @@ function rgbaToRGBFast(
 // E.g., at 30fps each frame is ~33.33ms. Rounding to 33ms loses 0.33ms/frame,
 // which accumulates to ~500ms over 1500 frames. We carry the fractional
 // remainder across frames so total timing matches source.
-let durationCarryUs = 0;
+//
+// Per-conversion context — must be created fresh for each decodeFrames call
+// to prevent concurrent conversions from bleeding carry state.
+
+export interface FrameProcessingContext {
+  /** Fractional duration remainder in microseconds */
+  durationCarryUs: number;
+  /** Cached copyTo path — detected on first frame, reused for subsequent frames */
+  copyPath: 'four-channel' | 'canvas' | null;
+}
+
+/**
+ * Create a fresh per-conversion frame processing context.
+ * Call this at the start of each decodeFrames invocation.
+ */
+export function createFrameProcessingContext(): FrameProcessingContext {
+  return {
+    durationCarryUs: 0,
+    copyPath: null,
+  };
+}
 
 /**
  * Get frame duration in milliseconds — preserves original timing by
@@ -191,18 +214,21 @@ let durationCarryUs = 0;
  * No clamping: the original video frame duration is used as-is to maintain
  * accurate playback speed. Clamping is applied only at the output stage
  * when writing frames (see writeFrameWithDelay in gif-encoder-service).
+ *
+ * @param frame - The VideoFrame to extract duration from
+ * @param ctx - Per-conversion context for carry state
  */
-export function getFrameDurationMs(frame: VideoFrame): number {
+export function getFrameDurationMs(frame: VideoFrame, ctx: FrameProcessingContext): number {
   const raw = frame.duration as number | null;
   if (raw == null || raw <= 0) {
-    durationCarryUs = 0;
+    ctx.durationCarryUs = 0;
     return 100;
   }
   // Add any fractional remainder from previous frames
-  const totalUs = raw + durationCarryUs;
+  const totalUs = raw + ctx.durationCarryUs;
   const ms = Math.round(totalUs / 1000);
   // Save the sub-millisecond remainder for next frame
-  durationCarryUs = totalUs - ms * 1000;
+  ctx.durationCarryUs = totalUs - ms * 1000;
   return Math.max(1, ms);
 }
 

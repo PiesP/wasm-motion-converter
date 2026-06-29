@@ -22,6 +22,8 @@ import type { DemuxResult } from './demuxer-service';
 import {
   computeDHash,
   copyFrameToRGB,
+  createFrameProcessingContext,
+  type FrameProcessingContext,
   getFrameDurationMs,
   getSkipThreshold,
   hammingDistance,
@@ -147,6 +149,9 @@ export async function decodeFrames(
   // Check codec support (cached per codec+hw combo)
   const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
 
+  // Create per-conversion frame processing context (duration carry + copy path cache)
+  const frameCtx: FrameProcessingContext = createFrameProcessingContext();
+
   logger.info('encoders', 'VideoDecoder configured', {
     codec: demux.config.codec,
     hwAccel: activeConfig.hardwareAcceleration,
@@ -159,7 +164,7 @@ export async function decodeFrames(
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
       try {
-        const frameDuration = getFrameDurationMs(frame);
+        const frameDuration = getFrameDurationMs(frame, frameCtx);
         const frameNum = inputFrameCount++;
 
         // Frame decimation: skip every Nth frame
@@ -181,7 +186,7 @@ export async function decodeFrames(
               frame.close();
               return;
             }
-            const rgbData = await copyFrameToRGB(frame, width, height);
+            const rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
 
             // ── Smart frame skip: similarity-based deduplication ──
             if (streaming && skipThreshold >= 0) {
