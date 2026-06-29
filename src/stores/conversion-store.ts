@@ -56,18 +56,21 @@ export const [conversionResults, setConversionResults] = createSignal<Conversion
 export const [inputFile, setInputFile] = createSignal<File | null>(null);
 
 /**
- * Input buffer stored as a reactive signal. Although the buffer can be up to
- * 500MB, Solid's signal provides predictable read/write semantics and
- * integrates with the reactive system — callers that need the buffer
- * subscribe via getInputBuffer() if they want reactivity, or read it directly
- * via getInputBuffer() for one-shot access during conversion.
+ * Input buffer stored outside the reactive system. An ArrayBuffer can be up
+ * to 500 MB; storing it in a SolidJS signal would create a reactive
+ * dependency that triggers re-renders whenever the buffer changes — an
+ * expensive and unnecessary side-effect for data this large.
+ *
+ * Callers that need the buffer read it directly via getInputBuffer().
+ * Only the public API (getInputBuffer / setInputBuffer) is exported;
+ * no reactive signal tracks the buffer contents.
  */
-const [inputBuffer, setInputBufferSignal] = createSignal<ArrayBuffer | null>(null);
+let inputBufferRef: ArrayBuffer | null = null;
 export function getInputBuffer(): ArrayBuffer | null {
-  return inputBuffer();
+  return inputBufferRef;
 }
 export function setInputBuffer(buffer: ArrayBuffer | null): void {
-  setInputBufferSignal(buffer);
+  inputBufferRef = buffer;
 }
 
 export const [videoMetadata, setVideoMetadata] = createSignal<VideoMetadata | null>(null);
