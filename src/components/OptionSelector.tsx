@@ -85,7 +85,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
           checked={option.value === local.value}
           onChange={() => handleOptionChange(option.value)}
           disabled={local.disabled}
-          class="absolute inset-0 w-full h-full opacity-0 cursor-pointer peer"
+          class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           aria-label={ariaLabel}
           aria-describedby={descriptionId}
         />
