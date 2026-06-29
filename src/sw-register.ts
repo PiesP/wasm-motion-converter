@@ -63,6 +63,9 @@ export async function registerServiceWorker(
       document.removeEventListener('visibilitychange', handleVisibility);
     };
 
+    // Ensure cleanup runs on page unload to avoid leaked listeners
+    window.addEventListener('pagehide', cleanup);
+
     return { supported: true, registered: true, cleanup };
   } catch (error) {
     console.error('[SW] Registration failed:', error);

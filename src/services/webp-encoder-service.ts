@@ -132,7 +132,11 @@ export async function encodeWebp(
 
         // encodeRGB returns a Uint8Array view over WASM memory — no copy needed.
         // extractVP8BitstreamFast creates a subarray view, keeping the original alive.
-        // The WASM memory is stable during encoding, so this is safe.
+        // WASM memory lifecycle: the wasm-webp module allocates a single linear memory
+        // buffer that grows as needed. encodeRGB writes into this buffer and returns a view
+        // that remains valid until the next encodeRGB call or the module is freed.
+        // Since we call addFrame (which copies the data into the muxer) immediately,
+        // the view is only borrowed and the WASM memory can be safely reused.
         const bitstream =
           encodeIdx === 0 ? extractVP8Bitstream(webpResult) : extractVP8BitstreamFast(webpResult);
 
