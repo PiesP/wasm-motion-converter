@@ -161,10 +161,11 @@ export async function runPipelineViaWorker(
       reject(new Error(`Worker error: ${error.message}`));
     };
 
-    // Send the start message with a copy of inputBuffer to the worker.
-    // We intentionally copy (not transfer) the buffer to avoid duplicating
-    // memory via a separate fallbackBuffer — the worker gets its own copy,
-    // and the original inputBuffer remains valid on the main thread.
+    // Transfer a copy of inputBuffer to the worker (zero-copy).
+    // We copy via .slice(0) so we retain a fallback copy on the main thread,
+    // then transfer that copy to the worker. This avoids keeping two full
+    // copies alive simultaneously while still guaranteeing inputBuffer itself
+    // is never detached — the fallback path below can safely use the original.
     const bufferCopy = inputBuffer.slice(0);
     const startMsg: WorkerRequest = {
       type: 'start',
@@ -202,8 +203,16 @@ export async function runPipelineWithFallback(
     }
 
     // Fall back to main thread.
-    // Since runPipelineViaWorker copies the buffer to the worker (not transfers),
-    // the original inputBuffer remains valid here for fallback use.
+    // Since runPipelineViaWorker transfers a *copy* (not the original),
+    // inputBuffer should still be valid here. However, if the caller
+    // already transferred inputBuffer elsewhere before this function was
+    // invoked, inputBuffer would be detached and the fallback would
+    // silently fail. Re-throw in that case so the error surfaces.
+    if (inputBuffer.byteLength === 0) {
+      throw new Error(
+        'Cannot fall back to main thread: inputBuffer is detached (already transferred).'
+      );
+    }
     console.warn('[WorkerPipeline] Worker failed, falling back to main thread:', workerError);
 
     // Dynamic import to avoid circular dependencies
