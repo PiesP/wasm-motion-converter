@@ -64,12 +64,70 @@ export async function copyFrameToRGB(
   return copyFrameCanvas(frame, width, height);
 }
 
+/**
+ * Yield to the event loop to keep the UI responsive.
+ * Uses scheduler.yield() (Chrome 115+) if available, falls back to setTimeout(0).
+ */
+export function yieldToMain(): Promise<void> {
+  if (typeof globalThis.scheduler?.yield === 'function') {
+    return scheduler.yield();
+  }
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Strategy 0 (new): Try copyTo with RGBX format for zero-JS-conversion copy.
+ * The browser's native C++ implementation handles YUV→RGB conversion during copy,
+ * eliminating the need for manual rgbaToRGBFast() on the hot path.
+ *
+ * VideoFrame.copyTo() supports format conversion:
+ *   I420, I422, I444, NV12, NV21 → RGBA, RGBX, BGRA, BGRX
+ */
+async function copyFrameRGBX(
+  frame: VideoFrame,
+  width: number,
+  height: number
+): Promise<Uint8Array> {
+  const size = frame.allocationSize({
+    rect: { x: 0, y: 0, width, height },
+    layout: [{ offset: 0, stride: width * 4 }],
+    format: 'RGBX',
+  });
+  const buffer = globalBufferPool.acquire(size);
+  await frame.copyTo(buffer, {
+    rect: { x: 0, y: 0, width, height },
+    layout: [{ offset: 0, stride: width * 4 }],
+    format: 'RGBX',
+  });
+  // RGBX data: every 4th byte is padding. Convert to tight RGB in-place.
+  // We can't avoid this copy since the encoder expects packed RGB.
+  const pixelCount = width * height;
+  const rgb = globalBufferPool.acquire(pixelCount * 3);
+  const buf32 = new Uint32Array(buffer.buffer, buffer.byteOffset, pixelCount);
+  for (let i = 0; i < pixelCount; i++) {
+    const v = buf32[i]!;
+    const dstIdx = i * 3;
+    rgb[dstIdx] = v & 0xff; // R
+    rgb[dstIdx + 1] = (v >> 8) & 0xff; // G
+    rgb[dstIdx + 2] = (v >> 16) & 0xff; // B
+  }
+  globalBufferPool.release(buffer);
+  return rgb;
+}
+
 /** Strategy 1: 4-channel copyTo + fast RGBA→RGB */
 async function copyFrameFourChannel(
   frame: VideoFrame,
   width: number,
   height: number
 ): Promise<Uint8Array> {
+  // Try RGBX first (native YUV→RGB conversion in browser)
+  try {
+    return await copyFrameRGBX(frame, width, height);
+  } catch {
+    // RGBX not supported, fall through to RGBA/BGRA path
+  }
+
   const fourChannelFormats: Array<'RGBA' | 'BGRA' | 'RGBX' | 'BGRX'> = [
     'RGBA',
     'BGRA',

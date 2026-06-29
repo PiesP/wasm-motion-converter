@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { yieldToMain } from '@services/frame-utils';
 import { extractVideoMetadata } from '@services/video-metadata';
 import type { ConversionRequest } from '@t/conversion-types';
 import { logger } from '@utils/logger';
@@ -102,7 +103,7 @@ export async function demuxVideo(
         if (signal?.aborted) {
           throw new DOMException('Cancelled', 'AbortError');
         }
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await yieldToMain();
       }
     }
   } finally {
