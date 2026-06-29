@@ -68,7 +68,8 @@ export function calcAutoDecimation(
   if (forceDecimation !== undefined) return forceDecimation;
   // Guard against unreliable fps detection: clamp to reasonable range
   const clampedFps = Math.max(1, Math.min(sourceFps, 120));
-  const baseDecimation = clampedFps > targetFps ? Math.max(1, Math.round(clampedFps / targetFps)) : 1;
+  const baseDecimation =
+    clampedFps > targetFps ? Math.max(1, Math.round(clampedFps / targetFps)) : 1;
   // Scale boost: larger output scales need more decimation to keep
   // file sizes and encoding time reasonable (see JSDoc rationale above).
   const scaleBoost = scale >= 1.0 ? 3 : scale > 0.5 ? 2 : 1;

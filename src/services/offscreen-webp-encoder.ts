@@ -116,7 +116,10 @@ function extractVP8FromOffscreenBlob(webpBuffer: Uint8Array): Uint8Array {
 
   // Unknown format
   const codecStr = String.fromCharCode(
-    webpBuffer[12]!, webpBuffer[13]!, webpBuffer[14]!, webpBuffer[15]!
+    webpBuffer[12]!,
+    webpBuffer[13]!,
+    webpBuffer[14]!,
+    webpBuffer[15]!
   );
   throw new Error(`Unknown WebP format: "${codecStr}" (0x${fourCC.toString(16)})`);
 }
