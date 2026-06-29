@@ -438,7 +438,7 @@ async function resolveDecoderConfig(
 
   const finalCached = configCache.get(key)!;
   if (hwAccel === 'prefer-hardware' && finalCached.hwSupported) {
-    return { ...baseConfig, hardwareAcceleration: 'prefer-hardware' };
+    return { ...baseConfig, hardwareAcceleration: 'prefer-hardware', optimizeForLatency: false };
   }
-  return { ...baseConfig, hardwareAcceleration: 'prefer-software' };
+  return { ...baseConfig, hardwareAcceleration: 'prefer-software', optimizeForLatency: false };
 }
