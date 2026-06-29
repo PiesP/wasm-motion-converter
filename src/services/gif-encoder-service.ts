@@ -192,7 +192,7 @@ export async function encodeGif(
   /** Estimated total frames from demuxer — used for progress reporting only */
   let estimatedTotalFrames = 0;
   let skippedByDecimation = 0;
-  const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
+  const sourceTotalMs = demux.sourceTotalMs;
 
   // Reusable indexed pixel buffer — avoids per-frame ~2MB allocation.
   // applyPalette() returns a new Uint8Array each call; we reuse this buffer

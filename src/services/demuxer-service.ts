@@ -12,6 +12,8 @@ export interface DemuxResult {
   config: VideoDecoderConfig;
   totalFrames: number;
   duration: number;
+  /** Total source duration in milliseconds (computed from chunk durations) */
+  sourceTotalMs: number;
 }
 
 type DemuxProgressCallback = (packetsExtracted: number, estimatedTotalFrames: number) => void;
@@ -115,5 +117,8 @@ export async function demuxVideo(
     elapsed: `${(elapsed / 1000).toFixed(2)}s`,
   });
 
-  return { chunks, config, totalFrames, duration };
+  // Compute total source duration from chunk durations (microseconds → milliseconds)
+  const sourceTotalMs = chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
+
+  return { chunks, config, totalFrames, duration, sourceTotalMs };
 }

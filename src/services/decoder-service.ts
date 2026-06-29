@@ -332,7 +332,7 @@ export async function decodeFrames(
     }
 
     // Compute timing summary
-    const sourceTotalMs = demux.chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
+    const sourceTotalMs = demux.sourceTotalMs;
     // Streaming mode: encoder handles frame timing internally, so outputTotalMs is not
     // tracked here. GIF/WebP encoders compute their own timing from frame durations.
     // Non-streaming: sum of all RGB frame durations.
