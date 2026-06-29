@@ -323,6 +323,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     fileInputElement = el;
                   }}
                   id="file-upload"
+                  name="file-upload"
                   type="file"
                   class="absolute opacity-0 w-0 h-0 overflow-hidden"
                   accept="video/*"
