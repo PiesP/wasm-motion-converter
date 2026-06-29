@@ -39,11 +39,10 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [downloadUrl, setDownloadUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
 
-  // Track the current blob URLs for cleanup without triggering effect re-entry.
-  // We use plain let variables closed over by the effect, so that
+  // Track the current blob URL for cleanup without triggering effect re-entry.
+  // We use a plain let variable closed over by the effect, so that
   // setPreviewUrl()/setDownloadUrl() do NOT cause the effect to re-run.
-  let currentPreviewUrl: string | null = null;
-  let currentDownloadUrl: string | null = null;
+  let currentUrl: string | null = null;
 
   createEffect(() => {
     // React to outputBlob changes
@@ -53,34 +52,24 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     setLoaded(false);
     setPreviewError(false);
 
-    // Revoke previous URLs (stored in closure variables, not reactive)
-    if (currentPreviewUrl) {
-      URL.revokeObjectURL(currentPreviewUrl);
-      currentPreviewUrl = null;
-    }
-    if (currentDownloadUrl) {
-      URL.revokeObjectURL(currentDownloadUrl);
-      currentDownloadUrl = null;
+    // Revoke previous URL (stored in closure variable, not reactive)
+    if (currentUrl) {
+      URL.revokeObjectURL(currentUrl);
+      currentUrl = null;
     }
 
-    // Create separate URLs for preview and download to avoid shared mutation
-    const preview = URL.createObjectURL(blob);
-    const download = URL.createObjectURL(blob);
-    currentPreviewUrl = preview;
-    currentDownloadUrl = download;
-    setPreviewUrl(preview);
-    setDownloadUrl(download);
+    // Create a single URL shared between preview and download
+    const url = URL.createObjectURL(blob);
+    currentUrl = url;
+    setPreviewUrl(url);
+    setDownloadUrl(url);
   });
 
   // Cleanup on unmount
   onCleanup(() => {
-    if (currentPreviewUrl) {
-      URL.revokeObjectURL(currentPreviewUrl);
-      currentPreviewUrl = null;
-    }
-    if (currentDownloadUrl) {
-      URL.revokeObjectURL(currentDownloadUrl);
-      currentDownloadUrl = null;
+    if (currentUrl) {
+      URL.revokeObjectURL(currentUrl);
+      currentUrl = null;
     }
   });
 
