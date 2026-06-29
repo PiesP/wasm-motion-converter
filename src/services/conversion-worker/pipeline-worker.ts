@@ -102,10 +102,7 @@ export async function runWorkerPipeline(
           type: 'progress',
           requestId: '',
           phase: 'demuxing',
-          percent: Math.min(
-            10,
-            Math.round((packetsExtracted / Math.max(packetsExtracted, 100)) * 10)
-          ),
+          percent: Math.min(10, Math.round(packetsExtracted / 10)),
           fps: 0,
           memoryMB: 0,
           currentFrame: packetsExtracted,

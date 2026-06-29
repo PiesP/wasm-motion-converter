@@ -62,8 +62,6 @@ export interface ConversionOptions {
   smartFrameSkip?: SmartFrameSkipMode;
 }
 
-const MS_PER_SECOND = 1000;
-
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
 
 export async function handleConvert(
@@ -347,7 +345,7 @@ async function performConversion(
     runtime.stopMemoryMonitoring();
 
     const duration = Math.max(0, performance.now() - startTimeMs);
-    const durationSeconds = Math.max(0, duration / MS_PER_SECOND);
+    const durationSeconds = Math.max(0, duration / 1000);
     const memMB = getMemoryUsageMB();
     logger.info('conversion', 'Conversion complete', {
       format: settings.format,
