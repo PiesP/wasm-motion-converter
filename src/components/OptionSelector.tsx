@@ -64,18 +64,14 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
   const renderOption = (option: OptionSelectorOption<T>): JSX.Element => {
     const inputId = `${local.name}-${String(option.value)}`;
     const descriptionId = option.description ? `${inputId}-desc` : undefined;
-    const ariaLabel = option.description ? `${option.label}: ${option.description}` : option.label;
+    const ariaLabel = option.label;
 
     return (
       <label
         for={inputId}
         class={`${optionClass(option.value === local.value)} relative`}
         data-testid={`option-${local.name}-${String(option.value)}`}
-        // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: label acts as radio input via visually-hidden input
-        role="radio"
-        aria-checked={option.value === local.value}
         aria-label={ariaLabel}
-        tabIndex={0}
       >
         <input
           type="radio"
@@ -86,7 +82,6 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
           onChange={() => handleOptionChange(option.value)}
           disabled={local.disabled}
           class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          aria-label={ariaLabel}
           aria-describedby={descriptionId}
         />
         <div class="text-center pointer-events-none">

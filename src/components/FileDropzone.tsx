@@ -132,16 +132,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            openFilePicker();
-          }
-        }}
-        tabIndex={0}
         aria-label={ariaLabel()}
         aria-busy={isBusy()}
-        role="button"
         data-testid="dropzone"
       >
         {/* Busy state: compact progress card (아이디어 1 — 통합 카드) */}
