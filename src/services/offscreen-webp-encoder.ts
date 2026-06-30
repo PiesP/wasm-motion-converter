@@ -179,6 +179,12 @@ export async function encodeWebpOffscreen(
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController();
 
+  // Accumulate durations from dynamically skipped frames for timing preservation.
+  // When decimationController.shouldSkip() drops a frame under memory pressure,
+  // its duration is accumulated here and added to the next kept frame's delay.
+  // This mirrors the GIF encoder's accumulatedDuration behavior.
+  let accumulatedDuration = 0;
+
   // Decode frames with streaming callback — each frame is encoded immediately
   const { totalInputFrames: totalDecoded, skippedByDecimation: totalSkipped } = await decodeFrames(
     demux,
@@ -215,10 +221,16 @@ export async function encodeWebpOffscreen(
         const shouldSkip = decimationController.shouldSkip(frameNum);
 
         if (shouldSkip) {
-          // Release buffer and skip encoding
+          // Accumulate skipped frame duration for timing preservation.
+          // Without this, WebP output plays faster than source when dynamic
+          // decimation kicks in under memory pressure.
+          accumulatedDuration += frameDurationMs;
           globalBufferPool.release(rgbData);
           return;
         }
+
+        const totalDuration = frameDurationMs + accumulatedDuration;
+        accumulatedDuration = 0;
 
         // Create ImageData from RGB data (3 bytes per pixel → 4 bytes RGBA for canvas)
         // OffscreenCanvas putImageData requires RGBA format
@@ -257,7 +269,7 @@ export async function encodeWebpOffscreen(
             ? extractVP8FromOffscreenBlob(webpBuffer)
             : extractVP8BitstreamFast(webpBuffer);
 
-        muxer.addFrame(bitstream, frameDurationMs);
+        muxer.addFrame(bitstream, totalDuration);
         encodeIdx++;
 
         // Release the RGB buffer back to the pool after successful encode

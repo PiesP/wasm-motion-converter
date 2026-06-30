@@ -395,6 +395,9 @@ async function _runPipelineInner(
         const rgbFrames: Array<{ rgbData: Uint8Array; durationMs: number }> = [];
         const decimationController = createDynamicDecimationController();
 
+        // Accumulate durations from dynamically skipped frames (see offscreen-webp-encoder).
+        let dynamicAccumulatedMs = 0;
+
         await decodeFrames(
           demuxResult,
           {
@@ -427,10 +430,13 @@ async function _runPipelineInner(
               }
               const shouldSkip = decimationController.shouldSkip(frameNum);
               if (shouldSkip) {
+                dynamicAccumulatedMs += frameDurationMs;
                 globalBufferPool.release(rgbData);
                 return;
               }
-              rgbFrames.push({ rgbData: new Uint8Array(rgbData), durationMs: frameDurationMs });
+              const totalDuration = frameDurationMs + dynamicAccumulatedMs;
+              dynamicAccumulatedMs = 0;
+              rgbFrames.push({ rgbData: new Uint8Array(rgbData), durationMs: totalDuration });
               globalBufferPool.release(rgbData);
             },
           },
