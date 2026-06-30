@@ -51,6 +51,7 @@ export interface TranslationKeys {
   'footer.openIssue': string;
   'footer.licenseAttribution': string;
   'footer.linkGitHub': string;
+  'footer.questions': string;
 
   // Dropzone
   'dropzone.dropHere': string;

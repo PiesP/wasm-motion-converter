@@ -282,15 +282,15 @@ const App: Component = () => {
         </a>
 
         <header class="border-b border-white/[0.08] bg-[#08090a]">
-          <div class="mx-auto flex max-w-[1200px] items-center justify-between px-4 py-1">
+          <div class="mx-auto flex max-w-[1200px] items-center justify-between px-4 py-0">
             <div class="flex-1">
               <h1
-                class="text-2xl font-bold tracking-tight text-[#f7f8f8] sm:text-3xl"
+                class="text-2xl font-bold tracking-tight text-[#f7f8f8] sm:text-[32px]"
                 style="letter-spacing: -0.704px"
               >
                 {t('app.title')}
               </h1>
-              <p class="mt-1 text-sm text-[#d0d6e0] sm:text-lg">{t('app.subtitle')}</p>
+              <p class="mt-0.5 text-sm text-[#d0d6e0] sm:text-lg">{t('app.subtitle')}</p>
             </div>
 
             <div class="flex items-center gap-2">
