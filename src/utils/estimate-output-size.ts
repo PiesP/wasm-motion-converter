@@ -12,6 +12,7 @@
  */
 
 import type { ConversionQuality } from '@t/conversion-types';
+import { formatBytes } from './format-utils';
 
 /**
  * Conservative bytes-per-pixel (BPP) estimate for GIF LZW compression.
@@ -105,14 +106,9 @@ export interface OutputSizeEstimate {
   formatted: string;
 }
 
-/**
- * Format bytes to human-readable string.
- */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+// Re-export formatBytes from the canonical source (format-utils.ts) to avoid
+// duplication. When called without a locale, the locale-naive fallback is used.
+export { formatBytes };
 
 /**
  * Produce a formatted output size estimate.
