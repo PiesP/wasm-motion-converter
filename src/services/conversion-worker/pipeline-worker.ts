@@ -12,6 +12,9 @@
 
 import type { ConversionRequest } from '@t/conversion-types.js';
 import {
+  DEFAULT_FPS,
+  GIF_TARGET_FPS,
+  WEBP_TARGET_FPS,
   WORKER_MAX_MEMORY_LIMIT_MB,
   WORKER_MAX_MEMORY_MB,
   WORKER_MIN_MEMORY_MB,
@@ -19,6 +22,7 @@ import {
 import { logger } from '@utils/logger.js';
 import { globalBufferPool } from '../buffer-pool.js';
 import { demuxVideo } from '../demuxer-service.js';
+import { calcAutoDecimation } from '../encoder-common.js';
 import { encodeGif } from '../gif-encoder-service.js';
 import { encodeWebp } from '../webp-encoder-service.js';
 import { restoreVideoDecoderConfig } from './protocol.js';
@@ -122,12 +126,18 @@ export async function runWorkerPipeline(
   }
 
   const cfg = demuxResult.config;
+  // Prioritize codedWidth/codedHeight — these are the actual pixel dimensions
+  // from the VideoDecoderConfig and are always present for valid configs.
+  // displayAspectWidth/Height and displayWidth/Height are only used as fallbacks
+  // when coded dimensions are unavailable (extremely rare, indicates malformed config).
   const codedWidth =
+    cfg.codedWidth ??
     (cfg as VideoDecoderConfig & { displayAspectWidth?: number }).displayAspectWidth ??
-    cfg.codedWidth;
+    (cfg as VideoDecoderConfig & { displayWidth?: number }).displayWidth;
   const codedHeight =
+    cfg.codedHeight ??
     (cfg as VideoDecoderConfig & { displayAspectHeight?: number }).displayAspectHeight ??
-    cfg.codedHeight;
+    (cfg as VideoDecoderConfig & { displayHeight?: number }).displayHeight;
   if (!codedWidth || !codedHeight) {
     postMessage({
       type: 'error',
@@ -140,6 +150,8 @@ export async function runWorkerPipeline(
 
   // ── Decode + Encode Phase ──────────────────────────────────────
   let output: ArrayBuffer;
+
+  const sourceFps = demuxResult.framerate ?? DEFAULT_FPS;
 
   const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
     const now = performance.now();
@@ -168,11 +180,20 @@ export async function runWorkerPipeline(
   };
 
   if (options.format === 'gif') {
+    const gifDecimation = calcAutoDecimation(
+      sourceFps,
+      GIF_TARGET_FPS,
+      options.scale,
+      options.forceDecimation
+    );
+
     logger.info('encoders', 'GIF encoder (streaming decode→encode)', {
       codec: demuxResult.config.codec,
       codedWidth,
       codedHeight,
       totalFrames: demuxResult.totalFrames,
+      sourceFps: Math.round(sourceFps),
+      gifDecimation,
     });
 
     const gifResult = await encodeGif(
@@ -182,7 +203,7 @@ export async function runWorkerPipeline(
         height: codedHeight,
         quality: options.quality,
         scale: options.scale,
-        frameDecimation: 1,
+        frameDecimation: gifDecimation,
         onFrameDecoded: decodeProgressCb,
         onFrameEncoded: (frameIdx: number, totalFrames: number) => {
           const now = performance.now();
@@ -206,11 +227,20 @@ export async function runWorkerPipeline(
     );
     output = gifResult.buffer as ArrayBuffer;
   } else {
+    const webpDecimation = calcAutoDecimation(
+      sourceFps,
+      WEBP_TARGET_FPS[options.quality],
+      options.scale,
+      options.forceDecimation
+    );
+
     logger.info('encoders', 'WebP encoder (streaming encodeRGB + mux)', {
       codec: demuxResult.config.codec,
       codedWidth,
       codedHeight,
       totalFrames: demuxResult.totalFrames,
+      sourceFps: Math.round(sourceFps),
+      webpDecimation,
     });
 
     const webpResult = await encodeWebp(
@@ -220,7 +250,7 @@ export async function runWorkerPipeline(
         height: codedHeight,
         quality: options.quality,
         scale: options.scale,
-        frameDecimation: 1,
+        frameDecimation: webpDecimation,
         onFrameDecoded: decodeProgressCb,
       },
       (p: { progress: number; currentFrame?: number }) => {

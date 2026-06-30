@@ -43,6 +43,7 @@ export interface DecimationMemoryInfo {
 export function createDynamicDecimationController(
   memoryCheck?: () => DecimationMemoryInfo | null
 ): DynamicDecimationController {
+  let actualSkipCount = 0;
   let dynamicSkipCount = 0;
   let consecutiveMemWarnings = 0;
   let cachedFrameNum = -1;
@@ -77,10 +78,14 @@ export function createDynamicDecimationController(
       // Critical: skip every other frame (aggressive)
       const skip = dynamicSkipCount % 2 === 0;
       dynamicSkipCount++;
+      if (skip) {
+        actualSkipCount++;
+      }
       logger.warn('encoders', 'Critical memory pressure, dynamic frame skip', {
         usagePct: Math.round(memInfo.usagePercentage),
         frameNum,
         dynamicSkipCount,
+        actualSkipCount,
       });
       return skip;
     }
@@ -89,10 +94,14 @@ export function createDynamicDecimationController(
       // Sustained pressure: skip every 3rd frame
       const skip = dynamicSkipCount % 3 === 0;
       dynamicSkipCount++;
+      if (skip) {
+        actualSkipCount++;
+      }
       logger.info('encoders', 'Sustained memory pressure, dynamic frame skip', {
         usagePct: Math.round(memInfo.usagePercentage),
         frameNum,
         dynamicSkipCount,
+        actualSkipCount,
       });
       return skip;
     }
@@ -101,7 +110,7 @@ export function createDynamicDecimationController(
   }
 
   function getSkipCount(): number {
-    return dynamicSkipCount;
+    return actualSkipCount;
   }
 
   return { shouldSkip, getSkipCount };
