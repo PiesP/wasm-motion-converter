@@ -5,35 +5,37 @@ import type { Component, JSX } from 'solid-js';
 import { createSignal, onCleanup, Show, splitProps } from 'solid-js';
 
 const TOOLTIP_Z_INDEX = 'z-10';
-const TOOLTIP_OFFSET_TOP = '-top-10';
 const TOOLTIP_ARROW_SIZE = 'w-2 h-2';
+const TOOLTIP_MARGIN_PX = 4;
+const TOOLTIP_ESTIMATED_HEIGHT = 40;
 
 interface TooltipProps {
   content: string;
   children: JSX.Element;
 }
 
-/** Check if the Popover API is available (baseline 2025, all major browsers) */
-const SUPPORTS_POPOVER = typeof HTMLElement !== 'undefined' && 'popover' in HTMLElement.prototype;
-
 const Tooltip: Component<TooltipProps> = (props) => {
   const [local] = splitProps(props, ['content', 'children']);
   const [isVisible, setIsVisible] = createSignal(false);
+  const [placement, setPlacement] = createSignal<'above' | 'below'>('above');
   const [tooltipId] = createSignal(`tooltip-${crypto.randomUUID()}`);
-  let popoverEl: HTMLDivElement | undefined;
+  let triggerEl: HTMLDivElement | undefined;
 
   const showTooltip = () => {
-    setIsVisible(true);
-    if (popoverEl && SUPPORTS_POPOVER) {
-      popoverEl.showPopover();
+    // Check if showing above would overflow viewport
+    const triggerRect = triggerEl?.getBoundingClientRect();
+    if (triggerRect) {
+      if (triggerRect.top - TOOLTIP_ESTIMATED_HEIGHT - TOOLTIP_MARGIN_PX < 0) {
+        setPlacement('below');
+      } else {
+        setPlacement('above');
+      }
     }
+    setIsVisible(true);
   };
 
   const hideTooltip = () => {
     setIsVisible(false);
-    if (popoverEl && SUPPORTS_POPOVER) {
-      popoverEl.hidePopover();
-    }
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -42,23 +44,20 @@ const Tooltip: Component<TooltipProps> = (props) => {
     }
   };
 
-  // Set popover attribute on mount — no signal setter in ref callback
-  // (SolidJS ref callbacks run during render phase; signal setters trigger
-  //  runUpdates↔completeUpdates recursion → stack overflow → ErrorBoundary).
-  const initPopover = (el: HTMLDivElement) => {
-    popoverEl = el;
-    if (SUPPORTS_POPOVER && el) {
-      el.popover = 'hint';
-    }
-  };
-
   onCleanup(() => {
-    popoverEl = undefined;
+    triggerEl = undefined;
   });
+
+  const tooltipClass = () => (placement() === 'above' ? 'bottom-full mb-1' : 'top-full mt-1');
+
+  const arrowClass = () => (placement() === 'above' ? '-bottom-1' : '-top-1');
 
   return (
     <div class="relative inline-block">
       <div
+        ref={(el) => {
+          triggerEl = el;
+        }}
         onMouseEnter={showTooltip}
         onMouseLeave={hideTooltip}
         onFocus={showTooltip}
@@ -71,13 +70,12 @@ const Tooltip: Component<TooltipProps> = (props) => {
       <Show when={isVisible()}>
         <div
           id={tooltipId()}
-          ref={initPopover}
-          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-[#f7f8f8] bg-[#191a1b] rounded-lg shadow-lg ${TOOLTIP_OFFSET_TOP} left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none`}
+          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-[#f7f8f8] bg-[#191a1b] rounded-lg shadow-lg ${tooltipClass()} left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none`}
           role="tooltip"
         >
           {local.content}
           <div
-            class={`absolute ${TOOLTIP_ARROW_SIZE} bg-[#191a1b] rotate-45 left-1/2 -translate-x-1/2 -bottom-1`}
+            class={`absolute ${TOOLTIP_ARROW_SIZE} bg-[#191a1b] rotate-45 left-1/2 -translate-x-1/2 ${arrowClass()}`}
           />
         </div>
       </Show>
