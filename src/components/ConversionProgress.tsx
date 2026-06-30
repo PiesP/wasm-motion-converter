@@ -20,8 +20,6 @@ interface ConversionProgressProps {
   outputFrames?: number;
   memoryUsage?: string | null;
   phase?: ProgressPhase;
-  fps?: number;
-  elapsedMs?: number;
 }
 
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {
@@ -37,8 +35,6 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
     'outputFrames',
     'memoryUsage',
     'phase',
-    'fps',
-    'elapsedMs',
   ]);
   const isInProgress = () => local.progress < 100;
   const ariaBusy = () => (isInProgress() ? true : undefined);
