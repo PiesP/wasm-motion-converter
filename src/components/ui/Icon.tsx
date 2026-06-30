@@ -47,7 +47,7 @@ const Icon: Component<IconProps> = (props) => {
 
   const ariaLabel = () => {
     const labels: Record<IconName, () => string> = {
-      info: () => t('app.error.title'),
+      info: () => 'Info',
       warning: () => t('memory.title'),
       error: () => t('error.unknown'),
       success: () => t('result.download'),
