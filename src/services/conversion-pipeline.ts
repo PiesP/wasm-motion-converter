@@ -190,6 +190,17 @@ async function _runPipelineInner(
 ): Promise<ArrayBuffer> {
   const throttled = createThrottledProgress(onProgress, 100);
 
+  // Phase-weighted progress ranges (empirical from ConversionProfiler measurements):
+  //   demux:   0 ~ 3%   (typically <1% of total time)
+  //   decode:  3 ~ 73%  (typically ~70% of total time — dominant bottleneck)
+  //   encode: 73 ~ 93%  (typically ~20% of total time)
+  //   finish: 93 ~ 100% (file finalization)
+  const DEMUX_MAX = 3;
+  const DECODE_MAX = 73;
+  const ENCODE_MAX = 93;
+  const DECODE_RANGE = DECODE_MAX - DEMUX_MAX; // 70
+  const ENCODE_RANGE = ENCODE_MAX - DECODE_MAX; // 20
+
   try {
     // ── Throttled memory sampling (PERF-H1) ──
     // getMemoryUsageMB() reads performance.memory which is expensive.
@@ -217,7 +228,10 @@ async function _runPipelineInner(
           profiler.updatePhase('demuxing', packetsExtracted);
           const memMB = sampleMemory();
           const elapsedMs = Math.round(performance.now() - pipelineStart);
-          const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalFrames) * 10));
+          const demuxPct = Math.min(
+            DEMUX_MAX,
+            Math.round((packetsExtracted / estimatedTotalFrames) * DEMUX_MAX)
+          );
           demuxProgressThrottled({
             phase: 'demuxing',
             progress: demuxPct,
@@ -260,7 +274,7 @@ async function _runPipelineInner(
     const demuxMemMB = sampleMemory();
     onProgress({
       phase: 'demuxing',
-      progress: 10,
+      progress: DEMUX_MAX,
       fps: 0,
       etaSeconds: null,
       memoryMB: demuxMemMB,
@@ -278,7 +292,10 @@ async function _runPipelineInner(
     // so we count actual frames and compute FPS over the interval.
     const fpsTracker = { current: 0, lastTime: performance.now(), lastFrame: 0 };
 
-    const decodeProgressCb = (frameIdx: number, totalFrames: number) => {
+    // estimatedOutputFrames is computed after decimationRatio is determined
+    let estimatedOutputFrames = 1;
+
+    const decodeProgressCb = (frameIdx: number, _totalFrames: number) => {
       const now = performance.now();
       const deltaMs = now - fpsTracker.lastTime;
       const framesDelta = frameIdx - fpsTracker.lastFrame;
@@ -286,15 +303,18 @@ async function _runPipelineInner(
         deltaMs > 0 && framesDelta > 0 ? Math.round(((framesDelta * 1000) / deltaMs) * 10) / 10 : 0;
       fpsTracker.lastTime = now;
       fpsTracker.lastFrame = frameIdx;
-      const decodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
+      const decodePct =
+        estimatedOutputFrames > 0
+          ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)
+          : 0;
       throttled.callback({
         phase: 'decoding',
-        progress: 10 + Math.min(40, decodePct),
+        progress: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
         fps: fpsTracker.current,
         etaSeconds: null,
         memoryMB: sampleMemory(),
         currentFrame: frameIdx,
-        totalFrames,
+        totalFrames: estimatedOutputFrames,
         elapsedMs: Math.round(now - pipelineStart),
       });
     };
@@ -307,8 +327,6 @@ async function _runPipelineInner(
         ? demuxResult.framerate
         : DEFAULT_FPS;
 
-    let decimationRatio = 1;
-
     if (request.format === 'gif') {
       const gifDecimation = calcAutoDecimation(
         sourceFps,
@@ -316,7 +334,7 @@ async function _runPipelineInner(
         request.scale,
         request.forceDecimation
       );
-      decimationRatio = gifDecimation;
+      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
 
       logger.info('conversion', '  ├─ Branch: GIF encoder (streaming decode→encode)', {
         codec: demuxResult.config.codec,
@@ -338,17 +356,20 @@ async function _runPipelineInner(
             scale: request.scale,
             frameDecimation: gifDecimation,
             onFrameDecoded: decodeProgressCb,
-            onFrameEncoded: (frameIdx: number, totalFrames: number) => {
+            onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
               gifEncodeFrames = frameIdx;
-              const encodePct = totalFrames > 0 ? Math.round((frameIdx / totalFrames) * 40) : 0;
+              const encodePct =
+                estimatedOutputFrames > 0
+                  ? Math.round((frameIdx / estimatedOutputFrames) * ENCODE_RANGE)
+                  : 0;
               throttled.callback({
                 phase: 'encoding',
-                progress: 50 + Math.min(40, encodePct),
+                progress: DECODE_MAX + Math.min(ENCODE_RANGE, encodePct),
                 fps: fpsTracker.current,
                 etaSeconds: null,
                 memoryMB: sampleMemory(),
                 currentFrame: frameIdx,
-                totalFrames,
+                totalFrames: estimatedOutputFrames,
                 elapsedMs: Math.round(performance.now() - pipelineStart),
               });
             },
@@ -367,7 +388,7 @@ async function _runPipelineInner(
         request.scale,
         request.forceDecimation
       );
-      decimationRatio = webpDecimation;
+      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
 
       // Use parallel Worker-based encoder when available (distributes frame
       // encoding across multiple CPU cores for 2-3x speedup).
@@ -406,16 +427,19 @@ async function _runPipelineInner(
             frameDecimation: webpDecimation,
             hwAccel: 'prefer-hardware',
             smartFrameSkip: request.smartFrameSkip,
-            onFrameDecoded: (frameIdx, total) => {
-              const decodePct = total > 0 ? Math.round((frameIdx / total) * 40) : 0;
+            onFrameDecoded: (frameIdx, _total) => {
+              const decodePct =
+                estimatedOutputFrames > 0
+                  ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)
+                  : 0;
               throttled.callback({
                 phase: 'decoding',
-                progress: 10 + Math.min(40, decodePct),
+                progress: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
                 fps: fpsTracker.current,
                 etaSeconds: null,
                 memoryMB: sampleMemory(),
                 currentFrame: frameIdx,
-                totalFrames: total,
+                totalFrames: estimatedOutputFrames,
                 elapsedMs: Math.round(performance.now() - pipelineStart),
               });
             },
@@ -445,15 +469,16 @@ async function _runPipelineInner(
 
         // Encode via worker pool
         const encoded = await encodeWebpParallel(rgbFrames, w, h, request.quality, (p) => {
-          const mappedProgress = 50 + Math.round(((p.progress - 50) * 0.4) / 40);
+          const encodeProgress =
+            DECODE_MAX + Math.round(((p.progress - DECODE_MAX) * ENCODE_RANGE) / ENCODE_RANGE);
           throttled.callback({
             phase: 'encoding',
-            progress: Math.min(90, mappedProgress),
+            progress: Math.min(ENCODE_MAX, encodeProgress),
             fps: fpsTracker.current,
             etaSeconds: null,
             memoryMB: sampleMemory(),
             currentFrame: p.currentFrame ?? 0,
-            totalFrames: demuxResult.totalFrames,
+            totalFrames: estimatedOutputFrames,
             elapsedMs: Math.round(performance.now() - pipelineStart),
           });
         });
@@ -489,15 +514,18 @@ async function _runPipelineInner(
           },
           (p) => {
             encodedFrames = p.currentFrame ?? encodedFrames;
-            const mappedProgress = 50 + Math.round(((p.progress - 50) * 0.4) / 40);
+            const encodePct =
+              estimatedOutputFrames > 0
+                ? Math.round((encodedFrames / estimatedOutputFrames) * ENCODE_RANGE)
+                : 0;
             throttled.callback({
               phase: 'encoding',
-              progress: Math.min(90, 50 + mappedProgress),
+              progress: Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
               fps: fpsTracker.current,
               etaSeconds: null,
               memoryMB: sampleMemory(),
               currentFrame: p.currentFrame ?? 0,
-              totalFrames: demuxResult.totalFrames,
+              totalFrames: estimatedOutputFrames,
               elapsedMs: Math.round(performance.now() - pipelineStart),
             });
           },
@@ -531,15 +559,18 @@ async function _runPipelineInner(
           },
           (p: { progress: number; currentFrame?: number }) => {
             encodedFrames = p.currentFrame ?? encodedFrames;
-            const mappedProgress = 50 + Math.round(p.progress * 0.4);
+            const encodePct =
+              estimatedOutputFrames > 0
+                ? Math.round((encodedFrames / estimatedOutputFrames) * ENCODE_RANGE)
+                : 0;
             throttled.callback({
               phase: 'encoding',
-              progress: Math.min(90, mappedProgress),
+              progress: Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
               fps: fpsTracker.current,
               etaSeconds: null,
               memoryMB: sampleMemory(),
               currentFrame: p.currentFrame ?? 0,
-              totalFrames: demuxResult.totalFrames,
+              totalFrames: estimatedOutputFrames,
               elapsedMs: Math.round(performance.now() - pipelineStart),
             });
           },
@@ -558,7 +589,7 @@ async function _runPipelineInner(
     profiler.endPhase('decoding');
     profiler.endPhase('encoding', encodeResult);
 
-    // ── Assembly Phase (90~100%) ──
+    // ── Assembly Phase (93~100%) ──
     profiler.startPhase('assembling');
 
     // Clear buffer pool after conversion
@@ -566,16 +597,15 @@ async function _runPipelineInner(
 
     const memMB = sampleMemory();
     const totalElapsedMs = Math.round(performance.now() - pipelineStart);
-    const outputFrames = Math.max(1, Math.round(demuxResult.totalFrames / decimationRatio));
     throttled.callback({
       phase: 'assembling',
-      progress: 95,
+      progress: ENCODE_MAX,
       fps: 0,
       etaSeconds: 0,
       memoryMB: memMB,
       currentFrame: demuxResult.totalFrames,
       totalFrames: demuxResult.totalFrames,
-      outputFrames,
+      outputFrames: estimatedOutputFrames,
       elapsedMs: totalElapsedMs,
     });
     throttled.callback({
@@ -586,7 +616,7 @@ async function _runPipelineInner(
       memoryMB: memMB,
       currentFrame: demuxResult.totalFrames,
       totalFrames: demuxResult.totalFrames,
-      outputFrames,
+      outputFrames: estimatedOutputFrames,
       elapsedMs: totalElapsedMs,
     });
 
