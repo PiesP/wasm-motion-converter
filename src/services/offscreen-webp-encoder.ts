@@ -259,6 +259,9 @@ export async function encodeWebpOffscreen(
 
         muxer.addFrame(bitstream, frameDurationMs);
         encodeIdx++;
+
+        // Release the RGB buffer back to the pool after successful encode
+        globalBufferPool.release(rgbData);
       },
     },
     signal
