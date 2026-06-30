@@ -302,7 +302,10 @@ async function _runPipelineInner(
     profiler.startPhase('decoding');
     profiler.startPhase('encoding');
 
-    const sourceFps = demuxResult.framerate ?? DEFAULT_FPS;
+    const sourceFps =
+      Number.isFinite(demuxResult.framerate) && demuxResult.framerate > 0
+        ? demuxResult.framerate
+        : DEFAULT_FPS;
 
     let decimationRatio = 1;
 

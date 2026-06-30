@@ -54,6 +54,15 @@ const getInitialConversionSettings = (): ConversionSettings => {
         const trimStart =
           typeof obj.trimStart === 'number' && obj.trimStart >= 0 ? obj.trimStart : 0;
         const trimEnd = typeof obj.trimEnd === 'number' && obj.trimEnd >= 0 ? obj.trimEnd : 0;
+        // Validate trim range: trimStart must be strictly before trimEnd.
+        // If both are set but inverted or equal, reset both to defaults.
+        const validTrim =
+          trimStart === 0 && trimEnd === 0
+            ? true
+            : trimStart > 0 && trimEnd > 0 && trimStart < trimEnd;
+        if (!validTrim) {
+          return DEFAULT_CONVERSION_SETTINGS;
+        }
         return {
           ...DEFAULT_CONVERSION_SETTINGS,
           format: obj.format,
