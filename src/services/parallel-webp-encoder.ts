@@ -123,11 +123,6 @@ export async function encodeWebpParallel(
       })
       .catch((err: Error) => {
         logger.error('encoders', 'Worker encode failed', { encodeId: i, error: err.message });
-        resultBuffer.set(i, {
-          bitstream: new Uint8Array(0),
-          durationMs: frame.durationMs,
-          encodeIdx: i,
-        });
         throw err;
       });
 
