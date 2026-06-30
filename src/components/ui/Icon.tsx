@@ -75,7 +75,6 @@ const Icon: Component<IconProps> = (props) => {
       aria-label={ariaHidden() ? undefined : ariaLabel()}
       aria-hidden={ariaHidden() ? true : undefined}
     >
-      <title>{ariaLabel()}</title>
       <Switch>
         <Match when={local.name === 'info'}>
           <path
