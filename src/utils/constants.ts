@@ -81,8 +81,11 @@ export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */
 export const GIF_MAX_FRAME_DELAY_CS = 200;
 
-/** GIF encoder minimum first frame delay in milliseconds */
-export const GIF_MIN_FIRST_FRAME_DELAY_MS = 100;
+/** GIF encoder minimum first frame delay in milliseconds.
+ *  Set to 20ms — the minimum safe delay for GIF viewers (sub-20ms frames
+ *  may be skipped by some renderers). Previously 100ms which caused
+ *  noticeable positive timing drift after the tail-accumulation fix. */
+export const GIF_MIN_FIRST_FRAME_DELAY_MS = 20;
 
 /** GIF encoder minimum frame delay in milliseconds */
 export const GIF_MIN_FRAME_DELAY_MS = 50;
