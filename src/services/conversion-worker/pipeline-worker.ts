@@ -25,7 +25,6 @@ import { demuxVideo } from '../demuxer-service.js';
 import { calcAutoDecimation } from '../encoder-common.js';
 import { encodeGif } from '../gif-encoder-service.js';
 import { encodeWebp } from '../webp-encoder-service.js';
-import { restoreVideoDecoderConfig } from './protocol.js';
 import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
@@ -61,15 +60,12 @@ function clampMaxMemoryMB(value: number): number {
  */
 export async function runWorkerPipeline(
   inputBuffer: ArrayBuffer,
-  config: SerializedDecoderConfig,
+  _config: SerializedDecoderConfig,
   options: SerializedConversionOptions,
   postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
   _signal?: AbortSignal
 ): Promise<ArrayBuffer> {
   const pipelineStart = performance.now();
-
-  // Restore VideoDecoderConfig from serialized form
-  restoreVideoDecoderConfig(config);
 
   // Build a ConversionRequest for the existing pipeline code
   const request: ConversionRequest = {
