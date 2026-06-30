@@ -210,18 +210,28 @@ html.dark :focus-visible {
   }
 
   /* Disable Tailwind animate-* classes for reduced motion */
-  /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
   .animate-spin,
   .animate-pulse,
   .animate-bounce,
   .animate-ping {
-    animation: none !important;
+    animation: none;
   }
 }
 
-/* ============================================================================
-   UI Transition Animations (아이디어 4)
-   ============================================================================ */
+@media (forced-colors: active) {
+  /* Ensure borders remain visible in high-contrast mode */
+  .memory-warning-severity-border,
+  [class*="border-red"],
+  [class*="border-yellow"],
+  [class*="border-green"],
+  [class*="border-orange"] {
+    border-color: CanvasText;
+  }
+  /* Progress bar retains visibility */
+  [role="progressbar"] {
+    border: 1px solid CanvasText;
+  }
+}
 
 /** Fade in animation for newly appearing elements */
 @keyframes fade-in {

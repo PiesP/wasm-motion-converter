@@ -14,7 +14,10 @@
  */
 
 // ─── VP8 Bitstream Extraction ──────────────────────────────────────
-// Same logic as streaming-webp-encoder.ts, inlined for worker independence.
+// Same logic as streaming-webp-encoder.ts, inlined for worker independence
+// because Vite Worker URL imports cannot reference external ES modules.<｜end▁of▁thinking｜>// In production builds this file is loaded separately via new Worker(),
+// so importing from streaming-webp-encoder.ts is not possible.
+// This duplication is intentional and necessary for Worker isolation.
 
 const RIFF_MAGIC = 0x52494646;
 const WEBP_MAGIC = 0x57454250;

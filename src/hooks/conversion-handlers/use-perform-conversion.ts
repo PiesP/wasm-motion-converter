@@ -470,7 +470,9 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
 }
 
 export function handleCancelAnalysis(): void {
-  setAppState('cancelling');
+  batch(() => {
+    setAppState('cancelling');
+  });
 
   // Revoke blob URL immediately (not deferred) to prevent race condition
   // where a new file's preview URL could be revoked by a queued microtask.
@@ -478,10 +480,12 @@ export function handleCancelAnalysis(): void {
   if (url) URL.revokeObjectURL(url);
 
   queueMicrotask(() => {
-    setInputFile(null);
-    setVideoPreviewUrl(null);
-    setVideoMetadata(null);
-    setAppState('idle');
+    batch(() => {
+      setInputFile(null);
+      setVideoPreviewUrl(null);
+      setVideoMetadata(null);
+      setAppState('idle');
+    });
   });
 }
 
@@ -533,17 +537,19 @@ export function handleRetry(runtime: ConversionRuntimeController, t: TFunction):
 
 export function handleDismissError(): void {
   logger.info('general', 'User dismissed error message');
-  setErrorMessage(null);
-  setErrorContext(null);
+  batch(() => {
+    setErrorMessage(null);
+    setErrorContext(null);
 
-  const previousPreviewUrl = videoPreviewUrl();
-  if (previousPreviewUrl) {
-    URL.revokeObjectURL(previousPreviewUrl);
-  }
-  setVideoPreviewUrl(null);
-  // Clear inputFile too — revoking the preview URL without clearing the file
-  // creates orphaned state where inputFile is set but videoPreviewUrl is null.
-  setInputFile(null);
+    const previousPreviewUrl = videoPreviewUrl();
+    if (previousPreviewUrl) {
+      URL.revokeObjectURL(previousPreviewUrl);
+    }
+    setVideoPreviewUrl(null);
+    // Clear inputFile too — revoking the preview URL without clearing the file
+    // creates orphaned state where inputFile is set but videoPreviewUrl is null.
+    setInputFile(null);
 
-  setAppState('idle');
+    setAppState('idle');
+  });
 }

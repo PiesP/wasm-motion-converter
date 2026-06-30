@@ -145,6 +145,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           <img
             src={previewUrl()!}
             alt={`${outputExtension().toUpperCase()} preview: ${downloadFileName()}`}
+            aria-label={`${outputExtension().toUpperCase()} animated preview: ${downloadFileName()}`}
             class="w-full h-auto max-h-[70vh] object-contain rounded transition-opacity duration-300 opacity-100"
             onLoad={handlePreviewLoad}
             onError={handlePreviewError}

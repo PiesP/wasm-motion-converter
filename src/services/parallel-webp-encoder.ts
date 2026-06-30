@@ -20,7 +20,11 @@
 import type { ProgressCallback } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import type { BaseEncoderOptions } from './encoder-common';
-import { extractVP8BitstreamFast, StreamingWebpMuxer } from './streaming-webp-encoder';
+import {
+  extractVP8Bitstream,
+  extractVP8BitstreamFast,
+  StreamingWebpMuxer,
+} from './streaming-webp-encoder';
 import { type EncodeTask, type EncodeTaskResult, getWorkerPool } from './worker-pool';
 
 const WORKER_QUALITY_MAP: Record<BaseEncoderOptions['quality'], number> = {
@@ -314,7 +318,7 @@ async function encodeWebpMainThread(
     const webpBuffer = new Uint8Array(await blob.arrayBuffer());
 
     const bitstream =
-      i === 0 ? extractVP8FromMainThread(webpBuffer) : extractVP8BitstreamFast(webpBuffer);
+      i === 0 ? extractVP8Bitstream(webpBuffer) : extractVP8BitstreamFast(webpBuffer);
 
     muxer.addFrame(bitstream, frame.durationMs);
 
@@ -333,37 +337,4 @@ async function encodeWebpMainThread(
   }
 
   return muxer.finish();
-}
-
-// Inline VP8 extraction for main thread fallback
-function extractVP8FromMainThread(webpBuffer: Uint8Array): Uint8Array {
-  if (webpBuffer.length < 24) throw new Error(`WebP too small: ${webpBuffer.length}`);
-
-  const view = new DataView(webpBuffer.buffer, webpBuffer.byteOffset, webpBuffer.byteLength);
-
-  if (view.getUint32(0, false) !== 0x52494646) throw new Error('Invalid RIFF');
-  if (view.getUint32(8, false) !== 0x57454250) throw new Error('Invalid WEBP');
-
-  const fourCC = view.getUint32(12, false);
-
-  if (fourCC === 0x56503820) {
-    const frameSize = view.getUint32(16, true);
-    return webpBuffer.subarray(20, 20 + frameSize);
-  }
-
-  if (fourCC === 0x56503858) {
-    const vp8xSize = view.getUint32(16, true);
-    let offset = 12 + 8 + vp8xSize;
-    while (offset + 8 <= webpBuffer.length) {
-      const chunkFourCC = view.getUint32(offset, false);
-      const chunkSize = view.getUint32(offset + 4, true);
-      if (chunkFourCC === 0x56503820) {
-        return webpBuffer.subarray(offset + 8, offset + 8 + chunkSize);
-      }
-      offset += 8 + chunkSize + (chunkSize % 2);
-    }
-    throw new Error('VP8X without VP8 chunk');
-  }
-
-  throw new Error(`Unknown WebP: 0x${fourCC.toString(16)}`);
 }

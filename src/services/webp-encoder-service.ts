@@ -76,6 +76,7 @@ export async function encodeWebp(
   let totalInputFrames = 0;
   let skippedByDecimation = 0;
   let encodeIdx = 0;
+  let accumulatedDuration = 0;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController();
@@ -117,6 +118,8 @@ export async function encodeWebp(
         const shouldSkip = decimationController.shouldSkip(_frameNum);
 
         if (shouldSkip) {
+          // Accumulate skipped frame duration to avoid timing drift
+          accumulatedDuration += frameDurationMs;
           // Release buffer and skip encoding
           globalBufferPool.release(rgbData);
           return;
@@ -140,7 +143,9 @@ export async function encodeWebp(
         const bitstream =
           encodeIdx === 0 ? extractVP8Bitstream(webpResult) : extractVP8BitstreamFast(webpResult);
 
-        muxer.addFrame(bitstream, frameDurationMs);
+        const totalDuration = frameDurationMs + accumulatedDuration;
+        accumulatedDuration = 0;
+        muxer.addFrame(bitstream, totalDuration);
         encodeIdx++;
 
         // Release the RGB buffer back to the pool after successful encode

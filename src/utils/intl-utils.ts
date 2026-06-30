@@ -90,7 +90,7 @@ const FILE_UNITS: Record<string, readonly string[]> = {
 };
 
 function fileUnit(index: number, locale: Locale): string {
-  const units = FILE_UNITS[locale] ?? FILE_UNITS['en']!;
+  const units = FILE_UNITS[locale] ?? FILE_UNITS.en!;
   return units[index] ?? 'B';
 }
 
@@ -103,7 +103,7 @@ function fileUnit(index: number, locale: Locale): string {
  * @param locale - BCP 47 locale identifier
  */
 export function formatDuration(ms: number, locale: Locale): string {
-  const units = DURATION_UNITS[locale] ?? DURATION_UNITS['en']!;
+  const units = DURATION_UNITS[locale] ?? DURATION_UNITS.en!;
   if (ms < 1000) return `${new Intl.NumberFormat(locale).format(Math.round(ms))}${units.ms}`;
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
