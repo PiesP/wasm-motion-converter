@@ -357,9 +357,11 @@ export async function decodeFrames(
       outputTotalMs,
     };
   } finally {
-    // Close decoder only after all pending frames have been processed.
-    // This guarantees VideoDecoder resources are released even if an error
-    // occurs during decode (decodeError path) or cancellation (abort signal).
+    // Close decoder only after all pending frame conversions have settled.
+    // This guarantees no VideoFrame is still being processed when the decoder
+    // is closed, preventing \"close() called while a flush is in progress\"
+    // and other VideoDecoder close races.
+    await Promise.allSettled(pendingConversions);
     decoder.close();
   }
 }

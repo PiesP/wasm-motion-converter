@@ -62,6 +62,13 @@ export interface ConversionOptions {
   smartFrameSkip?: SmartFrameSkipMode;
 }
 
+/**
+ * Module-level reference to the AbortController for the currently active
+ * conversion. Set by performConversion and read by handleCancelConversion
+ * so that the user's Stop button actually aborts the pipeline.
+ */
+let activeAbortController: AbortController | null = null;
+
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
 
 export async function handleConvert(
@@ -203,6 +210,7 @@ async function performConversion(
     }
 
     const abortController = new AbortController();
+    activeAbortController = abortController;
     signal?.addEventListener('abort', () => abortController.abort(), { once: true });
 
     const conversionOptions: ConversionOptions = {
@@ -431,6 +439,10 @@ async function performConversion(
     });
 
     focusRetryButton();
+  } finally {
+    // Release the module-level abort controller so a stale reference
+    // cannot abort a future conversion.
+    activeAbortController = null;
   }
 }
 
@@ -438,6 +450,9 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
   logger.info('conversion', 'User cancelled conversion', {
     appState: appState(),
   });
+  // Abort the active pipeline so demux/decode/encode can stop immediately
+  activeAbortController?.abort();
+  activeAbortController = null;
   runtime.invalidateActiveConversions();
   setAppState('cancelling');
 
