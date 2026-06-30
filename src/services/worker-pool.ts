@@ -119,6 +119,13 @@ export class WebpWorkerPool {
       return;
     }
 
+    // Clear the timeout for this task (it completed successfully)
+    const timeoutHandle = this.taskTimeouts.get(activeTask.id);
+    if (timeoutHandle !== undefined) {
+      clearTimeout(timeoutHandle);
+      this.taskTimeouts.delete(activeTask.id);
+    }
+
     this.activeTasks.delete(worker);
 
     if (data.error) {
@@ -143,6 +150,15 @@ export class WebpWorkerPool {
 
     const activeTask = this.activeTasks.get(worker);
     this.activeTasks.delete(worker);
+
+    // Clear timeout for this task
+    if (activeTask) {
+      const timeoutHandle = this.taskTimeouts.get(activeTask.id);
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+        this.taskTimeouts.delete(activeTask.id);
+      }
+    }
 
     // Reject the pending task
     if (activeTask) {
@@ -184,6 +200,9 @@ export class WebpWorkerPool {
 
   // Map task id → pending task with resolve/reject (for submitted tasks awaiting result)
   private pendingResolvers = new Map<number, PendingTask>();
+
+  // Map task id → setTimeout handle (for timeout cleanup on task completion)
+  private taskTimeouts = new Map<number, ReturnType<typeof setTimeout>>();
 
   private releaseWorker(worker: Worker): void {
     if (this.terminated) return;
@@ -241,6 +260,7 @@ export class WebpWorkerPool {
 
       this.activeTasks.delete(worker);
       this.pendingResolvers.delete(pending.task.id);
+      this.taskTimeouts.delete(pending.task.id);
       pending.reject(
         new Error(`Encoding task ${pending.task.id} timed out after ${this.timeoutMs}ms`)
       );
@@ -265,8 +285,7 @@ export class WebpWorkerPool {
       this.processQueue();
     }, this.timeoutMs);
 
-    // Suppress unhandled rejection if timeout fires after completion
-    void timeoutHandle;
+    this.taskTimeouts.set(pending.task.id, timeoutHandle);
   }
 
   private processQueue(): void {
@@ -299,6 +318,7 @@ export class WebpWorkerPool {
     this.idleWorkers.length = 0;
     this.activeTasks.clear();
     this.pendingResolvers.clear();
+    this.taskTimeouts.clear();
     this.workers.length = 0;
   }
 
@@ -331,14 +351,4 @@ export function getWorkerPool(size?: number): WebpWorkerPool | null {
     singletonPool = new WebpWorkerPool(size);
   }
   return singletonPool;
-}
-
-/**
- * Terminate the shared pool. Call this between conversions or on cleanup.
- */
-export function terminateWorkerPool(): void {
-  if (singletonPool) {
-    singletonPool.terminate();
-    singletonPool = null;
-  }
 }
