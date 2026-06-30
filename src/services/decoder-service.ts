@@ -189,6 +189,13 @@ export async function decodeFrames(
         const totalDuration = frameDuration + accumulatedDuration;
         accumulatedDuration = 0;
 
+        // Carry-over from smart frame skip: when consecutive similar frames
+        // are skipped, their durations are accumulated in consecutiveSkipMs.
+        // When a frame is finally kept, those accumulated durations must be
+        // added to totalDuration to preserve total playback time.
+        // Without this, smart-skipped frame durations are permanently lost.
+        let smartCarryoverMs = 0;
+
         const conversion = (async () => {
           try {
             // Validate frame before attempting copy — frame may be invalid
@@ -230,13 +237,16 @@ export async function decodeFrames(
               }
 
               prevDHash = dHash;
-              // Reset consecutive skip counter on kept frame
+              // Transfer accumulated consecutive skip durations to this frame
+              smartCarryoverMs = consecutiveSkipMs;
               consecutiveSkipMs = 0;
             }
 
             if (streaming) {
-              // Streaming mode: pass frame to callback for immediate processing
-              await onFrameAvailable!(rgbData, totalDuration, frameNum);
+              // Streaming mode: pass frame to callback for immediate processing.
+              // Include smart-skip carryover to preserve total playback time.
+              await onFrameAvailable!(rgbData, totalDuration + smartCarryoverMs, frameNum);
+              smartCarryoverMs = 0;
               // Note: onFrameAvailable is responsible for releasing rgbData
             } else {
               // Batch mode: collect into array (existing behavior for WebP)
