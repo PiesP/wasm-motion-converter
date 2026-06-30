@@ -22,6 +22,40 @@ export interface MemoryInfo {
   deviceMemoryGB?: number;
 }
 
+/** Detailed memory breakdown from measureUserAgentSpecificMemory() */
+export interface MemoryBreakdown {
+  totalBytes: number;
+  byType: Record<string, number>;
+}
+
+/** Memory info from the standardized performance.measureUserAgentSpecificMemory() API.
+ *  Returns breakdown by memory type (JS, DOM, Canvas, Shared) when available.
+ *  Requires crossOriginIsolated (COOP/COEP headers). Falls back to null otherwise. */
+export async function getDetailedMemoryBreakdown(): Promise<MemoryBreakdown | null> {
+  if (typeof crossOriginIsolated === 'undefined' || !crossOriginIsolated) return null;
+
+  const perf = performance as Performance & {
+    measureUserAgentSpecificMemory?: () => Promise<{
+      bytes: number;
+      breakdown: Array<{ bytes: number; attribution: Array<{ url: string }>; types: string[] }>;
+    }>;
+  };
+
+  if (!perf.measureUserAgentSpecificMemory) return null;
+
+  try {
+    const result = await perf.measureUserAgentSpecificMemory();
+    const byType: Record<string, number> = {};
+    for (const entry of result.breakdown) {
+      const key = entry.types.join('+') || 'Unknown';
+      byType[key] = (byType[key] || 0) + entry.bytes;
+    }
+    return { totalBytes: result.bytes, byType };
+  } catch {
+    return null;
+  }
+}
+
 export function getMemoryInfo(): MemoryInfo | null {
   if ('memory' in performance && performance.memory) {
     const memory = performance.memory as {

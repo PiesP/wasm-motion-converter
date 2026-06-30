@@ -171,12 +171,37 @@ async function copyFrameFourChannel(
   throw new Error('No 4-channel format supported');
 }
 
-/** Strategy 2: Canvas fallback for exotic formats */
+/** Strategy 2: Canvas fallback for exotic formats + GPU-accelerated scaling */
 async function copyFrameCanvas(
   frame: VideoFrame,
   width: number,
   height: number
 ): Promise<Uint8Array> {
+  // Try GPU-accelerated scaling via createImageBitmap first.
+  // Falls back to canvas drawImage on failure (e.g., exotic codecs, old browsers).
+  try {
+    const bitmap = await createImageBitmap(frame, {
+      resizeWidth: width,
+      resizeHeight: height,
+      resizeQuality: 'medium',
+    });
+    try {
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) throw new Error('Failed to get 2d context');
+      ctx.drawImage(bitmap, 0, 0);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const rgb = rgbaToRGBFast(new Uint8Array(imageData.data), width, height, 'RGBA');
+      canvas.width = 0;
+      canvas.height = 0;
+      return rgb;
+    } finally {
+      bitmap.close();
+    }
+  } catch {
+    // Fallback: canvas drawImage with source→dest rect scaling
+  }
+
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Failed to get 2d context from OffscreenCanvas');
