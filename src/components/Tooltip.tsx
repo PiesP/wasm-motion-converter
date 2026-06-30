@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { Component, JSX } from 'solid-js';
-import { createSignal, Show, splitProps } from 'solid-js';
+import { createSignal, onCleanup, Show, splitProps } from 'solid-js';
 
 const TOOLTIP_Z_INDEX = 'z-10';
 const TOOLTIP_OFFSET_TOP = '-top-10';
@@ -20,10 +20,21 @@ const Tooltip: Component<TooltipProps> = (props) => {
   const [local] = splitProps(props, ['content', 'children']);
   const [isVisible, setIsVisible] = createSignal(false);
   const [tooltipId] = createSignal(`tooltip-${crypto.randomUUID()}`);
-  const [isNativePopover, setIsNativePopover] = createSignal(false);
+  let popoverEl: HTMLDivElement | undefined;
 
-  const showTooltip = () => setIsVisible(true);
-  const hideTooltip = () => setIsVisible(false);
+  const showTooltip = () => {
+    setIsVisible(true);
+    if (popoverEl && SUPPORTS_POPOVER) {
+      popoverEl.showPopover();
+    }
+  };
+
+  const hideTooltip = () => {
+    setIsVisible(false);
+    if (popoverEl && SUPPORTS_POPOVER) {
+      popoverEl.hidePopover();
+    }
+  };
 
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Escape' && isVisible()) {
@@ -31,13 +42,19 @@ const Tooltip: Component<TooltipProps> = (props) => {
     }
   };
 
-  // When Popover API is available, use it for light dismiss + ESC + top layer
+  // Set popover attribute on mount — no signal setter in ref callback
+  // (SolidJS ref callbacks run during render phase; signal setters trigger
+  //  runUpdates↔completeUpdates recursion → stack overflow → ErrorBoundary).
   const initPopover = (el: HTMLDivElement) => {
+    popoverEl = el;
     if (SUPPORTS_POPOVER && el) {
-      (el as HTMLDivElement & { popover?: string }).popover = 'hint';
-      setIsNativePopover(true);
+      el.popover = 'hint';
     }
   };
+
+  onCleanup(() => {
+    popoverEl = undefined;
+  });
 
   return (
     <div class="relative inline-block">
@@ -51,7 +68,7 @@ const Tooltip: Component<TooltipProps> = (props) => {
       >
         {local.children}
       </div>
-      <Show when={isVisible() || isNativePopover()}>
+      <Show when={isVisible()}>
         <div
           id={tooltipId()}
           ref={initPopover}
