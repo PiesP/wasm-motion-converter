@@ -510,9 +510,20 @@ export function handleRetry(runtime: ConversionRuntimeController, t: TFunction):
   if (file && appState() === 'error') {
     // Clear previous results immediately to avoid flash of stale content
     setConversionResults([]);
-    void handleFileSelected(file, runtime, t).catch((error) =>
-      logger.error('conversion', 'Retry file selection failed', { error: getErrorMessage(error) })
-    );
+    // If we already have valid video metadata (e.g., from a previous
+    // file-selection phase), skip re-extracting it and go straight to
+    // conversion. This avoids redundant buffer reads + decoder config
+    // extraction when only the conversion itself failed.
+    if (videoMetadata()?.config) {
+      const settings = conversionSettings();
+      void performConversion(file, settings, runtime, t).catch((error) =>
+        logger.error('conversion', 'Retry conversion failed', { error: getErrorMessage(error) })
+      );
+    } else {
+      void handleFileSelected(file, runtime, t).catch((error) =>
+        logger.error('conversion', 'Retry file selection failed', { error: getErrorMessage(error) })
+      );
+    }
   } else {
     handleReset(runtime);
   }
@@ -528,6 +539,9 @@ export function handleDismissError(): void {
     URL.revokeObjectURL(previousPreviewUrl);
   }
   setVideoPreviewUrl(null);
+  // Clear inputFile too — revoking the preview URL without clearing the file
+  // creates orphaned state where inputFile is set but videoPreviewUrl is null.
+  setInputFile(null);
 
   setAppState('idle');
 }
