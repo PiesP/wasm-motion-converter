@@ -200,9 +200,6 @@ export async function encodeGif(
   // encoder.writeFrame(). gifenc only reads the data synchronously, so reuse is safe.
   let indexedBuffer: Uint8Array | null = null;
 
-  // T2: Maximum delay per frame — prevents a single frame from displaying too long
-  // gifenc's writeFrame delay is in centiseconds (cs), so convert from ms.
-  const MAX_FRAME_DELAY_CS = GIF_MAX_FRAME_DELAY_CS;
   let accumulatedDuration = 0;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
@@ -238,21 +235,23 @@ export async function encodeGif(
     }
     indexedBuffer.set(indexed);
 
-    // Convert ms → centiseconds for gifenc writeFrame API
-    let remainingCs = Math.round(delayMs / 10);
-    if (remainingCs <= MAX_FRAME_DELAY_CS) {
-      encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: remainingCs });
-      outputTotalDelay += remainingCs;
+    // gifenc's writeFrame expects delay in MILLISECONDS and converts
+    // internally to centiseconds via Math.round(delay/10).
+    // Do NOT pre-convert to cs — that would double-divide by 10.
+    if (delayMs <= GIF_MAX_FRAME_DELAY_CS * 10) {
+      encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: delayMs });
+      outputTotalDelay += Math.round(delayMs / 10);
       return;
     }
     // Split long-delay frames into multiple writes with the same indexed data.
     // No re-quantization needed — the pixel content is identical.
-    while (remainingCs > 0) {
-      const chunk = Math.min(remainingCs, MAX_FRAME_DELAY_CS);
+    let remainingMs = delayMs;
+    while (remainingMs > 0) {
+      const chunk = Math.min(remainingMs, GIF_MAX_FRAME_DELAY_CS * 10);
       encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: chunk });
-      outputTotalDelay += chunk;
-      remainingCs -= chunk;
-      if (remainingCs > 0) splitFrames++;
+      outputTotalDelay += Math.round(chunk / 10);
+      remainingMs -= chunk;
+      if (remainingMs > 0) splitFrames++;
     }
   }
 
@@ -371,17 +370,17 @@ export async function encodeGif(
     // duration as extra delay on the last frame by writing a continuation frame
     // with the same pixel data and only the tail delay.
     if (tailAccumulatedMs > 0 && lastWrittenIndexed && globalPalette) {
-      const tailDelayCs = Math.round(tailAccumulatedMs / 10);
-      if (tailDelayCs > 0) {
+      // Pass ms directly — gifenc converts ms→cs internally via Math.round(delay/10)
+      if (tailAccumulatedMs > 0) {
         encoder.writeFrame(lastWrittenIndexed, w, h, {
           palette: globalPalette,
           repeat: 0,
-          delay: tailDelayCs,
+          delay: tailAccumulatedMs,
         });
-        outputTotalDelay += tailDelayCs;
+        outputTotalDelay += Math.round(tailAccumulatedMs / 10);
         logger.info('encoders', 'GIF tail duration added', {
           tailMs: Math.round(tailAccumulatedMs),
-          tailCs: tailDelayCs,
+          tailCs: Math.round(tailAccumulatedMs / 10),
         });
       }
     }
