@@ -68,7 +68,8 @@ export async function demuxVideo(
   // Estimate total frames from duration and frame rate for progress reporting.
   // This is an estimate — actual packet count may differ due to variable frame rate
   // or container-level vs stream-level duration mismatch.
-  const estimatedTotalFrames = Math.max(1, Math.round(duration * (framerate || 30)));
+  const safeFramerate = Number.isFinite(framerate) && framerate > 0 ? framerate : 30;
+  const estimatedTotalFrames = Math.max(1, Math.round(duration * safeFramerate));
 
   // Set up source/input for demuxing
   const input = createMediaBunnyInput(request.inputBuffer);
@@ -118,6 +119,8 @@ export async function demuxVideo(
   });
 
   try {
+    // Check for cancellation before starting packet iteration
+    signal?.throwIfAborted();
     for await (const packet of sink.packets(startPacket, endPacket)) {
       chunks.push(packet.toEncodedVideoChunk());
       totalFrames++;
@@ -146,7 +149,7 @@ export async function demuxVideo(
   });
 
   // Compute total source duration from chunk durations (microseconds → milliseconds)
-  const sourceTotalMs = chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
+  const sourceTotalMs = chunks.reduce((sum, ch) => sum + Math.max(0, ch.duration ?? 0), 0) / 1000;
 
   return { chunks, config, totalFrames, duration, sourceTotalMs, framerate };
 }
