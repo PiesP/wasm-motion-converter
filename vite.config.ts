@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => {
   // served from 'self', so a strict hash/self policy suffices.
   // 'unsafe-eval' is needed for WebAssembly (wasm-webp, gifenc use dynamic compilation).
   const styleSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
-  const scriptSrc = isDev ? "'self' 'unsafe-eval'" : "'self'";
+  const scriptSrc = "'self' 'unsafe-eval'";
 
   const csp = [
     "default-src 'self'",
