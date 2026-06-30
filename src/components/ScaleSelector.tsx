@@ -29,8 +29,8 @@ const ScaleSelector: Component<ScaleSelectorProps> = (props) => {
     if (!local.inputMetadata) {
       return undefined;
     }
-    const width = Math.round(local.inputMetadata.width * scale);
-    const height = Math.round(local.inputMetadata.height * scale);
+    const width = Math.floor(local.inputMetadata.width * scale);
+    const height = Math.floor(local.inputMetadata.height * scale);
     return `${width}x${height}`;
   };
 

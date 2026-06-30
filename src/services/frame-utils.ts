@@ -44,6 +44,20 @@ export async function copyFrameToRGB(
   height: number,
   ctx: FrameProcessingContext
 ): Promise<Uint8Array> {
+  // ── Scaling detection ──
+  // VideoFrame.copyTo() with rect={width,height} CROPS the source frame
+  // to those dimensions rather than scaling. When target dimensions differ
+  // from the source, we must route through the canvas path which properly
+  // scales via drawImage().
+  const srcW = frame.codedWidth ?? frame.displayWidth;
+  const srcH = frame.codedHeight ?? frame.displayHeight;
+  const needsScaling = srcW !== width || srcH !== height;
+
+  if (needsScaling) {
+    ctx.copyPath = 'canvas';
+    return copyFrameCanvas(frame, width, height);
+  }
+
   // Use cached path from first frame detection
   if (ctx.copyPath === 'four-channel') {
     return copyFrameFourChannel(frame, width, height);
