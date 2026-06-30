@@ -71,18 +71,21 @@ export async function demuxVideo(
   const safeFramerate = Number.isFinite(framerate) && framerate > 0 ? framerate : 30;
   const estimatedTotalFrames = Math.max(1, Math.round(duration * safeFramerate));
 
-  // Set up source/input for demuxing
-  const input = createMediaBunnyInput(request.inputBuffer);
+  // Set up source/input for demuxing.
+  // Prefer inputBlob (on-demand read via BlobSource) over inputBuffer
+  // (full in-memory BufferSource) to reduce memory usage for large files.
+  const inputSource = request.inputBlob ?? request.inputBuffer;
+  const input = createMediaBunnyInput(inputSource);
 
   const videoTracks = await input.getVideoTracks();
   const videoTrack = videoTracks[0];
   if (!videoTrack) {
     input.dispose();
-    logger.error('demuxer', 'No video track found in input buffer', {
+    logger.error('demuxer', 'No video track found in input', {
       fileName: request.fileName,
-      fileSizeBytes: request.inputBuffer.byteLength,
+      fileSizeBytes: request.inputBlob?.size ?? request.inputBuffer.byteLength,
     });
-    throw new Error('No video track found in input buffer');
+    throw new Error('No video track found in input');
   }
   const sink = new EncodedPacketSink(videoTrack);
 

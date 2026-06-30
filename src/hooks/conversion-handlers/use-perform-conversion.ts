@@ -319,7 +319,8 @@ async function performConversion(
       serializedConfig,
       serializedOptions,
       progressCallback,
-      abortController.signal
+      abortController.signal,
+      file // pass File for on-demand BlobSource reading
     );
 
     const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';

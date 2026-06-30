@@ -16,7 +16,7 @@
  * - Timeout protection: terminates worker and rejects if conversion hangs
  */
 
-import type { ConversionProgress } from '@t/conversion-types';
+import type { ConversionProgress, ConversionRequest } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants.js';
 
 import type {
@@ -50,7 +50,8 @@ export type MainThreadPipelineCallback = (progress: ConversionProgress) => void;
  * Runs the conversion pipeline via a Web Worker.
  *
  * @param inputBuffer - The video file buffer (will be transferred to worker)
- * @param config - Serialized video decoder configuration
+ * @param inputBlob - Optional Blob/File for on-demand reading via BlobSource
+ * @param config - Serialized decoder configuration
  * @param options - Conversion options (format, quality, scale, etc.)
  * @param onProgress - Progress callback (throttled to ~100ms)
  * @param signal - Abort signal for cancellation
@@ -228,7 +229,8 @@ export async function runPipelineWithFallback(
   config: SerializedDecoderConfig,
   options: SerializedConversionOptions,
   onProgress: MainThreadPipelineCallback,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  inputBlob?: Blob
 ): Promise<ArrayBuffer> {
   try {
     return await runPipelineViaWorker(inputBuffer, config, options, onProgress, signal);
@@ -254,8 +256,9 @@ export async function runPipelineWithFallback(
     // Dynamic import to avoid circular dependencies
     const { runConversionPipeline } = await import('../conversion-pipeline.js');
 
-    const request = {
+    const request: ConversionRequest = {
       inputBuffer,
+      inputBlob,
       fileName: 'input.webm',
       format: options.format,
       quality: options.quality,
