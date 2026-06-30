@@ -44,13 +44,6 @@ export class WorkerTimeoutError extends Error {
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
-export interface MainThreadPipelineOptions {
-  /** Serialized decoder config from the demuxer */
-  config: SerializedDecoderConfig;
-  /** Conversion options */
-  options: SerializedConversionOptions;
-}
-
 export type MainThreadPipelineCallback = (progress: ConversionProgress) => void;
 
 /**

@@ -5,12 +5,12 @@
  * Protocol helpers for serializing/deserializing worker messages.
  *
  * Handles:
- * - encodeRequest / decodeResponse helpers with Transferable extraction
- * - Chunked ArrayBuffer serialization for EncodedVideoChunk
- * (EncodedVideoChunk cannot be structured-cloned, so we use copyTo() pattern)
+ * - Transferable extraction for worker postMessage
+ * - Hex encoding/decoding for Annex B codec descriptions
+ * - VideoDecoderConfig restoration from serialized form
  */
 
-import type { SerializedDecoderConfig, WorkerRequest, WorkerResponse } from './types.js';
+import type { SerializedDecoderConfig, WorkerRequest } from './types.js';
 
 // ─── Transferable helpers ────────────────────────────────────────────────
 
@@ -66,93 +66,7 @@ export function hexToArrayBuffer(hex: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-// ─── Request encoding/decoding ──────────────────────────────────────────
-
-/**
- * Prepare a WorkerRequest for posting.
- * Returns the message and the list of Transferables to pass to postMessage.
- */
-export function encodeRequest(request: WorkerRequest): {
-  message: WorkerRequest;
-  transferables: Transferable[];
-} {
-  const transferables = extractTransferables(request);
-  return { message: request, transferables };
-}
-
-/**
- * Prepare a WorkerResponse for posting back to the main thread.
- * The outputBuffer (on 'complete') is transferred, not copied.
- */
-export function encodeResponse(response: WorkerResponse): {
-  message: WorkerResponse;
-  transferables: Transferable[];
-} {
-  if (response.type === 'complete') {
-    return { message: response, transferables: [response.outputBuffer] };
-  }
-  return { message: response, transferables: [] };
-}
-
-// ─── EncodedVideoChunk serialization ────────────────────────────────────
-
-/**
- /** Serializable representation of an EncodedVideoChunk.
-  * EncodedVideoChunk cannot be structured-cloned, so we serialize
-  * the data and metadata, then recreate it on the worker side.
-  */
-export interface SerializedEncodedVideoChunk {
-  /** Chunk data as ArrayBuffer (will be transferred) */
-  data: ArrayBuffer;
-  type: 'key' | 'delta';
-  /** Timestamp in microseconds (chunk.timestamp) */
-  timestamp: number;
-  /** Duration in microseconds, if known (chunk.duration ?? null) */
-  duration: number | null;
-}
-
-/**
- * Serializes an EncodedVideoChunk for transfer to a worker.
- * Copies chunk data into a new ArrayBuffer, then wraps it back
- * as an EncodedVideoChunk with the original metadata.
- */
-export function serializeEncodedVideoChunk(chunk: EncodedVideoChunk): SerializedEncodedVideoChunk {
-  // Copy chunk data — chunk.data lives in WebCodecs internal memory
-  // that cannot be transferred. We extract bytes via copyTo().
-  const buffer = new ArrayBuffer(chunk.byteLength);
-  chunk.copyTo(buffer);
-
-  return {
-    data: buffer,
-    type: chunk.type,
-    timestamp: chunk.timestamp,
-    duration: chunk.duration ?? null,
-  };
-}
-
-/**
- * Recreates an EncodedVideoChunk from serialized data.
- * Use this in the worker to restore chunks after message receipt.
- */
-export function recreateEncodedVideoChunk(
-  serialized: SerializedEncodedVideoChunk
-): EncodedVideoChunk {
-  const options: EncodedVideoChunkInit = {
-    data: serialized.data,
-    type: serialized.type as EncodedVideoChunkType,
-    timestamp: serialized.timestamp,
-    ...(serialized.duration !== null ? { duration: serialized.duration } : {}),
-  };
-  return new EncodedVideoChunk(options);
-}
-
-// ─── DemuxResult serialization ───────────────────────────────────────────
-
-/** Serializable DemuxResult for worker transfer */
-export interface SerializedDemuxConfig extends SerializedDecoderConfig {
-  /** Optional base64-encoded decoder description (for Annex B codecs) */
-  decoderDescription?: string;
-}
+// ─── VideoDecoderConfig restoration ──────────────────────────────────
 
 /**
  * Restores VideoDecoderConfig from SerializedDecoderConfig.

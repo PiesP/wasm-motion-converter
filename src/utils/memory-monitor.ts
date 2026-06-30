@@ -133,14 +133,3 @@ export function checkMemoryForConversion(
   }
   return { level: 'ok', estimatedMB, availableMB };
 }
-
-/**
- * Get current memory usage as a formatted string (e.g. "128 MB / 512 MB (25%)").
- */
-export function getMemoryUsageString(): string | null {
-  const memInfo = getMemoryInfo();
-  if (!memInfo) return null;
-  const usedMB = Math.round(memInfo.usedJSHeapSize / (1024 * 1024));
-  const totalMB = Math.round(memInfo.totalJSHeapSize / (1024 * 1024));
-  return `${usedMB} MB / ${totalMB} MB (${Math.round(memInfo.usagePercentage)}%)`;
-}

@@ -228,8 +228,5 @@ export type TFunction = <K extends keyof TranslationKeys>(
 /** Individual translation key */
 export type TranslationKey = keyof TranslationKeys;
 
-/** Partial translation for incomplete locales */
-export type PartialTranslations = Partial<TranslationKeys>;
-
 /** Complete translation set */
 export type Translations = { [K in keyof TranslationKeys]: TranslationKeys[K] };
