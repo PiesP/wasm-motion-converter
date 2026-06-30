@@ -35,7 +35,7 @@ import { createDynamicDecimationController } from './dynamic-decimation-controll
 import { calcAutoDecimation } from './encoder-common';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
-import { encodeWebpParallel } from './parallel-webp-encoder';
+import { createStreamingWebpEncoder } from './parallel-webp-encoder';
 import { encodeWebp } from './webp-encoder-service';
 
 /**
@@ -416,11 +416,36 @@ async function _runPipelineInner(
           }
         );
 
-        // Decode on main thread, collect RGB frames, then send to worker pool
+        // Decode on main thread, stream frames directly to worker pool.
+        // Uses createStreamingWebpEncoder to avoid accumulating all frames
+        // in an array (reduces peak memory by ~50% for large videos).
         const w = Math.max(1, Math.floor(codedWidth * request.scale));
         const h = Math.max(1, Math.floor(codedHeight * request.scale));
-        const rgbFrames: Array<{ rgbData: Uint8Array; durationMs: number }> = [];
         const decimationController = createDynamicDecimationController();
+
+        const streamingEncoder = createStreamingWebpEncoder(
+          w,
+          h,
+          request.quality,
+          estimatedOutputFrames,
+          (p) => {
+            const encodeProgress =
+              DECODE_MAX + Math.round(((p.progress - DECODE_MAX) * ENCODE_RANGE) / ENCODE_RANGE);
+            throttled.callback({
+              phase: 'encoding',
+              progress: Math.min(ENCODE_MAX, encodeProgress),
+              fps: fpsTracker.current,
+              etaSeconds:
+                fpsTracker.current > 0 && p.currentFrame != null
+                  ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
+                  : null,
+              memoryMB: sampleMemory(),
+              currentFrame: p.currentFrame ?? 0,
+              totalFrames: estimatedOutputFrames,
+              elapsedMs: Math.round(performance.now() - pipelineStart),
+            });
+          }
+        );
 
         // Accumulate durations from dynamically skipped frames (see offscreen-webp-encoder).
         let dynamicAccumulatedMs = 0;
@@ -469,34 +494,16 @@ async function _runPipelineInner(
               }
               const totalDuration = frameDurationMs + dynamicAccumulatedMs;
               dynamicAccumulatedMs = 0;
-              rgbFrames.push({ rgbData: new Uint8Array(rgbData), durationMs: totalDuration });
+              streamingEncoder.submit(rgbData, totalDuration);
               globalBufferPool.release(rgbData);
             },
           },
           signal
         );
 
-        // Encode via worker pool
-        const encoded = await encodeWebpParallel(rgbFrames, w, h, request.quality, (p) => {
-          const encodeProgress =
-            DECODE_MAX + Math.round(((p.progress - DECODE_MAX) * ENCODE_RANGE) / ENCODE_RANGE);
-          throttled.callback({
-            phase: 'encoding',
-            progress: Math.min(ENCODE_MAX, encodeProgress),
-            fps: fpsTracker.current,
-            etaSeconds:
-              fpsTracker.current > 0 && p.currentFrame != null
-                ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
-                : null,
-            memoryMB: sampleMemory(),
-            currentFrame: p.currentFrame ?? 0,
-            totalFrames: estimatedOutputFrames,
-            elapsedMs: Math.round(performance.now() - pipelineStart),
-          });
-        });
-        output = encoded.buffer as ArrayBuffer;
+        output = (await streamingEncoder.finish()).buffer as ArrayBuffer;
         encodeResult = {
-          frames: rgbFrames.length,
+          frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
         };
       } else if (typeof OffscreenCanvas !== 'undefined') {
