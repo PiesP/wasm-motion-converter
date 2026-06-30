@@ -186,8 +186,8 @@ async function performConversion(
     let forcedDecimation: number | undefined;
     if (isHighRisk && md) {
       const estFrames = md.duration > 0 ? Math.round(md.duration * (md.framerate ?? 30)) : 300;
-      const outW = Math.floor(md.width * settings.scale);
-      const outH = Math.floor(md.height * settings.scale);
+      const outW = Math.max(1, Math.floor(md.width * settings.scale));
+      const outH = Math.max(1, Math.floor(md.height * settings.scale));
       const memCheck = checkMemoryForConversion(outW, outH, estFrames, settings.format);
       logger.info('conversion', 'Pre-conversion memory check', {
         level: memCheck.level,

@@ -390,8 +390,8 @@ async function _runPipelineInner(
         );
 
         // Decode on main thread, collect RGB frames, then send to worker pool
-        const w = Math.floor(codedWidth * request.scale);
-        const h = Math.floor(codedHeight * request.scale);
+        const w = Math.max(1, Math.floor(codedWidth * request.scale));
+        const h = Math.max(1, Math.floor(codedHeight * request.scale));
         const rgbFrames: Array<{ rgbData: Uint8Array; durationMs: number }> = [];
         const decimationController = createDynamicDecimationController();
 

@@ -144,8 +144,8 @@ export async function encodeWebpOffscreen(
 ): Promise<Uint8Array> {
   const srcW = opts.width;
   const srcH = opts.height;
-  const w = Math.floor(srcW * opts.scale);
-  const h = Math.floor(srcH * opts.scale);
+  const w = Math.max(1, Math.floor(srcW * opts.scale));
+  const h = Math.max(1, Math.floor(srcH * opts.scale));
   const quality = OFFSCREEN_QUALITY_MAP[opts.quality];
   const frameDecimation = opts.frameDecimation ?? 1;
 

@@ -166,8 +166,8 @@ export async function encodeGif(
 ): Promise<Uint8Array> {
   const srcW = opts.width;
   const srcH = opts.height;
-  const w = Math.floor(srcW * opts.scale);
-  const h = Math.floor(srcH * opts.scale);
+  const w = Math.max(1, Math.floor(srcW * opts.scale));
+  const h = Math.max(1, Math.floor(srcH * opts.scale));
   const maxColors = QUALITY_COLORS[opts.quality];
   const ditherStrength = QUALITY_DITHER_STRENGTH[opts.quality];
   const frameDecimation = opts.frameDecimation ?? 1;
