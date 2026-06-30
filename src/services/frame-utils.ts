@@ -81,9 +81,12 @@ export async function copyFrameToRGB(
 /**
  * Yield to the event loop to keep the UI responsive.
  * Uses scheduler.yield() (Chrome 115+) if available, falls back to setTimeout(0).
+ * The availability check is cached since it doesn't change during a page session.
  */
+const hasSchedulerYield = typeof globalThis.scheduler?.yield === 'function';
+
 export function yieldToMain(): Promise<void> {
-  if (typeof globalThis.scheduler?.yield === 'function') {
+  if (hasSchedulerYield) {
     return scheduler.yield();
   }
   return new Promise((resolve) => setTimeout(resolve, 0));

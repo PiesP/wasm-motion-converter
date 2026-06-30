@@ -125,7 +125,7 @@ export async function decodeFrames(
   // Warn if onFrameAvailable is provided but mode is explicitly 'batch'
   if (mode === 'batch' && typeof onFrameAvailable === 'function') {
     logger.warn(
-      'encoders',
+      'decoders',
       'onFrameAvailable provided but mode is "batch" — streaming callback will be ignored',
       {
         mode,
@@ -163,7 +163,7 @@ export async function decodeFrames(
   // Create per-conversion frame processing context (duration carry + copy path cache)
   const frameCtx: FrameProcessingContext = createFrameProcessingContext();
 
-  logger.info('encoders', 'VideoDecoder configured', {
+  logger.info('decoders', 'VideoDecoder configured', {
     codec: demux.config.codec,
     hwAccel: activeConfig.hardwareAcceleration,
     resolution: `${width}×${height}`,
@@ -281,7 +281,7 @@ export async function decodeFrames(
       }
     },
     error(e: Error) {
-      logger.error('encoders', 'VideoDecoder error', {
+      logger.error('decoders', 'VideoDecoder error', {
         codec: demux.config.codec,
         error: e.message,
       });
@@ -359,7 +359,7 @@ export async function decodeFrames(
     // Non-streaming: sum of all RGB frame durations.
     const outputTotalMs = streaming ? 0 : rgbFrames.reduce((sum, f) => sum + f.duration, 0);
 
-    logger.info('encoders', 'Decoding complete', {
+    logger.info('decoders', 'Decoding complete', {
       totalInputFrames: inputFrameCount,
       outputFrames: streaming ? inputFrameCount - skippedByDecimation : rgbFrames.length,
       skippedByDecimation,

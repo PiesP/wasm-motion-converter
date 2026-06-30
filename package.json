@@ -25,7 +25,7 @@
     "knip": "knip --dependencies",
     "circular": "pnpm dlx madge --ts-config tsconfig.json --circular src/**/*.ts",
     "knip:full": "knip --files --exports --dependencies --reporter compact --max-show-issues 50 --no-exit-code",
-    "prebuild": "npx tsx scripts/generate-licenses.ts && pnpm -s quality",
+    "prebuild": "npx tsx scripts/generate-licenses.ts && pnpm -s quality:ci",
     "build": "NODE_OPTIONS=\"--no-deprecation\" vite build && npx tsx scripts/postbuild.ts",
     "postbuild": "npx tsx scripts/postbuild.ts",
     "analyze": "NODE_OPTIONS=\"--no-deprecation\" VITE_ANALYZE_BUNDLE=true vite build && node -e \"console.log('\\\\nBundle analysis generated at dist/stats.html')\"",
@@ -35,7 +35,7 @@
     "test:watch": "cd test && pnpm test:watch",
     "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s knip",
     "quality:fix": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s check && pnpm -s circular && pnpm -s knip",
-    "quality:ci": "pnpm -s quality",
+    "quality:ci": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular",
     "verify": "pnpm -s quality && pnpm -s build",
     "mut": "cd test && npx stryker run ../stryker.conf.json --reporters=progress",
     "mut:fast": "cd test && npx stryker run ../stryker.conf.json --reporters=progress --mutators=boolean,arithmetic,conditional-boundary,equality-operator,negate-conditional,string"

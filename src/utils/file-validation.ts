@@ -237,6 +237,9 @@ async function extractVideoDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
     // STEP 1: Create hidden video element and blob URL
     const video = document.createElement('video');
+    // Blob URLs (URL.createObjectURL) are always same-origin, so no crossOrigin
+    // attribute is needed. If this function is ever adapted for remote video
+    // URLs, add crossOrigin="anonymous" (or appropriate) before src assignment.
     const url = URL.createObjectURL(file);
 
     // Centralized cleanup function (called in both success and error paths)
@@ -250,9 +253,16 @@ async function extractVideoDuration(file: File): Promise<number> {
     // preload='metadata' tells browser to fetch only header (fast, no full download)
     video.preload = 'metadata';
 
+    // Track whether loadedmetadata fired, for edge-case error detection.
+    // Some browsers fire the error event *before* loadedmetadata on certain
+    // corrupt files; without this flag the error handler would be correct
+    // but we guard against the reverse (error fires instead of loadedmetadata).
+    let metadataLoaded = false;
+
     // STEP 3: Listen for 'loadedmetadata' event (duration is now available)
     // This fires when video duration and dimensions are readable from metadata
     video.onloadedmetadata = () => {
+      metadataLoaded = true;
       // Duration from video.duration is in seconds, convert to milliseconds
       if (!Number.isFinite(video.duration) || video.duration <= 0) {
         cleanup();
@@ -265,8 +275,12 @@ async function extractVideoDuration(file: File): Promise<number> {
     };
 
     // STEP 4: Handle errors (unsupported codec, corrupted file, network failure)
-    // Cleanup resources even on error to prevent memory leaks
+    // Cleanup resources even on error to prevent memory leaks.
+    // If loadedmetadata already fired successfully, errors at this point are
+    // from later playback (e.g. corrupted seek), and the promise is already
+    // resolved — the error is ignored.
     video.onerror = () => {
+      if (metadataLoaded) return; // Already resolved duration
       cleanup();
       reject(new Error('Failed to extract video duration'));
     };

@@ -20,7 +20,8 @@ type LogCategory =
   | 'prefetch'
   | 'cdn'
   | 'demuxer'
-  | 'encoders';
+  | 'encoders'
+  | 'decoders';
 
 type LogEntry = {
   timestampMs: number;
@@ -49,6 +50,7 @@ const IMPORTANT_CATEGORIES: ReadonlySet<LogCategory> = new Set([
   'watchdog',
   'general',
   'encoders',
+  'decoders',
   'performance',
 ]);
 

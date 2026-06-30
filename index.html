@@ -60,9 +60,17 @@
     <div id="root"></div>
 
     <script>
-      // Suppress Cloudflare Insights MIME-type errors (injected by Cloudflare Pages)
+      // Suppress harmless Cloudflare Insights MIME-type mismatch errors
+      // (injected by Cloudflare Pages). Only suppress MIME type mismatch
+      // errors — other legitimate errors from Cloudflare scripts (e.g.
+      // dependency load failures) should propagate to other handlers.
+      // Previous version used stopImmediatePropagation() which masked
+      // all Cloudflare-originated errors.
       window.addEventListener('error', (e) => {
-        if (e.filename?.includes('cloudflareinsights')) {
+        if (
+          e.filename?.includes('cloudflareinsights') &&
+          e.message?.includes('MIME type mismatch')
+        ) {
           e.stopImmediatePropagation();
           e.preventDefault();
         }
