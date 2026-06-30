@@ -64,6 +64,14 @@ export interface TranslationKeys {
   'dropzone.formats': string;
 
   // Metadata
+  'metadata.title': string;
+  'metadata.file': string;
+  'metadata.resolution': string;
+  'metadata.duration': string;
+  'metadata.fps': string;
+  'metadata.codec': string;
+  'metadata.size': string;
+  'metadata.bitrate': string;
   'metadata.detecting': string;
 
   // Settings Panel
@@ -149,6 +157,10 @@ export interface TranslationKeys {
   'result.scale': string;
   'result.convertedAnimation': string;
   'result.downloadFile': string;
+  'result.downloadButton': string;
+  'result.compressionSmaller': string;
+  'result.compressionLarger': string;
+  'result.previewFailed': string;
 
   // Errors
   'error.format': string;
@@ -192,6 +204,12 @@ export interface TranslationKeys {
   'env.logCapabilities': string;
   'env.showDetails': string;
   'env.hideDetails': string;
+  'env.notSupported': string;
+  'env.coiFalse': string;
+  'env.sabUnavailable': string;
+  'env.detected': string;
+  'env.localDevHint': string;
+  'env.deployedHint': string;
 
   // Offline
   'offline.message': string;

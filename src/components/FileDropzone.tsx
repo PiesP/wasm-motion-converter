@@ -138,7 +138,6 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
             openFilePicker();
           }
         }}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: dropzone region is interactive (opens file picker on Enter/Space)
         tabIndex={0}
         aria-label={ariaLabel()}
         aria-busy={isBusy()}
