@@ -9,8 +9,8 @@
  * and forwards progress/complete/error responses back to the main thread.
  */
 
-import { runWorkerPipeline } from './pipeline-worker.js';
-import type { WorkerRequest, WorkerResponse } from './types.js';
+import { runWorkerPipeline } from './pipeline-worker';
+import type { WorkerRequest, WorkerResponse } from './types';
 
 // ─── AbortController registry ────────────────────────────────────────────
 

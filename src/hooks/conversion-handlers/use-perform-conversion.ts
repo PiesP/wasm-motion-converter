@@ -111,7 +111,7 @@ export async function handleConvert(
                 });
                 batch(() => {
                   setConversionStatusMessage('');
-                  runtime.resetTimingState();
+                  runtime.resetRuntimeState();
                   const context = classifyConversionError(
                     getErrorMessage(error) || t('error.conversionFailed'),
                     videoMetadata(),
@@ -392,7 +392,7 @@ async function performConversion(
     batch(() => {
       transitionToState('done');
       setConversionStatusMessage('');
-      runtime.resetTimingState();
+      runtime.resetRuntimeState();
       // Release input buffer — no longer needed after conversion completes.
       // This allows GC of the original file data (up to 500MB).
       setInputBuffer(null);
@@ -415,7 +415,7 @@ async function performConversion(
     if (isCancellationError(error)) {
       batch(() => {
         setConversionStatusMessage('');
-        runtime.resetTimingState();
+        runtime.resetRuntimeState();
         setAppState('idle');
         // Release input buffer on cancellation too
         setInputBuffer(null);
@@ -434,7 +434,7 @@ async function performConversion(
 
     batch(() => {
       setConversionStatusMessage('');
-      runtime.resetTimingState();
+      runtime.resetRuntimeState();
       setErrorMessage(context.originalError);
       setErrorContext(context);
       transitionToState('error');

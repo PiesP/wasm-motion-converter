@@ -17,6 +17,31 @@
 
 import { globalBufferPool } from './buffer-pool';
 
+// ─── Video Dimension Resolution ────────────────────────────────────
+
+export interface VideoConfigWithDimensions {
+  codedWidth?: number;
+  codedHeight?: number;
+  displayAspectWidth?: number;
+  displayAspectHeight?: number;
+  displayWidth?: number;
+  displayHeight?: number;
+}
+
+/**
+ * Resolve video dimensions from decoder config, preferring coded dimensions
+ * over display aspect dimensions over raw display dimensions.
+ * Returns null if no valid dimensions can be determined.
+ */
+export function resolveVideoDimensions(
+  config: VideoConfigWithDimensions
+): { width: number; height: number } | null {
+  const width = config.codedWidth ?? config.displayAspectWidth ?? config.displayWidth;
+  const height = config.codedHeight ?? config.displayAspectHeight ?? config.displayHeight;
+  if (!width || !height) return null;
+  return { width, height };
+}
+
 // ─── Cached copyTo path ───────────────────────────────────────────
 // Strategy detection result cached after first frame to avoid repeated
 // try/catch fallback attempts on every frame.

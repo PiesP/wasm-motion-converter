@@ -17,14 +17,14 @@
  */
 
 import type { ConversionProgress, ConversionRequest } from '@t/conversion-types';
-import { WORKER_MAX_MEMORY_MB } from '@utils/constants.js';
+import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
 
 import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
   WorkerRequest,
   WorkerResponse,
-} from './types.js';
+} from './types';
 
 // ─── Timeout configuration ──────────────────────────────────────────────
 // Worker timeout: allow up to 5 minutes for large videos at high quality.
@@ -254,7 +254,7 @@ export async function runPipelineWithFallback(
     console.warn('[WorkerPipeline] Worker failed, falling back to main thread:', workerError);
 
     // Dynamic import to avoid circular dependencies
-    const { runConversionPipeline } = await import('../conversion-pipeline.js');
+    const { runConversionPipeline } = await import('../conversion-pipeline');
 
     const request: ConversionRequest = {
       inputBuffer,

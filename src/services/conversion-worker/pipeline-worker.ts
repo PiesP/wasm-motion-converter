@@ -10,7 +10,7 @@
  * fact that performance.memory is unavailable in Workers.
  */
 
-import type { ConversionRequest } from '@t/conversion-types.js';
+import type { ConversionRequest } from '@t/conversion-types';
 import {
   DEFAULT_FPS,
   GIF_TARGET_FPS,
@@ -18,18 +18,15 @@ import {
   WORKER_MAX_MEMORY_LIMIT_MB,
   WORKER_MAX_MEMORY_MB,
   WORKER_MIN_MEMORY_MB,
-} from '@utils/constants.js';
-import { logger } from '@utils/logger.js';
-import { globalBufferPool } from '../buffer-pool.js';
-import { demuxVideo } from '../demuxer-service.js';
-import { calcAutoDecimation } from '../encoder-common.js';
-import { encodeGif } from '../gif-encoder-service.js';
-import { encodeWebp } from '../webp-encoder-service.js';
-import type {
-  SerializedConversionOptions,
-  SerializedDecoderConfig,
-  WorkerResponse,
-} from './types.js';
+} from '@utils/constants';
+import { logger } from '@utils/logger';
+import { globalBufferPool } from '../buffer-pool';
+import { demuxVideo } from '../demuxer-service';
+import { calcAutoDecimation } from '../encoder-common';
+import { resolveVideoDimensions } from '../frame-utils';
+import { encodeGif } from '../gif-encoder-service';
+import { encodeWebp } from '../webp-encoder-service';
+import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
 
 interface WorkerProgressState {
   lastPostTime: number;
@@ -122,19 +119,8 @@ export async function runWorkerPipeline(
   }
 
   const cfg = demuxResult.config;
-  // Prioritize codedWidth/codedHeight — these are the actual pixel dimensions
-  // from the VideoDecoderConfig and are always present for valid configs.
-  // displayAspectWidth/Height and displayWidth/Height are only used as fallbacks
-  // when coded dimensions are unavailable (extremely rare, indicates malformed config).
-  const codedWidth =
-    cfg.codedWidth ??
-    (cfg as VideoDecoderConfig & { displayAspectWidth?: number }).displayAspectWidth ??
-    (cfg as VideoDecoderConfig & { displayWidth?: number }).displayWidth;
-  const codedHeight =
-    cfg.codedHeight ??
-    (cfg as VideoDecoderConfig & { displayAspectHeight?: number }).displayAspectHeight ??
-    (cfg as VideoDecoderConfig & { displayHeight?: number }).displayHeight;
-  if (!codedWidth || !codedHeight) {
+  const dims = resolveVideoDimensions(cfg);
+  if (!dims) {
     postMessage({
       type: 'error',
       requestId: '',
@@ -143,6 +129,7 @@ export async function runWorkerPipeline(
     });
     throw new Error('Unable to determine video dimensions');
   }
+  const { width: codedWidth, height: codedHeight } = dims;
 
   // ── Decode + Encode Phase ──────────────────────────────────────
   let output: ArrayBuffer;

@@ -3,11 +3,7 @@
 
 // Message protocol types for the conversion worker
 
-import type {
-  ConversionFormat,
-  ConversionQuality,
-  SmartFrameSkipMode,
-} from '../../types/conversion-types';
+import type { ConversionFormat, ConversionQuality, SmartFrameSkipMode } from '@t/conversion-types';
 
 export type WorkerRequest =
   | {
