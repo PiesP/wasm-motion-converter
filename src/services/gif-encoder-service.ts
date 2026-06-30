@@ -214,6 +214,10 @@ export async function encodeGif(
   let lastQuantizedData: Uint8Array | null = null;
   let lastIndexedData: Uint8Array | null = null;
 
+  // Save a copy of the last written frame's indexed pixel data for
+  // tail-duration continuation frames (see tailAccumulatedMs fix below).
+  let lastWrittenIndexed: Uint8Array | null = null;
+
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     const pal = globalPalette;
     if (!pal) return;
@@ -254,7 +258,7 @@ export async function encodeGif(
 
   try {
     // Decode frames with streaming callback — each frame is encoded immediately
-    const { totalInputFrames: totalDecoded } = await decodeFrames(
+    const { totalInputFrames: totalDecoded, tailAccumulatedMs } = await decodeFrames(
       demux,
       {
         width: w,
@@ -330,6 +334,10 @@ export async function encodeGif(
           }
 
           writeFrameWithDelay(rgba, delay);
+          // Save a copy of the indexed data for potential tail-duration frame
+          if (lastIndexedData) {
+            lastWrittenIndexed = new Uint8Array(lastIndexedData);
+          }
           // Release RGBA buffer after encoding
           // Invalidate cache since this buffer may be reused by the pool
           if (lastQuantizedData === rgba) {
@@ -355,6 +363,27 @@ export async function encodeGif(
 
     if (encodeIdx === 0) {
       throw new Error('No frames decoded for GIF encoding');
+    }
+
+    // ── Tail accumulated duration fix ──
+    // In streaming mode, frames skipped after the last kept frame have their
+    // durations accumulated by the decoder but never consumed. Add this tail
+    // duration as extra delay on the last frame by writing a continuation frame
+    // with the same pixel data and only the tail delay.
+    if (tailAccumulatedMs > 0 && lastWrittenIndexed && globalPalette) {
+      const tailDelayCs = Math.round(tailAccumulatedMs / 10);
+      if (tailDelayCs > 0) {
+        encoder.writeFrame(lastWrittenIndexed, w, h, {
+          palette: globalPalette,
+          repeat: 0,
+          delay: tailDelayCs,
+        });
+        outputTotalDelay += tailDelayCs;
+        logger.info('encoders', 'GIF tail duration added', {
+          tailMs: Math.round(tailAccumulatedMs),
+          tailCs: tailDelayCs,
+        });
+      }
     }
 
     encoder.finish();

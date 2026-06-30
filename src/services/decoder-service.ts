@@ -79,6 +79,17 @@ export interface DecodeResult {
   sourceTotalMs: number;
   /** Total output duration in milliseconds (sum of all frame durations) */
   outputTotalMs: number;
+  /**
+   * Remaining accumulated duration after the last kept frame.
+   * Only meaningful in streaming mode — batch mode already adds
+   * this to the last frame (see !streaming branch below).
+   * In streaming mode, frames skipped after the last kept frame
+   * have their durations accumulated but never consumed, causing
+   * the output to play faster than the source. Encoders should
+   * add this tail duration to the output (e.g., as extra delay
+   * on the last frame).
+   */
+  tailAccumulatedMs: number;
 }
 
 /**
@@ -355,6 +366,7 @@ export async function decodeFrames(
       skippedByDecimation,
       sourceTotalMs,
       outputTotalMs,
+      tailAccumulatedMs: streaming ? accumulatedDuration : 0,
     };
   } finally {
     // Close decoder only after all pending frame conversions have settled.
