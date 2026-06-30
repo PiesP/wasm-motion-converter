@@ -19,6 +19,7 @@
 
 import type { ProgressCallback } from '@t/conversion-types';
 import { logger } from '@utils/logger';
+import { globalBufferPool } from './buffer-pool';
 import type { BaseEncoderOptions } from './encoder-common';
 import {
   extractVP8Bitstream,
@@ -302,7 +303,14 @@ async function encodeWebpMainThread(
   for (let i = 0; i < frames.length; i++) {
     const frame = frames[i]!;
     const pixelCount = width * height;
-    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    const rawBuf = globalBufferPool.acquire(pixelCount * 4);
+    // BufferPool.acquire() always returns a Uint8Array backed by ArrayBuffer,
+    // so casting is safe (ImageData constructor requires ArrayBuffer).
+    const rgbaData = new Uint8ClampedArray(
+      rawBuf.buffer as ArrayBuffer,
+      rawBuf.byteOffset,
+      pixelCount * 4
+    ) as unknown as Uint8ClampedArray<ArrayBuffer>;
 
     for (let j = 0, k = 0; j < frame.rgbData.length; j += 3, k += 4) {
       rgbaData[k] = frame.rgbData[j]!;
@@ -313,6 +321,7 @@ async function encodeWebpMainThread(
 
     const imageData = new ImageData(rgbaData, width, height);
     ctx.putImageData(imageData, 0, 0);
+    globalBufferPool.release(rawBuf);
 
     const blob = await canvas.convertToBlob({ type: 'image/webp', quality });
     const webpBuffer = new Uint8Array(await blob.arrayBuffer());

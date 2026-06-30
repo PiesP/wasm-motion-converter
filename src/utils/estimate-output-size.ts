@@ -106,10 +106,6 @@ export interface OutputSizeEstimate {
   formatted: string;
 }
 
-// Re-export formatBytes from the canonical source (format-utils.ts) to avoid
-// duplication. When called without a locale, the locale-naive fallback is used.
-export { formatBytes };
-
 /**
  * Produce a formatted output size estimate.
  *

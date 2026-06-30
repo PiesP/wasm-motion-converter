@@ -45,7 +45,7 @@ export default defineConfig(({ mode }) => {
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     `style-src ${styleSrc}`,
-    "img-src 'self' blob: data:",
+    "img-src 'self' blob: data: https:",
     "connect-src 'self' blob:",
     "worker-src 'self'",
   ].join('; ');

@@ -4,6 +4,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Early lang detection: set document.documentElement.lang from stored preference
+         or browser language before any render, avoiding the English flash (M-07). -->
+    <script>
+      (() => {
+        var stored, langs;
+        try {
+          stored = localStorage.getItem('dropconvert.locale');
+          if (stored) { document.documentElement.lang = stored; return; }
+        } catch (e) {}
+        try {
+          langs = navigator.languages || [navigator.language];
+          if (langs.length > 0 && langs[0]) { document.documentElement.lang = langs[0]; }
+        } catch (e) {}
+      })();
+    </script>
 
     <meta name="color-scheme" content="dark" />
 

@@ -9,6 +9,7 @@ import {
   SMART_FRAME_SKIP_MODES,
 } from '@t/conversion-types';
 import { logger } from '@utils/logger';
+import { isInTuple } from '@utils/type-utils';
 import { createSignal } from 'solid-js';
 
 export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
@@ -23,13 +24,6 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
 };
 
 const SETTINGS_STORAGE_KEY = 'conversion-settings';
-
-/**
- * Validate a value is a member of a readonly array (type-narrowing guard).
- */
-function isInTuple<T extends string | number>(value: unknown, allowed: readonly T[]): value is T {
-  return allowed.includes(value as T);
-}
 
 const getInitialConversionSettings = (): ConversionSettings => {
   try {

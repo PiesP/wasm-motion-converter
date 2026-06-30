@@ -88,24 +88,34 @@ export class WebpWorkerPool {
 
   private initWorkers(): void {
     for (let i = 0; i < this.size; i++) {
-      const worker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
-        type: 'module',
-      });
+      try {
+        const worker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
+          type: 'module',
+        });
 
-      worker.onmessage = (event: MessageEvent<EncodeTaskResult & { error?: string }>) => {
-        this.handleWorkerMessage(worker, event.data);
-      };
+        worker.onmessage = (event: MessageEvent<EncodeTaskResult & { error?: string }>) => {
+          this.handleWorkerMessage(worker, event.data);
+        };
 
-      worker.onerror = (event: ErrorEvent) => {
-        this.handleWorkerError(worker, event);
-      };
+        worker.onerror = (event: ErrorEvent) => {
+          this.handleWorkerError(worker, event);
+        };
 
-      this.workers.push(worker);
-      this.idleWorkers.push(worker);
+        this.workers.push(worker);
+        this.idleWorkers.push(worker);
+      } catch (err) {
+        logger.error('encoders', 'Failed to create worker', {
+          index: i,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // Continue with fewer workers — the caller (encodeWebpParallel) falls back
+        // to main-thread encoding when pool is unavailable or has no workers.
+      }
     }
 
     logger.info('encoders', `Worker pool initialized`, {
       poolSize: this.size,
+      created: this.workers.length,
       optimalCount: WebpWorkerPool.getOptimalWorkerCount(),
     });
   }

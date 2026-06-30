@@ -26,16 +26,18 @@
 // ─── Re-exports from @t/i18n-types for convenience ──────────────────────────
 export type { Locale as LocaleCode } from '@t/i18n-types';
 // ─── Intl Utilities ─────────────────────────────────────────────────────────
+// NOTE: Only locale detection and document-lang utilities are re-exported here.
+// Locale-aware formatters (formatDuration, formatBytes, etc.) should be imported
+// directly from their canonical homes:
+//   - formatDuration(ms, locale)  → @utils/intl-utils  (milliseconds)
+//   - formatDurationSeconds(seconds, locale) → @utils/format-utils  (seconds)
+//   - formatBytes(bytes, locale)  → @utils/format-utils
+// This avoids SSOT confusion between ms-vs-seconds parameter units.
 export {
   detectInitialLocale,
   detectUserLocale,
-  formatDate,
-  formatDuration,
-  formatFileSize as formatBytes,
   formatNumber,
   formatPercent,
-  formatRelativeTime,
-  formatTime,
   updateDocumentLang,
 } from './intl-utils';
 // ─── Types ──────────────────────────────────────────────────────────────────

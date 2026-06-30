@@ -234,7 +234,15 @@ export async function encodeWebpOffscreen(
 
         // Create ImageData from RGB data (3 bytes per pixel → 4 bytes RGBA for canvas)
         // OffscreenCanvas putImageData requires RGBA format
-        const rgbaData = new Uint8ClampedArray(w * h * 4);
+        // Use buffer pool to avoid per-frame GC pressure (M-05).
+        const rawBuf = globalBufferPool.acquire(w * h * 4);
+        // BufferPool.acquire() always returns a Uint8Array backed by ArrayBuffer,
+        // so casting is safe (ImageData constructor requires ArrayBuffer).
+        const rgbaData = new Uint8ClampedArray(
+          rawBuf.buffer as ArrayBuffer,
+          rawBuf.byteOffset,
+          w * h * 4
+        ) as unknown as Uint8ClampedArray<ArrayBuffer>;
         for (let i = 0, j = 0; i < rgbData.length; i += 3, j += 4) {
           rgbaData[j] = rgbData[i]!;
           rgbaData[j + 1] = rgbData[i + 1]!;
@@ -244,8 +252,9 @@ export async function encodeWebpOffscreen(
 
         const imageData = new ImageData(rgbaData, w, h);
 
-        // Draw to OffscreenCanvas
+        // Draw to OffscreenCanvas — putImageData copies the data so we can release immediately
         ctx.putImageData(imageData, 0, 0);
+        globalBufferPool.release(rawBuf);
 
         // Encode to WebP via convertToBlob
         const blob = await canvas.convertToBlob({
