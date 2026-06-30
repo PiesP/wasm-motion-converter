@@ -94,7 +94,7 @@ export async function runWorkerPipeline(
   // ── Demux Phase ────────────────────────────────────────────
   let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
   try {
-    demuxResult = await demuxVideo(request, (packetsExtracted) => {
+    demuxResult = await demuxVideo(request, undefined, (packetsExtracted) => {
       const now = performance.now();
       if (now - progressState.lastPostTime >= 100) {
         progressState.lastPostTime = now;

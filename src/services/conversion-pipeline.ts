@@ -206,23 +206,27 @@ async function _runPipelineInner(
     let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
     const demuxProgressThrottled = throttled.callback;
     try {
-      demuxResult = await demuxVideo(request, (packetsExtracted, estimatedTotalFrames) => {
-        if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-        profiler.updatePhase('demuxing', packetsExtracted);
-        const memMB = sampleMemory();
-        const elapsedMs = Math.round(performance.now() - pipelineStart);
-        const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalFrames) * 10));
-        demuxProgressThrottled({
-          phase: 'demuxing',
-          progress: demuxPct,
-          fps: 0,
-          etaSeconds: null,
-          memoryMB: memMB,
-          currentFrame: packetsExtracted,
-          totalFrames: estimatedTotalFrames,
-          elapsedMs,
-        });
-      });
+      demuxResult = await demuxVideo(
+        request,
+        undefined,
+        (packetsExtracted, estimatedTotalFrames) => {
+          if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+          profiler.updatePhase('demuxing', packetsExtracted);
+          const memMB = sampleMemory();
+          const elapsedMs = Math.round(performance.now() - pipelineStart);
+          const demuxPct = Math.min(10, Math.round((packetsExtracted / estimatedTotalFrames) * 10));
+          demuxProgressThrottled({
+            phase: 'demuxing',
+            progress: demuxPct,
+            fps: 0,
+            etaSeconds: null,
+            memoryMB: memMB,
+            currentFrame: packetsExtracted,
+            totalFrames: estimatedTotalFrames,
+            elapsedMs,
+          });
+        }
+      );
     } catch (err) {
       logger.error('conversion', 'Demux failed', {
         fileName: request.fileName,

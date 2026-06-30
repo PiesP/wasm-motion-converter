@@ -3,7 +3,7 @@
 
 import { yieldToMain } from '@services/frame-utils';
 import { extractVideoMetadata } from '@services/video-metadata';
-import type { ConversionRequest } from '@t/conversion-types';
+import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { EncodedPacketSink } from 'mediabunny';
@@ -15,33 +15,60 @@ export interface DemuxResult {
   duration: number;
   /** Total source duration in milliseconds (computed from chunk durations) */
   sourceTotalMs: number;
+  /** Average frame rate from pre-computed metadata (or fallback). Used for decimation calculation. */
+  framerate: number;
 }
 
 type DemuxProgressCallback = (packetsExtracted: number, estimatedTotalFrames: number) => void;
 
 /**
  * Demux a video buffer using MediaBunny, extracting encoded video chunks.
+ *
+ * When `preComputedMetadata` is provided (from file selection's metadata extraction),
+ * the config, duration, and framerate are reused — avoiding a second
+ * `extractVideoMetadata()` call and its associated Input creation.
+ *
+ * @param request - Conversion settings + input buffer
+ * @param preComputedMetadata - Optional pre-extracted metadata (from handleFileSelected)
+ * @param onProgress - Callback for demux progress reporting
+ * @param signal - AbortSignal for cancellation
  */
 export async function demuxVideo(
   request: ConversionRequest,
+  preComputedMetadata?: VideoMetadata,
   onProgress?: DemuxProgressCallback,
   signal?: AbortSignal
 ): Promise<DemuxResult> {
   const startTime = performance.now();
 
-  // Extract metadata (also validates the video track exists and config is obtainable).
-  // Pass a copy so the original buffer stays intact for demuxing below —
-  // mediabunny's BufferSource may detach the buffer on dispose.
-  const metadata = await extractVideoMetadata(request.inputBuffer.slice(0));
-  if (!metadata.config) {
-    throw new Error('Unable to obtain VideoDecoderConfig from video track');
+  // Reuse pre-computed metadata when available (avoids second extractVideoMetadata call).
+  // Keep the extractVideoMetadata fallback for callers that don't pass metadata
+  // (e.g. tests, programmatic API usage).
+  let config: VideoDecoderConfig;
+  let duration: number;
+  let framerate: number;
+
+  if (preComputedMetadata?.config) {
+    config = preComputedMetadata.config;
+    duration = preComputedMetadata.duration;
+    framerate = preComputedMetadata.framerate;
+  } else {
+    // Extract metadata (also validates the video track exists and config is obtainable).
+    // Pass a copy so the original buffer stays intact for demuxing below —
+    // mediabunny's BufferSource may detach the buffer on dispose.
+    const metadata = await extractVideoMetadata(request.inputBuffer.slice(0));
+    if (!metadata.config) {
+      throw new Error('Unable to obtain VideoDecoderConfig from video track');
+    }
+    config = metadata.config;
+    duration = metadata.duration;
+    framerate = metadata.framerate;
   }
-  const { config, duration } = metadata;
 
   // Estimate total frames from duration and frame rate for progress reporting.
   // This is an estimate — actual packet count may differ due to variable frame rate
   // or container-level vs stream-level duration mismatch.
-  const estimatedTotalFrames = Math.max(1, Math.round(duration * (metadata.framerate || 30)));
+  const estimatedTotalFrames = Math.max(1, Math.round(duration * (framerate || 30)));
 
   // Set up source/input for demuxing
   const input = createMediaBunnyInput(request.inputBuffer);
@@ -121,5 +148,5 @@ export async function demuxVideo(
   // Compute total source duration from chunk durations (microseconds → milliseconds)
   const sourceTotalMs = chunks.reduce((sum, ch) => sum + (ch.duration ?? 0), 0) / 1000;
 
-  return { chunks, config, totalFrames, duration, sourceTotalMs };
+  return { chunks, config, totalFrames, duration, sourceTotalMs, framerate };
 }
