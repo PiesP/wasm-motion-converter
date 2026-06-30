@@ -8,7 +8,6 @@ import type { Component } from 'solid-js';
 import { createMemo, splitProps } from 'solid-js';
 
 const UNKNOWN_CODEC = 'unknown';
-const DETECTING_LABEL = 'Detecting...';
 
 interface VideoMetadataDisplayProps {
   metadata: VideoMetadata;
@@ -17,46 +16,61 @@ interface VideoMetadataDisplayProps {
 }
 
 const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
-  const { locale } = useLocale();
+  const { t, locale } = useLocale();
   const [local] = splitProps(props, ['metadata', 'fileName', 'fileSize']);
 
   const codecDisplay = createMemo(() =>
-    local.metadata.codec === UNKNOWN_CODEC ? DETECTING_LABEL : local.metadata.codec.toUpperCase()
+    local.metadata.codec === UNKNOWN_CODEC
+      ? t('metadata.detecting')
+      : local.metadata.codec.toUpperCase()
   );
+
+  const bitrateDisplay = createMemo(() => {
+    const bps = local.metadata.bitrate;
+    if (!bps || bps <= 0) return t('metadata.detecting');
+    if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;
+    return `${(bps / 1_000).toFixed(0)} Kbps`;
+  });
 
   return (
     <div
       class="bg-[#191a1b] border border-white/[0.06] rounded-lg p-4"
       data-testid="video-metadata"
     >
-      <h3 class="text-xs font-medium text-[#8a8f98] mb-2 uppercase tracking-wide">Input Video</h3>
+      <h3 class="text-xs font-medium text-[#8a8f98] mb-2 uppercase tracking-wide">
+        {t('metadata.title')}
+      </h3>
       <dl class="space-y-1.5 text-sm">
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">File</dt>
+          <dt class="text-[#8a8f98] shrink-0">{t('metadata.file')}</dt>
           <dd class="text-[#f7f8f8] truncate text-right">{local.fileName}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">Resolution</dt>
+          <dt class="text-[#8a8f98] shrink-0">{t('metadata.resolution')}</dt>
           <dd class="text-[#f7f8f8] tabular-nums">
             {local.metadata.width}×{local.metadata.height}
           </dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">Duration</dt>
+          <dt class="text-[#8a8f98] shrink-0">{t('metadata.duration')}</dt>
           <dd class="text-[#f7f8f8] tabular-nums">
             {formatDurationSeconds(local.metadata.duration, locale())}
           </dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">FPS</dt>
+          <dt class="text-[#8a8f98] shrink-0">{t('metadata.fps')}</dt>
           <dd class="text-[#f7f8f8] tabular-nums">{local.metadata.framerate}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">Codec</dt>
+          <dt class="text-[#8a8f98] shrink-0">{t('metadata.codec')}</dt>
           <dd class="text-[#f7f8f8] tabular-nums">{codecDisplay()}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">Size</dt>
+          <dt class="text-[#8a8f98] shrink-0">{t('metadata.bitrate')}</dt>
+          <dd class="text-[#f7f8f8] tabular-nums">{bitrateDisplay()}</dd>
+        </div>
+        <div class="flex justify-between gap-3">
+          <dt class="text-[#8a8f98] shrink-0">{t('metadata.size')}</dt>
           <dd class="text-[#f7f8f8] tabular-nums">{formatBytes(local.fileSize, locale())}</dd>
         </div>
       </dl>
