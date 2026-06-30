@@ -87,8 +87,12 @@ export const GIF_MAX_FRAME_DELAY_CS = 200;
  *  noticeable positive timing drift after the tail-accumulation fix. */
 export const GIF_MIN_FIRST_FRAME_DELAY_MS = 20;
 
-/** GIF encoder minimum frame delay in milliseconds */
-export const GIF_MIN_FRAME_DELAY_MS = 50;
+/** GIF encoder minimum frame delay in milliseconds.
+ *  Set to 20ms — the minimum safe delay for GIF viewers (sub-20ms frames
+ *  may be skipped by some renderers). Previously 50ms which was an
+ *  arbitrary constraint from legacy browser behavior. Modern browsers
+ *  (Firefox, Chrome, Safari) all support 20ms (2cs) = 50fps. */
+export const GIF_MIN_FRAME_DELAY_MS = 20;
 
 /** GIF LZW compression ratio estimate for buffer sizing */
 export const GIF_LZW_RATIO = 0.1;
