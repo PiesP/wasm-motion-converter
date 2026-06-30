@@ -59,36 +59,6 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
 
   return (
     <Panel class="p-4">
-      <div class="mb-4">
-        <div class="flex gap-2">
-          <Show
-            when={local.isConverting}
-            fallback={
-              <Button
-                ariaLabel={ariaLabel()}
-                class="flex-1"
-                disabled={convertDisabled()}
-                onClick={local.onConvert}
-                variant={convertVariant()}
-                data-testid="convert-button"
-              >
-                {convertText()}
-              </Button>
-            }
-          >
-            <Button
-              ariaLabel={t('settings.stopConversion')}
-              class="flex-1"
-              onClick={local.onCancel}
-              variant="danger"
-              data-testid="stop-conversion-button"
-            >
-              {t('settings.stopConversion')}
-            </Button>
-          </Show>
-        </div>
-      </div>
-
       <Show when={local.metadata}>
         <div class="mb-4">
           <TrimSelector
@@ -128,6 +98,36 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         tooltip={t('settings.tooltip.scale')}
         value={local.settings.scale}
       />
+
+      <div class="mt-4">
+        <div class="flex gap-2">
+          <Show
+            when={local.isConverting}
+            fallback={
+              <Button
+                ariaLabel={ariaLabel()}
+                class="flex-1"
+                disabled={convertDisabled()}
+                onClick={local.onConvert}
+                variant={convertVariant()}
+                data-testid="convert-button"
+              >
+                {convertText()}
+              </Button>
+            }
+          >
+            <Button
+              ariaLabel={t('settings.stopConversion')}
+              class="flex-1"
+              onClick={local.onCancel}
+              variant="danger"
+              data-testid="stop-conversion-button"
+            >
+              {t('settings.stopConversion')}
+            </Button>
+          </Show>
+        </div>
+      </div>
     </Panel>
   );
 };

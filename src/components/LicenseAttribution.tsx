@@ -23,11 +23,11 @@ const LicenseAttribution: Component = () => {
 
   return (
     <footer
-      class="border-t border-white/[0.06] py-4 sm:py-6 mt-4 sm:mt-8 bg-[#0a0b0c]"
+      class="border-t border-white/[0.06] py-3 sm:py-4 mt-4 sm:mt-8 bg-[#0a0b0c]"
       role="contentinfo"
       aria-label={t('footer.licenseAttribution')}
     >
-      <div class="max-w-6xl mx-auto px-4 text-center text-xs sm:text-sm text-[#8a8f98] space-y-2 sm:space-y-3">
+      <div class="max-w-6xl mx-auto px-4 text-center text-[11px] sm:text-xs text-[#8a8f98] space-y-1.5 sm:space-y-2">
         {/* Line 1: Powered by — libraries in a responsive inline list */}
         <p class="leading-relaxed">
           Powered by{' '}

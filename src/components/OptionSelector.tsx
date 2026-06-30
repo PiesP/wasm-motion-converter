@@ -7,11 +7,11 @@ import Tooltip from './Tooltip';
 import Icon from './ui/Icon';
 
 const BASE_OPTION_CLASS =
-  'relative flex items-center justify-center px-3 py-2 sm:py-3 border rounded-lg cursor-pointer transition-colors text-sm min-h-[44px]';
+  'relative flex items-center justify-center px-3 py-2 sm:py-3 border rounded-lg cursor-pointer transition-all duration-200 text-sm min-h-[44px]';
 const SELECTED_OPTION_CLASS =
   'bg-[#5e6ad2]/20 border-[#5e6ad2] text-[#f7f8f8] ring-2 ring-[#5e6ad2]/30';
 const DEFAULT_OPTION_CLASS =
-  'bg-white/[0.02] border-white/[0.08] text-[#d0d6e0] hover:border-white/[0.15]';
+  'bg-white/[0.02] border-white/[0.08] text-[#d0d6e0] hover:border-white/[0.15] hover:bg-white/[0.04]';
 const DEFAULT_COLUMNS_MANY = 3;
 const DEFAULT_COLUMNS_FEW = 2;
 
@@ -105,7 +105,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
 
   return (
     <fieldset
-      class={`mb-4 ${local.disabled ? 'opacity-50 pointer-events-none' : ''}`}
+      class={`mb-6 ${local.disabled ? 'opacity-50 pointer-events-none' : ''}`}
       disabled={local.disabled}
       aria-label={local.title}
       data-testid={`option-group-${local.name}`}

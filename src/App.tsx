@@ -282,10 +282,15 @@ const App: Component = () => {
         </a>
 
         <header class="border-b border-white/[0.08] bg-[#08090a]">
-          <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+          <div class="mx-auto flex max-w-[1200px] items-center justify-between px-4 py-1">
             <div class="flex-1">
-              <h1 class="text-xl font-bold text-[#f7f8f8] sm:text-2xl">{t('app.title')}</h1>
-              <p class="mt-1 text-xs text-[#d0d6e0] sm:text-sm">{t('app.subtitle')}</p>
+              <h1
+                class="text-2xl font-bold tracking-tight text-[#f7f8f8] sm:text-3xl"
+                style="letter-spacing: -0.704px"
+              >
+                {t('app.title')}
+              </h1>
+              <p class="mt-1 text-sm text-[#d0d6e0] sm:text-lg">{t('app.subtitle')}</p>
             </div>
 
             <div class="flex items-center gap-2">
@@ -295,7 +300,10 @@ const App: Component = () => {
           </div>
         </header>
 
-        <main id="main-content" class="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 lg:px-8">
+        <main
+          id="main-content"
+          class="mx-auto w-full max-w-[1200px] flex-1 px-4 py-8 sm:px-6 lg:px-8"
+        >
           <StatusAlerts
             environmentSupported={environmentSupported()}
             errorContext={errorContext()}

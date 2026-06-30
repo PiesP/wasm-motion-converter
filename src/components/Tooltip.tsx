@@ -20,8 +20,9 @@ const Tooltip: Component<TooltipProps> = (props) => {
   const [placement, setPlacement] = createSignal<'above' | 'below'>('above');
   const [tooltipId] = createSignal(`tooltip-${crypto.randomUUID()}`);
   let triggerEl: HTMLDivElement | undefined;
+  let enterTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  const showTooltip = () => {
+  const showTooltipImmediate = () => {
     // Check if showing above would overflow viewport
     const triggerRect = triggerEl?.getBoundingClientRect();
     if (triggerRect) {
@@ -34,7 +35,15 @@ const Tooltip: Component<TooltipProps> = (props) => {
     setIsVisible(true);
   };
 
+  const showTooltipDelayed = () => {
+    clearTimeout(enterTimeout);
+    enterTimeout = setTimeout(() => {
+      showTooltipImmediate();
+    }, 150);
+  };
+
   const hideTooltip = () => {
+    clearTimeout(enterTimeout);
     setIsVisible(false);
   };
 
@@ -45,6 +54,7 @@ const Tooltip: Component<TooltipProps> = (props) => {
   };
 
   onCleanup(() => {
+    clearTimeout(enterTimeout);
     triggerEl = undefined;
   });
 
@@ -58,9 +68,9 @@ const Tooltip: Component<TooltipProps> = (props) => {
         ref={(el) => {
           triggerEl = el;
         }}
-        onMouseEnter={showTooltip}
+        onMouseEnter={showTooltipDelayed}
         onMouseLeave={hideTooltip}
-        onFocus={showTooltip}
+        onFocus={showTooltipImmediate}
         onBlur={hideTooltip}
         onKeyDown={handleKeyDown}
         aria-describedby={tooltipId()}
@@ -70,7 +80,7 @@ const Tooltip: Component<TooltipProps> = (props) => {
       <Show when={isVisible()}>
         <div
           id={tooltipId()}
-          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-[#f7f8f8] bg-[#191a1b] rounded-lg shadow-lg ${tooltipClass()} left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none`}
+          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-[#f7f8f8] bg-[#191a1b] rounded-lg shadow-lg ${tooltipClass()} left-1/2 -translate-x-1/2 max-w-[240px] whitespace-normal pointer-events-none`}
           role="tooltip"
         >
           {local.content}
