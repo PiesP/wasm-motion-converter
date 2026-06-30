@@ -114,8 +114,9 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const compressionLabel = createMemo(() => {
     const ratio = compressionRatio();
     if (ratio === null) return null;
-    if (ratio > 0) return `${ratio.toFixed(0)}% smaller`;
-    return `${Math.abs(ratio).toFixed(0)}% larger`;
+    const pct = Math.abs(ratio).toFixed(0);
+    if (ratio > 0) return t('result.compressionSmaller', { percent: pct });
+    return t('result.compressionLarger', { percent: pct });
   });
 
   const compressionColorClass = createMemo(() => {
@@ -166,7 +167,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
                 d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
               />
             </svg>
-            <span class="text-xs">Preview failed to load</span>
+            <span class="text-xs">{t('result.previewFailed')}</span>
           </div>
         </Show>
       </div>
@@ -245,8 +246,10 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
             />
           </svg>
-          Download {outputExtension().toUpperCase()} ·{' '}
-          {formatBytes(local.outputBlob.size, locale())}
+          {t('result.downloadButton', {
+            format: outputExtension().toUpperCase(),
+            size: formatBytes(local.outputBlob.size, locale()),
+          })}
         </a>
       </div>
     </Panel>
