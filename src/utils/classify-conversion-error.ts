@@ -61,6 +61,16 @@ type ErrorRule = {
  * Rules are evaluated top-to-bottom; first match wins.
  */
 const ERROR_RULES: readonly ErrorRule[] = [
+  // -- Cancellation -------------------------------------------------------
+  {
+    name: 'abort-error-cancelled',
+    type: 'general',
+    code: 'CANCELLED',
+    pattern: /abort(?:error|ed)/i,
+    condition: (msg) => !/memory|oom|wasm\s.*memory|stack\s*overflow/i.test(msg),
+    suggestion: 'The conversion was cancelled. You can try again with different settings.',
+  },
+
   // -- Memory -------------------------------------------------------------
   {
     name: 'out-of-memory',
@@ -75,7 +85,7 @@ const ERROR_RULES: readonly ErrorRule[] = [
     type: 'memory',
     code: 'OUT_OF_MEMORY',
     pattern: /\babort\b|aborted|wasm\s.*\bmemory\b/i,
-    condition: (msg) => !/cancelled by user|cancelled\s*by/i.test(msg),
+    condition: (msg) => /memory|oom|stack\s*overflow|wasm/i.test(msg) && !/cancelled/i.test(msg),
     suggestion:
       'Your browser ran out of memory or encountered a memory issue. Try using a smaller video file, reducing quality to "low", or scaling down the resolution.',
   },
