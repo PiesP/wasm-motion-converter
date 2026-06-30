@@ -11,7 +11,14 @@
  * Type guard: check whether an error was triggered by a user cancellation.
  */
 export function isCancellationError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === 'AbortError') {
+  // Primary check: name === 'AbortError' (covers DOMException, regular Error,
+  // and any error-like object with the AbortError name)
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name: unknown }).name === 'AbortError'
+  ) {
     return true;
   }
 
@@ -31,7 +38,6 @@ export function isCancellationError(error: unknown): boolean {
       ? String((error as { message: unknown }).message).toLowerCase()
       : String(error).toLowerCase();
 
-  // Only match explicit cancellation messages — avoid generic 'abort' which
-  // could match unrelated errors like 'abort decode'
+  // Fallback: match user-cancellation phrases only
   return message.includes('cancelled') || message.includes('canceled');
 }

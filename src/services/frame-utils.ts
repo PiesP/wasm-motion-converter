@@ -276,11 +276,15 @@ export function createFrameProcessingContext(): FrameProcessingContext {
  * @param frame - The VideoFrame to extract duration from
  * @param ctx - Per-conversion context for carry state
  */
-export function getFrameDurationMs(frame: VideoFrame, ctx: FrameProcessingContext): number {
+export function getFrameDurationMs(
+  frame: VideoFrame,
+  ctx: FrameProcessingContext,
+  fallbackMs?: number
+): number {
   const raw = frame.duration as number | null;
   if (raw == null || raw <= 0) {
     ctx.durationCarryUs = 0;
-    return 100;
+    return fallbackMs ?? 100;
   }
   // Add any fractional remainder from previous frames
   const totalUs = raw + ctx.durationCarryUs;
