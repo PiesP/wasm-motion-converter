@@ -3,6 +3,7 @@
 
 import type { MediabunnyVideoDecoderConfig, VideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS } from '@utils/constants';
+import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 
 /**
@@ -10,6 +11,11 @@ import { createMediaBunnyInput } from '@utils/mediabunny-utils';
  *
  * Shared utility to avoid duplicating the BufferSource → Input → getVideoTracks()
  * → getDecoderConfig() pipeline across demuxer-service and file-selected handler.
+ *
+ * FPS and bitrate are computed via `track.computePacketStats(50)` which scans the
+ * first ~50 packets (metadata-only, no actual data reads). For CFR (constant frame
+ * rate) videos this returns the exact frame rate; for VFR it returns a close
+ * approximation. See <https://mediabunny.dev/guide/reading-media-files#packet-statistics>.
  *
  * @param buffer - The video file's ArrayBuffer
  * @param defaultFps - Fallback frame rate if not derivable from config (default: DEFAULT_FPS)
@@ -36,6 +42,63 @@ export async function extractVideoMetadata(
 
     const duration = await track.computeDuration();
 
+    // ── FPS & Bitrate: compute from first ~50 packets ──────────────────
+    // computePacketStats scans packets metadata-only (no actual data reads)
+    // and returns { packetCount, averagePacketRate, averageBitrate }.
+    // For CFR videos averagePacketRate == exact frame rate.
+    // Cost: ~10-30ms (independent of file size).
+    let computedFps: number | null = null;
+    let computedBitrate: number | null = null;
+
+    try {
+      const packetStats = await track.computePacketStats(50);
+      if (packetStats.averagePacketRate > 0) {
+        computedFps = Math.round(packetStats.averagePacketRate * 100) / 100;
+      }
+      if (packetStats.averageBitrate > 0) {
+        computedBitrate = Math.round(packetStats.averageBitrate);
+      }
+    } catch {
+      // computePacketStats may fail for very short files or exotic containers.
+      // Fall through to metadata-based or default values below.
+    }
+
+    // Fallback chain for FPS:
+    //   1. computePacketStats (most accurate for CFR, reasonable for VFR)
+    //   2. defaultFps (caller-provided constant)
+    const framerate = computedFps ?? defaultFps;
+
+    // Fallback chain for bitrate:
+    //   1. computePacketStats (computed from actual packet bytes — most accurate)
+    //   2. track.getAverageBitrate() (container metadata, available for MP4/WebM)
+    //   3. track.getBitrate() (peak bitrate from metadata — least reliable)
+    let bitrate = computedBitrate;
+    if (bitrate == null || bitrate <= 0) {
+      try {
+        const avgBitrate = await track.getAverageBitrate();
+        if (avgBitrate != null && avgBitrate > 0) bitrate = avgBitrate;
+      } catch {
+        // getAverageBitrate not supported by all formats
+      }
+    }
+    if (bitrate == null || bitrate <= 0) {
+      try {
+        const peakBitrate = await track.getBitrate();
+        if (peakBitrate != null && peakBitrate > 0) bitrate = peakBitrate;
+      } catch {
+        // getBitrate not supported by all formats
+      }
+    }
+
+    if (bitrate != null && bitrate > 0) {
+      logger.info('general', 'Extracted video metadata', {
+        codec: config.codec?.split('.')[0] ?? 'unknown',
+        duration: `${duration.toFixed(2)}s`,
+        framerate,
+        bitrateMbps: (bitrate / 1_000_000).toFixed(2),
+      });
+    }
+
     // displayAspectWidth/Height: present when pixel aspect ratio is non-square (mediabunny v1.40.0+).
     // These represent the display dimensions directly.
     const cfg = config as MediabunnyVideoDecoderConfig;
@@ -50,8 +113,8 @@ export async function extractVideoMetadata(
       height,
       duration,
       codec,
-      framerate: defaultFps,
-      bitrate: 0,
+      framerate,
+      bitrate: bitrate ?? 0,
       config,
     };
   } finally {
