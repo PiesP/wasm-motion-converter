@@ -50,7 +50,7 @@ const EnvironmentWarning: Component = () => {
   };
 
   const sharedArrayBufferLabel = createMemo(() =>
-    hasSharedArrayBuffer() ? 'Available' : 'Unavailable'
+    hasSharedArrayBuffer() ? t('env.available') : t('env.unavailable')
   );
   const crossOriginIsolatedLabel = createMemo(() => (isCrossOriginIsolated() ? 'true' : 'false'));
 
@@ -78,7 +78,7 @@ const EnvironmentWarning: Component = () => {
         </div>
         <div class="ml-3 flex-1">
           <div class="flex items-start justify-between">
-            <h3 class="text-sm font-medium text-[#f7f8f8]">Environment Not Supported</h3>
+            <h3 class="text-sm font-medium text-[#f7f8f8]">{t('env.notSupported')}</h3>
             <button
               type="button"
               onClick={handleToggleExpanded}
@@ -92,34 +92,20 @@ const EnvironmentWarning: Component = () => {
 
           <Show when={isExpanded()}>
             <div class="mt-2 text-sm text-[#d0d6e0]">
-              <Show
-                when={!hasSharedArrayBuffer()}
-                fallback={
-                  <p>
-                    crossOriginIsolated is <strong>false</strong>. This application requires
-                    cross-origin isolation (COOP/COEP headers) to enable SharedArrayBuffer features
-                    reliably.
-                  </p>
-                }
-              >
-                <p>
-                  SharedArrayBuffer is not available. This application requires cross-origin
-                  isolation (COOP/COEP headers) to work properly.
-                </p>
+              <Show when={!hasSharedArrayBuffer()} fallback={<p>{t('env.coiFalse')}</p>}>
+                <p>{t('env.sabUnavailable')}</p>
               </Show>
               <p class="mt-2">
-                Detected: SharedArrayBuffer <strong>{sharedArrayBufferLabel()}</strong>,
-                crossOriginIsolated <strong>{crossOriginIsolatedLabel()}</strong>.
+                {t('env.detected', {
+                  sab: sharedArrayBufferLabel(),
+                  coi: crossOriginIsolatedLabel(),
+                })}
               </p>
               <p class="mt-2">
-                <strong>If you're running this locally:</strong> Make sure you're using the Vite dev
-                server with the correct headers configured.
+                <strong>{t('env.localDevHint')}</strong>
               </p>
               <p class="mt-2">
-                <strong>If you're accessing a deployed site:</strong> Contact the administrator to
-                configure COOP/COEP headers. If FFmpeg fails to start, browser extensions or strict
-                security settings may be blocking module/blob workers—try an InPrivate window or
-                disable blockers temporarily.
+                <strong>{t('env.deployedHint')}</strong>
               </p>
             </div>
             <div class="mt-3">
