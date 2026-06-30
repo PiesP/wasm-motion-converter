@@ -268,3 +268,71 @@ html.dark :focus-visible {
 .animate-scale-in {
   animation: scale-in 0.25s ease-out forwards;
 }
+
+/* ── View Transition API ──
+   Smooth cross-state transitions for SPA navigation.
+   Default: 200ms cross-fade. Override per transition name.
+   Falls back to instant when API unavailable. */
+@view-transition {
+  navigation: auto;
+}
+
+/* Default cross-fade for all view transitions */
+::view-transition-old(root) {
+  animation: fade-out 0.15s ease-out;
+}
+::view-transition-new(root) {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Slide-up entry for conversion results */
+::view-transition-new(conversion-results) {
+  animation: slide-up-in 0.3s ease-out;
+}
+::view-transition-old(conversion-results) {
+  animation: fade-out 0.15s ease-out;
+}
+
+@keyframes slide-up-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ── @starting-style Entry Animations ──
+   CSS-only entry animations for elements appearing in the DOM.
+   Browser takes care of transition from starting state to final state. */
+.result-preview-enter,
+.error-display-enter,
+.progress-bar-enter {
+  transition:
+    opacity 0.3s ease-out,
+    transform 0.3s ease-out;
+}
+@starting-style {
+  .result-preview-enter,
+  .error-display-enter,
+  .progress-bar-enter {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}

@@ -24,6 +24,20 @@ import { createSignal } from 'solid-js';
 export const [appState, setAppState] = createSignal<AppState>('idle');
 export const [environmentSupported, setEnvironmentSupported] = createSignal<boolean>(true);
 
+/**
+ * Transition to a new app state using the View Transition API.
+ * Wraps the state change in document.startViewTransition() for smooth
+ * cross-state animations when supported. Falls back to instant transition
+ * when the API is unavailable or for non-visual state changes.
+ */
+export function transitionToState(state: AppState): void {
+  if ('startViewTransition' in document) {
+    document.startViewTransition(() => setAppState(state));
+  } else {
+    setAppState(state);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------

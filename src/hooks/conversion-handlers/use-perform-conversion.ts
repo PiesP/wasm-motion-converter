@@ -25,6 +25,7 @@ import {
   setInputFile,
   setVideoMetadata,
   setVideoPreviewUrl,
+  transitionToState,
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
@@ -120,7 +121,7 @@ export async function handleConvert(
                   );
                   setErrorMessage(context.originalError);
                   setErrorContext(context);
-                  setAppState('error');
+                  transitionToState('error');
                 });
                 focusRetryButton();
               })
@@ -155,7 +156,7 @@ async function performConversion(
 
   try {
     batch(() => {
-      setAppState('converting');
+      transitionToState('converting');
       setConversionStatusMessage('');
       setConversionResults([]);
     });
@@ -389,7 +390,7 @@ async function performConversion(
     });
 
     batch(() => {
-      setAppState('done');
+      transitionToState('done');
       setConversionStatusMessage('');
       runtime.resetTimingState();
       // Release input buffer — no longer needed after conversion completes.
@@ -436,7 +437,7 @@ async function performConversion(
       runtime.resetTimingState();
       setErrorMessage(context.originalError);
       setErrorContext(context);
-      setAppState('error');
+      transitionToState('error');
     });
 
     focusRetryButton();

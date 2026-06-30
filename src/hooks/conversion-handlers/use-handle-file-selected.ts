@@ -3,13 +3,13 @@
 
 import { extractVideoMetadata } from '@services/video-metadata';
 import {
-  setAppState,
   setErrorContext,
   setErrorMessage,
   setInputBuffer,
   setInputFile,
   setVideoMetadata,
   setVideoPreviewUrl,
+  transitionToState,
   videoPreviewUrl,
 } from '@stores/conversion-store';
 import type { TFunction } from '@t/i18n-types';
@@ -54,7 +54,7 @@ export async function handleFileSelected(
     });
     batch(() => {
       setErrorMessage(getErrorMessage(validation.error));
-      setAppState('error');
+      transitionToState('error');
     });
     focusRetryButton();
     return;
@@ -64,7 +64,7 @@ export async function handleFileSelected(
 
   // Show "analyzing" state before reading the file so the UI reflects
   // that work is happening (important for large files).
-  setAppState('analyzing');
+  transitionToState('analyzing');
 
   // Read file once upfront, then share the buffer between metadata extraction and conversion
   const buffer = await file.arrayBuffer();
@@ -87,7 +87,7 @@ export async function handleFileSelected(
     // Store buffer only after successful metadata extraction so performConversion can reuse it
     setInputBuffer(buffer);
     setVideoMetadata(metadata);
-    setAppState('idle');
+    transitionToState('idle');
   } catch (error) {
     if (isStale()) return;
 
@@ -98,7 +98,7 @@ export async function handleFileSelected(
     });
     batch(() => {
       setErrorMessage(getErrorMessage(error));
-      setAppState('error');
+      transitionToState('error');
     });
     focusRetryButton();
   }

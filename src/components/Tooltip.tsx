@@ -13,10 +13,14 @@ interface TooltipProps {
   children: JSX.Element;
 }
 
+/** Check if the Popover API is available (baseline 2025, all major browsers) */
+const SUPPORTS_POPOVER = typeof HTMLElement !== 'undefined' && 'popover' in HTMLElement.prototype;
+
 const Tooltip: Component<TooltipProps> = (props) => {
   const [local] = splitProps(props, ['content', 'children']);
   const [isVisible, setIsVisible] = createSignal(false);
-  const tooltipId = `tooltip-${crypto.randomUUID()}`;
+  const [tooltipId] = createSignal(`tooltip-${crypto.randomUUID()}`);
+  const [isNativePopover, setIsNativePopover] = createSignal(false);
 
   const showTooltip = () => setIsVisible(true);
   const hideTooltip = () => setIsVisible(false);
@@ -24,6 +28,14 @@ const Tooltip: Component<TooltipProps> = (props) => {
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Escape' && isVisible()) {
       hideTooltip();
+    }
+  };
+
+  // When Popover API is available, use it for light dismiss + ESC + top layer
+  const initPopover = (el: HTMLDivElement) => {
+    if (SUPPORTS_POPOVER && el) {
+      (el as HTMLDivElement & { popover?: string }).popover = 'hint';
+      setIsNativePopover(true);
     }
   };
 
@@ -35,13 +47,14 @@ const Tooltip: Component<TooltipProps> = (props) => {
         onFocus={showTooltip}
         onBlur={hideTooltip}
         onKeyDown={handleKeyDown}
-        aria-describedby={tooltipId}
+        aria-describedby={tooltipId()}
       >
         {local.children}
       </div>
-      <Show when={isVisible()}>
+      <Show when={isVisible() || isNativePopover()}>
         <div
-          id={tooltipId}
+          id={tooltipId()}
+          ref={initPopover}
           class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-[#f7f8f8] bg-[#191a1b] rounded-lg shadow-lg ${TOOLTIP_OFFSET_TOP} left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none`}
           role="tooltip"
         >
