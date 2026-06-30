@@ -26,10 +26,7 @@ import type {
   WorkerResponse,
 } from './types';
 
-// ─── Timeout configuration ──────────────────────────────────────────────
-// Worker timeout: allow up to 5 minutes for large videos at high quality.
-// The worker is terminated if it produces no result within this window.
-// (Browser-safe: import.meta.env.VITE_WORKER_TIMEOUT_MS or default)
+// 5 min timeout for worker conversion
 const WORKER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
@@ -70,10 +67,7 @@ export async function runPipelineViaWorker(
     // Create the worker
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
 
-    // ── Timeout guard ──────────────────────────────────────────────────
-    // If the worker hangs (e.g. infinite loop, deadlock in WASM), this
-    // timer fires, terminates the worker, and rejects the promise.
-    // The timer is cleared on any terminal message or external abort.
+    // Timeout guard: terminate worker and reject if it hangs
     let timedOut = false;
     const timeoutId = setTimeout(() => {
       timedOut = true;
@@ -108,7 +102,6 @@ export async function runPipelineViaWorker(
 
     // Set up abort signal forwarding
     const onAbort = () => {
-      // External abort — clear the timeout since we're handling termination
       clearTimeout(timeoutId);
       const abortMsg: WorkerRequest = {
         type: 'abort',
@@ -119,7 +112,6 @@ export async function runPipelineViaWorker(
 
     if (signal) {
       if (signal.aborted) {
-        // Already aborted
         clearTimeout(timeoutId);
         worker.terminate();
         reject(new DOMException('Cancelled', 'AbortError'));
@@ -150,14 +142,9 @@ export async function runPipelineViaWorker(
         }
 
         case 'complete': {
-          // Clear timeout — conversion finished successfully
           cleanup();
-          // The response.outputBuffer is transferred back by the worker
-          // via postMessage transferables — ownership moves to main thread.
-          // Terminate immediately — the transfer is complete once we receive
-          // the message, so no need to defer. Deferring with queueMicrotask
-          // can race with consumer .then() handlers that expect the buffer
-          // to still be valid.
+          // Terminate immediately — transfer is complete once message received.
+          // Deferring with queueMicrotask can race with consumer .then() handlers.
           worker.terminate();
           resolve(response.outputBuffer);
           break;
@@ -198,11 +185,9 @@ export async function runPipelineViaWorker(
       reject(new Error(`Worker error: ${error.message}`));
     };
 
-    // Transfer a copy of inputBuffer to the worker (zero-copy).
-    // We copy via .slice(0) so we retain a fallback copy on the main thread,
-    // then transfer that copy to the worker. This avoids keeping two full
-    // copies alive simultaneously while still guaranteeing inputBuffer itself
-    // is never detached — the fallback path below can safely use the original.
+    // Copy via .slice(0) so main thread retains a fallback copy while
+    // transferring the copy to the worker — zero-copy for the worker,
+    // safe fallback if the worker path fails.
     const bufferCopy = inputBuffer.slice(0);
     const startMsg: WorkerRequest = {
       type: 'start',

@@ -57,74 +57,68 @@ const parseStatusCounter = (status: string): ParsedStatusCounter => {
   return { prefix, current, total };
 };
 
-/**
- * Custom hook that encapsulates progress state management for conversion.
- * Returns progress-related state and update methods.
- */
-export function useProgressState(deps: ProgressStateDeps) {
-  let lastProgressValue = 0;
-  let lastStatusMessage = '';
-  let lastUiProgressLogAtMs = 0;
-  let lastUiStatusLogAtMs = 0;
-  let currentStartTimeMs = 0;
-  let activeRunId: string | null = null;
-  let stallTimer: ReturnType<typeof setTimeout> | null = null;
-  let disposed = false;
-  let lastEtaUpdate = 0;
-  const etaCalculator = new ETACalculator();
+export class ProgressState {
+  lastProgressValue = 0;
+  lastStatusMessage = '';
+  lastUiProgressLogAtMs = 0;
+  lastUiStatusLogAtMs = 0;
+  currentStartTimeMs = 0;
+  activeRunId: string | null = null;
+  disposed = false;
+  lastEtaUpdate = 0;
+  readonly etaCalculator = new ETACalculator();
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const clearStallTimer = (): void => {
-    if (stallTimer) {
-      clearTimeout(stallTimer);
-      stallTimer = null;
+  constructor(private readonly deps: ProgressStateDeps) {}
+
+  private clearStallTimer(): void {
+    if (this.stallTimer) {
+      clearTimeout(this.stallTimer);
+      this.stallTimer = null;
     }
-  };
+  }
 
-  const startStallTimer = (): void => {
-    clearStallTimer();
-    stallTimer = setTimeout(() => {
+  private startStallTimer(): void {
+    this.clearStallTimer();
+    this.stallTimer = setTimeout(() => {
       const elapsedMs =
-        currentStartTimeMs > 0 ? Math.max(0, performance.now() - currentStartTimeMs) : 0;
+        this.currentStartTimeMs > 0 ? Math.max(0, performance.now() - this.currentStartTimeMs) : 0;
       const elapsedSeconds = Math.floor(elapsedMs / 1000);
-      if (lastProgressValue >= 10 || elapsedSeconds > 120) {
+      if (this.lastProgressValue >= 10 || elapsedSeconds > 120) {
         logger.warn('progress', 'Conversion stalled — no progress update in 60s', {
-          runId: activeRunId,
-          lastProgressValue: lastProgressValue,
+          runId: this.activeRunId,
+          lastProgressValue: this.lastProgressValue,
           elapsedSeconds,
         });
       }
     }, STALL_DETECTION_MS);
-  };
+  }
 
-  const updateProgress = (
-    progress: number,
-    phase?: ProgressPhase | string,
-    outputFrames?: number
-  ): void => {
+  updateProgress(progress: number, phase?: ProgressPhase | string, outputFrames?: number): void {
     if (!Number.isFinite(progress)) {
       return;
     }
 
     const rounded = Math.min(100, Math.max(0, progress));
-    const monotonic = Math.max(rounded, lastProgressValue);
+    const monotonic = Math.max(rounded, this.lastProgressValue);
 
-    if (monotonic === lastProgressValue) {
+    if (monotonic === this.lastProgressValue) {
       return;
     }
 
-    lastProgressValue = monotonic;
+    this.lastProgressValue = monotonic;
 
     // Update phase if provided
-    if (phase && deps.setConversionPhase) {
-      deps.setConversionPhase(phase as ProgressPhase);
+    if (phase && this.deps.setConversionPhase) {
+      this.deps.setConversionPhase(phase as ProgressPhase);
     }
 
     // Reset stall timer whenever progress advances — but not at 100%,
     // since the stall timer would fire 60s after completion with a spurious warning.
     if (monotonic < 100) {
-      startStallTimer();
+      this.startStallTimer();
     } else {
-      clearStallTimer();
+      this.clearStallTimer();
     }
 
     const now = performance.now();
@@ -133,29 +127,30 @@ export function useProgressState(deps: ProgressStateDeps) {
       if (outputFrames != null) {
         setOutputFrames(outputFrames);
       }
-      etaCalculator.addSample(monotonic);
+      this.etaCalculator.addSample(monotonic);
 
-      if (now - lastEtaUpdate >= ETA_UPDATE_INTERVAL) {
-        deps.setEstimatedSecondsRemaining(etaCalculator.getETA());
-        lastEtaUpdate = now;
+      if (now - this.lastEtaUpdate >= ETA_UPDATE_INTERVAL) {
+        this.deps.setEstimatedSecondsRemaining(this.etaCalculator.getETA());
+        this.lastEtaUpdate = now;
       }
     });
 
     if (
       monotonic >= 100 ||
-      now - lastUiProgressLogAtMs >= UI_PROGRESS_LOG_INTERVAL_MS ||
-      lastUiProgressLogAtMs === 0
+      now - this.lastUiProgressLogAtMs >= UI_PROGRESS_LOG_INTERVAL_MS ||
+      this.lastUiProgressLogAtMs === 0
     ) {
-      lastUiProgressLogAtMs = now;
-      const elapsedMs = currentStartTimeMs > 0 ? Math.max(0, now - currentStartTimeMs) : 0;
+      this.lastUiProgressLogAtMs = now;
+      const elapsedMs =
+        this.currentStartTimeMs > 0 ? Math.max(0, now - this.currentStartTimeMs) : 0;
       const elapsedSeconds = Math.floor(elapsedMs / 1000);
       const elapsed = formatDurationSeconds(elapsedSeconds);
-      const etaSeconds = etaCalculator.getETA();
+      const etaSeconds = this.etaCalculator.getETA();
 
       logger.info('progress', 'UI progress update', {
-        runId: activeRunId,
+        runId: this.activeRunId,
         progressPercent: monotonic,
-        statusMessage: lastStatusMessage || undefined,
+        statusMessage: this.lastStatusMessage || undefined,
         elapsed,
         elapsedLabel: `Elapsed: ${elapsed}`,
         elapsedSeconds,
@@ -167,16 +162,16 @@ export function useProgressState(deps: ProgressStateDeps) {
             : null,
       });
     }
-  };
+  }
 
-  const updateStatus = (message: string): void => {
+  updateStatus(message: string): void {
     const safeMessage = message ?? '';
 
-    if (safeMessage === lastStatusMessage) {
+    if (safeMessage === this.lastStatusMessage) {
       return;
     }
 
-    lastStatusMessage = safeMessage;
+    this.lastStatusMessage = safeMessage;
     setConversionStatusMessage(safeMessage);
 
     if (!safeMessage) {
@@ -185,123 +180,67 @@ export function useProgressState(deps: ProgressStateDeps) {
 
     const now = performance.now();
     // Throttle status logging: skip if logged less than UI_STATUS_LOG_INTERVAL_MS ago
-    if (now - lastUiStatusLogAtMs < UI_STATUS_LOG_INTERVAL_MS) {
+    if (now - this.lastUiStatusLogAtMs < UI_STATUS_LOG_INTERVAL_MS) {
       return;
     }
-    lastUiStatusLogAtMs = now;
-    const elapsedMs = currentStartTimeMs > 0 ? Math.max(0, now - currentStartTimeMs) : 0;
+    this.lastUiStatusLogAtMs = now;
+    const elapsedMs = this.currentStartTimeMs > 0 ? Math.max(0, now - this.currentStartTimeMs) : 0;
     const elapsedSeconds = Math.floor(elapsedMs / 1000);
     const elapsed = formatDurationSeconds(elapsedSeconds);
     const parsed = parseStatusCounter(safeMessage);
 
     logger.info('progress', 'UI status update', {
-      runId: activeRunId,
+      runId: this.activeRunId,
       statusMessage: safeMessage,
       statusPrefix: parsed?.prefix,
       current: parsed?.current,
       total: parsed?.total,
-      progressPercent: lastProgressValue,
+      progressPercent: this.lastProgressValue,
       elapsed,
       elapsedLabel: `Elapsed: ${elapsed}`,
       elapsedSeconds,
       elapsedMs,
     });
-  };
+  }
 
-  const resetProgressState = (): void => {
+  resetProgressState(): void {
     setConversionProgress(0);
     setConversionStatusMessage('');
-    disposed = true;
+    this.disposed = true;
     setOutputFrames(undefined);
-    deps.setConversionStartTime(0);
-    deps.setEstimatedSecondsRemaining(null);
-    deps.setMemoryWarning(false);
-    etaCalculator.reset();
-    lastEtaUpdate = 0;
-    currentStartTimeMs = 0;
-    lastStatusMessage = '';
-    lastUiProgressLogAtMs = 0;
-    lastUiStatusLogAtMs = 0;
-    activeRunId = null;
-    lastProgressValue = 0;
-    clearStallTimer();
-  };
+    this.deps.setConversionStartTime(0);
+    this.deps.setEstimatedSecondsRemaining(null);
+    this.deps.setMemoryWarning(false);
+    this.etaCalculator.reset();
+    this.lastEtaUpdate = 0;
+    this.currentStartTimeMs = 0;
+    this.lastStatusMessage = '';
+    this.lastUiProgressLogAtMs = 0;
+    this.lastUiStatusLogAtMs = 0;
+    this.activeRunId = null;
+    this.lastProgressValue = 0;
+    this.clearStallTimer();
+  }
 
-  const prepareForConversion = (startTimeMs: number): void => {
-    disposed = false;
+  prepareForConversion(startTimeMs: number): void {
+    this.disposed = false;
     setConversionProgress(0);
     setConversionStatusMessage('');
-    deps.setConversionStartTime(startTimeMs);
-    currentStartTimeMs = startTimeMs;
-    etaCalculator.reset();
-    deps.setEstimatedSecondsRemaining(null);
-    lastEtaUpdate = 0;
-    deps.setMemoryWarning(false);
+    this.deps.setConversionStartTime(startTimeMs);
+    this.currentStartTimeMs = startTimeMs;
+    this.etaCalculator.reset();
+    this.deps.setEstimatedSecondsRemaining(null);
+    this.lastEtaUpdate = 0;
+    this.deps.setMemoryWarning(false);
 
-    lastProgressValue = 0;
-    lastStatusMessage = '';
-    lastUiProgressLogAtMs = 0;
-    lastUiStatusLogAtMs = 0;
-    startStallTimer();
-  };
+    this.lastProgressValue = 0;
+    this.lastStatusMessage = '';
+    this.lastUiProgressLogAtMs = 0;
+    this.lastUiStatusLogAtMs = 0;
+    this.startStallTimer();
+  }
+}
 
-  return {
-    updateProgress,
-    updateStatus,
-    resetProgressState,
-    prepareForConversion,
-    startStallTimer,
-    clearStallTimer,
-    get lastProgressValue() {
-      return lastProgressValue;
-    },
-    get lastStatusMessage() {
-      return lastStatusMessage;
-    },
-    get currentStartTimeMs() {
-      return currentStartTimeMs;
-    },
-    set currentStartTimeMs(v: number) {
-      currentStartTimeMs = v;
-    },
-    get activeRunId() {
-      return activeRunId;
-    },
-    set activeRunId(v: string | null) {
-      activeRunId = v;
-    },
-    get disposed() {
-      return disposed;
-    },
-    set disposed(v: boolean) {
-      disposed = v;
-    },
-    get etaCalculator() {
-      return etaCalculator;
-    },
-    get lastEtaUpdate() {
-      return lastEtaUpdate;
-    },
-    set lastEtaUpdate(v: number) {
-      lastEtaUpdate = v;
-    },
-    get lastUiProgressLogAtMs() {
-      return lastUiProgressLogAtMs;
-    },
-    set lastUiProgressLogAtMs(v: number) {
-      lastUiProgressLogAtMs = v;
-    },
-    get lastUiStatusLogAtMs() {
-      return lastUiStatusLogAtMs;
-    },
-    set lastUiStatusLogAtMs(v: number) {
-      lastUiStatusLogAtMs = v;
-    },
-    set lastProgressValue(v: number) {
-      lastProgressValue = v;
-    },
-    set lastStatusMessage(v: string) {
-      lastStatusMessage = v;
-    },
-  };
+export function useProgressState(deps: ProgressStateDeps): ProgressState {
+  return new ProgressState(deps);
 }

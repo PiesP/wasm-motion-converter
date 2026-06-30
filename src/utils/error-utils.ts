@@ -41,32 +41,16 @@ function isErrorWithMessage(error: unknown): error is { message: string } {
 /**
  * Extract error message from unknown error type.
  *
- * Handles multiple error sources in order of preference:
- * 1. Objects with a `message` property (custom errors, axios errors)
- * 2. String values (errors thrown as strings)
- * 3. Native Error instances (Error, TypeError, etc.)
- * 4. Fallback to `String(error)` for any other value
+ * Handles Error objects, objects with a `message` property, and string errors.
  *
- * @param error - Unknown error value (can be Error, string, object, null, undefined, etc.)
- * @returns Error message string (never empty, always at least returns "unknown error")
+ * @param error - Unknown error value
+ * @returns Error message string (falls back to String(error) for unexpected types)
  *
  * @example
  * ```ts
- * try {
- *   throw new Error('Something went wrong');
- * } catch (error) {
- *   const message = getErrorMessage(error);
- *   logger.error('general', 'Something went wrong', { message });
- * }
- * ```
- *
- * @example
- * ```ts
- * const customError = { message: 'Custom error object' };
- * getErrorMessage(customError); // 'Custom error object'
- * getErrorMessage('string error'); // 'string error'
- * getErrorMessage(null); // 'null'
- * getErrorMessage(undefined); // 'undefined'
+ * getErrorMessage(new Error('Something went wrong')); // 'Something went wrong'
+ * getErrorMessage({ message: 'Custom error' });       // 'Custom error'
+ * getErrorMessage('string error');                     // 'string error'
  * ```
  */
 export function getErrorMessage(error: unknown): string {

@@ -61,7 +61,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
             type: 'complete',
             requestId,
             outputBuffer,
-            durationMs: 0, // TODO: track properly
+            durationMs: 0, // TODO(#421): track properly
           },
           [outputBuffer]
         );

@@ -181,162 +181,219 @@ async function performConversion(
 
     runtime.startMemoryMonitoring();
 
-    // Pre-conversion memory check for high-risk settings (high quality + full scale)
-    const md = videoMetadata();
-    const isHighRisk = settings.quality === 'high' && settings.scale >= 1.0;
-    let forcedDecimation: number | undefined;
-    if (isHighRisk && md) {
-      const estFrames = md.duration > 0 ? Math.round(md.duration * (md.framerate ?? 30)) : 300;
-      const outW = Math.max(1, Math.floor(md.width * settings.scale));
-      const outH = Math.max(1, Math.floor(md.height * settings.scale));
-      const memCheck = checkMemoryForConversion(outW, outH, estFrames, settings.format);
-      logger.info('conversion', 'Pre-conversion memory check', {
-        level: memCheck.level,
-        estimatedMB: memCheck.estimatedMB,
-        availableMB: memCheck.availableMB,
-        width: outW,
-        height: outH,
-        estFrames,
-      });
-      if (memCheck.level === 'critical') {
-        // Force decimation to reduce memory: target 15fps
-        const srcFps = md.framerate ?? 30;
-        forcedDecimation = Math.max(2, Math.round(srcFps / 15));
-        logger.warn('conversion', 'Forcing frame decimation due to memory pressure', {
-          forcedDecimation,
-          estimatedMB: memCheck.estimatedMB,
-          availableMB: memCheck.availableMB,
-        });
-      }
-    }
-
+    const forcedDecimation = runMemoryCheck(settings);
     const abortController = new AbortController();
     activeAbortController = abortController;
     signal?.addEventListener('abort', () => abortController.abort(), { once: true });
 
-    const conversionOptions: ConversionOptions = {
-      format: settings.format,
-      quality: settings.quality,
-      scale: settings.scale,
-      trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
-      trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
-      forceDecimation: forcedDecimation,
-      smartFrameSkip: settings.smartFrameSkip,
-    };
-
-    let buffer: ArrayBuffer;
-    try {
-      buffer = getInputBuffer() ?? (await file.arrayBuffer());
-    } catch (err) {
-      logger.error('conversion', 'Failed to read input file buffer', {
-        fileName: file.name,
-        fileSizeBytes: file.size,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-
+    const buffer = await readInputBuffer(file);
     if (abortController.signal.aborted) {
-      logger.info('conversion', 'Conversion cancelled before pipeline start', {
-        fileName: file.name,
-        format: settings.format,
-      });
       throw new DOMException('Cancelled', 'AbortError');
     }
 
-    const progressCallback: ProgressCallback = (progress) => {
-      if (!isActive()) return;
-      runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
-      setConversionFps(progress.fps ?? undefined);
-      setConversionElapsedMs(progress.elapsedMs ?? undefined);
+    const progressCallback = createProgressCallback(isActive, runtime, t);
+    const { serializedConfig, serializedOptions } = serializeConfig(forcedDecimation);
 
-      const phaseLabel =
-        progress.phase === 'demuxing'
-          ? t('progress.preparing')
-          : progress.phase === 'decoding'
-            ? t('progress.decoding')
-            : progress.phase === 'encoding'
-              ? t('progress.encoding')
-              : t('progress.finalizing');
-
-      if (
-        progress.currentFrame != null &&
-        progress.totalFrames != null &&
-        progress.currentFrame > 0 &&
-        progress.totalFrames > 0
-      ) {
-        const fpsLabel = progress.fps != null && progress.fps > 0 ? ` @ ${progress.fps}fps` : '';
-        runtime.updateStatus(
-          `Frame ${progress.currentFrame}/${progress.totalFrames} — ${phaseLabel}${fpsLabel}`
-        );
-      } else {
-        runtime.updateStatus(phaseLabel);
-      }
-    };
-
-    // Build SerializedDecoderConfig from video metadata (needed for Worker path)
-    const decoderConfig = md?.config;
-    const serializedConfig = decoderConfig
-      ? {
-          codec: decoderConfig.codec,
-          codedWidth: decoderConfig.codedWidth ?? 0,
-          codedHeight: decoderConfig.codedHeight ?? 0,
-          ...(decoderConfig.displayAspectWidth && decoderConfig.displayAspectHeight
-            ? {
-                displayAspectWidth: decoderConfig.displayAspectWidth,
-                displayAspectHeight: decoderConfig.displayAspectHeight,
-              }
-            : {}),
-          ...(decoderConfig.hardwareAcceleration
-            ? { hardwareAcceleration: decoderConfig.hardwareAcceleration }
-            : {}),
-          ...(decoderConfig.description
-            ? { description: arrayBufferToHex(decoderConfig.description as ArrayBuffer) }
-            : {}),
-        }
-      : null;
-
-    if (!serializedConfig) {
-      throw new Error('Unable to extract VideoDecoderConfig — cannot run conversion pipeline');
-    }
-
-    // Build SerializedConversionOptions (Worker-compatible format)
-    const fps = md?.framerate ?? 30;
-    const serializedOptions = {
-      format: conversionOptions.format,
-      quality: conversionOptions.quality,
-      fps,
-      scale: conversionOptions.scale,
-      trimStart: conversionOptions.trimStart,
-      trimEnd: conversionOptions.trimEnd,
-      maxFrames: 0, // 0 = no limit
-      forceDecimation: conversionOptions.forceDecimation,
-      smartFrameSkip: conversionOptions.smartFrameSkip,
-    };
-
-    // Run via Worker with automatic fallback to main thread on error
-    const output = await runPipelineWithFallback(
+    const output = await executePipeline(
       buffer,
       serializedConfig,
       serializedOptions,
       progressCallback,
-      abortController.signal,
-      file // pass File for on-demand BlobSource reading
+      abortController,
+      file
     );
 
-    const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';
-    const blob = new Blob([output], { type: mimeType });
+    const blob = validateOutputBlob(output, settings);
+    handleResult(blob, file, settings, runtime, startTimeMs);
+    focusDownloadButton();
+  } catch (error) {
+    await handleConversionError(error, isActive, runtime, t, settings);
+  } finally {
+    activeAbortController = null;
+  }
+}
 
-    if (!isActive()) return;
+// ─── Private Step Functions ────────────────────────────────────────────
 
-    if (blob.size === 0) {
-      throw new Error('Conversion produced an empty output file');
+function runMemoryCheck(settings: ConversionSettings): number | undefined {
+  const md = videoMetadata();
+  const isHighRisk = settings.quality === 'high' && settings.scale >= 1.0;
+  let forcedDecimation: number | undefined;
+
+  if (isHighRisk && md) {
+    const estFrames = md.duration > 0 ? Math.round(md.duration * (md.framerate ?? 30)) : 300;
+    const outW = Math.max(1, Math.floor(md.width * settings.scale));
+    const outH = Math.max(1, Math.floor(md.height * settings.scale));
+    const memCheck = checkMemoryForConversion(outW, outH, estFrames, settings.format);
+    logger.info('conversion', 'Pre-conversion memory check', {
+      level: memCheck.level,
+      estimatedMB: memCheck.estimatedMB,
+      availableMB: memCheck.availableMB,
+      width: outW,
+      height: outH,
+      estFrames,
+    });
+    if (memCheck.level === 'critical') {
+      const srcFps = md.framerate ?? 30;
+      forcedDecimation = Math.max(2, Math.round(srcFps / 15));
+      logger.warn('conversion', 'Forcing frame decimation due to memory pressure', {
+        forcedDecimation,
+        estimatedMB: memCheck.estimatedMB,
+        availableMB: memCheck.availableMB,
+      });
     }
+  }
 
-    // Validate output integrity — read only the first 16 bytes to check header
-    // instead of loading the entire blob into memory (avoids 2x memory for large outputs)
-    const headerBuf = await blob.slice(0, 16).arrayBuffer();
-    const blobData = new Uint8Array(headerBuf);
+  return forcedDecimation;
+}
+
+async function readInputBuffer(file: File): Promise<ArrayBuffer> {
+  try {
+    return getInputBuffer() ?? (await file.arrayBuffer());
+  } catch (err) {
+    logger.error('conversion', 'Failed to read input file buffer', {
+      fileName: file.name,
+      fileSizeBytes: file.size,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
+
+function createProgressCallback(
+  isActive: () => boolean,
+  runtime: ConversionRuntimeController,
+  t: TFunction
+): ProgressCallback {
+  return (progress) => {
+    if (!isActive()) return;
+    runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
+    setConversionFps(progress.fps ?? undefined);
+    setConversionElapsedMs(progress.elapsedMs ?? undefined);
+
+    const phaseLabel =
+      progress.phase === 'demuxing'
+        ? t('progress.preparing')
+        : progress.phase === 'decoding'
+          ? t('progress.decoding')
+          : progress.phase === 'encoding'
+            ? t('progress.encoding')
+            : t('progress.finalizing');
+
+    if (
+      progress.currentFrame != null &&
+      progress.totalFrames != null &&
+      progress.currentFrame > 0 &&
+      progress.totalFrames > 0
+    ) {
+      const fpsLabel = progress.fps != null && progress.fps > 0 ? ` @ ${progress.fps}fps` : '';
+      runtime.updateStatus(
+        `Frame ${progress.currentFrame}/${progress.totalFrames} — ${phaseLabel}${fpsLabel}`
+      );
+    } else {
+      runtime.updateStatus(phaseLabel);
+    }
+  };
+}
+
+function serializeConfig(forcedDecimation: number | undefined): {
+  serializedConfig: ReturnType<typeof buildSerializedConfig>;
+  serializedOptions: ReturnType<typeof buildSerializedOptions>;
+} {
+  const serializedConfig = buildSerializedConfig();
+  const serializedOptions = buildSerializedOptions(forcedDecimation);
+  return { serializedConfig, serializedOptions };
+}
+
+function buildSerializedConfig(): Record<string, unknown> | null {
+  const md = videoMetadata();
+  const decoderConfig = md?.config;
+  if (!decoderConfig) return null;
+
+  return {
+    codec: decoderConfig.codec,
+    codedWidth: decoderConfig.codedWidth ?? 0,
+    codedHeight: decoderConfig.codedHeight ?? 0,
+    ...(decoderConfig.displayAspectWidth && decoderConfig.displayAspectHeight
+      ? {
+          displayAspectWidth: decoderConfig.displayAspectWidth,
+          displayAspectHeight: decoderConfig.displayAspectHeight,
+        }
+      : {}),
+    ...(decoderConfig.hardwareAcceleration
+      ? { hardwareAcceleration: decoderConfig.hardwareAcceleration }
+      : {}),
+    ...(decoderConfig.description
+      ? { description: arrayBufferToHex(decoderConfig.description as ArrayBuffer) }
+      : {}),
+  };
+}
+
+function buildSerializedOptions(forcedDecimation: number | undefined): {
+  format: ConversionFormat;
+  quality: ConversionQuality;
+  fps: number;
+  scale: ConversionScale;
+  trimStart: number;
+  trimEnd: number;
+  maxFrames: number;
+  forceDecimation: number | undefined;
+  smartFrameSkip: SmartFrameSkipMode | undefined;
+} {
+  const md = videoMetadata();
+  const settings = conversionSettings();
+  const fps = md?.framerate ?? 30;
+
+  return {
+    format: settings.format,
+    quality: settings.quality,
+    fps,
+    scale: settings.scale,
+    trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
+    trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
+    maxFrames: 0,
+    forceDecimation: forcedDecimation,
+    smartFrameSkip: settings.smartFrameSkip,
+  };
+}
+
+async function executePipeline(
+  buffer: ArrayBuffer,
+  serializedConfig: Record<string, unknown> | null,
+  serializedOptions: ReturnType<typeof buildSerializedOptions>,
+  progressCallback: ProgressCallback,
+  abortController: AbortController,
+  file: File
+): Promise<ArrayBuffer> {
+  if (!serializedConfig) {
+    throw new Error('Unable to extract VideoDecoderConfig — cannot run conversion pipeline');
+  }
+
+  return runPipelineWithFallback(
+    buffer,
+    serializedConfig as unknown as Parameters<typeof runPipelineWithFallback>[1],
+    serializedOptions,
+    progressCallback,
+    abortController.signal,
+    file
+  );
+}
+
+function validateOutputBlob(output: ArrayBuffer, settings: ConversionSettings): Blob {
+  const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';
+  const blob = new Blob([output], { type: mimeType });
+
+  if (blob.size === 0) {
+    throw new Error('Conversion produced an empty output file');
+  }
+
+  // Validate output integrity — read only the first 16 bytes to check header
+  // instead of loading the entire blob into memory (avoids 2x memory for large outputs)
+  const headerBuf = blob.slice(0, 16).arrayBuffer();
+  // Fire-and-forget validation: we intentionally do NOT throw on mismatch.
+  // Some valid outputs may have non-standard headers (e.g., animated WebP with VP8L codec).
+  void headerBuf.then((buf) => {
+    const blobData = new Uint8Array(buf);
     if (!validateOutput(blobData, settings.format)) {
       const hexHeader = Array.from(blobData.slice(0, 10))
         .map((b) => b.toString(16).padStart(2, '0'))
@@ -346,106 +403,114 @@ async function performConversion(
         size: blobData.length,
         headerHex: hexHeader,
       });
-      // Note: We intentionally do NOT throw here. Some valid outputs may have
-      // non-standard headers (e.g., animated WebP with VP8L codec). The user
-      // can still download and use the file. If the file is truly corrupt,
-      // the browser will fail to decode it naturally.
     }
+  });
 
+  return blob;
+}
+
+function handleResult(
+  blob: Blob,
+  file: File,
+  settings: ConversionSettings,
+  runtime: ConversionRuntimeController,
+  startTimeMs: number
+): void {
+  runtime.stopMemoryMonitoring();
+
+  const duration = Math.max(0, performance.now() - startTimeMs);
+  const durationSeconds = Math.max(0, duration / 1000);
+  const memMB = getMemoryUsageMB();
+  logger.info('conversion', 'Conversion complete', {
+    format: settings.format,
+    quality: settings.quality,
+    scale: settings.scale,
+    duration: `${durationSeconds.toFixed(2)}s`,
+    outputSize: blob.size,
+    outputSizeFormatted: formatBytes(blob.size),
+    outputSizePercent: `${((blob.size / file.size) * 100).toFixed(1)}%`,
+    memoryMB: memMB ?? 'N/A',
+  });
+
+  const resultId = createId();
+  const newResult: ConversionResult = {
+    id: resultId,
+    outputBlob: blob,
+    originalName: file.name,
+    originalSize: file.size,
+    createdAt: performance.now(),
+    settings,
+    conversionDurationSeconds: durationSeconds,
+  };
+
+  // setConversionResults triggers ResultSection → ResultPreview →
+  // createEffect → URL.createObjectURL → setPreviewUrl → render.
+  // Use queueMicrotask to defer the new result into a separate microtask,
+  // breaking the synchronous signal cascade that could overflow the stack.
+  setConversionResults([]);
+
+  queueMicrotask(() => {
+    setConversionResults([newResult]);
+  });
+
+  batch(() => {
+    transitionToState('done');
+    setConversionStatusMessage('');
+    runtime.resetRuntimeState();
+    // Release input buffer — no longer needed after conversion completes.
+    // This allows GC of the original file data (up to 500MB).
+    setInputBuffer(null);
+  });
+}
+
+async function handleConversionError(
+  error: unknown,
+  isActive: () => boolean,
+  runtime: ConversionRuntimeController,
+  t: TFunction,
+  settings: ConversionSettings
+): Promise<void> {
+  if (!isActive()) return;
+
+  try {
     runtime.stopMemoryMonitoring();
-
-    const duration = Math.max(0, performance.now() - startTimeMs);
-    const durationSeconds = Math.max(0, duration / 1000);
-    const memMB = getMemoryUsageMB();
-    logger.info('conversion', 'Conversion complete', {
-      format: settings.format,
-      quality: settings.quality,
-      scale: settings.scale,
-      duration: `${durationSeconds.toFixed(2)}s`,
-      outputSize: blob.size,
-      outputSizeFormatted: formatBytes(blob.size),
-      outputSizePercent: `${((blob.size / file.size) * 100).toFixed(1)}%`,
-      memoryMB: memMB ?? 'N/A',
+  } catch (timerError) {
+    logger.warn('conversion', 'Error clearing memory timer', {
+      error: getErrorMessage(timerError),
     });
+  }
 
-    const resultId = createId();
-    const newResult: ConversionResult = {
-      id: resultId,
-      outputBlob: blob,
-      originalName: file.name,
-      originalSize: file.size,
-      createdAt: performance.now(),
-      settings,
-      conversionDurationSeconds: durationSeconds,
-    };
+  const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
 
-    // setConversionResults triggers ResultSection → ResultPreview →
-    // createEffect → URL.createObjectURL → setPreviewUrl → render.
-    // Use queueMicrotask to defer the new result into a separate microtask,
-    // breaking the synchronous signal cascade that could overflow the stack.
-    setConversionResults([]);
-
-    queueMicrotask(() => {
-      setConversionResults([newResult]);
-    });
-
+  if (isCancellationError(error)) {
     batch(() => {
-      transitionToState('done');
       setConversionStatusMessage('');
       runtime.resetRuntimeState();
-      // Release input buffer — no longer needed after conversion completes.
-      // This allows GC of the original file data (up to 500MB).
+      setAppState('idle');
+      // Release input buffer on cancellation too
       setInputBuffer(null);
     });
-
-    focusDownloadButton();
-  } catch (error) {
-    if (!isActive()) return;
-
-    try {
-      runtime.stopMemoryMonitoring();
-    } catch (timerError) {
-      logger.warn('conversion', 'Error clearing memory timer', {
-        error: getErrorMessage(timerError),
-      });
-    }
-
-    const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
-
-    if (isCancellationError(error)) {
-      batch(() => {
-        setConversionStatusMessage('');
-        runtime.resetRuntimeState();
-        setAppState('idle');
-        // Release input buffer on cancellation too
-        setInputBuffer(null);
-      });
-      return;
-    }
-
-    const context = classifyConversionError(errorMessage_, videoMetadata(), settings, undefined, t);
-
-    logger.error('conversion', 'Conversion failed', {
-      error: errorMessage_,
-      settings,
-      errorType: context.type,
-      errorCode: context.code,
-    });
-
-    batch(() => {
-      setConversionStatusMessage('');
-      runtime.resetRuntimeState();
-      setErrorMessage(context.originalError);
-      setErrorContext(context);
-      transitionToState('error');
-    });
-
-    focusRetryButton();
-  } finally {
-    // Release the module-level abort controller so a stale reference
-    // cannot abort a future conversion.
-    activeAbortController = null;
+    return;
   }
+
+  const context = classifyConversionError(errorMessage_, videoMetadata(), settings, undefined, t);
+
+  logger.error('conversion', 'Conversion failed', {
+    error: errorMessage_,
+    settings,
+    errorType: context.type,
+    errorCode: context.code,
+  });
+
+  batch(() => {
+    setConversionStatusMessage('');
+    runtime.resetRuntimeState();
+    setErrorMessage(context.originalError);
+    setErrorContext(context);
+    transitionToState('error');
+  });
+
+  focusRetryButton();
 }
 
 export function handleCancelConversion(runtime: ConversionRuntimeController): void {
