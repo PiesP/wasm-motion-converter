@@ -311,7 +311,10 @@ async function _runPipelineInner(
         phase: 'decoding',
         progress: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
         fps: fpsTracker.current,
-        etaSeconds: null,
+        etaSeconds:
+          fpsTracker.current > 0
+            ? Math.round((estimatedOutputFrames - frameIdx) / fpsTracker.current)
+            : null,
         memoryMB: sampleMemory(),
         currentFrame: frameIdx,
         totalFrames: estimatedOutputFrames,
@@ -366,7 +369,10 @@ async function _runPipelineInner(
                 phase: 'encoding',
                 progress: DECODE_MAX + Math.min(ENCODE_RANGE, encodePct),
                 fps: fpsTracker.current,
-                etaSeconds: null,
+                etaSeconds:
+                  fpsTracker.current > 0
+                    ? Math.round((estimatedOutputFrames - frameIdx) / fpsTracker.current)
+                    : null,
                 memoryMB: sampleMemory(),
                 currentFrame: frameIdx,
                 totalFrames: estimatedOutputFrames,
@@ -436,7 +442,10 @@ async function _runPipelineInner(
                 phase: 'decoding',
                 progress: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
                 fps: fpsTracker.current,
-                etaSeconds: null,
+                etaSeconds:
+                  fpsTracker.current > 0
+                    ? Math.round((estimatedOutputFrames - frameIdx) / fpsTracker.current)
+                    : null,
                 memoryMB: sampleMemory(),
                 currentFrame: frameIdx,
                 totalFrames: estimatedOutputFrames,
@@ -475,7 +484,10 @@ async function _runPipelineInner(
             phase: 'encoding',
             progress: Math.min(ENCODE_MAX, encodeProgress),
             fps: fpsTracker.current,
-            etaSeconds: null,
+            etaSeconds:
+              fpsTracker.current > 0 && p.currentFrame != null
+                ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
+                : null,
             memoryMB: sampleMemory(),
             currentFrame: p.currentFrame ?? 0,
             totalFrames: estimatedOutputFrames,
@@ -522,7 +534,10 @@ async function _runPipelineInner(
               phase: 'encoding',
               progress: Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
               fps: fpsTracker.current,
-              etaSeconds: null,
+              etaSeconds:
+                fpsTracker.current > 0 && p.currentFrame != null
+                  ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
+                  : null,
               memoryMB: sampleMemory(),
               currentFrame: p.currentFrame ?? 0,
               totalFrames: estimatedOutputFrames,
@@ -567,7 +582,10 @@ async function _runPipelineInner(
               phase: 'encoding',
               progress: Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
               fps: fpsTracker.current,
-              etaSeconds: null,
+              etaSeconds:
+                fpsTracker.current > 0 && p.currentFrame != null
+                  ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
+                  : null,
               memoryMB: sampleMemory(),
               currentFrame: p.currentFrame ?? 0,
               totalFrames: estimatedOutputFrames,
