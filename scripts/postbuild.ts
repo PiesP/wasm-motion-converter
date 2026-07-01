@@ -42,25 +42,11 @@ if (cleaned !== html) {
   console.log('[postbuild] No Cloudflare Insights beacon script found');
 }
 
-// Also remove data-cfasync script we added to index.html
-const cfAsyncRegex = /<script data-cfasync="false">[^>]*<\/script>/gi;
-let prev2 = '';
-let cleaned2 = cleaned;
-do {
-  prev2 = cleaned2;
-  cleaned2 = cleaned2.replace(cfAsyncRegex, '');
-} while (cleaned2 !== prev2);
-
-if (cleaned2 !== cleaned) {
-  writeFileSync(indexPath, cleaned2);
-  console.log('[postbuild] Removed data-cfasync script');
-}
-
 // ── Step 2: Generate CSP hashes for inline scripts ───────────────────
 
-// Use the cleaned HTML (after Cloudflare script removal) for hash generation
+// Use the HTML (after Cloudflare script removal) for hash generation
 // so we don't create hashes for scripts that will be stripped at deploy time.
-const finalHtml = cleaned2;
+const finalHtml = cleaned;
 
 // Find inline <script> blocks (no src attribute)
 const inlineScriptRegex = /<script(?![^>]*\bsrc\b)[^>]*>\s*([\s\S]*?)\s*<\/script>/gi;

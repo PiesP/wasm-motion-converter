@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-cfasync="false">
   <!-- dropconvert: in-browser video to GIF/WebP -->
   <head>
     <meta charset="UTF-8" />
@@ -48,9 +48,6 @@
     <!-- Theme color for browser chrome -->
     <meta name="theme-color" content="#0f172a" />
 
-    <!-- Disable Cloudflare automatic script injection -->
-    <script data-cfasync="false">/* disable cf beacon */</script>
-
     <!-- Preconnect to CDN origins -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
     <link rel="preconnect" href="https://esm.sh" crossorigin />
@@ -58,24 +55,6 @@
   </head>
   <body>
     <div id="root"></div>
-
-    <script>
-      // Suppress harmless Cloudflare Insights MIME-type mismatch errors
-      // (injected by Cloudflare Pages). Only suppress MIME type mismatch
-      // errors — other legitimate errors from Cloudflare scripts (e.g.
-      // dependency load failures) should propagate to other handlers.
-      // Previous version used stopImmediatePropagation() which masked
-      // all Cloudflare-originated errors.
-      window.addEventListener('error', (e) => {
-        if (
-          e.filename?.includes('cloudflareinsights') &&
-          e.message?.includes('MIME type mismatch')
-        ) {
-          e.stopImmediatePropagation();
-          e.preventDefault();
-        }
-      }, true);
-    </script>
     <script type="module" src="/src/index.tsx"></script>
   </body>
 </html>
