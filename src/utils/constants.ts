@@ -68,14 +68,16 @@ export const DEFAULT_FPS = 30;
 export const GIF_TARGET_FPS = 5;
 
 /** WebP auto-decimation target FPS — varies by quality preset.
- *  Perceptual basis: 15fps is acceptable for low quality (where artifacts
- *  dominate), 20fps is smooth enough for medium, 24fps preserves original
- *  temporal fidelity for high quality where the viewer expects fidelity.
- *  Reduced from 20/24/30 to 15/20/24 to reduce output file sizes. */
+ *  Human motion sensitivity basis: 10fps preserves basic motion continuity
+ *  (gestures, head movements), 12fps is fluid-enough for medium, 16fps preserves
+ *  expressive motion fidelity for high quality. With scaleBoost=3 at 100% scale,
+ *  effective output FPS is ~3.3/4.0/5.3fps — keeping file sizes practical while
+ *  maintaining acceptable motion. Previously 15/20/24; lowered to reduce
+ *  conversion time (~25-40% fewer frames). */
 export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
-  low: 15,
-  medium: 20,
-  high: 24,
+  low: 10,
+  medium: 12,
+  high: 16,
 };
 
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */

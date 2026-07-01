@@ -45,25 +45,27 @@ export interface BaseEncoderOptions {
  *    occupies more bytes in the output. A full-scale (1.0x) encoded frame is
  *    roughly 4x the data of a 0.5x frame. To compensate and keep output sizes
  *    manageable, we apply MORE aggressive decimation at larger scales:
- *    - scale >= 1.0 → boost = 4 (e.g., 30fps source → effective 7.5fps output)
+ *    - scale >= 1.0 → boost = 3 (e.g., 30fps source → effective 10fps output)
  *    - 0.5 < scale < 1.0 → boost = 2 (moderate decimation increase)
  *    - scale <= 0.5 → boost = 1 (no additional decimation; output is already small)
  *
  * The boosted decimation is multiplicative: `baseDecimation * scaleBoost`.
  * This prioritizes usability (conversion completes in reasonable time) over
- * frame fidelity at large scales, where users typically expect faster results.
+ * frame fidelity at large scales.
  *
  * @param sourceFps - Source video frame rate
  * @param targetFps - Desired output frame rate
  * @param scale - Output scale factor (e.g., 1.0 = full resolution)
  * @param forceDecimation - Override all calculations (used for memory-pressure forced decimation)
+ * @param scaleIndependentFps - Reserved for future content-adaptive FPS (P1). When true, scale does NOT affect decimation.
  * @returns Frame decimation factor (1 = keep every frame, N = keep every Nth frame)
  */
 export function calcAutoDecimation(
   sourceFps: number,
   targetFps: number,
   scale: number,
-  forceDecimation?: number
+  forceDecimation?: number,
+  scaleIndependentFps?: boolean
 ): number {
   if (forceDecimation !== undefined) return forceDecimation;
   // Guard against unreliable fps detection: clamp to reasonable range
@@ -71,7 +73,8 @@ export function calcAutoDecimation(
   const baseDecimation =
     clampedFps > targetFps ? Math.max(1, Math.round(clampedFps / targetFps)) : 1;
   // Scale boost: larger output scales need more decimation to keep
-  // file sizes and encoding time reasonable (see JSDoc rationale above).
-  const scaleBoost = scale >= 1.0 ? 3 : scale > 0.5 ? 2 : 1;
+  // file sizes and encoding time reasonable.
+  // Can be overridden via scaleIndependentFps for content-adaptive FPS (P1).
+  const scaleBoost = scaleIndependentFps ? 1 : scale >= 1.0 ? 3 : scale > 0.5 ? 2 : 1;
   return Math.max(1, Math.round(baseDecimation * scaleBoost));
 }
