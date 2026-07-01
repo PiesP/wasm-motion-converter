@@ -1,18 +1,19 @@
-/*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' blob:; connect-src 'self' blob:; worker-src 'self'
-  Cross-Origin-Opener-Policy: same-origin
-  Cross-Origin-Embedder-Policy: require-corp
-  X-Content-Type-Options: nosniff
-  X-Frame-Options: DENY
-  Referrer-Policy: strict-origin-when-cross-origin
+# Cloudflare Pages _headers
+# Ordered: extension rules before catch-all. Cloudflare Pages merges
+# matching rules by specificity; most specific match wins.
+#
+# NOTE: Due to Cloudflare Pages header merging behavior, extension-based
+# Content-Type rules MUST appear before the /* catch-all to avoid
+# multiple Content-Type values being concatenated.
 
-/*.webm
+# MIME type overrides — must be listed before /* catch-all
+*.webm
   Content-Type: video/webm
 
-/*.mp4
+*.mp4
   Content-Type: video/mp4
 
-/*.m4v
+*.m4v
   Content-Type: video/mp4
 
 /*.wasm
@@ -21,3 +22,12 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Catch-all headers — applied last
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' blob:; connect-src 'self' blob:; worker-src 'self'
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
