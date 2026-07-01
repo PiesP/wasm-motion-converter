@@ -236,18 +236,22 @@ export async function encodeWebpOffscreen(
         // OffscreenCanvas putImageData requires RGBA format
         // Use buffer pool to avoid per-frame GC pressure (M-05).
         const rawBuf = globalBufferPool.acquire(w * h * 4);
-        // BufferPool.acquire() always returns a Uint8Array backed by ArrayBuffer,
-        // so casting is safe (ImageData constructor requires ArrayBuffer).
+        // ImageData constructor requires ArrayBuffer or BufferSource — the pool
+        // always returns Uint8Array backed by ArrayBuffer, so casting is safe.
         const rgbaData = new Uint8ClampedArray(
           rawBuf.buffer as ArrayBuffer,
           rawBuf.byteOffset,
           w * h * 4
         ) as unknown as Uint8ClampedArray<ArrayBuffer>;
-        for (let i = 0, j = 0; i < rgbData.length; i += 3, j += 4) {
-          rgbaData[j] = rgbData[i]!;
-          rgbaData[j + 1] = rgbData[i + 1]!;
-          rgbaData[j + 2] = rgbData[i + 2]!;
-          rgbaData[j + 3] = 255; // fully opaque
+        // Uint32Array for 4-byte-at-a-time writes (~3x faster than byte loop).
+        // Little-endian: uint32 = 0xAABBGGRR → [R, G, B, 0xFF]
+        const rgba32 = new Uint32Array(rawBuf.buffer, rawBuf.byteOffset, w * h);
+        for (let i = 0; i < w * h; i++) {
+          const srcIdx = i * 3;
+          const r = rgbData[srcIdx]!;
+          const g = rgbData[srcIdx + 1]!;
+          const b = rgbData[srcIdx + 2]!;
+          rgba32[i] = (255 << 24) | (b << 16) | (g << 8) | r;
         }
 
         const imageData = new ImageData(rgbaData, w, h);

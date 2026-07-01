@@ -50,6 +50,18 @@ export interface DecodeOptions {
     frameNum: number
   ) => Promise<void> | void;
   /**
+   * GPU-only callback: passes raw VideoFrame to encoder without reading
+   * pixels into JS memory. Used by VP8 VideoEncoder path for zero-copy
+   * GPU encoding. When provided, smart frame skip and adaptive mode are
+   * disabled (dHash requires RGB pixel data).
+   * The caller OWNS the VideoFrame and MUST call frame.close().
+   */
+  onVideoFrameAvailable?: (
+    frame: VideoFrame,
+    durationMs: number,
+    frameNum: number
+  ) => Promise<void> | void;
+  /**
    * Explicit decode mode. When 'stream', frames are passed to onFrameAvailable
    * immediately. When 'batch', frames are collected into an array.
    * @default 'stream' when onFrameAvailable is provided, 'batch' otherwise
@@ -114,13 +126,16 @@ export async function decodeFrames(
     hwAccel = 'prefer-software',
     onFrameDecoded,
     onFrameAvailable,
+    onVideoFrameAvailable,
     mode,
     smartFrameSkip = 'off',
   } = opts;
 
   // Determine streaming mode: explicit 'stream' mode or infer from callback
   const streaming =
-    mode === 'stream' || (mode !== 'batch' && typeof onFrameAvailable === 'function');
+    mode === 'stream' ||
+    (mode !== 'batch' &&
+      (typeof onFrameAvailable === 'function' || typeof onVideoFrameAvailable === 'function'));
 
   // Warn if onFrameAvailable is provided but mode is explicitly 'batch'
   if (mode === 'batch' && typeof onFrameAvailable === 'function') {
@@ -221,6 +236,20 @@ export async function decodeFrames(
               frame.close();
               return;
             }
+
+            // ── GPU-only path: pass VideoFrame directly to encoder ──
+            // Skips copyFrameToRGB (GPU→CPU read) and all dHash-based processing.
+            // Used by VP8 VideoEncoder path for zero-copy GPU encoding.
+            // Smart frame skip and adaptive mode are disabled (require RGB data).
+            if (typeof onVideoFrameAvailable === 'function') {
+              // Transfer accumulated frame durations (decimation + smart skip carryover)
+              const totalDur = totalDuration + smartCarryoverMs;
+              smartCarryoverMs = 0;
+              await onVideoFrameAvailable(frame, totalDur, frameNum);
+              // Caller owns frame and MUST call frame.close()
+              return;
+            }
+
             const rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
 
             // ── Smart frame skip: similarity-based deduplication ──
@@ -272,16 +301,23 @@ export async function decodeFrames(
                 const dHash = computeDHash(rgbData, width, height);
                 const dist = prevDHash !== null ? hammingDistance(prevDHash, dHash) : 0;
 
-                // Classify motion level
+                // Classify motion level using noise-floor-adapted thresholds.
+                // Lower-noise videos get tighter thresholds (more aggressive skip),
+                // noisier videos get wider thresholds (conservative skip).
                 const effectiveStatic = Math.max(
                   ADAPT_STATIC_THRESHOLD,
-                  Math.floor(noiseFloor / 3.5) // undo the 3.5x scaling for raw threshold
+                  Math.floor(noiseFloor / 3.5) // undo 3.5x scaling for raw threshold
+                );
+                const effectiveSlow = Math.max(ADAPT_SLOW_THRESHOLD, Math.floor(noiseFloor / 1.8));
+                const effectiveNormal = Math.max(
+                  ADAPT_NORMAL_THRESHOLD,
+                  Math.floor(noiseFloor / 1.2)
                 );
                 if (dist <= effectiveStatic) {
                   motionClass = 'static';
-                } else if (dist <= ADAPT_SLOW_THRESHOLD) {
+                } else if (dist <= effectiveSlow) {
                   motionClass = 'slow';
-                } else if (dist <= ADAPT_NORMAL_THRESHOLD) {
+                } else if (dist <= effectiveNormal) {
                   motionClass = 'normal';
                 } else {
                   motionClass = 'fast';

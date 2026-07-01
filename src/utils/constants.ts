@@ -68,16 +68,16 @@ export const DEFAULT_FPS = 30;
 export const GIF_TARGET_FPS = 5;
 
 /** WebP auto-decimation target FPS — varies by quality preset.
- *  Human motion sensitivity basis: 10fps preserves basic motion continuity
- *  (gestures, head movements), 12fps is fluid-enough for medium, 16fps preserves
- *  expressive motion fidelity for high quality. With scaleBoost=3 at 100% scale,
- *  effective output FPS is ~3.3/4.0/5.3fps — keeping file sizes practical while
- *  maintaining acceptable motion. Previously 15/20/24; lowered to reduce
- *  conversion time (~25-40% fewer frames). */
+ *  Per-frame VP8 encoding speed is independent of quality parameter
+ *  (~257ms/frame regardless of q=0.6/0.75/0.85). FPS targets now reflect
+ *  user-visible motion quality only — image quality is a separate axis.
+ *  With scaleBoost=3 at 100% scale, effective output FPS is ~3.3/4.0/4.0fps.
+ *  Low uses 10fps for faster conversion, med/high share 12fps since
+ *  quality parameter has negligible impact on encoding speed. */
 export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
   low: 10,
   medium: 12,
-  high: 16,
+  high: 12,
 };
 
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */

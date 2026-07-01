@@ -24,7 +24,6 @@
 
 import type { ProgressCallback } from '@t/conversion-types';
 import { logger } from '@utils/logger';
-import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
@@ -168,7 +167,10 @@ export async function encodeWebpVp8(
   const decimationController = createDynamicDecimationController();
   let accumulatedDuration = 0;
 
-  // Decode frames with streaming callback
+  // Decode frames with GPU-only streaming callback (no pixel read).
+  // Uses onVideoFrameAvailable to receive raw VideoFrames directly,
+  // skipping copyFrameToRGB entirely. Smart frame skip and adaptive
+  // mode are disabled for this path (require dHash / RGB data).
   const { totalInputFrames: totalDecoded, skippedByDecimation: totalSkipped } = await decodeFrames(
     demux,
     {
@@ -176,7 +178,6 @@ export async function encodeWebpVp8(
       height: h,
       frameDecimation,
       hwAccel: 'prefer-hardware',
-      smartFrameSkip: opts.smartFrameSkip,
       onFrameDecoded: (_frameNum, total) => {
         if (onProgress && encodedFrames > 0) {
           const encodePct = total > 0 ? Math.round((encodedFrames / total) * 40) : 0;
@@ -191,9 +192,13 @@ export async function encodeWebpVp8(
           });
         }
       },
-      onFrameAvailable: async (rgbData: Uint8Array, frameDurationMs: number, frameNum: number) => {
+      onVideoFrameAvailable: async (
+        frame: VideoFrame,
+        frameDurationMs: number,
+        frameNum: number
+      ) => {
         if (signal?.aborted) {
-          globalBufferPool.release(rgbData);
+          frame.close();
           throw new DOMException('Cancelled', 'AbortError');
         }
 
@@ -201,7 +206,7 @@ export async function encodeWebpVp8(
         const shouldSkip = decimationController.shouldSkip(frameNum);
         if (shouldSkip) {
           accumulatedDuration += frameDurationMs;
-          globalBufferPool.release(rgbData);
+          frame.close();
           return;
         }
 
@@ -209,46 +214,17 @@ export async function encodeWebpVp8(
         accumulatedDuration = 0;
         currentDurationMs = totalDuration;
 
-        // ── GPU-only VideoFrame pipeline ──
-        // Draw the decoded frame onto the canvas (GPU)
-        // Note: rgbData is NOT used directly — we use the VideoFrame from decoder.
-        // The canvas drawing step happens via the decodeFrames output which
-        // gives us the VideoFrame. We need to draw it to canvas first.
-        //
-        // However, decodeFrames calls copyFrameToRGB internally which reads
-        // pixels to JS. For the GPU-only path, we need the original VideoFrame.
-        // Solution: We create a fresh VideoFrame from the canvas in the
-        // copyFrameCanvas path, then encode it.
-        //
-        // This is the bridge: RGB data → canvas → VideoFrame → VideoEncoder
-        const pixelCount = w * h;
+        // ── GPU-only pipeline: VideoFrame → canvas → VideoFrame → VideoEncoder ──
+        // All operations stay on GPU — no pixel data read into JS memory.
+        // ctx.drawImage(frame) transfers frame pixels GPU→GPU (zero-copy).
+        ctx.drawImage(frame, 0, 0, w, h);
+        frame.close();
 
-        // Convert RGB → RGBA for canvas putImageData (3bpp → 4bpp)
-        const rgbaBuf = globalBufferPool.acquire(pixelCount * 4);
-        for (let i = 0, j = 0; i < rgbData.length; i += 3, j += 4) {
-          rgbaBuf[j] = rgbData[i]!;
-          rgbaBuf[j + 1] = rgbData[i + 1]!;
-          rgbaBuf[j + 2] = rgbData[i + 2]!;
-          rgbaBuf[j + 3] = 255;
-        }
-
-        const imageData = new ImageData(
-          new Uint8ClampedArray(rgbaBuf.buffer as ArrayBuffer, rgbaBuf.byteOffset, pixelCount * 4),
-          w,
-          h
-        );
-
-        ctx.putImageData(imageData, 0, 0);
-        globalBufferPool.release(rgbaBuf);
-        globalBufferPool.release(rgbData);
-
-        // Create VideoFrame from canvas — GPU-only, no pixel read!
         const vp8Frame = new VideoFrame(canvas, {
-          timestamp: encodeIdx * 1_000_000, // microseconds
-          duration: Math.round(totalDuration * 1000), // microseconds
+          timestamp: encodeIdx * 1_000_000,
+          duration: Math.round(totalDuration * 1000),
         });
 
-        // Encode as VP8 keyframe (WebP always uses keyframes)
         encoder.encode(vp8Frame, { keyFrame: true });
         vp8Frame.close();
 
