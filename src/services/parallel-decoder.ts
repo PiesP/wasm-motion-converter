@@ -36,8 +36,10 @@ import {
 /** Maximum number of parallel decoders */
 const MAX_PARALLEL_DECODERS = 4;
 
-/** Minimum frames per segment to justify parallelization overhead */
-const MIN_SEGMENT_FRAMES = 15;
+/** Minimum frames per segment to justify parallelization overhead.
+ *  Small segments waste time on decoder creation/teardown.
+ *  At 60fps, 100 frames ≈ 1.7s of video. */
+const MIN_SEGMENT_FRAMES = 100;
 
 export interface DecodedFrameStream {
   /** RGB pixel data (borrowed from buffer pool — caller must release) */
@@ -103,6 +105,19 @@ function splitIntoOrderedSegments(
     }
   }
 
+  // Limit to MAX_PARALLEL_DECODERS by merging adjacent segments.
+  // Too many small segments waste time on decoder creation/teardown.
+  if (segments.length > MAX_PARALLEL_DECODERS) {
+    const merged: Array<{ chunks: EncodedVideoChunk[]; startIndex: number }> = [];
+    const mergeSize = Math.ceil(segments.length / MAX_PARALLEL_DECODERS);
+    for (let i = 0; i < segments.length; i += mergeSize) {
+      const batch = segments.slice(i, i + mergeSize);
+      const mergedChunks = batch.flatMap((s) => s.chunks);
+      merged.push({ chunks: mergedChunks, startIndex: batch[0]!.startIndex });
+    }
+    return merged;
+  }
+
   return segments;
 }
 
@@ -121,6 +136,7 @@ async function decodeSegment(
 
   let segmentFrameIdx = 0;
   let decodeError: Error | null = null;
+  const pendingConversions: Promise<void>[] = [];
 
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
@@ -129,8 +145,8 @@ async function decodeSegment(
         const globalIndex = segment.startIndex + segmentFrameIdx;
         segmentFrameIdx++;
 
-        // Convert to RGB (needed for encoder compatibility)
-        copyFrameToRGB(frame, width, height, frameCtx)
+        // Track async conversion for final flush
+        const conversion = copyFrameToRGB(frame, width, height, frameCtx)
           .then((rgbData) => {
             frames.push({
               data: rgbData,
@@ -147,6 +163,8 @@ async function decodeSegment(
           .finally(() => {
             frame.close();
           });
+
+        pendingConversions.push(conversion);
       } catch (err) {
         frame.close();
         throw err;
@@ -157,7 +175,15 @@ async function decodeSegment(
     },
   });
 
-  decoder.configure({ ...config, hardwareAcceleration: hwAccel });
+  // Resolve decoder config with hardware acceleration support check
+  const swConfig = { ...config, hardwareAcceleration: 'prefer-software' as const };
+  const hwConfig = { ...config, hardwareAcceleration: 'prefer-hardware' as const };
+  const hwSupport = await VideoDecoder.isConfigSupported(hwConfig);
+  const activeConfig =
+    hwAccel === 'prefer-hardware' && hwSupport.supported
+      ? { ...hwConfig, optimizeForLatency: false }
+      : { ...swConfig, optimizeForLatency: false };
+  decoder.configure(activeConfig);
 
   for (let i = 0; i < segment.chunks.length; i++) {
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -171,7 +197,14 @@ async function decodeSegment(
     decoder.decode(segment.chunks[i]!);
   }
 
-  await decoder.flush();
+  try {
+    await decoder.flush();
+  } catch (_err) {
+    // flush may throw if decodeError is set — that's ok
+  }
+
+  // Wait for all pending frame conversions to complete before closing
+  await Promise.allSettled(pendingConversions);
   decoder.close();
 
   if (decodeError) throw decodeError;

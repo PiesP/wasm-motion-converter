@@ -28,6 +28,7 @@ import {
   getSkipThreshold,
   hammingDistance,
 } from './frame-utils';
+import { decodeFramesParallel } from './parallel-decoder';
 
 export interface DecodeOptions {
   width: number;
@@ -131,6 +132,9 @@ export async function decodeFrames(
     smartFrameSkip = 'off',
   } = opts;
 
+  // ── Smart frame skip state (must be before parallel decode block) ──
+  const skipThreshold = getSkipThreshold(smartFrameSkip);
+
   // Determine streaming mode: explicit 'stream' mode or infer from callback
   const streaming =
     mode === 'stream' ||
@@ -150,23 +154,88 @@ export async function decodeFrames(
   const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
   const pendingConversions: Promise<void>[] = [];
 
+  // ── Attempt parallel decode via keyframe-segmented multi-decoder ──
+  // Parallel decode splits the video at keyframe boundaries and decodes
+  // segments concurrently, cutting the dominant decode phase (~70% of
+  // total time) by up to 4x. Falls back to sequential decode if the
+  // video has insufficient keyframes or if any segment fails.
+  //
+  // Only enabled for streaming callbacks (not GPU-only VideoFrame paths
+  // which need raw VideoFrames, not RGB data). Smart frame skip and
+  // adaptive mode are incompatible with parallel decode (per-frame
+  // dHash comparison runs inside the sequential output handler).
+  if (
+    streaming &&
+    typeof onFrameAvailable === 'function' &&
+    smartFrameSkip === 'off' &&
+    skipThreshold !== -2 // not adaptive mode
+  ) {
+    try {
+      const parallelResult = await decodeFramesParallel(demux, { width, height, hwAccel }, signal);
+
+      // Feed pre-decoded frames through streaming callback with decimation
+      let frameIdx = 0;
+      let decodeAccumulated = 0;
+      let decimSkipped = 0;
+
+      for (const frame of parallelResult.frames) {
+        if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+
+        // Apply frame decimation (same logic as sequential path)
+        const globalIdx = frame.globalIndex;
+        if (frameDecimation > 1 && globalIdx % frameDecimation !== 0) {
+          decodeAccumulated += frame.durationMs;
+          decimSkipped++;
+          globalBufferPool.release(frame.data);
+          continue;
+        }
+
+        const totalDur = frame.durationMs + decodeAccumulated;
+        decodeAccumulated = 0;
+
+        await onFrameAvailable(frame.data, totalDur, globalIdx);
+        frameIdx++;
+
+        if (onFrameDecoded && frameIdx % 10 === 0) {
+          onFrameDecoded(frameIdx, demux.totalFrames);
+        }
+      }
+
+      logger.warn('decoders', 'Parallel decode complete (integrated)', {
+        frames: parallelResult.frames.length,
+        kept: frameIdx,
+        skippedByDecimation: decimSkipped,
+        totalInput: parallelResult.totalInputFrames,
+      });
+
+      return {
+        frames: [],
+        totalInputFrames: parallelResult.totalInputFrames,
+        skippedByDecimation: decimSkipped,
+        sourceTotalMs: parallelResult.sourceTotalMs,
+        outputTotalMs: 0,
+        tailAccumulatedMs: 0,
+      };
+    } catch (err) {
+      logger.warn('decoders', 'Parallel decode failed, falling back to sequential', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Fall through to sequential decode below
+    }
+  }
+
+  // ── Smart frame skip state (continued) ──
+  const isAdaptive = skipThreshold === -2;
+  let prevDHash: bigint | null = null;
+  let consecutiveSkipMs = 0; // accumulated duration of skipped frames
+
   // ── Backpressure for pendingConversions (RES-H2) ──
-  // Limit the number of in-flight frame conversion promises to prevent
-  // unbounded memory growth when decoding outpaces encoding.
-  // The chunk-feeding loop checks this limit and waits for pending conversions
-  // to drain before feeding more chunks to the decoder.
   const MAX_PENDING_CONVERSIONS = 10;
 
   let decodeError: Error | null = null;
   let inputFrameCount = 0;
   let accumulatedDuration = 0;
   let skippedByDecimation = 0;
-
-  // ── Smart frame skip state ──
-  const skipThreshold = getSkipThreshold(smartFrameSkip);
-  const isAdaptive = skipThreshold === -2;
-  let prevDHash: bigint | null = null;
-  let consecutiveSkipMs = 0; // accumulated duration of skipped frames
   let smartSkippedCount = 0;
   // Noise floor estimation: collect frame diff stdDev from first N frames
   const noiseFloorSamples: number[] = [];
