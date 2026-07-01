@@ -9,6 +9,12 @@
 /*.webm
   Content-Type: video/webm
 
+/*.mp4
+  Content-Type: video/mp4
+
+/*.m4v
+  Content-Type: video/mp4
+
 /*.wasm
   Content-Type: application/wasm
   Cache-Control: public, max-age=31536000, immutable
