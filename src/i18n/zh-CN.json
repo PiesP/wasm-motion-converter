@@ -61,6 +61,8 @@
   "frameSkip.mediumDesc": "跳过噪声级别变化",
   "frameSkip.high": "高",
   "frameSkip.highDesc": "也跳过缓慢变化",
+  "frameSkip.adaptive": "自适应",
+  "frameSkip.adaptiveDesc": "场景感知可变FPS",
   "frameSkip.tooltip": "跳过相似帧以减小文件大小。运动保持不变。",
   "trim.full": "全部",
   "trim.first5s": "前5秒",

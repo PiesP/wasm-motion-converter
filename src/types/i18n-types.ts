@@ -113,6 +113,8 @@ export interface TranslationKeys {
   'frameSkip.mediumDesc': string;
   'frameSkip.high': string;
   'frameSkip.highDesc': string;
+  'frameSkip.adaptive': string;
+  'frameSkip.adaptiveDesc': string;
   'frameSkip.tooltip': string;
 
   // Trim

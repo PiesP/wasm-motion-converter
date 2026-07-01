@@ -61,6 +61,8 @@
   "frameSkip.mediumDesc": "ノイズレベルの変化をスキップ",
   "frameSkip.high": "高",
   "frameSkip.highDesc": "ゆっくりした変化もスキップ",
+  "frameSkip.adaptive": "適応型",
+  "frameSkip.adaptiveDesc": "シーン別可変FPS",
   "frameSkip.tooltip": "類似フレームをスキップしてファイルサイズを削減します。動作は保持されます。",
   "trim.full": "全体",
   "trim.first5s": "最初の5秒",

@@ -149,6 +149,7 @@ export async function decodeFrames(
 
   // ── Smart frame skip state ──
   const skipThreshold = getSkipThreshold(smartFrameSkip);
+  const isAdaptive = skipThreshold === -2;
   let prevDHash: bigint | null = null;
   let consecutiveSkipMs = 0; // accumulated duration of skipped frames
   let smartSkippedCount = 0;
@@ -156,6 +157,22 @@ export async function decodeFrames(
   const noiseFloorSamples: number[] = [];
   const NOISE_SAMPLE_COUNT = 15; // reduced from 30 → faster adaptation for short videos
   let noiseFloor = 0; // will be set after sampling phase
+
+  // ── Adaptive motion-classified decimation state ──
+  // Running window of motion distances for scene analysis
+  let adaptFrameCounter = 0;
+  // Motion class thresholds (hamming distance)
+  const ADAPT_STATIC_THRESHOLD = 1; // ≤1 → static (very similar)
+  const ADAPT_SLOW_THRESHOLD = 3; // ≤3 → slow motion
+  const ADAPT_NORMAL_THRESHOLD = 6; // ≤6 → normal motion (>6 → fast)
+  // Decimation per motion class
+  const ADAPT_DECIMATION = {
+    static: 8, // keep every 8th frame (≈7.5fps from 60fps)
+    slow: 3, // keep every 3rd frame (≈20fps from 60fps)
+    normal: 2, // keep every 2nd frame (≈30fps from 60fps)
+    fast: 1, // keep every frame
+  };
+  let adaptLastMotionClass: 'static' | 'slow' | 'normal' | 'fast' = 'normal';
 
   // Check codec support (cached per codec+hw combo)
   const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
@@ -238,6 +255,60 @@ export async function decodeFrames(
 
               prevDHash = dHash;
               // Transfer accumulated consecutive skip durations to this frame
+              smartCarryoverMs = consecutiveSkipMs;
+              consecutiveSkipMs = 0;
+            }
+
+            // ── Adaptive motion-classified decimation ──
+            // Instead of fixed decimation, classify each frame's motion level
+            // and apply variable decimation: static scenes get aggressive skip,
+            // fast motion keeps all frames. Integrated with dHash already computed
+            // above (reuses prevDHash/dist when available from smart skip).
+            if (streaming && isAdaptive) {
+              let motionClass: 'static' | 'slow' | 'normal' | 'fast' = adaptLastMotionClass;
+
+              if (prevDHash !== null && noiseFloorSamples.length >= NOISE_SAMPLE_COUNT) {
+                // Re-compute dHash if smart skip didn't do it (threshold=-2 path)
+                const dHash = computeDHash(rgbData, width, height);
+                const dist = prevDHash !== null ? hammingDistance(prevDHash, dHash) : 0;
+
+                // Classify motion level
+                const effectiveStatic = Math.max(
+                  ADAPT_STATIC_THRESHOLD,
+                  Math.floor(noiseFloor / 3.5) // undo the 3.5x scaling for raw threshold
+                );
+                if (dist <= effectiveStatic) {
+                  motionClass = 'static';
+                } else if (dist <= ADAPT_SLOW_THRESHOLD) {
+                  motionClass = 'slow';
+                } else if (dist <= ADAPT_NORMAL_THRESHOLD) {
+                  motionClass = 'normal';
+                } else {
+                  motionClass = 'fast';
+                }
+
+                // Scene change detection: if motion class jumps up, force keep
+                const classOrder = { static: 0, slow: 1, normal: 2, fast: 3 } as const;
+                if (classOrder[motionClass] > classOrder[adaptLastMotionClass] + 1) {
+                  adaptFrameCounter = 0; // force keep on significant motion increase
+                }
+                adaptLastMotionClass = motionClass;
+                prevDHash = dHash;
+              }
+
+              const decimation = ADAPT_DECIMATION[motionClass];
+              const shouldSkip = adaptFrameCounter % decimation !== 0 && consecutiveSkipMs < 500; // 500ms safety limit
+
+              adaptFrameCounter++;
+
+              if (shouldSkip && motionClass !== 'fast') {
+                consecutiveSkipMs += totalDuration;
+                smartSkippedCount++;
+                globalBufferPool.release(rgbData);
+                return;
+              }
+
+              // Frame kept: reset counters, transfer accumulated duration
               smartCarryoverMs = consecutiveSkipMs;
               consecutiveSkipMs = 0;
             }

@@ -424,10 +424,12 @@ export function hammingDistance(a: bigint, b: bigint): number {
  * Frames with distance ≤ threshold are candidates for skipping.
  * Returns -1 for 'off' (never skip).
  */
-export function getSkipThreshold(mode: 'off' | 'low' | 'medium' | 'high'): number {
+export function getSkipThreshold(mode: 'off' | 'low' | 'medium' | 'high' | 'adaptive'): number {
   switch (mode) {
     case 'off':
       return -1;
+    case 'adaptive':
+      return -2; // signal for adaptive motion-classified decimation
     case 'low':
       return 2;
     case 'medium':

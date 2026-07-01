@@ -61,6 +61,8 @@
   "frameSkip.mediumDesc": "Skip noise-level changes",
   "frameSkip.high": "High",
   "frameSkip.highDesc": "Skip slow changes too",
+  "frameSkip.adaptive": "Adaptive",
+  "frameSkip.adaptiveDesc": "Scene-aware variable FPS",
   "frameSkip.tooltip": "Skip similar frames to reduce file size. Motion is preserved.",
   "trim.full": "Full",
   "trim.first5s": "First 5s",

@@ -23,6 +23,7 @@ const SmartFrameSkipSelector: Component<SmartFrameSkipSelectorProps> = (props) =
     { value: 'low', label: t('frameSkip.low'), description: t('frameSkip.lowDesc') },
     { value: 'medium', label: t('frameSkip.medium'), description: t('frameSkip.mediumDesc') },
     { value: 'high', label: t('frameSkip.high'), description: t('frameSkip.highDesc') },
+    { value: 'adaptive', label: t('frameSkip.adaptive'), description: t('frameSkip.adaptiveDesc') },
   ]);
 
   return (

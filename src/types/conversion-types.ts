@@ -84,7 +84,7 @@ export const CONVERSION_SCALES: readonly ConversionScale[] = [0.5, 0.75, 1.0] as
  * When enabled, consecutive similar frames are merged and their durations
  * are accumulated into the next kept frame, preserving timing accuracy.
  */
-export type SmartFrameSkipMode = 'off' | 'low' | 'medium' | 'high';
+export type SmartFrameSkipMode = 'off' | 'low' | 'medium' | 'high' | 'adaptive';
 
 /** Runtime-available list of all SmartFrameSkipMode values */
 export const SMART_FRAME_SKIP_MODES: readonly SmartFrameSkipMode[] = [
@@ -92,6 +92,7 @@ export const SMART_FRAME_SKIP_MODES: readonly SmartFrameSkipMode[] = [
   'low',
   'medium',
   'high',
+  'adaptive',
 ] as const;
 
 /**
