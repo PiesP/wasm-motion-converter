@@ -120,7 +120,7 @@ export function yieldToMain(): Promise<void> {
 /**
  * Strategy 0 (new): Try copyTo with RGBX format for zero-JS-conversion copy.
  * The browser's native C++ implementation handles YUV→RGB conversion during copy,
- * eliminating the need for manual rgbaToRGBFast() on the hot path.
+ * eliminating the need for manual convertRGBAToRGB() on the hot path.
  *
  * VideoFrame.copyTo() supports format conversion:
  *   I420, I422, I444, NV12, NV21 → RGBA, RGBX, BGRA, BGRX
@@ -189,7 +189,7 @@ async function copyFrameFourChannel(
         layout: [{ offset: 0, stride: width * 4 }],
       });
 
-      const rgb = rgbaToRGBFast(buffer, width, height, fmt);
+      const rgb = convertRGBAToRGB(buffer, width, height, fmt);
       globalBufferPool.release(buffer);
       return rgb;
     } catch {
@@ -219,7 +219,7 @@ async function copyFrameCanvas(
       if (!ctx) throw new Error('Failed to get 2d context');
       ctx.drawImage(bitmap, 0, 0);
       const imageData = ctx.getImageData(0, 0, width, height);
-      const rgb = rgbaToRGBFast(new Uint8Array(imageData.data), width, height, 'RGBA');
+      const rgb = convertRGBAToRGB(new Uint8Array(imageData.data), width, height, 'RGBA');
       canvas.width = 0;
       canvas.height = 0;
       return rgb;
@@ -247,7 +247,7 @@ async function copyFrameCanvas(
 
   const imageData = ctx.getImageData(0, 0, width, height);
   const rgbaBuf = new Uint8Array(imageData.data);
-  const rgb = rgbaToRGBFast(rgbaBuf, width, height, 'RGBA');
+  const rgb = convertRGBAToRGB(rgbaBuf, width, height, 'RGBA');
 
   // Explicitly release OffscreenCanvas GPU resources
   canvas.width = 0;
@@ -268,7 +268,7 @@ async function copyFrameCanvas(
  * @param format - Source channel order
  * @returns New RGB buffer (pooled)
  */
-function rgbaToRGBFast(
+export function convertRGBAToRGB(
   src: Uint8Array,
   width: number,
   height: number,
@@ -303,6 +303,39 @@ function rgbaToRGBFast(
   }
 
   return dst;
+}
+
+/**
+ * Fast RGB→RGBA conversion using Uint32Array bitwise operations.
+ *
+ * Packs RGB bytes (3 bytes/pixel) into RGBA uint32 (4 bytes/pixel) with
+ * alpha channel set to 0xFF (fully opaque). Uses the global buffer pool.
+ *
+ * ~3x faster than per-pixel byte copying by writing 4 bytes at once.
+ *
+ * @param rgb - Source RGB buffer (3 bytes per pixel)
+ * @param width - Frame width in pixels
+ * @param height - Frame height in pixels
+ * @returns New RGBA buffer (pooled), alpha=0xFF
+ */
+export function convertRGBToRGBA(rgb: Uint8Array, width: number, height: number): Uint8Array {
+  const pixelCount = width * height;
+  const rgba = globalBufferPool.acquire(pixelCount * 4);
+
+  // Uint32Array view over the RGBA buffer for 4-byte-at-a-time writes
+  const rgba32 = new Uint32Array(rgba.buffer, rgba.byteOffset, pixelCount);
+
+  // Little-endian: uint32 = 0xAABBGGRR → bytes [RR, GG, BB, AA]
+  // We package [R, G, B, 0xFF] → uint32 = 0xFF << 24 | B << 16 | G << 8 | R
+  for (let i = 0; i < pixelCount; i++) {
+    const srcIdx = i * 3;
+    const r = rgb[srcIdx]!;
+    const g = rgb[srcIdx + 1]!;
+    const b = rgb[srcIdx + 2]!;
+    rgba32[i] = (0xff << 24) | (b << 16) | (g << 8) | r;
+  }
+
+  return rgba;
 }
 
 // ─── Duration accumulation state ──────────────────────────────────

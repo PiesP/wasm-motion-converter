@@ -21,6 +21,7 @@ import type { ProgressCallback } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import type { BaseEncoderOptions } from './encoder-common';
+import { convertRGBToRGBA } from './frame-utils';
 import {
   extractVP8Bitstream,
   extractVP8BitstreamFast,
@@ -303,7 +304,7 @@ async function encodeWebpMainThread(
   for (let i = 0; i < frames.length; i++) {
     const frame = frames[i]!;
     const pixelCount = width * height;
-    const rawBuf = globalBufferPool.acquire(pixelCount * 4);
+    const rawBuf = convertRGBToRGBA(frame.rgbData, width, height);
     // ImageData constructor requires ArrayBuffer or BufferSource — the pool
     // always returns Uint8Array backed by ArrayBuffer, so casting is safe.
     const rgbaData = new Uint8ClampedArray(
@@ -311,17 +312,6 @@ async function encodeWebpMainThread(
       rawBuf.byteOffset,
       pixelCount * 4
     ) as unknown as Uint8ClampedArray<ArrayBuffer>;
-
-    // Uint32Array for 4-byte-at-a-time writes (~3x faster than byte loop).
-    // Little-endian: uint32 = 0xAABBGGRR → [R, G, B, 0xFF]
-    const rgba32 = new Uint32Array(rawBuf.buffer, rawBuf.byteOffset, pixelCount);
-    for (let i = 0; i < pixelCount; i++) {
-      const srcIdx = i * 3;
-      const r = frame.rgbData[srcIdx]!;
-      const g = frame.rgbData[srcIdx + 1]!;
-      const b = frame.rgbData[srcIdx + 2]!;
-      rgba32[i] = (255 << 24) | (b << 16) | (g << 8) | r;
-    }
 
     const imageData = new ImageData(rgbaData, width, height);
     ctx.putImageData(imageData, 0, 0);

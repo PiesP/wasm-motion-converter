@@ -33,6 +33,7 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
+import { convertRGBToRGBA } from './frame-utils';
 
 const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
   low: 64, // 128 → 64: perceptual studies show banding is visible below ~32 colors,
@@ -50,37 +51,6 @@ const QUALITY_DITHER_STRENGTH: Record<BaseEncoderOptions['quality'], number> = {
   high: 12, // 4 → 12: high quality needs stronger dithering to produce
   // smooth gradients with full 256-color palette; 4 was too subtle
 };
-
-/**
- * Convert RGB (3 bytes/pixel) to RGBA (4 bytes/pixel) using buffer pool.
- * gifenc's quantize() and applyPalette() require RGBA input because they
- * internally cast the buffer to Uint32Array (4-byte aligned).
- *
- * Optimization: Uses Uint32Array view to write 4 bytes at a time.
- * Instead of 4 separate byte writes per pixel, we pack R,G,B,0xFF into
- * a single uint32 write. This reduces loop overhead by ~4x.
- *
- * For a 1080p frame (2M pixels), this saves ~1-2ms vs byte-by-byte copy.
- */
-function rgbToRgbaPooled(rgb: Uint8Array, width: number, height: number): Uint8Array {
-  const pixelCount = width * height;
-  const rgba = globalBufferPool.acquire(pixelCount * 4);
-
-  // Uint32Array view over the RGBA buffer for 4-byte-at-a-time writes
-  const rgba32 = new Uint32Array(rgba.buffer, rgba.byteOffset, pixelCount);
-
-  // Little-endian: uint32 = 0xAABBGGRR → bytes [RR, GG, BB, AA]
-  // We want [R, G, B, 0xFF] → uint32 = 0xFF << 24 | B << 16 | G << 8 | R
-  for (let i = 0; i < pixelCount; i++) {
-    const srcIdx = i * 3;
-    const r = rgb[srcIdx]!;
-    const g = rgb[srcIdx + 1]!;
-    const b = rgb[srcIdx + 2]!;
-    rgba32[i] = (0xff << 24) | (b << 16) | (g << 8) | r;
-  }
-
-  return rgba;
-}
 
 // ─── Bayer Ordered Dithering ────────────────────────────────────────
 
@@ -323,7 +293,7 @@ export async function encodeGif(
           }
 
           // Convert RGB → RGBA for gifenc compatibility (pooled)
-          const rgba = rgbToRgbaPooled(rgbData, w, h);
+          const rgba = convertRGBToRGBA(rgbData, w, h);
           // Release the RGB buffer back to pool immediately
           globalBufferPool.release(rgbData);
 

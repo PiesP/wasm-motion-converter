@@ -24,6 +24,7 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
+import { convertRGBToRGBA } from './frame-utils';
 import { extractVP8BitstreamFast, StreamingWebpMuxer } from './streaming-webp-encoder';
 
 /**
@@ -235,24 +236,12 @@ export async function encodeWebpOffscreen(
         // Create ImageData from RGB data (3 bytes per pixel → 4 bytes RGBA for canvas)
         // OffscreenCanvas putImageData requires RGBA format
         // Use buffer pool to avoid per-frame GC pressure (M-05).
-        const rawBuf = globalBufferPool.acquire(w * h * 4);
-        // ImageData constructor requires ArrayBuffer or BufferSource — the pool
-        // always returns Uint8Array backed by ArrayBuffer, so casting is safe.
+        const rawBuf = convertRGBToRGBA(rgbData, w, h);
         const rgbaData = new Uint8ClampedArray(
           rawBuf.buffer as ArrayBuffer,
           rawBuf.byteOffset,
           w * h * 4
         ) as unknown as Uint8ClampedArray<ArrayBuffer>;
-        // Uint32Array for 4-byte-at-a-time writes (~3x faster than byte loop).
-        // Little-endian: uint32 = 0xAABBGGRR → [R, G, B, 0xFF]
-        const rgba32 = new Uint32Array(rawBuf.buffer, rawBuf.byteOffset, w * h);
-        for (let i = 0; i < w * h; i++) {
-          const srcIdx = i * 3;
-          const r = rgbData[srcIdx]!;
-          const g = rgbData[srcIdx + 1]!;
-          const b = rgbData[srcIdx + 2]!;
-          rgba32[i] = (255 << 24) | (b << 16) | (g << 8) | r;
-        }
 
         const imageData = new ImageData(rgbaData, w, h);
 
