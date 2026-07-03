@@ -79,6 +79,18 @@ export const [inputFile, setInputFile] = createSignal<File | null>(null);
  * Only the public API (getInputBuffer / setInputBuffer) is exported;
  * no reactive signal tracks the buffer contents.
  */
+/**
+ * Module-level mutable buffer reference for the input file.
+ *
+ * This is intentionally module-level mutable state (rather than a reactive signal)
+ * because:
+ * 1. ArrayBuffers can be up to 500 MB; storing in a SolidJS signal would create a
+ *    reactive dependency that triggers re-renders on every change.
+ * 2. The buffer is only needed during conversion — there is no UI that observes it.
+ * 3. Module-level state is safe in this SPA because only one conversion runs at a
+ *    time. The getter/setter API (getInputBuffer/setInputBuffer) provides controlled
+ *    access without exposing the mutable reference for uncontrolled reassignment.
+ */
 let inputBufferRef: ArrayBuffer | null = null;
 export function getInputBuffer(): ArrayBuffer | null {
   return inputBufferRef;

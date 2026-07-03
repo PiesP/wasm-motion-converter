@@ -129,11 +129,11 @@ export async function decodeFrames(
     onFrameAvailable,
     onVideoFrameAvailable,
     mode,
-    smartFrameSkip = 'off',
+    smartFrameSkip: effectiveSmartSkip = 'off',
   } = opts;
 
   // ── Smart frame skip state (must be before parallel decode block) ──
-  const skipThreshold = getSkipThreshold(smartFrameSkip);
+  const skipThreshold = getSkipThreshold(effectiveSmartSkip);
 
   // Determine streaming mode: explicit 'stream' mode or infer from callback
   const streaming =
@@ -167,7 +167,7 @@ export async function decodeFrames(
   if (
     streaming &&
     typeof onFrameAvailable === 'function' &&
-    smartFrameSkip === 'off' &&
+    effectiveSmartSkip === 'off' &&
     skipThreshold !== -2 // not adaptive mode
   ) {
     try {
@@ -362,6 +362,16 @@ export async function decodeFrames(
             // and apply variable decimation: static scenes get aggressive skip,
             // fast motion keeps all frames. Integrated with dHash already computed
             // above (reuses prevDHash/dist when available from smart skip).
+            //
+            // NOTE: This block is NEVER entered when onVideoFrameAvailable is active
+            // (GPU-only path) because that path skips copyFrameToRGB entirely, meaning
+            // no rgbData/dHash/hammingDistance is available. See the GPU-only check at
+            // ~line 313.
+            //
+            // NOTE: The first frame is always classified as adaptLastMotionClass
+            // (initially 'normal') because prevDHash is null until at least two frames
+            // have been processed. This initial misclassification is expected and has
+            // negligible impact — only one frame's decimation is affected.
             if (streaming && isAdaptive) {
               let motionClass: 'static' | 'slow' | 'normal' | 'fast' = adaptLastMotionClass;
 
@@ -540,7 +550,7 @@ export async function decodeFrames(
       outputFrames: streaming ? inputFrameCount - skippedByDecimation : rgbFrames.length,
       skippedByDecimation,
       smartSkipped: smartSkippedCount,
-      smartSkipMode: smartFrameSkip,
+      smartSkipMode: effectiveSmartSkip,
       noiseFloor: Math.round(noiseFloor * 100) / 100,
       resolution: `${width}×${height}`,
       streaming,

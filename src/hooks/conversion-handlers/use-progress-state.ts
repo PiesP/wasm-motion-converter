@@ -31,6 +31,12 @@ type ParsedStatusCounter = {
   total: number;
 } | null;
 
+/**
+ * Parse a status string in the format "prefix (N/M)" to extract structured
+ * counter information. Only used internally by ProgressState for enriched
+ * logging — not part of the public API.
+ * @internal
+ */
 const parseStatusCounter = (status: string): ParsedStatusCounter => {
   // Match pattern: "prefix (N/M)" at end of string
   // Use lastIndexOf to find the final " (" which precedes the counter
