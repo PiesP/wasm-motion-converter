@@ -92,7 +92,7 @@ export async function encodeWebpParallel(
 
     const task: EncodeTask = {
       id: i,
-      rgbData: frame.rgbData,
+      rgbData: new Uint8Array(frame.rgbData),
       width,
       height,
       quality: qualityF,

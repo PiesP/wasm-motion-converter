@@ -184,14 +184,17 @@ async function copyFrameFourChannel(
         layout: [{ offset: 0, stride: width * 4 }],
       });
       const buffer = globalBufferPool.acquire(size);
-      await frame.copyTo(buffer, {
-        rect: { x: 0, y: 0, width, height },
-        layout: [{ offset: 0, stride: width * 4 }],
-      });
+      try {
+        await frame.copyTo(buffer, {
+          rect: { x: 0, y: 0, width, height },
+          layout: [{ offset: 0, stride: width * 4 }],
+        });
 
-      const rgb = convertRGBAToRGB(buffer, width, height, fmt);
-      globalBufferPool.release(buffer);
-      return rgb;
+        const rgb = convertRGBAToRGB(buffer, width, height, fmt);
+        return rgb;
+      } finally {
+        globalBufferPool.release(buffer);
+      }
     } catch {
       // Format not supported, try next
     }
