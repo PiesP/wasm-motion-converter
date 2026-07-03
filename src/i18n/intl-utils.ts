@@ -5,7 +5,7 @@
  * Internationalization Utilities (i18n module re-export barrel)
  *
  * Re-exports all utilities from @utils/intl-utils for convenient imports
- * via the @i18n path alias.
+ * via the @i18n path alias. (Audited: all 7 exports are re-exported.)
  */
 
 export type { Locale } from '@t/i18n-types';
