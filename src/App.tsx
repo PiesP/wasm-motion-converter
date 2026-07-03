@@ -152,7 +152,10 @@ const App: Component = () => {
 
   createEffect(() => {
     const el = document.getElementById('app-state');
-    if (el) el.textContent = appState();
+    if (!el) return;
+    const state = appState();
+    const progress = conversionProgress();
+    el.textContent = progress > 0 ? `${state}: ${progress}%` : state;
   });
 
   const dropzoneStatus = createMemo(() => {
