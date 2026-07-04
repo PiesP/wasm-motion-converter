@@ -72,21 +72,18 @@ export function hexToArrayBuffer(hex: string): ArrayBuffer {
  * Restores VideoDecoderConfig from SerializedDecoderConfig.
  */
 export function restoreVideoDecoderConfig(serialized: SerializedDecoderConfig): VideoDecoderConfig {
-  const config: VideoDecoderConfig = {
+  const config: Record<string, unknown> = {
     codec: serialized.codec,
     codedWidth: serialized.codedWidth,
     codedHeight: serialized.codedHeight,
-    ...(serialized.hardwareAcceleration
-      ? {
-          hardwareAcceleration:
-            serialized.hardwareAcceleration as VideoDecoderConfig['hardwareAcceleration'],
-        }
-      : {}),
   };
+  if (serialized.hardwareAcceleration) {
+    config.hardwareAcceleration = serialized.hardwareAcceleration;
+  }
   // description is non-null ArrayBuffer if present (safe for AllowSharedBufferSource)
   if (serialized.description) {
     const descBuf: ArrayBuffer = hexToArrayBuffer(serialized.description);
-    (config as VideoDecoderConfig & { description: ArrayBuffer }).description = descBuf;
+    config.description = descBuf as ArrayBuffer;
   }
   // displayAspectWidth/Height are non-standard (mediabunny extension)
   if (serialized.displayAspectWidth && serialized.displayAspectHeight) {
@@ -97,5 +94,5 @@ export function restoreVideoDecoderConfig(serialized: SerializedDecoderConfig): 
     extended.displayAspectWidth = serialized.displayAspectWidth;
     extended.displayAspectHeight = serialized.displayAspectHeight;
   }
-  return config;
+  return config as unknown as VideoDecoderConfig;
 }

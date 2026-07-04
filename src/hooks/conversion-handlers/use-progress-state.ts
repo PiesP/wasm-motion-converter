@@ -17,7 +17,7 @@ export interface ProgressStateDeps {
   setConversionStartTime: Setter<number>;
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
-  setConversionPhase?: Setter<ProgressPhase>;
+  setConversionPhase?: Setter<ProgressPhase> | undefined;
 }
 
 const ETA_UPDATE_INTERVAL = 1000;

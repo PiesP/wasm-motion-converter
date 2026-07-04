@@ -12,7 +12,7 @@ interface ConversionRuntimeControllerDeps {
   setConversionStartTime: Setter<number>;
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
-  setConversionPhase?: Setter<import('@t/conversion-types').ProgressPhase>;
+  setConversionPhase?: Setter<import('@t/conversion-types').ProgressPhase> | undefined;
 }
 
 export class ConversionRuntimeController {

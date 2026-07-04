@@ -22,7 +22,7 @@ interface ResultPreviewProps {
   originalName: string;
   originalSize: number;
   settings: ConversionSettings;
-  conversionDurationSeconds?: number;
+  conversionDurationSeconds?: number | undefined;
 }
 
 const ResultPreview: Component<ResultPreviewProps> = (props) => {

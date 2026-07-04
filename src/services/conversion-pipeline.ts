@@ -694,7 +694,7 @@ async function _runPipelineInner(
                   frameDecimation: webpDecimation,
                   onFrameDecoded: decodeProgressCb,
                 },
-                (p: { progress: number; currentFrame?: number }) => {
+                (p) => {
                   encodedFrames = p.currentFrame ?? encodedFrames;
                   const encodePct =
                     estimatedOutputFrames > 0

@@ -208,7 +208,7 @@ This project uses the following open-source libraries.
       md += '- This project does not statically link or modify FFmpeg source\n';
       md += '- Users can replace the ffmpeg.wasm binary with a modified version\n\n';
     } else {
-      md += `See the package repository for full license text.\n\n`;
+      md += 'See the package repository for full license text.\n\n';
     }
   }
 

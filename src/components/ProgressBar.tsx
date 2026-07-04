@@ -41,22 +41,22 @@ const PHASE_CONFIG = [
 interface ProgressBarProps {
   progress: number;
   status: string;
-  statusMessage?: string;
-  showSpinner?: boolean;
-  showElapsedTime?: boolean;
-  startTime?: number;
-  estimatedSecondsRemaining?: number | null;
-  layout?: 'horizontal' | 'vertical';
-  subPhaseProgress?: number;
-  subPhaseLabel?: string;
-  currentFrame?: number;
-  totalFrames?: number;
-  outputFrames?: number;
-  memoryUsage?: string | null;
-  phase?: ProgressPhase;
-  compact?: boolean;
-  fps?: number;
-  elapsedMs?: number;
+  statusMessage?: string | undefined;
+  showSpinner?: boolean | undefined;
+  showElapsedTime?: boolean | undefined;
+  startTime?: number | undefined;
+  estimatedSecondsRemaining?: (number | null) | undefined;
+  layout?: ('horizontal' | 'vertical') | undefined;
+  subPhaseProgress?: number | undefined;
+  subPhaseLabel?: string | undefined;
+  currentFrame?: number | undefined;
+  totalFrames?: number | undefined;
+  outputFrames?: number | undefined;
+  memoryUsage?: (string | null) | undefined;
+  phase?: ProgressPhase | undefined;
+  compact?: boolean | undefined;
+  fps?: number | undefined;
+  elapsedMs?: number | undefined;
 }
 
 const ProgressBar: Component<ProgressBarProps> = (props) => {

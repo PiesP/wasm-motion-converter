@@ -13,8 +13,8 @@ const QUALITY_COLUMNS = 3;
 interface QualitySelectorProps {
   value: ConversionQuality;
   onChange: (quality: ConversionQuality) => void;
-  disabled?: boolean;
-  tooltip?: string;
+  disabled?: boolean | undefined;
+  tooltip?: string | undefined;
 }
 
 const QualitySelector: Component<QualitySelectorProps> = (props) => {

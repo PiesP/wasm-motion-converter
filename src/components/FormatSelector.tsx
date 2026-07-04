@@ -13,8 +13,8 @@ const FORMAT_COLUMNS = 2;
 interface FormatSelectorProps {
   value: ConversionFormat;
   onChange: (format: ConversionFormat) => void;
-  disabled?: boolean;
-  tooltip?: string;
+  disabled?: boolean | undefined;
+  tooltip?: string | undefined;
 }
 
 const FormatSelector: Component<FormatSelectorProps> = (props) => {

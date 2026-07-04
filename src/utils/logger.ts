@@ -31,7 +31,7 @@ type LogEntry = {
   category: LogCategory;
   message: string;
   conversionProgress: number | null;
-  contextJson?: string;
+  contextJson?: string | undefined;
   line: string;
 };
 

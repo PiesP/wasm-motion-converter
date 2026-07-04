@@ -20,7 +20,7 @@ type OptionValue = string | number;
 export interface OptionSelectorOption<T extends OptionValue> {
   value: T;
   label: string;
-  description?: string;
+  description?: string | undefined;
 }
 
 interface OptionSelectorProps<T extends OptionValue> {
@@ -29,9 +29,9 @@ interface OptionSelectorProps<T extends OptionValue> {
   value: T;
   options: OptionSelectorOption<T>[];
   onChange: (value: T) => void;
-  disabled?: boolean;
-  columns?: 2 | 3;
-  tooltip?: string;
+  disabled?: boolean | undefined;
+  columns?: (2 | 3) | undefined;
+  tooltip?: string | undefined;
 }
 
 const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) => {

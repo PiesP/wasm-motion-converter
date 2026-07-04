@@ -11,7 +11,7 @@ import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 interface SmartFrameSkipSelectorProps {
   value: SmartFrameSkipMode;
   onChange: (mode: SmartFrameSkipMode) => void;
-  disabled?: boolean;
+  disabled?: boolean | undefined;
 }
 
 const SmartFrameSkipSelector: Component<SmartFrameSkipSelectorProps> = (props) => {

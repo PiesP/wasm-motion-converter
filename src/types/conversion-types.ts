@@ -201,13 +201,13 @@ export interface ErrorContext {
   /** When error occurred (milliseconds since epoch) */
   timestamp: number;
   /** User-friendly suggestion for resolution */
-  suggestion?: string;
+  suggestion?: string | undefined;
   /** Settings used for failed conversion */
-  conversionSettings?: ConversionSettings;
+  conversionSettings?: ConversionSettings | undefined;
   /** Which phase of conversion failed (e.g., 'decoding', 'encoding') */
-  phase?: string;
+  phase?: string | undefined;
   /** FFmpeg log lines for debugging */
-  ffmpegLogs?: string[];
+  ffmpegLogs?: string[] | undefined;
 }
 /**
  *
@@ -253,7 +253,7 @@ export interface ConversionRequest {
   /** Full file content as ArrayBuffer (required for legacy paths, optional when inputBlob is provided) */
   inputBuffer: ArrayBuffer;
   /** File as Blob — enables on-demand reading via BlobSource, avoiding full memory load */
-  inputBlob?: Blob;
+  inputBlob?: Blob | undefined;
   fileName: string;
   format: ConversionFormat;
   quality: ConversionQuality;
@@ -262,9 +262,9 @@ export interface ConversionRequest {
   trimEnd: number;
   maxMemoryMB: number;
   /** Force frame decimation (overrides auto-decimation) */
-  forceDecimation?: number;
+  forceDecimation?: number | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
-  smartFrameSkip?: SmartFrameSkipMode;
+  smartFrameSkip?: SmartFrameSkipMode | undefined;
 }
 
 /** Progress phase identifier for pipeline operations and UI display */
@@ -276,8 +276,8 @@ export interface ConversionProgress {
   fps: number;
   etaSeconds: number | null;
   memoryMB: number;
-  currentFrame?: number;
-  totalFrames?: number;
-  outputFrames?: number;
-  elapsedMs?: number;
+  currentFrame?: number | undefined;
+  totalFrames?: number | undefined;
+  outputFrames?: number | undefined;
+  elapsedMs?: number | undefined;
 }

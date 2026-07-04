@@ -34,22 +34,22 @@ export interface DecodeOptions {
   width: number;
   height: number;
   /** Frame decimation: keep every Nth frame (1 = keep all) */
-  frameDecimation?: number;
+  frameDecimation?: number | undefined;
   /** Hardware acceleration policy */
-  hwAccel?: 'prefer-hardware' | 'prefer-software';
+  hwAccel?: ('prefer-hardware' | 'prefer-software') | undefined;
   /** Callback fired after each frame is decoded (for progress tracking) */
-  onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
+  onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /**
    * Streaming callback: fired for each decoded frame with RGB data.
    * When provided, frames are NOT accumulated into an array — instead they
    * are passed to this callback for immediate processing (e.g. encoding).
    * The callback receives ownership of the RGB buffer (must release to pool).
    */
-  onFrameAvailable?: (
+  onFrameAvailable?: ((
     rgbData: Uint8Array,
     durationMs: number,
     frameNum: number
-  ) => Promise<void> | void;
+  ) => Promise<void> | void) | undefined;
   /**
    * GPU-only callback: passes raw VideoFrame to encoder without reading
    * pixels into JS memory. Used by VP8 VideoEncoder path for zero-copy
@@ -57,24 +57,24 @@ export interface DecodeOptions {
    * disabled (dHash requires RGB pixel data).
    * The caller OWNS the VideoFrame and MUST call frame.close().
    */
-  onVideoFrameAvailable?: (
+  onVideoFrameAvailable?: ((
     frame: VideoFrame,
     durationMs: number,
     frameNum: number
-  ) => Promise<void> | void;
+  ) => Promise<void> | void) | undefined;
   /**
    * Explicit decode mode. When 'stream', frames are passed to onFrameAvailable
    * immediately. When 'batch', frames are collected into an array.
    * @default 'stream' when onFrameAvailable is provided, 'batch' otherwise
    */
-  mode?: 'stream' | 'batch';
+  mode?: ('stream' | 'batch') | undefined;
   /**
    * Smart frame skip mode — enables similarity-based frame deduplication.
    * When enabled, consecutive similar frames are skipped and their durations
    * are accumulated into the next kept frame.
    * @default 'off'
    */
-  smartFrameSkip?: SmartFrameSkipMode;
+  smartFrameSkip?: SmartFrameSkipMode | undefined;
 }
 
 export interface DecodedFrame {

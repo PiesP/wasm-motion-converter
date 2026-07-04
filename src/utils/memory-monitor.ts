@@ -19,7 +19,7 @@ export interface MemoryInfo {
   totalJSHeapSize: number;
   jsHeapSizeLimit: number;
   usagePercentage: number;
-  deviceMemoryGB?: number;
+  deviceMemoryGB?: number | undefined;
 }
 
 /** Detailed memory breakdown from measureUserAgentSpecificMemory() */

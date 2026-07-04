@@ -73,7 +73,7 @@ if (hashes.length > 0) {
   if (cspScriptSrcRegex.test(headers)) {
     headers = headers.replace(cspScriptSrcRegex, `$1 ${hashStr}$2;`);
     writeFileSync(headersPath, headers);
-    console.log(`[postbuild] Injected CSP hashes into _headers`);
+    console.log('[postbuild] Injected CSP hashes into _headers');
   } else {
     console.warn('[postbuild] Could not find script-src in _headers to inject hashes');
   }

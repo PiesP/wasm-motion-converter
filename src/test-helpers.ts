@@ -237,7 +237,7 @@ const readProgressFromDOM = (): number | null => {
 
 const waitFor = (
   condition: () => boolean,
-  options?: { timeoutMs?: number; intervalMs?: number }
+  options?: { timeoutMs?: number | undefined; intervalMs?: number | undefined }
 ): Promise<boolean> => {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_WAIT_TIMEOUT;
   const intervalMs = options?.intervalMs ?? DEFAULT_WAIT_INTERVAL;

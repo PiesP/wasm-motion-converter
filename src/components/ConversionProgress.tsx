@@ -11,15 +11,15 @@ import ProgressBar from './ProgressBar';
 interface ConversionProgressProps {
   progress: number;
   status: string;
-  statusMessage?: string;
-  showElapsedTime?: boolean;
-  startTime?: number;
-  estimatedSecondsRemaining?: number | null;
-  currentFrame?: number;
-  totalFrames?: number;
-  outputFrames?: number;
-  memoryUsage?: string | null;
-  phase?: ProgressPhase;
+  statusMessage?: string | undefined;
+  showElapsedTime?: boolean | undefined;
+  startTime?: number | undefined;
+  estimatedSecondsRemaining?: (number | null) | undefined;
+  currentFrame?: number | undefined;
+  totalFrames?: number | undefined;
+  outputFrames?: number | undefined;
+  memoryUsage?: (string | null) | undefined;
+  phase?: ProgressPhase | undefined;
 }
 
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {

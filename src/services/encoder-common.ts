@@ -19,16 +19,16 @@ export interface BaseEncoderOptions {
   quality: ConversionQuality;
   scale: number;
   /** Frame decimation: keep every Nth frame (1 = keep all) */
-  frameDecimation?: number;
+  frameDecimation?: number | undefined;
   /** Callback fired after each frame is decoded */
-  onFrameDecoded?: (frameIndex: number, totalFrames: number) => void;
+  onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /**
    * Callback fired after each frame is encoded.
    * @note Currently only used by the GIF encoder; WebP does not invoke this.
    */
-  onFrameEncoded?: (frameIndex: number, totalFrames: number) => void;
+  onFrameEncoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
-  smartFrameSkip?: SmartFrameSkipMode;
+  smartFrameSkip?: SmartFrameSkipMode | undefined;
 }
 
 /**

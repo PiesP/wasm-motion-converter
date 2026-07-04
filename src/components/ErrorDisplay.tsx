@@ -16,11 +16,11 @@ const ERROR_ICONS: Partial<Record<ConversionErrorType, string>> = {
 
 interface ErrorDisplayProps {
   message: string;
-  suggestion?: string;
-  errorType?: ConversionErrorType;
+  suggestion?: string | undefined;
+  errorType?: ConversionErrorType | undefined;
   onRetry: () => void;
   onSelectNewFile: () => void;
-  onDismiss?: () => void;
+  onDismiss?: (() => void) | undefined;
 }
 
 const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {

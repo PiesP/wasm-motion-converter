@@ -8,11 +8,11 @@ import { createSignal } from 'solid-js';
 interface ConfirmationState {
   isVisible: boolean;
   warnings: ValidationWarning[];
-  title?: string;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  onConfirm?: () => void;
-  onCancel?: () => void;
+  title?: string | undefined;
+  confirmLabel?: string | undefined;
+  cancelLabel?: string | undefined;
+  onConfirm?: (() => void) | undefined;
+  onCancel?: (() => void) | undefined;
 }
 
 const [confirmationState, setConfirmationState] = createSignal<ConfirmationState>({

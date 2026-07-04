@@ -40,10 +40,10 @@ export interface SerializedDecoderConfig {
   codec: string;
   codedWidth: number;
   codedHeight: number;
-  displayAspectWidth?: number;
-  displayAspectHeight?: number;
-  hardwareAcceleration?: string;
-  description?: string;
+  displayAspectWidth?: number | undefined;
+  displayAspectHeight?: number | undefined;
+  hardwareAcceleration?: string | undefined;
+  description?: string | undefined;
 }
 
 export interface SerializedConversionOptions {
@@ -55,7 +55,7 @@ export interface SerializedConversionOptions {
   trimEnd: number;
   maxFrames: number;
   /** Force frame decimation (overrides auto-decimation) */
-  forceDecimation?: number;
+  forceDecimation?: number | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
-  smartFrameSkip?: SmartFrameSkipMode;
+  smartFrameSkip?: SmartFrameSkipMode | undefined;
 }

@@ -11,22 +11,22 @@ const SELECTION_FEEDBACK_DURATION_MS = 500;
 
 interface FileDropzoneProps {
   onFileSelected: (file: File) => void;
-  onCancel?: () => void;
-  onClear?: () => void;
-  disabled?: boolean;
-  progress?: number;
-  status?: string;
-  statusMessage?: string;
-  showElapsedTime?: boolean;
-  startTime?: number;
-  estimatedSecondsRemaining?: number | null;
-  subPhaseLabel?: string;
-  previewUrl?: string | null;
-  phase?: 'demuxing' | 'decoding' | 'encoding' | 'assembling';
-  outputFrames?: number;
-  fileName?: string;
-  fileSize?: number;
-  metadataSummary?: string;
+  onCancel?: (() => void) | undefined;
+  onClear?: (() => void) | undefined;
+  disabled?: boolean | undefined;
+  progress?: number | undefined;
+  status?: string | undefined;
+  statusMessage?: string | undefined;
+  showElapsedTime?: boolean | undefined;
+  startTime?: number | undefined;
+  estimatedSecondsRemaining?: (number | null) | undefined;
+  subPhaseLabel?: string | undefined;
+  previewUrl?: (string | null) | undefined;
+  phase?: ('demuxing' | 'decoding' | 'encoding' | 'assembling') | undefined;
+  outputFrames?: number | undefined;
+  fileName?: string | undefined;
+  fileSize?: number | undefined;
+  metadataSummary?: string | undefined;
 }
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {

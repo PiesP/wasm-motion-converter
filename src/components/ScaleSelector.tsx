@@ -17,8 +17,8 @@ interface ScaleSelectorProps {
   value: ConversionScale;
   onChange: (scale: ConversionScale) => void;
   inputMetadata: VideoMetadata | null;
-  disabled?: boolean;
-  tooltip?: string;
+  disabled?: boolean | undefined;
+  tooltip?: string | undefined;
 }
 
 const ScaleSelector: Component<ScaleSelectorProps> = (props) => {

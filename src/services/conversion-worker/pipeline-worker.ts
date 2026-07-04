@@ -236,7 +236,7 @@ export async function runWorkerPipeline(
         frameDecimation: webpDecimation,
         onFrameDecoded: decodeProgressCb,
       },
-      (p: { progress: number; currentFrame?: number }) => {
+      (p) => {
         const now = performance.now();
         if (now - progressState.lastPostTime >= 100) {
           progressState.lastPostTime = now;

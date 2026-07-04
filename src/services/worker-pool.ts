@@ -113,7 +113,7 @@ export class WebpWorkerPool {
       }
     }
 
-    logger.info('encoders', `Worker pool initialized`, {
+    logger.info('encoders', 'Worker pool initialized', {
       poolSize: this.size,
       created: this.workers.length,
       optimalCount: WebpWorkerPool.getOptimalWorkerCount(),

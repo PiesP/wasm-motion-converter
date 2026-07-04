@@ -5,11 +5,11 @@ import type { Component, ParentProps } from 'solid-js';
 import { splitProps } from 'solid-js';
 
 interface PanelProps extends ParentProps {
-  class?: string;
-  role?: 'region' | 'group' | 'presentation' | 'status' | 'alert';
-  ariaLabel?: string;
-  ariaLive?: 'polite' | 'assertive' | 'off';
-  ariaBusy?: boolean;
+  class?: string | undefined;
+  role?: ('region' | 'group' | 'presentation' | 'status' | 'alert') | undefined;
+  ariaLabel?: string | undefined;
+  ariaLive?: ('polite' | 'assertive' | 'off') | undefined;
+  ariaBusy?: boolean | undefined;
 }
 
 const Panel: Component<PanelProps> = (props) => {
