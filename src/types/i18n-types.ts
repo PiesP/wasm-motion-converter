@@ -38,6 +38,7 @@ export interface TranslationKeys {
   'app.title': string;
   'app.subtitle': string;
   'app.skipToMain': string;
+  'app.navigation': string;
   'app.error.title': string;
   'app.error.description': string;
   'app.error.details': string;
@@ -77,6 +78,7 @@ export interface TranslationKeys {
 
   // Settings Panel
   'settings.title': string;
+  'settings.heading': string;
   'settings.selectVideo': string;
   'settings.convert': string;
   'settings.stopConversion': string;
@@ -164,6 +166,7 @@ export interface TranslationKeys {
   'result.compressionSmaller': string;
   'result.compressionLarger': string;
   'result.previewFailed': string;
+  'result.heading': string;
 
   // Errors
   'error.format': string;

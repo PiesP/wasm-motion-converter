@@ -1,6 +1,7 @@
 {
   "app.title": "dropconvert",
   "app.subtitle": "Convertir vídeos a imágenes GIF o WebP animadas",
+  "app.navigation": "Navegación principal",
   "app.skipToMain": "Ir al contenido principal",
   "app.error.title": "Error de la aplicación",
   "app.error.description": "Se ha producido un error inesperado. Actualiza la página para volver a intentarlo.",
@@ -33,6 +34,8 @@
   "metadata.bitrate": "Bitrate",
   "metadata.detecting": "Detectando...",
   "settings.title": "Configuración",
+  "settings.heading": "Ajustes de conversión",
+  "result.heading": "Resultado",
   "settings.selectVideo": "Selecciona un vídeo para iniciar la conversión",
   "settings.convert": "Convertir",
   "settings.stopConversion": "Detener conversión de vídeo",

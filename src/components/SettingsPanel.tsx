@@ -59,6 +59,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
 
   return (
     <Panel class="p-4">
+      <h2 class="mb-4 text-lg font-semibold text-[#f7f8f8]">{t('settings.heading')}</h2>
       <Show when={local.metadata}>
         <div class="mb-4">
           <TrimSelector

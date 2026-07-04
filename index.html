@@ -52,6 +52,9 @@
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
     <link rel="preconnect" href="https://esm.sh" crossorigin />
 
+    <!-- Preload critical WASM binary for conversion pipeline -->
+    <link rel="preload" href="/wasm-webp.wasm" as="fetch" crossorigin="anonymous" fetchpriority="high" />
+
   </head>
   <body>
     <div id="root"></div>

@@ -1,6 +1,7 @@
 {
   "app.title": "dropconvert",
   "app.subtitle": "تحويل الفيديوهات إلى صور GIF أو WebP متحركة",
+  "app.navigation": "التنقل الرئيسي",
   "app.skipToMain": "انتقل إلى المحتوى الرئيسي",
   "app.error.title": "خطأ في التطبيق",
   "app.error.description": "حدث خطأ غير متوقع. يرجى تحديث الصفحة للمحاولة مرة أخرى.",
@@ -33,6 +34,8 @@
   "metadata.bitrate": "معدل البت",
   "metadata.detecting": "جاري الكشف...",
   "settings.title": "الإعدادات",
+  "settings.heading": "إعدادات التحويل",
+  "result.heading": "النتيجة",
   "settings.selectVideo": "اختر فيديو لبدء التحويل",
   "settings.convert": "تحويل",
   "settings.stopConversion": "إيقاف تحويل الفيديو",

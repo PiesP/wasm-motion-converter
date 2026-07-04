@@ -1,6 +1,7 @@
 {
   "app.title": "dropconvert",
   "app.subtitle": "비디오를 애니메이션 GIF 또는 WebP 이미지로 변환하세요",
+  "app.navigation": "주요 탐색",
   "app.skipToMain": "메인 콘텐츠로 건너뛰기",
   "app.error.title": "애플리케이션 오류",
   "app.error.description": "예기치 않은 오류가 발생했습니다. 페이지를 새로고침하여 다시 시도해 주세요.",
@@ -33,6 +34,8 @@
   "metadata.bitrate": "비트레이트",
   "metadata.detecting": "감지 중...",
   "settings.title": "설정",
+  "settings.heading": "변환 설정",
+  "result.heading": "결과",
   "settings.selectVideo": "변환을 시작할 비디오를 선택하세요",
   "settings.convert": "변환",
   "settings.stopConversion": "비디오 변환 중지",

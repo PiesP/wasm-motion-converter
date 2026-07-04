@@ -28,6 +28,8 @@
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' 'sha256-dhTAj/p2tcWB3q8ACHjAvUY9vq8602iOu4/ItmGkyJQ=' 'sha256-9aZj+ksN13qgCb5jrVDA3Hisq1nb33/Vq6OxRwHLt1Y='; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' blob:; connect-src 'self' blob:; worker-src 'self'
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
+  Permissions-Policy: camera=(), geolocation=(), microphone=(), accelerometer=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin

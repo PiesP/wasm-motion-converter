@@ -1,6 +1,7 @@
 {
   "app.title": "dropconvert",
   "app.subtitle": "将视频转换为动画GIF或WebP图像",
+  "app.navigation": "主导航",
   "app.skipToMain": "跳转到主要内容",
   "app.error.title": "应用程序错误",
   "app.error.description": "发生意外错误。请刷新页面重试。",
@@ -33,6 +34,8 @@
   "metadata.bitrate": "比特率",
   "metadata.detecting": "检测中...",
   "settings.title": "设置",
+  "settings.heading": "转换设置",
+  "result.heading": "结果",
   "settings.selectVideo": "选择视频以开始转换",
   "settings.convert": "转换",
   "settings.stopConversion": "停止视频转换",

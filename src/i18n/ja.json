@@ -1,6 +1,7 @@
 {
   "app.title": "dropconvert",
   "app.subtitle": "動画をアニメーションGIFまたはWebP画像に変換します",
+  "app.navigation": "メインナビゲーション",
   "app.skipToMain": "メインコンテンツにスキップ",
   "app.error.title": "アプリケーションエラー",
   "app.error.description": "予期しないエラーが発生しました。ページを再読み込みしてお試しください。",
@@ -33,6 +34,8 @@
   "metadata.bitrate": "ビットレート",
   "metadata.detecting": "検出中...",
   "settings.title": "設定",
+  "settings.heading": "変換設定",
+  "result.heading": "結果",
   "settings.selectVideo": "変換を開始する動画を選択してください",
   "settings.convert": "変換",
   "settings.stopConversion": "動画変換を停止",

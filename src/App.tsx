@@ -296,10 +296,10 @@ const App: Component = () => {
               <p class="mt-0.5 text-sm text-[#d0d6e0] sm:text-lg">{t('app.subtitle')}</p>
             </div>
 
-            <div class="flex items-center gap-2">
+            <nav aria-label={t('app.navigation')} class="flex items-center gap-2">
               <LanguageSelector />
               <ExportLogsButton />
-            </div>
+            </nav>
           </div>
         </header>
 
@@ -418,7 +418,9 @@ const App: Component = () => {
           <ResultSection results={conversionResults()} />
         </main>
 
-        <LicenseAttribution />
+        <footer>
+          <LicenseAttribution />
+        </footer>
         <ConfirmationModal />
       </div>
     </ErrorBoundary>
