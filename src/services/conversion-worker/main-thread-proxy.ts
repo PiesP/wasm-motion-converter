@@ -18,6 +18,7 @@
 
 import type { ConversionProgress, ConversionRequest } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
+import { isCancellationError } from '@utils/cancellation-context';
 
 import type {
   SerializedConversionOptions,
@@ -221,7 +222,7 @@ export async function runPipelineWithFallback(
     return await runPipelineViaWorker(inputBuffer, config, options, onProgress, signal);
   } catch (workerError) {
     // If the error is a cancellation, don't fall back — propagate it
-    if (workerError instanceof DOMException && workerError.name === 'AbortError') {
+    if (isCancellationError(workerError)) {
       throw workerError;
     }
 
