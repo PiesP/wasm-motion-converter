@@ -33,14 +33,17 @@
     "rules": {
       "preset": "recommended",
       "correctness": {
-        "noUnusedImports": "warn",
+        "noUnusedImports": "error",
         "noUnusedVariables": "warn",
-        "noUnknownMediaFeatureName": "off"
+        "noUnknownMediaFeatureName": "off",
+        "useExhaustiveDependencies": "warn"
       },
       "style": {
         "noNonNullAssertion": "off",
         "useConst": "error",
-        "noParameterAssign": "warn"
+        "noParameterAssign": "warn",
+        "noUnusedTemplateLiteral": "error",
+        "useExponentiationOperator": "error"
       },
       "suspicious": {
         "noExplicitAny": "error",
@@ -49,15 +52,21 @@
         "noUnknownAtRules": "off",
         "noAssignInExpressions": "off",
         "noDocumentCookie": "off",
-        "useIterableCallbackReturn": "off",
-        "noImplicitAnyLet": "error"
+        "useIterableCallbackReturn": "error",
+        "noImplicitAnyLet": "error",
+        "noSelfCompare": "warn",
+        "noArrayIndexKey": "off"
       },
       "complexity": {
         "noForEach": "off",
-        "noStaticOnlyClass": "off"
+        "noStaticOnlyClass": "off",
+        "noUselessTernary": "error",
+        "noUselessSwitchCase": "error",
+        "noUselessEmptyExport": "error",
+        "noUselessLoneBlockStatements": "error"
       },
       "performance": {
-        "noAccumulatingSpread": "warn"
+        "noAccumulatingSpread": "error"
       },
       "a11y": {
         "noStaticElementInteractions": "off",
