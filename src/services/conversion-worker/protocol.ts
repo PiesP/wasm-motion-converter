@@ -40,7 +40,7 @@ export function extractTransferables(request: WorkerRequest): Transferable[] {
 export function extractDescriptionFromConfig(config: SerializedDecoderConfig): ArrayBuffer | null {
   if (!config.description) return null;
   // description is a hex-encoded string of the original DataView bytes
-  return hexToArrayBuffer(config.description); // eslint-disable-line
+  return hexToArrayBuffer(config.description);
 }
 
 // ─── Hex helpers for DataView description ────────────────────────────────

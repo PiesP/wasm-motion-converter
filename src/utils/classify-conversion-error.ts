@@ -27,10 +27,6 @@ import { MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
 // The canonical definition lives in conversion-types.ts (ErrorContext.code).
 // ---------------------------------------------------------------------------
 
-import type { ErrorCode } from '@t/conversion-types';
-
-export type { ErrorCode };
-
 // ---------------------------------------------------------------------------
 // Error classification rule system
 // ---------------------------------------------------------------------------

@@ -3,7 +3,8 @@
 
 // Barrel export for all utility modules
 export { isCancellationError } from './cancellation-context';
-export { classifyConversionError, type ErrorCode } from './classify-conversion-error';
+export { classifyConversionError } from './classify-conversion-error';
+export type { ErrorCode } from '@t/conversion-types';
 export {
   DEFAULT_FPS,
   GIF_TARGET_FPS,
