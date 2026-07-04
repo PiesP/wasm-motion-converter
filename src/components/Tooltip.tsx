@@ -80,7 +80,7 @@ const Tooltip: Component<TooltipProps> = (props) => {
       <Show when={isVisible()}>
         <div
           id={tooltipId()}
-          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-[#f7f8f8] bg-[#191a1b] rounded-lg shadow-lg ${tooltipClass()} left-1/2 -translate-x-1/2 max-w-[240px] whitespace-normal pointer-events-none`}
+          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-[#f7f8f8] bg-[#191a1b] rounded-lg shadow-lg ${tooltipClass()} left-1/2 -translate-x-1/2 w-max max-w-[240px] whitespace-normal pointer-events-none`}
           role="tooltip"
         >
           {local.content}
