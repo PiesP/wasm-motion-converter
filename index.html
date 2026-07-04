@@ -12,11 +12,11 @@
         try {
           stored = localStorage.getItem('dropconvert.locale');
           if (stored) { document.documentElement.lang = stored; return; }
-        } catch (e) {}
+        } catch (_e) {}
         try {
           langs = navigator.languages || [navigator.language];
           if (langs.length > 0 && langs[0]) { document.documentElement.lang = langs[0]; }
-        } catch (e) {}
+        } catch (_e) {}
       })();
     </script>
 

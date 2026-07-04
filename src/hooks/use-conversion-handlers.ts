@@ -3,7 +3,8 @@
 
 import type { ProgressPhase } from '@t/conversion-types';
 import type { TFunction } from '@t/i18n-types';
-import { onCleanup, type Setter } from 'solid-js';
+import type { Setter } from 'solid-js';
+import { onCleanup } from 'solid-js';
 import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';
 import {

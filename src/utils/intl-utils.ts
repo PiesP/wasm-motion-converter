@@ -7,7 +7,8 @@
  * Core i18n helpers: locale detection, Intl API wrappers, lang attribute management.
  */
 
-import { DEFAULT_LOCALE, LOCALES, type Locale } from '@t/i18n-types';
+import type { Locale } from '@t/i18n-types';
+import { DEFAULT_LOCALE, LOCALES } from '@t/i18n-types';
 
 /**
  * Detect user's preferred locale from browser settings.

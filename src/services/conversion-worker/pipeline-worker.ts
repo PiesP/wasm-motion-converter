@@ -20,12 +20,12 @@ import {
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
-import { globalBufferPool } from '../buffer-pool';
-import { demuxVideo } from '../demuxer-service';
-import { calcAutoDecimation } from '../encoder-common';
-import { resolveVideoDimensions } from '../frame-utils';
-import { encodeGif } from '../gif-encoder-service';
-import { encodeWebp } from '../webp-encoder-service';
+import { globalBufferPool } from '@services/buffer-pool';
+import { demuxVideo } from '@services/demuxer-service';
+import { calcAutoDecimation } from '@services/encoder-common';
+import { resolveVideoDimensions } from '@services/frame-utils';
+import { encodeGif } from '@services/gif-encoder-service';
+import { encodeWebp } from '@services/webp-encoder-service';
 import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
 
 interface WorkerProgressState {

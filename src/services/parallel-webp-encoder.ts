@@ -27,7 +27,8 @@ import {
   extractVP8BitstreamFast,
   StreamingWebpMuxer,
 } from './streaming-webp-encoder';
-import { type EncodeTask, type EncodeTaskResult, getWorkerPool } from './worker-pool';
+import type { EncodeTask, EncodeTaskResult } from './worker-pool';
+import { getWorkerPool } from './worker-pool';
 
 const WORKER_QUALITY_MAP: Record<BaseEncoderOptions['quality'], number> = {
   low: 0.6,

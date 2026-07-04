@@ -4,7 +4,8 @@
 import { useLocale } from '@hooks/use-locale';
 import type { ProgressPhase } from '@t/conversion-types';
 import { formatDurationSeconds } from '@utils/format-utils';
-import { type Component, createEffect, createMemo, onCleanup, Show, splitProps } from 'solid-js';
+import type { Component } from 'solid-js';
+import { createEffect, createMemo, onCleanup, Show, splitProps } from 'solid-js';
 
 const PHASE_CONFIG = [
   {
