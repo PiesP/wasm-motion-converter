@@ -287,6 +287,26 @@ html.dark :focus-visible {
   navigation: auto;
 }
 
+/* ── Content Visibility ──
+   Defer rendering of off-screen result sections to improve
+   initial load and scroll performance.
+
+   content-visibility: auto tells the browser to skip layout/paint
+   for elements outside the viewport. contain-intrinsic-size
+   provides a placeholder size to prevent layout shifts. */
+.result-section-deferred {
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 250px;
+}
+
+/* Per-result preview cards within the section.
+   Each card is self-contained with image, stats, and download button.
+   Off-screen cards use content-visibility: auto for deferred rendering. */
+.result-preview-deferred {
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 400px;
+}
+
 /* Default cross-fade for all view transitions */
 ::view-transition-old(root) {
   animation: fade-out 0.15s ease-out;

@@ -13,7 +13,10 @@ interface ResultSectionProps {
 const ResultSection: Component<ResultSectionProps> = (props) => {
   return (
     <Show when={props.results.length > 0}>
-      <div class="mt-8 space-y-6 animate-crossfade" data-testid="result-section">
+      <div
+        class="mt-8 space-y-6 animate-crossfade result-section-deferred"
+        data-testid="result-section"
+      >
         <For each={props.results}>
           {(result) => (
             <ResultPreview

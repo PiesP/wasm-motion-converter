@@ -134,7 +134,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   };
 
   return (
-    <Panel class="p-4 bg-[#0f1011] border border-white/[0.08] rounded-lg">
+    <Panel class="p-4 bg-[#0f1011] border border-white/[0.08] rounded-lg result-preview-deferred">
       {/* Preview area */}
       <div class="relative flex justify-center bg-white/[0.02] rounded-lg overflow-hidden">
         {/* Skeleton: removed from DOM when loaded */}
