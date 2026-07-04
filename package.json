@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "gifenc": "^1.0.3",
-    "mediabunny": "^1.50.4",
+    "mediabunny": "^1.50.6",
     "solid-js": "1.9.14",
     "wasm-webp": "^0.1.0"
   },
@@ -54,7 +54,7 @@
     "esbuild": "0.28.1",
     "knip": "6.24.0",
     "rollup-plugin-visualizer": "7.0.1",
-    "tsx": "^4.22.5",
+    "tsx": "^4.23.0",
     "typescript": "6.0.3",
     "vite": "8.1.3",
     "vite-plugin-solid": "2.11.12"
