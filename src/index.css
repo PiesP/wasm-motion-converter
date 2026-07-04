@@ -349,7 +349,8 @@ html.dark :focus-visible {
    Browser takes care of transition from starting state to final state. */
 .result-preview-enter,
 .error-display-enter,
-.progress-bar-enter {
+.progress-bar-enter,
+.modal-backdrop-enter {
   transition:
     opacity 0.3s ease-out,
     transform 0.3s ease-out;
@@ -357,8 +358,33 @@ html.dark :focus-visible {
 @starting-style {
   .result-preview-enter,
   .error-display-enter,
-  .progress-bar-enter {
+  .progress-bar-enter,
+  .modal-backdrop-enter {
     opacity: 0;
     transform: translateY(12px);
   }
+}
+
+/* ── Accessibility Utilities ── */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Modern CSS Utilities ── */
+.field-sizing-content {
+  field-sizing: content;
+}
+
+/* ── Scroll Edge Soft Fade ── */
+.mask-fade-bottom {
+  mask-image: linear-gradient(to bottom, black 90%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 90%, transparent 100%);
 }

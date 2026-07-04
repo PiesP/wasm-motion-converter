@@ -289,7 +289,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-7 h-7',
       'rounded-full bg-white/90 border-2',
       'border-[#5e6ad2] shadow-md',
-      'cursor-col-resize hover:scale-110 hover:shadow-lg hover:border-[#5e6ad2]',
+      'cursor-col-resize hover:scale-[1.1] hover:shadow-lg hover:border-[#5e6ad2]',
       'transition-all duration-150 ease-out',
       'focus-visible:ring-2 focus-visible:ring-[rgba(94,106,210,0.5)] focus-visible:ring-offset-2 focus-visible:outline-none',
       'after:absolute after:-bottom-2 after:left-1/2 after:-translate-x-1/2',
@@ -304,7 +304,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   };
 
   const textClass =
-    'text-[10px] border border-white/[0.08] rounded px-1 py-0.5 bg-[#191a1b] text-right font-mono w-[4.5rem]';
+    'text-[10px] border border-white/[0.08] rounded px-1 py-0.5 bg-[#191a1b] text-right font-mono w-[4.5rem] field-sizing-content';
 
   if (props.duration < MIN_DURATION) {
     return <p class="text-xs text-[#8a8f98]">{t('trim.tooShort')}</p>;
@@ -421,7 +421,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             type="button"
             onClick={() => handlePreset(preset.start, preset.end)}
             disabled={props.disabled}
-            aria-pressed={isPresetActive(preset.start, preset.end)}
+            aria-current={isPresetActive(preset.start, preset.end) ? 'true' : undefined}
             class={presetBtnClass(isPresetActive(preset.start, preset.end))}
           >
             {preset.label}
