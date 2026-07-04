@@ -9,9 +9,9 @@
  * and forwards progress/complete/error responses back to the main thread.
  */
 
+import { isCancellationError } from '@utils/cancellation-context';
 import { runWorkerPipeline } from './pipeline-worker';
 import type { WorkerRequest, WorkerResponse } from './types';
-import { isCancellationError } from '@utils/cancellation-context';
 
 // ─── AbortController registry ────────────────────────────────────────────
 
@@ -68,8 +68,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const code =
-          isCancellationError(err) ? 'CANCELLED' : 'UNKNOWN';
+        const code = isCancellationError(err) ? 'CANCELLED' : 'UNKNOWN';
 
         respond({
           type: 'error',

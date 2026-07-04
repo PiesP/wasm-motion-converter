@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+export type { ErrorCode } from '@t/conversion-types';
 // Barrel export for all utility modules
 export { isCancellationError } from './cancellation-context';
 export { classifyConversionError } from './classify-conversion-error';
-export type { ErrorCode } from '@t/conversion-types';
 export {
   DEFAULT_FPS,
   GIF_TARGET_FPS,

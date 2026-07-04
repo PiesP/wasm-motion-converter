@@ -17,8 +17,8 @@
  */
 
 import type { ConversionProgress, ConversionRequest } from '@t/conversion-types';
-import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
 import { isCancellationError } from '@utils/cancellation-context';
+import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
 
 import type {
   SerializedConversionOptions,

@@ -45,11 +45,9 @@ export interface DecodeOptions {
    * are passed to this callback for immediate processing (e.g. encoding).
    * The callback receives ownership of the RGB buffer (must release to pool).
    */
-  onFrameAvailable?: ((
-    rgbData: Uint8Array,
-    durationMs: number,
-    frameNum: number
-  ) => Promise<void> | void) | undefined;
+  onFrameAvailable?:
+    | ((rgbData: Uint8Array, durationMs: number, frameNum: number) => Promise<void> | void)
+    | undefined;
   /**
    * GPU-only callback: passes raw VideoFrame to encoder without reading
    * pixels into JS memory. Used by VP8 VideoEncoder path for zero-copy
@@ -57,11 +55,9 @@ export interface DecodeOptions {
    * disabled (dHash requires RGB pixel data).
    * The caller OWNS the VideoFrame and MUST call frame.close().
    */
-  onVideoFrameAvailable?: ((
-    frame: VideoFrame,
-    durationMs: number,
-    frameNum: number
-  ) => Promise<void> | void) | undefined;
+  onVideoFrameAvailable?:
+    | ((frame: VideoFrame, durationMs: number, frameNum: number) => Promise<void> | void)
+    | undefined;
   /**
    * Explicit decode mode. When 'stream', frames are passed to onFrameAvailable
    * immediately. When 'batch', frames are collected into an array.

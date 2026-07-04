@@ -5,12 +5,7 @@
     "module": "ESNext",
     "incremental": true,
     "tsBuildInfoFile": ".vscode/.tsbuildinfo",
-    "lib": [
-      "ESNext",
-      "DOM",
-      "DOM.Iterable",
-      "WebWorker"
-    ],
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
     "moduleResolution": "bundler",
@@ -29,30 +24,14 @@
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "src/*"
-      ],
-      "@components/*": [
-        "src/components/*"
-      ],
-      "@services/*": [
-        "src/services/*"
-      ],
-      "@utils/*": [
-        "src/utils/*"
-      ],
-      "@stores/*": [
-        "src/stores/*"
-      ],
-      "@hooks/*": [
-        "src/hooks/*"
-      ],
-      "@t/*": [
-        "src/types/*"
-      ],
-      "@i18n": [
-        "src/i18n/index.ts"
-      ]
+      "@/*": ["src/*"],
+      "@components/*": ["src/components/*"],
+      "@services/*": ["src/services/*"],
+      "@utils/*": ["src/utils/*"],
+      "@stores/*": ["src/stores/*"],
+      "@hooks/*": ["src/hooks/*"],
+      "@t/*": ["src/types/*"],
+      "@i18n": ["src/i18n/index.ts"]
     },
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
