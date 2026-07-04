@@ -1,14 +1,4 @@
-/**
- * Global Styles for Motion Converter
- *
- * Provides base styling for the application including:
- * - Tailwind CSS framework integration
- * - Linear design system tokens (dark theme default)
- * - Inter Variable font with cv01, ss03 OpenType features
- * - Dark mode support with custom variant
- * - Theme-aware background colors with smooth transitions
- * - Custom keyframe animations for UI transitions
- */
+/** @import "tailwindcss" theme-aware colors with light-dark() support. */
 
 @import "tailwindcss";
 
@@ -17,8 +7,8 @@
  *
  * @theme block defines design tokens as Tailwind utility classes.
  * Each variable here generates a corresponding utility (e.g. bg-bg-base, text-brand).
+ * Values here are dark-mode defaults used by Tailwind utility generation.
  */
-
 @theme {
   /* ── Surface / Background ── */
   --color-bg-base: #08090a; /* marketing black — page background */
@@ -51,31 +41,37 @@
 }
 
 /**
- * Linear Design System — CSS Custom Properties (runtime fallback)
+ * Linear Design System — CSS Custom Properties (runtime)
  *
- * These mirror the @theme tokens above but are available at runtime
- * for var() usage in component styles and inline styles.
+ * These mirror the @theme tokens above but use the light-dark() CSS function
+ * to automatically adapt to the user's system color scheme preference.
+ *
+ * light-dark(light-color, dark-color):
+ *   When the user's preferred color scheme is "light", the first value is used.
+ *   When "dark", the second value is used.
  */
 :root {
+  color-scheme: light dark;
+
   /* ── Surface / Background ── */
-  --color-bg-base: #08090a;
-  --color-bg-panel: #0f1011;
-  --color-bg-elevated: #191a1b;
+  --color-bg-base: light-dark(#ffffff, #08090a);
+  --color-bg-panel: light-dark(#f7f8fa, #0f1011);
+  --color-bg-elevated: light-dark(#ffffff, #191a1b);
 
   /* ── Text ── */
-  --color-text-primary: #f7f8f8;
-  --color-text-secondary: #d0d6e0;
-  --color-text-tertiary: #8a8f98;
-  --color-text-quaternary: #62666d;
+  --color-text-primary: light-dark(#171717, #f7f8f8);
+  --color-text-secondary: light-dark(#525252, #d0d6e0);
+  --color-text-tertiary: light-dark(#737373, #8a8f98);
+  --color-text-quaternary: light-dark(#a3a3a3, #62666d);
 
-  /* ── Brand Accent ── */
+  /* ── Brand Accent (perceptually uniform, identical in both modes) ── */
   --color-brand: #5e6ad2;
   --color-brand-interactive: #7170ff;
   --color-brand-hover: #828fff;
 
   /* ── Borders ── */
-  --color-border-subtle: rgba(255, 255, 255, 0.05);
-  --color-border-standard: rgba(255, 255, 255, 0.08);
+  --color-border-subtle: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
+  --color-border-standard: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
 
   /* ── Radii ── */
   --radius-button: 6px;
