@@ -2,8 +2,9 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { ConversionFormat } from '@t/conversion-types';
-
 import {
+  BYTES_PER_KB,
+  BYTES_PER_MB,
   MEMORY_CRITICAL_RATIO,
   MEMORY_CRITICAL_THRESHOLD,
   MEMORY_DEFAULT_AVAILABLE_MB,
@@ -77,7 +78,7 @@ export function getMemoryInfo(): MemoryInfo | null {
   if (typeof deviceMemoryGB === 'number' && deviceMemoryGB > 0) {
     // deviceMemory is total device RAM, not JS heap limit.
     // Use a conservative estimate: ~25% of device memory as available JS heap.
-    const jsHeapSizeLimit = deviceMemoryGB * 1024 * 1024 * 1024 * 0.25;
+    const jsHeapSizeLimit = deviceMemoryGB * BYTES_PER_KB * BYTES_PER_MB * 0.25;
     return {
       usedJSHeapSize: 0, // Unknown without performance.memory
       totalJSHeapSize: 0,
@@ -105,7 +106,7 @@ export function isMemoryCritical(): boolean {
 export function getMemoryUsageMB(): number | null {
   const memInfo = getMemoryInfo();
   if (!memInfo) return null;
-  return Math.round(memInfo.usedJSHeapSize / (1024 * 1024));
+  return Math.round(memInfo.usedJSHeapSize / BYTES_PER_MB);
 }
 
 /**
@@ -138,9 +139,9 @@ function estimatePeakMemoryMB(
   const outputRatio = format === 'gif' ? 0.2 : 0.05;
   const outputMemory = totalFrames * bytesPerFrame * outputRatio;
   // Decoder overhead: ~50MB
-  const decoderOverhead = 50 * 1024 * 1024;
+  const decoderOverhead = 50 * BYTES_PER_MB;
   const totalBytes = frameMemory + outputMemory + decoderOverhead;
-  return Math.round(totalBytes / (1024 * 1024));
+  return Math.round(totalBytes / BYTES_PER_MB);
 }
 
 /**
@@ -156,7 +157,7 @@ export function checkMemoryForConversion(
   const estimatedMB = estimatePeakMemoryMB(width, height, totalFrames, format);
   const memInfo = getMemoryInfo();
   const availableMB = memInfo
-    ? Math.round((memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize) / (1024 * 1024))
+    ? Math.round((memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize) / BYTES_PER_MB)
     : MEMORY_DEFAULT_AVAILABLE_MB;
 
   if (estimatedMB > availableMB * MEMORY_CRITICAL_RATIO) {

@@ -9,6 +9,7 @@
 
 import type { Locale } from '@t/i18n-types';
 import { DEFAULT_LOCALE, LOCALES } from '@t/i18n-types';
+import { BYTES_PER_KB } from './constants.js';
 
 /**
  * Detect user's preferred locale from browser settings.
@@ -79,7 +80,7 @@ export function updateDocumentLang(locale: Locale, dir: 'ltr' | 'rtl'): void {
  */
 export function formatFileSize(bytes: number, locale: Locale): string {
   if (bytes === 0) return `${new Intl.NumberFormat(locale).format(0)} ${fileUnit(0, locale)}`;
-  const k = 1024;
+  const k = BYTES_PER_KB;
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), 3);
   const value = bytes / k ** i;
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: i === 0 ? 0 : 2 }).format(value)} ${fileUnit(i, locale)}`;

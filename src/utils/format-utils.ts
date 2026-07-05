@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { BYTES_PER_KB } from './constants.js';
+
 /**
  * ID generation utility
  *
@@ -56,7 +58,7 @@ export function formatBytes(bytes: number, locale?: string): string {
 
   if (bytes === 0) return '0 B';
 
-  const k = 1024;
+  const k = BYTES_PER_KB;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
 

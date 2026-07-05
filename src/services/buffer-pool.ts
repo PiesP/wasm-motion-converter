@@ -1,25 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-/**
- * Buffer Pool — reuses Uint8Array allocations to reduce GC pressure.
- *
- * Video conversion allocates many same-sized buffers per frame (RGB, RGBA,
- * copyTo targets). Without pooling, each frame triggers 2-3 new allocations
- * followed by GC. With pooling, buffers are recycled across frames.
- *
- * A total memory cap prevents unbounded growth: when the pooled memory
- * exceeds the limit, release() silently discards buffers instead of pooling
- * them, allowing GC to reclaim the memory.
- *
- * Usage:
- *   const pool = new BufferPool();
- *   const buf = pool.acquire(size);
- *   // ... use buf ...
- *   pool.release(buf);
- */
-
-import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
+import { BYTES_PER_MB, WORKER_MAX_MEMORY_MB } from '../utils/constants.js';
 
 /**
  * Default maximum total pooled memory: 512 MB.
@@ -29,7 +11,7 @@ import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
  * memory-constrained devices, the pool can hold too much if uncapped.
  * Consider lowering this based on deviceMemory or jsHeapSizeLimit.
  */
-const DEFAULT_MAX_TOTAL_MEMORY = WORKER_MAX_MEMORY_MB * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_MEMORY = WORKER_MAX_MEMORY_MB * BYTES_PER_MB;
 
 /**
  * Determine a reasonable default maxTotalMemory based on available JS heap.
@@ -48,6 +30,23 @@ function getDefaultMaxTotalMemory(): number {
   return DEFAULT_MAX_TOTAL_MEMORY;
 }
 
+/**
+ * Buffer Pool — reuses Uint8Array allocations to reduce GC pressure.
+ *
+ * Video conversion allocates many same-sized buffers per frame (RGB, RGBA,
+ * copyTo targets). Without pooling, each frame triggers 2-3 new allocations
+ * followed by GC. With pooling, buffers are recycled across frames.
+ *
+ * A total memory cap prevents unbounded growth: when the pooled memory
+ * exceeds the limit, release() silently discards buffers instead of pooling
+ * them, allowing GC to reclaim the memory.
+ *
+ * Usage:
+ *   const pool = new BufferPool();
+ *   const buf = pool.acquire(size);
+ *   // ... use buf ...
+ *   pool.release(buf);
+ */
 export class BufferPool {
   private pools: Map<number, Uint8Array[]> = new Map();
   private maxPerBucket: number;

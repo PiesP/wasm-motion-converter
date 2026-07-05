@@ -15,8 +15,14 @@ import type { ConversionQuality } from '@t/conversion-types';
 // FILE SIZE CONSTRAINTS (bytes)
 // ============================================================================
 
+/** Bytes per kilobyte */
+export const BYTES_PER_KB = 1024;
+
+/** Bytes per megabyte (1024 KB) */
+export const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
+
 /** Maximum file size allowed for upload (500 MB) */
-export const MAX_FILE_SIZE = 500 * 1024 * 1024;
+export const MAX_FILE_SIZE = 500 * BYTES_PER_MB;
 
 export const SUPPORTED_VIDEO_MIMES = [
   'video/mp4',
@@ -100,7 +106,7 @@ export const GIF_MIN_FRAME_DELAY_MS = 20;
 export const GIF_LZW_RATIO = 0.1;
 
 /** GIF encoder maximum buffer size (32 MB) */
-export const GIF_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+export const GIF_MAX_BUFFER_BYTES = 32 * BYTES_PER_MB;
 
 // ============================================================================
 // TIMEOUT CONSTANTS (milliseconds)

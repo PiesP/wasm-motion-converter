@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { BYTES_PER_MB } from '../utils/constants.js';
+
 /**
  * Conversion Profiler — per-phase timing, memory, and throughput measurement.
  *
@@ -136,7 +138,7 @@ export class ConversionProfiler {
     const fps = durationMs > 0 ? Math.round((frames / durationMs) * 1000) : 0;
     const throughputMBps =
       durationMs > 0 && outputBytes > 0
-        ? Math.round((outputBytes / (1024 * 1024) / (durationMs / 1000)) * 100) / 100
+        ? Math.round((outputBytes / BYTES_PER_MB / (durationMs / 1000)) * 100) / 100
         : 0;
 
     this.phases.set(phase, {
@@ -234,7 +236,7 @@ export class ConversionProfiler {
     };
     const mem = perf.memory;
     if (mem && typeof mem.usedJSHeapSize === 'number') {
-      return Math.round(mem.usedJSHeapSize / (1024 * 1024));
+      return Math.round(mem.usedJSHeapSize / BYTES_PER_MB);
     }
     return 0;
   }
