@@ -78,15 +78,16 @@ function prepareVp8Frame(vp8Bytes: Uint8Array): Uint8Array {
     }
   }
 
-  // Strip prefix and create a mutable copy for show_frame patching
+  // Strip prefix and create a mutable copy for show_frame + version patching.
+  // Chromium's VP8 encoder produces keyframes with:
+  //   - show_frame=0 (invisible) at bit 3 — must be 1 for WebP ANMF
+  //   - version=2 at bits 6-4 — must be 0 per RFC 6386
+  // Patch bit 3 → 1 and bits 6-4 → 0 (e.g. 0xa0 → 0x88).
   const raw = vp8Bytes.subarray(frameStart);
   const frame = new Uint8Array(raw);
-  // Byte 3, bit 0: show_frame (set to 1 for visible frame)
-  // The byte layout: [key_frame:1][version:3][show_frame:1][first_part_size_high:3]
-  // Current value is typically 0xa0 (10100000), we need 0xa1 (10100001)
   const byte = frame[3];
   if (byte !== undefined) {
-    frame[3] = byte | 0x01;
+    frame[3] = (byte & 0x8f) | 0x08; // clear version bits 6-4, set show_frame bit 3
   }
 
   return frame;

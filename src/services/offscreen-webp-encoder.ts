@@ -25,7 +25,7 @@ import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
 import { convertRGBToRGBA } from './frame-utils';
-import { extractVP8BitstreamFast, StreamingWebpMuxer } from './streaming-webp-encoder';
+import { StreamingWebpMuxer } from './streaming-webp-encoder';
 
 /**
  * OffscreenCanvas quality parameter (0.0–1.0 float).
@@ -61,6 +61,10 @@ function isOffscreenCanvasAvailable(): boolean {
  * 2. Extended VP8X WebP: RIFF → WEBP → "VP8X" → [chunks including "VP8 "]
  *
  * This function handles both formats by scanning for the VP8 chunk.
+ *
+ * Chromium's convertToBlob (and VideoEncoder) prepend a 3-byte frame
+ * size prefix before the VP8 keyframe tag (0x9d 0x01 0x2a). This is
+ * stripped to produce a clean VP8 bitstream for the animated WebP muxer.
  */
 function extractVP8FromOffscreenBlob(webpBuffer: Uint8Array): Uint8Array {
   if (webpBuffer.length < 24) {
@@ -79,6 +83,8 @@ function extractVP8FromOffscreenBlob(webpBuffer: Uint8Array): Uint8Array {
     throw new Error(`Invalid WEBP type: 0x${view.getUint32(8, false).toString(16)}`);
   }
 
+  let vp8Data: Uint8Array;
+
   // Determine format: simple VP8 (0x56503820) or extended VP8X (0x56503858)
   const fourCC = view.getUint32(12, false);
 
@@ -88,10 +94,8 @@ function extractVP8FromOffscreenBlob(webpBuffer: Uint8Array): Uint8Array {
     if (20 + frameSize > webpBuffer.length) {
       throw new Error(`Frame size ${frameSize} exceeds buffer ${webpBuffer.length}`);
     }
-    return webpBuffer.subarray(20, 20 + frameSize);
-  }
-
-  if (fourCC === 0x56503858) {
+    vp8Data = webpBuffer.subarray(20, 20 + frameSize);
+  } else if (fourCC === 0x56503858) {
     // VP8X extended format — scan chunks to find VP8
     const vp8xSize = view.getUint32(16, true);
     let offset = 12 + 8 + vp8xSize; // skip past VP8X chunk (header 8 + data)
@@ -105,24 +109,59 @@ function extractVP8FromOffscreenBlob(webpBuffer: Uint8Array): Uint8Array {
         if (offset + 8 + chunkSize > webpBuffer.length) {
           throw new Error(`VP8 chunk size ${chunkSize} exceeds buffer ${webpBuffer.length}`);
         }
-        return webpBuffer.subarray(offset + 8, offset + 8 + chunkSize);
+        vp8Data = webpBuffer.subarray(offset + 8, offset + 8 + chunkSize);
+        break;
       }
 
       // Advance to next chunk (with padding for odd sizes)
       offset += 8 + chunkSize + (chunkSize % 2);
     }
 
-    throw new Error('VP8X container does not contain a VP8 chunk');
+    if (!vp8Data!) {
+      throw new Error('VP8X container does not contain a VP8 chunk');
+    }
+  } else {
+    // Unknown format
+    const codecStr = String.fromCharCode(
+      webpBuffer[12]!,
+      webpBuffer[13]!,
+      webpBuffer[14]!,
+      webpBuffer[15]!
+    );
+    throw new Error(`Unknown WebP format: "${codecStr}" (0x${fourCC.toString(16)})`);
   }
 
-  // Unknown format
-  const codecStr = String.fromCharCode(
-    webpBuffer[12]!,
-    webpBuffer[13]!,
-    webpBuffer[14]!,
-    webpBuffer[15]!
-  );
-  throw new Error(`Unknown WebP format: "${codecStr}" (0x${fourCC.toString(16)})`);
+  // Find the VP8 keyframe tag (0x9d 0x01 0x2a) to locate the keyframe byte.
+  // Chromium's VP8 bitstream has a 3-byte header before the frame tag.
+  // DO NOT strip these 3 bytes — they are part of the valid VP8 bitstream
+  // that libwebp's decoder expects (verified with dwebp).
+  let tagOffset = -1;
+  for (let i = 0; i < Math.min(vp8Data.length - 2, 16); i++) {
+    if (vp8Data[i] === 0x9d && vp8Data[i + 1] === 0x01 && vp8Data[i + 2] === 0x2a) {
+      tagOffset = i;
+      break;
+    }
+  }
+
+  if (tagOffset < 0) {
+    // Fallback: return as-is if frame tag not found (shouldn't happen)
+    return vp8Data;
+  }
+
+  // Create a mutable copy of ALL VP8 data (including the 3-byte header
+  // that must be preserved for libwebp compatibility).
+  // Then patch the keyframe byte at (tagOffset + 3):
+  //   - show_frame=0 (invisible) at bit 3 → set to 1 for WebP ANMF
+  //   - version=2 at bits 6-4 → clear to 0 per RFC 6386
+  // Patch: (byte & 0x8f) | 0x08  (e.g. 0x80 → 0x88, 0xa0 → 0x88)
+  const frame = new Uint8Array(vp8Data);
+  const keyIdx = tagOffset + 3;
+  const keyByte = frame[keyIdx];
+  if (keyByte !== undefined) {
+    frame[keyIdx] = (keyByte & 0x8f) | 0x08; // clear version bits 6-4, set show_frame bit 3
+  }
+
+  return frame;
 }
 
 /**
@@ -262,12 +301,10 @@ export async function encodeWebpOffscreen(
         // Read blob as ArrayBuffer
         const webpBuffer = new Uint8Array(await blob.arrayBuffer());
 
-        // Extract VP8 bitstream from the single-frame WebP
-        // First frame uses full validation, subsequent frames use fast path
-        const bitstream =
-          encodeIdx === 0
-            ? extractVP8FromOffscreenBlob(webpBuffer)
-            : extractVP8BitstreamFast(webpBuffer);
+        // Extract VP8 bitstream from the single-frame WebP.
+        // Always use the full parser — convertToBlob may produce VP8X
+        // format for any frame, not just the first.
+        const bitstream = extractVP8FromOffscreenBlob(webpBuffer);
 
         muxer.addFrame(bitstream, totalDuration);
         encodeIdx++;
