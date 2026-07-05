@@ -361,126 +361,65 @@ export async function runWorkerPipeline(
         }
       }
 
-      // ── OffscreenCanvas WebP path (GPU-only, ~3x faster than wasm) ──
+      // ── wasm-webp encodeRGB path (primary, most compatible) ──
+      // Uses encodeWebp from webp-encoder-service which invokes
+      // wasm-webp's encodeRGB for each frame, then muxes via
+      // StreamingWebpMuxer. Proven reliable across all quality/scale
+      // combinations.
+      //
+      // NOTE: OffscreenCanvas path (encodeWebpOffscreen) is available
+      // as fallback but disabled by default due to VP8 coded-size vs
+      // ANMF canvas mismatch on certain quality settings.
       if (!output) {
-        if (typeof OffscreenCanvas !== 'undefined') {
-          logger.info('encoders', 'WebP encoder (OffscreenCanvas convertToBlob + mux)', {
-            codec: demuxResult.config.codec,
-            codedWidth,
-            codedHeight,
-            totalFrames: demuxResult.totalFrames,
-            sourceFps: Math.round(sourceFps),
-            webpDecimation,
-          });
+        logger.info('encoders', 'WebP encoder (wasm-webp encodeRGB + mux)', {
+          codec: demuxResult.config.codec,
+          codedWidth,
+          codedHeight,
+          totalFrames: demuxResult.totalFrames,
+          sourceFps: Math.round(sourceFps),
+          webpDecimation,
+        });
 
-          try {
-            const { encodeWebpOffscreen } = await import('@services/offscreen-webp-encoder');
-            const encoded = await encodeWebpOffscreen(
-              demuxResult,
-              {
-                width: codedWidth,
-                height: codedHeight,
-                quality: options.quality,
-                scale: options.scale,
-                frameDecimation: webpDecimation,
-                onFrameDecoded: decodeProgressCb,
-              },
-              (p) => {
-                const now = performance.now();
-                if (now - progressState.lastPostTime >= 100) {
-                  progressState.lastPostTime = now;
-                  const encodePct =
-                    estimatedOutputFrames > 0
-                      ? Math.round(((p.currentFrame ?? 0) / estimatedOutputFrames) * ENCODE_RANGE)
-                      : 0;
-                  postMessage({
-                    type: 'progress',
-                    requestId: '',
-                    phase: 'encoding',
-                    percent: Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
-                    fps: progressState.fpsTracker.current,
-                    etaSeconds:
-                      progressState.fpsTracker.current > 0 && p.currentFrame != null
-                        ? Math.round(
-                            (estimatedOutputFrames - p.currentFrame) /
-                              progressState.fpsTracker.current
-                          )
-                        : 0,
-                    memoryMB: 0,
-                    currentFrame: p.currentFrame ?? 0,
-                    totalFrames: estimatedOutputFrames,
-                    outputFrames: estimatedOutputFrames,
-                  });
-                }
-              },
-              _signal
-            );
-            output = encoded.buffer as ArrayBuffer;
-          } catch (offscreenErr) {
-            logger.warn(
-              'encoders',
-              'OffscreenCanvas encoder failed in worker, falling back to wasm-webp',
-              {
-                error: offscreenErr instanceof Error ? offscreenErr.message : String(offscreenErr),
-              }
-            );
-            // Fall through to wasm-webp path below
-          }
-        }
-
-        // ── wasm-webp fallback (CPU, slowest) ──
-        if (!output) {
-          logger.info('encoders', 'WebP encoder (streaming encodeRGB + mux)', {
-            codec: demuxResult.config.codec,
-            codedWidth,
-            codedHeight,
-            totalFrames: demuxResult.totalFrames,
-            sourceFps: Math.round(sourceFps),
-            webpDecimation,
-          });
-
-          const webpResult = await encodeWebp(
-            demuxResult,
-            {
-              width: codedWidth,
-              height: codedHeight,
-              quality: options.quality,
-              scale: options.scale,
-              frameDecimation: webpDecimation,
-              onFrameDecoded: decodeProgressCb,
-            },
-            (p) => {
-              const now = performance.now();
-              if (now - progressState.lastPostTime >= 100) {
-                progressState.lastPostTime = now;
-                const encodePct =
-                  estimatedOutputFrames > 0
-                    ? Math.round(((p.currentFrame ?? 0) / estimatedOutputFrames) * ENCODE_RANGE)
-                    : 0;
-                postMessage({
-                  type: 'progress',
-                  requestId: '',
-                  phase: 'encoding',
-                  percent: Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
-                  fps: progressState.fpsTracker.current,
-                  etaSeconds:
-                    progressState.fpsTracker.current > 0 && p.currentFrame != null
-                      ? Math.round(
-                          (estimatedOutputFrames - p.currentFrame) /
-                            progressState.fpsTracker.current
-                        )
-                      : 0,
-                  memoryMB: 0,
-                  currentFrame: p.currentFrame ?? 0,
-                  totalFrames: estimatedOutputFrames,
-                  outputFrames: estimatedOutputFrames,
-                });
-              }
-            },
-            _signal
-          );
-          output = webpResult.buffer as ArrayBuffer;
-        }
+        const webpResult = await encodeWebp(
+          demuxResult,
+          {
+            width: codedWidth,
+            height: codedHeight,
+            quality: options.quality,
+            scale: options.scale,
+            frameDecimation: webpDecimation,
+            onFrameDecoded: decodeProgressCb,
+          },
+          (p) => {
+            const now = performance.now();
+            if (now - progressState.lastPostTime >= 100) {
+              progressState.lastPostTime = now;
+              const encodePct =
+                estimatedOutputFrames > 0
+                  ? Math.round(((p.currentFrame ?? 0) / estimatedOutputFrames) * ENCODE_RANGE)
+                  : 0;
+              postMessage({
+                type: 'progress',
+                requestId: '',
+                phase: 'encoding',
+                percent: Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
+                fps: progressState.fpsTracker.current,
+                etaSeconds:
+                  progressState.fpsTracker.current > 0 && p.currentFrame != null
+                    ? Math.round(
+                        (estimatedOutputFrames - p.currentFrame) / progressState.fpsTracker.current
+                      )
+                    : 0,
+                memoryMB: 0,
+                currentFrame: p.currentFrame ?? 0,
+                totalFrames: estimatedOutputFrames,
+                outputFrames: estimatedOutputFrames,
+              });
+            }
+          },
+          _signal
+        );
+        output = webpResult.buffer as ArrayBuffer;
       }
     }
 
