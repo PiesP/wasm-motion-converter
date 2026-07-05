@@ -4,9 +4,9 @@
 /**
  * Structured logging utility with environment-aware filtering.
  *
- * - Development: all levels logged
- * - Production: only WARN, ERROR, and performance INFO shown
- * - Format: [HH:MM:SS] [category] message [context]
+ * Standard: development → all levels, production → warn + error
+ * Extensions: performance INFO always visible, route-tracking (▶◀├└│) auto-upgraded to WARN
+ * Format: [HH:MM:SS] [category] message [context]
  */
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
