@@ -127,13 +127,15 @@ export async function runPipelineViaWorker(
       switch (response.type) {
         case 'progress': {
           throttledProgress({
-            phase: response.phase as ConversionProgress['phase'],
+            // phase is now the proper union type from WorkerResponse — no cast needed
+            phase: response.phase,
             progress: response.percent,
             fps: response.fps,
-            etaSeconds: null,
+            etaSeconds: response.etaSeconds ?? null,
             memoryMB: response.memoryMB,
             currentFrame: response.currentFrame,
             totalFrames: response.totalFrames,
+            outputFrames: response.outputFrames,
             elapsedMs: response.elapsedMs,
           });
           break;
@@ -248,7 +250,7 @@ export async function runPipelineWithFallback(
       scale: options.scale,
       trimStart: options.trimStart,
       trimEnd: options.trimEnd,
-      maxMemoryMB: WORKER_MAX_MEMORY_MB,
+      maxMemoryMB: options.maxMemoryMB ?? WORKER_MAX_MEMORY_MB,
       forceDecimation: options.forceDecimation ?? 1,
       smartFrameSkip: options.smartFrameSkip ?? 'off',
     };

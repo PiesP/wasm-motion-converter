@@ -19,13 +19,15 @@ export type WorkerResponse =
   | {
       type: 'progress';
       requestId: string;
-      phase: string;
+      phase: 'demuxing' | 'decoding' | 'encoding' | 'assembling';
       percent: number;
       fps: number;
       memoryMB: number;
       currentFrame?: number;
       totalFrames?: number;
-      elapsedMs?: number;
+      outputFrames?: number | undefined;
+      etaSeconds: number;
+      elapsedMs?: number | undefined;
     }
   | {
       type: 'complete';
@@ -58,4 +60,6 @@ export interface SerializedConversionOptions {
   forceDecimation?: number | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
+  /** Dynamic memory limit (MB) forwarded from main thread */
+  maxMemoryMB?: number | undefined;
 }
