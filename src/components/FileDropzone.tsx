@@ -323,6 +323,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                   tabIndex={-1}
                   aria-label={t('dropzone.selectFile')}
                   data-testid="file-input"
+                  autocomplete="off"
                 />
               </div>
               <p class="mt-2 text-sm text-[#8a8f98]">{t('dropzone.clickSelect')}</p>

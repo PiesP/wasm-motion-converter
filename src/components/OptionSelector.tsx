@@ -83,6 +83,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
           disabled={local.disabled}
           class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           aria-describedby={descriptionId}
+          autocomplete="off"
         />
         <div class="text-center pointer-events-none">
           <div class="font-medium">{option.label}</div>
