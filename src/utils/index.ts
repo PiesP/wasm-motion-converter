@@ -22,7 +22,7 @@ export {
   estimateWebpOutputSize,
   type OutputSizeEstimate,
 } from './estimate-output-size';
-export { ETACalculator } from './eta-calculator';
+export { createETACalculator } from './eta-calculator';
 export { validateVideoDuration, validateVideoFile } from './file-validation';
 export { createId, formatBytes, formatDurationSeconds } from './format-utils';
 export {

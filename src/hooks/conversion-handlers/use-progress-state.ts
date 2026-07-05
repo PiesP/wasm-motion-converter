@@ -8,7 +8,7 @@ import {
 } from '@stores/conversion-store';
 import type { ProgressPhase } from '@t/conversion-types';
 import { STALL_DETECTION_TIMEOUT_MS } from '@utils/constants';
-import { ETACalculator } from '@utils/eta-calculator';
+import { createETACalculator } from '@utils/eta-calculator';
 import { formatDurationSeconds } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import type { Setter } from 'solid-js';
@@ -72,7 +72,7 @@ export class ProgressState {
   activeRunId: string | null = null;
   disposed = false;
   lastEtaUpdate = 0;
-  readonly etaCalculator = new ETACalculator();
+  readonly etaCalculator = createETACalculator();
   private stallTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly deps: ProgressStateDeps) {}
