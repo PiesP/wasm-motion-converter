@@ -135,6 +135,17 @@ export function getLastConversionProfiler(): Profiler | null {
 // a simple counter is sufficient and avoids crypto entropy overhead.
 let nextRunId = 0;
 
+/**
+ * Reset pipeline module-level state for testing purposes.
+ * Clears the profiler module cache, run ID counter, and active profilers map
+ * so the next conversion starts from a clean slate.
+ */
+export function resetPipelineState(): void {
+  profilerModule = null;
+  nextRunId = 0;
+  activeProfilers.clear();
+}
+
 export async function runConversionPipeline(
   request: ConversionRequest,
   onProgress: ProgressCallback,

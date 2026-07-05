@@ -363,3 +363,13 @@ export function getWorkerPool(size?: number): WebpWorkerPool | null {
   }
   return singletonPool;
 }
+
+/**
+ * Reset the singleton worker pool for testing purposes.
+ * Clears the existing singleton so the next call to getWorkerPool()
+ * creates a fresh instance. Does not terminate the existing pool
+ * (call terminate() first if needed).
+ */
+export function resetWorkerPool(): void {
+  singletonPool = null;
+}
