@@ -18,6 +18,8 @@
 // because Vite Worker URL imports cannot reference external ES modules.<｜end▁of▁thinking｜>// In production builds this file is loaded separately via new Worker(),
 // so importing from streaming-webp-encoder.ts is not possible.
 // This duplication is intentional and necessary for Worker isolation.
+// NOTE: Duplicated from streaming-webp-encoder.ts. Vite Worker URL imports prevent sharing ES modules.
+// Both implementations must be kept in sync. See streaming-webp-encoder.ts for canonical version.
 
 const RIFF_MAGIC = 0x52494646;
 const WEBP_MAGIC = 0x57454250;
