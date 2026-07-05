@@ -58,29 +58,38 @@ async function isVp8ConfigSupported(width: number, height: number): Promise<bool
 }
 
 /**
- * Wrap raw VP8 bitstream in a "VP8 " RIFF sub-chunk header.
- * The WebP ANMF specification (RFC 9649) requires the VP8 data to be
- * wrapped in a "VP8 " chunk with FourCC and size prefix.
+ * Prepare VP8 EncodedVideoChunk data for WebP ANMF muxing.
  *
- * Output layout (8 + bitstream.length bytes):
- *   Offset  Content
- *   0       "VP8 " (FourCC, big-endian: 0x56503820)
- *   4       chunk size (uint32 LE)
- *   8       raw VP8 bitstream
+ * Two transformations are applied:
+ * 1. Strip Chromium's 3-byte frame size prefix before the VP8 keyframe tag.
+ * 2. Patch show_frame bit from 0→1. Chromium's VP8 encoder produces invisible
+ *    keyframes (show_frame=0) which are alternate reference frames, not
+ *    displayable. WebP ANMF frames must be visible.
+ *
+ * The prefix varies per frame, so we locate the frame tag dynamically.
  */
-function wrapVp8Subchunk(vp8Data: Uint8Array): Uint8Array {
-  const totalSize = 8 + vp8Data.length;
-  const wrapped = new Uint8Array(totalSize);
-  const view = new DataView(wrapped.buffer);
+function prepareVp8Frame(vp8Bytes: Uint8Array): Uint8Array {
+  let frameStart = 0;
 
-  // "VP8 " FourCC — big-endian
-  view.setUint32(0, 0x56503820, false);
-  // Chunk size — little-endian
-  view.setUint32(4, vp8Data.length, true);
-  // Copy VP8 bitstream
-  wrapped.set(vp8Data, 8);
+  for (let i = 0; i < Math.min(vp8Bytes.length - 2, 16); i++) {
+    if (vp8Bytes[i] === 0x9d && vp8Bytes[i + 1] === 0x01 && vp8Bytes[i + 2] === 0x2a) {
+      frameStart = i;
+      break;
+    }
+  }
 
-  return wrapped;
+  // Strip prefix and create a mutable copy for show_frame patching
+  const raw = vp8Bytes.subarray(frameStart);
+  const frame = new Uint8Array(raw);
+  // Byte 3, bit 0: show_frame (set to 1 for visible frame)
+  // The byte layout: [key_frame:1][version:3][show_frame:1][first_part_size_high:3]
+  // Current value is typically 0xa0 (10100000), we need 0xa1 (10100001)
+  const byte = frame[3];
+  if (byte !== undefined) {
+    frame[3] = byte | 0x01;
+  }
+
+  return frame;
 }
 
 /**
@@ -138,9 +147,10 @@ export async function encodeWebpVp8(
       chunk.copyTo(buffer);
       const vp8Bytes = new Uint8Array(buffer);
 
-      // Wrap in "VP8 " RIFF sub-chunk
-      const subchunk = wrapVp8Subchunk(vp8Bytes);
-      muxer.addFrame(subchunk, currentDurationMs);
+      // Strip Chromium's frame prefix and patch show_frame for display.
+      // The muxer will wrap it in the correct "VP8 " RIFF sub-chunk.
+      const rawVp8 = prepareVp8Frame(vp8Bytes);
+      muxer.addFrame(rawVp8, currentDurationMs);
 
       encodedFrames++;
     },
