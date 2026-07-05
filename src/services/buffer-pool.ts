@@ -19,14 +19,17 @@
  *   pool.release(buf);
  */
 
+import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
+
 /**
  * Default maximum total pooled memory: 512 MB.
+ * Derived from WORKER_MAX_MEMORY_MB to maintain a single source of truth.
  *
  * Note: this is a conservative default. For large-video conversions on
  * memory-constrained devices, the pool can hold too much if uncapped.
  * Consider lowering this based on deviceMemory or jsHeapSizeLimit.
  */
-const DEFAULT_MAX_TOTAL_MEMORY = 512 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_MEMORY = WORKER_MAX_MEMORY_MB * 1024 * 1024;
 
 /**
  * Determine a reasonable default maxTotalMemory based on available JS heap.
