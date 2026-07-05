@@ -137,25 +137,28 @@ async function copyFrameRGBX(
     format: 'RGBX',
   });
   const buffer = globalBufferPool.acquire(size);
-  await frame.copyTo(buffer, {
-    rect: { x: 0, y: 0, width, height },
-    layout: [{ offset: 0, stride: width * 4 }],
-    format: 'RGBX',
-  });
-  // RGBX data: every 4th byte is padding. Convert to tight RGB in-place.
-  // We can't avoid this copy since the encoder expects packed RGB.
-  const pixelCount = width * height;
-  const rgb = globalBufferPool.acquire(pixelCount * 3);
-  const buf32 = new Uint32Array(buffer.buffer, buffer.byteOffset, pixelCount);
-  for (let i = 0; i < pixelCount; i++) {
-    const v = buf32[i]!;
-    const dstIdx = i * 3;
-    rgb[dstIdx] = v & 0xff; // R
-    rgb[dstIdx + 1] = (v >> 8) & 0xff; // G
-    rgb[dstIdx + 2] = (v >> 16) & 0xff; // B
+  try {
+    await frame.copyTo(buffer, {
+      rect: { x: 0, y: 0, width, height },
+      layout: [{ offset: 0, stride: width * 4 }],
+      format: 'RGBX',
+    });
+    // RGBX data: every 4th byte is padding. Convert to tight RGB in-place.
+    // We can't avoid this copy since the encoder expects packed RGB.
+    const pixelCount = width * height;
+    const rgb = globalBufferPool.acquire(pixelCount * 3);
+    const buf32 = new Uint32Array(buffer.buffer, buffer.byteOffset, pixelCount);
+    for (let i = 0; i < pixelCount; i++) {
+      const v = buf32[i]!;
+      const dstIdx = i * 3;
+      rgb[dstIdx] = v & 0xff; // R
+      rgb[dstIdx + 1] = (v >> 8) & 0xff; // G
+      rgb[dstIdx + 2] = (v >> 16) & 0xff; // B
+    }
+    return rgb;
+  } finally {
+    globalBufferPool.release(buffer);
   }
-  globalBufferPool.release(buffer);
-  return rgb;
 }
 
 /** Strategy 1: 4-channel copyTo + fast RGBA→RGB */
