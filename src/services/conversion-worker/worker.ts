@@ -37,6 +37,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   switch (request.type) {
     case 'start': {
       const { requestId, inputBuffer, config, options } = request;
+      const pipelineStart = performance.now();
 
       // Create AbortController for this conversion
       const abortController = new AbortController();
@@ -56,19 +57,22 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           abortController.signal
         );
 
+        const durationMs = Math.round(performance.now() - pipelineStart);
+
         // Send completion with transferred output buffer
         respond(
           {
             type: 'complete',
             requestId,
             outputBuffer,
-            durationMs: 0, // TODO(#421): track properly
+            durationMs,
           },
           [outputBuffer]
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const code = isCancellationError(err) ? 'CANCELLED' : 'UNKNOWN';
+        // Classify error using the same compact rules as pipeline-worker.ts
+        const code = isCancellationError(err) ? 'CANCELLED' : classifyWorkerError(message);
 
         respond({
           type: 'error',
@@ -102,3 +106,19 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
 // Ready signal for the main thread
 self.postMessage({ type: 'log', requestId: '', level: 'info', message: 'Worker initialized' });
+
+/**
+ * Classify a conversion error for worker context.
+ * Compact rule subset matching classifyWorkerError in pipeline-worker.ts.
+ */
+function classifyWorkerError(message: string): string {
+  const lower = message.toLowerCase();
+  if (/memory|oom|wasm\s*memory|stack\s*overflow/i.test(lower)) return 'OUT_OF_MEMORY';
+  if (/timed?\s*out|timeout|stall|watchdog/i.test(lower)) return 'TIMEOUT';
+  if (/cancel|abort/i.test(lower)) return 'CANCELLED';
+  if (/codec|unsupported|not\s*found|decod(?:er|e)\s*fail/i.test(lower))
+    return 'CODEC_NOT_SUPPORTED';
+  if (/webp|libwebp|encoder\s*fail/i.test(lower)) return 'ENCODER_ERROR';
+  if (/demux|container|format|unable\s*to\s*parse/i.test(lower)) return 'DECODER_ERROR';
+  return 'UNKNOWN';
+}
