@@ -78,11 +78,15 @@ function safeJsonStringify(value: unknown): string {
 }
 
 class Logger {
-  private isDev = import.meta.env.MODE === 'development';
+  private isDev: boolean;
   private recentLines: string[] = [];
   private recentEntries: LogEntry[] = [];
   private conversionProgress: number | null = null;
   private conversionProgressUpdatedAtMs = 0;
+
+  constructor(isDev = import.meta.env.MODE === 'development') {
+    this.isDev = isDev;
+  }
 
   setConversionProgress(progress: number): void {
     if (!Number.isFinite(progress)) return;
@@ -208,4 +212,4 @@ class Logger {
   }
 }
 
-export const logger = new Logger();
+export const logger = new Logger(import.meta.env.MODE === 'development');
