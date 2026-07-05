@@ -15,6 +15,7 @@
  * BufferPool: Reuses Uint8Array allocations across frames to reduce GC.
  */
 
+import type { BufferPool } from './buffer-pool';
 import { globalBufferPool } from './buffer-pool';
 
 // ─── Video Dimension Resolution ────────────────────────────────────
@@ -275,10 +276,11 @@ export function convertRGBAToRGB(
   src: Uint8Array,
   width: number,
   height: number,
-  format: 'RGBA' | 'BGRA' | 'RGBX' | 'BGRX'
+  format: 'RGBA' | 'BGRA' | 'RGBX' | 'BGRX',
+  pool?: BufferPool
 ): Uint8Array {
   const pixelCount = width * height;
-  const dst = globalBufferPool.acquire(pixelCount * 3);
+  const dst = (pool ?? globalBufferPool).acquire(pixelCount * 3);
 
   // Use Uint32Array view for 4-byte-at-a-time reads
   const src32 = new Uint32Array(src.buffer, src.byteOffset, pixelCount);
@@ -321,9 +323,14 @@ export function convertRGBAToRGB(
  * @param height - Frame height in pixels
  * @returns New RGBA buffer (pooled), alpha=0xFF
  */
-export function convertRGBToRGBA(rgb: Uint8Array, width: number, height: number): Uint8Array {
+export function convertRGBToRGBA(
+  rgb: Uint8Array,
+  width: number,
+  height: number,
+  pool?: BufferPool
+): Uint8Array {
   const pixelCount = width * height;
-  const rgba = globalBufferPool.acquire(pixelCount * 4);
+  const rgba = (pool ?? globalBufferPool).acquire(pixelCount * 4);
 
   // Uint32Array view over the RGBA buffer for 4-byte-at-a-time writes
   const rgba32 = new Uint32Array(rgba.buffer, rgba.byteOffset, pixelCount);
