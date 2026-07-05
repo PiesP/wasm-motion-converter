@@ -109,6 +109,9 @@ export const GIF_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 /** Max time before a worker task is considered stalled (30 seconds) */
 export const WORKER_TIMEOUT_MS = 30_000;
 
+/** Max time for pipeline worker conversion (5 minutes) */
+export const WORKER_PIPELINE_TIMEOUT_MS = 5 * 60 * 1000;
+
 /** Max time without progress update before stall detection fires (60 seconds) */
 export const STALL_DETECTION_TIMEOUT_MS = 60_000;
 

@@ -18,7 +18,7 @@
 
 import type { ConversionProgress, ConversionRequest } from '@t/conversion-types';
 import { isCancellationError } from '@utils/cancellation-context';
-import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
+import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 
 import type {
   SerializedConversionOptions,
@@ -26,9 +26,6 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from './types';
-
-// 5 min timeout for worker conversion
-const WORKER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Error thrown when a worker operation exceeds the timeout.
@@ -80,8 +77,8 @@ export async function runPipelineViaWorker(
         // Worker may already be in a bad state; terminate below regardless
       }
       worker.terminate();
-      reject(new WorkerTimeoutError(WORKER_TIMEOUT_MS));
-    }, WORKER_TIMEOUT_MS);
+      reject(new WorkerTimeoutError(WORKER_PIPELINE_TIMEOUT_MS));
+    }, WORKER_PIPELINE_TIMEOUT_MS);
 
     // Clear timeout and remove abort listener — shared cleanup for all terminal paths
     const cleanup = () => {
