@@ -74,16 +74,15 @@ export const DEFAULT_FPS = 30;
 export const GIF_TARGET_FPS = 5;
 
 /** WebP auto-decimation target FPS — varies by quality preset.
- *  Per-frame VP8 encoding speed is independent of quality parameter
- *  (~257ms/frame regardless of q=0.6/0.75/0.85). FPS targets now reflect
- *  user-visible motion quality only — image quality is a separate axis.
- *  With scaleBoost=3 at 100% scale, effective output FPS is ~3.3/4.0/4.0fps.
- *  Low uses 10fps for faster conversion, med/high share 12fps since
- *  quality parameter has negligible impact on encoding speed. */
+ *  Per-frame wasm-webp encoding (~287ms/frame for 1080p) dominates
+ *  conversion time; reducing output frames is the highest-ROI optimization.
+ *  Unified at 8fps across all quality levels — the quality parameter
+ *  affects per-frame encoding size, not speed, so it's a separate axis.
+ *  With scaleBoost=3 at 100% scale, effective output FPS is ~2.7fps. */
 export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
-  low: 10,
-  medium: 12,
-  high: 12,
+  low: 8,
+  medium: 8,
+  high: 8,
 };
 
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */
