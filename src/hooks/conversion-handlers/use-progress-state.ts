@@ -7,6 +7,7 @@ import {
   setOutputFrames,
 } from '@stores/conversion-store';
 import type { ProgressPhase } from '@t/conversion-types';
+import { STALL_DETECTION_TIMEOUT_MS } from '@utils/constants';
 import { ETACalculator } from '@utils/eta-calculator';
 import { formatDurationSeconds } from '@utils/format-utils';
 import { logger } from '@utils/logger';
@@ -23,7 +24,6 @@ export interface ProgressStateDeps {
 const ETA_UPDATE_INTERVAL = 1000;
 const UI_PROGRESS_LOG_INTERVAL_MS = 1000;
 const UI_STATUS_LOG_INTERVAL_MS = 500;
-const STALL_DETECTION_MS = 60_000;
 
 type ParsedStatusCounter = {
   prefix: string;
@@ -97,7 +97,7 @@ export class ProgressState {
           elapsedSeconds,
         });
       }
-    }, STALL_DETECTION_MS);
+    }, STALL_DETECTION_TIMEOUT_MS);
   }
 
   updateProgress(progress: number, phase?: ProgressPhase | string, outputFrames?: number): void {

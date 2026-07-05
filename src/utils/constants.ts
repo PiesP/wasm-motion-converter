@@ -103,6 +103,19 @@ export const GIF_LZW_RATIO = 0.1;
 export const GIF_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 // ============================================================================
+// TIMEOUT CONSTANTS (milliseconds)
+// ============================================================================
+
+/** Max time before a worker task is considered stalled (30 seconds) */
+export const WORKER_TIMEOUT_MS = 30_000;
+
+/** Max time without progress update before stall detection fires (60 seconds) */
+export const STALL_DETECTION_TIMEOUT_MS = 60_000;
+
+/** Default VP8 encoder bitrate — 5 Mbps for quality encoding */
+export const VP8_DEFAULT_BITRATE = 5_000_000;
+
+// ============================================================================
 // MEMORY THRESHOLD CONSTANTS
 // ============================================================================
 

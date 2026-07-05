@@ -16,6 +16,7 @@
  * - Timeout-based task retirement for stalled workers
  */
 
+import { WORKER_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
 
 // ─── Types ─────────────────────────────────────────────────────────
@@ -57,7 +58,7 @@ export class WebpWorkerPool {
    * @param size - Number of workers. Default: navigator.hardwareConcurrency - 1 (min 1).
    * @param timeoutMs - Max time (ms) before a task is considered stalled. Default: 30000.
    */
-  constructor(size?: number, timeoutMs = 30000) {
+  constructor(size?: number, timeoutMs = WORKER_TIMEOUT_MS) {
     this.size = size ?? WebpWorkerPool.getOptimalWorkerCount();
     this.timeoutMs = timeoutMs;
     this.initWorkers();

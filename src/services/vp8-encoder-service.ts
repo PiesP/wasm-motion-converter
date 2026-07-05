@@ -23,6 +23,7 @@
  */
 
 import type { ProgressCallback } from '@t/conversion-types';
+import { VP8_DEFAULT_BITRATE } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
@@ -153,7 +154,7 @@ export async function encodeWebpVp8(
     codec: 'vp8',
     width: w,
     height: h,
-    bitrate: 5_000_000, // 5 Mbps for quality VP8 encoding
+    bitrate: VP8_DEFAULT_BITRATE, // 5 Mbps for quality VP8 encoding
     framerate: 30,
   });
 
