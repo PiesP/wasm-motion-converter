@@ -67,7 +67,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
 
   return (
     <Panel
-      class="relative border-l-4 border-red-500/60 p-4 bg-[#191a1b] rounded-lg"
+      class="relative border-l-4 border-red-500/60 p-4 bg-bg-elevated rounded-lg"
       role="alert"
       aria-live="assertive"
       aria-atomic="true"
@@ -77,7 +77,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
         <button
           type="button"
           onClick={handleDismiss}
-          class="absolute top-4 right-4 p-2 text-[#d0d6e0] hover:text-[#f7f8f8] transition-colors rounded-md hover:bg-white/[0.05]"
+          class="absolute top-4 right-4 p-2 text-text-secondary hover:text-text-primary transition-colors rounded-md hover:bg-bg-elevated/50 cursor-pointer"
           aria-label={t('error.dismiss')}
           data-testid="error-dismiss-button"
         >
@@ -113,7 +113,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
           </svg>
         </div>
         <div class="ml-3 flex-1">
-          <h3 class="text-sm font-medium text-[#f7f8f8]">
+          <h3 class="text-sm font-medium text-text-primary">
             {t('error.conversionFailed')}{' '}
             {errorIcon() && (
               <span class="ml-1" aria-hidden="true">
@@ -121,20 +121,20 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               </span>
             )}
           </h3>
-          <p class="mt-2 text-sm text-[#d0d6e0]">{userFriendlyMessage()}</p>
+          <p class="mt-2 text-sm text-text-secondary">{userFriendlyMessage()}</p>
           <Show when={rawErrorMessage()}>
             <details class="mt-2">
-              <summary class="text-xs text-[#d0d6e0] cursor-pointer hover:underline">
+              <summary class="text-xs text-text-secondary cursor-pointer hover:underline">
                 Technical details
               </summary>
-              <pre class="mt-1 text-xs text-[#d0d6e0] whitespace-pre-wrap break-all bg-white/[0.02] border border-white/[0.08] p-2 rounded max-h-32 overflow-auto">
+              <pre class="mt-1 text-xs text-text-secondary whitespace-pre-wrap break-all bg-white/[0.02] border border-border-standard p-2 rounded max-h-32 overflow-auto">
                 {rawErrorMessage()}
               </pre>
             </details>
           </Show>
           <Show when={local.suggestion}>
-            <div class="mt-2 p-3 bg-white/[0.02] border border-white/[0.08] rounded text-sm text-[#d0d6e0]">
-              <strong class="text-[#f7f8f8]">Suggestion:</strong> {local.suggestion}
+            <div class="mt-2 p-3 bg-white/[0.02] border border-border-standard rounded text-sm text-text-secondary">
+              <strong class="text-text-primary">Suggestion:</strong> {local.suggestion}
             </div>
           </Show>
           <div class="mt-4 flex gap-3">
@@ -144,7 +144,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 <button
                   type="button"
                   data-testid="error-select-different-fallback-button"
-                  class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                  class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-500 cursor-pointer"
                   onClick={handleSelectNewFile}
                   aria-label={t('error.selectDifferent')}
                 >
@@ -156,7 +156,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 ref={retryButtonRef}
                 type="button"
                 data-testid="error-retry-button"
-                class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-500 cursor-pointer"
                 onClick={handleRetry}
                 aria-label={t('error.retry')}
               >
@@ -165,7 +165,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               <button
                 type="button"
                 data-testid="error-select-different-button"
-                class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-[#d0d6e0] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-text-secondary bg-white/[0.02] border-border-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-500 cursor-pointer"
                 onClick={handleSelectNewFile}
                 aria-label={t('error.selectDifferent')}
               >

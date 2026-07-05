@@ -232,11 +232,11 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     props.trimStart === start && props.trimEnd === end;
 
   const presetBtnClass = (active: boolean): string =>
-    `text-[10px] px-2 py-0.5 rounded border transition-colors font-medium ${
+    `text-[10px] px-2 py-0.5 rounded border transition-colors font-medium cursor-pointer ${
       active
-        ? 'bg-[#5e6ad2] text-white border-[#5e6ad2] shadow-sm'
-        : 'border-white/[0.08] hover:bg-white/[0.05] text-[#d0d6e0]'
-    } ${props.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`;
+        ? 'bg-brand text-white border-brand shadow-sm'
+        : 'border-border-standard hover:bg-white/[0.05] text-text-secondary'
+    } ${props.disabled ? 'opacity-50 cursor-not-allowed' : ''}`;
 
   const [startFocused, setStartFocused] = createSignal(false);
   const [endFocused, setEndFocused] = createSignal(false);
@@ -286,17 +286,15 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   const handleClass = (which: 'start' | 'end'): string => {
     const isDragging = dragging() === which;
     return [
-      'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-7 h-7',
+      'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 min-w-[44px] min-h-[44px]',
       'rounded-full bg-white/90 border-2',
-      'border-[#5e6ad2] shadow-md',
-      'cursor-col-resize hover:scale-[1.1] hover:shadow-lg hover:border-[#5e6ad2]',
+      'border-brand shadow-md',
+      'cursor-col-resize hover:scale-[1.1] hover:shadow-lg hover:border-brand',
       'transition-all duration-150 ease-out',
-      'focus-visible:ring-2 focus-visible:ring-[rgba(94,106,210,0.5)] focus-visible:ring-offset-2 focus-visible:outline-none',
+      'focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-offset-2 focus-visible:outline-none',
       'after:absolute after:-bottom-2 after:left-1/2 after:-translate-x-1/2',
-      'after:w-1 after:h-2 after:bg-[#5e6ad2]/40 after:rounded-b-sm after:pointer-events-none',
-      isDragging
-        ? 'scale-115 shadow-xl ring-2 ring-[rgba(94,106,210,0.5)] bg-[#5e6ad2]/10 border-[#5e6ad2]'
-        : '',
+      'after:w-1 after:h-2 after:bg-brand/40 after:rounded-b-sm after:pointer-events-none',
+      isDragging ? 'scale-115 shadow-xl ring-2 ring-brand/50 bg-brand/10 border-brand' : '',
       props.disabled ? 'cursor-not-allowed opacity-50' : '',
     ]
       .filter(Boolean)
@@ -304,27 +302,27 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   };
 
   const textClass =
-    'text-[10px] border border-white/[0.08] rounded px-1 py-0.5 bg-[#191a1b] text-right font-mono w-[4.5rem] field-sizing-content';
+    'text-[10px] border border-border-standard rounded px-1 py-0.5 bg-bg-elevated text-right font-mono w-[4.5rem] field-sizing-content';
 
   if (props.duration < MIN_DURATION) {
-    return <p class="text-xs text-[#8a8f98]">{t('trim.tooShort')}</p>;
+    return <p class="text-xs text-text-tertiary">{t('trim.tooShort')}</p>;
   }
 
   return (
     <div class="space-y-2" data-testid="trim-selector">
       {/* Header */}
       <div class="flex items-center justify-between">
-        <span class="text-xs font-medium text-[#d0d6e0]">{t('trim.range')}</span>
+        <span class="text-xs font-medium text-text-secondary">{t('trim.range')}</span>
         {!isDefault() && (
           <button
             type="button"
             onClick={handleReset}
             disabled={props.disabled}
             data-testid="trim-reset-button"
-            class={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+            class={`text-[10px] px-2 py-0.5 rounded border transition-colors cursor-pointer ${
               props.disabled
-                ? 'opacity-50 cursor-not-allowed border-white/[0.08]'
-                : 'border-white/[0.08] hover:bg-white/[0.05] cursor-pointer'
+                ? 'opacity-50 cursor-not-allowed border-border-standard'
+                : 'border-border-standard hover:bg-white/[0.05]'
             }`}
           >
             {t('trim.reset')}
@@ -335,7 +333,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       {/* Range Bar */}
       <div
         ref={trackRef}
-        class={`relative h-8 rounded-lg bg-[#191a1b] select-none touch-none cursor-pointer ${props.disabled ? 'opacity-50 pointer-events-none' : ''}`}
+        class={`relative h-8 rounded-lg bg-bg-elevated select-none touch-none cursor-pointer ${props.disabled ? 'opacity-50 pointer-events-none' : ''}`}
         onClick={handleTrackClick}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -349,7 +347,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         aria-disabled={!!props.disabled}
       >
         <div
-          class={`absolute top-0 h-full rounded-lg bg-[#5e6ad2]/15 border-x-2 border-[#5e6ad2] transition-[left,width] duration-100 ${dragging() !== null ? 'bg-[#5e6ad2]/25' : ''}`}
+          class={`absolute top-0 h-full rounded-lg bg-brand/15 border-x-2 border-brand transition-[left,width] duration-100 ${dragging() !== null ? 'bg-brand/25' : ''}`}
           style={{ left: `${startPct()}%`, width: `${endPct() - startPct()}%` }}
         />
         <div
@@ -369,9 +367,9 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         >
           <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div class="flex flex-col gap-0.5">
-              <div class="w-0.5 h-0.5 rounded-full bg-[#5e6ad2]/60" />
-              <div class="w-0.5 h-0.5 rounded-full bg-[#5e6ad2]/60" />
-              <div class="w-0.5 h-0.5 rounded-full bg-[#5e6ad2]/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-brand/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-brand/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-brand/60" />
             </div>
           </div>
         </div>
@@ -400,7 +398,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         </div>
         {dragging() && (
           <div
-            class="absolute -top-7 -translate-x-1/2 px-1.5 py-0.5 rounded bg-[#191a1b] text-[#f7f8f8] text-[10px] font-medium pointer-events-none whitespace-nowrap shadow-lg z-10"
+            class="absolute -top-7 -translate-x-1/2 px-1.5 py-0.5 rounded bg-bg-elevated text-text-primary text-[10px] font-medium pointer-events-none whitespace-nowrap shadow-lg z-10"
             style={{ left: `${dragging() === 'start' ? startPct() : endPct()}%` }}
           >
             {formatTime(dragging() === 'start' ? props.trimStart : effectiveEnd())}
@@ -409,7 +407,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       </div>
 
       {/* Track boundary labels */}
-      <div class="flex justify-between text-[10px] text-[#8a8f98] px-0.5">
+      <div class="flex justify-between text-[10px] text-text-tertiary px-0.5">
         <span>{formatTime(0)}</span>
         <span>{formatTime(props.duration)}</span>
       </div>
@@ -432,7 +430,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       {/* Text inputs + summary */}
       <div class="flex items-center gap-1.5 justify-between flex-wrap">
         <div class="flex items-center gap-1.5">
-          <label for="trim-start-input" class="text-[10px] text-[#8a8f98]">
+          <label for="trim-start-input" class="text-[10px] text-text-tertiary">
             {t('trim.startLabel')}
           </label>
           <input
@@ -448,10 +446,10 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             onKeyDown={handleStartTextKeyDown}
             class={textClass}
           />
-          <span class="text-[10px] text-[#8a8f98]" aria-hidden="true">
+          <span class="text-[10px] text-text-tertiary" aria-hidden="true">
             –
           </span>
-          <label for="trim-end-input" class="text-[10px] text-[#8a8f98]">
+          <label for="trim-end-input" class="text-[10px] text-text-tertiary">
             {t('trim.endLabel')}
           </label>
           <input
@@ -468,7 +466,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             class={textClass}
           />
         </div>
-        <span class="text-[10px] text-[#8a8f98] whitespace-nowrap">
+        <span class="text-[10px] text-text-tertiary whitespace-nowrap">
           {trimDuration().toFixed(1)}s ({Math.round((trimDuration() / props.duration) * 100)}%) · ~
           {frameCount()}f
         </span>

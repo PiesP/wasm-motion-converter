@@ -122,8 +122,8 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
     <Show
       when={translations()}
       fallback={
-        <div class="flex min-h-screen items-center justify-center bg-[#08090a]">
-          <div class="animate-pulse text-[#5e6ad2]">Loading...</div>
+        <div class="flex min-h-screen items-center justify-center bg-bg-base">
+          <div class="animate-pulse text-brand">Loading...</div>
         </div>
       }
     >

@@ -19,7 +19,7 @@ const ResultSection: Component<ResultSectionProps> = (props) => {
         class="mt-8 space-y-6 animate-crossfade result-section-deferred"
         data-testid="result-section"
       >
-        <h2 class="text-lg font-semibold text-[#f7f8f8]">{t('result.heading')}</h2>
+        <h2 class="text-lg font-semibold text-text-primary">{t('result.heading')}</h2>
         <For each={props.results}>
           {(result) => (
             <ResultPreview

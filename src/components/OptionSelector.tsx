@@ -8,10 +8,9 @@ import Icon from './ui/Icon';
 
 const BASE_OPTION_CLASS =
   'relative flex items-center justify-center px-3 py-2 sm:py-3 border rounded-lg cursor-pointer transition-all duration-200 text-sm min-h-[44px]';
-const SELECTED_OPTION_CLASS =
-  'bg-[#5e6ad2]/20 border-[#5e6ad2] text-[#f7f8f8] ring-2 ring-[#5e6ad2]/30';
+const SELECTED_OPTION_CLASS = 'bg-brand/20 border-brand text-text-primary ring-2 ring-brand/30';
 const DEFAULT_OPTION_CLASS =
-  'bg-white/[0.02] border-white/[0.08] text-[#d0d6e0] hover:border-white/[0.15] hover:bg-white/[0.04]';
+  'bg-white/[0.02] border-border-standard text-text-secondary hover:border-border-standard hover:bg-white/[0.04]';
 const DEFAULT_COLUMNS_MANY = 3;
 const DEFAULT_COLUMNS_FEW = 2;
 
@@ -113,7 +112,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
     >
       <legend
         id={legendId()}
-        class="block text-xs font-medium text-[#8a8f98] mb-2 flex items-center gap-1.5"
+        class="block text-xs font-medium text-text-tertiary mb-2 flex items-center gap-1.5"
       >
         <span>{local.title}</span>
         <Show when={local.tooltip}>
@@ -121,11 +120,11 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
             <button
               type="button"
               tabIndex={0}
-              class="inline-flex items-center justify-center w-11 h-11 -m-2 min-h-[44px] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] rounded-md"
+              class="inline-flex items-center justify-center w-11 h-11 -m-2 min-h-[44px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded-md cursor-pointer"
               aria-label={`Information about ${local.title}`}
               onKeyDown={handleTooltipKeyDown}
             >
-              <Icon name="info" size="sm" class="text-[#62666d] cursor-help" />
+              <Icon name="info" size="sm" class="text-text-quaternary cursor-help" />
             </button>
           </Tooltip>
         </Show>

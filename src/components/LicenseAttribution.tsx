@@ -16,18 +16,18 @@ const LICENSES_URL = '/LICENSES.md';
 const GITHUB_ISSUES_URL = 'https://github.com/PiesP/wasm-motion-converter/issues';
 
 const linkClass =
-  'text-[#5e6ad2] hover:text-[#828fff] underline underline-offset-2 px-1.5 py-1 inline-flex items-center min-h-[44px]';
+  'text-brand hover:text-[#828fff] underline underline-offset-2 px-1.5 py-1 inline-flex items-center min-h-[44px]';
 
 const LicenseAttribution: Component = () => {
   const { t } = useLocale();
 
   return (
     <footer
-      class="border-t border-white/[0.06] py-2 sm:py-3 mt-4 sm:mt-8 bg-[#0a0b0c]"
+      class="border-t border-white/[0.06] py-2 sm:py-3 mt-4 sm:mt-8 bg-bg-base"
       role="contentinfo"
       aria-label={t('footer.licenseAttribution')}
     >
-      <div class="max-w-6xl mx-auto px-4 text-center text-[11px] sm:text-xs text-[#8a8f98] space-y-1 sm:space-y-1.5">
+      <div class="max-w-6xl mx-auto px-4 text-center text-[11px] sm:text-xs text-text-tertiary space-y-1 sm:space-y-1.5">
         {/* Line 1: Powered by — libraries in a responsive inline list */}
         <p class="leading-relaxed">
           Powered by{' '}
@@ -43,9 +43,9 @@ const LicenseAttribution: Component = () => {
                 >
                   {lib.name}
                 </a>
-                <span class="text-[#62666d]">({lib.license})</span>
+                <span class="text-text-quaternary">({lib.license})</span>
                 {i < LIBRARIES.length - 1 && (
-                  <span class="text-[#62666d] hidden sm:inline">, </span>
+                  <span class="text-text-quaternary hidden sm:inline">, </span>
                 )}
               </span>
             ))}
@@ -53,7 +53,7 @@ const LicenseAttribution: Component = () => {
         </p>
 
         {/* Line 2: Processing note — hidden on mobile to save space */}
-        <p class="hidden sm:block text-[#62666d]">
+        <p class="hidden sm:block text-text-quaternary">
           Processing happens entirely in your browser via WebCodecs.
         </p>
 
@@ -68,7 +68,7 @@ const LicenseAttribution: Component = () => {
           >
             {t('footer.viewLicenses')}
           </a>
-          <span class="hidden sm:inline text-[#62666d] mx-1">·</span>
+          <span class="hidden sm:inline text-text-quaternary mx-1">·</span>
           <span class="hidden sm:inline">{t('footer.questions')}</span>
           <a
             href={GITHUB_ISSUES_URL}

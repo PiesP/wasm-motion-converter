@@ -42,7 +42,7 @@ const Icon: Component<IconProps> = (props) => {
 
   const sizeClass = () => ICON_SIZES[local.size ?? 'md'];
   const combinedClasses = () =>
-    [sizeClass(), 'text-[#d0d6e0]', local.class].filter(Boolean).join(' ');
+    [sizeClass(), 'text-text-secondary', local.class].filter(Boolean).join(' ');
   const ariaHidden = () => local['aria-hidden'] ?? true;
 
   const ariaLabel = () => {

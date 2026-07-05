@@ -34,44 +34,44 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
 
   return (
     <div
-      class="bg-[#191a1b] border border-white/[0.06] rounded-lg p-4"
+      class="bg-bg-elevated border border-white/[0.06] rounded-lg p-4"
       data-testid="video-metadata"
     >
-      <h3 class="text-xs font-medium text-[#8a8f98] mb-2 uppercase tracking-wide">
+      <h3 class="text-xs font-medium text-text-tertiary mb-2 uppercase tracking-wide">
         {t('metadata.title')}
       </h3>
       <dl class="space-y-1.5 text-sm">
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">{t('metadata.file')}</dt>
-          <dd class="text-[#f7f8f8] truncate text-right">{local.fileName}</dd>
+          <dt class="text-text-tertiary shrink-0">{t('metadata.file')}</dt>
+          <dd class="text-text-primary truncate text-right">{local.fileName}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">{t('metadata.resolution')}</dt>
-          <dd class="text-[#f7f8f8] tabular-nums">
+          <dt class="text-text-tertiary shrink-0">{t('metadata.resolution')}</dt>
+          <dd class="text-text-primary tabular-nums">
             {local.metadata.width}×{local.metadata.height}
           </dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">{t('metadata.duration')}</dt>
-          <dd class="text-[#f7f8f8] tabular-nums">
+          <dt class="text-text-tertiary shrink-0">{t('metadata.duration')}</dt>
+          <dd class="text-text-primary tabular-nums">
             {formatDurationSeconds(local.metadata.duration, locale())}
           </dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">{t('metadata.fps')}</dt>
-          <dd class="text-[#f7f8f8] tabular-nums">{local.metadata.framerate}</dd>
+          <dt class="text-text-tertiary shrink-0">{t('metadata.fps')}</dt>
+          <dd class="text-text-primary tabular-nums">{local.metadata.framerate}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">{t('metadata.codec')}</dt>
-          <dd class="text-[#f7f8f8] tabular-nums">{codecDisplay()}</dd>
+          <dt class="text-text-tertiary shrink-0">{t('metadata.codec')}</dt>
+          <dd class="text-text-primary tabular-nums">{codecDisplay()}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">{t('metadata.bitrate')}</dt>
-          <dd class="text-[#f7f8f8] tabular-nums">{bitrateDisplay()}</dd>
+          <dt class="text-text-tertiary shrink-0">{t('metadata.bitrate')}</dt>
+          <dd class="text-text-primary tabular-nums">{bitrateDisplay()}</dd>
         </div>
         <div class="flex justify-between gap-3">
-          <dt class="text-[#8a8f98] shrink-0">{t('metadata.size')}</dt>
-          <dd class="text-[#f7f8f8] tabular-nums">{formatBytes(local.fileSize, locale())}</dd>
+          <dt class="text-text-tertiary shrink-0">{t('metadata.size')}</dt>
+          <dd class="text-text-primary tabular-nums">{formatBytes(local.fileSize, locale())}</dd>
         </div>
       </dl>
     </div>

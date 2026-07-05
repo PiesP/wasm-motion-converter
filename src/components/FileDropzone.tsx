@@ -112,7 +112,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         <button
           type="button"
           onClick={local.onCancel}
-          class="absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full bg-red-500/10 text-red-400 transition-colors hover:bg-red-500/20"
+          class="absolute right-3 top-3 z-10 inline-flex min-w-[44px] min-h-[44px] items-center justify-center rounded-full bg-red-500/10 text-red-400 transition-colors hover:bg-red-500/20 cursor-pointer"
           aria-label={t('dropzone.cancelConversion')}
           title={t('dropzone.cancelConversion')}
         >
@@ -124,9 +124,9 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
       <div
         class={`relative rounded-lg border border-dashed transition-all duration-300 ${
           isDragging()
-            ? 'border-[#5e6ad2] bg-white/[0.04]'
+            ? 'border-brand bg-white/[0.04]'
             : isInteractive()
-              ? 'border-white/[0.08] hover:border-[#5e6ad2] hover:bg-white/[0.04] bg-white/[0.02]'
+              ? 'border-border-standard hover:border-brand hover:bg-white/[0.04] bg-white/[0.02]'
               : 'border-white/[0.06] bg-white/[0.01]'
         } ${isBusy() ? 'p-4' : hasFile() ? 'p-4' : 'p-6 sm:p-12'}`}
         onDragOver={handleDragOver}
@@ -141,7 +141,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           <div class="space-y-3">
             {/* File header with name + change button */}
             <Show when={hasFile()}>
-              <div class="flex items-center gap-2 text-xs text-[#8a8f98]">
+              <div class="flex items-center gap-2 text-xs text-text-tertiary">
                 <svg
                   class="h-3.5 w-3.5 shrink-0"
                   fill="none"
@@ -158,13 +158,13 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 </svg>
                 <span class="truncate font-medium">{local.fileName}</span>
                 <Show when={local.fileSize}>
-                  <span class="shrink-0 text-[#8a8f98]">· {local.metadataSummary}</span>
+                  <span class="shrink-0 text-text-tertiary">· {local.metadataSummary}</span>
                 </Show>
                 <Show when={local.onClear && !isBusy()}>
                   <button
                     type="button"
                     onClick={local.onClear}
-                    class="ml-auto shrink-0 text-[#5e6ad2] hover:text-[#7e8ae8]"
+                    class="ml-auto shrink-0 text-brand hover:text-brand-hover cursor-pointer"
                   >
                     {t('dropzone.changeFile')}
                   </button>
@@ -219,7 +219,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           when={isInteractive()}
           fallback={
             <Show when={!isBusy()}>
-              <div class="text-center text-sm text-[#8a8f98]">
+              <div class="text-center text-sm text-text-tertiary">
                 {local.status || t('dropzone.processing')}
               </div>
             </Show>
@@ -229,7 +229,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           <Show when={hasFile() && !isBusy()}>
             <div class="space-y-3 animate-in fade-in duration-300">
               {/* File header */}
-              <div class="flex items-center gap-2 text-xs text-[#8a8f98]">
+              <div class="flex items-center gap-2 text-xs text-text-tertiary">
                 <svg
                   class="h-3.5 w-3.5 shrink-0"
                   fill="none"
@@ -246,7 +246,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 </svg>
                 <span class="truncate font-medium">{local.fileName}</span>
                 <Show when={local.fileSize}>
-                  <span class="shrink-0 text-[#8a8f98]">· {local.metadataSummary}</span>
+                  <span class="shrink-0 text-text-tertiary">· {local.metadataSummary}</span>
                 </Show>
                 <button
                   type="button"
@@ -254,7 +254,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     e.stopPropagation();
                     local.onClear?.();
                   }}
-                  class="ml-auto shrink-0 text-[#5e6ad2] hover:text-[#7e8ae8]"
+                  class="ml-auto shrink-0 text-brand hover:text-brand-hover cursor-pointer"
                 >
                   {t('dropzone.changeFile')}
                 </button>
@@ -278,7 +278,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           <Show when={!hasFile()}>
             <div class="text-center">
               <svg
-                class="mx-auto h-8 w-8 sm:h-12 sm:w-12 text-[#8a8f98]"
+                class="mx-auto h-8 w-8 sm:h-12 sm:w-12 text-text-tertiary"
                 stroke="currentColor"
                 fill="none"
                 viewBox="0 0 48 48"
@@ -303,7 +303,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 <button
                   type="button"
                   onClick={openFilePicker}
-                  class="inline-flex items-center px-4 py-3 min-h-[44px] text-sm font-medium rounded-md text-white bg-[#5e6ad2] hover:bg-[#7e8ae8] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#5e6ad2] transition-colors"
+                  class="inline-flex items-center px-4 py-3 min-h-[44px] text-sm font-medium rounded-md text-white bg-brand hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand transition-colors cursor-pointer"
                   disabled={!isInteractive()}
                   data-testid="choose-file-button"
                 >
@@ -326,8 +326,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                   autocomplete="off"
                 />
               </div>
-              <p class="mt-2 text-sm text-[#8a8f98]">{t('dropzone.clickSelect')}</p>
-              <p class="mt-1 text-xs text-[#5e6ad2]/60">{t('dropzone.formats')}</p>
+              <p class="mt-2 text-sm text-text-tertiary">{t('dropzone.clickSelect')}</p>
+              <p class="mt-1 text-xs text-brand/60">{t('dropzone.formats')}</p>
             </div>
           </Show>
         </Show>

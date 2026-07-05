@@ -56,7 +56,7 @@ const EnvironmentWarning: Component = () => {
 
   return (
     <div
-      class="bg-[#191a1b] border-l-4 border-amber-500/60 p-4"
+      class="bg-bg-elevated border-l-4 border-amber-500/60 p-4"
       role="alert"
       aria-live="polite"
       data-testid="environment-warning"
@@ -78,11 +78,11 @@ const EnvironmentWarning: Component = () => {
         </div>
         <div class="ml-3 flex-1">
           <div class="flex items-start justify-between">
-            <h3 class="text-sm font-medium text-[#f7f8f8]">{t('env.notSupported')}</h3>
+            <h3 class="text-sm font-medium text-text-primary">{t('env.notSupported')}</h3>
             <button
               type="button"
               onClick={handleToggleExpanded}
-              class="ml-3 text-sm text-[#d0d6e0] hover:text-[#f7f8f8] underline focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] rounded"
+              class="ml-3 text-sm text-text-secondary hover:text-text-primary underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded cursor-pointer"
               aria-expanded={isExpanded()}
               aria-label={isExpanded() ? t('env.hideDetails') : t('env.showDetails')}
             >
@@ -91,7 +91,7 @@ const EnvironmentWarning: Component = () => {
           </div>
 
           <Show when={isExpanded()}>
-            <div class="mt-2 text-sm text-[#d0d6e0]">
+            <div class="mt-2 text-sm text-text-secondary">
               <Show when={!hasSharedArrayBuffer()} fallback={<p>{t('env.coiFalse')}</p>}>
                 <p>{t('env.sabUnavailable')}</p>
               </Show>
@@ -112,7 +112,7 @@ const EnvironmentWarning: Component = () => {
               <button
                 type="button"
                 onClick={handleTestEnvironment}
-                class="inline-flex items-center px-3 py-1.5 border border-white/[0.08] text-sm font-medium rounded text-[#d0d6e0] bg-white/[0.02] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)]"
+                class="inline-flex items-center px-3 py-1.5 border border-border-standard text-sm font-medium rounded text-text-secondary bg-white/[0.02] hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 cursor-pointer"
                 aria-label={t('env.logCapabilities')}
               >
                 {t('env.logCapabilities')}

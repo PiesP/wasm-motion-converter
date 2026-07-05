@@ -131,10 +131,10 @@ const ConfirmationModal: Component = () => {
       >
         <div
           ref={modalRef}
-          class="bg-[#0f1011] border border-white/[0.08] rounded-lg shadow-xl max-w-md w-full mx-4 p-6"
+          class="bg-bg-panel border border-border-standard rounded-lg shadow-xl max-w-md w-full mx-4 p-6"
           tabIndex={-1}
         >
-          <h2 id="modal-title" class="text-xl font-semibold mb-4 text-[#f7f8f8]">
+          <h2 id="modal-title" class="text-xl font-semibold mb-4 text-text-primary">
             {state().title ?? 'Conversion Warning'}
           </h2>
 
@@ -159,10 +159,10 @@ const ConfirmationModal: Component = () => {
                         {warning.message}
                       </p>
                       <Show when={warning.details}>
-                        <p class="text-sm text-[#d0d6e0] mt-1">{warning.details}</p>
+                        <p class="text-sm text-text-secondary mt-1">{warning.details}</p>
                       </Show>
                       <Show when={warning.suggestedAction}>
-                        <p class="text-sm text-[#d0d6e0] mt-2 font-medium">
+                        <p class="text-sm text-text-secondary mt-2 font-medium">
                           <span aria-hidden="true">💡</span> {warning.suggestedAction}
                         </p>
                       </Show>
@@ -178,7 +178,7 @@ const ConfirmationModal: Component = () => {
               ref={cancelButtonRef}
               type="button"
               onClick={cancelDialog}
-              class="px-4 py-2 min-h-[44px] rounded-md bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
+              class="px-4 py-2 min-h-[44px] rounded-md bg-white/[0.02] border-border-standard hover:bg-white/[0.05] transition-colors text-text-secondary cursor-pointer"
               aria-label={t('modal.cancel')}
               data-testid="modal-cancel-button"
             >
@@ -187,7 +187,7 @@ const ConfirmationModal: Component = () => {
             <button
               type="button"
               onClick={confirmDialog}
-              class="px-4 py-2 min-h-[44px] rounded-md bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] transition-colors text-[#d0d6e0]"
+              class="px-4 py-2 min-h-[44px] rounded-md bg-white/[0.02] border-border-standard hover:bg-white/[0.05] transition-colors text-text-secondary cursor-pointer"
               aria-label={t('modal.confirm')}
               data-testid="modal-confirm-button"
             >

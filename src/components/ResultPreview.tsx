@@ -134,7 +134,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   };
 
   return (
-    <Panel class="p-4 bg-[#0f1011] border border-white/[0.08] rounded-lg result-preview-deferred">
+    <Panel class="p-4 bg-bg-panel border border-border-standard rounded-lg result-preview-deferred">
       {/* Preview area */}
       <div class="relative flex justify-center bg-white/[0.02] rounded-lg overflow-hidden">
         {/* Skeleton: removed from DOM when loaded */}
@@ -153,7 +153,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           />
         </Show>
         <Show when={previewError()}>
-          <div class="flex flex-col items-center justify-center p-8 text-[#8a8f98] w-full">
+          <div class="flex flex-col items-center justify-center p-8 text-text-tertiary w-full">
             <svg
               class="h-10 w-10 mb-2"
               fill="none"
@@ -177,11 +177,11 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       <section class="mt-3" aria-label={ariaLabel()}>
         {/* Primary stats: size reduction + time */}
         <div class="flex items-center justify-center gap-3 text-sm mb-2">
-          <span class="text-[#8a8f98] font-mono" data-result-original-size>
+          <span class="text-text-tertiary font-mono" data-result-original-size>
             {formatBytes(local.originalSize, locale())}
           </span>
           <svg
-            class="h-4 w-4 text-[#5e6ad2]/60"
+            class="h-4 w-4 text-brand/60"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -194,20 +194,20 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               d="M13 7l5 5m0 0l-5 5m5-5H6"
             />
           </svg>
-          <span class="font-semibold text-[#d0d6e0] font-mono" data-result-output-size>
+          <span class="font-semibold text-text-secondary font-mono" data-result-output-size>
             {formatBytes(local.outputBlob.size, locale())}
           </span>
           <Show when={compressionLabel()}>
             <span class={`font-semibold ${compressionColorClass()}`}>{compressionLabel()}</span>
           </Show>
           <Show when={conversionTimeLabel()}>
-            <span class="text-[#5e6ad2]/60">·</span>
-            <span class="text-[#8a8f98]">⚡ {conversionTimeLabel()}</span>
+            <span class="text-brand/60">·</span>
+            <span class="text-text-tertiary">⚡ {conversionTimeLabel()}</span>
           </Show>
         </div>
 
         {/* Secondary stats: format, quality, scale */}
-        <div class="flex items-center justify-center gap-2 text-[10px] text-[#5e6ad2]/70 uppercase tracking-wide">
+        <div class="flex items-center justify-center gap-2 text-[10px] text-brand/70 uppercase tracking-wide">
           <span data-result-format>{outputExtension().toUpperCase()}</span>
           <span>·</span>
           <span class="capitalize" data-result-quality>
@@ -229,7 +229,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             format: outputExtension().toUpperCase(),
             fileName: downloadFileName(),
           })}
-          class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#5e6ad2] text-white text-sm font-medium shadow-lg hover:bg-[#7e8ae8] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"
+          class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand text-white text-sm font-medium shadow-lg hover:bg-brand-hover transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           data-testid="download-result-button"
           role="button"
         >

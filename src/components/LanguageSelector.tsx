@@ -22,7 +22,7 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
       onChange={handleChange}
       class={
         props.class ??
-        'rounded-md border border-white/[0.08] bg-white/[0.02] px-2 py-1.5 text-xs text-[#d0d6e0] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] cursor-pointer'
+        'rounded-md border border-border-standard bg-white/[0.02] px-2 py-1.5 text-xs text-text-secondary focus:outline-none focus:ring-2 focus:ring-brand/50 cursor-pointer'
       }
       aria-label={t('lang.select')}
       aria-live="polite"
@@ -31,7 +31,7 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
       {supportedLocales.map((loc) => (
         <option
           value={loc.code}
-          class="bg-[#191a1b] text-[#d0d6e0]"
+          class="bg-bg-elevated text-text-secondary"
           aria-current={locale() === loc.code ? 'true' : undefined}
         >
           {loc.name}

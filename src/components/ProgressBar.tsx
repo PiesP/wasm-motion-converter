@@ -26,7 +26,7 @@ const PHASE_CONFIG = [
     labelKey: 'progress.encode',
     icon: '⚙️',
     doneIcon: '✓',
-    colorClass: 'bg-[#5e6ad2]',
+    colorClass: 'bg-brand',
     phase: 'encoding' as ProgressPhase,
   },
   {
@@ -145,8 +145,8 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       const markerClass = isPast
         ? 'text-green-400'
         : isActive
-          ? 'text-[#5e6ad2]'
-          : 'text-[#8a8f98]';
+          ? 'text-brand'
+          : 'text-text-tertiary';
       return (
         <span class={`inline-flex items-center gap-0.5 ${markerClass}`}>
           <span class="text-[10px]">{marker}</span>
@@ -200,7 +200,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         <div class="flex items-center gap-2 text-xs">
           <Show when={local.showSpinner}>
             <svg
-              class="animate-spin h-3.5 w-3.5 text-[#5e6ad2] shrink-0"
+              class="animate-spin h-3.5 w-3.5 text-brand shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               aria-hidden="true"
@@ -220,7 +220,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
               />
             </svg>
           </Show>
-          <span class="truncate font-medium text-[#d0d6e0]">{local.status}</span>
+          <span class="truncate font-medium text-text-secondary">{local.status}</span>
           <div
             class="flex-1 h-1.5 rounded-full bg-white/[0.05] overflow-hidden"
             role="progressbar"
@@ -230,31 +230,31 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
             aria-label={local.status}
           >
             <div
-              class="h-full rounded-full bg-[#5e6ad2] transition-[width] duration-150 ease-out"
+              class="h-full rounded-full bg-brand transition-[width] duration-150 ease-out"
               style={{ width: `${progressValue()}%` }}
             />
           </div>
-          <span class="font-mono text-[10px] tabular-nums text-[#8a8f98] shrink-0">
+          <span class="font-mono text-[10px] tabular-nums text-text-tertiary shrink-0">
             {progressValue()}%
           </span>
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
-            <span class="font-mono text-[10px] tabular-nums text-[#5e6ad2]/60 shrink-0">
+            <span class="font-mono text-[10px] tabular-nums text-brand/60 shrink-0">
               ETA {formatDurationSeconds(local.estimatedSecondsRemaining!, locale())}
             </span>
           </Show>
         </div>
 
         {/* Phase markers: ✓ Demux · ✓ Decode · ● Encode · ○ Final */}
-        <div class="flex items-center justify-between text-[10px] text-[#8a8f98] px-px">
+        <div class="flex items-center justify-between text-[10px] text-text-tertiary px-px">
           {phaseMarkers().map((marker, idx) => (
-            <span class={idx < activePhaseIndex() ? 'text-[#d0d6e0]' : ''}>{marker}</span>
+            <span class={idx < activePhaseIndex() ? 'text-text-secondary' : ''}>{marker}</span>
           ))}
         </div>
 
         {/* Detail row: frame counter + memory */}
-        <div class="flex items-center justify-between text-[10px] text-[#8a8f98] min-h-[1rem]">
+        <div class="flex items-center justify-between text-[10px] text-text-tertiary min-h-[1rem]">
           <span class="truncate italic">
             {showFrameCounter()
               ? frameCounterLabel()
@@ -262,17 +262,17 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           </span>
           <div class="flex items-center gap-1.5 shrink-0">
             {showFrameCounter() && subPhaseValue() > 0 && (
-              <span class="font-mono tabular-nums text-[#d0d6e0]">{subPhaseValue()}%</span>
+              <span class="font-mono tabular-nums text-text-secondary">{subPhaseValue()}%</span>
             )}
             {local.memoryUsage && local.memoryUsage !== '0 MB / 0 MB (0%)' && (
-              <span class="font-mono tabular-nums text-[#5e6ad2]/70">🧠 {local.memoryUsage}</span>
+              <span class="font-mono tabular-nums text-brand/70">🧠 {local.memoryUsage}</span>
             )}
           </div>
         </div>
 
         {/* Elapsed time */}
         <Show when={local.showElapsedTime && local.startTime}>
-          <div class="text-center text-[10px] text-[#8a8f98] font-mono tabular-nums">
+          <div class="text-center text-[10px] text-text-tertiary font-mono tabular-nums">
             <span ref={elapsedDisplayRef}>⏱ 0:00</span>
           </div>
         </Show>
@@ -289,10 +289,10 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       aria-busy={progressValue() > 0 && progressValue() < 100}
     >
       {/* Header row: spinner + status + percent */}
-      <div class="flex items-center gap-1.5 text-xs font-medium text-[#d0d6e0]">
+      <div class="flex items-center gap-1.5 text-xs font-medium text-text-secondary">
         <Show when={local.showSpinner}>
           <svg
-            class="animate-spin h-4 w-4 text-[#5e6ad2] shrink-0"
+            class="animate-spin h-4 w-4 text-brand shrink-0"
             fill="none"
             viewBox="0 0 24 24"
             aria-hidden="true"
@@ -313,7 +313,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           </svg>
         </Show>
         <span class="truncate">{local.status}</span>
-        <span class="text-[#8a8f98] font-mono text-[10px] tabular-nums ml-auto shrink-0">
+        <span class="text-text-tertiary font-mono text-[10px] tabular-nums ml-auto shrink-0">
           {progressValue()}%
         </span>
       </div>
@@ -332,14 +332,14 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       </div>
 
       {/* Phase labels with icons */}
-      <div class="flex justify-between text-[10px] text-[#8a8f98] font-medium px-px">
+      <div class="flex justify-between text-[10px] text-text-tertiary font-medium px-px">
         {PHASE_CONFIG.map((seg, idx) => {
           const isPast = idx < activePhaseIndex();
           const isActive = idx === activePhaseIndex();
           return (
             <span
               class={`inline-flex items-center gap-0.5 ${
-                isPast ? 'text-green-400' : isActive ? 'text-[#5e6ad2]' : ''
+                isPast ? 'text-green-400' : isActive ? 'text-brand' : ''
               }`}
             >
               <span>{isPast ? '✓' : seg.icon}</span>
@@ -350,7 +350,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       </div>
 
       {/* Detail row: frame counter / sub-phase + memory */}
-      <div class="flex items-center justify-between text-[10px] text-[#8a8f98] min-h-[1.25rem]">
+      <div class="flex items-center justify-between text-[10px] text-text-tertiary min-h-[1.25rem]">
         <span class="truncate italic">
           {showFrameCounter()
             ? frameCounterLabel()
@@ -358,31 +358,31 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         </span>
         <div class="flex items-center gap-1.5 shrink-0">
           {showFrameCounter() && subPhaseValue() > 0 && (
-            <span class="font-mono tabular-nums text-[#d0d6e0]">{subPhaseValue()}%</span>
+            <span class="font-mono tabular-nums text-text-secondary">{subPhaseValue()}%</span>
           )}
           {local.memoryUsage && local.memoryUsage !== '0 MB / 0 MB (0%)' && (
-            <span class="font-mono tabular-nums text-[#5e6ad2]/70">🧠 {local.memoryUsage}</span>
+            <span class="font-mono tabular-nums text-brand/70">🧠 {local.memoryUsage}</span>
           )}
         </div>
       </div>
 
       {/* Elapsed / ETA row */}
       <Show when={local.showElapsedTime && local.startTime}>
-        <div class="flex items-center justify-center gap-2 text-[10px] text-[#8a8f98] font-mono tabular-nums">
+        <div class="flex items-center justify-center gap-2 text-[10px] text-text-tertiary font-mono tabular-nums">
           <span ref={elapsedDisplayRef}>⏱ 0:00</span>
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
-            <span class="text-[#5e6ad2]/60">·</span>
-            <span class="text-[#5e6ad2]/60">
+            <span class="text-brand/60">·</span>
+            <span class="text-brand/60">
               ETA {formatDurationSeconds(local.estimatedSecondsRemaining!, locale())}
             </span>
           </Show>
           <Show
             when={local.estimatedSecondsRemaining == null || local.estimatedSecondsRemaining <= 0}
           >
-            <span class="text-[#5e6ad2]/60">·</span>
-            <span class="text-[#5e6ad2]/60 italic">calculating…</span>
+            <span class="text-brand/60">·</span>
+            <span class="text-brand/60 italic">calculating…</span>
           </Show>
         </div>
       </Show>

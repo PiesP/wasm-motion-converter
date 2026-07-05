@@ -35,7 +35,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
 
   return (
     <div
-      class="bg-[#191a1b] border-l-4 border-amber-500/60 rounded-lg p-4"
+      class="bg-bg-elevated border-l-4 border-amber-500/60 rounded-lg p-4"
       role="alert"
       aria-live="polite"
       aria-atomic="true"
@@ -57,12 +57,12 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
           </svg>
         </div>
         <div class="ml-3 flex-1">
-          <h3 class="text-sm font-medium text-[#f7f8f8]">{warningTitle()}</h3>
-          <div class="mt-2 text-sm text-[#d0d6e0]">
+          <h3 class="text-sm font-medium text-text-primary">{warningTitle()}</h3>
+          <div class="mt-2 text-sm text-text-secondary">
             <p>{warningMessage()}</p>
             <Show when={!local.isDuringConversion}>
               <p class="mt-2">
-                <strong class="text-[#f7f8f8]">Recommendation:</strong> Close other browser tabs
+                <strong class="text-text-primary">Recommendation:</strong> Close other browser tabs
                 before starting conversion, or use lower quality settings.
               </p>
             </Show>
@@ -77,7 +77,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                     <button
                       type="button"
                       onClick={handleDismiss}
-                      class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-[#d0d6e0] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
+                      class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-500 cursor-pointer"
                       aria-label={t('memory.cancelRetry')}
                       data-testid="memory-warning-dismiss"
                     >
@@ -88,7 +88,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                     <button
                       type="button"
                       onClick={handleReduceSettings}
-                      class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
+                      class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-500 cursor-pointer"
                       aria-label={t('memory.reduceStart')}
                       data-testid="memory-warning-reduce"
                     >
@@ -102,7 +102,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                 <button
                   type="button"
                   onClick={handleCancel}
-                  class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-[#f7f8f8] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
+                  class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-500 cursor-pointer"
                   aria-label={t('memory.cancel')}
                   data-testid="memory-warning-cancel"
                 >
@@ -113,7 +113,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
                 <button
                   type="button"
                   onClick={handleDismiss}
-                  class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-[#d0d6e0] bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
+                  class="inline-flex items-center px-3 py-2 text-sm leading-4 font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-500 cursor-pointer"
                   aria-label={t('memory.dismiss')}
                   data-testid="memory-warning-continue"
                 >

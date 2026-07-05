@@ -216,7 +216,6 @@ html.dark :focus-visible {
 
 @media (forced-colors: active) {
   /* Ensure borders remain visible in high-contrast mode */
-  .memory-warning-severity-border,
   [class*="border-red"],
   [class*="border-yellow"],
   [class*="border-green"],
@@ -257,22 +256,6 @@ html.dark :focus-visible {
 
 .animate-crossfade {
   animation: crossfade-in 0.4s ease-out forwards;
-}
-
-/** Subtle scale-in for cards */
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.animate-scale-in {
-  animation: scale-in 0.25s ease-out forwards;
 }
 
 /* ── View Transition API ──
@@ -365,26 +348,7 @@ html.dark :focus-visible {
   }
 }
 
-/* ── Accessibility Utilities ── */
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* ── Modern CSS Utilities ── */
 .field-sizing-content {
   field-sizing: content;
-}
-
-/* ── Scroll Edge Soft Fade ── */
-.mask-fade-bottom {
-  mask-image: linear-gradient(to bottom, black 90%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 90%, transparent 100%);
 }

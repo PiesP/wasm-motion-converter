@@ -246,29 +246,29 @@ const App: Component = () => {
   return (
     <ErrorBoundary
       fallback={(error, reset) => (
-        <div class="flex min-h-screen items-center justify-center bg-[#08090a] p-4">
-          <div class="max-w-2xl border-l-4 border-red-500/60 bg-[#191a1b] p-6 rounded-lg">
-            <h2 class="mb-2 text-lg font-semibold text-[#f7f8f8]">{t('app.error.title')}</h2>
-            <p class="mb-4 text-sm text-[#d0d6e0]">{t('app.error.description')}</p>
+        <div class="flex min-h-screen items-center justify-center bg-bg-base p-4">
+          <div class="max-w-2xl border-l-4 border-red-500/60 bg-bg-elevated p-6 rounded-lg">
+            <h2 class="mb-2 text-lg font-semibold text-text-primary">{t('app.error.title')}</h2>
+            <p class="mb-4 text-sm text-text-secondary">{t('app.error.description')}</p>
             <div class="mb-4 flex gap-3">
               <button
                 type="button"
                 onClick={reset}
-                class="inline-flex items-center rounded-md bg-[#5e6ad2] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#7170ff] focus:outline-none focus:ring-2 focus:ring-[#5e6ad2] focus:ring-offset-2 focus:ring-offset-[#191a1b]"
+                class="inline-flex items-center rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elevated cursor-pointer"
               >
                 {t('app.error.retry')}
               </button>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                class="inline-flex items-center rounded-md border border-white/[0.08] bg-white/[0.02] px-4 py-2 text-sm font-medium text-[#d0d6e0] transition-colors hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-white/[0.2] focus:ring-offset-2 focus:ring-offset-[#191a1b]"
+                class="inline-flex items-center rounded-md border border-border-standard bg-white/[0.02] px-4 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/[0.2] focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elevated cursor-pointer"
               >
                 {t('app.error.reload')}
               </button>
             </div>
-            <details class="text-xs text-[#d0d6e0]">
+            <details class="text-xs text-text-secondary">
               <summary class="cursor-pointer hover:underline">{t('app.error.details')}</summary>
-              <pre class="mt-2 overflow-auto rounded bg-white/[0.02] border border-white/[0.08] p-3">
+              <pre class="mt-2 overflow-auto rounded bg-white/[0.02] border border-border-standard p-3">
                 {String(error)}
               </pre>
             </details>
@@ -276,24 +276,24 @@ const App: Component = () => {
         </div>
       )}
     >
-      <div class="flex min-h-screen flex-col bg-[#08090a] transition-colors" data-testid="app">
+      <div class="flex min-h-screen flex-col bg-bg-base transition-colors" data-testid="app">
         <a
-          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-[#5e6ad2] focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
+          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-brand focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
           href="#main-content"
         >
           {t('app.skipToMain')}
         </a>
 
-        <header class="border-b border-white/[0.08] bg-[#08090a]">
+        <header class="border-b border-border-standard bg-bg-base">
           <div class="mx-auto flex max-w-[1200px] items-center justify-between px-4 py-0">
             <div class="flex-1">
               <h1
-                class="text-2xl font-bold tracking-tight text-[#f7f8f8] sm:text-[32px]"
+                class="text-2xl font-bold tracking-tight text-text-primary sm:text-[32px]"
                 style="letter-spacing: -0.704px"
               >
                 {t('app.title')}
               </h1>
-              <p class="mt-0.5 text-sm text-[#d0d6e0] sm:text-lg">{t('app.subtitle')}</p>
+              <p class="mt-0.5 text-sm text-text-secondary sm:text-lg">{t('app.subtitle')}</p>
             </div>
 
             <nav aria-label={t('app.navigation')} class="flex items-center gap-2">
@@ -322,7 +322,7 @@ const App: Component = () => {
             {/* Left column (desktop): Dropzone + metadata */}
             <div class="space-y-6 order-1">
               <Show when={memoryWarning()}>
-                <Suspense fallback={<div class="h-24 animate-pulse rounded-lg bg-[#191a1b]" />}>
+                <Suspense fallback={<div class="h-24 animate-pulse rounded-lg bg-bg-elevated" />}>
                   <MemoryWarning
                     isDuringConversion={appState() === 'converting'}
                     onCancel={handleCancelConversion}
@@ -354,7 +354,7 @@ const App: Component = () => {
 
               {/* Analyzing state: separate progress (not in dropzone) */}
               <Show when={appState() === 'analyzing'}>
-                <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-[#191a1b]" />}>
+                <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-bg-elevated" />}>
                   <div class="space-y-2">
                     <ConversionProgress
                       progress={0}
@@ -363,7 +363,7 @@ const App: Component = () => {
                     />
                     <button
                       type="button"
-                      class="w-full rounded-md border border-white/[0.08] bg-white/[0.02] px-4 py-2 text-sm font-medium text-[#d0d6e0] transition-all duration-150 hover:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-[rgba(94,106,210,0.5)] focus:ring-offset-2 focus:ring-offset-[#0f1011]"
+                      class="w-full rounded-md border border-border-standard bg-white/[0.02] px-4 py-2 text-sm font-medium text-text-secondary transition-all duration-150 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-panel cursor-pointer"
                       onClick={handleCancelAnalysis}
                     >
                       {t('dropzone.cancelConversion')}
@@ -373,7 +373,7 @@ const App: Component = () => {
               </Show>
 
               <Show when={appState() === 'cancelling'}>
-                <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-[#191a1b]" />}>
+                <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-bg-elevated" />}>
                   <ConversionProgress progress={0} status={t('progress.cancelling')} />
                 </Suspense>
               </Show>

@@ -18,12 +18,12 @@ interface ButtonProps {
 }
 
 const BASE_CLASS =
-  'inline-flex justify-center items-center px-4 py-2 min-h-[44px] border text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(94,106,210,0.5)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f1011] transition-all duration-150';
+  'inline-flex justify-center items-center px-4 py-2 min-h-[44px] border text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-panel transition-all duration-150';
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary: 'border-transparent text-white bg-[#5e6ad2] hover:bg-[#828fff]',
+  primary: 'border-transparent text-white bg-brand hover:bg-brand-hover',
   danger: 'border-transparent text-white bg-red-600/80 hover:bg-red-500',
-  ghost: 'border-white/[0.08] text-[#d0d6e0] bg-white/[0.02] hover:bg-white/[0.05]',
+  ghost: 'border-border-standard text-text-secondary bg-white/[0.02] hover:bg-white/[0.05]',
 };
 
 const Button: Component<ButtonProps> = (props) => {
