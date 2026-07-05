@@ -7,7 +7,8 @@
   "type": "module",
   "packageManager": "pnpm@11.2.2",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0",
+    "pnpm": ">=11.2.2"
   },
   "volta": {
     "node": "26.4.0",
@@ -25,8 +26,8 @@
     "knip": "knip --dependencies",
     "circular": "pnpm dlx madge --ts-config tsconfig.json --circular src/**/*.ts",
     "knip:full": "knip --files --exports --dependencies --reporter compact --max-show-issues 50 --no-exit-code",
-    "prebuild": "npx tsx scripts/generate-licenses.ts && pnpm -s quality:ci",
-    "build": "NODE_OPTIONS=\"--no-deprecation\" vite build && npx tsx scripts/postbuild.ts",
+    "prebuild": "npx tsx scripts/generate-licenses.ts && pnpm -s quality",
+    "build": "NODE_OPTIONS=\"--no-deprecation\" vite build",
     "postbuild": "npx tsx scripts/postbuild.ts",
     "analyze": "NODE_OPTIONS=\"--no-deprecation\" VITE_ANALYZE_BUNDLE=true vite build && node -e \"console.log('\\\\nBundle analysis generated at dist/stats.html')\"",
     "preview": "NODE_OPTIONS=\"--no-deprecation\" vite preview",
