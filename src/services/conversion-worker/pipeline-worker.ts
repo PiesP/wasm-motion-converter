@@ -291,10 +291,13 @@ export async function runWorkerPipeline(
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
 
       // ── VP8 VideoEncoder path (GPU-only, fastest) ──
-      // VideoEncoder IS available in Workers in Chrome/Edge.
-      // Try VP8 first, then OffscreenCanvas, then wasm-webp.
+      // DISABLED (2026-07-06): Chromium's VP8 EncodedVideoChunk output is not
+      // compatible with WebP ANMF muxing. Falls through to OffscreenCanvas.
+      const useVp8Encoder = false;
+      /*
       const useVp8Encoder =
         typeof VideoEncoder !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
+      */
 
       if (useVp8Encoder) {
         logger.info('encoders', 'WebP encoder (VideoEncoder VP8, GPU-only)', {

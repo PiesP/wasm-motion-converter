@@ -441,11 +441,16 @@ async function _runPipelineInner(
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
 
       // ── VP8 VideoEncoder path (GPU-only, fastest) ──
-      // Uses VideoEncoder with "vp8" codec to encode frames directly
-      // without reading pixel data into JS memory. Falls back to
-      // OffscreenCanvas paths if VideoEncoder is unavailable.
+      // DISABLED (2026-07-06): Chromium's VP8 EncodedVideoChunk output is not
+      // compatible with WebP ANMF muxing. The data includes a non-standard
+      // 3-byte prefix and version=2 bitstream that all VP8/WebP decoders reject.
+      // Re-enable when Chromium fixes the VP8 raw bitstream output format.
+      // See: .hermes/plans/ for full research notes.
+      const useVp8Encoder = false;
+      /*
       const useVp8Encoder =
         typeof VideoEncoder !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
+      */
 
       if (useVp8Encoder) {
         logger.info('conversion', '  ├─ Branch: WebP encoder (VideoEncoder VP8, GPU-only)', {
