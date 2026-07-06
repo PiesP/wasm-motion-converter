@@ -4,78 +4,26 @@
   "baseline_kind": "accepted-duplication",
   "families": [
     {
-      "id": "0b096e40a443e34c",
+      "id": "ed6c4c0b4834c258",
       "note": "local duplication — extract a method from the repeated block",
       "members": [
         {
-          "id": "daf341b6aeef28ee",
+          "id": "aa02c8fa7b2b549e",
           "source_digest": "fnv1a64:f8c3e4b556a8a80d",
           "file": "src/services/conversion-worker/pipeline-worker.ts",
           "lang": "typescript",
-          "start_line": 319,
-          "end_line": 354,
+          "start_line": 301,
+          "end_line": 336,
           "kind": "Block",
           "is_fragment": false
         },
         {
-          "id": "ec2a49bf9ff1a063",
+          "id": "683ec9f685f46dbf",
           "source_digest": "fnv1a64:0492ae2a71c64b4c",
           "file": "src/services/conversion-worker/pipeline-worker.ts",
           "lang": "typescript",
-          "start_line": 388,
-          "end_line": 422,
-          "kind": "Block",
-          "is_fragment": false
-        }
-      ]
-    },
-    {
-      "id": "8e0563071c716fed",
-      "note": "local duplication — extract a method from the repeated block",
-      "members": [
-        {
-          "id": "c67a6ed6d3ccca8f",
-          "source_digest": "fnv1a64:4cf047b1c30e3205",
-          "file": "src/services/conversion-pipeline.ts",
-          "lang": "typescript",
-          "start_line": 656,
-          "end_line": 742,
-          "kind": "Block",
-          "is_fragment": false
-        },
-        {
-          "id": "b081b2e997145ceb",
-          "source_digest": "fnv1a64:e58e1ddd91de42ec",
-          "file": "src/services/conversion-pipeline.ts",
-          "lang": "typescript",
-          "start_line": 474,
-          "end_line": 513,
-          "kind": "Block",
-          "is_fragment": false
-        }
-      ]
-    },
-    {
-      "id": "f13968bc6c705239",
-      "note": "local duplication — extract a method from the repeated block",
-      "members": [
-        {
-          "id": "237991487fba928e",
-          "source_digest": "fnv1a64:1cee57ba2c0e7e97",
-          "file": "src/services/conversion-pipeline.ts",
-          "lang": "typescript",
-          "start_line": 474,
-          "end_line": 507,
-          "kind": "Block",
-          "is_fragment": false
-        },
-        {
-          "id": "b3e1ce383b2d8916",
-          "source_digest": "fnv1a64:1cee57ba2c0e7e97",
-          "file": "src/services/conversion-pipeline.ts",
-          "lang": "typescript",
-          "start_line": 708,
-          "end_line": 741,
+          "start_line": 370,
+          "end_line": 404,
           "kind": "Block",
           "is_fragment": false
         }
