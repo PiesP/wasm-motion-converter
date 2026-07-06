@@ -1,0 +1,85 @@
+{
+  "schema_version": 2,
+  "tool": "nose",
+  "baseline_kind": "accepted-duplication",
+  "families": [
+    {
+      "id": "34cd65cb3893b31f",
+      "note": "local duplication — extract a method from the repeated block",
+      "members": [
+        {
+          "id": "256f34b855416034",
+          "source_digest": "fnv1a64:4cf047b1c30e3205",
+          "file": "/home/piesp/projects/wasm-motion-converter/src/services/conversion-pipeline.ts",
+          "lang": "typescript",
+          "start_line": 656,
+          "end_line": 742,
+          "kind": "Block",
+          "is_fragment": false
+        },
+        {
+          "id": "221a55ff14380c88",
+          "source_digest": "fnv1a64:e58e1ddd91de42ec",
+          "file": "/home/piesp/projects/wasm-motion-converter/src/services/conversion-pipeline.ts",
+          "lang": "typescript",
+          "start_line": 474,
+          "end_line": 513,
+          "kind": "Block",
+          "is_fragment": false
+        }
+      ]
+    },
+    {
+      "id": "ca31eb6f5460e3cd",
+      "note": "local duplication — extract a method from the repeated block",
+      "members": [
+        {
+          "id": "781881f69c11b3a9",
+          "source_digest": "fnv1a64:1cee57ba2c0e7e97",
+          "file": "/home/piesp/projects/wasm-motion-converter/src/services/conversion-pipeline.ts",
+          "lang": "typescript",
+          "start_line": 474,
+          "end_line": 507,
+          "kind": "Block",
+          "is_fragment": false
+        },
+        {
+          "id": "c4f1eb7735143db1",
+          "source_digest": "fnv1a64:1cee57ba2c0e7e97",
+          "file": "/home/piesp/projects/wasm-motion-converter/src/services/conversion-pipeline.ts",
+          "lang": "typescript",
+          "start_line": 708,
+          "end_line": 741,
+          "kind": "Block",
+          "is_fragment": false
+        }
+      ]
+    },
+    {
+      "id": "f0d6adbdd40a3894",
+      "note": "local duplication — extract a method from the repeated block",
+      "members": [
+        {
+          "id": "e76d17ac5d6b6d55",
+          "source_digest": "fnv1a64:f8c3e4b556a8a80d",
+          "file": "/home/piesp/projects/wasm-motion-converter/src/services/conversion-worker/pipeline-worker.ts",
+          "lang": "typescript",
+          "start_line": 319,
+          "end_line": 354,
+          "kind": "Block",
+          "is_fragment": false
+        },
+        {
+          "id": "7dbe5cf842152e84",
+          "source_digest": "fnv1a64:0492ae2a71c64b4c",
+          "file": "/home/piesp/projects/wasm-motion-converter/src/services/conversion-worker/pipeline-worker.ts",
+          "lang": "typescript",
+          "start_line": 388,
+          "end_line": 422,
+          "kind": "Block",
+          "is_fragment": false
+        }
+      ]
+    }
+  ]
+}
