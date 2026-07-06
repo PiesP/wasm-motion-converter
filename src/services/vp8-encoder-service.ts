@@ -29,6 +29,7 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
+import { createEncodingProgressReporter } from './encoding-progress-reporter';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
 
 /**
@@ -179,20 +180,7 @@ export async function encodeWebpVp8(
       height: h,
       frameDecimation,
       hwAccel: 'prefer-hardware',
-      onFrameDecoded: (_frameNum, total) => {
-        if (onProgress && encodedFrames > 0) {
-          const encodePct = total > 0 ? Math.round((encodedFrames / total) * 40) : 0;
-          onProgress({
-            phase: 'encoding',
-            progress: 50 + Math.min(40, encodePct),
-            fps: 0,
-            etaSeconds: null,
-            memoryMB: 0,
-            currentFrame: encodedFrames,
-            totalFrames: total,
-          });
-        }
-      },
+      onFrameDecoded: createEncodingProgressReporter(onProgress, () => encodedFrames),
       onVideoFrameAvailable: async (
         frame: VideoFrame,
         frameDurationMs: number,

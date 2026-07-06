@@ -21,6 +21,7 @@ import type { ProgressCallback } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import type { BaseEncoderOptions } from './encoder-common';
+import { reportEncodingProgress } from './encoding-progress-reporter';
 import { convertRGBToRGBA } from './frame-utils';
 import {
   extractVP8Bitstream,
@@ -113,17 +114,7 @@ export async function encodeWebpParallel(
 
         if (onProgress) {
           const completedFrames = resultBuffer.size;
-          const encodePct =
-            frames.length > 0 ? Math.round((completedFrames / frames.length) * 40) : 0;
-          onProgress({
-            phase: 'encoding',
-            progress: 50 + Math.min(40, encodePct),
-            fps: 0,
-            etaSeconds: null,
-            memoryMB: 0,
-            currentFrame: completedFrames,
-            totalFrames: frames.length,
-          });
+          reportEncodingProgress(onProgress, completedFrames, frames.length);
         }
 
         return result;
@@ -326,18 +317,7 @@ async function encodeWebpMainThread(
 
     muxer.addFrame(bitstream, frame.durationMs);
 
-    if (onProgress) {
-      const encodePct = Math.round(((i + 1) / frames.length) * 40);
-      onProgress({
-        phase: 'encoding',
-        progress: 50 + Math.min(40, encodePct),
-        fps: 0,
-        etaSeconds: null,
-        memoryMB: 0,
-        currentFrame: i + 1,
-        totalFrames: frames.length,
-      });
-    }
+    reportEncodingProgress(onProgress, i + 1, frames.length);
   }
 
   return muxer.finish();
