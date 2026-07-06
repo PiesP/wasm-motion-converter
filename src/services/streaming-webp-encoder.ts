@@ -18,6 +18,8 @@
  *   3. Mux into RIFF/WEBP container with VP8X + ANIM + ANMF chunks
  */
 
+import { VP8_FOURCC as SHARED_VP8_FOURCC, VP8L_FOURCC } from '@utils/constants';
+
 // ---------------------------------------------------------------------------
 // VP8 bitstream extraction
 // ---------------------------------------------------------------------------
@@ -54,7 +56,7 @@ export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
 
   // Identify codec (big-endian)
   const codec = view.getUint32(12, false);
-  if (codec !== 0x56503820 && codec !== 0x5650384c) {
+  if (codec !== SHARED_VP8_FOURCC && codec !== VP8L_FOURCC) {
     throw new Error(`Unknown WebP codec: 0x${codec.toString(16)}`);
   }
 
@@ -108,7 +110,7 @@ export function extractVP8BitstreamFast(webp: Uint8Array): Uint8Array {
  *   const result = muxer.finish();
  */
 export class StreamingWebpMuxer {
-  private static readonly VP8_FOURCC = 0x56503820;
+  private static readonly VP8_FOURCC = SHARED_VP8_FOURCC;
   private static readonly VP8X_FOURCC = 0x56503858;
   private static readonly ANIM_MAGIC = 0x414e494d;
   private static readonly ANMF_MAGIC = 0x414e4d46;

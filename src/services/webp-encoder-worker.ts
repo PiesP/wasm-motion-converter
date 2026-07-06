@@ -44,6 +44,7 @@ function extractVP8Bitstream(webpBuffer: Uint8Array): Uint8Array {
   const fourCC = view.getUint32(12, false);
 
   if (fourCC === 0x56503820) {
+    // Mirrors @utils/constants VP8_FOURCC for Worker isolation
     // Simple VP8 format — bitstream starts at offset 20
     const frameSize = view.getUint32(16, true);
     if (20 + frameSize > webpBuffer.length) {
@@ -62,6 +63,7 @@ function extractVP8Bitstream(webpBuffer: Uint8Array): Uint8Array {
       const chunkSize = view.getUint32(offset + 4, true);
 
       if (chunkFourCC === 0x56503820) {
+        // Mirrors @utils/constants VP8_FOURCC for Worker isolation
         if (offset + 8 + chunkSize > webpBuffer.length) {
           throw new Error(`VP8 chunk size ${chunkSize} exceeds buffer ${webpBuffer.length}`);
         }

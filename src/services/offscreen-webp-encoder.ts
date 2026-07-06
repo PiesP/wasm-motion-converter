@@ -18,6 +18,7 @@
  */
 
 import type { ProgressCallback } from '@t/conversion-types';
+import { VP8_FOURCC } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
@@ -85,10 +86,10 @@ function extractVP8FromOffscreenBlob(webpBuffer: Uint8Array): Uint8Array {
 
   let vp8Data: Uint8Array;
 
-  // Determine format: simple VP8 (0x56503820) or extended VP8X (0x56503858)
+  // Determine format: simple VP8 (VP8_FOURCC) or extended VP8X (0x56503858)
   const fourCC = view.getUint32(12, false);
 
-  if (fourCC === 0x56503820) {
+  if (fourCC === VP8_FOURCC) {
     // Simple VP8 format — bitstream starts at offset 20
     const frameSize = view.getUint32(16, true);
     if (20 + frameSize > webpBuffer.length) {
@@ -104,7 +105,7 @@ function extractVP8FromOffscreenBlob(webpBuffer: Uint8Array): Uint8Array {
       const chunkFourCC = view.getUint32(offset, false);
       const chunkSize = view.getUint32(offset + 4, true);
 
-      if (chunkFourCC === 0x56503820) {
+      if (chunkFourCC === VP8_FOURCC) {
         // Found VP8 chunk
         if (offset + 8 + chunkSize > webpBuffer.length) {
           throw new Error(`VP8 chunk size ${chunkSize} exceeds buffer ${webpBuffer.length}`);

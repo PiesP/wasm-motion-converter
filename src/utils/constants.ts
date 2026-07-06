@@ -123,6 +123,12 @@ export const STALL_DETECTION_TIMEOUT_MS = 60_000;
 /** Default VP8 encoder bitrate — 5 Mbps for quality encoding */
 export const VP8_DEFAULT_BITRATE = 5_000_000;
 
+/** VP8 FourCC (big-endian: "VP8 " = 0x56503820) */
+export const VP8_FOURCC = 0x56503820;
+
+/** VP8L FourCC (big-endian: "VP8L" = 0x5650384c) */
+export const VP8L_FOURCC = 0x5650384c;
+
 // ============================================================================
 // MEMORY THRESHOLD CONSTANTS
 // ============================================================================

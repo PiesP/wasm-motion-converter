@@ -23,7 +23,7 @@
  */
 
 import type { ProgressCallback } from '@t/conversion-types';
-import { VP8_DEFAULT_BITRATE } from '@utils/constants';
+import { VP8_DEFAULT_BITRATE, VP8_FOURCC } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
@@ -74,7 +74,7 @@ function wrapVp8Subchunk(vp8Data: Uint8Array): Uint8Array {
   const view = new DataView(wrapped.buffer);
 
   // "VP8 " FourCC — big-endian
-  view.setUint32(0, 0x56503820, false);
+  view.setUint32(0, VP8_FOURCC, false);
   // Chunk size — little-endian
   view.setUint32(4, vp8Data.length, true);
   // Copy VP8 bitstream
