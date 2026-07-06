@@ -38,6 +38,7 @@ import { resolveVideoDimensions } from './frame-utils';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
+import { createPipelineProgressCallback } from './pipeline-progress-factory';
 import { encodeWebpVp8 } from './vp8-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
 
@@ -462,7 +463,16 @@ async function _runPipelineInner(
           webpDecimation,
         });
 
-        let encodedFrames = 0;
+        const { callback: onEncodeProgress, getEncodedFrames } = createPipelineProgressCallback(
+          throttled,
+          buildProgressData,
+          fpsTracker,
+          estimatedOutputFrames,
+          DECODE_MAX,
+          ENCODE_RANGE,
+          ENCODE_MAX,
+          sampleMemory
+        );
         try {
           const encoded = await scheduleTask(
             () =>
@@ -476,33 +486,14 @@ async function _runPipelineInner(
                   frameDecimation: webpDecimation,
                   onFrameDecoded: decodeProgressCb,
                 },
-                (p) => {
-                  encodedFrames = p.currentFrame ?? encodedFrames;
-                  const encodePct =
-                    estimatedOutputFrames > 0
-                      ? Math.round((encodedFrames / estimatedOutputFrames) * ENCODE_RANGE)
-                      : 0;
-                  throttled.callback(
-                    buildProgressData(
-                      'encoding',
-                      Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
-                      fpsTracker.current,
-                      fpsTracker.current > 0 && p.currentFrame != null
-                        ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
-                        : null,
-                      sampleMemory(),
-                      p.currentFrame ?? 0,
-                      estimatedOutputFrames
-                    )
-                  );
-                },
+                onEncodeProgress,
                 signal
               ),
             { priority: 'user-visible' }
           );
           output = encoded.buffer as ArrayBuffer;
           encodeResult = {
-            frames: encodedFrames,
+            frames: getEncodedFrames(),
             outputBytes: output.byteLength,
           };
         } catch (err) {
@@ -645,7 +636,16 @@ async function _runPipelineInner(
             }
           );
 
-          let encodedFrames = 0;
+          const { callback: onEncodeProgress, getEncodedFrames } = createPipelineProgressCallback(
+            throttled,
+            buildProgressData,
+            fpsTracker,
+            estimatedOutputFrames,
+            DECODE_MAX,
+            ENCODE_RANGE,
+            ENCODE_MAX,
+            sampleMemory
+          );
           const encoded = await scheduleTask(
             () =>
               encodeWebpOffscreen(
@@ -658,33 +658,14 @@ async function _runPipelineInner(
                   frameDecimation: webpDecimation,
                   onFrameDecoded: decodeProgressCb,
                 },
-                (p) => {
-                  encodedFrames = p.currentFrame ?? encodedFrames;
-                  const encodePct =
-                    estimatedOutputFrames > 0
-                      ? Math.round((encodedFrames / estimatedOutputFrames) * ENCODE_RANGE)
-                      : 0;
-                  throttled.callback(
-                    buildProgressData(
-                      'encoding',
-                      Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
-                      fpsTracker.current,
-                      fpsTracker.current > 0 && p.currentFrame != null
-                        ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
-                        : null,
-                      sampleMemory(),
-                      p.currentFrame ?? 0,
-                      estimatedOutputFrames
-                    )
-                  );
-                },
+                onEncodeProgress,
                 signal
               ),
             { priority: 'user-visible' }
           );
           output = encoded.buffer as ArrayBuffer;
           encodeResult = {
-            frames: encodedFrames,
+            frames: getEncodedFrames(),
             outputBytes: output.byteLength,
           };
         } else {
@@ -697,7 +678,16 @@ async function _runPipelineInner(
             webpDecimation,
           });
 
-          let encodedFrames = 0;
+          const { callback: onEncodeProgress, getEncodedFrames } = createPipelineProgressCallback(
+            throttled,
+            buildProgressData,
+            fpsTracker,
+            estimatedOutputFrames,
+            DECODE_MAX,
+            ENCODE_RANGE,
+            ENCODE_MAX,
+            sampleMemory
+          );
           const encoded = await scheduleTask(
             () =>
               encodeWebp(
@@ -710,33 +700,14 @@ async function _runPipelineInner(
                   frameDecimation: webpDecimation,
                   onFrameDecoded: decodeProgressCb,
                 },
-                (p) => {
-                  encodedFrames = p.currentFrame ?? encodedFrames;
-                  const encodePct =
-                    estimatedOutputFrames > 0
-                      ? Math.round((encodedFrames / estimatedOutputFrames) * ENCODE_RANGE)
-                      : 0;
-                  throttled.callback(
-                    buildProgressData(
-                      'encoding',
-                      Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
-                      fpsTracker.current,
-                      fpsTracker.current > 0 && p.currentFrame != null
-                        ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
-                        : null,
-                      sampleMemory(),
-                      p.currentFrame ?? 0,
-                      estimatedOutputFrames
-                    )
-                  );
-                },
+                onEncodeProgress,
                 signal
               ),
             { priority: 'user-visible' }
           );
           output = encoded.buffer as ArrayBuffer;
           encodeResult = {
-            frames: encodedFrames,
+            frames: getEncodedFrames(),
             outputBytes: output.byteLength,
           };
         }
