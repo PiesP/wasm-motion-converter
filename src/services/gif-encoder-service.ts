@@ -70,6 +70,9 @@ const BAYER_8X8 = [
  * Pre-computed scaled threshold LUT cache.
  * Key = dither strength (0-255), Value = flattened 64-element Int8Array.
  *
+ * Bounded to at most 3 entries (one per quality level: 0, 8, 12).
+ * Each entry is a 64-element Int8Array (~64 bytes).
+ *
  * Instead of computing (BAYER[y][x] - 32) * scale per-pixel per-frame,
  * we pre-compute the threshold for each quality's strength once.
  */
