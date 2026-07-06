@@ -10,6 +10,7 @@
  */
 
 import { isCancellationError } from '@utils/cancellation-context';
+import { classifyWorkerError } from './classify-worker-error';
 import { runWorkerPipeline } from './pipeline-worker';
 import type { WorkerRequest, WorkerResponse } from './types';
 
@@ -106,19 +107,3 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
 // Ready signal for the main thread
 self.postMessage({ type: 'log', requestId: '', level: 'info', message: 'Worker initialized' });
-
-/**
- * Classify a conversion error for worker context.
- * Compact rule subset matching classifyWorkerError in pipeline-worker.ts.
- */
-function classifyWorkerError(message: string): string {
-  const lower = message.toLowerCase();
-  if (/memory|oom|wasm\s*memory|stack\s*overflow/i.test(lower)) return 'OUT_OF_MEMORY';
-  if (/timed?\s*out|timeout|stall|watchdog/i.test(lower)) return 'TIMEOUT';
-  if (/cancel|abort/i.test(lower)) return 'CANCELLED';
-  if (/codec|unsupported|not\s*found|decod(?:er|e)\s*fail/i.test(lower))
-    return 'CODEC_NOT_SUPPORTED';
-  if (/webp|libwebp|encoder\s*fail/i.test(lower)) return 'ENCODER_ERROR';
-  if (/demux|container|format|unable\s*to\s*parse/i.test(lower)) return 'DECODER_ERROR';
-  return 'UNKNOWN';
-}
