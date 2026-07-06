@@ -34,9 +34,10 @@
     "clean": "rm -rf dist node_modules/.vite",
     "test": "cd test && pnpm test",
     "test:watch": "cd test && pnpm test:watch",
-    "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s knip",
+    "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s knip && pnpm -s quality:nose",
     "quality:fix": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s check && pnpm -s circular && pnpm -s knip",
-    "quality:ci": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular",
+    "quality:ci": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s quality:nose",
+    "quality:nose": "bash -c 'if command -v nose &>/dev/null; then nose query src --baseline .nose-baseline.json --fail-on new; else echo \"[nose] not installed — skipping\"; fi'",
     "verify": "pnpm -s quality && pnpm -s build",
     "mut": "cd test && npx stryker run ../stryker.conf.json --reporters=progress",
     "mut:fast": "cd test && npx stryker run ../stryker.conf.json --reporters=progress --mutators=boolean,arithmetic,conditional-boundary,equality-operator,negate-conditional,string"
