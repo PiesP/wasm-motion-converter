@@ -68,7 +68,7 @@ async function isVp8ConfigSupported(width: number, height: number): Promise<bool
  *   4       chunk size (uint32 LE)
  *   8       raw VP8 bitstream
  */
-function wrapVp8Subchunk(vp8Data: Uint8Array): Uint8Array {
+export function wrapVp8Subchunk(vp8Data: Uint8Array): Uint8Array {
   const totalSize = 8 + vp8Data.length;
   const wrapped = new Uint8Array(totalSize);
   const view = new DataView(wrapped.buffer);
