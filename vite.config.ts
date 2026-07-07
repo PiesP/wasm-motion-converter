@@ -1,9 +1,8 @@
-import path from 'node:path';
-import tailwindcss from '@tailwindcss/vite';
 import { visualizer } from 'rollup-plugin-visualizer';
 import type { Plugin, PluginOption } from 'vite';
-import { defineConfig, loadEnv } from 'vite';
-import solid from 'vite-plugin-solid';
+import { defineConfig, loadEnv, mergeConfig } from 'vite';
+import basePreset from './tooling/vite/presets/base';
+import browserAppPreset from './tooling/vite/presets/browser-app';
 
 function stripDataTestIdPlugin(): Plugin {
   return {
@@ -41,7 +40,7 @@ export default defineConfig(({ mode }) => {
   const styleSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
   const scriptSrc = "'self' 'unsafe-eval'";
 
-  const csp = [
+  const cspHeader = [
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     `style-src ${styleSrc}`,
@@ -51,95 +50,32 @@ export default defineConfig(({ mode }) => {
     "worker-src 'self'",
   ].join('; ');
 
-  return {
-    plugins: [
-      solid(),
-      tailwindcss(),
-      ...(env.VITE_ANALYZE_BUNDLE === 'true'
-        ? [
-            visualizer({
-              filename: 'dist/stats.html',
-              gzipSize: true,
-              brotliSize: true,
-            }) as PluginOption,
-          ]
-        : []),
-      stripDataTestIdPlugin(),
-    ],
+  const commonPlugins: PluginOption[] = [
+    ...(env.VITE_ANALYZE_BUNDLE === 'true'
+      ? [
+          visualizer({
+            filename: 'dist/stats.html',
+            gzipSize: true,
+            brotliSize: true,
+          }) as PluginOption,
+        ]
+      : []),
+    stripDataTestIdPlugin(),
+  ];
 
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, './src'),
-        '@components': path.resolve(__dirname, './src/components'),
-        '@services': path.resolve(__dirname, './src/services'),
-        '@utils': path.resolve(__dirname, './src/utils'),
-        '@stores': path.resolve(__dirname, './src/stores'),
-        '@hooks': path.resolve(__dirname, './src/hooks'),
-        '@t': path.resolve(__dirname, './src/types'),
-        '@i18n': path.resolve(__dirname, './src/i18n'),
-      },
-    },
-
-    worker: {
-      format: 'es',
-    },
-
+  const modeConfig = {
+    plugins: commonPlugins,
     server: {
       headers: {
-        'Content-Security-Policy': csp,
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Content-Security-Policy': cspHeader,
       },
     },
-
     preview: {
       headers: {
-        'Content-Security-Policy': csp,
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-        'Cross-Origin-Opener-Policy': 'same-origin',
-      },
-    },
-
-    optimizeDeps: {
-      include: ['wasm-webp', 'gifenc', 'mediabunny'],
-    },
-
-    build: {
-      target: 'esnext',
-      chunkSizeWarningLimit: 1000,
-      cssCodeSplit: true,
-      sourcemap: false,
-      rolldownOptions: {
-        output: {
-          format: 'es',
-          entryFileNames: 'assets/[name].[hash].js',
-          chunkFileNames: 'assets/[name].[hash].js',
-          assetFileNames: 'assets/[name].[hash].[ext]',
-          preserveModules: false,
-          exports: 'auto',
-          manualChunks(id): string | undefined {
-            // Keep wasm-webp out of the worker chunk — it's only needed for
-            // the main-thread fallback path, not the OffscreenCanvas worker path.
-            if (id.includes('wasm-webp')) {
-              return 'wasm-webp';
-            }
-            if (id.includes('gifenc')) {
-              return 'gifenc';
-            }
-            return undefined;
-          },
-        },
-        onwarn(warning, defaultHandler) {
-          // Suppress "module" externalization warning from wasm-webp
-          if (
-            warning.code === 'MODULE_LEVEL_DIRECTIVE' ||
-            warning.message?.includes('Module "module" has been externalized')
-          ) {
-            return;
-          }
-          defaultHandler(warning);
-        },
+        'Content-Security-Policy': cspHeader,
       },
     },
   };
+
+  return mergeConfig(mergeConfig(basePreset, browserAppPreset), modeConfig);
 });
