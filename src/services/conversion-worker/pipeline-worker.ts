@@ -27,7 +27,7 @@ import {
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { classifyWorkerError } from './classify-worker-error';
-import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
+import type { SerializedConversionOptions, WorkerResponse } from './types';
 
 // Aligned progress ranges matching main-thread conversion-pipeline.ts
 // demux: 0~3%   decode: 3~73%   encode: 73~93%   assembly: 93~100%
@@ -66,7 +66,6 @@ function clampMaxMemoryMB(value: number): number {
  */
 export async function runWorkerPipeline(
   inputBuffer: ArrayBuffer,
-  _config: SerializedDecoderConfig,
   options: SerializedConversionOptions,
   postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
   _signal?: AbortSignal
@@ -106,6 +105,19 @@ export async function runWorkerPipeline(
 
   let output: ArrayBuffer | undefined;
 
+  // ── Memory sampling (H3 fix) ──
+  // Workers lack performance.memory, so we estimate from buffer pool usage.
+  let lastMemSampleTime = 0;
+  const sampleMemoryMB = (): number => {
+    const now = performance.now();
+    if (now - lastMemSampleTime >= 1000) {
+      lastMemSampleTime = now;
+    }
+    // Track buffer pool memory + estimate overhead (approximate)
+    const poolBytes = globalBufferPool.totalPooledMemory;
+    return Math.round(poolBytes / (1024 * 1024));
+  };
+
   try {
     // ── Demux Phase ────────────────────────────────────────────
     let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
@@ -128,7 +140,7 @@ export async function runWorkerPipeline(
               percent: demuxPct,
               fps: 0,
               etaSeconds: 0,
-              memoryMB: 0,
+              memoryMB: sampleMemoryMB(),
               currentFrame: packetsExtracted,
               totalFrames: estimatedTotalFrames,
             });
@@ -197,7 +209,7 @@ export async function runWorkerPipeline(
             progressState.fpsTracker.current > 0
               ? Math.round((estimatedOutputFrames - frameIdx) / progressState.fpsTracker.current)
               : 0,
-          memoryMB: 0,
+          memoryMB: sampleMemoryMB(),
           currentFrame: frameIdx,
           totalFrames: estimatedOutputFrames,
           outputFrames: estimatedOutputFrames,
@@ -252,7 +264,7 @@ export async function runWorkerPipeline(
                         (estimatedOutputFrames - frameIdx) / progressState.fpsTracker.current
                       )
                     : 0,
-                memoryMB: 0,
+                memoryMB: sampleMemoryMB(),
                 currentFrame: frameIdx,
                 totalFrames: estimatedOutputFrames,
                 outputFrames: estimatedOutputFrames,
@@ -324,7 +336,7 @@ export async function runWorkerPipeline(
                             progressState.fpsTracker.current
                         )
                       : 0,
-                  memoryMB: 0,
+                  memoryMB: sampleMemoryMB(),
                   currentFrame: p.currentFrame ?? 0,
                   totalFrames: estimatedOutputFrames,
                   outputFrames: estimatedOutputFrames,
@@ -392,7 +404,7 @@ export async function runWorkerPipeline(
                         (estimatedOutputFrames - p.currentFrame) / progressState.fpsTracker.current
                       )
                     : 0,
-                memoryMB: 0,
+                memoryMB: sampleMemoryMB(),
                 currentFrame: p.currentFrame ?? 0,
                 totalFrames: estimatedOutputFrames,
                 outputFrames: estimatedOutputFrames,
@@ -416,7 +428,7 @@ export async function runWorkerPipeline(
       percent: 100,
       fps: 0,
       etaSeconds: 0,
-      memoryMB: 0,
+      memoryMB: sampleMemoryMB(),
       currentFrame: demuxResult.totalFrames,
       totalFrames: demuxResult.totalFrames,
       outputFrames: estimatedOutputFrames,

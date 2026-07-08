@@ -285,28 +285,51 @@ export function convertRGBAToRGB(
   const pixelCount = width * height;
   const dst = (pool ?? globalBufferPool).acquire(pixelCount * 3);
 
-  // Use Uint32Array view for 4-byte-at-a-time reads
-  const src32 = new Uint32Array(src.buffer, src.byteOffset, pixelCount);
-  const len = pixelCount;
-
-  if (format === 'RGBA' || format === 'RGBX') {
-    // RGBA: R=byte0, G=byte1, B=byte2, A/X=byte3 (little-endian: 0xAABBGGRR in uint32)
-    // We need bytes 0,1,2 → copy with alpha skip
-    for (let i = 0; i < len; i++) {
-      const v = src32[i]!;
-      const dstIdx = i * 3;
-      dst[dstIdx] = v & 0xff; // R
-      dst[dstIdx + 1] = (v >> 8) & 0xff; // G
-      dst[dstIdx + 2] = (v >> 16) & 0xff; // B
+  // Safely create Uint32Array view — the src buffer must have at least 4N bytes.
+  // If the buffer is too small, fall back to per-byte iteration (slower but safe).
+  const needsBytes = pixelCount * 4;
+  const availableBytes = src.buffer.byteLength - src.byteOffset;
+  if (availableBytes >= needsBytes) {
+    // Fast path: 4-byte-at-a-time Uint32 reads
+    const src32 = new Uint32Array(src.buffer, src.byteOffset, pixelCount);
+    if (format === 'RGBA' || format === 'RGBX') {
+      // RGBA: R=byte0, G=byte1, B=byte2, A/X=byte3 (little-endian: 0xAABBGGRR in uint32)
+      for (let i = 0; i < pixelCount; i++) {
+        const v = src32[i]!;
+        const dstIdx = i * 3;
+        dst[dstIdx] = v & 0xff; // R
+        dst[dstIdx + 1] = (v >> 8) & 0xff; // G
+        dst[dstIdx + 2] = (v >> 16) & 0xff; // B
+      }
+    } else {
+      // BGRA/BGRX: B=byte0, G=byte1, R=byte2, A/X=byte3
+      for (let i = 0; i < pixelCount; i++) {
+        const v = src32[i]!;
+        const dstIdx = i * 3;
+        dst[dstIdx] = (v >> 16) & 0xff; // R (from byte 2)
+        dst[dstIdx + 1] = (v >> 8) & 0xff; // G (from byte 1)
+        dst[dstIdx + 2] = v & 0xff; // B (from byte 0)
+      }
     }
   } else {
-    // BGRA/BGRX: B=byte0, G=byte1, R=byte2, A/X=byte3
-    for (let i = 0; i < len; i++) {
-      const v = src32[i]!;
-      const dstIdx = i * 3;
-      dst[dstIdx] = (v >> 16) & 0xff; // R (from byte 2)
-      dst[dstIdx + 1] = (v >> 8) & 0xff; // G (from byte 1)
-      dst[dstIdx + 2] = v & 0xff; // B (from byte 0)
+    // Fallback: per-byte copy when buffer is too small for Uint32Array view
+    if (format === 'RGBA' || format === 'RGBX') {
+      for (let i = 0; i < pixelCount; i++) {
+        const srcIdx = i * 4;
+        const dstIdx = i * 3;
+        dst[dstIdx] = src[srcIdx]!; // R
+        dst[dstIdx + 1] = src[srcIdx + 1]!; // G
+        dst[dstIdx + 2] = src[srcIdx + 2]!; // B
+      }
+    } else {
+      // BGRA/BGRX: B=byte0, G=byte1, R=byte2
+      for (let i = 0; i < pixelCount; i++) {
+        const srcIdx = i * 4;
+        const dstIdx = i * 3;
+        dst[dstIdx] = src[srcIdx + 2]!; // R
+        dst[dstIdx + 1] = src[srcIdx + 1]!; // G
+        dst[dstIdx + 2] = src[srcIdx]!; // B
+      }
     }
   }
 
