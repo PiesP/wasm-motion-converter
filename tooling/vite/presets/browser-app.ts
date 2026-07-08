@@ -48,7 +48,7 @@ const browserAppPreset: UserConfig = {
           return undefined;
         },
       },
-      onwarn(warning: { code?: string; message?: string }, defaultHandler: (w: { code?: string; message?: string }) => void) {
+      onwarn(warning: { code?: string; message: string }, defaultHandler: (w: { code?: string; message: string }) => void) {
         // Suppress "module" externalization warning from wasm-webp
         if (
           warning.code === 'MODULE_LEVEL_DIRECTIVE' ||
