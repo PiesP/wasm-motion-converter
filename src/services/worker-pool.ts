@@ -233,6 +233,12 @@ export class WebpWorkerPool {
       return Promise.reject(new Error('Worker pool has been terminated'));
     }
 
+    // If no workers were created (all init attempts failed), reject immediately
+    // rather than queuing tasks that will never complete (M5 fix).
+    if (this.workers.length === 0) {
+      return Promise.reject(new Error('Worker pool has no active workers'));
+    }
+
     return new Promise<EncodeTaskResult>((resolve, reject) => {
       const pending: PendingTask = {
         task,

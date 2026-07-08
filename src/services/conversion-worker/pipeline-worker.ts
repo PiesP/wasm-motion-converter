@@ -26,7 +26,6 @@ import {
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
-import { classifyWorkerError } from './classify-worker-error';
 import type { SerializedConversionOptions, WorkerResponse } from './types';
 
 // Aligned progress ranges matching main-thread conversion-pipeline.ts
@@ -121,55 +120,32 @@ export async function runWorkerPipeline(
   try {
     // ── Demux Phase ────────────────────────────────────────────
     let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
-    try {
-      demuxResult = await demuxVideo(
-        request,
-        undefined,
-        (packetsExtracted, estimatedTotalFrames) => {
-          const now = performance.now();
-          if (now - progressState.lastPostTime >= 100) {
-            progressState.lastPostTime = now;
-            const demuxPct = Math.min(
-              DEMUX_MAX,
-              Math.round((packetsExtracted / Math.max(1, estimatedTotalFrames)) * DEMUX_MAX)
-            );
-            postMessage({
-              type: 'progress',
-              requestId: '',
-              phase: 'demuxing',
-              percent: demuxPct,
-              fps: 0,
-              etaSeconds: 0,
-              memoryMB: sampleMemoryMB(),
-              currentFrame: packetsExtracted,
-              totalFrames: estimatedTotalFrames,
-            });
-          }
-        }
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const code = classifyWorkerError(msg);
-      postMessage({
-        type: 'error',
-        requestId: '',
-        message: `Demux failed: ${msg}`,
-        code,
-      });
-      throw err;
-    }
+    demuxResult = await demuxVideo(request, undefined, (packetsExtracted, estimatedTotalFrames) => {
+      const now = performance.now();
+      if (now - progressState.lastPostTime >= 100) {
+        progressState.lastPostTime = now;
+        const demuxPct = Math.min(
+          DEMUX_MAX,
+          Math.round((packetsExtracted / Math.max(1, estimatedTotalFrames)) * DEMUX_MAX)
+        );
+        postMessage({
+          type: 'progress',
+          requestId: '',
+          phase: 'demuxing',
+          percent: demuxPct,
+          fps: 0,
+          etaSeconds: 0,
+          memoryMB: sampleMemoryMB(),
+          currentFrame: packetsExtracted,
+          totalFrames: estimatedTotalFrames,
+        });
+      }
+    });
 
     const cfg = demuxResult.config;
     const dims = resolveVideoDimensions(cfg);
     if (!dims) {
-      const msg = 'Unable to determine video dimensions';
-      postMessage({
-        type: 'error',
-        requestId: '',
-        message: msg,
-        code: 'DECODER_ERROR',
-      });
-      throw new Error(msg);
+      throw new Error('Unable to determine video dimensions');
     }
     const { width: codedWidth, height: codedHeight } = dims;
 
@@ -419,6 +395,11 @@ export async function runWorkerPipeline(
 
     // ── Assembly Phase ─────────────────────────────────────────────
     globalBufferPool.clear();
+
+    // Guard: ensure output was produced (M10 fix).
+    if (!output) {
+      throw new Error('Worker pipeline completed without producing output');
+    }
 
     const totalElapsedMs = Math.round(performance.now() - pipelineStart);
     postMessage({

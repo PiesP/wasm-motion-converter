@@ -230,6 +230,7 @@ export async function decodeFrames(
 
   let decodeError: Error | null = null;
   let inputFrameCount = 0;
+  let keptFrameCount = 0;
   let accumulatedDuration = 0;
   let skippedByDecimation = 0;
   let smartSkippedCount = 0;
@@ -427,6 +428,7 @@ export async function decodeFrames(
             if (streaming) {
               // Streaming mode: pass frame to callback for immediate processing.
               // Include smart-skip carryover to preserve total playback time.
+              keptFrameCount++;
               await onFrameAvailable!(rgbData, totalDuration + smartCarryoverMs, frameNum);
               smartCarryoverMs = 0;
               // Note: onFrameAvailable is responsible for releasing rgbData
@@ -447,7 +449,7 @@ export async function decodeFrames(
                 ? inputFrameCount % 10 === 0
                 : rgbFrames.length % 10 === 0 || rgbFrames.length === 1)
             ) {
-              onFrameDecoded(streaming ? inputFrameCount : rgbFrames.length, demux.totalFrames);
+              onFrameDecoded(streaming ? keptFrameCount : rgbFrames.length, demux.totalFrames);
             }
           } finally {
             frame.close();

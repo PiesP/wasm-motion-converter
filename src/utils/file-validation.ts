@@ -242,9 +242,18 @@ async function extractVideoDuration(file: File): Promise<number> {
     // URLs, add crossOrigin="anonymous" (or appropriate) before src assignment.
     const url = URL.createObjectURL(file);
 
+    // Timeout guard (M6 fix): reject if metadata doesn't load within 5 seconds.
+    // Prevents hanging indefinitely on corrupt files that fire neither
+    // loadedmetadata nor error events.
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('Video duration extraction timed out after 5s'));
+    }, 5000);
+
     // Centralized cleanup function (called in both success and error paths)
     // Critical to prevent blob URL memory leak and orphaned video element
     const cleanup = () => {
+      clearTimeout(timeoutId);
       video.src = ''; // Clear source before revoking URL
       URL.revokeObjectURL(url); // Release blob URL memory
     };

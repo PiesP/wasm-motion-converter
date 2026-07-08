@@ -122,8 +122,9 @@ const ConfirmationModal: Component = () => {
         aria-describedby="modal-description"
         onClick={handleBackdropClick}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
+          // Only handle Escape on the backdrop itself, not on children like buttons.
+          // Enter/Space are handled natively by the Confirm/Cancel buttons.
+          if (e.key === 'Escape' && e.target === e.currentTarget) {
             cancelDialog();
           }
         }}

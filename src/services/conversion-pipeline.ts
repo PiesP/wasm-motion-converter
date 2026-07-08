@@ -41,6 +41,7 @@ import { createStreamingWebpEncoder } from './parallel-webp-encoder';
 import { createPipelineProgressCallback } from './pipeline-progress-factory';
 import { encodeWebpVp8 } from './vp8-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
+import { getWorkerPool } from './worker-pool';
 
 /**
  * Profiler interface — implemented by ConversionProfiler in DEV,
@@ -239,43 +240,34 @@ async function _runPipelineInner(
     profiler.startPhase('demuxing');
     let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
     const demuxProgressThrottled = throttled.callback;
-    try {
-      demuxResult = await scheduleTask(
-        () =>
-          demuxVideo(
-            request,
-            videoMetadata() ?? undefined,
-            (packetsExtracted, estimatedTotalFrames) => {
-              if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-              profiler.updatePhase('demuxing', packetsExtracted);
-              const memMB = sampleMemory();
-              const elapsedMs = Math.round(performance.now() - pipelineStart);
-              const demuxPct = Math.min(
-                DEMUX_MAX,
-                Math.round((packetsExtracted / estimatedTotalFrames) * DEMUX_MAX)
-              );
-              demuxProgressThrottled({
-                phase: 'demuxing',
-                progress: demuxPct,
-                fps: 0,
-                etaSeconds: null,
-                memoryMB: memMB,
-                currentFrame: packetsExtracted,
-                totalFrames: estimatedTotalFrames,
-                elapsedMs,
-              });
-            }
-          ),
-        { priority: 'user-blocking' }
-      );
-    } catch (err) {
-      logger.error('conversion', 'Demux failed', {
-        fileName: request.fileName,
-        format: request.format,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
+    demuxResult = await scheduleTask(
+      () =>
+        demuxVideo(
+          request,
+          videoMetadata() ?? undefined,
+          (packetsExtracted, estimatedTotalFrames) => {
+            if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+            profiler.updatePhase('demuxing', packetsExtracted);
+            const memMB = sampleMemory();
+            const elapsedMs = Math.round(performance.now() - pipelineStart);
+            const demuxPct = Math.min(
+              DEMUX_MAX,
+              Math.round((packetsExtracted / estimatedTotalFrames) * DEMUX_MAX)
+            );
+            demuxProgressThrottled({
+              phase: 'demuxing',
+              progress: demuxPct,
+              fps: 0,
+              etaSeconds: null,
+              memoryMB: memMB,
+              currentFrame: packetsExtracted,
+              totalFrames: estimatedTotalFrames,
+              elapsedMs,
+            });
+          }
+        ),
+      { priority: 'user-blocking' }
+    );
 
     if (signal?.aborted) {
       logger.info('conversion', 'Conversion aborted after demux');
@@ -510,7 +502,9 @@ async function _runPipelineInner(
         // encoding across multiple CPU cores for 2-3x speedup).
         // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
         const useParallelEncoder =
-          typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined';
+          typeof OffscreenCanvas !== 'undefined' &&
+          typeof Worker !== 'undefined' &&
+          getWorkerPool() !== null;
 
         if (useParallelEncoder) {
           logger.info(
@@ -539,12 +533,14 @@ async function _runPipelineInner(
             request.quality,
             estimatedOutputFrames,
             (p) => {
-              const encodeProgress =
-                DECODE_MAX + Math.round(((p.progress - DECODE_MAX) * ENCODE_RANGE) / ENCODE_RANGE);
+              const encodePct =
+                estimatedOutputFrames > 0
+                  ? Math.round(((p.currentFrame ?? 0) / estimatedOutputFrames) * ENCODE_RANGE)
+                  : 0;
               throttled.callback(
                 buildProgressData(
                   'encoding',
-                  Math.min(ENCODE_MAX, encodeProgress),
+                  DECODE_MAX + Math.min(ENCODE_RANGE, encodePct),
                   fpsTracker.current,
                   fpsTracker.current > 0 && p.currentFrame != null
                     ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
