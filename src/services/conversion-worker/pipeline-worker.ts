@@ -196,8 +196,7 @@ export async function runWorkerPipeline(
     if (options.format === 'gif') {
       const gifDecimation = calcAutoDecimation(
         sourceFps,
-        GIF_TARGET_FPS,
-        options.scale,
+        GIF_TARGET_FPS[options.quality],
         options.forceDecimation
       );
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
@@ -255,7 +254,6 @@ export async function runWorkerPipeline(
       const webpDecimation = calcAutoDecimation(
         sourceFps,
         WEBP_TARGET_FPS[options.quality],
-        options.scale,
         options.forceDecimation
       );
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));

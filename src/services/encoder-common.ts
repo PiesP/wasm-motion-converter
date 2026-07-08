@@ -10,13 +10,14 @@
  * - Progress callback types
  */
 
-import type { ConversionQuality, SmartFrameSkipMode } from '@t/conversion-types';
+import type { SmartFrameSkipMode } from '@t/conversion-types';
+import { MIN_OUTPUT_FPS } from '@utils/constants';
 
 /** Base options shared by all format encoders */
 export interface BaseEncoderOptions {
   width: number;
   height: number;
-  quality: ConversionQuality;
+  quality: import('@t/conversion-types').ConversionQuality;
   scale: number;
   /** Frame decimation: keep every Nth frame (1 = keep all) */
   frameDecimation?: number | undefined;
@@ -32,49 +33,52 @@ export interface BaseEncoderOptions {
 }
 
 /**
- * Calculate auto-decimation ratio based on source/target FPS and scale.
+ * Calculate frame decimation ratio from source FPS to target FPS.
  *
  * Decimation reduces the number of frames sent to the encoder, which directly
- * impacts output file size and processing time. The strategy is:
+ * impacts output file size, conversion time, and motion smoothness.
  *
- * 1. **FPS-based decimation** (`baseDecimation`): If the source FPS exceeds the
- *    target FPS, decimate to approximately match the target. E.g., 60fps → 15fps
- *    yields `baseDecimation = 4` (keep every 4th frame).
+ * The formula is simple: `decimation = round(sourceFps / targetFps)`,
+ * clamped to ensure output never drops below MIN_OUTPUT_FPS (3fps).
  *
- * 2. **Scale-based boost** (`scaleBoost`): At larger output scales, each frame
- *    occupies more bytes in the output. A full-scale (1.0x) encoded frame is
- *    roughly 4x the data of a 0.5x frame. To compensate and keep output sizes
- *    manageable, we apply MORE aggressive decimation at larger scales:
- *    - scale >= 1.0 → boost = 3 (e.g., 30fps source → effective 10fps output)
- *    - 0.5 < scale < 1.0 → boost = 2 (moderate decimation increase)
- *    - scale <= 0.5 → boost = 1 (no additional decimation; output is already small)
+ * Scale no longer affects frame rate. Resolution and frame rate are separate
+ * quality axes — the user's scale choice controls output dimensions, while
+ * quality (passed as targetFps by the caller) controls frame rate.
  *
- * The boosted decimation is multiplicative: `baseDecimation * scaleBoost`.
- * This prioritizes usability (conversion completes in reasonable time) over
- * frame fidelity at large scales.
+ * Example (60fps source):
+ *   targetFps=8  (GIF low)    → decimation=8  → output ~7.5fps
+ *   targetFps=12 (GIF medium) → decimation=5  → output ~12fps
+ *   targetFps=20 (GIF high)   → decimation=3  → output ~20fps
+ *   targetFps=30 (WebP high)  → decimation=2  → output ~30fps
  *
  * @param sourceFps - Source video frame rate
- * @param targetFps - Desired output frame rate
- * @param scale - Output scale factor (e.g., 1.0 = full resolution)
+ * @param targetFps - Desired output frame rate (from GIF_TARGET_FPS or WEBP_TARGET_FPS)
  * @param forceDecimation - Override all calculations (used for memory-pressure forced decimation)
- * @param scaleIndependentFps - Reserved for future content-adaptive FPS (P1). When true, scale does NOT affect decimation.
  * @returns Frame decimation factor (1 = keep every frame, N = keep every Nth frame)
  */
 export function calcAutoDecimation(
   sourceFps: number,
   targetFps: number,
-  scale: number,
-  forceDecimation?: number,
-  scaleIndependentFps?: boolean
+  forceDecimation?: number
 ): number {
   if (forceDecimation !== undefined) return forceDecimation;
+
   // Guard against unreliable fps detection: clamp to reasonable range
   const clampedFps = Math.max(1, Math.min(sourceFps, 120));
+
+  // Base decimation: keep every Nth frame to approximately match target FPS
   const baseDecimation =
     clampedFps > targetFps ? Math.max(1, Math.round(clampedFps / targetFps)) : 1;
-  // Scale boost: larger output scales need more decimation to keep
-  // file sizes and encoding time reasonable.
-  // Can be overridden via scaleIndependentFps for content-adaptive FPS (P1).
-  const scaleBoost = scaleIndependentFps ? 1 : scale >= 1.0 ? 3 : scale > 0.5 ? 2 : 1;
-  return Math.max(1, Math.round(baseDecimation * scaleBoost));
+
+  // MIN_OUTPUT_FPS guard: ensure output never drops below the floor.
+  // E.g., 120fps source with 8fps target → decimation=15 → output=8fps ✓
+  //       120fps source with 5fps target (hypothetical) → decimation=24 → output=5fps ✓
+  //       60fps source with 8fps target → decimation=8 → output=7.5fps ✓
+  const outputFps = clampedFps / baseDecimation;
+  if (outputFps < MIN_OUTPUT_FPS) {
+    // Recalculate: use floor to keep output at or above MIN_OUTPUT_FPS
+    return Math.max(1, Math.floor(clampedFps / MIN_OUTPUT_FPS));
+  }
+
+  return baseDecimation;
 }

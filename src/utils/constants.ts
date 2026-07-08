@@ -67,23 +67,36 @@ export const WEBP_MAX_FRAMES = 9000;
 /** Default FPS used when video metadata doesn't provide frame rate */
 export const DEFAULT_FPS = 30;
 
-/** GIF auto-decimation target FPS.
- *  GIF is significantly larger than WebP at the same quality.
- *  5fps with scaleBoost=3 gives ~2fps for 60fps sources (1080p → ~40MB).
- *  This is the practical limit before motion becomes choppy. */
-export const GIF_TARGET_FPS = 5;
-
-/** WebP auto-decimation target FPS — varies by quality preset.
- *  Per-frame wasm-webp encoding (~287ms/frame for 1080p) dominates
- *  conversion time; reducing output frames is the highest-ROI optimization.
- *  Unified at 8fps across all quality levels — the quality parameter
- *  affects per-frame encoding size, not speed, so it's a separate axis.
- *  With scaleBoost=3 at 100% scale, effective output FPS is ~2.7fps. */
-export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
+/** GIF auto-decimation target FPS — quality-dependent.
+ *  low:    8fps — aggressive decimation, smallest files, noticeable choppiness
+ *  medium: 12fps — balanced motion vs file size for typical screen viewing
+ *  high:   20fps — smooth motion approaching cinematic feel, larger files
+ *
+ *  Scale no longer affects frame rate (scaleBoost removed).
+ *  Scale controls resolution; quality controls both encoding fidelity and frame rate.
+ *  With MIN_OUTPUT_FPS=3 guard, worst-case output is 3fps. */
+export const GIF_TARGET_FPS: Record<ConversionQuality, number> = {
   low: 8,
-  medium: 8,
-  high: 8,
+  medium: 12,
+  high: 20,
 };
+
+/** WebP auto-decimation target FPS — quality-dependent.
+ *  WebP has better compression than GIF, so target FPS can be higher
+ *  at each quality level while maintaining reasonable file sizes.
+ *  low:    12fps
+ *  medium: 18fps
+ *  high:   30fps — near-source smoothness for 30fps content */
+export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
+  low: 12,
+  medium: 18,
+  high: 30,
+};
+
+/** Minimum output FPS guard — ensures output never drops below this.
+ *  Applied after decimation calculation to prevent excessively choppy output
+ *  even with low quality + high source FPS combinations. */
+export const MIN_OUTPUT_FPS = 3;
 
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */
 export const GIF_MAX_FRAME_DELAY_CS = 200;
