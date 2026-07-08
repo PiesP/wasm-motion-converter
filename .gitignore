@@ -94,3 +94,6 @@ stryker.log
 # Misc
 *.backup
 *.mp4
+
+# Test config (lives in test/)
+stryker.conf.json

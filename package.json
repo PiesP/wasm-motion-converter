@@ -39,8 +39,8 @@
     "quality:ci": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s circular && pnpm -s quality:nose",
     "quality:nose": "bash -c 'if command -v nose &>/dev/null; then nose query src --baseline .nose-baseline.json --fail-on new; else echo \"[nose] not installed — skipping\"; fi'",
     "verify": "pnpm -s quality && pnpm -s build",
-    "mut": "cd test && npx stryker run ../stryker.conf.json --reporters=progress",
-    "mut:fast": "cd test && npx stryker run ../stryker.conf.json --reporters=progress --mutators=boolean,arithmetic,conditional-boundary,equality-operator,negate-conditional,string"
+    "mut": "cd test && npx stryker run stryker.conf.json --reporters=progress",
+    "mut:fast": "cd test && npx stryker run stryker.conf.json --reporters=progress --mutators=boolean,arithmetic,conditional-boundary,equality-operator,negate-conditional,string"
   },
   "dependencies": {
     "gifenc": "^1.0.3",
