@@ -11,7 +11,7 @@
     "pnpm": ">=11.2.2"
   },
   "volta": {
-    "node": "26.4.0",
+    "node": "26.5.0",
     "pnpm": "11.2.2"
   },
   "scripts": {
@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "gifenc": "^1.0.3",
-    "mediabunny": "^1.50.6",
+    "mediabunny": "^1.50.7",
     "solid-js": "1.9.14",
     "wasm-webp": "^0.1.0"
   },
@@ -54,7 +54,7 @@
     "@types/dom-webcodecs": "^0.1.18",
     "@types/node": "26.1.0",
     "esbuild": "0.28.1",
-    "knip": "6.24.0",
+    "knip": "6.25.0",
     "rollup-plugin-visualizer": "7.0.1",
     "tsx": "^4.23.0",
     "typescript": "7.0.1-rc",
