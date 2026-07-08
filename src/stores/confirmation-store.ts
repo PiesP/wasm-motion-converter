@@ -32,9 +32,15 @@ export const showConfirmation = (
     cancelLabel?: string;
   }
 ): void => {
+  const confirmWarnings = warnings.filter((w) => w.requiresConfirmation);
+  if (confirmWarnings.length === 0) {
+    // No warnings requiring confirmation — invoke onConfirm directly (L8 fix).
+    onConfirm();
+    return;
+  }
   setConfirmationState({
     isVisible: true,
-    warnings: warnings.filter((w) => w.requiresConfirmation),
+    warnings: confirmWarnings,
     title: options?.title,
     confirmLabel: options?.confirmLabel,
     cancelLabel: options?.cancelLabel,

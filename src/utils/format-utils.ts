@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import type { Locale } from '@t/i18n-types';
 import { BYTES_PER_KB } from './constants.js';
+import {
+  formatDuration as formatDurationLocale,
+  formatFileSize as formatFileSizeLocale,
+} from './intl-utils';
 
 /**
  * ID generation utility
@@ -64,12 +69,3 @@ export function formatBytes(bytes: number, locale?: string): string {
 
   return `${(bytes / k ** i).toFixed(1)} ${sizes[i]}`;
 }
-
-// ─── Locale-aware delegates (imported from intl-utils) ──────────────────
-// intl-utils does not import from format-utils, so this is safe.
-
-import type { Locale } from '@t/i18n-types';
-import {
-  formatDuration as formatDurationLocale,
-  formatFileSize as formatFileSizeLocale,
-} from './intl-utils';

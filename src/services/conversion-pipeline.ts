@@ -723,33 +723,29 @@ async function _runPipelineInner(
 
     const memMB = sampleMemory();
     const totalElapsedMs = Math.round(performance.now() - pipelineStart);
-    scheduleTask(
-      () => {
-        throttled.callback({
-          phase: 'assembling',
-          progress: ENCODE_MAX,
-          fps: 0,
-          etaSeconds: 0,
-          memoryMB: memMB,
-          currentFrame: demuxResult.totalFrames,
-          totalFrames: demuxResult.totalFrames,
-          outputFrames: estimatedOutputFrames,
-          elapsedMs: totalElapsedMs,
-        });
-        throttled.callback({
-          phase: 'assembling',
-          progress: 100,
-          fps: 0,
-          etaSeconds: 0,
-          memoryMB: memMB,
-          currentFrame: demuxResult.totalFrames,
-          totalFrames: demuxResult.totalFrames,
-          outputFrames: estimatedOutputFrames,
-          elapsedMs: totalElapsedMs,
-        });
-      },
-      { priority: 'background' }
-    );
+    // Call progress directly instead of scheduling a fire-and-forget task (L3 fix).
+    throttled.callback({
+      phase: 'assembling',
+      progress: ENCODE_MAX,
+      fps: 0,
+      etaSeconds: 0,
+      memoryMB: memMB,
+      currentFrame: demuxResult.totalFrames,
+      totalFrames: demuxResult.totalFrames,
+      outputFrames: estimatedOutputFrames,
+      elapsedMs: totalElapsedMs,
+    });
+    throttled.callback({
+      phase: 'assembling',
+      progress: 100,
+      fps: 0,
+      etaSeconds: 0,
+      memoryMB: memMB,
+      currentFrame: demuxResult.totalFrames,
+      totalFrames: demuxResult.totalFrames,
+      outputFrames: estimatedOutputFrames,
+      elapsedMs: totalElapsedMs,
+    });
 
     profiler.endPhase('assembling');
 

@@ -70,16 +70,6 @@ export const [conversionResults, setConversionResults] = createSignal<Conversion
 export const [inputFile, setInputFile] = createSignal<File | null>(null);
 
 /**
- * Input buffer stored outside the reactive system. An ArrayBuffer can be up
- * to 500 MB; storing it in a SolidJS signal would create a reactive
- * dependency that triggers re-renders whenever the buffer changes — an
- * expensive and unnecessary side-effect for data this large.
- *
- * Callers that need the buffer read it directly via getInputBuffer().
- * Only the public API (getInputBuffer / setInputBuffer) is exported;
- * no reactive signal tracks the buffer contents.
- */
-/**
  * Module-level mutable buffer reference for the input file.
  *
  * This is intentionally module-level mutable state (rather than a reactive signal)

@@ -60,7 +60,7 @@ const parseTimeInput = (input: string): number | null => {
   return Number.isNaN(num) ? null : num;
 };
 
-const clampToStep = (value: number): number => Math.round(value / STEP) * STEP;
+const clampToStep = (value: number): number => Number((Math.round(value / STEP) * STEP).toFixed(2));
 
 const TrimSelector: Component<TrimSelectorProps> = (props) => {
   const { t } = useLocale();
@@ -264,7 +264,12 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     const parsed = parseTimeInput(endText());
     if (parsed !== null) {
       const clamped = Math.max(props.trimStart + 0.1, Math.min(parsed, props.duration));
-      props.onChange(props.trimStart, clampToStep(clamped));
+      // If clamped is at full duration, use sentinel 0 (L11 fix).
+      if (clamped >= props.duration - STEP / 2) {
+        props.onChange(props.trimStart, 0);
+      } else {
+        props.onChange(props.trimStart, clampToStep(clamped));
+      }
     }
     setEndText(formatTimePrecise(effectiveEnd()));
     setEndFocused(false);

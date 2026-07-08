@@ -149,6 +149,7 @@ export async function decodeFrames(
   }
   const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
   const pendingConversions: Promise<void>[] = [];
+  const PENDING_CONVERSIONS_MAX = 50; // Hard cap to prevent unbounded growth (L9 fix).
 
   // ── Attempt parallel decode via keyframe-segmented multi-decoder ──
   // Parallel decode splits the video at keyframe boundaries and decodes
@@ -458,6 +459,10 @@ export async function decodeFrames(
 
         // Track pending conversion for backpressure and final flush.
         pendingConversions.push(conversion);
+        // Cap pending conversions to prevent unbounded growth (L9 fix).
+        while (pendingConversions.length > PENDING_CONVERSIONS_MAX) {
+          pendingConversions.shift();
+        }
       } catch (err) {
         // Ensure frame is always closed if error occurs before async IIFE
         frame.close();

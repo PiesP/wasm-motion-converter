@@ -192,6 +192,7 @@ async function copyFrameFourChannel(
         await frame.copyTo(buffer, {
           rect: { x: 0, y: 0, width, height },
           layout: [{ offset: 0, stride: width * 4 }],
+          format: fmt,
         });
 
         const rgb = convertRGBAToRGB(buffer, width, height, fmt);

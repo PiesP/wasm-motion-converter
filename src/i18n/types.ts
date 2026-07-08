@@ -9,11 +9,11 @@
  * Extends the base types defined in @t/i18n-types.
  */
 
-import type { Locale, LocaleInfo, TranslationKeys, Translations } from '@t/i18n-types';
+import type { TranslationKeys } from '@t/i18n-types';
 
 /** Re-export LOCALES and DEFAULT_LOCALE for convenience */
 export { DEFAULT_LOCALE, LOCALES } from '@t/i18n-types';
-export type { Locale, LocaleInfo, TranslationKeys, Translations };
+export type { Locale, LocaleInfo, TranslationKeys, Translations } from '@t/i18n-types';
 
 /** Type-safe translation export function */
 export type TFunction = <K extends keyof TranslationKeys>(key: K) => TranslationKeys[K];
