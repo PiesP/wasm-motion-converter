@@ -4,26 +4,26 @@
   "baseline_kind": "accepted-duplication",
   "families": [
     {
-      "id": "ed6c4c0b4834c258",
+      "id": "7d0168c8ad0efa8c",
       "note": "local duplication — extract a method from the repeated block",
       "members": [
         {
-          "id": "aa02c8fa7b2b549e",
-          "source_digest": "fnv1a64:f8c3e4b556a8a80d",
+          "id": "b1f5e1dea5a4c0ee",
+          "source_digest": "fnv1a64:9d367e81f9da2594",
           "file": "src/services/conversion-worker/pipeline-worker.ts",
           "lang": "typescript",
-          "start_line": 301,
-          "end_line": 336,
+          "start_line": 287,
+          "end_line": 322,
           "kind": "Block",
           "is_fragment": false
         },
         {
-          "id": "683ec9f685f46dbf",
-          "source_digest": "fnv1a64:0492ae2a71c64b4c",
+          "id": "cbd9db0b9ed2ece3",
+          "source_digest": "fnv1a64:107697b7b2ae173f",
           "file": "src/services/conversion-worker/pipeline-worker.ts",
           "lang": "typescript",
-          "start_line": 370,
-          "end_line": 404,
+          "start_line": 356,
+          "end_line": 390,
           "kind": "Block",
           "is_fragment": false
         }

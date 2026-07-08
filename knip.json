@@ -15,5 +15,5 @@
   "ignore": ["**/*.d.ts"],
   "ignoreBinaries": ["sha256sum", "stryker"],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["@types/dom-webcodecs"]
+  "ignoreDependencies": ["@types/dom-webcodecs", "@tailwindcss/vite", "vite-plugin-solid"]
 }
