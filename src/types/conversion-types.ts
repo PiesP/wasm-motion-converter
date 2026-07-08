@@ -206,8 +206,6 @@ export interface ErrorContext {
   conversionSettings?: ConversionSettings | undefined;
   /** Which phase of conversion failed (e.g., 'decoding', 'encoding') */
   phase?: string | undefined;
-  /** FFmpeg log lines for debugging */
-  ffmpegLogs?: string[] | undefined;
 }
 /**
  *

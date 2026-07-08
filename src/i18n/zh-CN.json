@@ -147,7 +147,7 @@
   "env.sabUnavailable": "SharedArrayBuffer 不可用。此应用程序需要跨源隔离（COOP/COEP 标头）才能正常工作。",
   "env.detected": "检测到：SharedArrayBuffer {sab}，crossOriginIsolated {coi}。",
   "env.localDevHint": "如果您在本地运行：请确保使用配置了正确标头的 Vite 开发服务器。",
-  "env.deployedHint": "如果您正在访问已部署的站点：请联系管理员配置 COOP/COEP 标头。如果 FFmpeg 无法启动，浏览器扩展或严格的安全设置可能阻止了模块/blob worker——尝试使用 InPrivate 窗口或暂时禁用拦截器。",
+  "env.deployedHint": "如果您正在访问已部署的站点：请联系管理员配置 COOP/COEP 标头。如果应用无法加载，浏览器扩展或严格的安全设置可能阻止了 Web Worker——尝试使用 InPrivate 窗口或暂时禁用拦截器。",
   "offline.message": "您处于离线状态。正在使用缓存内容。某些功能可能受限。",
   "lang.label": "语言",
   "lang.select": "选择语言"

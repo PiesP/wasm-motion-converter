@@ -8,7 +8,6 @@ const LIBRARIES = [
   { name: 'gifenc', url: 'https://github.com/mattdesl/gifenc', license: 'MIT' },
   { name: 'wasm-webp', url: 'https://github.com/GoogleChromeLabs/wasm-webp', license: 'MIT' },
   { name: 'mediabunny', url: 'https://github.com/w3reality/mediabunny', license: 'MPL-2.0' },
-  { name: 'ffmpeg.wasm', url: 'https://github.com/ffmpegwasm/ffmpeg.wasm', license: 'LGPL-2.1+' },
   { name: 'SolidJS', url: 'https://github.com/solidjs/solid', license: 'MIT' },
 ] as const;
 

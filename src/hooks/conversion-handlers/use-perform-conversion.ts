@@ -116,7 +116,6 @@ export async function handleConvert(
                     getErrorMessage(error) || t('error.conversionFailed'),
                     videoMetadata(),
                     settings,
-                    undefined,
                     t
                   );
                   setErrorMessage(context.originalError);
@@ -493,7 +492,7 @@ async function handleConversionError(
     return;
   }
 
-  const context = classifyConversionError(errorMessage_, videoMetadata(), settings, undefined, t);
+  const context = classifyConversionError(errorMessage_, videoMetadata(), settings, t);
 
   logger.error('conversion', 'Conversion failed', {
     error: errorMessage_,

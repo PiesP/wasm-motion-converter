@@ -147,7 +147,7 @@
   "env.sabUnavailable": "SharedArrayBuffer is not available. This application requires cross-origin isolation (COOP/COEP headers) to work properly.",
   "env.detected": "Detected: SharedArrayBuffer {sab}, crossOriginIsolated {coi}.",
   "env.localDevHint": "If you're running this locally: Make sure you're using the Vite dev server with the correct headers configured.",
-  "env.deployedHint": "If you're accessing a deployed site: Contact the administrator to configure COOP/COEP headers. If FFmpeg fails to start, browser extensions or strict security settings may be blocking module/blob workers—try an InPrivate window or disable blockers temporarily.",
+  "env.deployedHint": "If you're accessing a deployed site: Contact the administrator to configure COOP/COEP headers. If the app fails to load, browser extensions or strict security settings may be blocking Web Workers—try an InPrivate window or disable blockers temporarily.",
   "offline.message": "You're offline. Using cached content. Some features may be limited.",
   "lang.label": "Language",
   "lang.select": "Select language"

@@ -15,27 +15,6 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-interface CdnPackageInfo {
-  name: string;
-  url: string;
-  license: string;
-  licenseUrl: string;
-  purpose: string;
-  note: string;
-}
-
-// Packages that are loaded at runtime via CDN, not bundled
-const CDN_PACKAGES: Record<string, CdnPackageInfo> = {
-  'ffmpeg.wasm': {
-    name: 'ffmpeg.wasm',
-    url: 'https://github.com/ffmpegwasm/ffmpeg.wasm',
-    license: 'LGPL-2.1-or-later',
-    licenseUrl: 'https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html',
-    purpose: 'Fallback video decoding/encoding via WebAssembly (loaded via CDN at runtime)',
-    note: 'Dynamically loaded at runtime via CDN, not statically bundled.',
-  },
-};
-
 interface LicenseEntry {
   name: string;
   version: string;
@@ -115,18 +94,6 @@ function collectRuntimeDeps(): LicenseEntry[] {
     });
   }
 
-  // Add CDN packages
-  for (const [, info] of Object.entries(CDN_PACKAGES)) {
-    entries.push({
-      name: info.name,
-      version: '(CDN)',
-      license: info.license,
-      url: info.url,
-      purpose: info.purpose,
-      note: info.note,
-    });
-  }
-
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -201,12 +168,6 @@ This project uses the following open-source libraries.
         'Key points:\n- Source code modifications to the library itself must be made available under MPL-2.0\n';
       md +=
         '- This project (wasm-motion-converter) remains under MIT\n- No patent retaliation clause applies\n\n';
-    } else if (license.startsWith('LGPL')) {
-      md += `${license}. See https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html for full text.\n\n`;
-      md += 'Key points:\n';
-      md += '- ffmpeg.wasm is loaded dynamically at runtime via CDN\n';
-      md += '- This project does not statically link or modify FFmpeg source\n';
-      md += '- Users can replace the ffmpeg.wasm binary with a modified version\n\n';
     } else {
       md += 'See the package repository for full license text.\n\n';
     }

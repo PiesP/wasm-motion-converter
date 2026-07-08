@@ -57,18 +57,12 @@ declare global {
    * undefined values indicate optional configuration that isn't required
    * for the application to function.
    *
-   * Configuration:
-   * - VITE_DEBUG_FFMPEG: Enable detailed FFmpeg logging
-   * - VITE_DEBUG_APP: Enable general application debug logging
-   * - VITE_FFMPEG_HARD_TIMEOUT_MS: Override default FFmpeg timeout (milliseconds)
-   */
+   /** Configuration:
+    * - VITE_DEBUG_APP: Enable general application debug logging
+    */
   interface ImportMetaEnv {
-    /** Enable FFmpeg debug logging as "true" or "false" string (optional) */
-    readonly VITE_DEBUG_FFMPEG?: string;
     /** Enable general app debug logging as "true" or "false" string (optional) */
     readonly VITE_DEBUG_APP?: string;
-    /** FFmpeg hard timeout in milliseconds (optional string, must parse to number) */
-    readonly VITE_FFMPEG_HARD_TIMEOUT_MS?: string;
   }
 
   /**

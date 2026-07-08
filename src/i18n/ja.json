@@ -147,7 +147,7 @@
   "env.sabUnavailable": "SharedArrayBufferは利用できません。このアプリケーションが正しく動作するには、クロスオリジンアイソレーション（COOP/COEPヘッダー）が必要です。",
   "env.detected": "検出: SharedArrayBuffer {sab}、crossOriginIsolated {coi}。",
   "env.localDevHint": "ローカルで実行している場合: 正しいヘッダーで構成されたVite開発サーバーを使用していることを確認してください。",
-  "env.deployedHint": "デプロイされたサイトにアクセスしている場合: 管理者にCOOP/COEPヘッダーの設定を依頼してください。FFmpegが起動しない場合、ブラウザ拡張機能や厳格なセキュリティ設定がモジュール/Blobワーカーをブロックしている可能性があります。InPrivateウィンドウを試すか、ブロッカーを一時的に無効にしてください。",
+  "env.deployedHint": "デプロイされたサイトにアクセスしている場合: 管理者にCOOP/COEPヘッダーの設定を依頼してください。アプリが読み込まれない場合、ブラウザ拡張機能や厳格なセキュリティ設定がWeb Workerをブロックしている可能性があります。InPrivateウィンドウを試すか、ブロッカーを一時的に無効にしてください。",
   "offline.message": "オフラインです。キャッシュされたコンテンツを使用しています。一部の機能が制限される場合があります。",
   "lang.label": "言語",
   "lang.select": "言語を選択"
