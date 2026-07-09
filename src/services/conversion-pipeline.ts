@@ -23,7 +23,7 @@ import type {
   ProgressCallback,
   ProgressPhase,
 } from '@t/conversion-types';
-import { DEFAULT_FPS, GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
+import { DEFAULT_FPS, GIF_TARGET_FPS, PROGRESS_PHASE, PROGRESS_PHASE_RANGES, WEBP_TARGET_FPS } from '@utils/constants';
 import { scheduleTask } from '@utils/dom-utils';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
@@ -150,11 +150,8 @@ async function _runPipelineInner(
   //   decode:  3 ~ 73%  (typically ~70% of total time — dominant bottleneck)
   //   encode: 73 ~ 93%  (typically ~20% of total time)
   //   finish: 93 ~ 100% (file finalization)
-  const DEMUX_MAX = 3;
-  const DECODE_MAX = 73;
-  const ENCODE_MAX = 93;
-  const DECODE_RANGE = DECODE_MAX - DEMUX_MAX; // 70
-  const ENCODE_RANGE = ENCODE_MAX - DECODE_MAX; // 20
+  const { DEMUX_MAX, DECODE_MAX, ENCODE_MAX } = PROGRESS_PHASE;
+  const { DECODE_RANGE, ENCODE_RANGE } = PROGRESS_PHASE_RANGES;
 
   try {
     // ── Throttled memory sampling (PERF-H1) ──

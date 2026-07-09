@@ -166,3 +166,20 @@ export const WORKER_MIN_MEMORY_MB = 128;
 
 /** Maximum allowed maxMemoryMB for worker pipeline */
 export const WORKER_MAX_MEMORY_LIMIT_MB = 2048;
+
+// ============================================================================
+// PROGRESS PHASE CONSTANTS
+// ============================================================================
+
+/** Phase-weighted progress max values for conversion pipeline */
+export const PROGRESS_PHASE = {
+  DEMUX_MAX: 3,
+  DECODE_MAX: 73,
+  ENCODE_MAX: 93,
+} as const;
+
+/** Phase-weighted progress ranges derived from PROGRESS_PHASE max values */
+export const PROGRESS_PHASE_RANGES = {
+  DECODE_RANGE: PROGRESS_PHASE.DECODE_MAX - PROGRESS_PHASE.DEMUX_MAX,
+  ENCODE_RANGE: PROGRESS_PHASE.ENCODE_MAX - PROGRESS_PHASE.DECODE_MAX,
+} as const;

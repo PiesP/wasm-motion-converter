@@ -20,6 +20,8 @@ import type { ConversionRequest } from '@t/conversion-types';
 import {
   DEFAULT_FPS,
   GIF_TARGET_FPS,
+  PROGRESS_PHASE,
+  PROGRESS_PHASE_RANGES,
   WEBP_TARGET_FPS,
   WORKER_MAX_MEMORY_LIMIT_MB,
   WORKER_MAX_MEMORY_MB,
@@ -30,11 +32,8 @@ import type { SerializedConversionOptions, WorkerResponse } from './types';
 
 // Aligned progress ranges matching main-thread conversion-pipeline.ts
 // demux: 0~3%   decode: 3~73%   encode: 73~93%   assembly: 93~100%
-const DEMUX_MAX = 3;
-const DECODE_MAX = 73;
-const ENCODE_MAX = 93;
-const DECODE_RANGE = DECODE_MAX - DEMUX_MAX; // 70
-const ENCODE_RANGE = ENCODE_MAX - DECODE_MAX; // 20
+const { DEMUX_MAX, DECODE_MAX, ENCODE_MAX } = PROGRESS_PHASE;
+const { DECODE_RANGE, ENCODE_RANGE } = PROGRESS_PHASE_RANGES;
 
 interface WorkerProgressState {
   lastPostTime: number;
