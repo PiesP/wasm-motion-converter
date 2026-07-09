@@ -3,7 +3,6 @@
 
 import type { ConversionFormat } from '@t/conversion-types';
 import {
-  BYTES_PER_KB,
   BYTES_PER_MB,
   MEMORY_CRITICAL_RATIO,
   MEMORY_CRITICAL_THRESHOLD,
