@@ -38,6 +38,7 @@ import { resolveVideoDimensions } from './frame-utils';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
+import { createPipelineProgressCallback } from './pipeline-progress-factory';
 import { encodeWebp } from './webp-encoder-service';
 import { getWorkerPool } from './worker-pool';
 
@@ -134,17 +135,6 @@ export function getLastConversionProfiler(): Profiler | null {
 // crypto.randomUUID() is unnecessary for profiling session IDs;
 // a simple counter is sufficient and avoids crypto entropy overhead.
 let nextRunId = 0;
-
-/**
- * Reset pipeline module-level state for testing purposes.
- * Clears the profiler module cache, run ID counter, and active profilers map
- * so the next conversion starts from a clean slate.
- */
-function resetPipelineState(): void {
-  profilerModule = null;
-  nextRunId = 0;
-  activeProfilers.clear();
-}
 
 export async function runConversionPipeline(
   request: ConversionRequest,
@@ -542,9 +532,8 @@ async function _runPipelineInner(
           { priority: 'user-blocking' }
         );
 
-        output = (
-          await scheduleTask(() => streamingEncoder.finish(), { priority: 'user-visible' })
-        ).buffer as ArrayBuffer;
+        output = (await scheduleTask(() => streamingEncoder.finish(), { priority: 'user-visible' }))
+          .buffer as ArrayBuffer;
         encodeResult = {
           frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
