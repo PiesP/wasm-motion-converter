@@ -71,3 +71,17 @@ export function focusElement(selector: string): void {
 export function focusRetryButton(): void {
   focusElement('[data-testid="error-retry-button"]');
 }
+
+/**
+ * Returns document.startViewTransition bound to document, or undefined if the
+ * View Transition API is not supported. Callers pass this to transitionToState()
+ * so the store layer doesn't need to reference document directly.
+ */
+export function getStartViewTransition():
+  | ((callback: () => void) => void)
+  | undefined {
+  if ('startViewTransition' in document) {
+    return document.startViewTransition.bind(document);
+  }
+  return undefined;
+}

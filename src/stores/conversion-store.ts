@@ -26,15 +26,23 @@ export const [environmentSupported, setEnvironmentSupported] = createSignal<bool
 
 /**
  * Transition to a new app state using the View Transition API.
- * Wraps the state change in document.startViewTransition() for smooth
- * cross-state animations when supported. Falls back to instant transition
- * when the API is unavailable or for non-visual state changes.
+ * Accepts an optional startViewTransition callback — when provided, the
+ * state update is wrapped in a view transition. When omitted, the state
+ * is updated synchronously.
+ *
+ * The store layer no longer calls document.startViewTransition directly;
+ * that concern is pushed to the component/hook layer which passes the
+ * callback from a Solid.js effect or event handler.
  */
-export function transitionToState(state: AppState): void {
-  if ('startViewTransition' in document) {
-    document.startViewTransition(() => setAppState(state));
+export function transitionToState(
+  newState: AppState,
+  startViewTransition?: (callback: () => void) => void
+): void {
+  const update = () => setAppState(newState);
+  if (startViewTransition) {
+    startViewTransition(update);
   } else {
-    setAppState(state);
+    update();
   }
 }
 

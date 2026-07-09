@@ -14,12 +14,14 @@ import {
 } from '@stores/conversion-store';
 import type { TFunction } from '@t/i18n-types';
 import { DEFAULT_FPS } from '@utils/constants';
-import { focusRetryButton } from '@utils/dom-utils';
+import { focusRetryButton, getStartViewTransition } from '@utils/dom-utils';
 import { getErrorMessage } from '@utils/error-utils';
 import { validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
 import { batch } from 'solid-js';
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
+
+const startViewTransition = getStartViewTransition();
 
 const resetErrorState = (): void => {
   batch(() => {
@@ -54,7 +56,7 @@ export async function handleFileSelected(
     });
     batch(() => {
       setErrorMessage(getErrorMessage(validation.error));
-      transitionToState('error');
+      transitionToState('error', startViewTransition);
     });
     focusRetryButton();
     return;
@@ -64,7 +66,7 @@ export async function handleFileSelected(
 
   // Show "analyzing" state before reading the file so the UI reflects
   // that work is happening (important for large files).
-  transitionToState('analyzing');
+  transitionToState('analyzing', startViewTransition);
 
   // Read file once upfront, then share the buffer between metadata extraction and conversion
   const buffer = await file.arrayBuffer();
@@ -87,7 +89,7 @@ export async function handleFileSelected(
     // Store buffer only after successful metadata extraction so performConversion can reuse it
     setInputBuffer(buffer);
     setVideoMetadata(metadata);
-    transitionToState('idle');
+    transitionToState('idle', startViewTransition);
   } catch (error) {
     if (isStale()) return;
 
@@ -101,7 +103,7 @@ export async function handleFileSelected(
     });
     batch(() => {
       setErrorMessage(getErrorMessage(error));
-      transitionToState('error');
+      transitionToState('error', startViewTransition);
     });
     focusRetryButton();
   }

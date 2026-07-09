@@ -40,7 +40,7 @@ import type {
 } from '@t/conversion-types';
 import type { TFunction } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
-import { focusElement, focusRetryButton } from '@utils/dom-utils';
+import { focusElement, focusRetryButton, getStartViewTransition } from '@utils/dom-utils';
 import { getErrorMessage, isCancellationError } from '@utils/error-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
@@ -49,6 +49,8 @@ import { checkMemoryForConversion, getMemoryUsageMB } from '@utils/memory-monito
 import { batch } from 'solid-js';
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 import { handleFileSelected } from './use-handle-file-selected';
+
+const startViewTransition = getStartViewTransition();
 
 export interface ConversionOptions {
   format: ConversionFormat;
@@ -119,7 +121,7 @@ export async function handleConvert(
                   );
                   setErrorMessage(context.originalError);
                   setErrorContext(context);
-                  transitionToState('error');
+                  transitionToState('error', startViewTransition);
                 });
                 focusRetryButton();
               })
@@ -154,7 +156,7 @@ async function performConversion(
 
   try {
     batch(() => {
-      transitionToState('converting');
+      transitionToState('converting', startViewTransition);
       setConversionStatusMessage('');
       setConversionResults([]);
     });
@@ -452,7 +454,7 @@ function handleResult(
   });
 
   batch(() => {
-    transitionToState('done');
+    transitionToState('done', startViewTransition);
     setConversionStatusMessage('');
     runtime.resetRuntimeState();
     // Release input buffer — no longer needed after conversion completes.
@@ -505,7 +507,7 @@ async function handleConversionError(
     runtime.resetRuntimeState();
     setErrorMessage(context.originalError);
     setErrorContext(context);
-    transitionToState('error');
+    transitionToState('error', startViewTransition);
   });
 
   focusRetryButton();
