@@ -57,7 +57,6 @@ export interface TranslationKeys {
   // Dropzone
   'dropzone.dropHere': string;
   'dropzone.clickSelect': string;
-  'dropzone.dragActive': string;
   'dropzone.selectFile': string;
   'dropzone.cancelConversion': string;
   'dropzone.preview': string;
@@ -77,7 +76,6 @@ export interface TranslationKeys {
   'metadata.detecting': string;
 
   // Settings Panel
-  'settings.title': string;
   'settings.heading': string;
   'settings.selectVideo': string;
   'settings.convert': string;
@@ -234,7 +232,6 @@ export interface TranslationKeys {
   'offline.message': string;
 
   // Language Switcher
-  'lang.label': string;
   'lang.select': string;
 
   // Option Selector
