@@ -7,8 +7,7 @@ import type { ConversionProgress, ProgressCallback, ProgressPhase } from '@t/con
  * Factory for the pipeline's encode-progress callback.
  *
  * The inline `(p) => { ... }` callback passed to all encoder functions is
- * identical across three encoder branches (VP8, OffscreenCanvas WebP, and
- * streaming encodeRGB WebP). Extracted here to eliminate duplication.
+ * identical across encoder branches. Extracted here to eliminate duplication.
  *
  * The factory encapsulates the `let encodedFrames = 0` state internally and
  * returns a callback closure that builds a throttled progress update from the
