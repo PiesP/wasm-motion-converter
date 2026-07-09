@@ -41,42 +41,10 @@
 }
 
 /**
- * Linear Design System — CSS Custom Properties (runtime)
- *
- * These mirror the @theme tokens above but use the light-dark() CSS function
- * to automatically adapt to the user's system color scheme preference.
- *
- * light-dark(light-color, dark-color):
- *   When the user's preferred color scheme is "light", the first value is used.
- *   When "dark", the second value is used.
+ * Enable system color scheme detection for light-dark() CSS function.
  */
 :root {
   color-scheme: light dark;
-
-  /* ── Surface / Background ── */
-  --color-bg-base: light-dark(#ffffff, #08090a);
-  --color-bg-panel: light-dark(#f7f8fa, #0f1011);
-  --color-bg-elevated: light-dark(#ffffff, #191a1b);
-
-  /* ── Text ── */
-  --color-text-primary: light-dark(#171717, #f7f8f8);
-  --color-text-secondary: light-dark(#525252, #d0d6e0);
-  --color-text-tertiary: light-dark(#737373, #8a8f98);
-  --color-text-quaternary: light-dark(#a3a3a3, #62666d);
-
-  /* ── Brand Accent — oklch for perceptual uniformity, identical in both modes ── */
-  --color-brand: oklch(56.7% 0.159 275.2);
-  --color-brand-interactive: oklch(62.3% 0.207 278.8);
-  --color-brand-hover: oklch(69.1% 0.164 276.2);
-
-  /* ── Borders ── */
-  --color-border-subtle: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
-  --color-border-standard: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
-
-  /* ── Radii ── */
-  --radius-button: 6px;
-  --radius-card: 8px;
-  --radius-panel: 12px;
 }
 
 /**
@@ -316,14 +284,6 @@ html.dark :focus-visible {
 @keyframes fade-out {
   to {
     opacity: 0;
-  }
-}
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
   }
 }
 
