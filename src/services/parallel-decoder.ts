@@ -141,7 +141,7 @@ async function decodeSegment(
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
       try {
-        const durationMs = getFrameDurationMs(frame, frameCtx);
+        const { durationMs, ctx: frameCtx } = getFrameDurationMs(frame, frameCtx);
         const globalIndex = segment.startIndex + segmentFrameIdx;
         segmentFrameIdx++;
 

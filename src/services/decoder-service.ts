@@ -274,7 +274,7 @@ export async function decodeFrames(
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
       try {
-        const frameDuration = getFrameDurationMs(frame, frameCtx);
+        const { durationMs: frameDuration, ctx: frameCtx } = getFrameDurationMs(frame, frameCtx);
         const frameNum = inputFrameCount++;
 
         // Frame decimation: skip every Nth frame

@@ -406,29 +406,35 @@ export function createFrameProcessingContext(): FrameProcessingContext {
  * Get frame duration in milliseconds — preserves original timing by
  * accumulating fractional remainders across frames to prevent drift.
  *
+ * Returns a new context instead of mutating the input, preserving
+ * referential transparency and pure function semantics.
+ *
  * No clamping: the original video frame duration is used as-is to maintain
  * accurate playback speed. Clamping is applied only at the output stage
  * when writing frames (see writeFrameWithDelay in gif-encoder-service).
  *
  * @param frame - The VideoFrame to extract duration from
  * @param ctx - Per-conversion context for carry state
+ * @returns An object with the duration in ms and an updated context
  */
 export function getFrameDurationMs(
   frame: VideoFrame,
   ctx: FrameProcessingContext,
   fallbackMs?: number
-): number {
+): { durationMs: number; ctx: FrameProcessingContext } {
   const raw = frame.duration as number | null;
   if (raw == null || raw <= 0) {
-    ctx.durationCarryUs = 0;
-    return fallbackMs ?? 100;
+    return { durationMs: fallbackMs ?? 100, ctx };
   }
   // Add any fractional remainder from previous frames
   const totalUs = raw + ctx.durationCarryUs;
   const ms = Math.round(totalUs / 1000);
-  // Save the sub-millisecond remainder for next frame
-  ctx.durationCarryUs = totalUs - ms * 1000;
-  return Math.max(1, ms);
+  // Save the sub-millisecond remainder for next frame in new context
+  const newCarry = totalUs - ms * 1000;
+  return {
+    durationMs: Math.max(1, ms),
+    ctx: { ...ctx, durationCarryUs: newCarry },
+  };
 }
 
 // ─── dHash (Difference Hash) for Frame Similarity ──────────────────
