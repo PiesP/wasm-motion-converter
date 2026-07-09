@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { BYTES_PER_MB, WORKER_MAX_MEMORY_MB } from '../utils/constants.js';
+import { BYTES_PER_MB, DEVICE_MEMORY_HEAP_RATIO, WORKER_MAX_MEMORY_MB } from '../utils/constants.js';
+import { getMemoryInfo } from '../utils/memory-monitor.js';
 
 /**
  * Default maximum total pooled memory: 512 MB.
@@ -15,17 +16,16 @@ const DEFAULT_MAX_TOTAL_MEMORY = WORKER_MAX_MEMORY_MB * BYTES_PER_MB;
 
 /**
  * Determine a reasonable default maxTotalMemory based on available JS heap.
- * Uses 25% of jsHeapSizeLimit (capped at 512MB) so the pool adapts to the
- * browser's actual memory budget. Falls back to 512MB if heap info unavailable.
+ * Uses DEVICE_MEMORY_HEAP_RATIO of jsHeapSizeLimit (capped at 512MB) so the
+ * pool adapts to the browser's actual memory budget. Falls back to 512MB if
+ * heap info unavailable.
  */
 function getDefaultMaxTotalMemory(): number {
-  const perf = performance as Performance & {
-    memory?: { jsHeapSizeLimit: number };
-  };
-  const limit = perf.memory?.jsHeapSizeLimit;
+  const memInfo = getMemoryInfo();
+  const limit = memInfo?.jsHeapSizeLimit;
   if (limit && limit > 0) {
-    // Use 25% of total JS heap limit, capped at 512MB
-    return Math.min(Math.round(limit * 0.25), DEFAULT_MAX_TOTAL_MEMORY);
+    // Use DEVICE_MEMORY_HEAP_RATIO of total JS heap limit, capped at 512MB
+    return Math.min(Math.round(limit * DEVICE_MEMORY_HEAP_RATIO), DEFAULT_MAX_TOTAL_MEMORY);
   }
   return DEFAULT_MAX_TOTAL_MEMORY;
 }

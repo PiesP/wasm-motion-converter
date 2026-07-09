@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { BYTES_PER_MB } from '../utils/constants.js';
+import { getMemoryUsageMB } from '../utils/memory-monitor.js';
 
 /**
  * Conversion Profiler — per-phase timing, memory, and throughput measurement.
@@ -231,13 +232,7 @@ export class ConversionProfiler {
 
   /** Get current JS heap usage in MB (best-effort, returns 0 if unavailable) */
   private static getHeapMB(): number {
-    const perf = performance as Performance & {
-      memory?: { usedJSHeapSize: number };
-    };
-    const mem = perf.memory;
-    if (mem && typeof mem.usedJSHeapSize === 'number') {
-      return Math.round(mem.usedJSHeapSize / BYTES_PER_MB);
-    }
-    return 0;
+    const heapMB = getMemoryUsageMB();
+    return heapMB ?? 0;
   }
 }

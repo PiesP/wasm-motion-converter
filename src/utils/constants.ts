@@ -155,6 +155,13 @@ export const MEMORY_CRITICAL_RATIO = 0.9;
 /** Ratio of estimated-to-available memory that triggers standard warning (60%) */
 export const MEMORY_WARNING_RATIO = 0.6;
 
+/**
+ * Heuristic ratio used to estimate JS heap limit from deviceMemory when
+ * performance.memory is unavailable. ~25% of device RAM is a conservative
+ * estimate of available JS heap.
+ */
+export const DEVICE_MEMORY_HEAP_RATIO = 0.25;
+
 /** Default available memory assumption when detection fails (1024 MB) */
 export const MEMORY_DEFAULT_AVAILABLE_MB = 1024;
 

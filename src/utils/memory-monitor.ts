@@ -10,51 +10,24 @@ import {
   MEMORY_DEFAULT_AVAILABLE_MB,
   MEMORY_WARNING_RATIO,
 } from './constants.js';
+import { getMemoryInfo as getRawMemoryInfo } from './memory-info.js';
 
 /**
  * Memory monitoring utilities for tracking browser memory usage during conversions.
+ *
+ * Wraps memory-info.ts with additional convenience functions
+ * (isMemoryCritical, getMemoryUsageMB, checkMemoryForConversion).
+ * The underlying raw memory access is owned by memory-info.ts.
  */
 
-export interface MemoryInfo {
-  usedJSHeapSize: number;
-  totalJSHeapSize: number;
-  jsHeapSizeLimit: number;
-  usagePercentage: number;
-  deviceMemoryGB?: number | undefined;
-}
+export type { MemoryInfo } from './memory-info.js';
 
-export function getMemoryInfo(): MemoryInfo | null {
-  if ('memory' in performance && performance.memory) {
-    const memory = performance.memory as {
-      usedJSHeapSize: number;
-      totalJSHeapSize: number;
-      jsHeapSizeLimit: number;
-    };
-    const deviceMemoryGB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-    return {
-      usedJSHeapSize: memory.usedJSHeapSize,
-      totalJSHeapSize: memory.totalJSHeapSize,
-      jsHeapSizeLimit: memory.jsHeapSizeLimit,
-      usagePercentage: (memory.usedJSHeapSize / memory.jsHeapSizeLimit) * 100,
-      deviceMemoryGB: typeof deviceMemoryGB === 'number' ? deviceMemoryGB : undefined,
-    };
-  }
-
-  const deviceMemoryGB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-  if (typeof deviceMemoryGB === 'number' && deviceMemoryGB > 0) {
-    // deviceMemory is total device RAM, not JS heap limit.
-    // Use a conservative estimate: ~25% of device memory as available JS heap.
-    const jsHeapSizeLimit = deviceMemoryGB * BYTES_PER_KB * BYTES_PER_MB * 0.25;
-    return {
-      usedJSHeapSize: 0, // Unknown without performance.memory
-      totalJSHeapSize: 0,
-      jsHeapSizeLimit,
-      usagePercentage: 0, // Cannot determine without actual measurement
-      deviceMemoryGB,
-    };
-  }
-
-  return null;
+/**
+ * Get current JS heap memory info.
+ * Delegates to memory-info.ts (the SSOT for performance.memory access).
+ */
+export function getMemoryInfo(): import('./memory-info').MemoryInfo | null {
+  return getRawMemoryInfo();
 }
 
 /**
