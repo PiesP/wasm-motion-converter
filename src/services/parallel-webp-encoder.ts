@@ -55,7 +55,7 @@ interface FrameEncodeResult {
  * @param onProgress - Progress callback
  * @returns Uint8Array of animated WebP
  */
-export async function encodeWebpParallel(
+async function encodeWebpParallel(
   frames: Array<{ rgbData: Uint8Array; durationMs: number }>,
   width: number,
   height: number,

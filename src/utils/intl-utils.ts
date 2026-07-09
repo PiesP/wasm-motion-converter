@@ -124,23 +124,3 @@ const DURATION_UNITS: Record<string, DurationUnits> = {
   en: { ms: 'ms', sec: 's', min: 'm' },
   ko: { ms: 'ms', sec: '초', min: '분' },
 };
-
-/**
- * Format number with locale-aware grouping.
- */
-export function formatNumber(
-  value: number,
-  locale: Locale,
-  options?: Intl.NumberFormatOptions
-): string {
-  return new Intl.NumberFormat(locale, options).format(value);
-}
-
-/**
- * Format percentage with locale-aware formatting.
- */
-export function formatPercent(value: number, locale: Locale, digits = 0): string {
-  return new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: digits }).format(
-    value / 100
-  );
-}

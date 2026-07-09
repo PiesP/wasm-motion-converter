@@ -140,7 +140,7 @@ let nextRunId = 0;
  * Clears the profiler module cache, run ID counter, and active profilers map
  * so the next conversion starts from a clean slate.
  */
-export function resetPipelineState(): void {
+function resetPipelineState(): void {
   profilerModule = null;
   nextRunId = 0;
   activeProfilers.clear();

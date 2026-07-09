@@ -32,7 +32,7 @@ export interface MemoryBreakdown {
 /** Memory info from the standardized performance.measureUserAgentSpecificMemory() API.
  *  Returns breakdown by memory type (JS, DOM, Canvas, Shared) when available.
  *  Requires crossOriginIsolated (COOP/COEP headers). Falls back to null otherwise. */
-export async function getDetailedMemoryBreakdown(): Promise<MemoryBreakdown | null> {
+async function getDetailedMemoryBreakdown(): Promise<MemoryBreakdown | null> {
   if (typeof crossOriginIsolated === 'undefined' || !crossOriginIsolated) return null;
 
   const perf = performance as Performance & {
