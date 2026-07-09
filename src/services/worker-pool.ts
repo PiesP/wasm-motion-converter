@@ -244,7 +244,7 @@ export class WebpWorkerPool {
         task,
         resolve,
         reject,
-        submittedAt: Date.now(),
+        submittedAt: performance.now(),
       };
 
       // If an idle worker is available, dispatch immediately
