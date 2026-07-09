@@ -25,7 +25,6 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
-import { createEncodingProgressReporter } from './encoding-progress-reporter';
 import { convertRGBToRGBA } from './frame-utils';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
 
@@ -235,7 +234,21 @@ export async function encodeWebpOffscreen(
       frameDecimation,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
-      onFrameDecoded: createEncodingProgressReporter(onProgress, () => encodeIdx),
+      onFrameDecoded: (_frameNum: number, total: number) => {
+        if (!onProgress) return;
+        const encCount = encodeIdx;
+        if (encCount === 0) return;
+        const encodePct = total > 0 ? Math.round((encCount / total) * 40) : 0;
+        onProgress({
+          phase: 'encoding',
+          progress: 50 + Math.min(40, encodePct),
+          fps: 0,
+          etaSeconds: null,
+          memoryMB: 0,
+          currentFrame: encCount,
+          totalFrames: total,
+        });
+      },
       // Streaming callback: encode each frame immediately upon decoding
       onFrameAvailable: async (rgbData: Uint8Array, frameDurationMs: number, frameNum: number) => {
         if (signal?.aborted) {

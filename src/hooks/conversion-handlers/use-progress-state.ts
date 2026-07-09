@@ -247,6 +247,6 @@ export class ProgressState {
   }
 }
 
-export function useProgressState(deps: ProgressStateDeps): ProgressState {
+export function createProgressState(deps: ProgressStateDeps): ProgressState {
   return new ProgressState(deps);
 }

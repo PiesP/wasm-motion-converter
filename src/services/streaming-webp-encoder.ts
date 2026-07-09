@@ -18,7 +18,7 @@
  *   3. Mux into RIFF/WEBP container with VP8X + ANIM + ANMF chunks
  */
 
-import { VP8_FOURCC as SHARED_VP8_FOURCC, VP8L_FOURCC } from '@utils/constants';
+import { VP8_FOURCC as SHARED_VP8_FOURCC, VP8L_FOURCC, VP8X_FOURCC } from '@utils/constants';
 
 // ---------------------------------------------------------------------------
 // VP8 bitstream extraction
@@ -111,7 +111,7 @@ export function extractVP8BitstreamFast(webp: Uint8Array): Uint8Array {
  */
 export class StreamingWebpMuxer {
   private static readonly VP8_FOURCC = SHARED_VP8_FOURCC;
-  private static readonly VP8X_FOURCC = 0x56503858;
+  private static readonly VP8X_FOURCC = VP8X_FOURCC;
   private static readonly ANIM_MAGIC = 0x414e494d;
   private static readonly ANMF_MAGIC = 0x414e4d46;
   public static readonly RIFF_MAGIC = 0x52494646;

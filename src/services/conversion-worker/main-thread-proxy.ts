@@ -17,8 +17,8 @@
  */
 
 import type { ConversionProgress, ConversionRequest } from '@t/conversion-types';
-import { isCancellationError } from '@utils/cancellation-context';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
+import { isCancellationError } from '@utils/error-utils';
 
 import type {
   SerializedConversionOptions,

@@ -9,7 +9,7 @@
  * and forwards progress/complete/error responses back to the main thread.
  */
 
-import { isCancellationError } from '@utils/cancellation-context';
+import { isCancellationError } from '@utils/error-utils';
 import { classifyWorkerError } from './classify-worker-error';
 import { runWorkerPipeline } from './pipeline-worker';
 import type { WorkerRequest, WorkerResponse } from './types';

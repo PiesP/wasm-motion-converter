@@ -37,7 +37,7 @@ export {
   detectInitialLocale,
   detectUserLocale,
   updateDocumentLang,
-} from '@utils/intl-utils';
+} from '@utils/format-utils';
 // ─── Types ──────────────────────────────────────────────────────────────────
 export type {
   Locale,

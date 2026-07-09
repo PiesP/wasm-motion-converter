@@ -4,7 +4,8 @@
 import { isMemoryCritical } from '@utils/memory-monitor';
 import type { Setter } from 'solid-js';
 
-import { useProgressState } from './use-progress-state';
+import type { ProgressState } from './use-progress-state';
+import { createProgressState } from './use-progress-state';
 
 const MEMORY_CHECK_INTERVAL = 5000;
 
@@ -19,10 +20,10 @@ export class ConversionRuntimeController {
   private memoryCheckTimer: ReturnType<typeof setInterval> | null = null;
   private activeConversionSeq = 0;
 
-  readonly progress: ReturnType<typeof useProgressState>;
+  readonly progress: ProgressState;
 
   constructor(private readonly deps: ConversionRuntimeControllerDeps) {
-    this.progress = useProgressState(deps);
+    this.progress = createProgressState(deps);
   }
 
   invalidateActiveConversions(): void {

@@ -39,10 +39,9 @@ import type {
   SmartFrameSkipMode,
 } from '@t/conversion-types';
 import type { TFunction } from '@t/i18n-types';
-import { isCancellationError } from '@utils/cancellation-context';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { focusElement, focusRetryButton } from '@utils/dom-utils';
-import { getErrorMessage } from '@utils/error-utils';
+import { getErrorMessage, isCancellationError } from '@utils/error-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';

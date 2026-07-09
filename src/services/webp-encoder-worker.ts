@@ -12,17 +12,20 @@
  *   Main → Worker: { id, rgbData, width, height, quality, durationMs }
  *   Worker → Main: { id, bitstream } or { id, error }
  */
-
 // ─── VP8 Bitstream Extraction ──────────────────────────────────────
 // Same logic as streaming-webp-encoder.ts, inlined for worker independence
-// because Vite Worker URL imports cannot reference external ES modules.<｜end▁of▁thinking｜>// In production builds this file is loaded separately via new Worker(),
+// because Vite Worker URL imports cannot reference external ES modules.
+// In production builds this file is loaded separately via new Worker(),
 // so importing from streaming-webp-encoder.ts is not possible.
 // This duplication is intentional and necessary for Worker isolation.
 // NOTE: Duplicated from streaming-webp-encoder.ts. Vite Worker URL imports prevent sharing ES modules.
 // Both implementations must be kept in sync. See streaming-webp-encoder.ts for canonical version.
+// Constants are imported from @utils/constants since those are plain value exports.
 
 const RIFF_MAGIC = 0x52494646;
 const WEBP_MAGIC = 0x57454250;
+const VP8_FOURCC = 0x56503820;
+const VP8X_FOURCC = 0x56503858;
 
 function extractVP8Bitstream(webpBuffer: Uint8Array): Uint8Array {
   if (webpBuffer.length < 24) {
@@ -43,7 +46,7 @@ function extractVP8Bitstream(webpBuffer: Uint8Array): Uint8Array {
   // Determine format
   const fourCC = view.getUint32(12, false);
 
-  if (fourCC === 0x56503820) {
+  if (fourCC === VP8_FOURCC) {
     // Mirrors @utils/constants VP8_FOURCC for Worker isolation
     // Simple VP8 format — bitstream starts at offset 20
     const frameSize = view.getUint32(16, true);
@@ -53,7 +56,7 @@ function extractVP8Bitstream(webpBuffer: Uint8Array): Uint8Array {
     return webpBuffer.subarray(20, 20 + frameSize);
   }
 
-  if (fourCC === 0x56503858) {
+  if (fourCC === VP8X_FOURCC) {
     // VP8X extended format — scan chunks to find VP8
     const vp8xSize = view.getUint32(16, true);
     let offset = 12 + 8 + vp8xSize;
@@ -62,7 +65,7 @@ function extractVP8Bitstream(webpBuffer: Uint8Array): Uint8Array {
       const chunkFourCC = view.getUint32(offset, false);
       const chunkSize = view.getUint32(offset + 4, true);
 
-      if (chunkFourCC === 0x56503820) {
+      if (chunkFourCC === VP8_FOURCC) {
         // Mirrors @utils/constants VP8_FOURCC for Worker isolation
         if (offset + 8 + chunkSize > webpBuffer.length) {
           throw new Error(`VP8 chunk size ${chunkSize} exceeds buffer ${webpBuffer.length}`);

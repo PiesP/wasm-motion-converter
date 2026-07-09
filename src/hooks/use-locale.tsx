@@ -6,7 +6,7 @@ import {
   type TranslationKeys,
   type Translations,
 } from '@t/i18n-types';
-import { detectInitialLocale, updateDocumentLang } from '@utils/intl-utils';
+import { detectInitialLocale, updateDocumentLang } from '@utils/format-utils';
 import type { Component, JSX } from 'solid-js';
 import { createContext, createEffect, createSignal, Show, useContext } from 'solid-js';
 
