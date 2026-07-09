@@ -29,7 +29,6 @@ import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
 import { createThrottledProgress } from '@utils/throttled-progress';
 import { globalBufferPool } from './buffer-pool';
-import type { ConversionProfileReport } from './conversion-profiler';
 import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
@@ -38,69 +37,11 @@ import { resolveVideoDimensions } from './frame-utils';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
-import { createPipelineProgressCallback } from './pipeline-progress-factory';
 import { encodeWebp } from './webp-encoder-service';
 import { getWorkerPool } from './worker-pool';
 
-/**
- * Profiler interface — implemented by ConversionProfiler in DEV,
- * no-op in production. The real class is dynamically imported in DEV
- * so it tree-shakes out of production bundles.
- */
-interface Profiler {
-  start(): void;
-  startPhase(phase: ProgressPhase): void;
-  updatePhase(phase: ProgressPhase, framesProcessed: number): void;
-  endPhase(phase: ProgressPhase, opts?: { frames?: number; outputBytes?: number }): void;
-  finish(): ConversionProfileReport;
-  getReport(): ConversionProfileReport;
-  getLastReport(): ConversionProfileReport | null;
-}
-
-const createNoopProfiler = (): Profiler => ({
-  start() {},
-  startPhase() {},
-  updatePhase() {},
-  endPhase() {},
-  finish() {
-    return {
-      totalDurationMs: 0,
-      heapStartMB: 0,
-      heapEndMB: 0,
-      heapPeakMB: 0,
-      phases: [],
-      phaseTimePct: { demuxing: 0, decoding: 0, encoding: 0, assembling: 0 },
-      bottleneck: 'demuxing',
-      summary: '[profiler disabled in production]',
-    };
-  },
-  getReport() {
-    return this.finish();
-  },
-  getLastReport() {
-    return null;
-  },
-});
-
-/**
- * Cached dynamic import for the real profiler (DEV only).
- * Null in production — the import.meta.env.DEV guard ensures
- * this is dead-code eliminated from prod bundles.
- */
-let profilerModule: typeof import('./conversion-profiler') | null = null;
-
-async function importProfiler(): Promise<void> {
-  if (import.meta.env.DEV && !profilerModule) {
-    profilerModule = await import('./conversion-profiler');
-  }
-}
-
-function createRealProfiler(): Profiler {
-  return new profilerModule!.ConversionProfiler();
-}
-
 /** Active profilers keyed by run ID — supports concurrent conversions */
-const activeProfilers = new Map<string, Profiler>();
+const activeProfilers = new Map<string, import('./conversion-profiler').ConversionProfiler>();
 
 /**
  * Evict stale profilers from previous failed/aborted runs.
@@ -126,7 +67,9 @@ function evictStaleProfilers(): void {
 }
 
 /** Get the most recent profiler (for test helpers / diagnostics) */
-export function getLastConversionProfiler(): Profiler | null {
+export function getLastConversionProfiler():
+  | import('./conversion-profiler').ConversionProfiler
+  | null {
   const lastKey = [...activeProfilers.keys()].pop();
   return lastKey ? activeProfilers.get(lastKey)! : null;
 }
@@ -160,15 +103,18 @@ export async function runConversionPipeline(
   globalBufferPool.clear();
 
   // Initialize profiler — in DEV, dynamically import the real profiler
-  // (tree-shaken from production bundles). In prod, use no-op.
-  if (import.meta.env.DEV) {
-    await importProfiler();
-  }
+  // (tree-shaken from production bundles). In prod, use null.
   const runId = `run-${nextRunId++}`;
-  const profiler =
-    import.meta.env.DEV && profilerModule ? createRealProfiler() : createNoopProfiler();
-  profiler.start();
-  activeProfilers.set(runId, profiler);
+  const profilerClass = import.meta.env.DEV
+    ? (await import('./conversion-profiler')).ConversionProfiler
+    : undefined;
+  const profiler: import('./conversion-profiler').ConversionProfiler | null = profilerClass
+    ? new profilerClass()
+    : null;
+  profiler?.start();
+  if (profiler) {
+    activeProfilers.set(runId, profiler);
+  }
 
   // Ensure profiler is removed from active map on completion or failure
   let output: ArrayBuffer;
@@ -195,7 +141,7 @@ async function _runPipelineInner(
   onProgress: ProgressCallback,
   signal: AbortSignal | undefined,
   pipelineStart: number,
-  profiler: Profiler
+  profiler: import('./conversion-profiler').ConversionProfiler | null
 ): Promise<ArrayBuffer> {
   const throttled = createThrottledProgress(onProgress, 100);
 
@@ -225,7 +171,7 @@ async function _runPipelineInner(
       return lastMemMB;
     };
 
-    profiler.startPhase('demuxing');
+    profiler?.startPhase('demuxing');
     let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
     const demuxProgressThrottled = throttled.callback;
     demuxResult = await scheduleTask(
@@ -235,7 +181,7 @@ async function _runPipelineInner(
           videoMetadata() ?? undefined,
           (packetsExtracted, estimatedTotalFrames) => {
             if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-            profiler.updatePhase('demuxing', packetsExtracted);
+            profiler?.updatePhase('demuxing', packetsExtracted);
             const memMB = sampleMemory();
             const elapsedMs = Math.round(performance.now() - pipelineStart);
             const demuxPct = Math.min(
@@ -267,7 +213,7 @@ async function _runPipelineInner(
     if (!dims) throw new Error('Unable to determine video dimensions');
     const { width: codedWidth, height: codedHeight } = dims;
 
-    profiler.endPhase('demuxing', { frames: demuxResult.totalFrames });
+    profiler?.endPhase('demuxing', { frames: demuxResult.totalFrames });
 
     const demuxElapsedMs = performance.now() - pipelineStart;
     const demuxMemMB = sampleMemory();
@@ -343,8 +289,37 @@ async function _runPipelineInner(
       });
     };
 
-    profiler.startPhase('decoding');
-    profiler.startPhase('encoding');
+    /**
+     * Build an encoding progress callback that tracks frame count and dispatches
+     * throttled progress updates. Replaces the factory function previously in
+     * pipeline-progress-factory.ts.
+     */
+    const createEncodeProgressCb = (): ProgressCallback => {
+      let encodedFrames = 0;
+      return (p) => {
+        encodedFrames = p.currentFrame ?? encodedFrames;
+        const encodePct =
+          estimatedOutputFrames > 0
+            ? Math.round((encodedFrames / estimatedOutputFrames) * ENCODE_RANGE)
+            : 0;
+        throttled.callback(
+          buildProgressData(
+            'encoding',
+            Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
+            fpsTracker.current,
+            fpsTracker.current > 0 && p.currentFrame != null
+              ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
+              : null,
+            sampleMemory(),
+            p.currentFrame ?? 0,
+            estimatedOutputFrames
+          )
+        );
+      };
+    };
+
+    profiler?.startPhase('decoding');
+    profiler?.startPhase('encoding');
 
     const sourceFps =
       Number.isFinite(demuxResult.framerate) && demuxResult.framerate > 0
@@ -552,16 +527,7 @@ async function _runPipelineInner(
           }
         );
 
-        const { callback: onEncodeProgress, getEncodedFrames } = createPipelineProgressCallback(
-          throttled,
-          buildProgressData,
-          fpsTracker,
-          estimatedOutputFrames,
-          DECODE_MAX,
-          ENCODE_RANGE,
-          ENCODE_MAX,
-          sampleMemory
-        );
+        const onEncodeProgress = createEncodeProgressCb();
         const encoded = await scheduleTask(
           () =>
             encodeWebpOffscreen(
@@ -581,7 +547,7 @@ async function _runPipelineInner(
         );
         output = encoded.buffer as ArrayBuffer;
         encodeResult = {
-          frames: getEncodedFrames(),
+          frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
         };
       } else {
@@ -594,16 +560,7 @@ async function _runPipelineInner(
           webpDecimation,
         });
 
-        const { callback: onEncodeProgress, getEncodedFrames } = createPipelineProgressCallback(
-          throttled,
-          buildProgressData,
-          fpsTracker,
-          estimatedOutputFrames,
-          DECODE_MAX,
-          ENCODE_RANGE,
-          ENCODE_MAX,
-          sampleMemory
-        );
+        const onEncodeProgress = createEncodeProgressCb();
         const encoded = await scheduleTask(
           () =>
             encodeWebp(
@@ -623,7 +580,7 @@ async function _runPipelineInner(
         );
         output = encoded.buffer as ArrayBuffer;
         encodeResult = {
-          frames: getEncodedFrames(),
+          frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
         };
       }
@@ -631,11 +588,11 @@ async function _runPipelineInner(
 
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
-    profiler.endPhase('decoding');
-    profiler.endPhase('encoding', encodeResult);
+    profiler?.endPhase('decoding');
+    profiler?.endPhase('encoding', encodeResult);
 
     // ── Assembly Phase (93~100%) ──
-    profiler.startPhase('assembling');
+    profiler?.startPhase('assembling');
 
     // Clear buffer pool after conversion
     globalBufferPool.clear();
@@ -666,27 +623,39 @@ async function _runPipelineInner(
       elapsedMs: totalElapsedMs,
     });
 
-    profiler.endPhase('assembling');
+    profiler?.endPhase('assembling');
 
     // ── Profile Report ──
-    const profileReport = profiler.finish();
-    scheduleTask(
-      () => {
-        logger.performance('Pipeline profile', profileReport);
-        logger.info('conversion', `◀ Pipeline complete: ${profileReport.summary}`, {
-          format: request.format,
-          quality: request.quality,
-          scale: request.scale,
-          totalFrames: demuxResult.totalFrames,
-          outputBytes: output!.byteLength,
-          duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
-          peakMemoryMB: profileReport.heapPeakMB,
-          bottleneck: profileReport.bottleneck,
-          phaseTimePct: profileReport.phaseTimePct,
-        });
-      },
-      { priority: 'background' }
-    );
+    if (profiler) {
+      const profileReport = profiler.finish();
+      scheduleTask(
+        () => {
+          const report = profileReport!;
+          logger.performance('Pipeline profile', report);
+          logger.info('conversion', `◀ Pipeline complete: ${report.summary}`, {
+            format: request.format,
+            quality: request.quality,
+            scale: request.scale,
+            totalFrames: demuxResult.totalFrames,
+            outputBytes: output!.byteLength,
+            duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
+            peakMemoryMB: report.heapPeakMB,
+            bottleneck: report.bottleneck,
+            phaseTimePct: report.phaseTimePct,
+          });
+        },
+        { priority: 'background' }
+      );
+    } else {
+      logger.info('conversion', '◀ Pipeline complete', {
+        format: request.format,
+        quality: request.quality,
+        scale: request.scale,
+        totalFrames: demuxResult.totalFrames,
+        outputBytes: output!.byteLength,
+        duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
+      });
+    }
 
     return output!;
   } finally {
