@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
+import { PROGRESS_THROTTLE_MS } from './constants';
 
 /**
  * Throttled progress wrapper — prevents UI re-render spam by enforcing a
@@ -14,7 +15,7 @@ import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
  */
 export function createThrottledProgress(
   onProgress: ProgressCallback,
-  minIntervalMs = 100
+  minIntervalMs = PROGRESS_THROTTLE_MS
 ): { callback: ProgressCallback; cleanup: () => void } {
   let lastCallTime = 0;
   let pendingCall: (() => void) | null = null;

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { ETA_CAP_SECONDS, ETA_MAX_SAMPLES } from './constants';
+
 /**
  * ETA (Estimated Time of Arrival) Calculator for conversion progress tracking.
  *
@@ -44,7 +46,7 @@ export interface ETACalculator {
  * - Returns null when insufficient data (< 5 samples) or unreasonable estimates (> 1 hour).
  */
 export function createETACalculator(): ETACalculator {
-  const maxSamples = 30;
+  const maxSamples = ETA_MAX_SAMPLES;
   const samples: Array<{ timestamp: number; progress: number }> = [];
 
   const api: ETACalculator = {
@@ -75,7 +77,7 @@ export function createETACalculator(): ETACalculator {
         const rate = progressDelta / elapsedSec; // % per second
         const remaining = 100 - lastSample.progress;
         const estimatedSeconds = remaining / rate;
-        if (!Number.isFinite(estimatedSeconds) || estimatedSeconds > 3600 || estimatedSeconds < 0) {
+        if (!Number.isFinite(estimatedSeconds) || estimatedSeconds > ETA_CAP_SECONDS || estimatedSeconds < 0) {
           return null;
         }
         return Math.ceil(estimatedSeconds * 1.1);
@@ -117,7 +119,7 @@ export function createETACalculator(): ETACalculator {
       const estimatedSeconds = remaining / slope;
 
       // Sanity checks
-      if (!Number.isFinite(estimatedSeconds) || estimatedSeconds > 3600 || estimatedSeconds < 0) {
+      if (!Number.isFinite(estimatedSeconds) || estimatedSeconds > ETA_CAP_SECONDS || estimatedSeconds < 0) {
         return null;
       }
 

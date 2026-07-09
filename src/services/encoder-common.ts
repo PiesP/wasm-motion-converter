@@ -11,7 +11,7 @@
  */
 
 import type { SmartFrameSkipMode } from '@t/conversion-types';
-import { MIN_OUTPUT_FPS } from '@utils/constants';
+import { FPS_CLAMP_MAX, MIN_OUTPUT_FPS } from '@utils/constants';
 
 /** Base options shared by all format encoders */
 export interface BaseEncoderOptions {
@@ -64,7 +64,7 @@ export function calcAutoDecimation(
   if (forceDecimation !== undefined) return forceDecimation;
 
   // Guard against unreliable fps detection: clamp to reasonable range
-  const clampedFps = Math.max(1, Math.min(sourceFps, 120));
+  const clampedFps = Math.max(1, Math.min(sourceFps, FPS_CLAMP_MAX));
 
   // Base decimation: keep every Nth frame to approximately match target FPS
   const baseDecimation =

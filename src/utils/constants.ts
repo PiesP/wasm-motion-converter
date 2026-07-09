@@ -190,3 +190,36 @@ export const PROGRESS_PHASE_RANGES = {
   DECODE_RANGE: PROGRESS_PHASE.DECODE_MAX - PROGRESS_PHASE.DEMUX_MAX,
   ENCODE_RANGE: PROGRESS_PHASE.ENCODE_MAX - PROGRESS_PHASE.DECODE_MAX,
 } as const;
+
+// ============================================================================
+// ENCODER CONSTANTS
+// ============================================================================
+
+/** Maximum FPS clamp for decimation calculation guard */
+export const FPS_CLAMP_MAX = 120;
+
+// ============================================================================
+// ETA & THROTTLING CONSTANTS
+// ============================================================================
+
+/** ETA maximum reasonable value in seconds (1 hour) */
+export const ETA_CAP_SECONDS = 3600;
+
+/** Maximum number of progress samples for ETA sliding window */
+export const ETA_MAX_SAMPLES = 30;
+
+/** Minimum progress throttling interval in milliseconds */
+export const PROGRESS_THROTTLE_MS = 100;
+
+// ============================================================================
+// OUTPUT SIZE ESTIMATION CONSTANTS
+// ============================================================================
+
+/** Conservative bytes-per-pixel estimate for GIF LZW compression */
+export const GIF_BPP_CONSERVATIVE = 0.18;
+
+/** GIF palette overhead per frame in bytes (256 colors × 3 bytes + header) */
+export const GIF_PALETTE_OVERHEAD_PER_FRAME = 800;
+
+/** WebP container overhead per frame in bytes (ANMF chunk header) */
+export const WEBP_OVERHEAD_PER_FRAME = 32;

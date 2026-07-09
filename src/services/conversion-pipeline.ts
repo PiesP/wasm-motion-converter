@@ -28,6 +28,7 @@ import {
   GIF_TARGET_FPS,
   PROGRESS_PHASE,
   PROGRESS_PHASE_RANGES,
+  PROGRESS_THROTTLE_MS,
   WEBP_TARGET_FPS,
 } from '@utils/constants';
 import { scheduleTask } from '@utils/dom-utils';
@@ -149,7 +150,7 @@ async function _runPipelineInner(
   pipelineStart: number,
   profiler: import('./conversion-profiler').ConversionProfiler | null
 ): Promise<ArrayBuffer> {
-  const throttled = createThrottledProgress(onProgress, 100);
+  const throttled = createThrottledProgress(onProgress, PROGRESS_THROTTLE_MS);
 
   // Phase-weighted progress ranges (empirical from ConversionProfiler measurements):
   //   demux:   0 ~ 3%   (typically <1% of total time)

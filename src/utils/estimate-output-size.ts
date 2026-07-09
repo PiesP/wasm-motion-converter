@@ -12,19 +12,12 @@
  */
 
 import type { ConversionQuality } from '@t/conversion-types';
+import {
+  GIF_BPP_CONSERVATIVE,
+  GIF_PALETTE_OVERHEAD_PER_FRAME,
+  WEBP_OVERHEAD_PER_FRAME,
+} from './constants';
 import { formatBytes } from './format-utils';
-
-/**
- * Conservative bytes-per-pixel (BPP) estimate for GIF LZW compression.
- *
- * GIF stores each frame as a palette-indexed bitmap. LZW compression ratio
- * depends on content complexity:
- *   - Photographic content: ~0.15-0.2 BPP
- *   - Screen recording (solid colors): ~0.05-0.1 BPP
- *
- * Using 0.18 BPP as a conservative upper-bound for mixed content.
- */
-const GIF_BPP_CONSERVATIVE = 0.18;
 
 /**
  * Bytes-per-pixel (BPP) estimate for WebP lossy encoding at each quality level.
@@ -41,19 +34,6 @@ const WEBP_BPP: Record<ConversionQuality, number> = {
   medium: 0.2,
   high: 0.35,
 };
-
-/**
- * GIF palette overhead per frame (bytes).
- * Each palette entry is 3 bytes (RGB). At 256 colors = 768 bytes.
- * Add ~32 bytes header/chunk overhead.
- */
-const GIF_PALETTE_OVERHEAD_PER_FRAME = 800;
-
-/**
- * WebP container overhead per frame (bytes).
- * ANMF chunk header + VP8 bitstream wrapper ≈ 32 bytes.
- */
-const WEBP_OVERHEAD_PER_FRAME = 32;
 
 /**
  * Estimate GIF output size in bytes.
