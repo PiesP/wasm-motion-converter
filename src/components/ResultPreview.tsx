@@ -98,13 +98,12 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     return `${sanitized || 'converted'}.${outputExtension()}`;
   });
 
-  const ariaLabel = createMemo(
-    () =>
-      t('result.aria.sectionLabel', {
-        format: outputExtension().toUpperCase(),
-        name: downloadFileName(),
-        size: formatBytes(local.outputBlob.size, locale()),
-      })
+  const ariaLabel = createMemo(() =>
+    t('result.aria.sectionLabel', {
+      format: outputExtension().toUpperCase(),
+      name: downloadFileName(),
+      size: formatBytes(local.outputBlob.size, locale()),
+    })
   );
 
   const compressionRatio = createMemo(() => {

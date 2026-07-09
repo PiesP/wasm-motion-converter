@@ -248,7 +248,9 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
             <span class="font-mono text-[10px] tabular-nums text-brand/60 shrink-0">
-              {t('progress.eta', { time: formatDurationSeconds(local.estimatedSecondsRemaining!, locale()) })}
+              {t('progress.eta', {
+                time: formatDurationSeconds(local.estimatedSecondsRemaining!, locale()),
+              })}
             </span>
           </Show>
         </div>
@@ -280,7 +282,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         {/* Elapsed time */}
         <Show when={local.showElapsedTime && local.startTime}>
           <div class="text-center text-[10px] text-text-tertiary font-mono tabular-nums">
-          <span ref={elapsedDisplayRef}>{t('progress.initialElapsed')}</span>
+            <span ref={elapsedDisplayRef}>{t('progress.initialElapsed')}</span>
           </div>
         </Show>
       </div>
@@ -382,7 +384,9 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           >
             <span class="text-brand/60">·</span>
             <span class="text-brand/60">
-              {t('progress.eta', { time: formatDurationSeconds(local.estimatedSecondsRemaining!, locale()) })}
+              {t('progress.eta', {
+                time: formatDurationSeconds(local.estimatedSecondsRemaining!, locale()),
+              })}
             </span>
           </Show>
           <Show

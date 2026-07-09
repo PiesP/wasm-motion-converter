@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { useLocale } from '@hooks/use-locale';
 import Panel from '@components/ui/Panel';
+import { useLocale } from '@hooks/use-locale';
 import { conversionElapsedMs, conversionFps } from '@stores/conversion-store';
 import type { ProgressPhase } from '@t/conversion-types';
 import type { Component } from 'solid-js';

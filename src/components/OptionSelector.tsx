@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import type { JSX } from 'solid-js';
 import { For, Show, splitProps } from 'solid-js';
 import Tooltip from './Tooltip';
 import Icon from './ui/Icon';
-import { useLocale } from '@hooks/use-locale';
 
 const BASE_OPTION_CLASS =
   'relative flex items-center justify-center px-3 py-2 sm:py-3 border rounded-lg cursor-pointer transition-all duration-200 text-sm min-h-[44px]';
