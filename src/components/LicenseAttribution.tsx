@@ -53,7 +53,7 @@ const LicenseAttribution: Component = () => {
 
         {/* Line 2: Processing note — hidden on mobile to save space */}
         <p class="hidden sm:block text-text-quaternary">
-          Processing happens entirely in your browser via WebCodecs.
+          {t('license.processingNote')}
         </p>
 
         {/* Line 3: Licenses + feedback in one line */}
