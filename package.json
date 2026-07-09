@@ -49,10 +49,10 @@
     "wasm-webp": "^0.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.2",
+    "@biomejs/biome": "2.5.3",
     "@tailwindcss/vite": "4.3.2",
     "@types/dom-webcodecs": "^0.1.18",
-    "@types/node": "26.1.0",
+    "@types/node": "26.1.1",
     "esbuild": "0.28.1",
     "knip": "6.25.0",
     "rollup-plugin-visualizer": "7.0.1",
