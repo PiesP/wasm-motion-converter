@@ -23,7 +23,13 @@ import type {
   ProgressCallback,
   ProgressPhase,
 } from '@t/conversion-types';
-import { DEFAULT_FPS, GIF_TARGET_FPS, PROGRESS_PHASE, PROGRESS_PHASE_RANGES, WEBP_TARGET_FPS } from '@utils/constants';
+import {
+  DEFAULT_FPS,
+  GIF_TARGET_FPS,
+  PROGRESS_PHASE,
+  PROGRESS_PHASE_RANGES,
+  WEBP_TARGET_FPS,
+} from '@utils/constants';
 import { scheduleTask } from '@utils/dom-utils';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
