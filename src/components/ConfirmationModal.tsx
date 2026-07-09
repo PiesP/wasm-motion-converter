@@ -136,7 +136,7 @@ const ConfirmationModal: Component = () => {
           tabIndex={-1}
         >
           <h2 id="modal-title" class="text-xl font-semibold mb-4 text-text-primary">
-            {state().title ?? 'Conversion Warning'}
+            {state().title ?? t('modal.title')}
           </h2>
 
           <div id="modal-description" class="space-y-3 mb-6" role="list">
@@ -183,7 +183,7 @@ const ConfirmationModal: Component = () => {
               aria-label={t('modal.cancel')}
               data-testid="modal-cancel-button"
             >
-              {state().cancelLabel ?? 'Cancel'}
+              {state().cancelLabel ?? t('modal.cancel')}
             </button>
             <button
               type="button"
@@ -192,7 +192,7 @@ const ConfirmationModal: Component = () => {
               aria-label={t('modal.confirm')}
               data-testid="modal-confirm-button"
             >
-              {state().confirmLabel ?? 'Proceed Anyway'}
+              {state().confirmLabel ?? t('modal.confirm')}
             </button>
           </div>
         </div>

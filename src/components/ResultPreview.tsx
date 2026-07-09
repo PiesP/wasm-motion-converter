@@ -98,9 +98,12 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     return `${sanitized || 'converted'}.${outputExtension()}`;
   });
 
-  const ariaLabel = createMemo(
-    () =>
-      `${outputExtension().toUpperCase()} conversion results: ${downloadFileName()}, ${formatBytes(local.outputBlob.size, locale())}`
+  const ariaLabel = createMemo(() =>
+    t('result.aria.sectionLabel', {
+      format: outputExtension().toUpperCase(),
+      name: downloadFileName(),
+      size: formatBytes(local.outputBlob.size, locale()),
+    })
   );
 
   const compressionRatio = createMemo(() => {
@@ -144,8 +147,14 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         <Show when={previewUrl()}>
           <img
             src={previewUrl()!}
-            alt={`${outputExtension().toUpperCase()} preview: ${downloadFileName()}`}
-            aria-label={`${outputExtension().toUpperCase()} animated preview: ${downloadFileName()}`}
+            alt={t('result.aria.previewAlt', {
+              format: outputExtension().toUpperCase(),
+              name: downloadFileName(),
+            })}
+            aria-label={t('result.aria.previewAlt', {
+              format: outputExtension().toUpperCase(),
+              name: downloadFileName(),
+            })}
             class="w-full h-auto max-h-[70vh] object-contain rounded transition-opacity duration-300 opacity-100"
             onLoad={handlePreviewLoad}
             onError={handlePreviewError}

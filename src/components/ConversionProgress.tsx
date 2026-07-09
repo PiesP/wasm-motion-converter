@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import Panel from '@components/ui/Panel';
+import { useLocale } from '@hooks/use-locale';
 import { conversionElapsedMs, conversionFps } from '@stores/conversion-store';
 import type { ProgressPhase } from '@t/conversion-types';
 import type { Component } from 'solid-js';
@@ -23,6 +24,7 @@ interface ConversionProgressProps {
 }
 
 const ConversionProgress: Component<ConversionProgressProps> = (props) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, [
     'progress',
     'status',
@@ -43,7 +45,7 @@ const ConversionProgress: Component<ConversionProgressProps> = (props) => {
     <Panel
       class="p-4"
       role="region"
-      ariaLabel="Video conversion progress"
+      ariaLabel={t('conversionProgress.aria.label')}
       ariaLive="polite"
       ariaBusy={ariaBusy()}
       data-testid="conversion-progress"

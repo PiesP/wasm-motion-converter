@@ -125,7 +125,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
           <Show when={rawErrorMessage()}>
             <details class="mt-2">
               <summary class="text-xs text-text-secondary cursor-pointer hover:underline">
-                Technical details
+                {t('error.technicalDetails')}
               </summary>
               <pre class="mt-1 text-xs text-text-secondary whitespace-pre-wrap break-all bg-white/[0.02] border border-border-standard p-2 rounded max-h-32 overflow-auto">
                 {rawErrorMessage()}
@@ -134,7 +134,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
           </Show>
           <Show when={local.suggestion}>
             <div class="mt-2 p-3 bg-white/[0.02] border border-border-standard rounded text-sm text-text-secondary">
-              <strong class="text-text-primary">Suggestion:</strong> {local.suggestion}
+              <strong class="text-text-primary">{t('error.suggestion')}</strong> {local.suggestion}
             </div>
           </Show>
           <div class="mt-4 flex gap-3">

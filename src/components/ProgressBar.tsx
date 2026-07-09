@@ -164,9 +164,16 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     if (!showFrameCounter()) return '';
     const out = local.outputFrames;
     if (out != null && out !== local.totalFrames) {
-      return `Frame ${local.currentFrame}/${local.totalFrames} (${out} out)`;
+      return t('progress.frameCounterOutput', {
+        current: local.currentFrame!,
+        total: local.totalFrames!,
+        output: out,
+      });
     }
-    return `Frame ${local.currentFrame}/${local.totalFrames}`;
+    return t('progress.frameCounter', {
+      current: local.currentFrame!,
+      total: local.totalFrames!,
+    });
   });
 
   createEffect(() => {
@@ -241,7 +248,9 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
             <span class="font-mono text-[10px] tabular-nums text-brand/60 shrink-0">
-              ETA {formatDurationSeconds(local.estimatedSecondsRemaining!, locale())}
+              {t('progress.eta', {
+                time: formatDurationSeconds(local.estimatedSecondsRemaining!, locale()),
+              })}
             </span>
           </Show>
         </div>
@@ -273,7 +282,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         {/* Elapsed time */}
         <Show when={local.showElapsedTime && local.startTime}>
           <div class="text-center text-[10px] text-text-tertiary font-mono tabular-nums">
-            <span ref={elapsedDisplayRef}>⏱ 0:00</span>
+            <span ref={elapsedDisplayRef}>{t('progress.initialElapsed')}</span>
           </div>
         </Show>
       </div>
@@ -369,20 +378,22 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       {/* Elapsed / ETA row */}
       <Show when={local.showElapsedTime && local.startTime}>
         <div class="flex items-center justify-center gap-2 text-[10px] text-text-tertiary font-mono tabular-nums">
-          <span ref={elapsedDisplayRef}>⏱ 0:00</span>
+          <span ref={elapsedDisplayRef}>{t('progress.initialElapsed')}</span>
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
             <span class="text-brand/60">·</span>
             <span class="text-brand/60">
-              ETA {formatDurationSeconds(local.estimatedSecondsRemaining!, locale())}
+              {t('progress.eta', {
+                time: formatDurationSeconds(local.estimatedSecondsRemaining!, locale()),
+              })}
             </span>
           </Show>
           <Show
             when={local.estimatedSecondsRemaining == null || local.estimatedSecondsRemaining <= 0}
           >
             <span class="text-brand/60">·</span>
-            <span class="text-brand/60 italic">calculating…</span>
+            <span class="text-brand/60 italic">{t('progress.calculating')}</span>
           </Show>
         </div>
       </Show>

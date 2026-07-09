@@ -61,10 +61,7 @@ const MemoryWarning: Component<MemoryWarningProps> = (props) => {
           <div class="mt-2 text-sm text-text-secondary">
             <p>{warningMessage()}</p>
             <Show when={!local.isDuringConversion}>
-              <p class="mt-2">
-                <strong class="text-text-primary">Recommendation:</strong> Close other browser tabs
-                before starting conversion, or use lower quality settings.
-              </p>
+              <p class="mt-2" innerHTML={t('memory.recommendation')} />
             </Show>
           </div>
 

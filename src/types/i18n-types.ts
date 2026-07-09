@@ -57,7 +57,6 @@ export interface TranslationKeys {
   // Dropzone
   'dropzone.dropHere': string;
   'dropzone.clickSelect': string;
-  'dropzone.dragActive': string;
   'dropzone.selectFile': string;
   'dropzone.cancelConversion': string;
   'dropzone.preview': string;
@@ -77,7 +76,6 @@ export interface TranslationKeys {
   'metadata.detecting': string;
 
   // Settings Panel
-  'settings.title': string;
   'settings.heading': string;
   'settings.selectVideo': string;
   'settings.convert': string;
@@ -152,6 +150,11 @@ export interface TranslationKeys {
   'progress.finalizing': string;
   'progress.converting': string;
   'progress.cancelling': string;
+  'progress.frameCounter': string;
+  'progress.frameCounterOutput': string;
+  'progress.eta': string;
+  'progress.calculating': string;
+  'progress.initialElapsed': string;
 
   // Result
   'result.download': string;
@@ -167,6 +170,8 @@ export interface TranslationKeys {
   'result.compressionLarger': string;
   'result.previewFailed': string;
   'result.heading': string;
+  'result.aria.previewAlt': string;
+  'result.aria.sectionLabel': string;
 
   // Errors
   'error.format': string;
@@ -179,6 +184,8 @@ export interface TranslationKeys {
   'error.retry': string;
   'error.selectDifferent': string;
   'error.selectDifferentFallback': string;
+  'error.technicalDetails': string;
+  'error.suggestion': string;
 
   // Validation
   'validation.fileTooLarge': string;
@@ -198,6 +205,10 @@ export interface TranslationKeys {
   'memory.reduceStart': string;
   'memory.cancel': string;
   'memory.dismiss': string;
+  'memory.recommendation': string;
+
+  // License Attribution
+  'license.processingNote': string;
 
   // Confirmation Modal
   'modal.title': string;
@@ -221,8 +232,13 @@ export interface TranslationKeys {
   'offline.message': string;
 
   // Language Switcher
-  'lang.label': string;
   'lang.select': string;
+
+  // Option Selector
+  'option.aria.tooltipInfo': string;
+
+  // Conversion Progress
+  'conversionProgress.aria.label': string;
 }
 
 /** Type-safe translation accessor */

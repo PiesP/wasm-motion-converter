@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { useLocale } from '@hooks/use-locale';
 import type { JSX } from 'solid-js';
 import { For, Show, splitProps } from 'solid-js';
 import Tooltip from './Tooltip';
@@ -34,6 +35,7 @@ interface OptionSelectorProps<T extends OptionValue> {
 }
 
 const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) => {
+  const { t } = useLocale();
   const [local] = splitProps(props, [
     'title',
     'name',
@@ -121,7 +123,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
               type="button"
               tabIndex={0}
               class="inline-flex items-center justify-center w-11 h-11 -m-2 min-h-[44px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded-md cursor-pointer"
-              aria-label={`Information about ${local.title}`}
+              aria-label={t('option.aria.tooltipInfo', { title: local.title })}
               onKeyDown={handleTooltipKeyDown}
             >
               <Icon name="info" size="sm" class="text-text-quaternary cursor-help" />
