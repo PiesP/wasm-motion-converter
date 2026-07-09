@@ -223,3 +223,10 @@ export const GIF_PALETTE_OVERHEAD_PER_FRAME = 800;
 
 /** WebP container overhead per frame in bytes (ANMF chunk header) */
 export const WEBP_OVERHEAD_PER_FRAME = 32;
+
+// ============================================================================
+// LOCALISATION CONSTANTS
+// ============================================================================
+
+/** localStorage key used to persist the user's locale preference */
+export const LOCALE_STORAGE_KEY = 'dropconvert.locale';

@@ -38,6 +38,9 @@ export function transitionToState(
   newState: AppState,
   startViewTransition?: (callback: () => void) => void
 ): void {
+  // Guard: avoid unnecessary state transitions (and potential double
+  // startViewTransition) when the state hasn't actually changed.
+  if (appState() === newState) return;
   const update = () => setAppState(newState);
   if (startViewTransition) {
     startViewTransition(update);

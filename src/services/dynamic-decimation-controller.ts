@@ -37,8 +37,13 @@ export interface DecimationMemoryInfo {
  * skipping.
  *
  * @param memoryCheck - Function returning current memory usage percentage, or
- *                      null if memory info is unavailable. Defaults to
- *                      performance.memory-based check.
+ *                      null if memory info is unavailable. Defaults to calling
+ *                      getMemoryInfo() from memory-monitor, which accesses
+ *                      Chrome-only performance.memory. **Callers SHOULD provide
+ *                      their own check function** (e.g. from memory-monitor or
+ *                      a worker-compatible alternative) to avoid coupling to
+ *                      the browser API. Providing a custom check also makes
+ *                      the controller testable without a real browser.
  */
 export function createDynamicDecimationController(
   memoryCheck?: () => DecimationMemoryInfo | null

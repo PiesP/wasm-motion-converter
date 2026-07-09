@@ -81,11 +81,14 @@ export function getLastConversionProfiler():
   return lastKey ? activeProfilers.get(lastKey)! : null;
 }
 
-// Incrementing counter for non-security run identifiers.
-// crypto.randomUUID() is unnecessary for profiling session IDs;
-// a simple counter is sufficient and avoids crypto entropy overhead.
+/** Incrementing counter for non-security run identifiers.
+ * crypto.randomUUID() is unnecessary for profiling session IDs;
+ * a simple counter is sufficient and avoids crypto entropy overhead.
+ */
 let nextRunId = 0;
 
+/** Device/environment check — isolated to this module-level constant */
+const isDev = import.meta.env.DEV;
 export async function runConversionPipeline(
   request: ConversionRequest,
   onProgress: ProgressCallback,
@@ -112,7 +115,7 @@ export async function runConversionPipeline(
   // Initialize profiler — in DEV, dynamically import the real profiler
   // (tree-shaken from production bundles). In prod, use null.
   const runId = `run-${nextRunId++}`;
-  const profilerClass = import.meta.env.DEV
+  const profilerClass = isDev
     ? (await import('./conversion-profiler')).ConversionProfiler
     : undefined;
   const profiler: import('./conversion-profiler').ConversionProfiler | null = profilerClass

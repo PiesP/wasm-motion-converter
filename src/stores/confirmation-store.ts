@@ -22,6 +22,9 @@ const [confirmationState, setConfirmationState] = createSignal<ConfirmationState
 
 export const getConfirmationState = () => confirmationState();
 
+/** Guard flag to prevent confirmDialog/cancelDialog callbacks from firing twice */
+let callbackInvoked = false;
+
 export const showConfirmation = (
   warnings: ValidationWarning[],
   onConfirm: () => void,
@@ -32,6 +35,8 @@ export const showConfirmation = (
     cancelLabel?: string;
   }
 ): void => {
+  // Reset guard when a new confirmation is shown
+  callbackInvoked = false;
   const confirmWarnings = warnings.filter((w) => w.requiresConfirmation);
   if (confirmWarnings.length === 0) {
     // No warnings requiring confirmation — invoke onConfirm directly (L8 fix).
@@ -50,12 +55,16 @@ export const showConfirmation = (
 };
 
 export const confirmDialog = (): void => {
+  if (callbackInvoked) return;
+  callbackInvoked = true;
   const state = confirmationState();
   setConfirmationState({ ...state, isVisible: false });
   state.onConfirm?.();
 };
 
 export const cancelDialog = (): void => {
+  if (callbackInvoked) return;
+  callbackInvoked = true;
   const state = confirmationState();
   setConfirmationState({ ...state, isVisible: false });
   state.onCancel?.();

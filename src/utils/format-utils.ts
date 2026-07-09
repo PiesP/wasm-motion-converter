@@ -11,7 +11,7 @@
 
 import type { Locale } from '@t/i18n-types';
 import { DEFAULT_LOCALE, LOCALES } from '@t/i18n-types';
-import { BYTES_PER_KB } from './constants';
+import { BYTES_PER_KB, LOCALE_STORAGE_KEY } from './constants';
 
 // ============================================================================
 // ID Generation
@@ -120,7 +120,7 @@ export function detectUserLocale(
  * Checks localStorage first, then browser language preference via
  * `detectUserLocale()`, then falls back to DEFAULT_LOCALE.
  */
-export function detectInitialLocale(storageKey = 'dropconvert.locale'): Locale {
+export function detectInitialLocale(storageKey = LOCALE_STORAGE_KEY): Locale {
   try {
     const stored = localStorage.getItem(storageKey);
     if (stored && LOCALES.some((l) => l.code === stored)) return stored as Locale;

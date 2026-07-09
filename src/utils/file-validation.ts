@@ -25,6 +25,7 @@
 import type { TranslationKeys } from '@t/i18n-types';
 import type { DurationValidationResult, ValidationWarning } from '@t/validation-types';
 import {
+  DEFAULT_FPS,
   MAX_FILE_SIZE,
   SUPPORTED_VIDEO_EXTENSIONS,
   SUPPORTED_VIDEO_MIMES,
@@ -33,7 +34,6 @@ import {
 } from './constants';
 import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
-import { DEFAULT_FPS } from './constants';
 
 type TFunction = <K extends keyof TranslationKeys>(
   key: K,

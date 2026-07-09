@@ -4,8 +4,8 @@
 import { yieldToMain } from '@services/frame-utils';
 import { extractVideoMetadata } from '@services/video-metadata';
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
-import { logger } from '@utils/logger';
 import { DEFAULT_FPS } from '@utils/constants';
+import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { EncodedPacketSink } from 'mediabunny';
 
