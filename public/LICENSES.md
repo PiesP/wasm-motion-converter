@@ -1,19 +1,11 @@
 # Third-Party Licenses
 
-> Auto-generated on 2026-07-08 by `scripts/generate-licenses.ts`.
+> Auto-generated on 2026-07-09 by `scripts/generate-licenses.ts`.
 > Do not edit manually — run `pnpm build` to regenerate.
 
 This project uses the following open-source libraries.
 
 ## Runtime Dependencies
-
-### ffmpeg.wasm
-
-- **Version:** (CDN)
-- **License:** LGPL-2.1-or-later
-- **Repository:** https://github.com/ffmpegwasm/ffmpeg.wasm
-- **Purpose:** Fallback video decoding/encoding via WebAssembly (loaded via CDN at runtime)
-- **Note:** Dynamically loaded at runtime via CDN, not statically bundled.
 
 ### gifenc
 
@@ -24,7 +16,7 @@ This project uses the following open-source libraries.
 
 ### mediabunny
 
-- **Version:** 1.50.6
+- **Version:** 1.50.7
 - **License:** MPL-2.0
 - **Repository:** https://mediabunny.dev/
 - **Purpose:** Video demuxing (Input, BufferSource, EncodedPacketSink)
@@ -44,15 +36,6 @@ This project uses the following open-source libraries.
 - **Purpose:** WebP encoding via WebAssembly (encodeRGB)
 
 ## License Texts
-
-### LGPL-2.1-or-later (ffmpeg.wasm)
-
-LGPL-2.1-or-later. See https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html for full text.
-
-Key points:
-- ffmpeg.wasm is loaded dynamically at runtime via CDN
-- This project does not statically link or modify FFmpeg source
-- Users can replace the ffmpeg.wasm binary with a modified version
 
 ### MIT (gifenc, solid-js, wasm-webp)
 
