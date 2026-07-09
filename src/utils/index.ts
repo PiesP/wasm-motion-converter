@@ -47,8 +47,6 @@ export {
   detectUserLocale,
   formatDuration,
   formatFileSize,
-  formatNumber,
-  formatPercent,
   updateDocumentLang,
 } from './intl-utils';
 export { logger } from './logger';

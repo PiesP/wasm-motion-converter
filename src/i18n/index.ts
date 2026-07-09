@@ -36,10 +36,8 @@ export type { Locale as LocaleCode } from '@t/i18n-types';
 export {
   detectInitialLocale,
   detectUserLocale,
-  formatNumber,
-  formatPercent,
   updateDocumentLang,
-} from './intl-utils';
+} from '@utils/intl-utils';
 // ─── Types ──────────────────────────────────────────────────────────────────
 export type {
   Locale,
