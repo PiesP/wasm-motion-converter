@@ -5,6 +5,7 @@ import { yieldToMain } from '@services/frame-utils';
 import { extractVideoMetadata } from '@services/video-metadata';
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 import { logger } from '@utils/logger';
+import { DEFAULT_FPS } from '@utils/constants';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { EncodedPacketSink } from 'mediabunny';
 
@@ -68,7 +69,7 @@ export async function demuxVideo(
   // Estimate total frames from duration and frame rate for progress reporting.
   // This is an estimate — actual packet count may differ due to variable frame rate
   // or container-level vs stream-level duration mismatch.
-  const safeFramerate = Number.isFinite(framerate) && framerate > 0 ? framerate : 30;
+  const safeFramerate = Number.isFinite(framerate) && framerate > 0 ? framerate : DEFAULT_FPS;
   const estimatedTotalFrames = Math.max(1, Math.round(duration * safeFramerate));
 
   // Set up source/input for demuxing.

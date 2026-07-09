@@ -33,6 +33,7 @@ import {
 } from './constants';
 import { getErrorMessage } from './error-utils';
 import { logger } from './logger';
+import { DEFAULT_FPS } from './constants';
 
 type TFunction = <K extends keyof TranslationKeys>(
   key: K,
@@ -320,7 +321,7 @@ async function extractVideoDuration(file: File): Promise<number> {
  * // 10 second video at 60fps
  * estimateFrameCount(10000, 60); // (10000 / 1000) * 60 = 600 frames
  */
-function estimateFrameCount(durationMs: number, fps = 30): number {
+function estimateFrameCount(durationMs: number, fps = DEFAULT_FPS): number {
   // Convert milliseconds to seconds, multiply by fps, round up
   // Math.ceil ensures we don't underestimate frame count (e.g., 5.1 frames → 6 frames)
   return Math.ceil((durationMs / 1000) * fps);

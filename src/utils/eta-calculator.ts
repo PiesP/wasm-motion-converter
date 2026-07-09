@@ -77,7 +77,11 @@ export function createETACalculator(): ETACalculator {
         const rate = progressDelta / elapsedSec; // % per second
         const remaining = 100 - lastSample.progress;
         const estimatedSeconds = remaining / rate;
-        if (!Number.isFinite(estimatedSeconds) || estimatedSeconds > ETA_CAP_SECONDS || estimatedSeconds < 0) {
+        if (
+          !Number.isFinite(estimatedSeconds) ||
+          estimatedSeconds > ETA_CAP_SECONDS ||
+          estimatedSeconds < 0
+        ) {
           return null;
         }
         return Math.ceil(estimatedSeconds * 1.1);
@@ -119,7 +123,11 @@ export function createETACalculator(): ETACalculator {
       const estimatedSeconds = remaining / slope;
 
       // Sanity checks
-      if (!Number.isFinite(estimatedSeconds) || estimatedSeconds > ETA_CAP_SECONDS || estimatedSeconds < 0) {
+      if (
+        !Number.isFinite(estimatedSeconds) ||
+        estimatedSeconds > ETA_CAP_SECONDS ||
+        estimatedSeconds < 0
+      ) {
         return null;
       }
 
