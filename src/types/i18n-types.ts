@@ -152,6 +152,11 @@ export interface TranslationKeys {
   'progress.finalizing': string;
   'progress.converting': string;
   'progress.cancelling': string;
+  'progress.frameCounter': string;
+  'progress.frameCounterOutput': string;
+  'progress.eta': string;
+  'progress.calculating': string;
+  'progress.initialElapsed': string;
 
   // Result
   'result.download': string;
@@ -167,6 +172,8 @@ export interface TranslationKeys {
   'result.compressionLarger': string;
   'result.previewFailed': string;
   'result.heading': string;
+  'result.aria.previewAlt': string;
+  'result.aria.sectionLabel': string;
 
   // Errors
   'error.format': string;
@@ -179,6 +186,8 @@ export interface TranslationKeys {
   'error.retry': string;
   'error.selectDifferent': string;
   'error.selectDifferentFallback': string;
+  'error.technicalDetails': string;
+  'error.suggestion': string;
 
   // Validation
   'validation.fileTooLarge': string;
@@ -198,6 +207,10 @@ export interface TranslationKeys {
   'memory.reduceStart': string;
   'memory.cancel': string;
   'memory.dismiss': string;
+  'memory.recommendation': string;
+
+  // License Attribution
+  'license.processingNote': string;
 
   // Confirmation Modal
   'modal.title': string;
@@ -223,6 +236,12 @@ export interface TranslationKeys {
   // Language Switcher
   'lang.label': string;
   'lang.select': string;
+
+  // Option Selector
+  'option.aria.tooltipInfo': string;
+
+  // Conversion Progress
+  'conversionProgress.aria.label': string;
 }
 
 /** Type-safe translation accessor */

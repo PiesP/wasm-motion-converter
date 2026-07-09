@@ -150,5 +150,18 @@
   "env.deployedHint": "デプロイされたサイトにアクセスしている場合: 管理者にCOOP/COEPヘッダーの設定を依頼してください。アプリが読み込まれない場合、ブラウザ拡張機能や厳格なセキュリティ設定がWeb Workerをブロックしている可能性があります。InPrivateウィンドウを試すか、ブロッカーを一時的に無効にしてください。",
   "offline.message": "オフラインです。キャッシュされたコンテンツを使用しています。一部の機能が制限される場合があります。",
   "lang.label": "言語",
-  "lang.select": "言語を選択"
+  "lang.select": "言語を選択",
+  "license.processingNote": "処理はWebCodecsを介してブラウザ内で完全に行われます。",
+  "memory.recommendation": "推奨事項: 変換を開始する前に他のブラウザタブを閉じるか、低品質設定を使用してください。",
+  "error.technicalDetails": "技術的詳細",
+  "error.suggestion": "提案:",
+  "progress.frameCounter": "フレーム {current}/{total}",
+  "progress.frameCounterOutput": "フレーム {current}/{total}（{output} 出力）",
+  "progress.eta": "残り {time}",
+  "progress.calculating": "計算中…",
+  "progress.initialElapsed": "⏱ 0:00",
+  "result.aria.previewAlt": "{format}アニメーションプレビュー: {name}",
+  "result.aria.sectionLabel": "{format}変換結果: {name}、{size}",
+  "option.aria.tooltipInfo": "{title}について",
+  "conversionProgress.aria.label": "動画変換の進行状況"
 }

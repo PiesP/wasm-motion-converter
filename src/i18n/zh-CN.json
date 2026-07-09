@@ -150,5 +150,18 @@
   "env.deployedHint": "如果您正在访问已部署的站点：请联系管理员配置 COOP/COEP 标头。如果应用无法加载，浏览器扩展或严格的安全设置可能阻止了 Web Worker——尝试使用 InPrivate 窗口或暂时禁用拦截器。",
   "offline.message": "您处于离线状态。正在使用缓存内容。某些功能可能受限。",
   "lang.label": "语言",
-  "lang.select": "选择语言"
+  "lang.select": "选择语言",
+  "license.processingNote": "处理完全通过WebCodecs在您的浏览器中进行。",
+  "memory.recommendation": "建议：开始转换前关闭其他浏览器标签页，或使用较低质量设置。",
+  "error.technicalDetails": "技术细节",
+  "error.suggestion": "建议：",
+  "progress.frameCounter": "帧 {current}/{total}",
+  "progress.frameCounterOutput": "帧 {current}/{total}（{output} 输出）",
+  "progress.eta": "预计 {time}",
+  "progress.calculating": "计算中…",
+  "progress.initialElapsed": "⏱ 0:00",
+  "result.aria.previewAlt": "{format}动画预览：{name}",
+  "result.aria.sectionLabel": "{format}转换结果：{name}，{size}",
+  "option.aria.tooltipInfo": "关于{title}的信息",
+  "conversionProgress.aria.label": "视频转换进度"
 }

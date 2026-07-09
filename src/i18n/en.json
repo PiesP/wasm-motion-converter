@@ -150,5 +150,18 @@
   "env.deployedHint": "If you're accessing a deployed site: Contact the administrator to configure COOP/COEP headers. If the app fails to load, browser extensions or strict security settings may be blocking Web Workers—try an InPrivate window or disable blockers temporarily.",
   "offline.message": "You're offline. Using cached content. Some features may be limited.",
   "lang.label": "Language",
-  "lang.select": "Select language"
+  "lang.select": "Select language",
+  "license.processingNote": "Processing happens entirely in your browser via WebCodecs.",
+  "memory.recommendation": "Recommendation: Close other browser tabs before starting conversion, or use lower quality settings.",
+  "error.technicalDetails": "Technical details",
+  "error.suggestion": "Suggestion:",
+  "progress.frameCounter": "Frame {current}/{total}",
+  "progress.frameCounterOutput": "Frame {current}/{total} ({output} out)",
+  "progress.eta": "ETA {time}",
+  "progress.calculating": "calculating…",
+  "progress.initialElapsed": "⏱ 0:00",
+  "result.aria.previewAlt": "{format} animated preview: {name}",
+  "result.aria.sectionLabel": "{format} conversion results: {name}, {size}",
+  "option.aria.tooltipInfo": "Information about {title}",
+  "conversionProgress.aria.label": "Video conversion progress"
 }

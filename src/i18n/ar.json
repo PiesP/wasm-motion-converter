@@ -150,5 +150,18 @@
   "env.deployedHint": "إذا كنت تصل إلى موقع منشور: اتصل بالمسؤول لتكوين ترويسات COOP/COEP. إذا فشل التطبيق في التحميل، فقد تكون إضافات المتصفح أو إعدادات الأمان الصارمة تمنع Web Workers — جرب نافذة InPrivate أو عطل الحواجز مؤقتًا.",
   "offline.message": "أنت غير متصل بالإنترنت. يتم استخدام المحتوى المخزن مؤقتًا. قد تكون بعض الميزات محدودة.",
   "lang.label": "اللغة",
-  "lang.select": "اختر اللغة"
+  "lang.select": "اختر اللغة",
+  "license.processingNote": "تتم المعالجة بالكامل في متصفحك عبر WebCodecs.",
+  "memory.recommendation": "توصية: أغلق تبويبات المتصفح الأخرى قبل بدء التحويل، أو استخدم إعدادات جودة أقل.",
+  "error.technicalDetails": "تفاصيل تقنية",
+  "error.suggestion": "اقتراح:",
+  "progress.frameCounter": "الإطار {current}/{total}",
+  "progress.frameCounterOutput": "الإطار {current}/{total} ({output} خارج)",
+  "progress.eta": "الوقت المتبقي {time}",
+  "progress.calculating": "جاري الحساب…",
+  "progress.initialElapsed": "⏱ 0:00",
+  "result.aria.previewAlt": "معاينة متحركة بتنسيق {format}: {name}",
+  "result.aria.sectionLabel": "نتائج التحويل بتنسيق {format}: {name}، {size}",
+  "option.aria.tooltipInfo": "معلومات حول {title}",
+  "conversionProgress.aria.label": "تقدم تحويل الفيديو"
 }
