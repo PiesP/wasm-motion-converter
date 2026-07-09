@@ -133,9 +133,6 @@ export const WORKER_PIPELINE_TIMEOUT_MS = 5 * 60 * 1000;
 /** Max time without progress update before stall detection fires (60 seconds) */
 export const STALL_DETECTION_TIMEOUT_MS = 60_000;
 
-/** Default VP8 encoder bitrate — 5 Mbps for quality encoding */
-export const VP8_DEFAULT_BITRATE = 5_000_000;
-
 /** VP8 FourCC (big-endian: "VP8 " = 0x56503820) */
 export const VP8_FOURCC = 0x56503820;
 

@@ -21,7 +21,6 @@ export {
   STALL_DETECTION_TIMEOUT_MS,
   SUPPORTED_VIDEO_EXTENSIONS,
   SUPPORTED_VIDEO_MIMES,
-  VP8_DEFAULT_BITRATE,
   WEBP_MAX_DURATION_MS,
   WEBP_MAX_FRAMES,
   WEBP_TARGET_FPS,
@@ -48,8 +47,6 @@ export {
   detectUserLocale,
   formatDuration,
   formatFileSize,
-  formatNumber,
-  formatPercent,
   updateDocumentLang,
 } from './intl-utils';
 export { logger } from './logger';

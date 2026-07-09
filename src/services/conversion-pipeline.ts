@@ -39,7 +39,6 @@ import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
 import { createPipelineProgressCallback } from './pipeline-progress-factory';
-import { encodeWebpVp8 } from './vp8-encoder-service';
 import { encodeWebp } from './webp-encoder-service';
 import { getWorkerPool } from './worker-pool';
 
@@ -136,17 +135,6 @@ export function getLastConversionProfiler(): Profiler | null {
 // crypto.randomUUID() is unnecessary for profiling session IDs;
 // a simple counter is sufficient and avoids crypto entropy overhead.
 let nextRunId = 0;
-
-/**
- * Reset pipeline module-level state for testing purposes.
- * Clears the profiler module cache, run ID counter, and active profilers map
- * so the next conversion starts from a clean slate.
- */
-export function resetPipelineState(): void {
-  profilerModule = null;
-  nextRunId = 0;
-  activeProfilers.clear();
-}
 
 export async function runConversionPipeline(
   request: ConversionRequest,
@@ -431,20 +419,173 @@ async function _runPipelineInner(
       );
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
 
-      // ── VP8 VideoEncoder path (GPU-only, fastest) ──
-      // DISABLED (2026-07-06): Chromium's VP8 EncodedVideoChunk output is not
-      // compatible with WebP ANMF muxing. The data includes a non-standard
-      // 3-byte prefix and version=2 bitstream that all VP8/WebP decoders reject.
-      // Re-enable when Chromium fixes the VP8 raw bitstream output format.
-      // See: .hermes/plans/ for full research notes.
-      const useVp8Encoder = false;
-      /*
-      const useVp8Encoder =
-        typeof VideoEncoder !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
-      */
+      // Use parallel Worker-based encoder when available (distributes frame
+      // encoding across multiple CPU cores for 2-3x speedup).
+      // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
+      const useParallelEncoder =
+        typeof OffscreenCanvas !== 'undefined' &&
+        typeof Worker !== 'undefined' &&
+        getWorkerPool() !== null;
 
-      if (useVp8Encoder) {
-        logger.info('conversion', '  ├─ Branch: WebP encoder (VideoEncoder VP8, GPU-only)', {
+      if (useParallelEncoder) {
+        logger.info(
+          'conversion',
+          '  ├─ Branch: WebP encoder (parallel Worker pool + OffscreenCanvas)',
+          {
+            codec: demuxResult.config.codec,
+            codedWidth: demuxResult.config.codedWidth,
+            codedHeight: demuxResult.config.codedHeight,
+            totalFrames: demuxResult.totalFrames,
+            sourceFps: Math.round(sourceFps),
+            webpDecimation,
+          }
+        );
+
+        // Decode on main thread, stream frames directly to worker pool.
+        // Uses createStreamingWebpEncoder to avoid accumulating all frames
+        // in an array (reduces peak memory by ~50% for large videos).
+        const w = Math.max(1, Math.floor(codedWidth * request.scale));
+        const h = Math.max(1, Math.floor(codedHeight * request.scale));
+        const decimationController = createDynamicDecimationController();
+
+        const streamingEncoder = createStreamingWebpEncoder(
+          w,
+          h,
+          request.quality,
+          estimatedOutputFrames,
+          (p) => {
+            const encodePct =
+              estimatedOutputFrames > 0
+                ? Math.round(((p.currentFrame ?? 0) / estimatedOutputFrames) * ENCODE_RANGE)
+                : 0;
+            throttled.callback(
+              buildProgressData(
+                'encoding',
+                DECODE_MAX + Math.min(ENCODE_RANGE, encodePct),
+                fpsTracker.current,
+                fpsTracker.current > 0 && p.currentFrame != null
+                  ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
+                  : null,
+                sampleMemory(),
+                p.currentFrame ?? 0,
+                estimatedOutputFrames
+              )
+            );
+          }
+        );
+
+        // Accumulate durations from dynamically skipped frames (see offscreen-webp-encoder).
+        let dynamicAccumulatedMs = 0;
+
+        await scheduleTask(
+          () =>
+            decodeFrames(
+              demuxResult,
+              {
+                width: w,
+                height: h,
+                frameDecimation: webpDecimation,
+                hwAccel: 'prefer-hardware',
+                smartFrameSkip: request.smartFrameSkip,
+                onFrameDecoded: (frameIdx, _total) => {
+                  const decodePct =
+                    estimatedOutputFrames > 0
+                      ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)
+                      : 0;
+                  throttled.callback({
+                    phase: 'decoding',
+                    progress: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
+                    fps: fpsTracker.current,
+                    etaSeconds:
+                      fpsTracker.current > 0
+                        ? Math.round((estimatedOutputFrames - frameIdx) / fpsTracker.current)
+                        : null,
+                    memoryMB: sampleMemory(),
+                    currentFrame: frameIdx,
+                    totalFrames: estimatedOutputFrames,
+                    elapsedMs: Math.round(performance.now() - pipelineStart),
+                  });
+                },
+                onFrameAvailable: async (
+                  rgbData: Uint8Array,
+                  frameDurationMs: number,
+                  frameNum: number
+                ) => {
+                  if (signal?.aborted) {
+                    globalBufferPool.release(rgbData);
+                    throw new DOMException('Cancelled', 'AbortError');
+                  }
+                  const shouldSkip = decimationController.shouldSkip(frameNum);
+                  if (shouldSkip) {
+                    dynamicAccumulatedMs += frameDurationMs;
+                    globalBufferPool.release(rgbData);
+                    return;
+                  }
+                  const totalDuration = frameDurationMs + dynamicAccumulatedMs;
+                  dynamicAccumulatedMs = 0;
+                  streamingEncoder.submit(rgbData, totalDuration);
+                  globalBufferPool.release(rgbData);
+                },
+              },
+              signal
+            ),
+          { priority: 'user-blocking' }
+        );
+
+        output = (await scheduleTask(() => streamingEncoder.finish(), { priority: 'user-visible' }))
+          .buffer as ArrayBuffer;
+        encodeResult = {
+          frames: estimatedOutputFrames,
+          outputBytes: output.byteLength,
+        };
+      } else if (typeof OffscreenCanvas !== 'undefined') {
+        logger.info(
+          'conversion',
+          '  ├─ Branch: WebP encoder (OffscreenCanvas convertToBlob + mux)',
+          {
+            codec: demuxResult.config.codec,
+            codedWidth: demuxResult.config.codedWidth,
+            codedHeight: demuxResult.config.codedHeight,
+            totalFrames: demuxResult.totalFrames,
+            sourceFps: Math.round(sourceFps),
+            webpDecimation,
+          }
+        );
+
+        const { callback: onEncodeProgress, getEncodedFrames } = createPipelineProgressCallback(
+          throttled,
+          buildProgressData,
+          fpsTracker,
+          estimatedOutputFrames,
+          DECODE_MAX,
+          ENCODE_RANGE,
+          ENCODE_MAX,
+          sampleMemory
+        );
+        const encoded = await scheduleTask(
+          () =>
+            encodeWebpOffscreen(
+              demuxResult,
+              {
+                width: codedWidth,
+                height: codedHeight,
+                quality: request.quality,
+                scale: request.scale,
+                frameDecimation: webpDecimation,
+                onFrameDecoded: decodeProgressCb,
+              },
+              onEncodeProgress,
+              signal
+            ),
+          { priority: 'user-visible' }
+        );
+        output = encoded.buffer as ArrayBuffer;
+        encodeResult = {
+          frames: getEncodedFrames(),
+          outputBytes: output.byteLength,
+        };
+      } else {
+        logger.info('conversion', '  ├─ Branch: WebP encoder (streaming encodeRGB + mux)', {
           codec: demuxResult.config.codec,
           codedWidth: demuxResult.config.codedWidth,
           codedHeight: demuxResult.config.codedHeight,
@@ -463,249 +604,29 @@ async function _runPipelineInner(
           ENCODE_MAX,
           sampleMemory
         );
-        try {
-          const encoded = await scheduleTask(
-            () =>
-              encodeWebpVp8(
-                demuxResult,
-                {
-                  width: codedWidth,
-                  height: codedHeight,
-                  quality: request.quality,
-                  scale: request.scale,
-                  frameDecimation: webpDecimation,
-                  onFrameDecoded: decodeProgressCb,
-                },
-                onEncodeProgress,
-                signal
-              ),
-            { priority: 'user-visible' }
-          );
-          output = encoded.buffer as ArrayBuffer;
-          encodeResult = {
-            frames: getEncodedFrames(),
-            outputBytes: output.byteLength,
-          };
-        } catch (err) {
-          logger.warn('conversion', 'VP8 encoder failed, falling back to OffscreenCanvas', {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          // Fall through to OffscreenCanvas paths below
-        }
+        const encoded = await scheduleTask(
+          () =>
+            encodeWebp(
+              demuxResult,
+              {
+                width: codedWidth,
+                height: codedHeight,
+                quality: request.quality,
+                scale: request.scale,
+                frameDecimation: webpDecimation,
+                onFrameDecoded: decodeProgressCb,
+              },
+              onEncodeProgress,
+              signal
+            ),
+          { priority: 'user-visible' }
+        );
+        output = encoded.buffer as ArrayBuffer;
+        encodeResult = {
+          frames: getEncodedFrames(),
+          outputBytes: output.byteLength,
+        };
       }
-
-      // If VP8 encoder did not produce output, try parallel Worker or OffscreenCanvas.
-      if (!encodeResult) {
-        // Use parallel Worker-based encoder when available (distributes frame
-        // encoding across multiple CPU cores for 2-3x speedup).
-        // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
-        const useParallelEncoder =
-          typeof OffscreenCanvas !== 'undefined' &&
-          typeof Worker !== 'undefined' &&
-          getWorkerPool() !== null;
-
-        if (useParallelEncoder) {
-          logger.info(
-            'conversion',
-            '  ├─ Branch: WebP encoder (parallel Worker pool + OffscreenCanvas)',
-            {
-              codec: demuxResult.config.codec,
-              codedWidth: demuxResult.config.codedWidth,
-              codedHeight: demuxResult.config.codedHeight,
-              totalFrames: demuxResult.totalFrames,
-              sourceFps: Math.round(sourceFps),
-              webpDecimation,
-            }
-          );
-
-          // Decode on main thread, stream frames directly to worker pool.
-          // Uses createStreamingWebpEncoder to avoid accumulating all frames
-          // in an array (reduces peak memory by ~50% for large videos).
-          const w = Math.max(1, Math.floor(codedWidth * request.scale));
-          const h = Math.max(1, Math.floor(codedHeight * request.scale));
-          const decimationController = createDynamicDecimationController();
-
-          const streamingEncoder = createStreamingWebpEncoder(
-            w,
-            h,
-            request.quality,
-            estimatedOutputFrames,
-            (p) => {
-              const encodePct =
-                estimatedOutputFrames > 0
-                  ? Math.round(((p.currentFrame ?? 0) / estimatedOutputFrames) * ENCODE_RANGE)
-                  : 0;
-              throttled.callback(
-                buildProgressData(
-                  'encoding',
-                  DECODE_MAX + Math.min(ENCODE_RANGE, encodePct),
-                  fpsTracker.current,
-                  fpsTracker.current > 0 && p.currentFrame != null
-                    ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
-                    : null,
-                  sampleMemory(),
-                  p.currentFrame ?? 0,
-                  estimatedOutputFrames
-                )
-              );
-            }
-          );
-
-          // Accumulate durations from dynamically skipped frames (see offscreen-webp-encoder).
-          let dynamicAccumulatedMs = 0;
-
-          await scheduleTask(
-            () =>
-              decodeFrames(
-                demuxResult,
-                {
-                  width: w,
-                  height: h,
-                  frameDecimation: webpDecimation,
-                  hwAccel: 'prefer-hardware',
-                  smartFrameSkip: request.smartFrameSkip,
-                  onFrameDecoded: (frameIdx, _total) => {
-                    const decodePct =
-                      estimatedOutputFrames > 0
-                        ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)
-                        : 0;
-                    throttled.callback({
-                      phase: 'decoding',
-                      progress: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
-                      fps: fpsTracker.current,
-                      etaSeconds:
-                        fpsTracker.current > 0
-                          ? Math.round((estimatedOutputFrames - frameIdx) / fpsTracker.current)
-                          : null,
-                      memoryMB: sampleMemory(),
-                      currentFrame: frameIdx,
-                      totalFrames: estimatedOutputFrames,
-                      elapsedMs: Math.round(performance.now() - pipelineStart),
-                    });
-                  },
-                  onFrameAvailable: async (
-                    rgbData: Uint8Array,
-                    frameDurationMs: number,
-                    frameNum: number
-                  ) => {
-                    if (signal?.aborted) {
-                      globalBufferPool.release(rgbData);
-                      throw new DOMException('Cancelled', 'AbortError');
-                    }
-                    const shouldSkip = decimationController.shouldSkip(frameNum);
-                    if (shouldSkip) {
-                      dynamicAccumulatedMs += frameDurationMs;
-                      globalBufferPool.release(rgbData);
-                      return;
-                    }
-                    const totalDuration = frameDurationMs + dynamicAccumulatedMs;
-                    dynamicAccumulatedMs = 0;
-                    streamingEncoder.submit(rgbData, totalDuration);
-                    globalBufferPool.release(rgbData);
-                  },
-                },
-                signal
-              ),
-            { priority: 'user-blocking' }
-          );
-
-          output = (
-            await scheduleTask(() => streamingEncoder.finish(), { priority: 'user-visible' })
-          ).buffer as ArrayBuffer;
-          encodeResult = {
-            frames: estimatedOutputFrames,
-            outputBytes: output.byteLength,
-          };
-        } else if (typeof OffscreenCanvas !== 'undefined') {
-          logger.info(
-            'conversion',
-            '  ├─ Branch: WebP encoder (OffscreenCanvas convertToBlob + mux)',
-            {
-              codec: demuxResult.config.codec,
-              codedWidth: demuxResult.config.codedWidth,
-              codedHeight: demuxResult.config.codedHeight,
-              totalFrames: demuxResult.totalFrames,
-              sourceFps: Math.round(sourceFps),
-              webpDecimation,
-            }
-          );
-
-          const { callback: onEncodeProgress, getEncodedFrames } = createPipelineProgressCallback(
-            throttled,
-            buildProgressData,
-            fpsTracker,
-            estimatedOutputFrames,
-            DECODE_MAX,
-            ENCODE_RANGE,
-            ENCODE_MAX,
-            sampleMemory
-          );
-          const encoded = await scheduleTask(
-            () =>
-              encodeWebpOffscreen(
-                demuxResult,
-                {
-                  width: codedWidth,
-                  height: codedHeight,
-                  quality: request.quality,
-                  scale: request.scale,
-                  frameDecimation: webpDecimation,
-                  onFrameDecoded: decodeProgressCb,
-                },
-                onEncodeProgress,
-                signal
-              ),
-            { priority: 'user-visible' }
-          );
-          output = encoded.buffer as ArrayBuffer;
-          encodeResult = {
-            frames: getEncodedFrames(),
-            outputBytes: output.byteLength,
-          };
-        } else {
-          logger.info('conversion', '  ├─ Branch: WebP encoder (streaming encodeRGB + mux)', {
-            codec: demuxResult.config.codec,
-            codedWidth: demuxResult.config.codedWidth,
-            codedHeight: demuxResult.config.codedHeight,
-            totalFrames: demuxResult.totalFrames,
-            sourceFps: Math.round(sourceFps),
-            webpDecimation,
-          });
-
-          const { callback: onEncodeProgress, getEncodedFrames } = createPipelineProgressCallback(
-            throttled,
-            buildProgressData,
-            fpsTracker,
-            estimatedOutputFrames,
-            DECODE_MAX,
-            ENCODE_RANGE,
-            ENCODE_MAX,
-            sampleMemory
-          );
-          const encoded = await scheduleTask(
-            () =>
-              encodeWebp(
-                demuxResult,
-                {
-                  width: codedWidth,
-                  height: codedHeight,
-                  quality: request.quality,
-                  scale: request.scale,
-                  frameDecimation: webpDecimation,
-                  onFrameDecoded: decodeProgressCb,
-                },
-                onEncodeProgress,
-                signal
-              ),
-            { priority: 'user-visible' }
-          );
-          output = encoded.buffer as ArrayBuffer;
-          encodeResult = {
-            frames: getEncodedFrames(),
-            outputBytes: output.byteLength,
-          };
-        }
-      } // end if (!output) fallback
     }
 
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
