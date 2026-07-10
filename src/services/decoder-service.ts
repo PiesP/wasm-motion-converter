@@ -148,8 +148,7 @@ export async function decodeFrames(
     );
   }
   const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
-  const pendingConversions: Promise<void>[] = [];
-  const PENDING_CONVERSIONS_MAX = 50; // Hard cap to prevent unbounded growth (L9 fix).
+  const pendingConversions = new Set<Promise<void>>();
 
   // ── Attempt parallel decode via keyframe-segmented multi-decoder ──
   // Parallel decode splits the video at keyframe boundaries and decodes
@@ -462,11 +461,12 @@ export async function decodeFrames(
         })();
 
         // Track pending conversion for backpressure and final flush.
-        pendingConversions.push(conversion);
-        // Cap pending conversions to prevent unbounded growth (L9 fix).
-        while (pendingConversions.length > PENDING_CONVERSIONS_MAX) {
-          pendingConversions.shift();
-        }
+        // Use a self-cleaning Set: each promise removes itself on completion,
+        // so pendingConversions.size always reflects actual in-flight work.
+        conversion.finally(() => {
+          pendingConversions.delete(conversion);
+        });
+        pendingConversions.add(conversion);
       } catch (err) {
         // Ensure frame is always closed if error occurs before async IIFE
         frame.close();
@@ -513,8 +513,8 @@ export async function decodeFrames(
       // frame conversion promises are in flight. This prevents unbounded
       // memory growth when decoded frames accumulate faster than they
       // can be processed (e.g., copyToRGB + encoding).
-      if (pendingConversions.length >= MAX_PENDING_CONVERSIONS) {
-        await Promise.race(pendingConversions);
+      if (pendingConversions.size >= MAX_PENDING_CONVERSIONS) {
+        await Promise.race([...pendingConversions]);
       }
 
       if (signal?.aborted) {
@@ -535,7 +535,7 @@ export async function decodeFrames(
     // Always await pending conversions before closing decoder to avoid VideoFrame leak.
     // Use Promise.allSettled so that even if some conversions fail (e.g., due to abort),
     // we still drain all pending work and close frames properly.
-    await Promise.allSettled(pendingConversions);
+    await Promise.allSettled([...pendingConversions]);
 
     if (decodeError) throw decodeError;
 
@@ -576,7 +576,7 @@ export async function decodeFrames(
     // This guarantees no VideoFrame is still being processed when the decoder
     // is closed, preventing \"close() called while a flush is in progress\"
     // and other VideoDecoder close races.
-    await Promise.allSettled(pendingConversions);
+    await Promise.allSettled([...pendingConversions]);
     decoder.close();
   }
 }
