@@ -80,3 +80,21 @@ if (hashes.length > 0) {
 } else {
   console.log('[postbuild] No inline scripts found — CSP hash injection skipped');
 }
+
+// ── Step 3: Remove test video files from production dist ─────────────
+// Test videos (~12MB total) are placed in public/ for dev convenience
+// but should not ship in the production deployment.
+
+import { readdirSync, rmSync } from 'node:fs';
+
+const publicDir = resolve(dist);
+try {
+  for (const entry of readdirSync(publicDir)) {
+    if (entry.startsWith('test-video-') || entry === 'test-assets') {
+      rmSync(resolve(publicDir, entry), { recursive: true, force: true });
+      console.log(`[postbuild] Removed test asset: ${entry}`);
+    }
+  }
+} catch (err) {
+  console.warn('[postbuild] Could not clean test assets from dist:', err);
+}
