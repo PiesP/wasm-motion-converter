@@ -66,7 +66,7 @@ export async function runWorkerPipeline(
   inputBuffer: ArrayBuffer,
   options: SerializedConversionOptions,
   postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
-  _signal?: AbortSignal
+  signal?: AbortSignal
 ): Promise<ArrayBuffer> {
   const pipelineStart = performance.now();
 
@@ -119,27 +119,32 @@ export async function runWorkerPipeline(
   try {
     // ── Demux Phase ────────────────────────────────────────────
     let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
-    demuxResult = await demuxVideo(request, undefined, (packetsExtracted, estimatedTotalFrames) => {
-      const now = performance.now();
-      if (now - progressState.lastPostTime >= 100) {
-        progressState.lastPostTime = now;
-        const demuxPct = Math.min(
-          DEMUX_MAX,
-          Math.round((packetsExtracted / Math.max(1, estimatedTotalFrames)) * DEMUX_MAX)
-        );
-        postMessage({
-          type: 'progress',
-          requestId: '',
-          phase: 'demuxing',
-          percent: demuxPct,
-          fps: 0,
-          etaSeconds: 0,
-          memoryMB: sampleMemoryMB(),
-          currentFrame: packetsExtracted,
-          totalFrames: estimatedTotalFrames,
-        });
-      }
-    });
+    demuxResult = await demuxVideo(
+      request,
+      undefined,
+      (packetsExtracted, estimatedTotalFrames) => {
+        const now = performance.now();
+        if (now - progressState.lastPostTime >= 100) {
+          progressState.lastPostTime = now;
+          const demuxPct = Math.min(
+            DEMUX_MAX,
+            Math.round((packetsExtracted / Math.max(1, estimatedTotalFrames)) * DEMUX_MAX)
+          );
+          postMessage({
+            type: 'progress',
+            requestId: '',
+            phase: 'demuxing',
+            percent: demuxPct,
+            fps: 0,
+            etaSeconds: 0,
+            memoryMB: sampleMemoryMB(),
+            currentFrame: packetsExtracted,
+            totalFrames: estimatedTotalFrames,
+          });
+        }
+      },
+      signal
+    );
 
     const cfg = demuxResult.config;
     const dims = resolveVideoDimensions(cfg);
@@ -246,7 +251,7 @@ export async function runWorkerPipeline(
             }
           },
         },
-        _signal
+        signal
       );
       output = gifResult.buffer as ArrayBuffer;
     } else {
@@ -313,7 +318,7 @@ export async function runWorkerPipeline(
               });
             }
           },
-          _signal
+          signal
         );
         output = webpResult.buffer as ArrayBuffer;
       }
