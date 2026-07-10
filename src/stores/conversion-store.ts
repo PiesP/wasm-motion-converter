@@ -45,8 +45,9 @@ export function transitionToState(
   if (startViewTransition) {
     // Safety fallback: document.startViewTransition may fail to invoke
     // the callback in headless Chrome or under certain page lifecycle
-    // conditions.  Use a double-rAF watchdog (~32 ms) that applies the
+    // conditions.  Use a setTimeout watchdog (~50 ms) that applies the
     // update directly if the view-transition callback hasn't fired yet.
+    // (requestAnimationFrame is unreliable in headless/invisible pages.)
     let applied = false;
     const guarded = (): void => {
       if (applied) return;
@@ -54,14 +55,12 @@ export function transitionToState(
       update();
     };
     startViewTransition(guarded);
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (!applied) {
-          applied = true;
-          update();
-        }
-      });
-    });
+    setTimeout(() => {
+      if (!applied) {
+        applied = true;
+        update();
+      }
+    }, 50);
   } else {
     update();
   }
