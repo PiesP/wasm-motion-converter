@@ -9,9 +9,15 @@
  * collected in order and muxed into an animated WebP container.
  *
  * Decoding must happen on the main thread (VideoDecoder requirement).
- * The caller is responsible for feeding RGB frames via encodeRGB().
+ * The caller is responsible for feeding RGB frames via submit().
  *
  * Falls back to main-thread encoding if Worker pool is unavailable.
+ *
+ * Backpressure: submit() is async and limits in-flight frames to
+ * MAX_IN_FLIGHT (2× pool size). When the limit is reached, the caller
+ * awaits until a slot opens. This prevents unbounded growth of both
+ * the pending promise array and the worker queue when the decoder
+ * produces frames faster than workers can encode them.
  */
 
 import type { ProgressCallback } from '@t/conversion-types';
@@ -35,8 +41,8 @@ interface FrameEncodeResult {
 
 /**
  * Streaming variant of encodeWebpParallel: frames are submitted one at a time
- * instead of collecting all into an array first. Reduces peak memory by ~50%
- * for large videos and enables decode↔encode overlap.
+ * instead of collecting all into an array first. submit() is async and applies
+ * backpressure when in-flight frames reach the limit.
  *
  * @returns { submit, finish } — submit frames during decode, call finish after
  */
@@ -47,7 +53,7 @@ export function createStreamingWebpEncoder(
   totalFrames: number,
   onProgress?: ProgressCallback
 ): {
-  submit: (rgbData: Uint8Array, durationMs: number) => void;
+  submit: (rgbData: Uint8Array, durationMs: number) => Promise<void>;
   finish: () => Promise<Uint8Array>;
 } {
   const qualityF = WORKER_QUALITY_MAP[quality];
@@ -57,7 +63,12 @@ export function createStreamingWebpEncoder(
   const resultBuffer = new Map<number, FrameEncodeResult>();
   let nextExpectedId = 0;
   let submittedCount = 0;
-  const pendingPromises: Array<Promise<EncodeTaskResult>> = [];
+  const inFlight = new Set<Promise<EncodeTaskResult>>();
+
+  // Cap in-flight frames at 2× pool size so that (a) each worker has one
+  // frame encoding + one queued frame ready with no gap, and (b) backup
+  // never grows unbounded even if encoding is slower than decoding.
+  const MAX_IN_FLIGHT = pool ? pool.stats.poolSize * 2 : 4;
 
   function flushResultsToMuxer(finalFlush = false): void {
     while (resultBuffer.has(nextExpectedId)) {
@@ -80,13 +91,29 @@ export function createStreamingWebpEncoder(
     }
   }
 
-  const submit = (rgbData: Uint8Array, durationMs: number): void => {
+  // Helper: wait for at least one in-flight promise to complete (backpressure).
+  async function waitForSlot(): Promise<void> {
+    if (inFlight.size < MAX_IN_FLIGHT) return;
+    // Race on the current in-flight set — when one completes, it removes
+    // itself from the set via the finally() cleanup below.
+    await Promise.race([...inFlight]);
+    // After the race resolves, the completed promise was already removed
+    // from inFlight. If still at capacity, wait again.
+    if (inFlight.size >= MAX_IN_FLIGHT) {
+      await Promise.race([...inFlight]);
+    }
+  }
+
+  const submit = async (rgbData: Uint8Array, durationMs: number): Promise<void> => {
+    // Backpressure: wait if we have too many frames in-flight
+    await waitForSlot();
+
     const id = submittedCount++;
     const isFirstFrame = id === 0;
 
     const task: EncodeTask = {
       id,
-      rgbData: new Uint8Array(rgbData), // copy before transfer
+      rgbData, // ownership transferred to pool (postMessage transfers buffer)
       width,
       height,
       quality: qualityF,
@@ -94,7 +121,11 @@ export function createStreamingWebpEncoder(
       isFirstFrame,
     };
 
-    const promise = pool!
+    if (!pool) {
+      throw new Error('Worker pool unavailable for streaming WebP encoding');
+    }
+
+    const promise = pool
       .encode(task)
       .then((result: EncodeTaskResult) => {
         resultBuffer.set(result.id, {
@@ -123,13 +154,17 @@ export function createStreamingWebpEncoder(
       .catch((err: Error) => {
         logger.error('encoders', 'Worker encode failed', { encodeId: id, error: err.message });
         throw err;
+      })
+      .finally(() => {
+        // Self-clean: remove from in-flight set when settled
+        inFlight.delete(promise);
       });
 
-    pendingPromises.push(promise);
+    inFlight.add(promise);
   };
 
   const finish = async (): Promise<Uint8Array> => {
-    await Promise.allSettled(pendingPromises);
+    await Promise.allSettled([...inFlight]);
     flushResultsToMuxer(true);
 
     if (muxer.frames === 0) {

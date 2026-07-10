@@ -505,8 +505,8 @@ async function _runPipelineInner(
                   }
                   const totalDuration = frameDurationMs + dynamicAccumulatedMs;
                   dynamicAccumulatedMs = 0;
-                  streamingEncoder.submit(rgbData, totalDuration);
-                  globalBufferPool.release(rgbData);
+                  await streamingEncoder.submit(rgbData, totalDuration);
+                  // buffer ownership transferred to worker via postMessage — do NOT release
                 },
               },
               signal
