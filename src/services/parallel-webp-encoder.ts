@@ -25,7 +25,7 @@ import { logger } from '@utils/logger';
 import type { BaseEncoderOptions } from './encoder-common';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
 import type { EncodeTask, EncodeTaskResult } from './worker-pool';
-import { getWorkerPool } from './worker-pool';
+import { getWorkerPool, WebpWorkerPool } from './worker-pool';
 
 const WORKER_QUALITY_MAP: Record<BaseEncoderOptions['quality'], number> = {
   low: 0.6,
@@ -57,7 +57,7 @@ export function createStreamingWebpEncoder(
   finish: () => Promise<Uint8Array>;
 } {
   const qualityF = WORKER_QUALITY_MAP[quality];
-  const pool = getWorkerPool();
+  const pool = getWorkerPool(WebpWorkerPool.getOptimalWorkerCount(width, height));
 
   const muxer = new StreamingWebpMuxer(width, height);
   const resultBuffer = new Map<number, FrameEncodeResult>();

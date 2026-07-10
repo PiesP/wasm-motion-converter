@@ -65,15 +65,51 @@ export class WebpWorkerPool {
   }
 
   /**
-   * Get optimal worker count based on available CPU cores.
-   * Leaves 1 core for main thread (decode + UI).
+   * Get optimal worker count based on available CPU cores, device memory,
+   * and frame resolution. Each worker requires an OffscreenCanvas (~w·h·4 bytes)
+   * plus encoding overhead, so large frames need fewer concurrent workers.
+   *
+   * Caps applied in order (most restrictive wins):
+   *   - CPU: hardwareConcurrency - 1, minimum 1
+   *   - Device memory: ≤4GB → 2, ≤8GB → 4, >8GB → unlimited
+   *   - Frame resolution: >1080p → 2, >720p → 4
    */
-  static getOptimalWorkerCount(): number {
-    if (typeof navigator === 'undefined' || !navigator.hardwareConcurrency) {
-      return 2; // safe default
+  static getOptimalWorkerCount(frameWidth?: number, frameHeight?: number): number {
+    let count = 1;
+
+    if (typeof navigator !== 'undefined') {
+      // CPU-based cap
+      if (navigator.hardwareConcurrency) {
+        count = Math.max(1, navigator.hardwareConcurrency - 1);
+      } else {
+        count = 2;
+      }
+
+      // Device memory cap (navigator.deviceMemory in GB, Chrome only)
+      const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+      if (typeof deviceMemory === 'number' && deviceMemory > 0) {
+        if (deviceMemory <= 4) {
+          count = Math.min(count, 2);
+        } else if (deviceMemory <= 8) {
+          count = Math.min(count, 4);
+        }
+      }
+
+      // Frame resolution cap: each worker needs an OffscreenCanvas
+      // at frame size (~w·h·4 bytes RGBA)
+      if (frameWidth && frameHeight) {
+        const pixels = frameWidth * frameHeight;
+        if (pixels > 1920 * 1080) {
+          // >1080p: limit to 2 workers (~66MB canvas memory at 4K)
+          count = Math.min(count, 2);
+        } else if (pixels > 1280 * 720) {
+          // >720p: limit to 4 workers (~32MB canvas memory at 1080p)
+          count = Math.min(count, 4);
+        }
+      }
     }
-    // Reserve 1 core for main thread, but allow at least 1 worker
-    return Math.max(1, navigator.hardwareConcurrency - 1);
+
+    return count;
   }
 
   /**
