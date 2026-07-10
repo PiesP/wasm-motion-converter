@@ -6,6 +6,22 @@ import { DEFAULT_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 
+/** Timeout for computePacketStats to prevent mediabunny internal hangs. */
+const COMPUTE_PACKET_STATS_TIMEOUT_MS = 2_000;
+
+/**
+ * Race a promise against a timeout.  If the promise does not settle within
+ * `ms` milliseconds the returned promise rejects with a descriptive error.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 /**
  * Extract video metadata from an ArrayBuffer using MediaBunny.
  *
@@ -51,7 +67,11 @@ export async function extractVideoMetadata(
     let computedBitrate: number | null = null;
 
     try {
-      const packetStats = await track.computePacketStats(50);
+      const packetStats = await withTimeout(
+        track.computePacketStats(50),
+        COMPUTE_PACKET_STATS_TIMEOUT_MS,
+        'computePacketStats'
+      );
       if (packetStats.averagePacketRate > 0) {
         computedFps = Math.round(packetStats.averagePacketRate * 100) / 100;
       }
@@ -59,7 +79,8 @@ export async function extractVideoMetadata(
         computedBitrate = Math.round(packetStats.averageBitrate);
       }
     } catch {
-      // computePacketStats may fail for very short files or exotic containers.
+      // computePacketStats may fail for very short files, exotic containers,
+      // or hang due to mediabunny internal state issues (timeout fallback).
       // Fall through to metadata-based or default values below.
     }
 
