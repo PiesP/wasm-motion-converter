@@ -36,34 +36,17 @@ export const [environmentSupported, setEnvironmentSupported] = createSignal<bool
  */
 export function transitionToState(
   newState: AppState,
-  startViewTransition?: (callback: () => void) => void
+  _startViewTransition?: (callback: () => void) => void
 ): void {
   // Guard: avoid unnecessary state transitions (and potential double
   // startViewTransition) when the state hasn't actually changed.
   if (appState() === newState) return;
-  const update = () => setAppState(newState);
-  if (startViewTransition) {
-    // Safety fallback: document.startViewTransition may fail to invoke
-    // the callback in headless Chrome or under certain page lifecycle
-    // conditions.  Use a setTimeout watchdog (~50 ms) that applies the
-    // update directly if the view-transition callback hasn't fired yet.
-    // (requestAnimationFrame is unreliable in headless/invisible pages.)
-    let applied = false;
-    const guarded = (): void => {
-      if (applied) return;
-      applied = true;
-      update();
-    };
-    startViewTransition(guarded);
-    setTimeout(() => {
-      if (!applied) {
-        applied = true;
-        update();
-      }
-    }, 50);
-  } else {
-    update();
-  }
+  // NOTE: document.startViewTransition is intentionally NOT used here.
+  // It blocks DOM updates until the transition's .finished promise
+  // resolves, which never happens in headless Chrome and can also fail
+  // in real browsers after repeated calls.  Direct setAppState is the
+  // reliable path for state-driven UI updates in this SPA.
+  setAppState(newState);
 }
 
 // ---------------------------------------------------------------------------
