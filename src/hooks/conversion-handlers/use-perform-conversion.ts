@@ -200,7 +200,9 @@ async function performConversion(
       serializedOptions,
       progressCallback,
       abortController,
-      file
+      file,
+      videoMetadata()?.duration,
+      videoMetadata()?.framerate
     );
 
     const blob = validateOutputBlob(output, settings);
@@ -363,7 +365,9 @@ async function executePipeline(
   serializedOptions: ReturnType<typeof buildSerializedOptions>,
   progressCallback: ProgressCallback,
   abortController: AbortController,
-  file: File
+  file: File,
+  duration?: number,
+  framerate?: number
 ): Promise<ArrayBuffer> {
   if (!serializedConfig) {
     throw new Error('Unable to extract VideoDecoderConfig — cannot run conversion pipeline');
@@ -375,7 +379,9 @@ async function executePipeline(
     serializedOptions,
     progressCallback,
     abortController.signal,
-    file
+    file,
+    duration,
+    framerate
   );
 }
 

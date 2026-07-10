@@ -12,6 +12,9 @@ export type WorkerRequest =
       inputBuffer: ArrayBuffer;
       config: SerializedDecoderConfig;
       options: SerializedConversionOptions;
+      /** Pre-computed metadata to skip redundant extractVideoMetadata in worker */
+      duration?: number;
+      framerate?: number;
     }
   | { type: 'abort'; requestId: string };
 

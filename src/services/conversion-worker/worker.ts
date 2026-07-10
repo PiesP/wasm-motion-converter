@@ -37,7 +37,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
   switch (request.type) {
     case 'start': {
-      const { requestId, inputBuffer, options } = request;
+      const { requestId, inputBuffer, config, options, duration, framerate } = request;
       const pipelineStart = performance.now();
 
       // Create AbortController for this conversion
@@ -54,7 +54,10 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           inputBuffer,
           options,
           respond,
-          abortController.signal
+          abortController.signal,
+          config,
+          duration,
+          framerate
         );
 
         const durationMs = Math.round(performance.now() - pipelineStart);

@@ -16,7 +16,7 @@ import { calcAutoDecimation } from '@services/encoder-common';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
-import type { ConversionRequest } from '@t/conversion-types';
+import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 import {
   DEFAULT_FPS,
   GIF_TARGET_FPS,
@@ -28,7 +28,7 @@ import {
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
-import type { SerializedConversionOptions, WorkerResponse } from './types';
+import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
 
 // Aligned progress ranges matching main-thread conversion-pipeline.ts
 // demux: 0~3%   decode: 3~73%   encode: 73~93%   assembly: 93~100%
@@ -66,7 +66,10 @@ export async function runWorkerPipeline(
   inputBuffer: ArrayBuffer,
   options: SerializedConversionOptions,
   postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  config?: SerializedDecoderConfig,
+  duration?: number,
+  framerate?: number
 ): Promise<ArrayBuffer> {
   const pipelineStart = performance.now();
 
@@ -117,11 +120,27 @@ export async function runWorkerPipeline(
   };
 
   try {
+    // ── Pre-computed metadata (avoids redundant extractVideoMetadata in worker) ──
+    // When the main thread has already extracted metadata during file selection,
+    // reuse it here to skip the expensive extractVideoMetadata → Input.create →
+    // getVideoTracks → getDecoderConfig → computeDuration chain inside demuxVideo.
+    const preComputedMetadata: VideoMetadata | undefined = config
+      ? {
+          width: config.codedWidth,
+          height: config.codedHeight,
+          duration: duration ?? 0,
+          codec: config.codec,
+          framerate: framerate ?? DEFAULT_FPS,
+          bitrate: 0,
+          config: config as unknown as VideoDecoderConfig,
+        }
+      : undefined;
+
     // ── Demux Phase ────────────────────────────────────────────
     let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
     demuxResult = await demuxVideo(
       request,
-      undefined,
+      preComputedMetadata,
       (packetsExtracted, estimatedTotalFrames) => {
         const now = performance.now();
         if (now - progressState.lastPostTime >= 100) {

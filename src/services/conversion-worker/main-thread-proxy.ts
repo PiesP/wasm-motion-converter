@@ -57,7 +57,9 @@ export async function runPipelineViaWorker(
   config: SerializedDecoderConfig,
   options: SerializedConversionOptions,
   onProgress: MainThreadPipelineCallback,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  duration?: number,
+  framerate?: number
 ): Promise<ArrayBuffer> {
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const requestId = crypto.randomUUID();
@@ -195,6 +197,8 @@ export async function runPipelineViaWorker(
       inputBuffer: bufferCopy,
       config,
       options,
+      ...(duration !== undefined ? { duration } : {}),
+      ...(framerate !== undefined ? { framerate } : {}),
     };
     worker.postMessage(startMsg, [bufferCopy]);
   });
@@ -215,10 +219,20 @@ export async function runPipelineWithFallback(
   options: SerializedConversionOptions,
   onProgress: MainThreadPipelineCallback,
   signal?: AbortSignal,
-  inputBlob?: Blob
+  inputBlob?: Blob,
+  duration?: number,
+  framerate?: number
 ): Promise<ArrayBuffer> {
   try {
-    return await runPipelineViaWorker(inputBuffer, config, options, onProgress, signal);
+    return await runPipelineViaWorker(
+      inputBuffer,
+      config,
+      options,
+      onProgress,
+      signal,
+      duration,
+      framerate
+    );
   } catch (workerError) {
     // If the error is a cancellation, don't fall back — propagate it
     if (isCancellationError(workerError)) {
