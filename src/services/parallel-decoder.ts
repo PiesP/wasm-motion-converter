@@ -56,6 +56,12 @@ export interface ParallelDecodeOptions {
   hwAccel?: 'prefer-hardware' | 'prefer-software';
   /** Progress callback: (completedFrames, totalFrames) */
   onProgress?: (completed: number, total: number) => void;
+  /**
+   * Streaming callback: when provided, decoded frames are emitted per-batch
+   * instead of collected into a full array. This reduces peak memory from
+   * O(total frames) to O(batch frames) — critical for long/high-res videos.
+   */
+  onFrame?: ((frame: DecodedFrameStream) => Promise<void> | void) | undefined;
 }
 
 export interface ParallelDecodeResult {
@@ -251,36 +257,59 @@ export async function decodeFramesParallel(
     throw new Error('Insufficient keyframes for parallel decode');
   }
 
-  // Step 2: Decode segments in parallel (up to MAX_PARALLEL_DECODERS at a time)
-  const allFrames: DecodedFrameStream[][] = [];
+  // Step 2: Decode segments in parallel (up to MAX_PARALLEL_DECODERS at a time).
+  // Emit frames per-batch through the streaming callback to keep memory bounded.
+  const { onFrame } = opts;
+  if (!onFrame) {
+    // Legacy batch-collection path (non-streaming callers)
+    const allFrames: DecodedFrameStream[][] = [];
+    for (let i = 0; i < segments.length; i += MAX_PARALLEL_DECODERS) {
+      const batch = segments.slice(i, i + MAX_PARALLEL_DECODERS);
+      const batchResults = await Promise.all(
+        batch.map((seg) => decodeSegment(seg, demux.config, opts, signal))
+      );
+      allFrames.push(...batchResults);
+      if (onProgress) {
+        const totalDone = allFrames.reduce((sum, f) => sum + f.length, 0);
+        onProgress(totalDone, chunks.length);
+      }
+    }
+    const flatFrames = allFrames.flat();
+    flatFrames.sort((a, b) => a.globalIndex - b.globalIndex);
+    return {
+      frames: flatFrames,
+      sourceTotalMs: demux.sourceTotalMs,
+      totalInputFrames: chunks.length,
+    };
+  }
 
+  // Streaming path: emit sorted frames per-batch, avoiding O(all frames) memory
+  let totalCompleted = 0;
   for (let i = 0; i < segments.length; i += MAX_PARALLEL_DECODERS) {
     const batch = segments.slice(i, i + MAX_PARALLEL_DECODERS);
-
     const batchResults = await Promise.all(
       batch.map((seg) => decodeSegment(seg, demux.config, opts, signal))
     );
-
-    allFrames.push(...batchResults);
-
+    // Flatten, sort, and emit this batch's frames, then discard
+    const batchFrames = batchResults.flat().sort((a, b) => a.globalIndex - b.globalIndex);
+    for (const frame of batchFrames) {
+      await onFrame(frame);
+    }
+    totalCompleted += batchFrames.length;
     if (onProgress) {
-      const totalDone = allFrames.reduce((sum, f) => sum + f.length, 0);
-      onProgress(totalDone, chunks.length);
+      onProgress(totalCompleted, chunks.length);
     }
   }
 
-  // Step 3: Collect and sort all frames by global index
-  const flatFrames = allFrames.flat();
-  flatFrames.sort((a, b) => a.globalIndex - b.globalIndex);
-
   logger.info('decoders', 'Parallel decode complete', {
     segments: segments.length,
-    totalFrames: flatFrames.length,
+    totalFrames: totalCompleted,
     totalInput: chunks.length,
+    mode: 'streaming',
   });
 
   return {
-    frames: flatFrames,
+    frames: [], // streaming — frames emitted via onFrame callback
     sourceTotalMs: demux.sourceTotalMs,
     totalInputFrames: chunks.length,
   };

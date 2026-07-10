@@ -167,38 +167,42 @@ export async function decodeFrames(
     skipThreshold !== -2 // not adaptive mode
   ) {
     try {
-      const parallelResult = await decodeFramesParallel(demux, { width, height, hwAccel }, signal);
-
-      // Feed pre-decoded frames through streaming callback with decimation
       let frameIdx = 0;
       let decodeAccumulated = 0;
       let decimSkipped = 0;
 
-      for (const frame of parallelResult.frames) {
-        if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+      const parallelResult = await decodeFramesParallel(
+        demux,
+        {
+          width,
+          height,
+          hwAccel,
+          // Streaming callback: process frames per-batch instead of
+          // collecting all into an O(frames * resolution) array.
+          onFrame: async (frame) => {
+            // Apply frame decimation (same logic as sequential path)
+            if (frameDecimation > 1 && frame.globalIndex % frameDecimation !== 0) {
+              decodeAccumulated += frame.durationMs;
+              decimSkipped++;
+              globalBufferPool.release(frame.data);
+              return;
+            }
 
-        // Apply frame decimation (same logic as sequential path)
-        const globalIdx = frame.globalIndex;
-        if (frameDecimation > 1 && globalIdx % frameDecimation !== 0) {
-          decodeAccumulated += frame.durationMs;
-          decimSkipped++;
-          globalBufferPool.release(frame.data);
-          continue;
-        }
+            const totalDur = frame.durationMs + decodeAccumulated;
+            decodeAccumulated = 0;
 
-        const totalDur = frame.durationMs + decodeAccumulated;
-        decodeAccumulated = 0;
+            await onFrameAvailable!(frame.data, totalDur, frame.globalIndex);
+            frameIdx++;
 
-        await onFrameAvailable(frame.data, totalDur, globalIdx);
-        frameIdx++;
+            if (onFrameDecoded && frameIdx % 10 === 0) {
+              onFrameDecoded(frameIdx, demux.totalFrames);
+            }
+          },
+        },
+        signal
+      );
 
-        if (onFrameDecoded && frameIdx % 10 === 0) {
-          onFrameDecoded(frameIdx, demux.totalFrames);
-        }
-      }
-
-      logger.warn('decoders', 'Parallel decode complete (integrated)', {
-        frames: parallelResult.frames.length,
+      logger.warn('decoders', 'Parallel decode complete (streaming)', {
         kept: frameIdx,
         skippedByDecimation: decimSkipped,
         totalInput: parallelResult.totalInputFrames,
