@@ -19,6 +19,7 @@
   "dropzone.clickSelect": "or click to select",
   "dropzone.selectFile": "Select video file for conversion",
   "dropzone.cancelConversion": "Cancel conversion",
+  "dropzone.cancel": "Cancel",
   "dropzone.preview": "Selected video preview",
   "dropzone.processing": "Processing...",
   "dropzone.changeFile": "Change",

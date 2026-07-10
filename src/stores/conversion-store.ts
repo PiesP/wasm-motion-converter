@@ -43,7 +43,25 @@ export function transitionToState(
   if (appState() === newState) return;
   const update = () => setAppState(newState);
   if (startViewTransition) {
-    startViewTransition(update);
+    // Safety fallback: document.startViewTransition may fail to invoke
+    // the callback in headless Chrome or under certain page lifecycle
+    // conditions.  Use a double-rAF watchdog (~32 ms) that applies the
+    // update directly if the view-transition callback hasn't fired yet.
+    let applied = false;
+    const guarded = (): void => {
+      if (applied) return;
+      applied = true;
+      update();
+    };
+    startViewTransition(guarded);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!applied) {
+          applied = true;
+          update();
+        }
+      });
+    });
   } else {
     update();
   }

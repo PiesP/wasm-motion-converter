@@ -19,6 +19,7 @@
   "dropzone.clickSelect": "またはクリックして選択",
   "dropzone.selectFile": "変換する動画ファイルを選択",
   "dropzone.cancelConversion": "変換をキャンセル",
+  "dropzone.cancel": "キャンセル",
   "dropzone.preview": "選択した動画のプレビュー",
   "dropzone.processing": "処理中...",
   "dropzone.changeFile": "変更",

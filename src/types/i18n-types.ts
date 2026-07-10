@@ -59,6 +59,7 @@ export interface TranslationKeys {
   'dropzone.clickSelect': string;
   'dropzone.selectFile': string;
   'dropzone.cancelConversion': string;
+  'dropzone.cancel': string;
   'dropzone.preview': string;
   'dropzone.processing': string;
   'dropzone.changeFile': string;

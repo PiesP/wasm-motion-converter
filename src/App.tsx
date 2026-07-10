@@ -352,24 +352,20 @@ const App: Component = () => {
                 metadataSummary={metadataSummary()}
               />
 
-              {/* Analyzing state: separate progress (not in dropzone) */}
+              {/* Analyzing state: lightweight inline progress (not the heavy ConversionProgress).
+                  The dropzone card already shows an inline status via dropzoneStatus.
+                  This only shows a cancel link for long-running metadata extraction. */}
               <Show when={appState() === 'analyzing'}>
-                <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-bg-elevated" />}>
-                  <div class="space-y-2">
-                    <ConversionProgress
-                      progress={0}
-                      status={t('progress.analyzing')}
-                      statusMessage={t('progress.readingMetadata')}
-                    />
-                    <button
-                      type="button"
-                      class="w-full rounded-md border border-border-standard bg-white/[0.02] px-4 py-2 text-sm font-medium text-text-secondary transition-all duration-150 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-panel cursor-pointer"
-                      onClick={handleCancelAnalysis}
-                    >
-                      {t('dropzone.cancelConversion')}
-                    </button>
-                  </div>
-                </Suspense>
+                <div class="flex items-center justify-between rounded-lg border border-border-standard bg-bg-elevated px-4 py-2">
+                  <span class="text-sm text-text-secondary">{t('progress.readingMetadata')}</span>
+                  <button
+                    type="button"
+                    class="text-sm text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
+                    onClick={handleCancelAnalysis}
+                  >
+                    {t('dropzone.cancel')}
+                  </button>
+                </div>
               </Show>
 
               <Show when={appState() === 'cancelling'}>

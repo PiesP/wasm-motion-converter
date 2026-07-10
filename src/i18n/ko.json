@@ -19,6 +19,7 @@
   "dropzone.clickSelect": "또는 클릭하여 선택",
   "dropzone.selectFile": "변환할 비디오 파일 선택",
   "dropzone.cancelConversion": "변환 취소",
+  "dropzone.cancel": "취소",
   "dropzone.preview": "선택한 비디오 미리보기",
   "dropzone.processing": "처리 중...",
   "dropzone.changeFile": "변경",

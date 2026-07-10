@@ -19,6 +19,7 @@
   "dropzone.clickSelect": "或点击选择",
   "dropzone.selectFile": "选择要转换的视频文件",
   "dropzone.cancelConversion": "取消转换",
+  "dropzone.cancel": "取消",
   "dropzone.preview": "已选视频预览",
   "dropzone.processing": "处理中...",
   "dropzone.changeFile": "更改",
