@@ -93,18 +93,31 @@ export async function extractVideoMetadata(
     //   1. computePacketStats (computed from actual packet bytes — most accurate)
     //   2. track.getAverageBitrate() (container metadata, available for MP4/WebM)
     //   3. track.getBitrate() (peak bitrate from metadata — least reliable)
+    //
+    // If computePacketStats timed out, subsequent mediabunny calls are likely
+    // to hang as well (same internal state corruption).  Skip them to avoid
+    // compounding the delay.
     let bitrate = computedBitrate;
-    if (bitrate == null || bitrate <= 0) {
+    const packetStatsTimedOut = computedBitrate == null && computedFps == null;
+    if (!packetStatsTimedOut && (bitrate == null || bitrate <= 0)) {
       try {
-        const avgBitrate = await track.getAverageBitrate();
+        const avgBitrate = await withTimeout(
+          track.getAverageBitrate(),
+          COMPUTE_PACKET_STATS_TIMEOUT_MS,
+          'getAverageBitrate'
+        );
         if (avgBitrate != null && avgBitrate > 0) bitrate = avgBitrate;
       } catch {
         // getAverageBitrate not supported by all formats
       }
     }
-    if (bitrate == null || bitrate <= 0) {
+    if (!packetStatsTimedOut && (bitrate == null || bitrate <= 0)) {
       try {
-        const peakBitrate = await track.getBitrate();
+        const peakBitrate = await withTimeout(
+          track.getBitrate(),
+          COMPUTE_PACKET_STATS_TIMEOUT_MS,
+          'getBitrate'
+        );
         if (peakBitrate != null && peakBitrate > 0) bitrate = peakBitrate;
       } catch {
         // getBitrate not supported by all formats
