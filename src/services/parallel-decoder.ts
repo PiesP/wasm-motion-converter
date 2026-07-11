@@ -36,6 +36,13 @@ import {
 /** Maximum number of parallel decoders */
 const MAX_PARALLEL_DECODERS = 4;
 
+/** Maximum number of in-flight frame conversions per segment.
+ *  Parallel decoders have a higher limit than the single-decoder path
+ *  (10) because multiple segments may need concurrent memory. Still bounded
+ *  to prevent unbounded memory growth when decoded frames arrive faster than
+ *  copyFrameToRGB can process them. */
+const MAX_PENDING_CONVERSIONS = 16;
+
 /** Minimum frames per segment to justify parallelization overhead.
  *  Small segments waste time on decoder creation/teardown.
  *  At 60fps, 100 frames ≈ 1.7s of video. */
@@ -199,6 +206,13 @@ async function decodeSegment(
     // Backpressure: wait if decode queue is full
     while (decoder.decodeQueueSize > 8 && !signal?.aborted && !decodeError) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+
+    // Backpressure on output: wait if too many frame conversion promises
+    // are in flight. Prevents OOM when VideoDecoder produces frames faster
+    // than copyFrameToRGB can process them (same counter as single-decoder path).
+    while (pendingConversions.length >= MAX_PENDING_CONVERSIONS && !signal?.aborted && !decodeError) {
+      await Promise.race(pendingConversions);
     }
 
     decoder.decode(segment.chunks[i]!);
