@@ -105,7 +105,6 @@ export const GIF_MAX_FRAME_DELAY_CS = 200;
  *  Set to 20ms — the minimum safe delay for GIF viewers (sub-20ms frames
  *  may be skipped by some renderers). Previously 100ms which caused
  *  noticeable positive timing drift after the tail-accumulation fix. */
-export const GIF_MIN_FIRST_FRAME_DELAY_MS = 20;
 
 /** GIF encoder minimum frame delay in milliseconds.
  *  Set to 20ms — the minimum safe delay for GIF viewers (sub-20ms frames

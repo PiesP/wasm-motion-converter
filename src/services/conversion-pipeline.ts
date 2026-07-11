@@ -248,7 +248,8 @@ async function _runPipelineInner(
     let estimatedOutputFrames = 1;
 
     /**
-     * Build a ConversionProgress object with standard fields and computed elapsedMs.
+     * Build a ConversionProgress object with standard fields.
+     * elapsedMs is passed from callers that already computed performance.now().
      */
     const buildProgressData = (
       phase: ProgressPhase,
@@ -257,7 +258,8 @@ async function _runPipelineInner(
       etaSeconds: number | null,
       memoryMB: number,
       currentFrame: number,
-      totalFrames: number
+      totalFrames: number,
+      elapsedMs: number
     ): Parameters<typeof throttled.callback>[0] => ({
       phase,
       progress,
@@ -266,7 +268,7 @@ async function _runPipelineInner(
       memoryMB,
       currentFrame,
       totalFrames,
-      elapsedMs: Math.round(performance.now() - pipelineStart),
+      elapsedMs,
     });
 
     const decodeProgressCb = (frameIdx: number, _totalFrames: number) => {
@@ -324,7 +326,8 @@ async function _runPipelineInner(
               : null,
             sampleMemory(),
             p.currentFrame ?? 0,
-            estimatedOutputFrames
+            estimatedOutputFrames,
+            Math.round(performance.now() - pipelineStart)
           )
         );
       };
@@ -384,7 +387,8 @@ async function _runPipelineInner(
                         : null,
                       sampleMemory(),
                       frameIdx,
-                      estimatedOutputFrames
+                      estimatedOutputFrames,
+                      Math.round(performance.now() - pipelineStart)
                     )
                   );
                 },
@@ -455,7 +459,8 @@ async function _runPipelineInner(
                   : null,
                 sampleMemory(),
                 p.currentFrame ?? 0,
-                estimatedOutputFrames
+                estimatedOutputFrames,
+                Math.round(performance.now() - pipelineStart)
               )
             );
           }

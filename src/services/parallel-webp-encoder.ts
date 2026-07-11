@@ -93,13 +93,7 @@ export function createStreamingWebpEncoder(
 
   // Helper: wait for at least one in-flight promise to complete (backpressure).
   async function waitForSlot(): Promise<void> {
-    if (inFlight.size < MAX_IN_FLIGHT) return;
-    // Race on the current in-flight set — when one completes, it removes
-    // itself from the set via the finally() cleanup below.
-    await Promise.race([...inFlight]);
-    // After the race resolves, the completed promise was already removed
-    // from inFlight. If still at capacity, wait again.
-    if (inFlight.size >= MAX_IN_FLIGHT) {
+    while (inFlight.size >= MAX_IN_FLIGHT) {
       await Promise.race([...inFlight]);
     }
   }
