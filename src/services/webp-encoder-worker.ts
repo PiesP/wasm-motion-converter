@@ -97,7 +97,6 @@ interface EncodeRequest {
   height: number;
   quality: number;
   durationMs: number;
-  isFirstFrame: boolean;
 }
 
 let canvas: OffscreenCanvas | null = null;
@@ -125,7 +124,7 @@ function ensureCanvas(
 async function handleEncode(
   request: EncodeRequest
 ): Promise<{ id: number; bitstream: Uint8Array }> {
-  const { id, rgbData, width, height, quality, isFirstFrame } = request;
+  const { id, rgbData, width, height, quality } = request;
 
   // Get or create cached OffscreenCanvas
   const { canvas: offscreen, ctx: offCtx } = ensureCanvas(width, height);
@@ -158,17 +157,11 @@ async function handleEncode(
   const arrayBuffer = await blob.arrayBuffer();
   const webpBuffer = new Uint8Array(arrayBuffer);
 
-  // Extract VP8 bitstream
-  const bitstream = isFirstFrame
-    ? extractVP8Bitstream(webpBuffer)
-    : webpBuffer.subarray(
-        20,
-        20 +
-          new DataView(webpBuffer.buffer, webpBuffer.byteOffset, webpBuffer.byteLength).getUint32(
-            16,
-            true
-          )
-      );
+  // Always use full VP8 bitstream extraction. convertToBlob may produce VP8X
+  // (extended) format for any frame, not just the first. The former fast-path
+  // assumption (simple VP8 at offset 20) produced garbage bitstreams for VP8X
+  // frames, resulting in broken animated WebP output.
+  const bitstream = extractVP8Bitstream(webpBuffer);
 
   return { id, bitstream };
 }

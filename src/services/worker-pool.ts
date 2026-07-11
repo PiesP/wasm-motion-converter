@@ -28,7 +28,6 @@ export interface EncodeTask {
   height: number;
   quality: number;
   durationMs: number;
-  isFirstFrame: boolean;
 }
 
 export interface EncodeTaskResult {

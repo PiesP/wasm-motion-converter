@@ -109,7 +109,6 @@ export function createStreamingWebpEncoder(
     await waitForSlot();
 
     const id = submittedCount++;
-    const isFirstFrame = id === 0;
 
     const task: EncodeTask = {
       id,
@@ -118,7 +117,6 @@ export function createStreamingWebpEncoder(
       height,
       quality: qualityF,
       durationMs,
-      isFirstFrame,
     };
 
     if (!pool) {

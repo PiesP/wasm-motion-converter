@@ -70,24 +70,6 @@ export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
 }
 
 /**
- * Fast VP8 bitstream extraction without header validation.
- *
- * After the first frame has been validated, all subsequent frames from the
- * same encoder will have identical RIFF/VP8 structure. Skip the 5 validation
- * checks and jump directly to the bitstream at offset 20.
- *
- * This saves ~0.05ms per frame (5 × DataView.getUint32 + branching).
- * For a 150-frame video, that's ~7.5ms total.
- */
-export function extractVP8BitstreamFast(webp: Uint8Array): Uint8Array {
-  // Same as extractVP8Bitstream but skips header validation.
-  // The bitstream starts at offset 20 and the chunk size is at offset 16 (little-endian).
-  const view = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
-  const frameSize = view.getUint32(16, true);
-  return webp.subarray(20, 20 + frameSize);
-}
-
-// ---------------------------------------------------------------------------
 // WebP muxing (RIFF container)
 // ---------------------------------------------------------------------------
 
