@@ -281,7 +281,9 @@ export async function decodeFrames(
           frame,
           frameCtx
         );
-        Object.assign(frameCtx, nextFrameCtx);
+        // Mutable update — avoid Object.assign spread allocation per frame
+        frameCtx.durationCarryUs = nextFrameCtx.durationCarryUs;
+        frameCtx.copyPath = nextFrameCtx.copyPath;
         const frameNum = inputFrameCount++;
 
         // Frame decimation: skip every Nth frame
