@@ -20,13 +20,13 @@ import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import type { DemuxResult } from './demuxer-service';
 import {
-  computeDHash,
+  compute8x8Grayscale,
+  computeMAD,
   copyFrameToRGB,
   createFrameProcessingContext,
   type FrameProcessingContext,
   getFrameDurationMs,
   getSkipThreshold,
-  hammingDistance,
 } from './frame-utils';
 import { decodeFramesParallel } from './parallel-decoder';
 
@@ -159,7 +159,7 @@ export async function decodeFrames(
   // Only enabled for streaming callbacks (not GPU-only VideoFrame paths
   // which need raw VideoFrames, not RGB data). Smart frame skip and
   // adaptive mode are incompatible with parallel decode (per-frame
-  // dHash comparison runs inside the sequential output handler).
+  // MAD comparison runs inside the sequential output handler).
   if (
     streaming &&
     typeof onFrameAvailable === 'function' &&
@@ -226,7 +226,7 @@ export async function decodeFrames(
 
   // ── Smart frame skip state (continued) ──
   const isAdaptive = skipThreshold === -2;
-  let prevDHash: bigint | null = null;
+  let prevGray: Uint8Array | null = null;
   let consecutiveSkipMs = 0; // accumulated duration of skipped frames
 
   // ── Backpressure for pendingConversions (RES-H2) ──
@@ -246,8 +246,8 @@ export async function decodeFrames(
   // ── Adaptive motion-classified decimation state ──
   // Running window of motion distances for scene analysis
   let adaptFrameCounter = 0;
-  // Motion class thresholds (hamming distance)
-  const ADAPT_STATIC_THRESHOLD = 1; // ≤1 → static (very similar)
+  // Motion class thresholds (MAD — mean absolute difference, 0-255 scale)
+  const ADAPT_STATIC_THRESHOLD = 1.5; // ≤1.5 → static (very similar)
   const ADAPT_SLOW_THRESHOLD = 3; // ≤3 → slow motion
   const ADAPT_NORMAL_THRESHOLD = 6; // ≤6 → normal motion (>6 → fast)
   // Decimation per motion class
@@ -312,7 +312,7 @@ export async function decodeFrames(
             }
 
             // ── GPU-only path: pass VideoFrame directly to encoder ──
-            // Skips copyFrameToRGB (GPU→CPU read) and all dHash-based processing.
+            // Skips copyFrameToRGB (GPU→CPU read) and all grayscale-based processing.
             // Used by VP8 VideoEncoder path for zero-copy GPU encoding.
             // Smart frame skip and adaptive mode are disabled (require RGB data).
             if (typeof onVideoFrameAvailable === 'function') {
@@ -328,10 +328,10 @@ export async function decodeFrames(
 
             // ── Smart frame skip: similarity-based deduplication ──
             if (streaming && skipThreshold >= 0) {
-              const dHash = computeDHash(rgbData, width, height);
+              const gray = compute8x8Grayscale(rgbData, width, height);
 
-              if (prevDHash !== null) {
-                const dist = hammingDistance(prevDHash, dHash);
+              if (prevGray !== null) {
+                const dist = computeMAD(gray, prevGray);
 
                 // Noise floor estimation from first N frames
                 if (noiseFloorSamples.length < NOISE_SAMPLE_COUNT) {
@@ -346,7 +346,8 @@ export async function decodeFrames(
                 }
 
                 // Skip if similar AND consecutive skip time < 500ms
-                const effectiveThreshold = Math.max(skipThreshold, Math.floor(noiseFloor));
+                // Use max of user threshold and noise-adapted floor
+                const effectiveThreshold = Math.max(skipThreshold, noiseFloor);
                 if (dist <= effectiveThreshold && consecutiveSkipMs < 500) {
                   // Skip this frame: accumulate duration, release buffer, return
                   consecutiveSkipMs += totalDuration;
@@ -356,7 +357,7 @@ export async function decodeFrames(
                 }
               }
 
-              prevDHash = dHash;
+              prevGray = gray;
               // Transfer accumulated consecutive skip durations to this frame
               smartCarryoverMs = consecutiveSkipMs;
               consecutiveSkipMs = 0;
@@ -365,37 +366,36 @@ export async function decodeFrames(
             // ── Adaptive motion-classified decimation ──
             // Instead of fixed decimation, classify each frame's motion level
             // and apply variable decimation: static scenes get aggressive skip,
-            // fast motion keeps all frames. Integrated with dHash already computed
-            // above (reuses prevDHash/dist when available from smart skip).
+            // fast motion keeps all frames. Uses 8×8 grayscale + MAD for comparison.
             //
             // NOTE: This block is NEVER entered when onVideoFrameAvailable is active
             // (GPU-only path) because that path skips copyFrameToRGB entirely, meaning
-            // no rgbData/dHash/hammingDistance is available. See the GPU-only check at
+            // no rgbData/grayscale/MAD is available. See the GPU-only check at
             // ~line 313.
             //
             // NOTE: The first frame is always classified as adaptLastMotionClass
-            // (initially 'normal') because prevDHash is null until at least two frames
+            // (initially 'normal') because prevGray is null until at least two frames
             // have been processed. This initial misclassification is expected and has
             // negligible impact — only one frame's decimation is affected.
             if (streaming && isAdaptive) {
               let motionClass: 'static' | 'slow' | 'normal' | 'fast' = adaptLastMotionClass;
 
-              if (prevDHash !== null && noiseFloorSamples.length >= NOISE_SAMPLE_COUNT) {
-                // Re-compute dHash if smart skip didn't do it (threshold=-2 path)
-                const dHash = computeDHash(rgbData, width, height);
-                const dist = prevDHash !== null ? hammingDistance(prevDHash, dHash) : 0;
+              if (prevGray !== null && noiseFloorSamples.length >= NOISE_SAMPLE_COUNT) {
+                // Re-compute grayscale if smart skip didn't do it (threshold=-2 path)
+                const gray = compute8x8Grayscale(rgbData, width, height);
+                const dist = computeMAD(gray, prevGray);
 
                 // Classify motion level using noise-floor-adapted thresholds.
                 // Lower-noise videos get tighter thresholds (more aggressive skip),
                 // noisier videos get wider thresholds (conservative skip).
                 const effectiveStatic = Math.max(
                   ADAPT_STATIC_THRESHOLD,
-                  Math.floor(noiseFloor / 3.5) // undo 3.5x scaling for raw threshold
+                  noiseFloor / 3.5 // undo 3.5x scaling for raw threshold
                 );
-                const effectiveSlow = Math.max(ADAPT_SLOW_THRESHOLD, Math.floor(noiseFloor / 1.8));
+                const effectiveSlow = Math.max(ADAPT_SLOW_THRESHOLD, noiseFloor / 1.8);
                 const effectiveNormal = Math.max(
                   ADAPT_NORMAL_THRESHOLD,
-                  Math.floor(noiseFloor / 1.2)
+                  noiseFloor / 1.2
                 );
                 if (dist <= effectiveStatic) {
                   motionClass = 'static';
@@ -413,7 +413,7 @@ export async function decodeFrames(
                   adaptFrameCounter = 0; // force keep on significant motion increase
                 }
                 adaptLastMotionClass = motionClass;
-                prevDHash = dHash;
+                prevGray = gray;
               }
 
               const decimation = ADAPT_DECIMATION[motionClass];

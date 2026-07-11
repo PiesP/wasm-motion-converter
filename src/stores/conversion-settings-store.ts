@@ -20,7 +20,7 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   // while still producing good quality for typical screen viewing
   trimStart: 0,
   trimEnd: 0,
-  smartFrameSkip: 'medium',
+  smartFrameSkip: 'off',
 };
 
 const SETTINGS_STORAGE_KEY = 'conversion-settings';

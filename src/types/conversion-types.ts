@@ -76,10 +76,13 @@ export const CONVERSION_SCALES: readonly ConversionScale[] = [0.5, 0.75, 1.0] as
 /**
  * Smart frame skip mode — controls similarity-based frame deduplication.
  *
- * - `off`: No similarity-based skipping (fixed FPS decimation only)
- * - `low`: Conservative — only skip near-identical frames (hamming ≤ 2)
- * - `medium`: Balanced — skip noise-level changes (hamming ≤ 3, recommended)
- * - `high`: Aggressive — skip slow changes too (hamming ≤ 5)
+ * Uses 8×8 grayscale Mean Absolute Difference (MAD) for frame comparison,
+ * which is more robust to compression noise than gradient-based dHash.
+ *
+ * - `off`: No similarity-based skipping (fixed FPS decimation only, default)
+ * - `low`: Conservative — only skip near-identical frames (MAD ≤ 1.5)
+ * - `medium`: Balanced — skip subtle changes (MAD ≤ 3)
+ * - `high`: Aggressive — skip moderate changes too (MAD ≤ 6)
  *
  * When enabled, consecutive similar frames are merged and their durations
  * are accumulated into the next kept frame, preserving timing accuracy.

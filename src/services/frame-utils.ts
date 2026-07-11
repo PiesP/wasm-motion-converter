@@ -461,20 +461,14 @@ export function getFrameDurationMs(
   };
 }
 
-// ─── dHash (Difference Hash) for Frame Similarity ──────────────────
+// ─── MAD (Mean Absolute Difference) for Frame Similarity ──────────
 
 /**
- * Compute 8x8 dHash from RGB frame data.
- *
- * Algorithm:
- * 1. Downsample to 8x8 by sampling center of each grid cell
- * 2. Convert to grayscale (R+G+B)/3 at sample point
- * 3. Compare each pixel with its right neighbor → 64-bit hash
- *
- * Returns a BigInt where bit[i] = 1 if pixel[i] > pixel[i+1].
- * Two very similar frames will have a small hamming distance.
+ * Extract 8×8 grayscale samples from RGB frame data.
+ * Uses center-sampling within each grid cell, matching dHash sampling positions.
+ * Returns 64-byte Uint8Array with grayscale values 0-255.
  */
-export function computeDHash(rgbData: Uint8Array, width: number, height: number): bigint {
+export function compute8x8Grayscale(rgbData: Uint8Array, width: number, height: number): Uint8Array {
   const gray = new Uint8Array(64);
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) {
@@ -485,45 +479,36 @@ export function computeDHash(rgbData: Uint8Array, width: number, height: number)
         ((rgbData[idx] ?? 0) + (rgbData[idx + 1] ?? 0) + (rgbData[idx + 2] ?? 0)) / 3;
     }
   }
-  let hash = 0n;
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 7; x++) {
-      if (gray[y * 8 + x]! > gray[y * 8 + x + 1]!) {
-        hash |= 1n << BigInt(y * 8 + x);
-      }
-    }
-    if (gray[y * 8 + 7]! > gray[y * 8]!) {
-      hash |= 1n << BigInt(y * 8 + 7);
-    }
-  }
-  return hash;
+  return gray;
 }
 
 /**
- * Hamming distance between two dHashes.
- * Counts the number of differing bits — lower means more similar.
+ * Compute Mean Absolute Difference between two 8×8 grayscale arrays.
  *
- * Distance interpretation:
- * - 0-2: Nearly identical (noise only)
- * - 3-5: Similar (slow motion or minor change)
- * - 6-10: Moderate change
- * - 11+: Significant change (different scene)
+ * Lower = more similar. Unlike dHash (which is sensitive to compression noise
+ * in gradient comparisons), MAD directly compares per-pixel intensity and
+ * correlates better with human perception of frame similarity.
+ *
+ * Interpretation:
+ * - 0.0-1.5: Nearly identical (noise only)
+ * - 1.5-3.0: Very similar (tiny motion or lighting change)
+ * - 3.0-6.0: Moderate change
+ * - 6.0+: Significant change (different scene)
  */
-export function hammingDistance(a: bigint, b: bigint): number {
-  let x = a ^ b;
-  let count = 0;
-  while (x > 0n) {
-    count++;
-    x &= x - 1n;
+export function computeMAD(
+  current: Uint8Array,
+  previous: Uint8Array
+): number {
+  let sum = 0;
+  for (let i = 0; i < 64; i++) {
+    sum += Math.abs((current[i] ?? 0) - (previous[i] ?? 0));
   }
-  return count;
+  return sum / 64;
 }
 
 /**
- * Get the hamming distance threshold for a given smart skip mode.
- * Frames with distance ≤ threshold are candidates for skipping.
- * Returns -1 for 'off' (never skip).
- */
+ * Get the MAD threshold for a given smart skip mode.
+ * Returns -1 for 'off' (never skip).*/
 export function getSkipThreshold(mode: 'off' | 'low' | 'medium' | 'high' | 'adaptive'): number {
   switch (mode) {
     case 'off':
@@ -531,10 +516,10 @@ export function getSkipThreshold(mode: 'off' | 'low' | 'medium' | 'high' | 'adap
     case 'adaptive':
       return -2; // signal for adaptive motion-classified decimation
     case 'low':
-      return 2;
+      return 1.5;
     case 'medium':
       return 3;
     case 'high':
-      return 5;
+      return 6;
   }
 }
