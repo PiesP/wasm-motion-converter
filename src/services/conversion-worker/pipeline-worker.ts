@@ -28,6 +28,7 @@ import {
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
+import { hexToArrayBuffer } from './protocol';
 import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
 
 // Aligned progress ranges matching main-thread conversion-pipeline.ts
@@ -132,7 +133,21 @@ export async function runWorkerPipeline(
           codec: config.codec,
           framerate: framerate ?? DEFAULT_FPS,
           bitrate: 0,
-          config: config as unknown as VideoDecoderConfig,
+          config: {
+            codec: config.codec,
+            codedWidth: config.codedWidth,
+            codedHeight: config.codedHeight,
+            ...(config.displayAspectWidth && config.displayAspectHeight
+              ? {
+                  displayAspectWidth: config.displayAspectWidth,
+                  displayAspectHeight: config.displayAspectHeight,
+                }
+              : {}),
+            ...(config.hardwareAcceleration
+              ? { hardwareAcceleration: config.hardwareAcceleration as HardwareAcceleration }
+              : {}),
+            ...(config.description ? { description: hexToArrayBuffer(config.description) } : {}),
+          } as VideoDecoderConfig,
         }
       : undefined;
 

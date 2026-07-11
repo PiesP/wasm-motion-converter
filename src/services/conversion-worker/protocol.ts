@@ -17,3 +17,14 @@ export function arrayBufferToHex(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+/** Decode a hex string back to an ArrayBuffer (reverse of arrayBufferToHex) */
+export function hexToArrayBuffer(hex: string): ArrayBuffer {
+  const len = Math.floor(hex.length / 2);
+  const buffer = new ArrayBuffer(len);
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+  }
+  return buffer;
+}

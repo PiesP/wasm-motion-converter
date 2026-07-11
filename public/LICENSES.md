@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-> Auto-generated on 2026-07-10 by `scripts/generate-licenses.ts`.
+> Auto-generated on 2026-07-11 by `scripts/generate-licenses.ts`.
 > Do not edit manually — run `pnpm build` to regenerate.
 
 This project uses the following open-source libraries.
@@ -16,7 +16,7 @@ This project uses the following open-source libraries.
 
 ### mediabunny
 
-- **Version:** 1.50.7
+- **Version:** 1.50.8
 - **License:** MPL-2.0
 - **Repository:** https://mediabunny.dev/
 - **Purpose:** Video demuxing (Input, BufferSource, EncodedPacketSink)
