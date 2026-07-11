@@ -377,6 +377,32 @@ async function executePipeline(
     throw new Error('Unable to extract VideoDecoderConfig — cannot run conversion pipeline');
   }
 
+  // WebP: skip Worker pipeline — wasm-webp hangs in Worker context (WASM preload
+  // from main document is not accessible to Workers). Main-thread OffscreenCanvas
+  // path is faster and more reliable.
+  const isWebP = serializedOptions.format === 'webp';
+  if (isWebP) {
+    const { runConversionPipeline } = await import('@services/conversion-pipeline');
+    const request = {
+      inputBuffer: buffer,
+      inputBlob: file,
+      fileName: file.name,
+      format: 'webp' as const,
+      quality: serializedOptions.quality,
+      scale: serializedOptions.scale,
+      trimStart: serializedOptions.trimStart,
+      trimEnd: serializedOptions.trimEnd,
+      maxMemoryMB: 2048,
+      forceDecimation: serializedOptions.forceDecimation,
+      smartFrameSkip: serializedOptions.smartFrameSkip ?? 'off',
+    };
+    return runConversionPipeline(
+      request as Parameters<typeof runConversionPipeline>[0],
+      progressCallback as Parameters<typeof runConversionPipeline>[1],
+      abortController.signal
+    );
+  }
+
   return runPipelineWithFallback(
     buffer,
     serializedConfig as unknown as Parameters<typeof runPipelineWithFallback>[1],
