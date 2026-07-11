@@ -23,7 +23,6 @@ import {
   GIF_LZW_RATIO,
   GIF_MAX_BUFFER_BYTES,
   GIF_MAX_FRAME_DELAY_CS,
-  GIF_MIN_FIRST_FRAME_DELAY_MS,
   GIF_MIN_FRAME_DELAY_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -184,10 +183,6 @@ export async function encodeGif(
   let lastQuantizedData: Uint8Array | null = null;
   let lastIndexedData: Uint8Array | null = null;
 
-  // Save a copy of the last written frame's indexed pixel data for
-  // tail-duration continuation frames (see tailAccumulatedMs fix below).
-  let lastWrittenIndexed: Uint8Array | null = null;
-
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     const pal = globalPalette;
     if (!pal) return;
@@ -280,15 +275,8 @@ export async function encodeGif(
           const totalDelayWithAccumulated = frameDurationMs + accumulatedDuration;
           accumulatedDuration = 0;
 
-          const isFirstFrame = encodeIdx === 0;
-
           // Apply minimum delays (in ms, will be converted to cs in writeFrameWithDelay)
-          let delay: number;
-          if (isFirstFrame) {
-            delay = Math.max(GIF_MIN_FIRST_FRAME_DELAY_MS, totalDelayWithAccumulated);
-          } else {
-            delay = Math.max(GIF_MIN_FRAME_DELAY_MS, totalDelayWithAccumulated);
-          }
+          const delay = Math.max(GIF_MIN_FRAME_DELAY_MS, totalDelayWithAccumulated);
 
           // Bayer ordered dithering (applied to RGB buffer in-place)
           if (ditherStrength > 0) {
@@ -306,10 +294,6 @@ export async function encodeGif(
           }
 
           writeFrameWithDelay(rgba, delay);
-          // Save a copy of the indexed data for potential tail-duration frame
-          if (lastIndexedData) {
-            lastWrittenIndexed = new Uint8Array(lastIndexedData);
-          }
           // Release RGBA buffer after encoding
           // Invalidate cache since this buffer may be reused by the pool
           if (lastQuantizedData === rgba) {
@@ -342,10 +326,10 @@ export async function encodeGif(
     // durations accumulated by the decoder but never consumed. Add this tail
     // duration as extra delay on the last frame by writing a continuation frame
     // with the same pixel data and only the tail delay.
-    if (tailAccumulatedMs > 0 && lastWrittenIndexed && globalPalette) {
+    if (tailAccumulatedMs > 0 && lastIndexedData && globalPalette) {
       // Pass ms directly — gifenc converts ms→cs internally via Math.round(delay/10)
       if (tailAccumulatedMs > 0) {
-        encoder.writeFrame(lastWrittenIndexed, w, h, {
+        encoder.writeFrame(lastIndexedData, w, h, {
           palette: globalPalette,
           repeat: 0,
           delay: tailAccumulatedMs,
