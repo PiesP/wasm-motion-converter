@@ -468,7 +468,11 @@ export function getFrameDurationMs(
  * Uses center-sampling within each grid cell, matching dHash sampling positions.
  * Returns 64-byte Uint8Array with grayscale values 0-255.
  */
-export function compute8x8Grayscale(rgbData: Uint8Array, width: number, height: number): Uint8Array {
+export function compute8x8Grayscale(
+  rgbData: Uint8Array,
+  width: number,
+  height: number
+): Uint8Array {
   const gray = new Uint8Array(64);
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) {
@@ -495,10 +499,7 @@ export function compute8x8Grayscale(rgbData: Uint8Array, width: number, height: 
  * - 3.0-6.0: Moderate change
  * - 6.0+: Significant change (different scene)
  */
-export function computeMAD(
-  current: Uint8Array,
-  previous: Uint8Array
-): number {
+export function computeMAD(current: Uint8Array, previous: Uint8Array): number {
   let sum = 0;
   for (let i = 0; i < 64; i++) {
     sum += Math.abs((current[i] ?? 0) - (previous[i] ?? 0));

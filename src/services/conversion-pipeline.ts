@@ -277,9 +277,8 @@ async function _runPipelineInner(
       // Raw delta-based FPS jumps wildly when the phase changes because decode and
       // encode have fundamentally different throughput characteristics.
       const instantFps = deltaMs > 0 && framesDelta > 0 ? (framesDelta * 1000) / deltaMs : 0;
-      fpsTracker.current = instantFps > 0
-        ? fpsTracker.current * 0.7 + instantFps * 0.3
-        : fpsTracker.current;
+      fpsTracker.current =
+        instantFps > 0 ? fpsTracker.current * 0.7 + instantFps * 0.3 : fpsTracker.current;
       fpsTracker.current = Math.round(fpsTracker.current * 10) / 10;
       fpsTracker.lastTime = now;
       fpsTracker.lastFrame = frameIdx;

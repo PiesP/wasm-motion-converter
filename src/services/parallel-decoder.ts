@@ -211,7 +211,11 @@ async function decodeSegment(
     // Backpressure on output: wait if too many frame conversion promises
     // are in flight. Prevents OOM when VideoDecoder produces frames faster
     // than copyFrameToRGB can process them (same counter as single-decoder path).
-    while (pendingConversions.length >= MAX_PENDING_CONVERSIONS && !signal?.aborted && !decodeError) {
+    while (
+      pendingConversions.length >= MAX_PENDING_CONVERSIONS &&
+      !signal?.aborted &&
+      !decodeError
+    ) {
       await Promise.race(pendingConversions);
     }
 

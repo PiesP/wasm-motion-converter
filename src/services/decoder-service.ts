@@ -393,10 +393,7 @@ export async function decodeFrames(
                   noiseFloor / 3.5 // undo 3.5x scaling for raw threshold
                 );
                 const effectiveSlow = Math.max(ADAPT_SLOW_THRESHOLD, noiseFloor / 1.8);
-                const effectiveNormal = Math.max(
-                  ADAPT_NORMAL_THRESHOLD,
-                  noiseFloor / 1.2
-                );
+                const effectiveNormal = Math.max(ADAPT_NORMAL_THRESHOLD, noiseFloor / 1.2);
                 if (dist <= effectiveStatic) {
                   motionClass = 'static';
                 } else if (dist <= effectiveSlow) {
