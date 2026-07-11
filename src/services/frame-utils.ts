@@ -208,11 +208,51 @@ async function copyFrameFourChannel(
 }
 
 /** Strategy 2: Canvas fallback for exotic formats + GPU-accelerated scaling */
+
+// ── Canvas cache for copyFrameCanvas ──────────────────────────────
+// Creating OffscreenCanvas + getContext('2d') is expensive (~0.3ms per call).
+// Since every frame in a conversion uses the same (width, height),
+// cache the canvas/context pair keyed by dimensions to avoid per-frame
+// allocation and GPU context setup cost.
+
+interface CachedCanvas {
+  canvas: OffscreenCanvas;
+  ctx: OffscreenCanvasRenderingContext2D;
+}
+
+const scaledCanvasCache = new Map<string, CachedCanvas>();
+
+function getOrCreateCanvas(width: number, height: number): CachedCanvas {
+  const key = `${width}x${height}`;
+  const cached = scaledCanvasCache.get(key);
+  if (cached) return cached;
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('Failed to get 2d context from OffscreenCanvas');
+  const entry: CachedCanvas = { canvas, ctx };
+  scaledCanvasCache.set(key, entry);
+  return entry;
+}
+
+/** Release all cached canvases. Call after conversion completes or on error. */
+export function clearCanvasCache(): void {
+  for (const entry of scaledCanvasCache.values()) {
+    entry.canvas.width = 0;
+    entry.canvas.height = 0;
+  }
+  scaledCanvasCache.clear();
+}
+
 async function copyFrameCanvas(
   frame: VideoFrame,
   width: number,
   height: number
 ): Promise<Uint8Array> {
+  const { ctx } = getOrCreateCanvas(width, height);
+
+  // Clear canvas before drawing (reuses same canvas across frames)
+  ctx.clearRect(0, 0, width, height);
+
   // Try GPU-accelerated scaling via createImageBitmap first.
   // Falls back to canvas drawImage on failure (e.g., exotic codecs, old browsers).
   try {
@@ -222,15 +262,9 @@ async function copyFrameCanvas(
       resizeQuality: 'medium',
     });
     try {
-      const canvas = new OffscreenCanvas(width, height);
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) throw new Error('Failed to get 2d context');
       ctx.drawImage(bitmap, 0, 0);
       const imageData = ctx.getImageData(0, 0, width, height);
-      const rgb = convertRGBAToRGB(new Uint8Array(imageData.data), width, height, 'RGBA');
-      canvas.width = 0;
-      canvas.height = 0;
-      return rgb;
+      return convertRGBAToRGB(new Uint8Array(imageData.data), width, height, 'RGBA');
     } finally {
       bitmap.close();
     }
@@ -238,9 +272,6 @@ async function copyFrameCanvas(
     // Fallback: canvas drawImage with source→dest rect scaling
   }
 
-  const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('Failed to get 2d context from OffscreenCanvas');
   ctx.drawImage(
     frame,
     0,
@@ -254,14 +285,7 @@ async function copyFrameCanvas(
   );
 
   const imageData = ctx.getImageData(0, 0, width, height);
-  const rgbaBuf = new Uint8Array(imageData.data);
-  const rgb = convertRGBAToRGB(rgbaBuf, width, height, 'RGBA');
-
-  // Explicitly release OffscreenCanvas GPU resources
-  canvas.width = 0;
-  canvas.height = 0;
-
-  return rgb;
+  return convertRGBAToRGB(new Uint8Array(imageData.data), width, height, 'RGBA');
 }
 
 /**

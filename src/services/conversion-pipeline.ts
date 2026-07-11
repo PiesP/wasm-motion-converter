@@ -40,7 +40,7 @@ import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import { calcAutoDecimation } from './encoder-common';
-import { resolveVideoDimensions } from './frame-utils';
+import { clearCanvasCache, resolveVideoDimensions } from './frame-utils';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
@@ -668,5 +668,6 @@ async function _runPipelineInner(
   } finally {
     throttled.cleanup();
     globalBufferPool.clear();
+    clearCanvasCache();
   }
 }
