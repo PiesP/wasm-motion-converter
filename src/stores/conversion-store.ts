@@ -67,6 +67,8 @@ export const [conversionElapsedMs, setConversionElapsedMs] = createSignal<number
   undefined
 );
 export const [outputFrames, setOutputFrames] = createSignal<number | undefined>(undefined);
+export const [currentFrame, setCurrentFrame] = createSignal<number | undefined>(undefined);
+export const [totalFrames, setTotalFrames] = createSignal<number | undefined>(undefined);
 
 // ---------------------------------------------------------------------------
 // Results

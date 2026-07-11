@@ -4,7 +4,9 @@
 import {
   setConversionProgress,
   setConversionStatusMessage,
+  setCurrentFrame,
   setOutputFrames,
+  setTotalFrames,
 } from '@stores/conversion-store';
 import type { ProgressPhase } from '@t/conversion-types';
 import { STALL_DETECTION_TIMEOUT_MS } from '@utils/constants';
@@ -214,6 +216,8 @@ export class ProgressState {
     setConversionStatusMessage('');
     this.disposed = true;
     setOutputFrames(undefined);
+    setCurrentFrame(undefined);
+    setTotalFrames(undefined);
     this.deps.setConversionStartTime(0);
     this.deps.setEstimatedSecondsRemaining(null);
     this.deps.setMemoryWarning(false);

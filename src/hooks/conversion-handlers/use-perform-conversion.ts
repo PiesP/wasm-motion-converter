@@ -19,10 +19,12 @@ import {
   setConversionFps,
   setConversionResults,
   setConversionStatusMessage,
+  setCurrentFrame,
   setErrorContext,
   setErrorMessage,
   setInputBuffer,
   setInputFile,
+  setTotalFrames,
   setVideoMetadata,
   setVideoPreviewUrl,
   transitionToState,
@@ -272,6 +274,8 @@ function createProgressCallback(
     runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
     setConversionFps(progress.fps ?? undefined);
     setConversionElapsedMs(progress.elapsedMs ?? undefined);
+    if (progress.currentFrame != null) setCurrentFrame(progress.currentFrame);
+    if (progress.totalFrames != null) setTotalFrames(progress.totalFrames);
 
     const phaseLabel =
       progress.phase === 'demuxing'
