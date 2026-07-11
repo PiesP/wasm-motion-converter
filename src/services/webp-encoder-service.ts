@@ -31,11 +31,7 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
-import {
-  extractVP8Bitstream,
-  extractVP8BitstreamFast,
-  StreamingWebpMuxer,
-} from './streaming-webp-encoder';
+import { extractVP8Bitstream, StreamingWebpMuxer } from './streaming-webp-encoder';
 
 const QUALITY_MAP: Record<BaseEncoderOptions['quality'], number> = {
   low: 50, // 70 → 50: matches SSIM perceptual transparency threshold
@@ -134,14 +130,13 @@ export async function encodeWebp(
         }
 
         // encodeRGB returns a Uint8Array view over WASM memory — no copy needed.
-        // extractVP8BitstreamFast creates a subarray view, keeping the original alive.
+        // extractVP8Bitstream creates a subarray view, keeping the original alive.
         // WASM memory lifecycle: the wasm-webp module allocates a single linear memory
         // buffer that grows as needed. encodeRGB writes into this buffer and returns a view
         // that remains valid until the next encodeRGB call or the module is freed.
         // Since we call addFrame (which copies the data into the muxer) immediately,
         // the view is only borrowed and the WASM memory can be safely reused.
-        const bitstream =
-          encodeIdx === 0 ? extractVP8Bitstream(webpResult) : extractVP8BitstreamFast(webpResult);
+        const bitstream = extractVP8Bitstream(webpResult);
 
         const totalDuration = frameDurationMs + accumulatedDuration;
         accumulatedDuration = 0;
