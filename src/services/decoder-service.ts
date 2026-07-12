@@ -372,8 +372,8 @@ export async function decodeFrames(
             //
             // NOTE: This block is NEVER entered when onVideoFrameAvailable is active
             // (GPU-only path) because that path skips copyFrameToRGB entirely, meaning
-            // no rgbData/grayscale/MAD is available. See the GPU-only check at
-            // ~line 313.
+            // no rgbData/grayscale/MAD is available. See the GPU-only early return
+            // earlier in this function (onVideoFrameAvailable check).
             //
             // NOTE: The first frame is always classified as adaptLastMotionClass
             // (initially 'normal') because prevGray is null until at least two frames

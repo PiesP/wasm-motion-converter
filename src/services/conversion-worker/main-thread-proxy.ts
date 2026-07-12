@@ -71,13 +71,7 @@ export async function runPipelineViaWorker(
     let timedOut = false;
     const timeoutId = setTimeout(() => {
       timedOut = true;
-      // Forward abort to the worker so it can clean up internal state
-      const abortMsg: WorkerRequest = { type: 'abort', requestId };
-      try {
-        worker.postMessage(abortMsg);
-      } catch {
-        // Worker may already be in a bad state; terminate below regardless
-      }
+      cleanup();
       worker.terminate();
       reject(new WorkerTimeoutError(WORKER_PIPELINE_TIMEOUT_MS));
     }, WORKER_PIPELINE_TIMEOUT_MS);
@@ -100,24 +94,29 @@ export async function runPipelineViaWorker(
       }
     };
 
-    // Set up abort signal forwarding
+    // Set up abort signal forwarding.
+    // The listener is registered BEFORE checking signal.aborted to eliminate
+    // the timing window where the signal becomes aborted between the check
+    // and listener registration (the handler would never fire, causing a
+    // permanent hang).
+    let settled = false;
     const onAbort = () => {
-      clearTimeout(timeoutId);
-      const abortMsg: WorkerRequest = {
-        type: 'abort',
-        requestId,
-      };
-      worker.postMessage(abortMsg);
+      if (settled || timedOut) return;
+      settled = true;
+      cleanup();
+      worker.terminate();
+      reject(new DOMException('Cancelled', 'AbortError'));
     };
 
     if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
       if (signal.aborted) {
-        clearTimeout(timeoutId);
-        worker.terminate();
-        reject(new DOMException('Cancelled', 'AbortError'));
+        // Signal was already aborted — the { once: true } listener may have
+        // fired synchronously during registration. The settled guard
+        // prevents double rejection regardless.
+        onAbort();
         return;
       }
-      signal.addEventListener('abort', onAbort, { once: true });
     }
 
     // Handle messages from the worker
