@@ -125,6 +125,9 @@ export function yieldToMain(): Promise<void> {
  *
  * VideoFrame.copyTo() supports format conversion:
  *   I420, I422, I444, NV12, NV21 → RGBA, RGBX, BGRA, BGRX
+ *
+ * @returns Pooled RGB buffer. The CALLER OWNS this buffer and MUST release it
+ *          via globalBufferPool.release() when done.
  */
 async function copyFrameRGBX(
   frame: VideoFrame,
