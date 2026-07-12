@@ -122,6 +122,17 @@ export class WebpWorkerPool {
     );
   }
 
+  /**
+   * Number of workers that were successfully initialized.
+   * May be 0 if all Worker() constructor calls failed (e.g. CSP blocks,
+   * network errors, or module load failures). Callers should check this
+   * before routing tasks to the pool — a pool with 0 workers cannot
+   * process any tasks and will reject every submission immediately.
+   */
+  get activeWorkers(): number {
+    return this.workers.length;
+  }
+
   private initWorkers(): void {
     for (let i = 0; i < this.size; i++) {
       try {

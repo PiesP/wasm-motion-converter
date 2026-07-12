@@ -413,10 +413,15 @@ async function _runPipelineInner(
       // Use parallel Worker-based encoder when available (distributes frame
       // encoding across multiple CPU cores for 2-3x speedup).
       // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
+      // Active worker count is checked additionally — getWorkerPool() may
+      // return a non-null pool where all Worker() init attempts failed
+      // (e.g. CSP blocks, network errors), which would reject every task.
+      const pool = getWorkerPool();
       const useParallelEncoder =
         typeof OffscreenCanvas !== 'undefined' &&
         typeof Worker !== 'undefined' &&
-        getWorkerPool() !== null;
+        pool !== null &&
+        pool.activeWorkers > 0;
 
       if (useParallelEncoder) {
         logger.info(

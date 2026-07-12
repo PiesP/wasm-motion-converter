@@ -59,6 +59,13 @@ export function createStreamingWebpEncoder(
   const qualityF = WORKER_QUALITY_MAP[quality];
   const pool = getWorkerPool(WebpWorkerPool.getOptimalWorkerCount(width, height));
 
+  // Pool may be non-null but have 0 workers if all Worker() init attempts
+  // failed (e.g. CSP blocks). The caller (conversion-pipeline) already gates
+  // on pool.activeWorkers > 0, but we check here for defense-in-depth.
+  if (!pool || pool.activeWorkers === 0) {
+    throw new Error('Worker pool has no active workers');
+  }
+
   const muxer = new StreamingWebpMuxer(width, height);
   const resultBuffer = new Map<number, FrameEncodeResult>();
   let nextExpectedId = 0;
@@ -113,11 +120,7 @@ export function createStreamingWebpEncoder(
       durationMs,
     };
 
-    if (!pool) {
-      throw new Error('Worker pool unavailable for streaming WebP encoding');
-    }
-
-    const promise = pool
+    const promise = pool!
       .encode(task)
       .then((result: EncodeTaskResult) => {
         resultBuffer.set(result.id, {

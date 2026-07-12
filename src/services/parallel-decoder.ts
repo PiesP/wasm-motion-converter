@@ -45,7 +45,9 @@ const MAX_PENDING_CONVERSIONS = 16;
 
 /** Minimum frames per segment to justify parallelization overhead.
  *  Small segments waste time on decoder creation/teardown.
- *  At 60fps, 100 frames ≈ 1.7s of video. */
+ *  At 60fps, 100 frames ≈ 1.7s of video.
+ *  Segments below this threshold are merged with adjacent ones rather than
+ *  dropped — silently discarding frames causes timing loss in short-GOP video. */
 const MIN_SEGMENT_FRAMES = 100;
 
 export interface DecodedFrameStream {
@@ -113,7 +115,18 @@ function splitIntoOrderedSegments(
     const start = keyframeIndices[i]!;
     const end = keyframeIndices[i + 1] ?? chunks.length;
     const segmentChunks = chunks.slice(start, end);
+
     if (segmentChunks.length >= MIN_SEGMENT_FRAMES) {
+      // Segment is large enough to justify dedicated decoder
+      segments.push({ chunks: segmentChunks, startIndex: start });
+    } else if (segments.length > 0) {
+      // Merge small segment into the previous one — avoids creating a
+      // standalone decoder for a tiny segment while preserving all frames.
+      const prev = segments[segments.length - 1]!;
+      prev.chunks = prev.chunks.concat(segmentChunks);
+    } else {
+      // First segment is small (e.g. very short video or all-I-frame at start).
+      // Keep it as a standalone segment rather than dropping it.
       segments.push({ chunks: segmentChunks, startIndex: start });
     }
   }
