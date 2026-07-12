@@ -157,6 +157,17 @@ export async function encodeWebp(
     throw new Error('No frames decoded for WebP encoding');
   }
 
+  // ── Tail accumulated duration fix ──
+  // When dynamic decimation skips frames after the last kept frame, their
+  // accumulated duration is never consumed by any subsequent encoding call.
+  // Pad the last ANMF chunk's duration to preserve total playback time.
+  if (accumulatedDuration > 0) {
+    muxer.padLastFrameDuration(accumulatedDuration);
+    logger.info('encoders', 'WebP tail duration padded', {
+      tailMs: Math.round(accumulatedDuration),
+    });
+  }
+
   // Mux all encoded frames into animated WebP container
   const result = muxer.finish();
   const totalElapsed = (performance.now() - startTime) / 1000;

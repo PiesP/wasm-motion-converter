@@ -259,6 +259,32 @@ export class StreamingWebpMuxer {
     return output;
   }
 
+  /**
+   * Add extra duration to the last frame already in the muxer.
+   *
+   * Used when dynamic decimation skips frames at the end of the video:
+   * their accumulated duration would otherwise be lost. Reads the existing
+   * ANMF duration (3-byte LE at offset 20), adds `extraMs`, clamps to
+   * 24-bit max (16,777,215 ms), and writes it back in-place.
+   */
+  padLastFrameDuration(extraMs: number): void {
+    if (this.frameCount === 0 || extraMs <= 0) return;
+
+    const lastChunk = this.chunks[this.chunks.length - 1]!;
+    // ANMF chunk layout: FourCC(4) + size(4) + x(3) + y(3) + w(3) + h(3) + dur(3) + flags(1)
+    const durOffset = 20;
+    const view = new DataView(lastChunk.buffer, lastChunk.byteOffset, lastChunk.byteLength);
+
+    // Read existing 3-byte LE duration
+    const existingMs =
+      view.getUint8(durOffset) |
+      (view.getUint8(durOffset + 1) << 8) |
+      (view.getUint8(durOffset + 2) << 16);
+
+    const updatedMs = Math.min(existingMs + extraMs, 0xffffff);
+    StreamingWebpMuxer.writeUint24(lastChunk, durOffset, updatedMs);
+  }
+
   private static writeUint24(output: Uint8Array, offset: number, value: number): number {
     let o = offset;
     output[o++] = value & 0xff;

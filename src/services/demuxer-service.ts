@@ -90,14 +90,18 @@ export async function demuxVideo(
   }
   const sink = new EncodedPacketSink(videoTrack);
 
-  // Start from first packet (requires keyframe after configure)
-  const startPacket = await sink.getFirstPacket();
+  // Seek to trimStart if specified, otherwise start from first packet.
+  // sink.getPacket() returns the nearest keyframe before the requested time,
+  // which is required for VideoDecoder to initialize correctly.
+  const startPacket =
+    request.trimStart > 0 ? await sink.getPacket(request.trimStart) : await sink.getFirstPacket();
   if (!startPacket) {
     input.dispose();
     logger.error('demuxer', 'No decodable packets found', {
       fileName: request.fileName,
       codec: config.codec,
       duration: `${duration.toFixed(2)}s`,
+      trimStart: request.trimStart,
     });
     throw new Error('No decodable packets found in input buffer');
   }
