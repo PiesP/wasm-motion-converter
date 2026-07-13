@@ -28,7 +28,6 @@ import {
   getFrameDurationMs,
   getSkipThreshold,
 } from './frame-utils';
-import { decodeFramesParallel } from './parallel-decoder';
 
 export interface DecodeOptions {
   width: number;
@@ -150,79 +149,9 @@ export async function decodeFrames(
   const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
   const pendingConversions = new Set<Promise<void>>();
 
-  // ── Attempt parallel decode via keyframe-segmented multi-decoder ──
-  // Parallel decode splits the video at keyframe boundaries and decodes
-  // segments concurrently, cutting the dominant decode phase (~70% of
-  // total time) by up to 4x. Falls back to sequential decode if the
-  // video has insufficient keyframes or if any segment fails.
-  //
-  // Only enabled for streaming callbacks (not GPU-only VideoFrame paths
-  // which need raw VideoFrames, not RGB data). Smart frame skip and
-  // adaptive mode are incompatible with parallel decode (per-frame
-  // MAD comparison runs inside the sequential output handler).
-  if (
-    streaming &&
-    typeof onFrameAvailable === 'function' &&
-    effectiveSmartSkip === 'off' &&
-    skipThreshold !== -2 // not adaptive mode
-  ) {
-    try {
-      let frameIdx = 0;
-      let decodeAccumulated = 0;
-      let decimSkipped = 0;
-
-      const parallelResult = await decodeFramesParallel(
-        demux,
-        {
-          width,
-          height,
-          hwAccel,
-          // Streaming callback: process frames per-batch instead of
-          // collecting all into an O(frames * resolution) array.
-          onFrame: async (frame) => {
-            // Apply frame decimation (same logic as sequential path)
-            if (frameDecimation > 1 && frame.globalIndex % frameDecimation !== 0) {
-              decodeAccumulated += frame.durationMs;
-              decimSkipped++;
-              globalBufferPool.release(frame.data);
-              return;
-            }
-
-            const totalDur = frame.durationMs + decodeAccumulated;
-            decodeAccumulated = 0;
-
-            await onFrameAvailable!(frame.data, totalDur, frame.globalIndex);
-            frameIdx++;
-
-            if (onFrameDecoded && frameIdx % 10 === 0) {
-              onFrameDecoded(frameIdx, demux.totalFrames);
-            }
-          },
-        },
-        signal
-      );
-
-      logger.warn('decoders', 'Parallel decode complete (streaming)', {
-        kept: frameIdx,
-        skippedByDecimation: decimSkipped,
-        totalInput: parallelResult.totalInputFrames,
-      });
-
-      return {
-        frames: [],
-        totalInputFrames: parallelResult.totalInputFrames,
-        skippedByDecimation: decimSkipped,
-        sourceTotalMs: parallelResult.sourceTotalMs,
-        outputTotalMs: 0,
-        tailAccumulatedMs: 0,
-      };
-    } catch (err) {
-      logger.warn('decoders', 'Parallel decode failed, falling back to sequential', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      // Fall through to sequential decode below
-    }
-  }
+  // ── Parallel decode temporarily disabled (Phase 1: fix infinite loop in pendingConversions) ──
+  // See .hermes/plans/refactor-critical-high-2026-07-14.md for details.
+  // Re-enable after implementing bounded ordered queue with Set-based cleanup.
 
   // ── Smart frame skip state (continued) ──
   const isAdaptive = skipThreshold === -2;
