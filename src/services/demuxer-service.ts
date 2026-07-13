@@ -7,7 +7,7 @@ import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
-import { EncodedPacketSink } from 'mediabunny';
+import { EncodedPacket, EncodedPacketSink } from 'mediabunny';
 
 export interface DemuxResult {
   chunks: EncodedVideoChunk[];
@@ -91,10 +91,24 @@ export async function demuxVideo(
   const sink = new EncodedPacketSink(videoTrack);
 
   // Seek to trimStart if specified, otherwise start from first packet.
-  // sink.getPacket() returns the nearest keyframe before the requested time,
-  // which is required for VideoDecoder to initialize correctly.
-  const startPacket =
-    request.trimStart > 0 ? await sink.getPacket(request.trimStart) : await sink.getFirstPacket();
+  // Use getNextKeyPacket() instead of getPacket() to validate that mediabunny
+  // has correctly classified the packet as a keyframe. In rare cases mediabunny's
+  // determinePacketType() may reclassify a keyframe as delta, causing DataError
+  // on the first decode call. getNextKeyPacket() walks forward until it finds a
+  // verified keyframe.
+  let startPacket: EncodedPacket | null;
+  if (request.trimStart > 0) {
+    const nearPacket = await sink.getPacket(request.trimStart);
+    if (nearPacket) {
+      // Verify keyframe classification — walk forward if misclassified
+      const verified = await sink.getNextKeyPacket(nearPacket);
+      startPacket = verified ?? nearPacket;
+    } else {
+      startPacket = null;
+    }
+  } else {
+    startPacket = await sink.getFirstPacket();
+  }
   if (!startPacket) {
     input.dispose();
     logger.warn('demuxer', 'no-decodable-packets', {
@@ -106,15 +120,11 @@ export async function demuxVideo(
     throw new Error('No decodable packets found in input buffer');
   }
 
-  // trimEnd == 0 means "until the end" — use duration to get last packet
-  let endPacket = startPacket;
-  if (request.trimEnd > 0) {
-    const trimmedEnd = await sink.getPacket(request.trimEnd);
-    if (trimmedEnd) endPacket = trimmedEnd;
-  } else {
-    const lastPkt = await sink.getPacket(duration);
-    if (lastPkt) endPacket = lastPkt;
-  }
+  // trimEnd == 0 means "until the end" — iterate all packets without a boundary.
+  // MediaBunny's packets(start, end) excludes `end` from iteration, so using
+  // an endPacket causes the last frame to be lost. Instead, iterate unbounded
+  // and break manually when exceeding trimEnd.
+  const trimEnd = request.trimEnd > 0 ? request.trimEnd : undefined;
 
   const chunks: EncodedVideoChunk[] = [];
   let totalFrames = 0;
@@ -129,7 +139,14 @@ export async function demuxVideo(
   try {
     // Check for cancellation before starting packet iteration
     signal?.throwIfAborted();
-    for await (const packet of sink.packets(startPacket, endPacket)) {
+    // Iterate all packets from startPacket — no end boundary since
+    // MediaBunny's packets() excludes the boundary packet.
+    // Manual break when exceeding trimEnd.
+    for await (const packet of sink.packets(startPacket)) {
+      // Stop if we've passed the trim end boundary
+      if (trimEnd !== undefined && packet.timestamp > trimEnd) {
+        break;
+      }
       chunks.push(packet.toEncodedVideoChunk());
       totalFrames++;
       if (onProgress && totalFrames % 10 === 0) {
