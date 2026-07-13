@@ -185,7 +185,11 @@ export class StreamingWebpMuxer {
   addFrame(bitstream: Uint8Array, durationMs: number): void {
     this.writeHeader();
 
-    const frameDataSize = StreamingWebpMuxer.VP8_CHUNK_OVERHEAD + bitstream.length;
+    // RIFF spec requires all chunks to be even-length. When the VP8
+    // bitstream is odd-length, a 0x00 pad byte must follow the data.
+    const needsPadding = (bitstream.length & 1) === 1;
+    const paddedBitstreamLen = bitstream.length + (needsPadding ? 1 : 0);
+    const frameDataSize = StreamingWebpMuxer.VP8_CHUNK_OVERHEAD + paddedBitstreamLen;
     const anmfChunkData = StreamingWebpMuxer.ANMF_HEADER - 8 + frameDataSize;
     const anmfTotalSize = 8 + anmfChunkData; // ANMF FourCC + size + data
 
@@ -215,16 +219,20 @@ export class StreamingWebpMuxer {
     // Frame Flags
     chunk[off++] = 0x00;
 
-    // VP8 sub-chunk
+    // VP8 sub-chunk (FourCC + size + data + optional pad byte)
     view.setUint32(off, StreamingWebpMuxer.VP8_FOURCC, false);
     off += 4;
-    view.setUint32(off, bitstream.length, true);
+    // VP8 chunk size includes the padding byte when present
+    view.setUint32(off, paddedBitstreamLen, true);
     off += 4;
     chunk.set(bitstream, off);
+    if (needsPadding) {
+      chunk[off + bitstream.length] = 0x00;
+    }
 
     this.chunks.push(chunk);
     this.currentOffset += chunk.length;
-    this.totalFrameBytes += bitstream.length;
+    this.totalFrameBytes += paddedBitstreamLen;
     this.frameCount++;
   }
 

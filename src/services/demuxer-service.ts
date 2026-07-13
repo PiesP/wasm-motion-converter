@@ -7,7 +7,7 @@ import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
-import { EncodedPacket, EncodedPacketSink } from 'mediabunny';
+import { type EncodedPacket, EncodedPacketSink } from 'mediabunny';
 
 export interface DemuxResult {
   chunks: EncodedVideoChunk[];
