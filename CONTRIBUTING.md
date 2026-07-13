@@ -53,7 +53,6 @@ pnpm dev
 ```
 
 - COOP/COEP headers are configured in `vite.config.ts` for dev/preview.
-- First run downloads ~30MB ffmpeg core from the CDN (fallback path).
 
 ### Quality checks (run before PRs)
 
@@ -68,8 +67,9 @@ pnpm dev
 - SharedArrayBuffer requires COOP/COEP headers:
   - Cloudflare Pages: `public/_headers`
   - Local dev/preview: `vite.config.ts`
-- WebCodecs is the preferred conversion path; FFmpeg is the fallback.
-- FFmpeg core assets are loaded at runtime with `toBlobURL()` from blob-compatible CDN providers.
+- Video decoding: WebCodecs VideoDecoder + MediaBunny demuxer
+- Encoding: OffscreenCanvas WebP, wasm-webp, gifenc (GIF)
+- No runtime CDN dependencies — all code is bundled at build time
 
 ## Code style
 
