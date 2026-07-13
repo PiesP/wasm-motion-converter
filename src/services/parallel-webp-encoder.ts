@@ -70,7 +70,8 @@ export function createStreamingWebpEncoder(
   const resultBuffer = new Map<number, FrameEncodeResult>();
   let nextExpectedId = 0;
   let submittedCount = 0;
-  const inFlight = new Set<Promise<EncodeTaskResult>>();
+  let failedCount = 0;
+  const inFlight = new Set<Promise<EncodeTaskResult | void>>();
 
   // Cap in-flight frames at 2× pool size so that (a) each worker has one
   // frame encoding + one queued frame ready with no gap, and (b) backup
@@ -147,8 +148,10 @@ export function createStreamingWebpEncoder(
         return result;
       })
       .catch((err: Error) => {
+        failedCount++;
         logger.warn('encoders', 'worker-encode-failed', { encodeId: id, error: err.message });
-        throw err;
+        // Don't rethrow — let remaining frames complete.
+        // finish() will throw if ALL frames failed.
       })
       .finally(() => {
         // Self-clean: remove from in-flight set when settled
@@ -163,7 +166,17 @@ export function createStreamingWebpEncoder(
     flushResultsToMuxer(true);
 
     if (muxer.frames === 0) {
+      if (failedCount > 0) {
+        throw new Error(`All ${failedCount} submitted frames failed to encode`);
+      }
       throw new Error('No frames encoded for streaming WebP encoding');
+    }
+
+    if (failedCount > 0) {
+      logger.warn('encoders', 'Some frames failed to encode in streaming WebP', {
+        failed: failedCount,
+        total: submittedCount,
+      });
     }
 
     return muxer.finish();

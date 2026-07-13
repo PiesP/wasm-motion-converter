@@ -167,6 +167,47 @@ export async function decodeFrames(
   let accumulatedDuration = 0;
   let skippedByDecimation = 0;
   let smartSkippedCount = 0;
+  // ── Reorder buffer for out-of-order async frame completion ──
+  // copyFrameToRGB() runs inside concurrent async IIFEs (up to MAX_PENDING_CONVERSIONS).
+  // Although VideoDecoder.output fires sequentially, the async copy+emit may complete
+  // out of order. This buffer holds early-completing frames and drains in-order.
+  const reorderBuffer = new Map<
+    number,
+    { rgbData: Uint8Array; duration: number; smartCarryoverMs: number }
+  >();
+  let nextEmitFrameNum = -1; // -1 = not yet initialized (first kept frame sets it)
+
+  /** Emit a decoded frame through the reorder buffer for in-order delivery. */
+  const emitOrBuffer = (
+    frameNum: number,
+    rgbData: Uint8Array,
+    duration: number,
+    carryoverMs: number
+  ): void => {
+    // Initialize nextEmitFrameNum on first kept frame
+    if (nextEmitFrameNum === -1) {
+      nextEmitFrameNum = frameNum;
+    }
+
+    // Out-of-order arrival: buffer and wait for predecessor
+    if (frameNum > nextEmitFrameNum) {
+      reorderBuffer.set(frameNum, { rgbData, duration, smartCarryoverMs: carryoverMs });
+      return;
+    }
+
+    // In-order: emit and drain buffer
+    onFrameAvailable!(rgbData, duration + carryoverMs, frameNum);
+    nextEmitFrameNum++;
+
+    // Drain any buffered frames that are now in order
+    while (reorderBuffer.has(nextEmitFrameNum)) {
+      const entry = reorderBuffer.get(nextEmitFrameNum)!;
+      reorderBuffer.delete(nextEmitFrameNum);
+      onFrameAvailable!(entry.rgbData, entry.duration + entry.smartCarryoverMs, nextEmitFrameNum);
+      nextEmitFrameNum++;
+    }
+  };
+
   // Noise floor estimation: collect frame diff stdDev from first N frames
   const noiseFloorSamples: number[] = [];
   const NOISE_SAMPLE_COUNT = 15; // reduced from 30 → faster adaptation for short videos
@@ -362,10 +403,10 @@ export async function decodeFrames(
             }
 
             if (streaming) {
-              // Streaming mode: pass frame to callback for immediate processing.
-              // Include smart-skip carryover to preserve total playback time.
+              // Streaming mode: pass frame through reorder buffer for in-order delivery.
+              // Competing async IIFEs may complete copyFrameToRGB out of order.
               keptFrameCount++;
-              await onFrameAvailable!(rgbData, totalDuration + smartCarryoverMs, frameNum);
+              emitOrBuffer(frameNum, rgbData, totalDuration, smartCarryoverMs);
               smartCarryoverMs = 0;
               // Note: onFrameAvailable is responsible for releasing rgbData
             } else {
