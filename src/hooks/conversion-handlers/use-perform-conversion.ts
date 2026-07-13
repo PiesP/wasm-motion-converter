@@ -5,11 +5,7 @@ import { runPipelineWithFallback } from '@services/conversion-worker/main-thread
 import { arrayBufferToHex } from '@services/conversion-worker/protocol';
 import { validateOutput } from '@services/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
-import {
-  conversionSettings,
-  DEFAULT_CONVERSION_SETTINGS,
-  setConversionSettings,
-} from '@stores/conversion-settings-store';
+import { conversionSettings } from '@stores/conversion-settings-store';
 import {
   appState,
   getInputBuffer,
@@ -607,7 +603,9 @@ export function handleReset(runtime: ConversionRuntimeController): void {
 
   batch(() => {
     setVideoMetadata(null);
-    setConversionSettings(DEFAULT_CONVERSION_SETTINGS);
+    // NOTE: conversion settings are intentionally preserved so the user's
+    // format/quality/scale/trim/smartFrameSkip choices survive a file change.
+    // Only file-related state is cleared here.
     setAppState('idle');
   });
 }

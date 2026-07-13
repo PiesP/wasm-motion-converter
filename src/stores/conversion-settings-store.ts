@@ -49,21 +49,20 @@ const getInitialConversionSettings = (): ConversionSettings => {
           typeof obj.trimStart === 'number' && obj.trimStart >= 0 ? obj.trimStart : 0;
         const trimEnd = typeof obj.trimEnd === 'number' && obj.trimEnd >= 0 ? obj.trimEnd : 0;
         // Validate trim range: trimStart must be strictly before trimEnd.
-        // If both are set but inverted or equal, reset both to defaults.
+        // trimEnd=0 is the sentinel for "full duration", so (0,0) is valid.
+        // If the stored trim is invalid, only reset trim — preserve the user's
+        // format/quality/scale/smartFrameSkip choices.
         const validTrim =
           trimStart === 0 && trimEnd === 0
             ? true
             : trimStart > 0 && trimEnd > 0 && trimStart < trimEnd;
-        if (!validTrim) {
-          return DEFAULT_CONVERSION_SETTINGS;
-        }
         return {
           ...DEFAULT_CONVERSION_SETTINGS,
           format: obj.format,
           quality: obj.quality,
           scale: obj.scale,
-          trimStart,
-          trimEnd,
+          trimStart: validTrim ? trimStart : 0,
+          trimEnd: validTrim ? trimEnd : 0,
           smartFrameSkip: obj.smartFrameSkip,
         };
       }
