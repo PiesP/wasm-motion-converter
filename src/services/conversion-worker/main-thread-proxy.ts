@@ -19,6 +19,7 @@
 import type { ConversionProgress, ConversionRequest } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { isCancellationError } from '@utils/error-utils';
+import { logger } from '@utils/logger';
 
 import type {
   SerializedConversionOptions,
@@ -165,7 +166,10 @@ export async function runPipelineViaWorker(
 
         case 'log': {
           // Forward worker logs to console (can be customized)
-          console.info(`[Worker] [${response.level}] ${response.message}`);
+          logger.info('general', 'worker.log-relay', {
+            level: response.level,
+            message: response.message,
+          });
           break;
         }
 
@@ -249,7 +253,7 @@ export async function runPipelineWithFallback(
         'Cannot fall back to main thread: inputBuffer is detached (already transferred).'
       );
     }
-    console.warn('[WorkerPipeline] Worker failed, falling back to main thread:', workerError);
+    logger.warn('general', 'worker.fallback', { error: String(workerError) });
 
     // Dynamic import to avoid circular dependencies
     const { runConversionPipeline } = await import('../conversion-pipeline');

@@ -7,6 +7,7 @@ import {
   type Translations,
 } from '@t/i18n-types';
 import { detectInitialLocale, updateDocumentLang } from '@utils/format-utils';
+import { logger } from '@utils/logger';
 import type { Component, JSX } from 'solid-js';
 import { createContext, createEffect, createSignal, Show, useContext } from 'solid-js';
 
@@ -43,7 +44,7 @@ async function loadTranslations(locale: Locale): Promise<Translations> {
     translationCache.set(locale, translations);
     return translations;
   } catch {
-    console.warn(`[i18n] Failed to load translations for "${locale}"`);
+    logger.warn('general', 'i18n.load-failed', { locale });
     if (locale !== DEFAULT_LOCALE) return loadTranslations(DEFAULT_LOCALE);
     throw new Error(`Failed to load default translations: ${DEFAULT_LOCALE}`);
   }

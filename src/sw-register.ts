@@ -3,6 +3,7 @@
 
 /// <reference lib="webworker" />
 
+import { logger } from '@utils/logger';
 import type { SWRegisterOptions, SWRegistrationState } from './sw-types';
 
 const SW_PATH = '/service-worker.js';
@@ -68,7 +69,7 @@ export async function registerServiceWorker(
 
     return { supported: true, registered: true, cleanup };
   } catch (error) {
-    console.error('[SW] Registration failed:', error);
+    logger.error('general', 'sw.registration-failed', { error: String(error) });
     return { supported: true, registered: false };
   }
 }
