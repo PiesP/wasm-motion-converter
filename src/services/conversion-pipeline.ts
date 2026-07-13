@@ -45,7 +45,7 @@ import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
 import { encodeWebp } from './webp-encoder-service';
-import { getWorkerPool } from './worker-pool';
+import { getWorkerPool, WebpWorkerPool } from './worker-pool';
 
 /** Active profilers keyed by run ID — supports concurrent conversions */
 const activeProfilers = new Map<string, import('./conversion-profiler').ConversionProfiler>();
@@ -413,10 +413,11 @@ async function _runPipelineInner(
       // Use parallel Worker-based encoder when available (distributes frame
       // encoding across multiple CPU cores for 2-3x speedup).
       // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
-      // Active worker count is checked additionally — getWorkerPool() may
-      // return a non-null pool where all Worker() init attempts failed
-      // (e.g. CSP blocks, network errors), which would reject every task.
-      const pool = getWorkerPool();
+      // Pass scaled dimensions to getWorkerPool() so the 4K 2-worker limit
+      // is properly enforced at the gate level (not just inside the encoder).
+      const w = Math.max(1, Math.floor(codedWidth * request.scale));
+      const h = Math.max(1, Math.floor(codedHeight * request.scale));
+      const pool = getWorkerPool(WebpWorkerPool.getOptimalWorkerCount(w, h));
       const useParallelEncoder =
         typeof OffscreenCanvas !== 'undefined' &&
         typeof Worker !== 'undefined' &&
@@ -440,8 +441,6 @@ async function _runPipelineInner(
         // Decode on main thread, stream frames directly to worker pool.
         // Uses createStreamingWebpEncoder to avoid accumulating all frames
         // in an array (reduces peak memory by ~50% for large videos).
-        const w = Math.max(1, Math.floor(codedWidth * request.scale));
-        const h = Math.max(1, Math.floor(codedHeight * request.scale));
         const decimationController = createDynamicDecimationController();
 
         const streamingEncoder = createStreamingWebpEncoder(

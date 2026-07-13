@@ -84,8 +84,21 @@ export async function handleConvert(
     return;
   }
 
+  // Guard against double-click: abort any in-flight conversion and prevent
+  // a second pipeline from starting while the first is still running.
+  if (appState() === 'converting') {
+    logger.warn('conversion', 'Convert called while already converting — skipping', {
+      activeAbortController: activeAbortController !== null,
+    });
+    return;
+  }
+  // Also guard during the analyzing → converting transition
+  if (appState() === 'analyzing') {
+    logger.warn('conversion', 'Convert called while analyzing — skipping');
+    return;
+  }
+
   const settings = conversionSettings();
-  // Note: t parameter added by caller
 
   try {
     const durationValidation = await validateVideoDuration(
