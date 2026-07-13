@@ -477,7 +477,7 @@ export async function decodeFrames(
       }
     },
     error(e: Error) {
-      logger.error('decoders', 'VideoDecoder error', {
+      logger.warn('decoders', 'decoder-error', {
         codec: demux.config.codec,
         error: e.message,
       });

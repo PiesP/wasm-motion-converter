@@ -182,7 +182,7 @@ async function decodeSegment(
             });
           })
           .catch((err) => {
-            logger.error('decoders', 'Segment frame copy failed', {
+            logger.warn('decoders', 'segment-frame-copy-failed', {
               globalIndex,
               error: err instanceof Error ? err.message : String(err),
             });

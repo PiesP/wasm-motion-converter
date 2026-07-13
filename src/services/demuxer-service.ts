@@ -82,7 +82,7 @@ export async function demuxVideo(
   const videoTrack = videoTracks[0];
   if (!videoTrack) {
     input.dispose();
-    logger.error('demuxer', 'No video track found in input', {
+    logger.warn('demuxer', 'no-video-track', {
       fileName: request.fileName,
       fileSizeBytes: request.inputBlob?.size ?? request.inputBuffer.byteLength,
     });
@@ -97,7 +97,7 @@ export async function demuxVideo(
     request.trimStart > 0 ? await sink.getPacket(request.trimStart) : await sink.getFirstPacket();
   if (!startPacket) {
     input.dispose();
-    logger.error('demuxer', 'No decodable packets found', {
+    logger.warn('demuxer', 'no-decodable-packets', {
       fileName: request.fileName,
       codec: config.codec,
       duration: `${duration.toFixed(2)}s`,

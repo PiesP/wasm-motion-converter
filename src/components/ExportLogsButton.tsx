@@ -144,7 +144,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
 
       downloadText({ filename, text: lines.join('\n') });
     } catch (error) {
-      logger.error('general', 'Failed to export logs', { error });
+      logger.warn('general', 'export-failed', { error: String(error) });
     }
   };
 

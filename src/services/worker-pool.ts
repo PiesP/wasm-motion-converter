@@ -151,7 +151,7 @@ export class WebpWorkerPool {
         this.workers.push(worker);
         this.idleWorkers.push(worker);
       } catch (err) {
-        logger.error('encoders', 'Failed to create worker', {
+        logger.warn('encoders', 'worker-create-failed', {
           index: i,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -203,7 +203,7 @@ export class WebpWorkerPool {
   }
 
   private handleWorkerError(worker: Worker, event: ErrorEvent): void {
-    logger.error('encoders', 'Worker error', { message: event.message });
+    logger.warn('encoders', 'worker-error', { message: event.message });
 
     const activeTask = this.activeTasks.get(worker);
     this.activeTasks.delete(worker);

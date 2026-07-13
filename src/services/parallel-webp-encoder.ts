@@ -147,7 +147,7 @@ export function createStreamingWebpEncoder(
         return result;
       })
       .catch((err: Error) => {
-        logger.error('encoders', 'Worker encode failed', { encodeId: id, error: err.message });
+        logger.warn('encoders', 'worker-encode-failed', { encodeId: id, error: err.message });
         throw err;
       })
       .finally(() => {

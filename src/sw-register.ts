@@ -69,7 +69,7 @@ export async function registerServiceWorker(
 
     return { supported: true, registered: true, cleanup };
   } catch (error) {
-    logger.error('general', 'sw.registration-failed', { error: String(error) });
+    logger.warn('general', 'sw.registration-failed', { error: String(error) });
     return { supported: true, registered: false };
   }
 }
