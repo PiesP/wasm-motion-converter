@@ -542,7 +542,7 @@ export async function decodeFrames(
       skippedByDecimation,
       sourceTotalMs,
       outputTotalMs,
-      tailAccumulatedMs: streaming ? accumulatedDuration : 0,
+      tailAccumulatedMs: streaming ? accumulatedDuration + consecutiveSkipMs : 0,
     };
   } finally {
     // Close decoder only after all pending frame conversions have settled.

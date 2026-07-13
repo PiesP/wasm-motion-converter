@@ -55,6 +55,8 @@ export function createStreamingWebpEncoder(
 ): {
   submit: (rgbData: Uint8Array, durationMs: number) => Promise<void>;
   finish: () => Promise<Uint8Array>;
+  /** Pad the last frame's duration (for tail-accumulated durations from decimation/smart-skip). */
+  padLastFrame: (extraMs: number) => void;
 } {
   const qualityF = WORKER_QUALITY_MAP[quality];
   const pool = getWorkerPool(WebpWorkerPool.getOptimalWorkerCount(width, height));
@@ -182,5 +184,9 @@ export function createStreamingWebpEncoder(
     return muxer.finish();
   };
 
-  return { submit, finish };
+  const padLastFrame = (extraMs: number): void => {
+    muxer.padLastFrameDuration(extraMs);
+  };
+
+  return { submit, finish, padLastFrame };
 }

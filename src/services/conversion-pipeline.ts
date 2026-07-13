@@ -473,6 +473,7 @@ async function _runPipelineInner(
 
         // Accumulate durations from dynamically skipped frames (see offscreen-webp-encoder).
         let dynamicAccumulatedMs = 0;
+        let tailAccumulatedMs = 0;
 
         await scheduleTask(
           () =>
@@ -525,9 +526,18 @@ async function _runPipelineInner(
                 },
               },
               signal
-            ),
+            ).then((result) => {
+              tailAccumulatedMs = result.tailAccumulatedMs;
+            }),
           { priority: 'user-blocking' }
         );
+
+        // Apply tail accumulated duration from decode (decimation leftovers)
+        // plus dynamic decimation leftovers to the last frame.
+        const totalTail = tailAccumulatedMs + dynamicAccumulatedMs;
+        if (totalTail > 0) {
+          streamingEncoder.padLastFrame(totalTail);
+        }
 
         output = (await scheduleTask(() => streamingEncoder.finish(), { priority: 'user-visible' }))
           .buffer as ArrayBuffer;
