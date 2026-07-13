@@ -78,11 +78,20 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
   // component that calls t() (because t() reads translations()).
   // We do NOT unmount children mid-switch; <Show when={translations()}>
   // keeps them mounted once translations are first loaded.
+  //
+  // Generation counter prevents stale loads from overwriting newer ones
+  // when the user rapidly switches locales.
+  let loadGeneration = 0;
   createEffect(() => {
     const currentLocaleValue = locale();
     const info = LOCALES.find((l) => l.code === currentLocaleValue)!;
     updateDocumentLang(currentLocaleValue, info.dir);
-    loadTranslations(currentLocaleValue).then(setTranslations);
+    const gen = ++loadGeneration;
+    loadTranslations(currentLocaleValue).then((loaded) => {
+      if (gen === loadGeneration) {
+        setTranslations(loaded);
+      }
+    });
   });
 
   const setLocale = (newLocale: Locale): void => {

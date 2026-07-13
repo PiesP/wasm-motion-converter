@@ -87,16 +87,28 @@ const ConfirmationModal: Component = () => {
     document.addEventListener('keydown', handleFocusTrap);
   });
 
+  let scrollY = 0;
+
   createEffect(() => {
     if (state().isVisible) {
       previouslyFocusedElement = (document.activeElement as HTMLElement | null) ?? null;
-      document.body.inert = true;
+      // Lock background scroll without disabling the modal itself.
+      // document.body.inert disables ALL body children including this modal.
+      scrollY = window.scrollY;
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.width = '100%';
       scheduleCancelFocus();
       return;
     }
 
     try {
-      document.body.inert = false;
+      document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.width = '';
+      window.scrollTo(0, scrollY);
       scheduleRestoreFocus(previouslyFocusedElement);
     } finally {
       previouslyFocusedElement = null;
@@ -104,7 +116,10 @@ const ConfirmationModal: Component = () => {
   });
 
   onCleanup(() => {
-    document.body.inert = false;
+    document.body.style.overflow = '';
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.width = '';
   });
 
   onCleanup(() => {

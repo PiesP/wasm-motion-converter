@@ -226,7 +226,11 @@ export async function encodeWebpOffscreen(
   let accumulatedDuration = 0;
 
   // Decode frames with streaming callback — each frame is encoded immediately
-  const { totalInputFrames: totalDecoded, skippedByDecimation: totalSkipped } = await decodeFrames(
+  const {
+    totalInputFrames: totalDecoded,
+    skippedByDecimation: totalSkipped,
+    tailAccumulatedMs,
+  } = await decodeFrames(
     demux,
     {
       width: w,
@@ -319,6 +323,13 @@ export async function encodeWebpOffscreen(
 
   if (muxer.frames === 0) {
     throw new Error('No frames decoded for WebP encoding');
+  }
+
+  // Apply tail accumulated duration (decimation + smart-skip leftovers)
+  // and dynamic decimation leftovers to the last frame to preserve total play time.
+  const totalTailMs = tailAccumulatedMs + accumulatedDuration;
+  if (totalTailMs > 0) {
+    muxer.padLastFrameDuration(totalTailMs);
   }
 
   // Mux all encoded frames into animated WebP container

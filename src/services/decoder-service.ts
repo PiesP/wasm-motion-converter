@@ -28,7 +28,6 @@ import {
   getFrameDurationMs,
   getSkipThreshold,
 } from './frame-utils';
-import { decodeFramesParallel } from './parallel-decoder';
 
 export interface DecodeOptions {
   width: number;
@@ -150,79 +149,9 @@ export async function decodeFrames(
   const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
   const pendingConversions = new Set<Promise<void>>();
 
-  // ── Attempt parallel decode via keyframe-segmented multi-decoder ──
-  // Parallel decode splits the video at keyframe boundaries and decodes
-  // segments concurrently, cutting the dominant decode phase (~70% of
-  // total time) by up to 4x. Falls back to sequential decode if the
-  // video has insufficient keyframes or if any segment fails.
-  //
-  // Only enabled for streaming callbacks (not GPU-only VideoFrame paths
-  // which need raw VideoFrames, not RGB data). Smart frame skip and
-  // adaptive mode are incompatible with parallel decode (per-frame
-  // MAD comparison runs inside the sequential output handler).
-  if (
-    streaming &&
-    typeof onFrameAvailable === 'function' &&
-    effectiveSmartSkip === 'off' &&
-    skipThreshold !== -2 // not adaptive mode
-  ) {
-    try {
-      let frameIdx = 0;
-      let decodeAccumulated = 0;
-      let decimSkipped = 0;
-
-      const parallelResult = await decodeFramesParallel(
-        demux,
-        {
-          width,
-          height,
-          hwAccel,
-          // Streaming callback: process frames per-batch instead of
-          // collecting all into an O(frames * resolution) array.
-          onFrame: async (frame) => {
-            // Apply frame decimation (same logic as sequential path)
-            if (frameDecimation > 1 && frame.globalIndex % frameDecimation !== 0) {
-              decodeAccumulated += frame.durationMs;
-              decimSkipped++;
-              globalBufferPool.release(frame.data);
-              return;
-            }
-
-            const totalDur = frame.durationMs + decodeAccumulated;
-            decodeAccumulated = 0;
-
-            await onFrameAvailable!(frame.data, totalDur, frame.globalIndex);
-            frameIdx++;
-
-            if (onFrameDecoded && frameIdx % 10 === 0) {
-              onFrameDecoded(frameIdx, demux.totalFrames);
-            }
-          },
-        },
-        signal
-      );
-
-      logger.warn('decoders', 'Parallel decode complete (streaming)', {
-        kept: frameIdx,
-        skippedByDecimation: decimSkipped,
-        totalInput: parallelResult.totalInputFrames,
-      });
-
-      return {
-        frames: [],
-        totalInputFrames: parallelResult.totalInputFrames,
-        skippedByDecimation: decimSkipped,
-        sourceTotalMs: parallelResult.sourceTotalMs,
-        outputTotalMs: 0,
-        tailAccumulatedMs: 0,
-      };
-    } catch (err) {
-      logger.warn('decoders', 'Parallel decode failed, falling back to sequential', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      // Fall through to sequential decode below
-    }
-  }
+  // ── Parallel decode temporarily disabled (Phase 1: fix infinite loop in pendingConversions) ──
+  // See .hermes/plans/refactor-critical-high-2026-07-14.md for details.
+  // Re-enable after implementing bounded ordered queue with Set-based cleanup.
 
   // ── Smart frame skip state (continued) ──
   const isAdaptive = skipThreshold === -2;
@@ -238,6 +167,47 @@ export async function decodeFrames(
   let accumulatedDuration = 0;
   let skippedByDecimation = 0;
   let smartSkippedCount = 0;
+  // ── Reorder buffer for out-of-order async frame completion ──
+  // copyFrameToRGB() runs inside concurrent async IIFEs (up to MAX_PENDING_CONVERSIONS).
+  // Although VideoDecoder.output fires sequentially, the async copy+emit may complete
+  // out of order. This buffer holds early-completing frames and drains in-order.
+  const reorderBuffer = new Map<
+    number,
+    { rgbData: Uint8Array; duration: number; smartCarryoverMs: number }
+  >();
+  let nextEmitFrameNum = -1; // -1 = not yet initialized (first kept frame sets it)
+
+  /** Emit a decoded frame through the reorder buffer for in-order delivery. */
+  const emitOrBuffer = (
+    frameNum: number,
+    rgbData: Uint8Array,
+    duration: number,
+    carryoverMs: number
+  ): void => {
+    // Initialize nextEmitFrameNum on first kept frame
+    if (nextEmitFrameNum === -1) {
+      nextEmitFrameNum = frameNum;
+    }
+
+    // Out-of-order arrival: buffer and wait for predecessor
+    if (frameNum > nextEmitFrameNum) {
+      reorderBuffer.set(frameNum, { rgbData, duration, smartCarryoverMs: carryoverMs });
+      return;
+    }
+
+    // In-order: emit and drain buffer
+    onFrameAvailable!(rgbData, duration + carryoverMs, frameNum);
+    nextEmitFrameNum++;
+
+    // Drain any buffered frames that are now in order
+    while (reorderBuffer.has(nextEmitFrameNum)) {
+      const entry = reorderBuffer.get(nextEmitFrameNum)!;
+      reorderBuffer.delete(nextEmitFrameNum);
+      onFrameAvailable!(entry.rgbData, entry.duration + entry.smartCarryoverMs, nextEmitFrameNum);
+      nextEmitFrameNum++;
+    }
+  };
+
   // Noise floor estimation: collect frame diff stdDev from first N frames
   const noiseFloorSamples: number[] = [];
   const NOISE_SAMPLE_COUNT = 15; // reduced from 30 → faster adaptation for short videos
@@ -433,10 +403,10 @@ export async function decodeFrames(
             }
 
             if (streaming) {
-              // Streaming mode: pass frame to callback for immediate processing.
-              // Include smart-skip carryover to preserve total playback time.
+              // Streaming mode: pass frame through reorder buffer for in-order delivery.
+              // Competing async IIFEs may complete copyFrameToRGB out of order.
               keptFrameCount++;
-              await onFrameAvailable!(rgbData, totalDuration + smartCarryoverMs, frameNum);
+              emitOrBuffer(frameNum, rgbData, totalDuration, smartCarryoverMs);
               smartCarryoverMs = 0;
               // Note: onFrameAvailable is responsible for releasing rgbData
             } else {
@@ -572,7 +542,7 @@ export async function decodeFrames(
       skippedByDecimation,
       sourceTotalMs,
       outputTotalMs,
-      tailAccumulatedMs: streaming ? accumulatedDuration : 0,
+      tailAccumulatedMs: streaming ? accumulatedDuration + consecutiveSkipMs : 0,
     };
   } finally {
     // Close decoder only after all pending frame conversions have settled.

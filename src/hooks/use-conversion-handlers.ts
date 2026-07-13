@@ -50,7 +50,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     handleConvert: () => handleConvert(runtime, options.t),
     handleReset: () => handleReset(runtime),
     handleCancelConversion: () => handleCancelConversion(runtime),
-    handleCancelAnalysis,
+    handleCancelAnalysis: () => handleCancelAnalysis(runtime),
     handleRetry: () => handleRetry(runtime, options.t),
     handleDismissError,
   };
