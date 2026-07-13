@@ -18,13 +18,14 @@ const CACHE_PREFIX = 'dropconvert';
 // Cache version derived from build timestamp — bumping this value invalidates
 // old caches on every new deploy. In the future, this can be replaced with a
 // hash from the build output for automatic versioning.
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v20260714';
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `${CACHE_PREFIX}-dynamic-${CACHE_VERSION}`;
 
 /**
  * Core assets to precache on install.
- * Matches the public/ directory files that are always needed for the app shell.
+ * Only non-hashed entry points — hashed /assets/* files are handled
+ * by the runtime cache-first strategy in the fetch handler.
  */
 const PRECACHE_URLS = ['/', '/icon.svg', '/robots.txt', '/sitemap.xml'];
 

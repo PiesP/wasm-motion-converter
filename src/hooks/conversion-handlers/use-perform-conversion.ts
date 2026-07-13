@@ -579,7 +579,11 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
   });
 }
 
-export function handleCancelAnalysis(): void {
+export function handleCancelAnalysis(runtime: ConversionRuntimeController): void {
+  // Invalidate any in-flight conversions so queued microtasks from
+  // this analysis can't override a newly started file selection.
+  runtime.invalidateActiveConversions();
+
   batch(() => {
     setAppState('cancelling');
   });
