@@ -108,6 +108,20 @@ export async function demuxVideo(
     }
   } else {
     startPacket = await sink.getFirstPacket();
+    if (startPacket) {
+      // Verify the first packet is a keyframe — some containers may
+      // misclassify the first packet, causing VideoDecoder.decode() to
+      // fail with DataError. getNextKeyPacket walks forward until it
+      // finds a verified keyframe.
+      const verified = await sink.getNextKeyPacket(startPacket);
+      if (verified && verified !== startPacket) {
+        logger.warn('demuxer', 'First packet reclassified as delta — using next keyframe', {
+          originalTimestamp: startPacket.timestamp,
+          keyframeTimestamp: verified.timestamp,
+        });
+        startPacket = verified;
+      }
+    }
   }
   if (!startPacket) {
     input.dispose();
