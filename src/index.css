@@ -173,6 +173,21 @@ html.dark :focus-visible {
     scroll-behavior: auto !important;
   }
 
+  /* Disable View Transition animations — these are not covered by the
+     animation/transition overrides above because they use ::view-transition
+     pseudo-elements and @starting-style, which operate at the compositor
+     level rather than the CSS animation/transition layer. */
+  ::view-transition-group(*) {
+    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
+    animation-duration: 0.01ms !important;
+  }
+
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
+    animation-duration: 0.01ms !important;
+  }
+
   /* Disable Tailwind animate-* classes for reduced motion */
   .animate-spin,
   .animate-pulse,

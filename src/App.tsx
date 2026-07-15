@@ -154,8 +154,9 @@ const App: Component = () => {
     const el = document.getElementById('app-state');
     if (!el) return;
     const state = appState();
-    const progress = conversionProgress();
-    el.textContent = progress > 0 ? `${state}: ${progress}%` : state;
+    // Only announce state transitions, not per-frame progress updates.
+    // Per-frame announcements would flood the screen reader with noise.
+    el.textContent = state;
   });
 
   const dropzoneStatus = createMemo(() => {

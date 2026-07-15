@@ -169,7 +169,7 @@ export async function encodeWebp(
   }
 
   // Mux all encoded frames into animated WebP container
-  const result = muxer.finish();
+  const result = await muxer.finish();
   const totalElapsed = (performance.now() - startTime) / 1000;
 
   logger.info('encoders', 'WebP encoding complete', {
