@@ -50,6 +50,7 @@ Thumbs.db
 
 # Documentation (keep essential files tracked)
 docs/
+plans/
 *.md
 !README.md
 !CHANGELOG.md
