@@ -162,6 +162,7 @@ export async function decodeFrames(
   const MAX_PENDING_CONVERSIONS = 10;
 
   let decodeError: Error | null = null;
+  const conversionErrors: Error[] = [];
   let inputFrameCount = 0;
   let keptFrameCount = 0;
   let accumulatedDuration = 0;
@@ -395,9 +396,15 @@ export async function decodeFrames(
         // Track pending conversion for backpressure and final flush.
         // Use a self-cleaning Set: each promise removes itself on completion,
         // so pendingConversions.size always reflects actual in-flight work.
-        conversion.finally(() => {
-          pendingConversions.delete(conversion);
-        });
+        // .catch() captures async IIFE errors that would otherwise be
+        // silently swallowed — the error set is checked after all frames settle.
+        conversion
+          .catch((err: unknown) => {
+            conversionErrors.push(err instanceof Error ? err : new Error(String(err)));
+          })
+          .finally(() => {
+            pendingConversions.delete(conversion);
+          });
         pendingConversions.add(conversion);
       } catch (err) {
         // Ensure frame is always closed if error occurs before async IIFE
@@ -468,6 +475,19 @@ export async function decodeFrames(
     // Use Promise.allSettled so that even if some conversions fail (e.g., due to abort),
     // we still drain all pending work and close frames properly.
     await Promise.allSettled([...pendingConversions]);
+
+    // After all frame conversions have settled, check for errors that were
+    // captured by the .catch() handler.  Any frame encoding failure means
+    // the output is incomplete — throw so the caller can surface the error.
+    if (conversionErrors.length > 0) {
+      logger.error('decoders', 'Frame conversion errors detected', {
+        errorCount: conversionErrors.length,
+        firstError: conversionErrors[0]?.message,
+      });
+      throw new Error(
+        `Frame processing failed: ${conversionErrors[0]?.message ?? 'unknown error'}`
+      );
+    }
 
     if (decodeError) throw decodeError;
 

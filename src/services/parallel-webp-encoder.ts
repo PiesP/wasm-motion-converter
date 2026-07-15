@@ -167,18 +167,14 @@ export function createStreamingWebpEncoder(
     await Promise.allSettled([...inFlight]);
     flushResultsToMuxer(true);
 
-    if (muxer.frames === 0) {
-      if (failedCount > 0) {
-        throw new Error(`All ${failedCount} submitted frames failed to encode`);
-      }
-      throw new Error('No frames encoded for streaming WebP encoding');
+    if (failedCount > 0) {
+      throw new Error(
+        `${failedCount}/${submittedCount} submitted frames failed to encode in streaming WebP`
+      );
     }
 
-    if (failedCount > 0) {
-      logger.warn('encoders', 'Some frames failed to encode in streaming WebP', {
-        failed: failedCount,
-        total: submittedCount,
-      });
+    if (muxer.frames === 0) {
+      throw new Error('No frames encoded for streaming WebP encoding');
     }
 
     return muxer.finish();
