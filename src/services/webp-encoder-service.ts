@@ -25,13 +25,13 @@
 
 import type { ProgressCallback } from '@t/conversion-types';
 import { logger } from '@utils/logger';
-import { encodeRGB } from 'wasm-webp';
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
 import { extractVP8Bitstream, StreamingWebpMuxer } from './streaming-webp-encoder';
+import { encodeRGBReuse } from './wasm-webp-singleton';
 
 const QUALITY_MAP: Record<BaseEncoderOptions['quality'], number> = {
   low: 50, // 70 → 50: matches SSIM perceptual transparency threshold
@@ -121,11 +121,14 @@ export async function encodeWebp(
           return;
         }
 
-        // Encode this frame immediately via wasm-webp
-        const webpResult = await encodeRGB(rgbData, w, h, quality);
+        // Encode this frame immediately via cached wasm-webp singleton.
+        // encodeRGBReuse reuses the same WASM module instance across all
+        // frames, avoiding per-frame instantiation overhead (~16MB WASM
+        // memory alloc + runtime init per frame with the original encodeRGB).
+        const webpResult = await encodeRGBReuse(rgbData, w, h, quality);
         if (!webpResult || webpResult.length === 0) {
           throw new Error(
-            `encodeRGB returned ${webpResult ? 'empty' : 'null'} for frame ${encodeIdx}`
+            `encodeRGBReuse returned ${webpResult ? 'empty' : 'null'} for frame ${encodeIdx}`
           );
         }
 
