@@ -1,5 +1,7 @@
 # Dependabot cooldown (7 days) handles supply-chain cooling;
-# minimumReleaseAge removed to avoid pnpm --no-save conflicts with Dependabot.
+# minimumReleaseAge explicitly set to 0 to avoid pnpm supply-chain
+# policy failures on freshly-published packages in Dependabot PRs.
+minimumReleaseAge: 0
 
 # Security-critical packages that should bypass the minimum release age.
 # These packages receive immediate updates even within the 7-day cooling period:
