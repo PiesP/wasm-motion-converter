@@ -295,10 +295,12 @@ export async function encodeGif(
 
           writeFrameWithDelay(rgba, delay);
           // Release RGBA buffer after encoding
-          // Invalidate cache since this buffer may be reused by the pool
+          // Invalidate the quantize cache: lastQuantizedData points to the
+          // RGBA buffer being returned to the pool, so it's no longer valid.
+          // Keep lastIndexedData — it's a separate buffer allocated by
+          // applyPalette and may be needed for the tail-duration fix below.
           if (lastQuantizedData === rgba) {
             lastQuantizedData = null;
-            lastIndexedData = null;
           }
           globalBufferPool.release(rgba);
 
