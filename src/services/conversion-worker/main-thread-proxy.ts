@@ -190,20 +190,19 @@ export async function runPipelineViaWorker(
       reject(new Error(`Worker error: ${error.message}`));
     };
 
-    // Copy via .slice(0) so main thread retains a fallback copy while
-    // transferring the copy to the worker — zero-copy for the worker,
-    // safe fallback if the worker path fails.
-    const bufferCopy = inputBuffer.slice(0);
+    // Transfer the input buffer to the worker (zero-copy).
+    // The main thread does NOT retain a copy — the fallback path in
+    // runPipelineWithFallback uses inputBlob to re-read if needed.
     const startMsg: WorkerRequest = {
       type: 'start',
       requestId,
-      inputBuffer: bufferCopy,
+      inputBuffer,
       config,
       options,
       ...(duration !== undefined ? { duration } : {}),
       ...(framerate !== undefined ? { framerate } : {}),
     };
-    worker.postMessage(startMsg, [bufferCopy]);
+    worker.postMessage(startMsg, [inputBuffer]);
   });
 }
 
@@ -243,15 +242,22 @@ export async function runPipelineWithFallback(
     }
 
     // Fall back to main thread.
-    // Since runPipelineViaWorker transfers a *copy* (not the original),
-    // inputBuffer should still be valid here. However, if the caller
-    // already transferred inputBuffer elsewhere before this function was
-    // invoked, inputBuffer would be detached and the fallback would
-    // silently fail. Re-throw in that case so the error surfaces.
+    // Since runPipelineViaWorker now transfers the original inputBuffer
+    // (not a copy), the buffer will be detached.  Re-read from inputBlob
+    // if available; otherwise throw — the fallback cannot proceed without
+    // pixel data.
+    let fallbackBuffer: ArrayBuffer;
     if (inputBuffer.byteLength === 0) {
-      throw new Error(
-        'Cannot fall back to main thread: inputBuffer is detached (already transferred).'
-      );
+      if (inputBlob) {
+        logger.info('general', 'worker.fallback-re-reading-from-blob');
+        fallbackBuffer = await inputBlob.arrayBuffer();
+      } else {
+        throw new Error(
+          'Cannot fall back to main thread: inputBuffer is detached and no inputBlob available.'
+        );
+      }
+    } else {
+      fallbackBuffer = inputBuffer;
     }
     logger.warn('general', 'worker.fallback', { error: String(workerError) });
 
@@ -259,7 +265,7 @@ export async function runPipelineWithFallback(
     const { runConversionPipeline } = await import('../conversion-pipeline');
 
     const request: ConversionRequest = {
-      inputBuffer,
+      inputBuffer: fallbackBuffer,
       inputBlob,
       fileName: 'input.webm',
       format: options.format,

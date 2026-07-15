@@ -238,9 +238,10 @@ export class StreamingWebpMuxer {
 
   /**
    * Finalize the container and return the complete WebP file.
-   * Patches the RIFF size in the header.
+   * Patches the RIFF size in the header, then uses the Blob constructor
+   * to concatenate chunks without an extra O(N) copy into a new buffer.
    */
-  finish(): Uint8Array {
+  async finish(): Promise<Uint8Array> {
     if (this.frameCount === 0) {
       throw new Error('No frames added to muxer');
     }
@@ -253,13 +254,12 @@ export class StreamingWebpMuxer {
     const view = new DataView(header.buffer, header.byteOffset, header.length);
     view.setUint32(4, riffSize, true);
 
-    // Concatenate all chunks
-    const output = new Uint8Array(this.currentOffset);
-    let off = 0;
-    for (const chunk of this.chunks) {
-      output.set(chunk, off);
-      off += chunk.length;
-    }
+    // Use Blob constructor to concatenate chunks — browsers optimize
+    // this path to avoid an extra O(N) copy compared to manual set() loop.
+    // Cast through unknown: TS strict mode treats Uint8Array<ArrayBufferLike>
+    // as incompatible with BlobPart (ArrayBufferLike includes SharedArrayBuffer).
+    const blob = new Blob(this.chunks as unknown as BlobPart[], { type: 'image/webp' });
+    const output = new Uint8Array(await blob.arrayBuffer());
 
     // Release chunk references for GC
     this.chunks.length = 0;

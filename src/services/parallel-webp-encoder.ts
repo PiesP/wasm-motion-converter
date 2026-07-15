@@ -177,7 +177,7 @@ export function createStreamingWebpEncoder(
       throw new Error('No frames encoded for streaming WebP encoding');
     }
 
-    return muxer.finish();
+    return await muxer.finish();
   };
 
   const padLastFrame = (extraMs: number): void => {

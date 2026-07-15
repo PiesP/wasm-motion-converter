@@ -225,6 +225,10 @@ async function performConversion(
       videoMetadata()?.framerate
     );
 
+    // Pipeline has consumed the buffer — release immediately so GC
+    // can reclaim up to 500 MB before handleResult allocates more.
+    setInputBuffer(null);
+
     const blob = validateOutputBlob(output, settings);
     handleResult(blob, file, settings, runtime, startTimeMs, isActive);
     focusDownloadButton();
@@ -522,9 +526,8 @@ function handleResult(
     transitionToState('done', startViewTransition);
     setConversionStatusMessage('');
     runtime.resetRuntimeState();
-    // Release input buffer — no longer needed after conversion completes.
-    // This allows GC of the original file data (up to 500MB).
-    setInputBuffer(null);
+    // Input buffer was already released after pipeline completion
+    // in performConversion — no need to clear again.
   });
 }
 
