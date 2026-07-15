@@ -290,11 +290,14 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
   }
 
   // Full layout (original, with phase icon improvements)
+  // NOTE: aria-live is intentionally NOT set here — App.tsx maintains a
+  // single global live region that announces state transitions. Duplicating
+  // aria-live on ProgressBar would cause screen readers to announce
+  // per-frame progress updates redundantly.
   return (
     <div
       class="flex flex-col gap-1.5"
       role="status"
-      aria-live="polite"
       aria-busy={progressValue() > 0 && progressValue() < 100}
     >
       {/* Header row: spinner + status + percent */}
