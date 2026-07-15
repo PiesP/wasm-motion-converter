@@ -418,11 +418,25 @@ async function _runPipelineInner(
       const w = Math.max(1, Math.floor(codedWidth * request.scale));
       const h = Math.max(1, Math.floor(codedHeight * request.scale));
       const pool = getWorkerPool(WebpWorkerPool.getOptimalWorkerCount(w, h));
+
+      // Verify actual capability, not just typeof — some browsers expose
+      // OffscreenCanvas but fail on getContext('2d') or lack convertToBlob.
+      let offscreenOk = false;
+      if (typeof OffscreenCanvas !== 'undefined') {
+        try {
+          const testCanvas = new OffscreenCanvas(1, 1);
+          const ctx = testCanvas.getContext('2d');
+          offscreenOk =
+            ctx !== null &&
+            typeof (testCanvas as OffscreenCanvas & { convertToBlob?: unknown }).convertToBlob ===
+              'function';
+        } catch {
+          // getContext may throw in some environments (e.g., GPU process crash)
+        }
+      }
+
       const useParallelEncoder =
-        typeof OffscreenCanvas !== 'undefined' &&
-        typeof Worker !== 'undefined' &&
-        pool !== null &&
-        pool.activeWorkers > 0;
+        offscreenOk && typeof Worker !== 'undefined' && pool !== null && pool.activeWorkers > 0;
 
       if (useParallelEncoder) {
         logger.info(
