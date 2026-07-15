@@ -8,6 +8,7 @@ import { onCleanup } from 'solid-js';
 import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';
 import {
+  abortActiveConversion,
   handleCancelAnalysis,
   handleCancelConversion,
   handleConvert,
@@ -39,6 +40,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     setEstimatedSecondsRemaining: options.setEstimatedSecondsRemaining,
     setMemoryWarning: options.setMemoryWarning,
     setConversionPhase: options.setConversionPhase,
+    abortActiveConversion,
   });
 
   onCleanup(() => {

@@ -14,6 +14,8 @@ interface ConversionRuntimeControllerDeps {
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
   setConversionPhase?: Setter<import('@t/conversion-types').ProgressPhase> | undefined;
+  /** Optional callback to abort the active conversion pipeline on teardown. */
+  abortActiveConversion?: (() => void) | undefined;
 }
 
 export class ConversionRuntimeController {
@@ -52,11 +54,12 @@ export class ConversionRuntimeController {
 
   /**
    * Full teardown — called by SolidJS onCleanup when the owner scope is disposed.
-   * Stops memory monitoring and marks progress state as disposed so any
-   * lingering interval callbacks become no-ops.
+   * Stops memory monitoring, aborts any in-flight conversion, and marks progress
+   * state as disposed so any lingering interval callbacks become no-ops.
    */
   dispose(): void {
     this.stopMemoryMonitoring();
+    this.deps.abortActiveConversion?.();
     this.progress.disposed = true;
   }
 

@@ -66,8 +66,17 @@ export interface ConversionOptions {
  * Module-level reference to the AbortController for the currently active
  * conversion. Set by performConversion and read by handleCancelConversion
  * so that the user's Stop button actually aborts the pipeline.
+ *
+ * Also exposed via the runtime controller's dispose() so that component
+ * teardown (SolidJS onCleanup) aborts any in-flight conversion.
  */
 let activeAbortController: AbortController | null = null;
+
+/** Called by ConversionRuntimeController.dispose() during component teardown. */
+export function abortActiveConversion(): void {
+  activeAbortController?.abort();
+  activeAbortController = null;
+}
 
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
 
@@ -217,7 +226,7 @@ async function performConversion(
     );
 
     const blob = validateOutputBlob(output, settings);
-    handleResult(blob, file, settings, runtime, startTimeMs);
+    handleResult(blob, file, settings, runtime, startTimeMs, isActive);
     focusDownloadButton();
   } catch (error) {
     await handleConversionError(error, isActive, runtime, t, settings);
@@ -459,8 +468,19 @@ function handleResult(
   file: File,
   settings: ConversionSettings,
   runtime: ConversionRuntimeController,
-  startTimeMs: number
+  startTimeMs: number,
+  isActive: () => boolean
 ): void {
+  // Guard against stale results from superseded conversion runs.
+  // If a new file was selected or conversion cancelled while the pipeline
+  // was running, the result belongs to an old run and must be discarded.
+  if (!isActive()) {
+    logger.warn('conversion', 'handleResult called for stale run — discarding result', {
+      outputSize: blob.size,
+      format: settings.format,
+    });
+    return;
+  }
   runtime.stopMemoryMonitoring();
 
   const duration = Math.max(0, performance.now() - startTimeMs);
@@ -528,12 +548,22 @@ async function handleConversionError(
   const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
 
   if (isCancellationError(error)) {
+    // Always release the input buffer on cancellation — even if this run
+    // was superseded by a later file selection (isActive() === false).
+    // The buffer can be up to 500 MB.
+    setInputBuffer(null);
+
+    if (!isActive()) {
+      // This run was superseded — abort is already handled by later run.
+      // Just clean up and bail out.
+      runtime.stopMemoryMonitoring();
+      return;
+    }
+
     batch(() => {
       setConversionStatusMessage('');
       runtime.resetRuntimeState();
       setAppState('idle');
-      // Release input buffer on cancellation too
-      setInputBuffer(null);
     });
     return;
   }
@@ -566,6 +596,12 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
   activeAbortController?.abort();
   activeAbortController = null;
   runtime.invalidateActiveConversions();
+
+  // Always release the input buffer on cancel — even if no pipeline was
+  // in flight (e.g., cancel during duration validation).  The buffer can
+  // be up to 500 MB and must be freed regardless of timing.
+  setInputBuffer(null);
+
   setAppState('cancelling');
 
   // Capture current seq so the microtask only resets state if no new conversion
