@@ -10,7 +10,7 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Video motion conversion**: Convert video files using WebCodecs and ffmpeg.wasm with 100% client-side processing.
+- **Video motion conversion**: Convert video files to GIF/WebP using WebCodecs with 100% client-side processing.
 - **Solid.js UI**: Reactive frontend built with Solid.js, TypeScript.
 - **Service Worker**: Offline-capable PWA with CDN dependency integrity verification.
 - **CI pipeline**: Automated quality gate (format, lint, typecheck, build, SRI generation) on push/PR.

@@ -24,4 +24,4 @@ Include, where possible:
 
 - All conversion runs locally in the browser.
 - No user file uploads by design.
-- WebCodecs is the primary conversion engine; FFmpeg.wasm is loaded from CDN as fallback.
+- WebCodecs is the primary conversion engine; all processing runs locally in the browser.
