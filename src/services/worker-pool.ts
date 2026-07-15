@@ -225,24 +225,8 @@ export class WebpWorkerPool {
       }
     }
 
-    // Recreate the worker (replace dead worker)
-    const idx = this.workers.indexOf(worker);
-    if (idx !== -1) {
-      worker.terminate();
-      const newWorker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
-        type: 'module',
-      });
-      newWorker.onmessage = (event: MessageEvent<EncodeTaskResult & { error?: string }>) => {
-        this.handleWorkerMessage(newWorker, event.data);
-      };
-      newWorker.onerror = (event: ErrorEvent) => {
-        this.handleWorkerError(newWorker, event);
-      };
-      this.workers[idx] = newWorker;
-      this.idleWorkers.push(newWorker);
-    }
-
-    this.processQueue();
+    // Replace dead worker (with try/catch inside replaceWorker)
+    this.replaceWorker(worker);
   }
 
   private findPendingByTaskId(id: number): PendingTask | undefined {
@@ -305,15 +289,12 @@ export class WebpWorkerPool {
   }
 
   private dispatch(worker: Worker, pending: PendingTask): void {
-    this.activeTasks.set(worker, pending.task);
-    this.pendingResolvers.set(pending.task.id, pending);
-
-    // Transfer the rgbData buffer to the worker (zero-copy)
-    const { rgbData } = pending.task;
-    worker.postMessage(pending.task, [rgbData.buffer]);
-
-    // Set timeout for this task
+    // Set up timeout BEFORE postMessage so the task is always guarded.
+    // postMessage can throw synchronously (e.g. detached ArrayBuffer),
+    // in which case the timeout will clean up and reject the task.
     const timeoutHandle = setTimeout(() => {
+      this.taskTimeouts.delete(pending.task.id);
+
       if (!this.activeTasks.has(worker)) return; // already completed
 
       logger.warn('encoders', 'Worker task timed out, retiring worker', {
@@ -323,32 +304,68 @@ export class WebpWorkerPool {
 
       this.activeTasks.delete(worker);
       this.pendingResolvers.delete(pending.task.id);
-      this.taskTimeouts.delete(pending.task.id);
       pending.reject(
         new Error(`Encoding task ${pending.task.id} timed out after ${this.timeoutMs}ms`)
       );
 
       // Retire this worker and create a new one
-      const idx = this.workers.indexOf(worker);
-      if (idx !== -1) {
-        worker.terminate();
-        const newWorker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
-          type: 'module',
-        });
-        newWorker.onmessage = (event: MessageEvent<EncodeTaskResult & { error?: string }>) => {
-          this.handleWorkerMessage(newWorker, event.data);
-        };
-        newWorker.onerror = (event: ErrorEvent) => {
-          this.handleWorkerError(newWorker, event);
-        };
-        this.workers[idx] = newWorker;
-        this.idleWorkers.push(newWorker);
-      }
-
-      this.processQueue();
+      this.replaceWorker(worker);
     }, this.timeoutMs);
 
     this.taskTimeouts.set(pending.task.id, timeoutHandle);
+
+    // Transfer the rgbData buffer to the worker (zero-copy).
+    // postMessage is called BEFORE registering in activeTasks so that
+    // a synchronous exception (detached buffer, etc.) doesn't leave
+    // the task permanently stuck with no cleanup path.
+    const { rgbData } = pending.task;
+    try {
+      worker.postMessage(pending.task, [rgbData.buffer]);
+    } catch (err) {
+      // postMessage threw synchronously — clean up and reject
+      clearTimeout(timeoutHandle);
+      this.taskTimeouts.delete(pending.task.id);
+      pending.reject(err instanceof Error ? err : new Error(String(err)));
+      this.releaseWorker(worker);
+      return;
+    }
+
+    // Only register the task AFTER successful postMessage.
+    // If the transfer succeeded, the worker now owns the buffer.
+    this.activeTasks.set(worker, pending.task);
+    this.pendingResolvers.set(pending.task.id, pending);
+  }
+
+  private replaceWorker(worker: Worker): void {
+    const idx = this.workers.indexOf(worker);
+    if (idx === -1) return;
+
+    worker.terminate();
+
+    try {
+      const newWorker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
+        type: 'module',
+      });
+      newWorker.onmessage = (event: MessageEvent<EncodeTaskResult & { error?: string }>) => {
+        this.handleWorkerMessage(newWorker, event.data);
+      };
+      newWorker.onerror = (event: ErrorEvent) => {
+        this.handleWorkerError(newWorker, event);
+      };
+      this.workers[idx] = newWorker;
+      this.idleWorkers.push(newWorker);
+    } catch (err) {
+      // new Worker() can fail due to CSP, network errors, or file://
+      // protocol restrictions. Remove the worker slot and continue
+      // with reduced pool size.
+      logger.warn('encoders', 'worker-replace-failed', {
+        error: err instanceof Error ? err.message : String(err),
+        remainingWorkers: this.workers.length - 1,
+      });
+      this.workers.splice(idx, 1);
+    }
+
+    this.processQueue();
   }
 
   private processQueue(): void {
