@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
+import { ALL_LOCALE_OPTIONS } from '@t/i18n-types';
 import type { Component } from 'solid-js';
 
 interface LanguageSelectorProps {
@@ -9,7 +10,7 @@ interface LanguageSelectorProps {
 }
 
 const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
-  const { locale, setLocale, t, supportedLocales } = useLocale();
+  const { settingLocale, setLocale, t } = useLocale();
 
   const handleChange = (event: Event) => {
     const target = event.target as HTMLSelectElement;
@@ -18,7 +19,7 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
 
   return (
     <select
-      value={locale()}
+      value={settingLocale()}
       onChange={handleChange}
       class={
         props.class ??
@@ -28,13 +29,13 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
       aria-live="polite"
       data-testid="language-selector"
     >
-      {supportedLocales.map((loc) => (
+      {ALL_LOCALE_OPTIONS.map((loc) => (
         <option
           value={loc.code}
           class="bg-bg-elevated text-text-secondary"
-          aria-current={locale() === loc.code ? 'true' : undefined}
+          aria-current={settingLocale() === loc.code ? 'true' : undefined}
         >
-          {loc.name}
+          {loc.englishName}
         </option>
       ))}
     </select>

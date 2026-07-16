@@ -3,10 +3,11 @@ import {
   LOCALES,
   type Locale,
   type LocaleInfo,
+  type SettingLocale,
   type TranslationKeys,
   type Translations,
 } from '@t/i18n-types';
-import { detectInitialLocale, updateDocumentLang } from '@utils/format-utils';
+import { detectInitialLocale, detectUserLocale, updateDocumentLang } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import type { Component, JSX } from 'solid-js';
 import { createContext, createEffect, createSignal, Show, useContext } from 'solid-js';
@@ -14,8 +15,12 @@ import { createContext, createEffect, createSignal, Show, useContext } from 'sol
 const LOCALE_STORAGE_KEY = 'dropconvert.locale';
 
 export interface LocaleContextValue {
+  /** The resolved concrete locale (never 'auto'). */
   locale: () => Locale;
-  setLocale: (locale: Locale) => void;
+  /** Set the language setting — 'auto' for browser detection, or a concrete locale. */
+  setLocale: (setting: SettingLocale) => void;
+  /** The raw user choice — may be 'auto' or a concrete locale. */
+  settingLocale: () => SettingLocale;
   t: <K extends keyof TranslationKeys>(
     key: K,
     params?: Record<string, string | number>
@@ -50,12 +55,29 @@ async function loadTranslations(locale: Locale): Promise<Translations> {
   }
 }
 
-function saveLocale(locale: Locale): void {
+function saveLocale(setting: SettingLocale): void {
   try {
-    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+    localStorage.setItem(LOCALE_STORAGE_KEY, setting);
   } catch {
     /* noop */
   }
+}
+
+/**
+ * Resolve the initial SettingLocale from localStorage.
+ * If the stored value is 'auto' (or missing), returns 'auto'.
+ * If a concrete locale is stored, returns that locale.
+ */
+function resolveInitialSetting(storageKey: string): SettingLocale {
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored === 'auto') return 'auto';
+    if (stored && LOCALES.some((l) => l.code === stored)) return stored as Locale;
+  } catch {
+    /* localStorage unavailable */
+  }
+  // No stored preference — browser detection was used, so setting is 'auto'.
+  return 'auto';
 }
 
 export interface LocaleProviderProps {
@@ -66,9 +88,12 @@ export interface LocaleProviderProps {
 const Provider = LocaleContext.Provider;
 
 export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
-  const [locale, setLocaleSignal] = createSignal<Locale>(
-    props.initialLocale ?? detectInitialLocale(LOCALE_STORAGE_KEY)
-  );
+  // Resolve initial setting and concrete locale from localStorage or browser detection.
+  const initialLocale = props.initialLocale ?? detectInitialLocale(LOCALE_STORAGE_KEY);
+  const initialSetting = resolveInitialSetting(LOCALE_STORAGE_KEY);
+
+  const [settingLocale, setSettingLocale] = createSignal<SettingLocale>(initialSetting);
+  const [locale, setLocaleSignal] = createSignal<Locale>(initialLocale);
   const [translations, setTranslations] = createSignal<Translations | null>(null);
 
   // Load translations when locale changes.
@@ -94,9 +119,17 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
     });
   });
 
-  const setLocale = (newLocale: Locale): void => {
-    setLocaleSignal(newLocale);
-    saveLocale(newLocale);
+  const setLocale = (setting: SettingLocale): void => {
+    const resolved =
+      setting === 'auto'
+        ? detectUserLocale(
+            LOCALES.map((l) => l.code),
+            DEFAULT_LOCALE
+          )
+        : setting;
+    setSettingLocale(setting);
+    setLocaleSignal(resolved);
+    saveLocale(setting);
   };
 
   const t = <K extends keyof TranslationKeys>(
@@ -122,6 +155,7 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
   const value: LocaleContextValue = {
     locale,
     setLocale,
+    settingLocale,
     t,
     localeInfo,
     isRTL,

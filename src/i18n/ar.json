@@ -161,5 +161,6 @@
   "result.aria.previewAlt": "معاينة متحركة بتنسيق {format}: {name}",
   "result.aria.sectionLabel": "نتائج التحويل بتنسيق {format}: {name}، {size}",
   "option.aria.tooltipInfo": "معلومات حول {title}",
-  "conversionProgress.aria.label": "تقدم تحويل الفيديو"
+  "conversionProgress.aria.label": "تقدم تحويل الفيديو",
+  "lang.auto": "تلقائي"
 }

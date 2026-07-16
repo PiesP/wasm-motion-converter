@@ -161,5 +161,6 @@
   "result.aria.previewAlt": "{format} animated preview: {name}",
   "result.aria.sectionLabel": "{format} conversion results: {name}, {size}",
   "option.aria.tooltipInfo": "Information about {title}",
-  "conversionProgress.aria.label": "Video conversion progress"
+  "conversionProgress.aria.label": "Video conversion progress",
+  "lang.auto": "Auto"
 }
