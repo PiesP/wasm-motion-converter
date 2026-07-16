@@ -1,11 +1,17 @@
 # Third-Party Licenses
 
-> Auto-generated on 2026-07-15 by `scripts/generate-licenses.ts`.
+> Auto-generated on 2026-07-16 by `scripts/generate-licenses.ts`.
 > Do not edit manually — run `pnpm build` to regenerate.
 
 This project uses the following open-source libraries.
 
 ## Runtime Dependencies
+
+### @piesp/browser-core
+
+- **Version:** 0.1.0
+- **License:** Unknown
+- **Purpose:** Runtime dependency
 
 ### gifenc
 
@@ -36,6 +42,10 @@ This project uses the following open-source libraries.
 - **Purpose:** WebP encoding via WebAssembly (encodeRGB)
 
 ## License Texts
+
+### Unknown (@piesp/browser-core)
+
+See the package repository for full license text.
 
 ### MIT (gifenc, solid-js, wasm-webp)
 
