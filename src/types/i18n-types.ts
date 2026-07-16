@@ -11,6 +11,9 @@
 /** Supported locale identifiers (BCP 47) */
 export type Locale = 'en' | 'ko' | 'ja' | 'zh-CN' | 'es' | 'ar';
 
+/** User-facing language setting — includes 'auto' for browser detection. */
+export type SettingLocale = 'auto' | Locale;
+
 /** Locale metadata */
 export interface LocaleInfo {
   code: Locale;
@@ -31,6 +34,17 @@ export const LOCALES: LocaleInfo[] = [
 
 /** Default locale */
 export const DEFAULT_LOCALE: Locale = 'en';
+
+/** Auto-detect option for LanguageSelector dropdown. */
+export const AUTO_OPTION: LocaleInfo = {
+  code: 'auto' as Locale,
+  name: 'Auto',
+  englishName: 'Auto',
+  dir: 'ltr',
+} as LocaleInfo;
+
+/** All options for the language selector dropdown (auto + all locales). */
+export const ALL_LOCALE_OPTIONS: LocaleInfo[] = [AUTO_OPTION, ...LOCALES];
 
 /** Translation namespace keys */
 export interface TranslationKeys {
@@ -234,6 +248,7 @@ export interface TranslationKeys {
 
   // Language Switcher
   'lang.select': string;
+  'lang.auto': string;
 
   // Option Selector
   'option.aria.tooltipInfo': string;

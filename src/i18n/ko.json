@@ -161,5 +161,6 @@
   "result.aria.previewAlt": "{format} 애니메이션 미리보기: {name}",
   "result.aria.sectionLabel": "{format} 변환 결과: {name}, {size}",
   "option.aria.tooltipInfo": "{title}에 대한 정보",
-  "conversionProgress.aria.label": "비디오 변환 진행 상황"
+  "conversionProgress.aria.label": "비디오 변환 진행 상황",
+  "lang.auto": "자동"
 }

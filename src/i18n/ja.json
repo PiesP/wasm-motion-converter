@@ -161,5 +161,6 @@
   "result.aria.previewAlt": "{format}アニメーションプレビュー: {name}",
   "result.aria.sectionLabel": "{format}変換結果: {name}、{size}",
   "option.aria.tooltipInfo": "{title}について",
-  "conversionProgress.aria.label": "動画変換の進行状況"
+  "conversionProgress.aria.label": "動画変換の進行状況",
+  "lang.auto": "自動"
 }

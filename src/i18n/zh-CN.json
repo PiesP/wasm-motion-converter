@@ -161,5 +161,6 @@
   "result.aria.previewAlt": "{format}动画预览：{name}",
   "result.aria.sectionLabel": "{format}转换结果：{name}，{size}",
   "option.aria.tooltipInfo": "关于{title}的信息",
-  "conversionProgress.aria.label": "视频转换进度"
+  "conversionProgress.aria.label": "视频转换进度",
+  "lang.auto": "自动"
 }
