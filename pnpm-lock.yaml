@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@piesp/browser-core':
-        specifier: file:../packages/core
-        version: file:../packages/core
+        specifier: file:./packages/core
+        version: file:packages/core
       gifenc:
         specifier: ^1.0.3
         version: 1.0.3
@@ -627,8 +627,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@piesp/browser-core@file:../packages/core':
-    resolution: {directory: ../packages/core, type: directory}
+  '@piesp/browser-core@file:packages/core':
+    resolution: {directory: packages/core, type: directory}
 
   '@rolldown/binding-android-arm64@1.1.5':
     resolution: {integrity: sha512-lZg8fqIv2v7FF237bwMgzGZEJvGL79/s5knJ/i6FmsGF4XXlzccZ4jb+TrFIxtSSxFtIpdsgrPZeMk1I9AFcyQ==}
@@ -1906,7 +1906,7 @@ snapshots:
   '@oxc-resolver/binding-win32-x64-msvc@11.21.3':
     optional: true
 
-  '@piesp/browser-core@file:../packages/core': {}
+  '@piesp/browser-core@file:packages/core': {}
 
   '@rolldown/binding-android-arm64@1.1.5':
     optional: true
