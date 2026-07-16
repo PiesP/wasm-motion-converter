@@ -15,6 +15,7 @@
     "pnpm": "11.2.2"
   },
   "scripts": {
+    "preinstall": "test -f packages/core/package.json || (echo '⚠️  Submodule not initialized. Run: git submodule update --init' && exit 1)",
     "dev": "NODE_OPTIONS=\"--no-deprecation\" vite",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
@@ -47,7 +48,7 @@
     "mediabunny": "^1.50.8",
     "solid-js": "1.9.14",
     "wasm-webp": "^0.1.0",
-    "@piesp/browser-core": "file:../packages/core"
+    "@piesp/browser-core": "file:./packages/core"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.4",
