@@ -11,6 +11,10 @@ import {
 import { logger } from '@utils/logger';
 import { isInTuple } from '@utils/type-utils';
 import { createSignal } from 'solid-js';
+import {
+  CONVERSION_SETTINGS_SCHEMA_VERSION,
+  CONVERSION_SETTINGS_STORAGE_KEY,
+} from './conversion-settings-constants';
 
 export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   format: 'gif',
@@ -23,50 +27,84 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   smartFrameSkip: 'off',
 };
 
-const SETTINGS_STORAGE_KEY = 'conversion-settings';
+// ── Migration chain ─────────────────────────────────────────────────────
+
+/**
+ * Ordered list of migration functions. Each function receives settings from
+ * the previous version and must return settings for the next version.
+ *
+ * To add a new migration (e.g., v1 → v2):
+ * 1. Add a new function: `(s) => ({ ...s, newField: defaultValue })`
+ * 2. Bump CONVERSION_SETTINGS_SCHEMA_VERSION in conversion-settings-constants.ts
+ */
+const MIGRATIONS: ReadonlyArray<(settings: Record<string, unknown>) => Record<string, unknown>> = [
+  // v0 → v1: Initial schema versioning (no field changes)
+  (_settings) => _settings,
+];
+
+// ── Load ─────────────────────────────────────────────────────────────────
+
+function parseStoredSettings(raw: Record<string, unknown>): ConversionSettings | null {
+  if (
+    typeof raw.format === 'string' &&
+    isInTuple(raw.format, CONVERSION_FORMATS) &&
+    typeof raw.quality === 'string' &&
+    isInTuple(raw.quality, CONVERSION_QUALITIES) &&
+    typeof raw.scale === 'number' &&
+    isInTuple(raw.scale, CONVERSION_SCALES) &&
+    typeof raw.smartFrameSkip === 'string' &&
+    isInTuple(raw.smartFrameSkip, SMART_FRAME_SKIP_MODES)
+  ) {
+    const trimStart = typeof raw.trimStart === 'number' && raw.trimStart >= 0 ? raw.trimStart : 0;
+    const trimEnd = typeof raw.trimEnd === 'number' && raw.trimEnd >= 0 ? raw.trimEnd : 0;
+    const validTrim =
+      trimStart === 0 && trimEnd === 0 ? true : trimStart > 0 && trimEnd > 0 && trimStart < trimEnd;
+    return {
+      ...DEFAULT_CONVERSION_SETTINGS,
+      format: raw.format,
+      quality: raw.quality,
+      scale: raw.scale,
+      trimStart: validTrim ? trimStart : 0,
+      trimEnd: validTrim ? trimEnd : 0,
+      smartFrameSkip: raw.smartFrameSkip,
+    };
+  }
+  return null;
+}
 
 const getInitialConversionSettings = (): ConversionSettings => {
   try {
-    const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (stored) {
-      const parsed: unknown = JSON.parse(stored);
-      // Type guard: ensure parsed is a non-null object before accessing properties
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        return DEFAULT_CONVERSION_SETTINGS;
-      }
-      const obj = parsed as Record<string, unknown>;
-      if (
-        typeof obj.format === 'string' &&
-        isInTuple(obj.format, CONVERSION_FORMATS) &&
-        typeof obj.quality === 'string' &&
-        isInTuple(obj.quality, CONVERSION_QUALITIES) &&
-        typeof obj.scale === 'number' &&
-        isInTuple(obj.scale, CONVERSION_SCALES) &&
-        typeof obj.smartFrameSkip === 'string' &&
-        isInTuple(obj.smartFrameSkip, SMART_FRAME_SKIP_MODES)
-      ) {
-        const trimStart =
-          typeof obj.trimStart === 'number' && obj.trimStart >= 0 ? obj.trimStart : 0;
-        const trimEnd = typeof obj.trimEnd === 'number' && obj.trimEnd >= 0 ? obj.trimEnd : 0;
-        // Validate trim range: trimStart must be strictly before trimEnd.
-        // trimEnd=0 is the sentinel for "full duration", so (0,0) is valid.
-        // If the stored trim is invalid, only reset trim — preserve the user's
-        // format/quality/scale/smartFrameSkip choices.
-        const validTrim =
-          trimStart === 0 && trimEnd === 0
-            ? true
-            : trimStart > 0 && trimEnd > 0 && trimStart < trimEnd;
-        return {
-          ...DEFAULT_CONVERSION_SETTINGS,
-          format: obj.format,
-          quality: obj.quality,
-          scale: obj.scale,
-          trimStart: validTrim ? trimStart : 0,
-          trimEnd: validTrim ? trimEnd : 0,
-          smartFrameSkip: obj.smartFrameSkip,
-        };
+    const stored = localStorage.getItem(CONVERSION_SETTINGS_STORAGE_KEY);
+    if (!stored) return DEFAULT_CONVERSION_SETTINGS;
+
+    const parsed: unknown = JSON.parse(stored);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return DEFAULT_CONVERSION_SETTINGS;
+    }
+
+    const obj = parsed as Record<string, unknown>;
+    const storedVersion = typeof obj.__schemaVersion === 'number' ? obj.__schemaVersion : 0;
+
+    // Run migration chain if stored version is behind
+    let migrated: Record<string, unknown> = { ...obj };
+    for (let v = storedVersion; v < CONVERSION_SETTINGS_SCHEMA_VERSION; v++) {
+      const migrator = MIGRATIONS[v];
+      if (migrator) {
+        migrated = migrator(migrated);
       }
     }
+
+    const settings = parseStoredSettings(migrated);
+    if (!settings) return DEFAULT_CONVERSION_SETTINGS;
+
+    // If we ran migrations, persist the updated settings asynchronously
+    if (storedVersion < CONVERSION_SETTINGS_SCHEMA_VERSION) {
+      queueMicrotask(() => {
+        saveConversionSettings(settings);
+      });
+    }
+
+    return settings;
   } catch (error) {
     logger.warn('general', 'Failed to load conversion settings from localStorage', { error });
   }
@@ -74,11 +112,14 @@ const getInitialConversionSettings = (): ConversionSettings => {
   return DEFAULT_CONVERSION_SETTINGS;
 };
 
+// ── Save ─────────────────────────────────────────────────────────────────
+
 export const saveConversionSettings = (settings: ConversionSettings): void => {
   try {
     localStorage.setItem(
-      SETTINGS_STORAGE_KEY,
+      CONVERSION_SETTINGS_STORAGE_KEY,
       JSON.stringify({
+        __schemaVersion: CONVERSION_SETTINGS_SCHEMA_VERSION,
         format: settings.format,
         quality: settings.quality,
         scale: settings.scale,
