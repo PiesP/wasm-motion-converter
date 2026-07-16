@@ -13,16 +13,7 @@ import type { Locale } from '@t/i18n-types';
 import { DEFAULT_LOCALE, LOCALES } from '@t/i18n-types';
 import { BYTES_PER_KB, LOCALE_STORAGE_KEY } from './constants';
 
-// ============================================================================
-// ID Generation
-// ============================================================================
-
-/**
- * Generate a collision-resistant UUID using `crypto.randomUUID()`.
- */
-export function createId(): string {
-  return crypto.randomUUID();
-}
+export { createId } from '@piesp/browser-core/util';
 
 // ============================================================================
 // Duration Formatting
