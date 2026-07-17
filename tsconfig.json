@@ -44,13 +44,5 @@
     "public/service-worker.js",
     "index.html"
   ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "tmp/**",
-    ".vite-sw-temp/**",
-    "**/*.test.ts",
-    "**/*.spec.ts",
-    ".vscode"
-  ]
+  "exclude": ["node_modules", "dist", "tmp/**", ".vite-sw-temp/**", ".vscode", "test"]
 }

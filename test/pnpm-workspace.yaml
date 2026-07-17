@@ -1,0 +1,3 @@
+autoInstallPeers: true
+strictPeerDependencies: false
+preferOffline: true
