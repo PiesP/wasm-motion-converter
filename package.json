@@ -15,7 +15,7 @@
     "pnpm": "11.2.2"
   },
   "scripts": {
-    "preinstall": "test -f packages/core/package.json || (echo '⚠️  Submodule not initialized. Run: git submodule update --init' && exit 1)",
+    "preinstall": "test -f packages/core/package.json || { echo '⚠️  Submodule not initialized. Run: git submodule update --init'; exit 1; }",
     "dev": "NODE_OPTIONS=\"--no-deprecation\" vite",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
