@@ -92,7 +92,7 @@ describe('conversion-settings-store', () => {
 
     expect(window.localStorage.setItem).toHaveBeenCalledWith(
       STORAGE_KEY,
-      JSON.stringify(settings),
+      JSON.stringify({ __schemaVersion: 1, ...settings }),
     );
   });
 
@@ -332,6 +332,7 @@ describe('conversion-settings-store', () => {
     const savedJson = localStorageStore[STORAGE_KEY]!;
     const parsed = JSON.parse(savedJson);
     expect(parsed).toEqual({
+      __schemaVersion: 1,
       format: 'webp',
       quality: 'high',
       scale: 1.0,
@@ -341,6 +342,7 @@ describe('conversion-settings-store', () => {
     });
     // Ensure no extra keys leaked
     expect(Object.keys(parsed).sort()).toEqual([
+      '__schemaVersion',
       'format',
       'quality',
       'scale',
