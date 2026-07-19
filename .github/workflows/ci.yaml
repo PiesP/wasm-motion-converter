@@ -1,9 +1,13 @@
-name: 🏗️ CI
++name: 🏗️ CI
 
-# Responsibility: Required verification for pull requests and merge queue
-# - Install dependencies with pnpm
-# - Run the repository quality gate
+# Responsibility: fast, independent verification for pull requests and merge queue
+# - Run static quality checks
+# - Run unit tests with coverage thresholds
 # - Build the production app
+# - Check source duplication
+#
+# Expensive mutation testing lives in deep-checks.yaml so PR feedback is not
+# blocked by a long-running, resource-heavy analysis.
 #
 # Triggered on: Push/PR to master + merge queue
 
@@ -29,10 +33,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: ✅ Verify
+  quality:
+    name: ✅ Quality
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -51,13 +55,61 @@ jobs:
       - name: 📦 Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: ✅ Run quality gate and build
-        run: pnpm verify
+      - name: ✅ Run quality gate
+        run: pnpm quality:ci
 
-      - name: 🧪 Run unit tests
-        run: pnpm test
+  unit:
+    name: 🧪 Unit + coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: true
 
-      - name: 📊 Upload build artifacts
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: 📦 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🧪 Run unit tests and coverage thresholds
+        run: pnpm test:cov
+
+  build:
+    name: 🏗️ Build app
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: true
+
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: 📦 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🏗️ Build app
+        run: pnpm build:ci
+
+      - name: 📊 Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         with:
@@ -68,8 +120,7 @@ jobs:
           compression-level: 9
 
   duplication:
-    name: 🔍 Duplication Check
-    needs: verify
+    name: 🔍 Duplication
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -79,9 +130,9 @@ jobs:
           submodules: true
 
       - name: 🔧 Install nose
-        run: |
-          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/corca-ai/nose/releases/latest/download/nose-cli-installer.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/install-nose.sh
 
-      - name: 🔍 Run duplication check
+      - name: 🔎 Check for new duplication
         run: nose query src --baseline .nose-baseline.json --fail-on new
