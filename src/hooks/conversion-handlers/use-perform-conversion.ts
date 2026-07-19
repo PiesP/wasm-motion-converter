@@ -282,6 +282,7 @@ function createProgressCallback(
   return (progress) => {
     if (!isActive()) return;
     runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
+    runtime.updateMemoryUsage(progress.memoryMB);
     setConversionFps(progress.fps ?? undefined);
     setConversionElapsedMs(progress.elapsedMs ?? undefined);
     if (progress.currentFrame != null) setCurrentFrame(progress.currentFrame);
