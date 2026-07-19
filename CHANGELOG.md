@@ -8,6 +8,12 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-07-19
+
+### Fixed
+
+- **Mutation gate**: Updated the Stryker command for the installed 9.6.1 CLI and disabled in-place mutation to keep CI worktrees clean.
+
 ## [0.1.2] - 2026-07-19
 
 ### Fixed
