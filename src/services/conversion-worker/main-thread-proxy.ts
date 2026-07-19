@@ -38,6 +38,14 @@ export class WorkerTimeoutError extends Error {
   }
 }
 
+/** A worker reached its conservative memory budget and must not be retried. */
+export class WorkerMemoryLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkerMemoryLimitError';
+  }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────
 
 export type MainThreadPipelineCallback = (progress: ConversionProgress) => void;
@@ -158,6 +166,8 @@ export async function runPipelineViaWorker(
 
           if (response.code === 'CANCELLED') {
             reject(new DOMException('Cancelled', 'AbortError'));
+          } else if (response.code === 'OUT_OF_MEMORY') {
+            reject(new WorkerMemoryLimitError(response.message));
           } else {
             reject(new Error(`Worker error: ${response.message}`));
           }
@@ -237,7 +247,7 @@ export async function runPipelineWithFallback(
     );
   } catch (workerError) {
     // If the error is a cancellation, don't fall back — propagate it
-    if (isCancellationError(workerError)) {
+    if (isCancellationError(workerError) || workerError instanceof WorkerMemoryLimitError) {
       throw workerError;
     }
 

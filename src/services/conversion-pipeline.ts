@@ -667,6 +667,8 @@ async function _runPipelineInner(
       outputFrames: estimatedOutputFrames,
       elapsedMs: totalElapsedMs,
     });
+    // Deliver the terminal state before cleanup cancels any trailing throttle timer.
+    throttled.flush();
 
     profiler?.endPhase('assembling');
 
