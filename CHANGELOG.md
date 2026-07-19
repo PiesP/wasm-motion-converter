@@ -8,6 +8,12 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-07-19
+
+### Fixed
+
+- **Mutation gate**: Pinned TypeScript 6.0.3, restoring the TypeScript API required by Stryker 9.6.1.
+
 ## [0.1.3] - 2026-07-19
 
 ### Fixed
