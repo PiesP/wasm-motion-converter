@@ -27,7 +27,7 @@
     "clear-text",
     "html"
   ],
-  "coverageAnalysis": "all",
+  "coverageAnalysis": "perTest",
   "ignoreStatic": true,
   "thresholds": {
     "high": 80,
