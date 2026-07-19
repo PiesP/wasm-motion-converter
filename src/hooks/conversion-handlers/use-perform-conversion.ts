@@ -50,18 +50,6 @@ import { handleFileSelected } from './use-handle-file-selected';
 
 const startViewTransition = getStartViewTransition();
 
-export interface ConversionOptions {
-  format: ConversionFormat;
-  quality: ConversionQuality;
-  scale: ConversionScale;
-  trimStart: number;
-  trimEnd: number;
-  /** Force frame decimation (overrides auto-decimation) */
-  forceDecimation?: number;
-  /** Smart frame skip mode — similarity-based frame deduplication */
-  smartFrameSkip?: SmartFrameSkipMode;
-}
-
 /**
  * Module-level reference to the AbortController for the currently active
  * conversion. Set by performConversion and read by handleCancelConversion

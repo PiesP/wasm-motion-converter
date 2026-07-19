@@ -29,8 +29,7 @@
       "@utils/*": ["./src/utils/*"],
       "@stores/*": ["./src/stores/*"],
       "@hooks/*": ["./src/hooks/*"],
-      "@t/*": ["./src/types/*"],
-      "@i18n": ["./src/i18n/index.ts"]
+      "@t/*": ["./src/types/*"]
     },
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
