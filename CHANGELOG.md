@@ -8,6 +8,12 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-19
+
+### Fixed
+
+- **CI/CD**: Restored valid workflow metadata so GitHub Actions executes release and verification jobs.
+
 ## [0.1.1] - 2026-07-19
 
 ### Added
