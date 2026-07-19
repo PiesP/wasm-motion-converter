@@ -28,6 +28,7 @@
     "html"
   ],
   "coverageAnalysis": "all",
+  "ignoreStatic": true,
   "thresholds": {
     "high": 80,
     "low": 60,
