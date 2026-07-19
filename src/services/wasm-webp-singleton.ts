@@ -68,12 +68,3 @@ export async function encodeRGBReuse(
   const q = Math.min(100, Math.max(0, quality));
   return module.encodeRGB(rgb, width, height, q);
 }
-
-/**
- * Release the cached WASM module and free its linear memory (~16MB+).
- * Call after conversion completes to reduce idle memory usage.
- */
-export function releaseWasmModule(): void {
-  cachedModule = null;
-  initPromise = null;
-}

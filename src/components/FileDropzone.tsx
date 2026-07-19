@@ -20,6 +20,7 @@ interface FileDropzoneProps {
   showElapsedTime?: boolean | undefined;
   startTime?: number | undefined;
   estimatedSecondsRemaining?: (number | null) | undefined;
+  memoryUsage?: (string | null) | undefined;
   subPhaseLabel?: string | undefined;
   previewUrl?: (string | null) | undefined;
   phase?: ('demuxing' | 'decoding' | 'encoding' | 'assembling') | undefined;
@@ -42,6 +43,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     'showElapsedTime',
     'startTime',
     'estimatedSecondsRemaining',
+    'memoryUsage',
     'subPhaseLabel',
     'previewUrl',
     'phase',
@@ -205,6 +207,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 showElapsedTime={local.showElapsedTime}
                 startTime={local.startTime}
                 estimatedSecondsRemaining={local.estimatedSecondsRemaining}
+                memoryUsage={local.memoryUsage}
                 layout="vertical"
                 phase={local.phase}
                 outputFrames={local.outputFrames}

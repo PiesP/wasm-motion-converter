@@ -94,6 +94,7 @@ const App: Component = () => {
     setConversionStartTime,
     setEstimatedSecondsRemaining,
     setMemoryWarning,
+    setMemoryUsageText,
     setConversionPhase,
     t,
   });
@@ -115,10 +116,7 @@ const App: Component = () => {
     }
   });
 
-  // Track whether we're converting to show memory usage text.
-  // Actual polling is handled by the conversion runtime controller's
-  // startMemoryMonitoring() to avoid redundant GC pressure from
-  // performance.memory reads. We only display the value when it changes.
+  // Clear conversion-only memory telemetry outside an active conversion.
   createEffect(() => {
     if (appState() !== 'converting') {
       setMemoryUsageText(null);
@@ -337,7 +335,10 @@ const App: Component = () => {
               <FileDropzone
                 disabled={isBusy()}
                 estimatedSecondsRemaining={dropzoneStatus()?.estimatedSecondsRemaining}
-                onCancel={handleCancelConversion}
+                memoryUsage={dropzoneStatus()?.memoryUsage}
+                onCancel={
+                  appState() === 'analyzing' ? handleCancelAnalysis : handleCancelConversion
+                }
                 onClear={handleReset}
                 onFileSelected={handleFileSelected}
                 previewUrl={videoPreviewUrl()}
@@ -352,22 +353,6 @@ const App: Component = () => {
                 fileSize={inputFile()?.size}
                 metadataSummary={metadataSummary()}
               />
-
-              {/* Analyzing state: lightweight inline progress (not the heavy ConversionProgress).
-                  The dropzone card already shows an inline status via dropzoneStatus.
-                  This only shows a cancel link for long-running metadata extraction. */}
-              <Show when={appState() === 'analyzing'}>
-                <div class="flex items-center justify-between rounded-lg border border-border-standard bg-bg-elevated px-4 py-2">
-                  <span class="text-sm text-text-secondary">{t('progress.readingMetadata')}</span>
-                  <button
-                    type="button"
-                    class="text-sm text-text-tertiary hover:text-text-secondary transition-colors cursor-pointer"
-                    onClick={handleCancelAnalysis}
-                  >
-                    {t('dropzone.cancel')}
-                  </button>
-                </div>
-              </Show>
 
               <Show when={appState() === 'cancelling'}>
                 <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-bg-elevated" />}>

@@ -18,8 +18,10 @@ import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 import {
+  BYTES_PER_MB,
   DEFAULT_FPS,
   GIF_TARGET_FPS,
+  MEMORY_CRITICAL_RATIO,
   PROGRESS_PHASE,
   PROGRESS_PHASE_RANGES,
   WEBP_TARGET_FPS,
@@ -107,20 +109,25 @@ export async function runWorkerPipeline(
 
   let output: ArrayBuffer | undefined;
 
-  // ── Memory sampling (H3 fix) ──
-  // Workers lack performance.memory, so we estimate from buffer pool usage.
-  let lastMemSampleTime = 0;
-  const sampleMemoryMB = (): number => {
-    const now = performance.now();
-    if (now - lastMemSampleTime >= 1000) {
-      lastMemSampleTime = now;
+  // ── Memory sampling and guard (H3 fix) ──
+  // Workers do not expose performance.memory. Include the transferred input,
+  // pooled frame buffers, and any known output buffer in a conservative estimate.
+  const sampleMemoryMB = (additionalBytes = 0): number => {
+    const estimatedBytes =
+      inputBuffer.byteLength + globalBufferPool.totalPooledMemory + additionalBytes;
+    return Math.ceil(estimatedBytes / BYTES_PER_MB);
+  };
+  const assertMemoryBudget = (additionalBytes = 0): number => {
+    const memoryMB = sampleMemoryMB(additionalBytes);
+    if (memoryMB >= maxMemoryMB * MEMORY_CRITICAL_RATIO) {
+      throw new Error(`Worker memory estimate reached ${memoryMB}MB of ${maxMemoryMB}MB limit`);
     }
-    // Track buffer pool memory + estimate overhead (approximate)
-    const poolBytes = globalBufferPool.totalPooledMemory;
-    return Math.round(poolBytes / (1024 * 1024));
+    return memoryMB;
   };
 
   try {
+    assertMemoryBudget();
+
     // ── Pre-computed metadata (avoids redundant extractVideoMetadata in worker) ──
     // When the main thread has already extracted metadata during file selection,
     // reuse it here to skip the expensive extractVideoMetadata → Input.create →
@@ -160,6 +167,7 @@ export async function runWorkerPipeline(
         const now = performance.now();
         if (now - progressState.lastPostTime >= 100) {
           progressState.lastPostTime = now;
+          const memoryMB = assertMemoryBudget();
           const demuxPct = Math.min(
             DEMUX_MAX,
             Math.round((packetsExtracted / Math.max(1, estimatedTotalFrames)) * DEMUX_MAX)
@@ -171,7 +179,7 @@ export async function runWorkerPipeline(
             percent: demuxPct,
             fps: 0,
             etaSeconds: 0,
-            memoryMB: sampleMemoryMB(),
+            memoryMB,
             currentFrame: packetsExtracted,
             totalFrames: estimatedTotalFrames,
           });
@@ -209,6 +217,7 @@ export async function runWorkerPipeline(
       // Throttle progress posts to ~100ms
       if (now - progressState.lastPostTime >= 100) {
         progressState.lastPostTime = now;
+        const memoryMB = assertMemoryBudget();
         const decodePct =
           estimatedOutputFrames > 0
             ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)
@@ -223,7 +232,7 @@ export async function runWorkerPipeline(
             progressState.fpsTracker.current > 0
               ? Math.round((estimatedOutputFrames - frameIdx) / progressState.fpsTracker.current)
               : 0,
-          memoryMB: sampleMemoryMB(),
+          memoryMB,
           currentFrame: frameIdx,
           totalFrames: estimatedOutputFrames,
           outputFrames: estimatedOutputFrames,
@@ -261,6 +270,7 @@ export async function runWorkerPipeline(
             const now = performance.now();
             if (now - progressState.lastPostTime >= 100) {
               progressState.lastPostTime = now;
+              const memoryMB = assertMemoryBudget();
               const encodePct =
                 estimatedOutputFrames > 0
                   ? Math.round((frameIdx / estimatedOutputFrames) * ENCODE_RANGE)
@@ -277,7 +287,7 @@ export async function runWorkerPipeline(
                         (estimatedOutputFrames - frameIdx) / progressState.fpsTracker.current
                       )
                     : 0,
-                memoryMB: sampleMemoryMB(),
+                memoryMB,
                 currentFrame: frameIdx,
                 totalFrames: estimatedOutputFrames,
                 outputFrames: estimatedOutputFrames,
@@ -329,6 +339,7 @@ export async function runWorkerPipeline(
             const now = performance.now();
             if (now - progressState.lastPostTime >= 100) {
               progressState.lastPostTime = now;
+              const memoryMB = assertMemoryBudget();
               const encodePct =
                 estimatedOutputFrames > 0
                   ? Math.round(((p.currentFrame ?? 0) / estimatedOutputFrames) * ENCODE_RANGE)
@@ -345,7 +356,7 @@ export async function runWorkerPipeline(
                         (estimatedOutputFrames - p.currentFrame) / progressState.fpsTracker.current
                       )
                     : 0,
-                memoryMB: sampleMemoryMB(),
+                memoryMB,
                 currentFrame: p.currentFrame ?? 0,
                 totalFrames: estimatedOutputFrames,
                 outputFrames: estimatedOutputFrames,
@@ -367,6 +378,7 @@ export async function runWorkerPipeline(
     }
 
     const totalElapsedMs = Math.round(performance.now() - pipelineStart);
+    const memoryMB = assertMemoryBudget(output.byteLength);
     postMessage({
       type: 'progress',
       requestId: '',
@@ -374,7 +386,7 @@ export async function runWorkerPipeline(
       percent: 100,
       fps: 0,
       etaSeconds: 0,
-      memoryMB: sampleMemoryMB(),
+      memoryMB,
       currentFrame: demuxResult.totalFrames,
       totalFrames: demuxResult.totalFrames,
       outputFrames: estimatedOutputFrames,

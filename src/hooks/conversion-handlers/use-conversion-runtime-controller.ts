@@ -13,6 +13,7 @@ interface ConversionRuntimeControllerDeps {
   setConversionStartTime: Setter<number>;
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
+  setMemoryUsageText: Setter<string | null>;
   setConversionPhase?: Setter<import('@t/conversion-types').ProgressPhase> | undefined;
   /** Optional callback to abort the active conversion pipeline on teardown. */
   abortActiveConversion?: (() => void) | undefined;
@@ -70,6 +71,10 @@ export class ConversionRuntimeController {
   /** Update the status message shown in the UI during conversion. */
   updateStatus(message: string): void {
     this.progress.updateStatus(message);
+  }
+
+  updateMemoryUsage(memoryMB: number): void {
+    this.progress.updateMemoryUsage(memoryMB);
   }
 
   updateProgress(

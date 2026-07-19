@@ -20,6 +20,7 @@ export interface ProgressStateDeps {
   setConversionStartTime: Setter<number>;
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
+  setMemoryUsageText: Setter<string | null>;
   setConversionPhase?: Setter<ProgressPhase> | undefined;
 }
 
@@ -211,6 +212,14 @@ export class ProgressState {
     });
   }
 
+  updateMemoryUsage(memoryMB: number): void {
+    if (!Number.isFinite(memoryMB) || memoryMB <= 0) {
+      this.deps.setMemoryUsageText(null);
+      return;
+    }
+    this.deps.setMemoryUsageText(`${Math.round(memoryMB)} MB`);
+  }
+
   resetProgressState(): void {
     setConversionProgress(0);
     setConversionStatusMessage('');
@@ -221,6 +230,7 @@ export class ProgressState {
     this.deps.setConversionStartTime(0);
     this.deps.setEstimatedSecondsRemaining(null);
     this.deps.setMemoryWarning(false);
+    this.deps.setMemoryUsageText(null);
     this.etaCalculator.reset();
     this.lastEtaUpdate = 0;
     this.currentStartTimeMs = 0;
@@ -242,6 +252,7 @@ export class ProgressState {
     this.deps.setEstimatedSecondsRemaining(null);
     this.lastEtaUpdate = 0;
     this.deps.setMemoryWarning(false);
+    this.deps.setMemoryUsageText(null);
 
     this.lastProgressValue = 0;
     this.lastStatusMessage = '';

@@ -22,6 +22,7 @@ interface ConversionHandlersOptions {
   setConversionStartTime: Setter<number>;
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
+  setMemoryUsageText: Setter<string | null>;
   setConversionPhase?: Setter<ProgressPhase>;
   t: TFunction;
 }
@@ -39,6 +40,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
     setConversionStartTime: options.setConversionStartTime,
     setEstimatedSecondsRemaining: options.setEstimatedSecondsRemaining,
     setMemoryWarning: options.setMemoryWarning,
+    setMemoryUsageText: options.setMemoryUsageText,
     setConversionPhase: options.setConversionPhase,
     abortActiveConversion,
   });

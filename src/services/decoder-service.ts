@@ -136,6 +136,15 @@ export async function decodeFrames(
     (mode !== 'batch' &&
       (typeof onFrameAvailable === 'function' || typeof onVideoFrameAvailable === 'function'));
 
+  if (
+    streaming &&
+    typeof onFrameAvailable !== 'function' &&
+    typeof onVideoFrameAvailable !== 'function'
+  ) {
+    throw new Error('Streaming decode requires an onFrameAvailable callback');
+  }
+  const frameAvailable = onFrameAvailable;
+
   // Warn if onFrameAvailable is provided but mode is explicitly 'batch'
   if (mode === 'batch' && typeof onFrameAvailable === 'function') {
     logger.warn(
@@ -366,7 +375,10 @@ export async function decodeFrames(
               // Streaming mode: pass frame to callback for immediate processing.
               // Include smart-skip carryover to preserve total playback time.
               keptFrameCount++;
-              await onFrameAvailable!(rgbData, totalDuration + smartCarryoverMs, frameNum);
+              if (!frameAvailable) {
+                throw new Error('Streaming decode requires an onFrameAvailable callback');
+              }
+              await frameAvailable(rgbData, totalDuration + smartCarryoverMs, frameNum);
               smartCarryoverMs = 0;
               // Note: onFrameAvailable is responsible for releasing rgbData
             } else {

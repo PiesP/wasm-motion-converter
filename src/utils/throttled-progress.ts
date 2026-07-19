@@ -16,7 +16,7 @@ import { PROGRESS_THROTTLE_MS } from './constants';
 export function createThrottledProgress(
   onProgress: ProgressCallback,
   minIntervalMs = PROGRESS_THROTTLE_MS
-): { callback: ProgressCallback; cleanup: () => void } {
+): { callback: ProgressCallback; flush: () => void; cleanup: () => void } {
   let lastCallTime = 0;
   let pendingCall: (() => void) | null = null;
   let scheduled = false;
@@ -25,6 +25,9 @@ export function createThrottledProgress(
 
   const flush = () => {
     if (disposed) return;
+    if (timerId !== null) {
+      clearTimeout(timerId);
+    }
     scheduled = false;
     timerId = null;
     if (pendingCall) {
@@ -64,5 +67,5 @@ export function createThrottledProgress(
     }
   };
 
-  return { callback, cleanup };
+  return { callback, flush, cleanup };
 }

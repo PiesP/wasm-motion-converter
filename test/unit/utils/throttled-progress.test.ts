@@ -141,6 +141,24 @@ describe('createThrottledProgress', () => {
     expect(onProgress).toHaveBeenCalledTimes(1);
   });
 
+  it('flushes a pending update immediately', () => {
+    const onProgress = vi.fn();
+    const { callback, flush, cleanup } = createThrottledProgress(onProgress, 100);
+
+    vi.advanceTimersByTime(100);
+    callback(makeProgress({ progress: 10 }));
+    callback(makeProgress({ progress: 100 }));
+    expect(onProgress).toHaveBeenCalledTimes(1);
+
+    flush();
+
+    expect(onProgress).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ progress: 100 })
+    );
+    cleanup();
+  });
+
   // ── Disposed prevents further calls ────────────────────────
 
   it('callback does nothing after cleanup is called', () => {
