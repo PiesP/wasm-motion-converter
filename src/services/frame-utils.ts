@@ -267,7 +267,7 @@ async function copyFrameCanvas(
     try {
       ctx.drawImage(bitmap, 0, 0);
       const imageData = ctx.getImageData(0, 0, width, height);
-      return convertRGBAToRGB(new Uint8Array(imageData.data), width, height, 'RGBA');
+      return convertImageDataToRGB(imageData, width, height);
     } finally {
       bitmap.close();
     }
@@ -288,7 +288,18 @@ async function copyFrameCanvas(
   );
 
   const imageData = ctx.getImageData(0, 0, width, height);
-  return convertRGBAToRGB(new Uint8Array(imageData.data), width, height, 'RGBA');
+  return convertImageDataToRGB(imageData, width, height);
+}
+
+function convertImageDataToRGB(imageData: ImageData, width: number, height: number): Uint8Array {
+  // Create a view over ImageData's bytes. Constructing Uint8Array(imageData.data)
+  // would copy the entire RGBA frame before the RGB conversion starts.
+  const rgba = new Uint8Array(
+    imageData.data.buffer as ArrayBuffer,
+    imageData.data.byteOffset,
+    imageData.data.byteLength
+  );
+  return convertRGBAToRGB(rgba, width, height, 'RGBA');
 }
 
 /**
@@ -311,13 +322,22 @@ export function convertRGBAToRGB(
   pool?: BufferPool
 ): Uint8Array {
   const pixelCount = width * height;
-  const dst = (pool ?? globalBufferPool).acquire(pixelCount * 3);
+  const targetPool = pool ?? globalBufferPool;
+  const dst = targetPool.acquire(pixelCount * 3);
 
-  // Safely create Uint32Array view — the src buffer must have at least 4N bytes.
-  // If the buffer is too small, fall back to per-byte iteration (slower but safe).
+  // The source view itself must contain the complete RGBA payload. Checking the
+  // underlying ArrayBuffer would incorrectly allow reads past a subarray's end.
   const needsBytes = pixelCount * 4;
-  const availableBytes = src.buffer.byteLength - src.byteOffset;
-  if (availableBytes >= needsBytes) {
+  if (src.byteLength < needsBytes) {
+    targetPool.release(dst);
+    throw new RangeError(
+      `RGBA source buffer is too small: expected ${needsBytes} bytes, got ${src.byteLength}`
+    );
+  }
+
+  // Uint32Array requires a 4-byte-aligned byteOffset. Unaligned views are
+  // valid input, so use the byte-wise path for them instead of throwing.
+  if (needsBytes > 0 && src.byteOffset % Uint32Array.BYTES_PER_ELEMENT === 0) {
     // Fast path: 4-byte-at-a-time Uint32 reads
     const src32 = new Uint32Array(src.buffer, src.byteOffset, pixelCount);
     if (format === 'RGBA' || format === 'RGBX') {
@@ -340,7 +360,7 @@ export function convertRGBAToRGB(
       }
     }
   } else {
-    // Fallback: per-byte copy when buffer is too small for Uint32Array view
+    // Fallback: per-byte copy for an unaligned source view.
     if (format === 'RGBA' || format === 'RGBX') {
       for (let i = 0; i < pixelCount; i++) {
         const srcIdx = i * 4;

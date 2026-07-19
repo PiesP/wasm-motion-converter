@@ -18,6 +18,7 @@
 
 import { WORKER_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
+import { globalBufferPool } from './buffer-pool';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -325,6 +326,12 @@ export class WebpWorkerPool {
       // postMessage threw synchronously — clean up and reject
       clearTimeout(timeoutHandle);
       this.taskTimeouts.delete(pending.task.id);
+      // The pool owns task buffers once encode() is called. If transfer failed
+      // before detaching the buffer, return it so a failed submission cannot
+      // strand a frame allocation.
+      if (rgbData.byteLength > 0) {
+        globalBufferPool.release(rgbData);
+      }
       pending.reject(err instanceof Error ? err : new Error(String(err)));
       this.releaseWorker(worker);
       return;
@@ -363,6 +370,9 @@ export class WebpWorkerPool {
         remainingWorkers: this.workers.length - 1,
       });
       this.workers.splice(idx, 1);
+      if (this.workers.length === 0) {
+        this.rejectQueuedTasks(new Error('All WebP workers failed'));
+      }
     }
 
     this.processQueue();
@@ -374,6 +384,13 @@ export class WebpWorkerPool {
       const pending = this.queue.shift()!;
       this.dispatch(worker, pending);
     }
+  }
+
+  private rejectQueuedTasks(error: Error): void {
+    for (const pending of this.queue) {
+      pending.reject(error);
+    }
+    this.queue.length = 0;
   }
 
   /**

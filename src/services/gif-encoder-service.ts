@@ -193,6 +193,9 @@ export async function encodeGif(
       indexed = lastIndexedData;
     } else {
       indexed = applyPalette(rgbData, pal, 'rgb565');
+      if (lastIndexedData && lastIndexedData !== indexed) {
+        globalBufferPool.release(lastIndexedData);
+      }
       lastQuantizedData = rgbData;
       lastIndexedData = indexed;
     }
@@ -283,26 +286,35 @@ export async function encodeGif(
             bayerDitherRGB(rgbData, w, h, ditherStrength);
           }
 
-          // Convert RGB → RGBA for gifenc compatibility (pooled)
-          const rgba = convertRGBToRGBA(rgbData, w, h);
-          // Release the RGB buffer back to pool immediately
-          globalBufferPool.release(rgbData);
+          let rgbReleased = false;
+          let rgba: Uint8Array | null = null;
+          try {
+            // Convert RGB → RGBA for gifenc compatibility (pooled).
+            rgba = convertRGBToRGBA(rgbData, w, h);
+            // The encoder now owns the RGBA buffer; the source RGB buffer is no
+            // longer needed after conversion.
+            globalBufferPool.release(rgbData);
+            rgbReleased = true;
 
-          // Quantize: compute global palette from first frame, reuse for subsequent
-          if (encodeIdx === 0) {
-            globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
-          }
+            // Quantize: compute global palette from first frame, reuse for subsequent
+            if (encodeIdx === 0) {
+              globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
+            }
 
-          writeFrameWithDelay(rgba, delay);
-          // Release RGBA buffer after encoding
-          // Invalidate the quantize cache: lastQuantizedData points to the
-          // RGBA buffer being returned to the pool, so it's no longer valid.
-          // Keep lastIndexedData — it's a separate buffer allocated by
-          // applyPalette and may be needed for the tail-duration fix below.
-          if (lastQuantizedData === rgba) {
-            lastQuantizedData = null;
+            writeFrameWithDelay(rgba, delay);
+          } finally {
+            if (!rgbReleased) {
+              globalBufferPool.release(rgbData);
+            }
+            // Invalidate the quantize cache: lastQuantizedData points to the
+            // RGBA buffer being returned to the pool, so it is no longer valid.
+            if (lastQuantizedData === rgba) {
+              lastQuantizedData = null;
+            }
+            if (rgba) {
+              globalBufferPool.release(rgba);
+            }
           }
-          globalBufferPool.release(rgba);
 
           // Report encoding progress (50~90% range in pipeline)
           if (opts.onFrameEncoded) {
@@ -379,6 +391,10 @@ export async function encodeGif(
     if (indexedBuffer) {
       globalBufferPool.release(indexedBuffer);
       indexedBuffer = null;
+    }
+    if (lastIndexedData) {
+      globalBufferPool.release(lastIndexedData);
+      lastIndexedData = null;
     }
   }
 }
