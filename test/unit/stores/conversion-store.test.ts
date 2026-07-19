@@ -26,7 +26,7 @@ describe('conversion-store', () => {
   });
 
   it('can transition through app states', async () => {
-    const { appState, setAppState } = await import('@stores/conversion-store');
+    const { appState, setAppState, transitionToState } = await import('@stores/conversion-store');
 
     setAppState('analyzing');
     expect(appState()).toBe('analyzing');
@@ -36,6 +36,13 @@ describe('conversion-store', () => {
 
     setAppState('done');
     expect(appState()).toBe('done');
+
+    const transition = vi.fn((callback: () => void) => callback());
+    transitionToState('converting', transition);
+    expect(appState()).toBe('converting');
+    expect(transition).not.toHaveBeenCalled();
+    transitionToState('converting', transition);
+    expect(appState()).toBe('converting');
 
     setAppState('idle');
     expect(appState()).toBe('idle');
@@ -116,5 +123,61 @@ describe('conversion-store', () => {
 
     setEnvironmentSupported(true);
     expect(environmentSupported()).toBe(true);
+  });
+
+  it('stores conversion result, progress metadata, and the input buffer', async () => {
+    const {
+      conversionResults,
+      setConversionResults,
+      conversionStatusMessage,
+      setConversionStatusMessage,
+      conversionFps,
+      setConversionFps,
+      conversionElapsedMs,
+      setConversionElapsedMs,
+      outputFrames,
+      setOutputFrames,
+      getInputBuffer,
+      setInputBuffer,
+      setCurrentFrame,
+      setTotalFrames,
+    } = await import('@stores/conversion-store');
+
+    const results = [
+      {
+        id: 'result-1',
+        outputBlob: new Blob(['result']),
+        originalName: 'input.mp4',
+        originalSize: 6,
+        createdAt: 123,
+        settings: {
+          format: 'gif' as const,
+          quality: 'high' as const,
+          scale: 1.0 as const,
+          trimStart: 0,
+          trimEnd: 0,
+          smartFrameSkip: 'off' as const,
+        },
+        conversionDurationSeconds: 1.2,
+      },
+    ];
+    setConversionResults(results);
+    expect(conversionResults()).toEqual(results);
+    setConversionStatusMessage('encoding');
+    setConversionFps(24);
+    setConversionElapsedMs(1234);
+    setOutputFrames(12);
+    setCurrentFrame(4);
+    setTotalFrames(12);
+    expect(conversionStatusMessage()).toBe('encoding');
+    expect(conversionFps()).toBe(24);
+    expect(conversionElapsedMs()).toBe(1234);
+    expect(outputFrames()).toBe(12);
+
+    const buffer = new ArrayBuffer(8);
+    setInputBuffer(buffer);
+    expect(getInputBuffer()).toBe(buffer);
+    setInputBuffer(null);
+    expect(getInputBuffer()).toBeNull();
   });
 });
