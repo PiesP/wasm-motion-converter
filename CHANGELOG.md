@@ -8,6 +8,8 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-19
+
 ### Added
 
 - **Video motion conversion**: Convert video files to GIF/WebP using WebCodecs with 100% client-side processing.
@@ -19,3 +21,7 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Infrastructure**: Migrated to pnpm 11.2.2, Node.js 24.x, TypeScript 6.x, Biome 2.x, Vite 8.x.
 - **Security**: Pinned all GitHub Actions to commit SHAs, added Dependabot with auto-merge.
+- **Reliability**: Hardened frame-buffer bounds, worker failure handling, cancellation cleanup, and GIF palette-buffer ownership.
+- **Memory safety**: Added conservative worker memory guards and surfaced conversion memory telemetry in the progress UI.
+- **Progress**: Ensured terminal 100% progress is delivered even when throttling is active.
+- **Maintenance**: Removed unreachable decoder/i18n/component entry points and unused exports identified by the audit.
