@@ -34,7 +34,7 @@
     "low": 60,
     "break": 50
   },
-  "inPlace": false,
+  "inPlace": true,
   "concurrency": 2,
   "timeoutMS": 120000,
   "plugins": [
