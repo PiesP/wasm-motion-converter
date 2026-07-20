@@ -34,8 +34,8 @@ import {
   videoPreviewUrl,
 } from '@stores/conversion-store';
 import type { ProgressPhase } from '@t/conversion-types';
-import { debounce } from '@utils/debounce';
-import { getErrorMessage } from '@utils/error-utils';
+import { debounce } from '@piesp/browser-core/async';
+import { getErrorMessage } from '@piesp/browser-core/error';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
 import {

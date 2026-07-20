@@ -15,7 +15,7 @@ import {
 import type { TFunction } from '@t/i18n-types';
 import { DEFAULT_FPS } from '@utils/constants';
 import { focusRetryButton, getStartViewTransition } from '@utils/dom-utils';
-import { getErrorMessage } from '@utils/error-utils';
+import { getErrorMessage } from '@piesp/browser-core/error';
 import { validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
 import { batch } from 'solid-js';

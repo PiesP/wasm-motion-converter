@@ -18,7 +18,7 @@
 
 import type { ConversionProgress, ConversionRequest } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
-import { isCancellationError } from '@utils/error-utils';
+import { isCancellationError } from '@piesp/browser-core/error';
 import { logger } from '@utils/logger';
 
 import type {

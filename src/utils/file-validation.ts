@@ -32,7 +32,7 @@ import {
   WEBP_MAX_DURATION_MS,
   WEBP_MAX_FRAMES,
 } from './constants';
-import { getErrorMessage } from './error-utils';
+import { getErrorMessage } from '@piesp/browser-core/error';
 import { logger } from './logger';
 
 type TFunction = <K extends keyof TranslationKeys>(

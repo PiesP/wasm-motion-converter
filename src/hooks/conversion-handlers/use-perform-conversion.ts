@@ -39,7 +39,7 @@ import type {
 import type { TFunction } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { focusElement, focusRetryButton, getStartViewTransition } from '@utils/dom-utils';
-import { getErrorMessage, isCancellationError } from '@utils/error-utils';
+import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
