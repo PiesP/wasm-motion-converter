@@ -35,7 +35,7 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
           class="bg-bg-elevated text-text-secondary"
           aria-current={settingLocale() === loc.code ? 'true' : undefined}
         >
-          {loc.englishName}
+          {loc.name}
         </option>
       ))}
     </select>
