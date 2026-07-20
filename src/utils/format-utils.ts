@@ -9,6 +9,7 @@
  * (over-engineering reduction: merge tiny utility files).
  */
 
+import { detectLocale, formatDuration, formatFileSize } from '@piesp/browser-core/locale';
 import type { Locale } from '@t/i18n-types';
 import { DEFAULT_LOCALE, LOCALES } from '@t/i18n-types';
 import { BYTES_PER_KB, LOCALE_STORAGE_KEY } from './constants';
@@ -83,26 +84,10 @@ export function formatBytes(bytes: number, locale?: string): string {
  * Falls back to `defaultLocale` if nothing matches.
  */
 export function detectUserLocale(
-  supportedLocales: Locale[],
-  defaultLocale: Locale = DEFAULT_LOCALE
+  _supportedLocales: Locale[],
+  _defaultLocale: Locale = DEFAULT_LOCALE
 ): Locale {
-  if (typeof navigator === 'undefined') return defaultLocale;
-
-  const browserLangs = navigator.languages ?? (navigator.language ? [navigator.language] : []);
-  if (browserLangs.length === 0) return defaultLocale;
-
-  for (const lang of browserLangs) {
-    if (!lang) continue;
-    const baseLang = lang.split('-')[0]?.toLowerCase() ?? lang.toLowerCase();
-    const exactMatch = supportedLocales.find((l) => l.toLowerCase() === lang.toLowerCase());
-    if (exactMatch) return exactMatch;
-    const baseMatch = supportedLocales.find(
-      (l) => l.toLowerCase().startsWith(baseLang) || baseLang.startsWith(l.toLowerCase())
-    );
-    if (baseMatch) return baseMatch;
-  }
-
-  return defaultLocale;
+  return detectLocale();
 }
 
 /**
@@ -141,21 +126,7 @@ export function updateDocumentLang(locale: Locale, dir: 'ltr' | 'rtl'): void {
  * Format file size with locale-aware separators and units.
  */
 export function formatFileSizeLocale(bytes: number, locale: Locale): string {
-  if (bytes === 0) return `${new Intl.NumberFormat(locale).format(0)} ${fileUnit(0, locale)}`;
-  const k = BYTES_PER_KB;
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), 3);
-  const value = bytes / k ** i;
-  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: i === 0 ? 0 : 2 }).format(value)} ${fileUnit(i, locale)}`;
-}
-
-const FILE_UNITS: Record<string, readonly string[]> = {
-  en: ['B', 'KB', 'MB', 'GB'],
-  ko: ['바이트', 'KB', 'MB', 'GB'],
-};
-
-function fileUnit(index: number, locale: Locale): string {
-  const units = FILE_UNITS[locale] ?? FILE_UNITS.en!;
-  return units[index] ?? 'B';
+  return formatFileSize(bytes, locale);
 }
 
 /**
@@ -165,22 +136,5 @@ function fileUnit(index: number, locale: Locale): string {
  * @param locale - BCP 47 locale identifier
  */
 export function formatDurationLocale(ms: number, locale: Locale): string {
-  const units = DURATION_UNITS[locale] ?? DURATION_UNITS.en!;
-  if (ms < 1000) return `${new Intl.NumberFormat(locale).format(Math.round(ms))}${units.ms}`;
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes > 0) return `${minutes}${units.min} ${seconds}${units.sec}`;
-  return `${(ms / 1000).toFixed(1)}${units.sec}`;
+  return formatDuration(ms, locale);
 }
-
-interface DurationUnits {
-  readonly ms: string;
-  readonly sec: string;
-  readonly min: string;
-}
-
-const DURATION_UNITS: Record<string, DurationUnits> = {
-  en: { ms: 'ms', sec: 's', min: 'm' },
-  ko: { ms: 'ms', sec: '초', min: '분' },
-};
