@@ -85,9 +85,9 @@ export function formatBytes(bytes: number, locale?: string): string {
  */
 export function detectUserLocale(
   _supportedLocales: Locale[],
-  _defaultLocale: Locale = DEFAULT_LOCALE
+  defaultLocale: Locale = DEFAULT_LOCALE
 ): Locale {
-  return detectLocale();
+  return detectLocale({ defaultLocale });
 }
 
 /**
