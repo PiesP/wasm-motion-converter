@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { getErrorMessage } from '@piesp/browser-core/error';
 import { extractVideoMetadata } from '@services/video-metadata';
 import {
   setErrorContext,
@@ -15,7 +16,6 @@ import {
 import type { TFunction } from '@t/i18n-types';
 import { DEFAULT_FPS } from '@utils/constants';
 import { focusRetryButton, getStartViewTransition } from '@utils/dom-utils';
-import { getErrorMessage } from '@piesp/browser-core/error';
 import { validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
 import { batch } from 'solid-js';

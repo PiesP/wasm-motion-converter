@@ -22,6 +22,7 @@
  * 3. Check duration warnings to inform or block conversion attempts
  */
 
+import { getErrorMessage } from '@piesp/browser-core/error';
 import type { TranslationKeys } from '@t/i18n-types';
 import type { DurationValidationResult, ValidationWarning } from '@t/validation-types';
 import {
@@ -32,7 +33,6 @@ import {
   WEBP_MAX_DURATION_MS,
   WEBP_MAX_FRAMES,
 } from './constants';
-import { getErrorMessage } from '@piesp/browser-core/error';
 import { logger } from './logger';
 
 type TFunction = <K extends keyof TranslationKeys>(

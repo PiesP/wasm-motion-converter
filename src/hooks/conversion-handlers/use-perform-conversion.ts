@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
 import { arrayBufferToHex } from '@services/conversion-worker/protocol';
 import { validateOutput } from '@services/error-recovery';
@@ -39,7 +40,6 @@ import type {
 import type { TFunction } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { focusElement, focusRetryButton, getStartViewTransition } from '@utils/dom-utils';
-import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
