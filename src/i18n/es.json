@@ -31,7 +31,7 @@
   "metadata.fps": "FPS",
   "metadata.codec": "Códec",
   "metadata.size": "Tamaño",
-  "metadata.bitrate": "Bitrate",
+  "metadata.bitrate": "Tasa de bits",
   "metadata.detecting": "Detectando...",
   "settings.heading": "Ajustes de conversión",
   "result.heading": "Resultado",
@@ -85,7 +85,7 @@
   "progress.demux": "Desmultiplexar",
   "progress.decode": "Decodificar",
   "progress.encode": "Codificar",
-  "progress.final": "Final",
+  "progress.final": "Finalizado",
   "progress.demuxing": "Desmultiplexando...",
   "progress.decoding": "Decodificando...",
   "progress.encoding": "Codificando...",
@@ -155,12 +155,12 @@
   "error.suggestion": "Sugerencia:",
   "progress.frameCounter": "Fotograma {current}/{total}",
   "progress.frameCounterOutput": "Fotograma {current}/{total} ({output} salida)",
-  "progress.eta": "ETA {time}",
+  "progress.eta": "Tiempo restante {time}",
   "progress.calculating": "calculando…",
   "progress.initialElapsed": "⏱ 0:00",
   "result.aria.previewAlt": "Vista previa animada en {format}: {name}",
   "result.aria.sectionLabel": "Resultados de conversión {format}: {name}, {size}",
   "option.aria.tooltipInfo": "Información sobre {title}",
   "conversionProgress.aria.label": "Progreso de conversión de vídeo",
-  "lang.auto": "Auto"
+  "lang.auto": "Automático"
 }

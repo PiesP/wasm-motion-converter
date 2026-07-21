@@ -62,7 +62,7 @@
   "frameSkip.medium": "متوسط",
   "frameSkip.mediumDesc": "تخطي التغييرات على مستوى الضوضاء",
   "frameSkip.high": "مرتفع",
-  "frameSkip.highDesc": "تخطي التغييرات البطيئة أيض�ا",
+  "frameSkip.highDesc": "تخطي التغييرات البطيئة أيضًا",
   "frameSkip.adaptive": "متكيف",
   "frameSkip.adaptiveDesc": "FPS متغير حسب المشهد",
   "frameSkip.tooltip": "تخطي الإطارات المتشابهة لتقليل حجم الملف. يتم الحفاظ على الحركة.",
