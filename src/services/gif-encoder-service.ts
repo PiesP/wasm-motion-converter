@@ -32,7 +32,7 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
-import { convertRGBToRGBA } from './frame-utils';
+import { convertRGBToRGBA, yieldToMain } from './frame-utils';
 
 const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
   low: 64, // 128 → 64: perceptual studies show banding is visible below ~32 colors,
@@ -261,7 +261,7 @@ export async function encodeGif(
           // for a 150-frame video). Yielding every 5 frames reduces this to ~30-120ms
           // while still keeping the UI responsive.
           if (frameNum % 5 === 0) {
-            await Promise.resolve();
+            await yieldToMain();
           }
 
           // ── Dynamic decimation based on memory pressure ──
