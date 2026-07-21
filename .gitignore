@@ -85,3 +85,4 @@ test-results/
 # Misc
 *.backup
 *.mp4
+coverage/
