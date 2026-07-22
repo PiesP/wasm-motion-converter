@@ -18,7 +18,7 @@ export default defineConfig({
   reporter: process.env.CI ? 'github' : [['list'], ['html', { open: 'never' }]],
   timeout: 300_000,
   expect: { timeout: 30_000 },
-  tsconfig: path.resolve(__dirname, 'tsconfig.playwright.json'),
+  tsconfig: path.resolve(__dirname, 'test/tsconfig.playwright.json'),
 
   use: {
     baseURL: DEV_SERVER_URL,
