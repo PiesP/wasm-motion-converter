@@ -17,7 +17,7 @@ import { calcAutoDecimation } from '@services/encoder-common';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
-import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
+import type { VideoMetadata } from '@t/conversion-types';
 import {
   AVIF_TARGET_FPS,
   BYTES_PER_MB,
@@ -32,6 +32,7 @@ import {
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
+import { buildConversionRequest } from './build-conversion-request';
 import { hexToArrayBuffer } from './protocol';
 import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
 
@@ -86,18 +87,7 @@ export async function runWorkerPipeline(
       ? clampMaxMemoryMB(options.maxMemoryMB)
       : clampMaxMemoryMB(WORKER_MAX_MEMORY_MB);
 
-  const request: ConversionRequest = {
-    inputBuffer,
-    fileName: 'input.webm', // Worker doesn't have original filename
-    format: options.format,
-    quality: options.quality,
-    scale: options.scale,
-    trimStart: options.trimStart,
-    trimEnd: options.trimEnd,
-    maxMemoryMB,
-    forceDecimation: options.forceDecimation ?? 1,
-    smartFrameSkip: options.smartFrameSkip ?? 'off',
-  };
+  const request = buildConversionRequest(inputBuffer, options, maxMemoryMB);
 
   const progressState = createWorkerProgressTracker();
 

@@ -189,6 +189,15 @@ const ERROR_RULES: readonly ErrorRule[] = [
       'WebP conversion failed. Try using GIF format instead, or reduce the quality/scale settings.',
   },
   {
+    name: 'encoder-error',
+    type: 'format',
+    code: 'ENCODER_ERROR',
+    phase: 'encoder_error',
+    pattern: /libavif|(?:encoding|encoder)\s+failed/i,
+    suggestion:
+      'The image encoder failed. Try reducing the quality or scale, or use a shorter video.',
+  },
+  {
     name: 'avif-format',
     type: 'format',
     code: 'ENCODER_ERROR',

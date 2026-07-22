@@ -12,6 +12,9 @@
  *   Main → Worker: { id, rgbData, width, height, quality, durationMs }
  *   Worker → Main: { id, bitstream } or { id, error }
  */
+
+import { getErrorMessage } from '@piesp/browser-core/error';
+
 // ─── VP8 Bitstream Extraction ──────────────────────────────────────
 // Same logic as streaming-webp-encoder.ts, inlined for worker independence
 // because Vite Worker URL imports cannot reference external ES modules.
@@ -176,7 +179,7 @@ self.onmessage = async (event: MessageEvent<EncodeRequest>) => {
     // Transfer the bitstream's underlying ArrayBuffer back
     self.postMessage(result, [result.bitstream.buffer]);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = getErrorMessage(err);
     self.postMessage({ id: request.id, error: message });
   }
 };

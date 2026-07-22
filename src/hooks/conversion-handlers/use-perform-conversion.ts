@@ -269,7 +269,7 @@ async function readInputBuffer(file: File): Promise<ArrayBuffer> {
     logger.error('conversion', 'Failed to read input file buffer', {
       fileName: file.name,
       fileSizeBytes: file.size,
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
     });
     throw err;
   }
