@@ -37,8 +37,7 @@ describe('isCancellationError', () => {
     const inner = new DOMException('aborted', 'AbortError');
     const mid = new Error('middle', { cause: inner });
     const outer = new Error('outer', { cause: mid });
-    // Note: isCancellationError only checks immediate cause
-    expect(isCancellationError(outer)).toBe(false);
+    expect(isCancellationError(outer)).toBe(true);
   });
 
   // ── Message matching: 'cancelled' ──────────────────────────
