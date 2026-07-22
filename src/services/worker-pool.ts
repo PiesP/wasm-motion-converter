@@ -388,6 +388,7 @@ export class WebpWorkerPool {
 
   private rejectQueuedTasks(error: Error): void {
     for (const pending of this.queue) {
+      globalBufferPool.release(pending.task.rgbData);
       pending.reject(error);
     }
     this.queue.length = 0;
@@ -405,6 +406,7 @@ export class WebpWorkerPool {
 
     // Reject all pending tasks
     for (const pending of this.queue) {
+      globalBufferPool.release(pending.task.rgbData);
       pending.reject(new Error('Worker pool terminated'));
     }
     for (const pending of this.pendingResolvers.values()) {

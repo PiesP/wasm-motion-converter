@@ -30,6 +30,7 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
+import { withPooledBuffer } from './pooled-buffer';
 import { extractVP8Bitstream, StreamingWebpMuxer } from './streaming-webp-encoder';
 import { encodeRGBReuse } from './wasm-webp-singleton';
 
@@ -121,33 +122,32 @@ export async function encodeWebp(
           return;
         }
 
-        // Encode this frame immediately via cached wasm-webp singleton.
-        // encodeRGBReuse reuses the same WASM module instance across all
-        // frames, avoiding per-frame instantiation overhead (~16MB WASM
-        // memory alloc + runtime init per frame with the original encodeRGB).
-        const webpResult = await encodeRGBReuse(rgbData, w, h, quality);
-        if (!webpResult || webpResult.length === 0) {
-          throw new Error(
-            `encodeRGBReuse returned ${webpResult ? 'empty' : 'null'} for frame ${encodeIdx}`
-          );
-        }
+        return withPooledBuffer(rgbData, async () => {
+          // Encode this frame immediately via cached wasm-webp singleton.
+          // encodeRGBReuse reuses the same WASM module instance across all
+          // frames, avoiding per-frame instantiation overhead (~16MB WASM
+          // memory alloc + runtime init per frame with the original encodeRGB).
+          const webpResult = await encodeRGBReuse(rgbData, w, h, quality);
+          if (!webpResult || webpResult.length === 0) {
+            throw new Error(
+              `encodeRGBReuse returned ${webpResult ? 'empty' : 'null'} for frame ${encodeIdx}`
+            );
+          }
 
-        // encodeRGB returns a Uint8Array view over WASM memory — no copy needed.
-        // extractVP8Bitstream creates a subarray view, keeping the original alive.
-        // WASM memory lifecycle: the wasm-webp module allocates a single linear memory
-        // buffer that grows as needed. encodeRGB writes into this buffer and returns a view
-        // that remains valid until the next encodeRGB call or the module is freed.
-        // Since we call addFrame (which copies the data into the muxer) immediately,
-        // the view is only borrowed and the WASM memory can be safely reused.
-        const bitstream = extractVP8Bitstream(webpResult);
+          // encodeRGB returns a Uint8Array view over WASM memory — no copy needed.
+          // extractVP8Bitstream creates a subarray view, keeping the original alive.
+          // WASM memory lifecycle: the wasm-webp module allocates a single linear memory
+          // buffer that grows as needed. encodeRGB writes into this buffer and returns a view
+          // that remains valid until the next encodeRGB call or the module is freed.
+          // Since we call addFrame (which copies the data into the muxer) immediately,
+          // the view is only borrowed and the WASM memory can be safely reused.
+          const bitstream = extractVP8Bitstream(webpResult);
 
-        const totalDuration = frameDurationMs + accumulatedDuration;
-        accumulatedDuration = 0;
-        muxer.addFrame(bitstream, totalDuration);
-        encodeIdx++;
-
-        // Release the RGB buffer back to the pool after successful encode
-        globalBufferPool.release(rgbData);
+          const totalDuration = frameDurationMs + accumulatedDuration;
+          accumulatedDuration = 0;
+          muxer.addFrame(bitstream, totalDuration);
+          encodeIdx++;
+        });
       },
     },
     signal
