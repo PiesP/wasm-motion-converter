@@ -13,6 +13,7 @@
 // All HIGH + MEDIUM + LOW fixes committed in df4c936.
 
 import { test, expect, type Page } from '@playwright/test';
+import { isCloudflareInsightsResource } from './fixtures/url-utils';
 
 const PROD_URL = 'https://wasm-motion-converter.pages.dev';
 
@@ -70,7 +71,7 @@ test.describe('Page Load & Console Health', () => {
 
     // static.cloudflareinsights.com may fail in some networks — non-critical
     const criticalFailed = failed.filter(
-      (f) => !f.includes('static.cloudflareinsights.com'),
+      (f) => !isCloudflareInsightsResource(f),
     );
     expect(criticalFailed).toEqual([]);
   });
@@ -344,5 +345,5 @@ test.describe('Footer & Links', () => {
 // ---------------------------------------------------------------------------
 
 function beaconError(error: string): boolean {
-  return error.includes('static.cloudflareinsights.com') || error.includes('ERR_CONNECTION_REFUSED');
+  return isCloudflareInsightsResource(error) || error.includes('ERR_CONNECTION_REFUSED');
 }

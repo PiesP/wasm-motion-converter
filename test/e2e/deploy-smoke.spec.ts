@@ -12,6 +12,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
+import { isCloudflareInsightsResource } from './fixtures/url-utils';
 
 const DEPLOY_URL = process.env.DEPLOY_URL || 'https://wasm-motion-converter.pages.dev';
 
@@ -71,7 +72,7 @@ test.describe('Deployment: Page Load', () => {
     const criticalErrors = errors.filter(
       (e) =>
         !e.includes('Content Security Policy') &&
-        !e.includes('static.cloudflareinsights.com') &&
+        !isCloudflareInsightsResource(e) &&
         !e.includes('ERR_CONNECTION_REFUSED')
     );
     expect(criticalErrors).toEqual([]);
@@ -83,7 +84,7 @@ test.describe('Deployment: Page Load', () => {
     await page.waitForLoadState('networkidle');
 
     const criticalFailed = failed.filter(
-      (f) => !f.includes('static.cloudflareinsights.com')
+      (f) => !isCloudflareInsightsResource(f)
     );
     expect(criticalFailed).toEqual([]);
   });
