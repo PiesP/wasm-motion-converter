@@ -97,6 +97,27 @@ function collectRuntimeDeps(): LicenseEntry[] {
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function collectBundledWasmSources(): LicenseEntry[] {
+  return [
+    {
+      name: 'libavif',
+      version: '1.4.2',
+      license: 'BSD-2-Clause',
+      url: 'https://github.com/AOMediaCodec/libavif',
+      purpose: 'Animated AVIF container and RGB/YUV conversion in browser WASM',
+      note: 'Built from the v1.4.2 tag with the bundled libaom encoder.',
+    },
+    {
+      name: 'libaom',
+      version: '3.14.1',
+      license: 'BSD-2-Clause',
+      url: 'https://aomedia.googlesource.com/aom',
+      purpose: 'AV1 encoding backend used by the libavif WASM build',
+      note: 'Built from the v3.14.1 tag with AOM_TARGET_CPU=generic for portable browser WASM.',
+    },
+  ];
+}
+
 function getMitLicense(): string {
   return `MIT License
 
@@ -180,7 +201,7 @@ This project uses the following open-source libraries.
 
 console.log('📋 Collecting license information...\n');
 
-const entries = collectRuntimeDeps();
+const entries = [...collectRuntimeDeps(), ...collectBundledWasmSources()];
 
 if (entries.length === 0) {
   console.error('❌ No runtime dependencies found. Run `pnpm install` first.');

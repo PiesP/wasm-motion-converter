@@ -46,6 +46,8 @@
   "format.gifDesc": "دعم شامل",
   "format.webp": "WebP",
   "format.webpDesc": "حجم ملف أصغر",
+  "format.avif": "AVIF",
+  "format.avifDesc": "أصغر حجم للملف (المتصفحات الحديثة)",
   "quality.title": "إعدادات الجودة",
   "quality.low": "منخفضة",
   "quality.lowDesc": "سريع",

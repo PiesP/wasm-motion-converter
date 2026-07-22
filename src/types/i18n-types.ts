@@ -105,6 +105,8 @@ export interface TranslationKeys {
   'format.gifDesc': string;
   'format.webp': string;
   'format.webpDesc': string;
+  'format.avif': string;
+  'format.avifDesc': string;
 
   // Quality Selector
   'quality.title': string;

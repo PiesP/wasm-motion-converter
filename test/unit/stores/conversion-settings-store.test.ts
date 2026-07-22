@@ -124,9 +124,16 @@ describe('conversion-settings-store', () => {
   // ── Type validation ────────────────────────────────────────────────
 
   it('returns defaults when format is invalid', async () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...makeTestSettings(), format: 'avif' }));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...makeTestSettings(), format: 'bmp' }));
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('restores AVIF as a supported persisted format', async () => {
+    const settings = makeTestSettings({ format: 'avif' });
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    expect(conversionSettings()).toEqual(settings);
   });
 
   it('returns defaults when quality is invalid', async () => {

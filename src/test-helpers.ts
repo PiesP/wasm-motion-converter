@@ -52,7 +52,7 @@ import {
   videoPreviewUrl,
 } from '@stores/conversion-store';
 import type { AppState as AppStateType } from '@t/app-types';
-import type { VideoMetadata } from '@t/conversion-types';
+import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
 
 // ─── Type for the exposed API ──────────────────────────────────────────────
 
@@ -146,7 +146,7 @@ export interface TestHelpers {
 
   /** Wait for conversion to complete (format-aware default timeout) */
   waitForConvert(
-    format: 'gif' | 'webp',
+    format: ConversionFormat,
     options?: { timeoutMs?: number; intervalMs?: number }
   ): Promise<boolean>;
 
@@ -170,6 +170,7 @@ const DEFAULT_WAIT_INTERVAL = 200;
 const FORMAT_WAIT_TIMEOUTS: Record<string, number> = {
   gif: 120_000,
   webp: 90_000,
+  avif: 180_000,
 };
 
 /** Auto-confirm any pending confirmation dialog (for testing). */
@@ -260,7 +261,7 @@ const waitFor = (
 };
 
 const waitForConvert = (
-  format: 'gif' | 'webp',
+  format: ConversionFormat,
   options?: { timeoutMs?: number; intervalMs?: number }
 ): Promise<boolean> => {
   const defaultTimeout = FORMAT_WAIT_TIMEOUTS[format] ?? 120_000;

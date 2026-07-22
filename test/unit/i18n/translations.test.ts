@@ -16,12 +16,12 @@ describe('translations', () => {
 
     it('has all translation keys in en.json', () => {
       const enKeys = Object.keys(enTranslations);
-      expect(enKeys.length).toBe(164);
+      expect(enKeys.length).toBe(166);
     });
 
     it('has all translation keys in ko.json', () => {
       const koKeys = Object.keys(koTranslations);
-      expect(koKeys.length).toBe(164);
+      expect(koKeys.length).toBe(166);
     });
 
     it('en.json keys are a subset of ko.json keys', () => {
@@ -159,11 +159,13 @@ describe('translations', () => {
       expect(koTranslations['settings.convert']).toBeDefined();
     });
 
-    it('has format.gif and format.webp keys', () => {
+    it('has format keys for GIF, WebP, and AVIF', () => {
       expect(enTranslations['format.gif']).toBeDefined();
       expect(koTranslations['format.gif']).toBeDefined();
       expect(enTranslations['format.webp']).toBeDefined();
       expect(koTranslations['format.webp']).toBeDefined();
+      expect(enTranslations['format.avif']).toBeDefined();
+      expect(koTranslations['format.avif']).toBeDefined();
     });
 
     it('has error.* keys', () => {

@@ -1,13 +1,13 @@
 # dropconvert
 
-SolidJS SPA that converts a single video into GIF or animated WebP entirely in the browser. Uses WebCodecs VideoDecoder + MediaBunny for demuxing and OffscreenCanvas/wasm-webp/gifenc for encoding. No uploads, no servers, no CDN.
+SolidJS SPA that converts a single video into GIF, animated WebP, or animated AVIF entirely in the browser. Uses WebCodecs VideoDecoder + MediaBunny for demuxing and OffscreenCanvas/wasm-webp/gifenc/libavif for encoding. No uploads, no servers, no CDN.
 
 Live demo: https://wasm-motion-converter.pages.dev/
 
 ## Features
 
 - Single-video dropzone with video-only validation
-- GIF/WebP output with quality + scale presets
+- GIF/WebP/AVIF output with quality + scale presets
 - WebCodecs-based decoding with MediaBunny demuxer
 - Fully client-side conversion (SharedArrayBuffer required)
 - Clear progress, elapsed time, and preview/download flow
@@ -49,7 +49,7 @@ pnpm preview
   - Cloudflare Pages: `public/_headers`
   - Local dev/preview: `vite.config.ts`
 - Video decoding: WebCodecs VideoDecoder + MediaBunny demuxer
-- Encoding: OffscreenCanvas WebP, wasm-webp, gifenc (GIF)
+- Encoding: OffscreenCanvas WebP, wasm-webp, gifenc (GIF), libavif v1.4.2 + libaom v3.14.1 (animated AVIF)
 - No runtime CDN dependencies — all code is bundled at build time
 - `pnpm build` runs quality checks + Vite build + postbuild
 - Build output: `dist/`
