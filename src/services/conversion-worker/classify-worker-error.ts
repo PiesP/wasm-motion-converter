@@ -16,7 +16,9 @@ export function classifyWorkerError(message: string): string {
   if (/cancel|abort/i.test(lower)) return 'CANCELLED';
   if (/codec|unsupported|not\s*found|decod(?:er|e)\s*fail/i.test(lower))
     return 'CODEC_NOT_SUPPORTED';
-  if (/webp|libwebp|encoder\s*fail/i.test(lower)) return 'ENCODER_ERROR';
+  if (/avif|libavif|webp|libwebp|encod(?:er|ing)\s*(?:fail|error)/i.test(lower)) {
+    return 'ENCODER_ERROR';
+  }
   if (/demux|container|format|unable\s*to\s*parse/i.test(lower)) return 'DECODER_ERROR';
   return 'UNKNOWN';
 }

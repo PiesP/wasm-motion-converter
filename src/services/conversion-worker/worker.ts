@@ -9,7 +9,7 @@
  * and forwards progress/complete/error responses back to the main thread.
  */
 
-import { isCancellationError } from '@piesp/browser-core/error';
+import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { classifyWorkerError } from './classify-worker-error';
 import { runWorkerPipeline } from './pipeline-worker';
 import type { WorkerRequest, WorkerResponse } from './types';
@@ -73,7 +73,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           [outputBuffer]
         );
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = getErrorMessage(err);
         // Classify error using the same compact rules as pipeline-worker.ts
         const code = isCancellationError(err) ? 'CANCELLED' : classifyWorkerError(message);
 

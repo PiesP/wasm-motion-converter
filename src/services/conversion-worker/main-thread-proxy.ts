@@ -16,10 +16,11 @@
  * - Timeout protection: terminates worker and rejects if conversion hangs
  */
 
-import { isCancellationError } from '@piesp/browser-core/error';
-import type { ConversionProgress, ConversionRequest } from '@t/conversion-types';
+import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+import type { ConversionProgress } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
+import { buildConversionRequest } from './build-conversion-request';
 
 import type {
   SerializedConversionOptions,
@@ -218,7 +219,7 @@ export async function runPipelineViaWorker(
       settled = true;
       cleanup();
       worker.terminate();
-      reject(error instanceof Error ? error : new Error(String(error)));
+      reject(new Error(getErrorMessage(error)));
     }
   });
 }
@@ -276,24 +277,17 @@ export async function runPipelineWithFallback(
     } else {
       fallbackBuffer = inputBuffer;
     }
-    logger.warn('general', 'worker.fallback', { error: String(workerError) });
+    logger.warn('general', 'worker.fallback', { error: getErrorMessage(workerError) });
 
     // Dynamic import to avoid circular dependencies
     const { runConversionPipeline } = await import('../conversion-pipeline');
 
-    const request: ConversionRequest = {
-      inputBuffer: fallbackBuffer,
-      inputBlob,
-      fileName: 'input.webm',
-      format: options.format,
-      quality: options.quality,
-      scale: options.scale,
-      trimStart: options.trimStart,
-      trimEnd: options.trimEnd,
-      maxMemoryMB: options.maxMemoryMB ?? WORKER_MAX_MEMORY_MB,
-      forceDecimation: options.forceDecimation ?? 1,
-      smartFrameSkip: options.smartFrameSkip ?? 'off',
-    };
+    const request = buildConversionRequest(
+      fallbackBuffer,
+      options,
+      options.maxMemoryMB ?? WORKER_MAX_MEMORY_MB,
+      inputBlob
+    );
 
     return runConversionPipeline(request, onProgress, signal);
   }
