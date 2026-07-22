@@ -1,5 +1,5 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "../tsconfig.json",
   "compilerOptions": {
     "types": ["node"],
     "module": "ESNext",
@@ -7,5 +7,5 @@
     "verbatimModuleSyntax": false,
     "noEmit": true
   },
-  "include": ["playwright.config.ts", "test/e2e/**/*"]
+  "include": ["../playwright.config.ts", "e2e/**/*"]
 }

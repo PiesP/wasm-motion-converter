@@ -564,3 +564,46 @@ test.describe('Language selector interaction (F21)', () => {
     expect(value).toBe('en');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. Smart frame skip selector
+// ═══════════════════════════════════════════════════════════════════════════
+
+test.describe('Smart frame skip selector', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await page.waitForTimeout(2000);
+    await waitForIdle(page);
+  });
+
+  test('offers every documented frame-skip mode and selects it', async ({ page }) => {
+    const modes = ['off', 'low', 'medium', 'high', 'adaptive'];
+
+    for (const mode of modes) {
+      const option = page.locator(`[data-testid="option-smart-frame-skip-${mode}"]`);
+      await expect(option).toBeVisible();
+      await option.click();
+
+      const settings = await page.evaluate(() => window.__TEST_HELPERS__?.getSettings());
+      expect(settings?.smartFrameSkip).toBe(mode);
+      await expect(option.locator('input')).toBeChecked();
+    }
+  });
+
+  test('persists the selected mode across reload', async ({ page }) => {
+    const selected = page.locator('[data-testid="option-smart-frame-skip-adaptive"]');
+    await selected.click();
+    await page.waitForTimeout(1000);
+
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(2000);
+    await waitForIdle(page);
+
+    const settings = await page.evaluate(() => window.__TEST_HELPERS__?.getSettings());
+    expect(settings?.smartFrameSkip).toBe('adaptive');
+    await expect(
+      page.locator('[data-testid="option-smart-frame-skip-adaptive"] input')
+    ).toBeChecked();
+  });
+});

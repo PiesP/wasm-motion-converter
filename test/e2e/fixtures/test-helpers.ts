@@ -15,7 +15,14 @@ import { Page, expect } from '@playwright/test';
 export interface TestHelpers {
   getAppState(): string;
   getProgress(): number;
-  getSettings(): { format: string; quality: string; scale: string; trimStart: number; trimEnd: number };
+  getSettings(): {
+    format: string;
+    quality: string;
+    scale: string;
+    trimStart: number;
+    trimEnd: number;
+    smartFrameSkip: string;
+  };
   getInputFile(): { name: string; size: number; type: string } | null;
   getMetadata(): { width: number; height: number; duration: number; codec: string; frameRate: number } | null;
   getError(): string | null;
