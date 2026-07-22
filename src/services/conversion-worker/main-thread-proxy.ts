@@ -212,7 +212,14 @@ export async function runPipelineViaWorker(
       ...(duration !== undefined ? { duration } : {}),
       ...(framerate !== undefined ? { framerate } : {}),
     };
-    worker.postMessage(startMsg, [inputBuffer]);
+    try {
+      worker.postMessage(startMsg, [inputBuffer]);
+    } catch (error) {
+      settled = true;
+      cleanup();
+      worker.terminate();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 

@@ -26,6 +26,7 @@ import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
 import { convertRGBToRGBA } from './frame-utils';
+import { withPooledBuffer } from './pooled-buffer';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
 
 /**
@@ -272,50 +273,52 @@ export async function encodeWebpOffscreen(
           return;
         }
 
-        const totalDuration = frameDurationMs + accumulatedDuration;
-        accumulatedDuration = 0;
+        return withPooledBuffer(rgbData, async () => {
+          const totalDuration = frameDurationMs + accumulatedDuration;
+          accumulatedDuration = 0;
 
-        // Create ImageData from RGB data (3 bytes per pixel → 4 bytes RGBA for canvas)
-        // OffscreenCanvas putImageData requires RGBA format
-        // Use buffer pool to avoid per-frame GC pressure (M-05).
-        const rawBuf = convertRGBToRGBA(rgbData, w, h);
-        const rgbaData = new Uint8ClampedArray(
-          rawBuf.buffer as ArrayBuffer,
-          rawBuf.byteOffset,
-          w * h * 4
-        ) as unknown as Uint8ClampedArray<ArrayBuffer>;
+          // Create ImageData from RGB data (3 bytes per pixel → 4 bytes RGBA for canvas)
+          // OffscreenCanvas putImageData requires RGBA format
+          // Use buffer pool to avoid per-frame GC pressure (M-05).
+          const rawBuf = convertRGBToRGBA(rgbData, w, h);
+          try {
+            const rgbaData = new Uint8ClampedArray(
+              rawBuf.buffer as ArrayBuffer,
+              rawBuf.byteOffset,
+              w * h * 4
+            ) as unknown as Uint8ClampedArray<ArrayBuffer>;
 
-        const imageData = new ImageData(rgbaData, w, h);
+            const imageData = new ImageData(rgbaData, w, h);
 
-        // Draw to OffscreenCanvas — putImageData copies the data so we can release immediately
-        ctx.putImageData(imageData, 0, 0);
-        globalBufferPool.release(rawBuf);
+            // Draw to OffscreenCanvas — putImageData copies the data so we can release immediately
+            ctx.putImageData(imageData, 0, 0);
+          } finally {
+            globalBufferPool.release(rawBuf);
+          }
 
-        // Encode to WebP via convertToBlob
-        const blob = await canvas.convertToBlob({
-          type: 'image/webp',
-          quality,
+          // Encode to WebP via convertToBlob
+          const blob = await canvas.convertToBlob({
+            type: 'image/webp',
+            quality,
+          });
+
+          if (!blob || blob.size === 0) {
+            throw new Error(
+              `convertToBlob returned ${blob ? 'empty' : 'null'} for frame ${encodeIdx}`
+            );
+          }
+
+          // Read blob as ArrayBuffer
+          const webpBuffer = new Uint8Array(await blob.arrayBuffer());
+
+          // Extract VP8 bitstream from the single-frame WebP.
+          // Always use the full parser — convertToBlob may produce VP8X
+          // format for any frame, not just the first.
+          const bitstream = extractVP8FromOffscreenBlob(webpBuffer);
+
+          muxer.addFrame(bitstream, totalDuration);
+          encodeIdx++;
         });
-
-        if (!blob || blob.size === 0) {
-          throw new Error(
-            `convertToBlob returned ${blob ? 'empty' : 'null'} for frame ${encodeIdx}`
-          );
-        }
-
-        // Read blob as ArrayBuffer
-        const webpBuffer = new Uint8Array(await blob.arrayBuffer());
-
-        // Extract VP8 bitstream from the single-frame WebP.
-        // Always use the full parser — convertToBlob may produce VP8X
-        // format for any frame, not just the first.
-        const bitstream = extractVP8FromOffscreenBlob(webpBuffer);
-
-        muxer.addFrame(bitstream, totalDuration);
-        encodeIdx++;
-
-        // Release the RGB buffer back to the pool after successful encode
-        globalBufferPool.release(rgbData);
       },
     },
     signal
