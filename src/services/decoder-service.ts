@@ -2,14 +2,14 @@
 // Copyright (c) 2025-2026 PiesP
 
 /**
- * Common VideoDecoder pipeline for both GIF and WebP encoders.
+ * Common VideoDecoder pipeline for GIF, WebP, and AVIF encoders.
  *
  * Extracts RGB frames from demuxed video chunks using VideoDecoder,
  * with hardware acceleration support, frame decimation, and abort handling.
  *
  * Supports two modes:
  * 1. Batch mode (WebP): collects all frames into an array (existing behavior)
- * 2. Streaming mode (GIF): calls onFrameAvailable per frame for immediate encoding
+ * 2. Streaming mode (GIF/AVIF): calls onFrameAvailable per frame for immediate encoding
  *
  * Both encoders share the same demux output and frame extraction logic;
  * only the encoding step (gifenc vs wasm-webp) differs.

@@ -134,13 +134,21 @@ export function validateWebpMagic(bytes: Uint8Array): { valid: boolean; width?: 
   return { valid: true };
 }
 
+/** Validate animated AVIF by requiring the AV1 image sequence (`avis`) brand. */
+export function validateAvifMagic(bytes: Uint8Array): { valid: boolean } {
+  if (bytes.length < 12) return { valid: false };
+  const boxType = String.fromCharCode(bytes[4]!, bytes[5]!, bytes[6]!, bytes[7]!);
+  const majorBrand = String.fromCharCode(bytes[8]!, bytes[9]!, bytes[10]!, bytes[11]!);
+  return { valid: boxType === 'ftyp' && majorBrand === 'avis' };
+}
+
 /**
  * Validate a downloaded file's magic bytes against expected format.
  * Works without ffprobe — pure byte inspection.
  */
 export function validateFileMagic(
   buffer: Buffer,
-  expectedFormat: 'gif' | 'webp'
+  expectedFormat: 'gif' | 'webp' | 'avif'
 ): { valid: boolean; width?: number; height?: number; message: string } {
   const bytes = new Uint8Array(buffer);
 
@@ -160,6 +168,13 @@ export function validateFileMagic(
       return { valid: false, message: `Invalid WebP magic: ${headerHex}` };
     }
     return { valid: true, width: result.width, height: result.height, message: 'Valid WebP' };
+  }
+
+  if (expectedFormat === 'avif') {
+    const result = validateAvifMagic(bytes);
+    return result.valid
+      ? { valid: true, message: 'Valid animated AVIF' }
+      : { valid: false, message: 'Invalid animated AVIF magic' };
   }
 
   return { valid: false, message: `Unknown format: ${expectedFormat}` };

@@ -4,7 +4,7 @@
 /**
  * Common encoder types and utilities for the conversion pipeline.
  *
- * Shared between GIF and WebP encoders to avoid duplication:
+ * Shared between GIF, WebP, and AVIF encoders to avoid duplication:
  * - EncoderOptions base interface
  * - Frame decimation calculation
  * - Progress callback types
@@ -49,10 +49,10 @@ export interface BaseEncoderOptions {
  *   targetFps=8  (GIF low)    → decimation=8  → output ~7.5fps
  *   targetFps=12 (GIF medium) → decimation=5  → output ~12fps
  *   targetFps=20 (GIF high)   → decimation=3  → output ~20fps
- *   targetFps=30 (WebP high)  → decimation=2  → output ~30fps
+ *   targetFps=30 (WebP/AVIF high) → decimation=2 → output ~30fps
  *
  * @param sourceFps - Source video frame rate
- * @param targetFps - Desired output frame rate (from GIF_TARGET_FPS or WEBP_TARGET_FPS)
+ * @param targetFps - Desired output frame rate (from a format-specific target FPS map)
  * @param forceDecimation - Override all calculations (used for memory-pressure forced decimation)
  * @returns Frame decimation factor (1 = keep every frame, N = keep every Nth frame)
  */

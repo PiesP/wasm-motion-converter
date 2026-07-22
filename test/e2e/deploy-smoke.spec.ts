@@ -129,6 +129,7 @@ test.describe('Deployment: Visual — Initial State', () => {
     // Verify format options
     await expect(page.locator('[data-testid="option-format-gif"]')).toBeVisible();
     await expect(page.locator('[data-testid="option-format-webp"]')).toBeVisible();
+    await expect(page.locator('[data-testid="option-format-avif"]')).toBeVisible();
 
     // Verify quality options
     await expect(page.locator('[data-testid="option-quality-low"]')).toBeVisible();

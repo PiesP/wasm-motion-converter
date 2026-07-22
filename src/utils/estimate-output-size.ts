@@ -4,15 +4,17 @@
 /**
  * Output Size Estimation
  *
- * Heuristic-based output size estimation for GIF and Animated WebP.
+ * Heuristic-based output size estimation for GIF, Animated WebP, and Animated AVIF.
  * Used to warn users before conversion and for memory planning.
  *
  * All estimates are conservative (upper-bound) to avoid surprises.
  * Actual sizes are typically 10-25% smaller.
  */
 
-import type { ConversionQuality } from '@t/conversion-types';
+import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
 import {
+  AVIF_BPP_CONSERVATIVE,
+  AVIF_OVERHEAD_PER_FRAME,
   GIF_BPP_CONSERVATIVE,
   GIF_PALETTE_OVERHEAD_PER_FRAME,
   WEBP_OVERHEAD_PER_FRAME,
@@ -76,6 +78,18 @@ export function estimateWebpOutputSize(
   return Math.ceil(frameBytes * totalFrames);
 }
 
+/** Estimate animated AVIF output size in bytes. */
+export function estimateAvifOutputSize(
+  width: number,
+  height: number,
+  totalFrames: number,
+  quality: ConversionQuality
+): number {
+  const pixelCount = width * height;
+  const frameBytes = pixelCount * AVIF_BPP_CONSERVATIVE[quality] + AVIF_OVERHEAD_PER_FRAME;
+  return Math.ceil(frameBytes * totalFrames);
+}
+
 /**
  * Estimated output size with human-readable formatting.
  */
@@ -98,12 +112,14 @@ export function estimateOutputSize(
   height: number,
   totalFrames: number,
   quality: ConversionQuality,
-  format: 'gif' | 'webp'
+  format: ConversionFormat
 ): OutputSizeEstimate {
   const bytes =
     format === 'gif'
       ? estimateGifOutputSize(width, height, totalFrames)
-      : estimateWebpOutputSize(width, height, totalFrames, quality);
+      : format === 'avif'
+        ? estimateAvifOutputSize(width, height, totalFrames, quality)
+        : estimateWebpOutputSize(width, height, totalFrames, quality);
 
   return { bytes, formatted: formatBytes(bytes) };
 }

@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+import { AVIF_MIME_TYPE } from '@services/avif-format';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
 import { arrayBufferToHex } from '@services/conversion-worker/protocol';
 import { validateOutput } from '@services/error-recovery';
@@ -427,7 +428,12 @@ async function executePipeline(
 }
 
 function validateOutputBlob(output: ArrayBuffer, settings: ConversionSettings): Blob {
-  const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';
+  const mimeType =
+    settings.format === 'gif'
+      ? 'image/gif'
+      : settings.format === 'avif'
+        ? AVIF_MIME_TYPE
+        : 'image/webp';
   const blob = new Blob([output], { type: mimeType });
 
   if (blob.size === 0) {

@@ -50,5 +50,6 @@ describe('memory monitor', () => {
     });
     expect(checkMemoryForConversion(1000, 1000, 100, 'webp').level).toBe('critical');
     expect(checkMemoryForConversion(1000, 1000, 10, 'gif').level).toBe('warning');
+    expect(checkMemoryForConversion(1000, 1000, 100, 'avif').level).toBe('warning');
   });
 });

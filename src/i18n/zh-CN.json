@@ -46,6 +46,8 @@
   "format.gifDesc": "通用支持",
   "format.webp": "WebP",
   "format.webpDesc": "文件更小",
+  "format.avif": "AVIF",
+  "format.avifDesc": "最小文件大小（较新的浏览器）",
   "quality.title": "质量预设",
   "quality.low": "低",
   "quality.lowDesc": "快速",
