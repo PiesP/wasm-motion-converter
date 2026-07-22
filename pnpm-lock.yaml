@@ -18,8 +18,8 @@ importers:
         specifier: ^1.0.3
         version: 1.0.3
       mediabunny:
-        specifier: ^1.50.8
-        version: 1.50.8
+        specifier: ^1.50.9
+        version: 1.50.9
       solid-js:
         specifier: 1.9.14
         version: 1.9.14
@@ -1946,8 +1946,8 @@ packages:
   mdn-data@2.27.1:
     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
 
-  mediabunny@1.50.8:
-    resolution: {integrity: sha512-LgykLyQzhdpo0V2yw3UXmOpj+b4JAGdpHBwsPE6kjSt8Za0d1VllD+FV7EGHBcdV4+oHUAo+yrqbVAWxNSDCPQ==}
+  mediabunny@1.50.9:
+    resolution: {integrity: sha512-dkv2xPuW7WxmiZrhV4yDzgqhdQcHdQ9g5xRyVIDNoxe8Bo+jnK71bdKMYj12LzJf5YV9hcsufBG9R41TFKfg9g==}
 
   merge-anything@5.1.7:
     resolution: {integrity: sha512-eRtbOb1N5iyH0tkQDAoQ4Ipsp/5qSR79Dzrz8hEPxRX10RWWR/iQXdoKmBSRCThY1Fh5EhISDtpSc93fpxUniQ==}
@@ -4080,7 +4080,7 @@ snapshots:
 
   mdn-data@2.27.1: {}
 
-  mediabunny@1.50.8:
+  mediabunny@1.50.9:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13
