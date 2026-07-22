@@ -33,7 +33,7 @@ describe('getErrorMessage', () => {
   });
 
   it('handles objects without message property', () => {
-    expect(getErrorMessage({ code: 500 })).toBe('[object Object]');
+    expect(getErrorMessage({ code: 500 })).toBe('{"code":500}');
   });
 
   it('prefers message property over Error instance check', () => {
@@ -43,6 +43,14 @@ describe('getErrorMessage', () => {
   });
 
   it('handles nested error-like objects', () => {
-    expect(getErrorMessage({ message: { nested: 'object' } })).toBe('[object Object]');
+    expect(getErrorMessage({ message: { nested: 'object' } })).toBe(
+      '{"message":{"nested":"object"}}'
+    );
+  });
+
+  it('extracts native exception text from objects with a what property', () => {
+    expect(getErrorMessage({ what: 'AVIF frame encoding failed' })).toBe(
+      'AVIF frame encoding failed'
+    );
   });
 });

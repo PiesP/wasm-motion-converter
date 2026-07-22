@@ -16,6 +16,7 @@
  * - Timeout-based task retirement for stalled workers
  */
 
+import { getErrorMessage } from '@piesp/browser-core/error';
 import { WORKER_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
@@ -154,7 +155,7 @@ export class WebpWorkerPool {
       } catch (err) {
         logger.warn('encoders', 'worker-create-failed', {
           index: i,
-          error: err instanceof Error ? err.message : String(err),
+          error: getErrorMessage(err),
         });
         // Continue with fewer workers — the caller (encodeWebpParallel) falls back
         // to main-thread encoding when pool is unavailable or has no workers.
@@ -332,7 +333,7 @@ export class WebpWorkerPool {
       if (rgbData.byteLength > 0) {
         globalBufferPool.release(rgbData);
       }
-      pending.reject(err instanceof Error ? err : new Error(String(err)));
+      pending.reject(new Error(getErrorMessage(err)));
       this.releaseWorker(worker);
       return;
     }
@@ -366,7 +367,7 @@ export class WebpWorkerPool {
       // protocol restrictions. Remove the worker slot and continue
       // with reduced pool size.
       logger.warn('encoders', 'worker-replace-failed', {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
         remainingWorkers: this.workers.length - 1,
       });
       this.workers.splice(idx, 1);

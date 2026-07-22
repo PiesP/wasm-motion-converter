@@ -15,6 +15,7 @@
  * only the encoding step (gifenc vs wasm-webp) differs.
  */
 
+import { getErrorMessage } from '@piesp/browser-core/error';
 import type { SmartFrameSkipMode } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
@@ -412,7 +413,7 @@ export async function decodeFrames(
         // silently swallowed — the error set is checked after all frames settle.
         conversion
           .catch((err: unknown) => {
-            conversionErrors.push(err instanceof Error ? err : new Error(String(err)));
+            conversionErrors.push(new Error(getErrorMessage(err)));
           })
           .finally(() => {
             pendingConversions.delete(conversion);
@@ -481,7 +482,7 @@ export async function decodeFrames(
     try {
       await decoder.flush();
     } catch (e) {
-      if (!decodeError) decodeError = e instanceof Error ? e : new Error(String(e));
+      if (!decodeError) decodeError = new Error(getErrorMessage(e));
     }
     // Always await pending conversions before closing decoder to avoid VideoFrame leak.
     // Use Promise.allSettled so that even if some conversions fail (e.g., due to abort),
