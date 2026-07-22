@@ -1,3 +1,7 @@
+# Keep transitive qs users on the first patched version for CVE-2026-8723.
+overrides:
+  qs@>=6.11.1: ">=6.15.2"
+
 # Dependabot cooldown (7 days) handles supply-chain cooling;
 # minimumReleaseAge explicitly set to 0 to avoid pnpm supply-chain
 # policy failures on freshly-published packages in Dependabot PRs.
