@@ -24,7 +24,6 @@ import type {
   ProgressPhase,
 } from '@t/conversion-types';
 import {
-  AVIF_TARGET_FPS,
   DEFAULT_FPS,
   GIF_TARGET_FPS,
   PROGRESS_PHASE,
@@ -36,7 +35,6 @@ import { scheduleTask } from '@utils/dom-utils';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
 import { createThrottledProgress } from '@utils/throttled-progress';
-import { encodeAvif } from './avif-encoder-service';
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
@@ -402,46 +400,6 @@ async function _runPipelineInner(
       ).buffer as ArrayBuffer;
       encodeResult = {
         frames: gifEncodeFrames,
-        outputBytes: output.byteLength,
-      };
-    } else if (request.format === 'avif') {
-      const avifDecimation = calcAutoDecimation(
-        sourceFps,
-        AVIF_TARGET_FPS[request.quality],
-        request.forceDecimation
-      );
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / avifDecimation));
-
-      logger.info('conversion', '  ├─ Branch: AVIF encoder (stateful WASM sequence)', {
-        codec: demuxResult.config.codec,
-        codedWidth: demuxResult.config.codedWidth,
-        codedHeight: demuxResult.config.codedHeight,
-        totalFrames: demuxResult.totalFrames,
-        sourceFps: Math.round(sourceFps),
-        avifDecimation,
-      });
-
-      const encoded = await scheduleTask(
-        () =>
-          encodeAvif(
-            demuxResult,
-            {
-              width: codedWidth,
-              height: codedHeight,
-              quality: request.quality,
-              scale: request.scale,
-              frameDecimation: avifDecimation,
-              smartFrameSkip: request.smartFrameSkip,
-              onFrameDecoded: decodeProgressCb,
-            },
-            createEncodeProgressCb(),
-            signal
-          ),
-        { priority: 'user-visible' }
-      );
-      output = encoded.buffer as ArrayBuffer;
-      encodeResult = {
-        frames: estimatedOutputFrames,
         outputBytes: output.byteLength,
       };
     } else {

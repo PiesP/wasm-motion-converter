@@ -81,7 +81,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const outputExtension = createMemo(() => {
     if (local.outputBlob.type === 'image/gif') return 'gif';
     if (local.outputBlob.type === 'image/webp') return 'webp';
-    if (local.outputBlob.type === 'image/avif') return 'avif';
     return 'webp';
   });
 

@@ -46,8 +46,6 @@
   "format.gifDesc": "Universal support",
   "format.webp": "WebP",
   "format.webpDesc": "Smaller file size",
-  "format.avif": "AVIF",
-  "format.avifDesc": "Smallest file size (newer browsers)",
   "quality.title": "Quality Preset",
   "quality.low": "Low",
   "quality.lowDesc": "Fast",

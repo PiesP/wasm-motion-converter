@@ -11,7 +11,6 @@
  */
 
 import type { ConversionFormat } from '@t/conversion-types';
-import { isAnimatedAvif } from './avif-format';
 
 /** Validate output file header (header-only check, no need to read full file) */
 export function validateOutput(output: Uint8Array, format: ConversionFormat): boolean {
@@ -28,8 +27,6 @@ export function validateOutput(output: Uint8Array, format: ConversionFormat): bo
     const webp = new TextDecoder().decode(output.slice(8, 12));
     if (riff !== 'RIFF' || webp !== 'WEBP') return false;
     // Size check requires full file — skip for header-only validation
-  } else {
-    return isAnimatedAvif(output);
   }
 
   return true;

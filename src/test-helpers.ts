@@ -170,7 +170,6 @@ const DEFAULT_WAIT_INTERVAL = 200;
 const FORMAT_WAIT_TIMEOUTS: Record<string, number> = {
   gif: 120_000,
   webp: 90_000,
-  avif: 180_000,
 };
 
 /** Auto-confirm any pending confirmation dialog (for testing). */

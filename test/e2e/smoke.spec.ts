@@ -84,27 +84,6 @@ test.describe('Smoke: H.264 → WebP', () => {
   });
 });
 
-test.describe('Smoke: H.264 → animated AVIF', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForTimeout(2000);
-  });
-
-  test('converts H.264 MP4 to an animated AVIF sequence', async ({ page }) => {
-    const { state, error } = await runConversion(page, {
-      file: 'test-video-h264-baseline.mp4',
-      format: 'avif',
-      quality: 'low',
-      scale: '50%',
-      timeoutMs: 180_000,
-    });
-
-    expect(state, error ?? 'AVIF conversion failed').toBe('done');
-    const output = await downloadResult(page);
-    expect(validateFileMagic(output, 'avif')).toMatchObject({ valid: true });
-  });
-});
-
 test.describe('Smoke: Result validation', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -274,4 +253,3 @@ test.describe('Smoke: Error handling', () => {
     expect(finalState).toBe('done');
   });
 });
-

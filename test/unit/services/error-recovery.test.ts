@@ -26,8 +26,4 @@ describe('validateOutput', () => {
     expect(validateOutput(bytes('WEBPxxxxRIFF', 12), 'webp')).toBe(false);
   });
 
-  it('accepts an animated AVIF brand and rejects a still-image AVIF brand', () => {
-    expect(validateOutput(bytes('\0\0\0\x18ftypavis\0\0\0\0avis'), 'avif')).toBe(true);
-    expect(validateOutput(bytes('\0\0\0\x18ftypavif\0\0\0\0avif'), 'avif')).toBe(false);
-  });
 });
