@@ -4,10 +4,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   AVIF_MIME_TYPE,
+  AVIF_MAX_ENCODE_PIXELS,
+  AVIF_SPEED,
   AVIF_TIMESCALE,
+  assertAvifEncodeResolution,
   avifQualityFor,
   durationToAvifTimescale,
   isAnimatedAvif,
+  isAvifEncodeResolutionSupported,
 } from '@services/avif-format';
 
 const bytes = (text: string, length = text.length) => {
@@ -20,6 +24,16 @@ describe('avif-format', () => {
   it('defines the browser AVIF MIME type', () => {
     expect(AVIF_MIME_TYPE).toBe('image/avif');
     expect(AVIF_TIMESCALE).toBe(1000);
+    expect(AVIF_SPEED).toBe(10);
+  });
+
+  it('rejects resolutions that exceed the AVIF WASM working-set limit', () => {
+    expect(isAvifEncodeResolutionSupported(1440, 810)).toBe(true);
+    expect(isAvifEncodeResolutionSupported(1920, 1080)).toBe(false);
+    expect(AVIF_MAX_ENCODE_PIXELS).toBe(1_200_000);
+    expect(() => assertAvifEncodeResolution(1920, 1080)).toThrow(
+      /AVIF WASM memory limit reached.*reduce the scale to 50%/
+    );
   });
 
   it('recognizes an animated AVIF ftyp box by the avis brand', () => {

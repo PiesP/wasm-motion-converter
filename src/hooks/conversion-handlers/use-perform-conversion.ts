@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
-import { AVIF_MIME_TYPE } from '@services/avif-format';
+import { AVIF_MIME_TYPE, assertAvifEncodeResolution } from '@services/avif-format';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
 import { arrayBufferToHex } from '@services/conversion-worker/protocol';
 import { validateOutput } from '@services/error-recovery';
@@ -232,13 +232,22 @@ async function performConversion(
 
 function runMemoryCheck(settings: ConversionSettings): number | undefined {
   const md = videoMetadata();
+  if (!md) return undefined;
+
+  const outW = Math.max(1, Math.floor(md.width * settings.scale));
+  const outH = Math.max(1, Math.floor(md.height * settings.scale));
+
+  // AVIF's libaom working set is dominated by a single frame's resolution;
+  // reducing frame count does not make an oversized frame encodable.
+  if (settings.format === 'avif') {
+    assertAvifEncodeResolution(outW, outH);
+  }
+
   const isHighRisk = settings.quality === 'high' && settings.scale >= 1.0;
   let forcedDecimation: number | undefined;
 
-  if (isHighRisk && md) {
+  if (isHighRisk) {
     const estFrames = md.duration > 0 ? Math.round(md.duration * (md.framerate ?? 30)) : 300;
-    const outW = Math.max(1, Math.floor(md.width * settings.scale));
-    const outH = Math.max(1, Math.floor(md.height * settings.scale));
     const memCheck = checkMemoryForConversion(outW, outH, estFrames, settings.format);
     logger.info('conversion', 'Pre-conversion memory check', {
       level: memCheck.level,
