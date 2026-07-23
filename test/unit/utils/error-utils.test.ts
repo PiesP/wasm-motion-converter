@@ -49,8 +49,8 @@ describe('getErrorMessage', () => {
   });
 
   it('extracts native exception text from objects with a what property', () => {
-    expect(getErrorMessage({ what: 'AVIF frame encoding failed' })).toBe(
-      'AVIF frame encoding failed'
+    expect(getErrorMessage({ what: 'WebP frame encoding failed' })).toBe(
+      'WebP frame encoding failed'
     );
   });
 });

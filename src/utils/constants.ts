@@ -93,13 +93,6 @@ export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
   high: 30,
 };
 
-/** AVIF auto-decimation target FPS — quality-dependent. */
-export const AVIF_TARGET_FPS: Record<ConversionQuality, number> = {
-  low: 12,
-  medium: 24,
-  high: 30,
-};
-
 /** Minimum output FPS guard — ensures output never drops below this.
  *  Applied after decimation calculation to prevent excessively choppy output
  *  even with low quality + high source FPS combinations. */
@@ -229,16 +222,6 @@ export const GIF_PALETTE_OVERHEAD_PER_FRAME = 800;
 
 /** WebP container overhead per frame in bytes (ANMF chunk header) */
 export const WEBP_OVERHEAD_PER_FRAME = 32;
-
-/** AVIF container overhead per frame, excluding the encoded AV1 payload. */
-export const AVIF_OVERHEAD_PER_FRAME = 48;
-
-/** Conservative bytes-per-pixel estimate for animated AVIF. */
-export const AVIF_BPP_CONSERVATIVE: Record<ConversionQuality, number> = {
-  low: 0.06,
-  medium: 0.1,
-  high: 0.18,
-};
 
 // ============================================================================
 // LOCALISATION CONSTANTS

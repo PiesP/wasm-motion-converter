@@ -2,7 +2,6 @@
 // Copyright (c) 2025-2026 PiesP
 
 import {
-  estimateAvifOutputSize,
   estimateGifOutputSize,
   estimateWebpOutputSize,
   estimateOutputSize,
@@ -73,21 +72,6 @@ describe('estimateWebpOutputSize', () => {
   });
 });
 
-describe('estimateAvifOutputSize', () => {
-  it('scales conservatively with AVIF quality', () => {
-    const low = estimateAvifOutputSize(1920, 1080, 150, 'low');
-    const medium = estimateAvifOutputSize(1920, 1080, 150, 'medium');
-    const high = estimateAvifOutputSize(1920, 1080, 150, 'high');
-
-    expect(low).toBeLessThan(medium);
-    expect(medium).toBeLessThan(high);
-  });
-
-  it('returns zero for zero totalFrames', () => {
-    expect(estimateAvifOutputSize(1920, 1080, 0, 'high')).toBe(0);
-  });
-});
-
 describe('estimateOutputSize', () => {
   it('returns GIF estimate for gif format', () => {
     const result = estimateOutputSize(1920, 1080, 150, 'high', 'gif');
@@ -97,12 +81,6 @@ describe('estimateOutputSize', () => {
 
   it('returns WebP estimate for webp format', () => {
     const result = estimateOutputSize(1920, 1080, 150, 'high', 'webp');
-    expect(result.bytes).toBeGreaterThan(0);
-    expect(result.formatted).toMatch(/^[\d.]+ (B|KB|MB|GB)$/);
-  });
-
-  it('returns AVIF estimate for avif format', () => {
-    const result = estimateOutputSize(1920, 1080, 150, 'high', 'avif');
     expect(result.bytes).toBeGreaterThan(0);
     expect(result.formatted).toMatch(/^[\d.]+ (B|KB|MB|GB)$/);
   });

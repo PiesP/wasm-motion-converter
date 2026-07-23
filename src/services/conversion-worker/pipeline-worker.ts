@@ -10,7 +10,6 @@
  * fact that performance.memory is unavailable in Workers.
  */
 
-import { encodeAvif } from '@services/avif-encoder-service';
 import { globalBufferPool } from '@services/buffer-pool';
 import { demuxVideo } from '@services/demuxer-service';
 import { calcAutoDecimation } from '@services/encoder-common';
@@ -19,7 +18,6 @@ import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
 import type { VideoMetadata } from '@t/conversion-types';
 import {
-  AVIF_TARGET_FPS,
   BYTES_PER_MB,
   DEFAULT_FPS,
   GIF_TARGET_FPS,
@@ -290,58 +288,6 @@ export async function runWorkerPipeline(
         signal
       );
       output = gifResult.buffer as ArrayBuffer;
-    } else if (options.format === 'avif') {
-      const avifDecimation = calcAutoDecimation(
-        sourceFps,
-        AVIF_TARGET_FPS[options.quality],
-        options.forceDecimation
-      );
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / avifDecimation));
-
-      logger.info('encoders', 'AVIF encoder (stateful WASM sequence)', {
-        codec: demuxResult.config.codec,
-        codedWidth,
-        codedHeight,
-        totalFrames: demuxResult.totalFrames,
-        sourceFps: Math.round(sourceFps),
-        avifDecimation,
-      });
-
-      const avifResult = await encodeAvif(
-        demuxResult,
-        {
-          width: codedWidth,
-          height: codedHeight,
-          quality: options.quality,
-          scale: options.scale,
-          frameDecimation: avifDecimation,
-          smartFrameSkip: options.smartFrameSkip,
-          onFrameDecoded: decodeProgressCb,
-        },
-        (progress) => {
-          const now = performance.now();
-          if (now - progressState.lastPostTime >= 100) {
-            progressState.lastPostTime = now;
-            postMessage({
-              type: 'progress',
-              requestId: '',
-              phase: 'encoding',
-              percent: progress.progress,
-              fps: progressState.fpsTracker.current,
-              etaSeconds: progress.etaSeconds ?? 0,
-              memoryMB: assertMemoryBudget(),
-              ...(progress.currentFrame !== undefined
-                ? { currentFrame: progress.currentFrame }
-                : {}),
-              totalFrames: estimatedOutputFrames,
-              outputFrames: estimatedOutputFrames,
-              elapsedMs: Math.round(now - pipelineStart),
-            });
-          }
-        },
-        signal
-      );
-      output = avifResult.buffer as ArrayBuffer;
     } else {
       const webpDecimation = calcAutoDecimation(
         sourceFps,

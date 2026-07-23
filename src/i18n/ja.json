@@ -46,8 +46,6 @@
   "format.gifDesc": "汎用性あり",
   "format.webp": "WebP",
   "format.webpDesc": "ファイルサイズが小さい",
-  "format.avif": "AVIF",
-  "format.avifDesc": "最小ファイルサイズ（新しいブラウザー）",
   "quality.title": "品質プリセット",
   "quality.low": "低",
   "quality.lowDesc": "高速",

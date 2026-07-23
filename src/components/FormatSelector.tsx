@@ -8,7 +8,7 @@ import { createMemo, splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
-const FORMAT_COLUMNS = 3;
+const FORMAT_COLUMNS = 2;
 
 interface FormatSelectorProps {
   value: ConversionFormat;
@@ -24,7 +24,6 @@ const FormatSelector: Component<FormatSelectorProps> = (props) => {
   const FORMAT_OPTIONS = createMemo<OptionSelectorOption<ConversionFormat>[]>(() => [
     { value: 'gif', label: t('format.gif'), description: t('format.gifDesc') },
     { value: 'webp', label: t('format.webp'), description: t('format.webpDesc') },
-    { value: 'avif', label: t('format.avif'), description: t('format.avifDesc') },
   ]);
 
   return (

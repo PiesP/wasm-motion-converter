@@ -193,16 +193,9 @@ const ERROR_RULES: readonly ErrorRule[] = [
     type: 'format',
     code: 'ENCODER_ERROR',
     phase: 'encoder_error',
-    pattern: /libavif|(?:encoding|encoder)\s+failed/i,
+    pattern: /(?:encoding|encoder)\s+failed/i,
     suggestion:
       'The image encoder failed. Try reducing the quality or scale, or use a shorter video.',
-  },
-  {
-    name: 'avif-format',
-    type: 'format',
-    code: 'ENCODER_ERROR',
-    pattern: /avif/i,
-    suggestion: 'AVIF format is not supported. Use GIF or WebP instead.',
   },
 ];
 

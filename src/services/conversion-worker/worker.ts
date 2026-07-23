@@ -75,9 +75,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       } catch (err) {
         const message = getErrorMessage(err);
         // Classify error using the same compact rules as pipeline-worker.ts
-        const code = isCancellationError(err)
-          ? 'CANCELLED'
-          : classifyWorkerError(message, options.format);
+        const code = isCancellationError(err) ? 'CANCELLED' : classifyWorkerError(message);
 
         respond({
           type: 'error',

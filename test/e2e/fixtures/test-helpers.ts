@@ -153,7 +153,7 @@ export async function injectSyntheticFile(
 
 // ── Settings ───────────────────────────────────────────────────
 
-export async function setFormat(page: Page, format: 'gif' | 'webp' | 'avif'): Promise<void> {
+export async function setFormat(page: Page, format: 'gif' | 'webp'): Promise<void> {
   await page.click(`label:has(input[value="${format}"])`);
 }
 
@@ -229,7 +229,7 @@ export async function runConversion(
   page: Page,
   options: {
     file: string;
-    format: 'gif' | 'webp' | 'avif';
+    format: 'gif' | 'webp';
     quality: 'low' | 'medium' | 'high';
     scale: '50%' | '75%' | '100%';
     timeoutMs?: number;
