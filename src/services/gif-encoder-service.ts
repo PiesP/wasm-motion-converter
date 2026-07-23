@@ -164,6 +164,7 @@ export async function encodeGif(
   /** Estimated total frames from demuxer — used for progress reporting only */
   let estimatedTotalFrames = 0;
   let skippedByDecimation = 0;
+  let smartSkipped = 0;
   const sourceTotalMs = demux.sourceTotalMs;
 
   // Reusable indexed pixel buffer — avoids per-frame ~2MB allocation.
@@ -228,7 +229,12 @@ export async function encodeGif(
 
   try {
     // Decode frames with streaming callback — each frame is encoded immediately
-    const { totalInputFrames: totalDecoded, tailAccumulatedMs } = await decodeFrames(
+    const {
+      totalInputFrames: totalDecoded,
+      skippedByDecimation: decoderSkippedByDecimation,
+      smartSkipped: decoderSmartSkipped,
+      tailAccumulatedMs,
+    } = await decodeFrames(
       demux,
       {
         width: w,
@@ -328,8 +334,8 @@ export async function encodeGif(
     );
 
     totalInputFrames = totalDecoded;
-    // Compute skippedByDecimation from decoder stats
-    skippedByDecimation = totalInputFrames - encodeIdx;
+    skippedByDecimation = decoderSkippedByDecimation;
+    smartSkipped = decoderSmartSkipped;
 
     if (encodeIdx === 0) {
       throw new Error('No frames decoded for GIF encoding');
@@ -372,6 +378,7 @@ export async function encodeGif(
       maxColors,
       frameDecimation,
       skippedByDecimation,
+      smartSkipped,
       splitFrames,
       sourceDurationMs: Math.round(sourceTotalMs),
       outputDurationCs: Math.round(outputTotalDelay),
@@ -383,6 +390,7 @@ export async function encodeGif(
       outputBytes: rawBytes.length,
       duration: `${totalElapsed.toFixed(2)}s`,
       skippedByDecimation,
+      smartSkipped,
     });
 
     return rawBytes;

@@ -239,7 +239,7 @@ test.describe('Error Boundary (F40)', () => {
 
       // App should recover
       const stateAfterRetry = await page.evaluate(() => window.__TEST_HELPERS__?.getAppState());
-      expect(['idle', 'loading-ffmpeg']).toContain(stateAfterRetry);
+      expect(stateAfterRetry).toBe('idle');
     } else {
       // If error boundary didn't visibly trigger (the specific corruption path
       // may not hit a render-time throw in all layouts), verify the app is still

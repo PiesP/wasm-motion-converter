@@ -230,6 +230,7 @@ export async function encodeWebpOffscreen(
   const {
     totalInputFrames: totalDecoded,
     skippedByDecimation: totalSkipped,
+    smartSkipped: totalSmartSkipped,
     tailAccumulatedMs,
   } = await decodeFrames(
     demux,
@@ -350,6 +351,7 @@ export async function encodeWebpOffscreen(
     resolution: `${w}×${h}`,
     quality,
     skippedByDecimation: totalSkipped,
+    smartSkipped: totalSmartSkipped,
     dynamicSkipCount: decimationController.getSkipCount(),
   });
   logger.info('encoders', '  │  └─ WebP: OffscreenCanvas encode finished', {
@@ -358,6 +360,7 @@ export async function encodeWebpOffscreen(
     duration: `${totalElapsed.toFixed(2)}s`,
     frameDecimation,
     skippedByDecimation: totalSkipped,
+    smartSkipped: totalSmartSkipped,
   });
 
   return result;
