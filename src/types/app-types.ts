@@ -7,6 +7,7 @@
  * - `idle`: Waiting for user to select a video file
  * - `analyzing`: Extracting video metadata via mediabunny
  * - `converting`: Active video conversion in progress
+ * - `cancelling`: Cancelling an active operation
  * - `done`: Conversion completed successfully
  * - `error`: An error occurred
  */

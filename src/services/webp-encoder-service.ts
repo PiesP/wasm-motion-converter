@@ -79,7 +79,11 @@ export async function encodeWebp(
   const decimationController = createDynamicDecimationController();
 
   // Decode frames with streaming callback — each frame is encoded immediately
-  const { totalInputFrames: totalDecoded, skippedByDecimation: totalSkipped } = await decodeFrames(
+  const {
+    totalInputFrames: totalDecoded,
+    skippedByDecimation: totalSkipped,
+    smartSkipped: totalSmartSkipped,
+  } = await decodeFrames(
     demux,
     {
       width: w,
@@ -186,6 +190,7 @@ export async function encodeWebp(
     resolution: `${w}×${h}`,
     quality,
     skippedByDecimation,
+    smartSkipped: totalSmartSkipped,
     dynamicSkipCount: decimationController.getSkipCount(),
   });
   logger.info('encoders', '  │  └─ WebP: encode finished', {
@@ -194,6 +199,7 @@ export async function encodeWebp(
     duration: `${totalElapsed.toFixed(2)}s`,
     frameDecimation,
     skippedByDecimation,
+    smartSkipped: totalSmartSkipped,
   });
 
   return result;

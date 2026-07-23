@@ -44,9 +44,9 @@ export default defineConfig(({ mode }) => {
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     `style-src ${styleSrc}`,
-    "img-src 'self' blob: data: https:",
+    "img-src 'self' blob: data:",
     "media-src 'self' blob:",
-    "connect-src 'self' blob: https://unpkg.com https://cdn.jsdelivr.net",
+    "connect-src 'self' blob:",
     "worker-src 'self'",
   ].join('; ');
 

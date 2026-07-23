@@ -59,7 +59,7 @@ import type { ConversionFormat, VideoMetadata } from '@t/conversion-types';
 export interface TestHelpers {
   // ── White-box: direct state access (for setup / injection) ──
 
-  /** Current app state ('idle' | 'analyzing' | 'converting' | 'done' | 'error') */
+  /** Current app state ('idle' | 'analyzing' | 'converting' | 'cancelling' | 'done' | 'error') */
   getAppState(): AppStateType;
 
   /** Current conversion progress (0-100) */

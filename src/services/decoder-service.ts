@@ -83,7 +83,10 @@ export interface DecodedFrame {
 export interface DecodeResult {
   frames: DecodedFrame[];
   totalInputFrames: number;
+  /** Frames skipped by the fixed frame-decimation ratio. */
   skippedByDecimation: number;
+  /** Frames skipped by similarity-based or adaptive smart frame skipping. */
+  smartSkipped: number;
   /** Total source duration in milliseconds (from demux chunk durations) */
   sourceTotalMs: number;
   /** Total output duration in milliseconds (sum of all frame durations) */
@@ -519,7 +522,7 @@ export async function decodeFrames(
 
     logger.info('decoders', 'Decoding complete', {
       totalInputFrames: inputFrameCount,
-      outputFrames: streaming ? inputFrameCount - skippedByDecimation : rgbFrames.length,
+      outputFrames: streaming ? keptFrameCount : rgbFrames.length,
       skippedByDecimation,
       smartSkipped: smartSkippedCount,
       smartSkipMode: effectiveSmartSkip,
@@ -532,6 +535,7 @@ export async function decodeFrames(
       frames: rgbFrames,
       totalInputFrames: inputFrameCount,
       skippedByDecimation,
+      smartSkipped: smartSkippedCount,
       sourceTotalMs,
       outputTotalMs,
       tailAccumulatedMs: streaming ? accumulatedDuration + consecutiveSkipMs : 0,
