@@ -19,9 +19,9 @@ const PROD_URL = 'https://wasm-motion-converter.pages.dev';
 
 // Skip all dogfood-qa tests when running against dev server (SKIP_WEB_SERVER=1).
 // These tests inspect the production deployment and require a built+deployed site.
-if (process.env.SKIP_WEB_SERVER === '1') {
-  test.describe.skip('Dogfood QA (production only)', () => {});
-}
+test.beforeEach(() => {
+  test.skip(process.env.SKIP_WEB_SERVER === '1', 'Dogfood QA requires the production deployment');
+});
 
 // ---------------------------------------------------------------------------
 // Helpers

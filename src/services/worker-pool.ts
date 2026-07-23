@@ -349,6 +349,10 @@ export class WebpWorkerPool {
     if (idx === -1) return;
 
     worker.terminate();
+    const idleIdx = this.idleWorkers.indexOf(worker);
+    if (idleIdx !== -1) {
+      this.idleWorkers.splice(idleIdx, 1);
+    }
 
     try {
       const newWorker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
@@ -418,6 +422,9 @@ export class WebpWorkerPool {
     this.idleWorkers.length = 0;
     this.activeTasks.clear();
     this.pendingResolvers.clear();
+    for (const timeoutHandle of this.taskTimeouts.values()) {
+      clearTimeout(timeoutHandle);
+    }
     this.taskTimeouts.clear();
     this.workers.length = 0;
   }

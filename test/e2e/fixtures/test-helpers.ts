@@ -1,4 +1,6 @@
 import { Page, expect } from '@playwright/test';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -46,6 +48,8 @@ declare global {
 // ── Low-level helpers ──────────────────────────────────────────
 
 import { existsSync } from 'node:fs';
+
+const PUBLIC_DIR = resolve(fileURLToPath(new URL('../../../public', import.meta.url)));
 
 /** Parse human-readable size string to bytes. */
 export function parseSizeString(sizeStr: string): number | undefined {
@@ -118,9 +122,7 @@ export async function injectTestFile(page: Page, filename: string): Promise<void
     }
   });
   const input = page.locator('input[type="file"]').first();
-  const resolvedPath = filename.startsWith('/')
-    ? `/home/piesp/projects/wasm-motion-converter/public${filename}`
-    : `/home/piesp/projects/wasm-motion-converter/public/${filename}`;
+  const resolvedPath = resolve(PUBLIC_DIR, filename.replace(/^\/+/, ''));
   if (!existsSync(resolvedPath)) {
     throw new Error(`Test video not found: ${resolvedPath}`);
   }
