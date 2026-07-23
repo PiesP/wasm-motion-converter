@@ -1,0 +1,63 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stryker-mutator/stryker/master/packages/core/schema/stryker-schema.json",
+  "mutate": [
+    "src/utils/**/*.ts",
+    "src/stores/**/*.ts",
+    "!src/**/*.d.ts",
+    "!src/types/**",
+    "!src/services/encoder-*.ts",
+    "!src/services/decoder-*.ts",
+    "!src/services/demuxer-*.ts",
+    "!src/services/streaming-*.ts",
+    "!src/services/conversion-pipeline.ts",
+    "!src/services/conversion-profiler.ts",
+    "!src/services/buffer-pool.ts",
+    "!src/services/gif-encoder-service.ts",
+    "!src/services/streaming-webp-encoder.ts",
+    "!src/services/dynamic-decimation-controller.ts",
+    "!src/services/error-recovery.ts"
+  ],
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.config.ts",
+    "related": false
+  },
+  "reporters": ["progress"],
+  "coverageAnalysis": "all",
+  "inPlace": true,
+  "thresholds": {
+    "high": 60,
+    "low": 40,
+    "break": null
+  },
+  "concurrency": 2,
+  "timeoutMS": 60000,
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "mutator": {
+    "excludedMutations": [
+      "StringLiteral",
+      "ArrayDeclaration",
+      "ObjectLiteral",
+      "ArrowFunction",
+      "BlockStatement",
+      "ConditionalExpression",
+      "Regex",
+      "UnaryOperator",
+      "UpdateOperator",
+      "OptionalChaining",
+      "AssignmentOperator",
+      "PrefixDecrementOperator",
+      "PrefixIncrementOperator",
+      "PostfixDecrementOperator",
+      "PostfixIncrementOperator",
+      "MethodExpression",
+      "NonNullAssertion",
+      "CheckedStatement",
+      "SwitchCase",
+      "WhileStatement",
+      "ForStatement",
+      "EqualityOperator",
+      "BooleanLiteral"
+    ]
+  }
+}
