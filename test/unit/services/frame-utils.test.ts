@@ -13,6 +13,28 @@ import {
 import { BufferPool } from '@services/buffer-pool';
 import { describe, expect, it, vi } from 'vitest';
 
+describe('BufferPool', () => {
+  it('retains a released buffer even when its bucket does not exist yet', () => {
+    const pool = new BufferPool(1, 1024);
+    const buffer = pool.acquire(8);
+
+    pool.release(buffer);
+
+    expect(pool.totalPooledMemory).toBe(buffer.byteLength);
+    expect(pool.acquire(8)).toBe(buffer);
+  });
+
+  it('does not retain buffers whose sizes cannot be acquired from a bucket', () => {
+    const pool = new BufferPool(1, 1024);
+    const buffer = new Uint8Array(12);
+
+    pool.release(buffer);
+
+    expect(pool.totalPooledMemory).toBe(0);
+    expect(pool.acquire(12)).not.toBe(buffer);
+  });
+});
+
 describe('copyFrameToRGB', () => {
   it('uses the RGBX path and caches the detected copy strategy', async () => {
     const allocationSize = vi.fn(() => 8);

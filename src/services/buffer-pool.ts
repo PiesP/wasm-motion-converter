@@ -88,13 +88,21 @@ export class BufferPool {
    * it is silently discarded (GC will reclaim it).
    */
   release(buf: Uint8Array): void {
+    if (buf.byteLength === 0 || (buf.byteLength & (buf.byteLength - 1)) !== 0) {
+      return;
+    }
+
     // Check total memory cap before accepting
     if (this.totalPooledBytes + buf.byteLength > this.maxTotalMemory) {
       // Over budget — let GC collect it
       return;
     }
-    const pool = this.pools.get(buf.byteLength);
-    if (pool && pool.length < this.maxPerBucket) {
+    let pool = this.pools.get(buf.byteLength);
+    if (!pool) {
+      pool = [];
+      this.pools.set(buf.byteLength, pool);
+    }
+    if (pool.length < this.maxPerBucket) {
       pool.push(buf);
       this.totalPooledBytes += buf.byteLength;
     }

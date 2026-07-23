@@ -47,6 +47,11 @@ export interface ConversionTestResult {
   browser?: string;
 }
 
+interface BaselineData {
+  results: Record<string, Record<string, ExpectedOutputRange>>;
+  timings: Record<string, Record<string, number>>;
+}
+
 // ── Storage ────────────────────────────────────────────────────
 
 const RESULTS_DIR = join(import.meta.dirname, '..', '.results');

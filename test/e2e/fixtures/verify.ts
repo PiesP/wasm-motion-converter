@@ -20,6 +20,7 @@ export async function probeFile(filePath: string): Promise<{
     '-print_format', 'json',
     '-show_format',
     '-show_streams',
+    '-select_streams', 'v:0',
     '-count_frames',
     filePath,
   ]);
@@ -30,7 +31,8 @@ export async function probeFile(filePath: string): Promise<{
 
   const format = data.format?.format_name?.split(',')[0] || 'unknown';
   const duration = parseFloat(data.format?.duration || '0');
-  const frameCount = parseInt(stream.nb_frames || '0', 10) ||
+  const frameCount = parseInt(stream.nb_read_frames || '0', 10) ||
+    parseInt(stream.nb_frames || '0', 10) ||
     Math.round(duration * (parseFloat(stream.r_frame_rate?.split('/')[0] || '0') / parseFloat(stream.r_frame_rate?.split('/')[1] || '1')));
 
   return {
@@ -77,14 +79,13 @@ export async function getFrameCenterColor(filePath: string, frameIndex = 0): Pro
     '-pix_fmt', 'rgb24',
     'pipe:1',
     '-y',
-  ]);
+  ], { encoding: 'buffer' });
 
-  if (!stdout || Buffer.byteLength(stdout, 'binary') < 3) {
+  if (stdout.length < 3) {
     throw new Error(`Failed to extract frame ${frameIndex} from ${filePath}`);
   }
 
-  const buf = Buffer.from(stdout, 'binary');
-  return { r: buf[0] as number, g: buf[1] as number, b: buf[2] as number };
+  return { r: stdout[0] as number, g: stdout[1] as number, b: stdout[2] as number };
 }
 
 // ─── Magic byte validation (no external tools required) ──
@@ -98,6 +99,7 @@ export function validateGifMagic(bytes: Uint8Array): { valid: boolean; width?: n
 
   const header = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
   if (header !== 'GIF89a' && header !== 'GIF87a') return { valid: false };
+  if (bytes[bytes.length - 1] !== 0x3b) return { valid: false };
 
   // Logical Screen Descriptor: bytes 6-9 contain width (little-endian) and height (little-endian)
   const width = bytes[6]! | (bytes[7]! << 8);
@@ -111,7 +113,7 @@ export function validateGifMagic(bytes: Uint8Array): { valid: boolean; width?: n
  * WebP: bytes 0-3 = "RIFF", bytes 8-11 = "WEBP"
  */
 export function validateWebpMagic(bytes: Uint8Array): { valid: boolean; width?: number; height?: number } {
-  if (bytes.length < 12) return { valid: false };
+  if (bytes.length < 20) return { valid: false };
 
   const riff = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
   const webp = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
