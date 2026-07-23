@@ -9,8 +9,22 @@ export const AVIF_MIME_TYPE = 'image/avif';
 /** Fixed media timescale used by the stateful libavif binding. */
 export const AVIF_TIMESCALE = 1000;
 
-/** Browser-safe AOM speed preset; lower values trade conversion time for size. */
-export const AVIF_SPEED = 8;
+/**
+ * Browser-safe AOM speed preset.
+ *
+ * Speed 8 causes libaom to allocate a disproportionately large working set
+ * for high-resolution frames in the checked-in WASM build. Speed 10 keeps the
+ * encoder's working set bounded while remaining within the supported range.
+ */
+export const AVIF_SPEED = 10;
+
+/**
+ * The checked-in libavif/libaom WASM artifact is not safe above this output
+ * pixel count. The limit is based on the encoder's per-frame working set, not
+ * on the final AVIF file size, so frame decimation cannot make an oversized
+ * frame safe.
+ */
+export const AVIF_MAX_ENCODE_PIXELS = 1_200_000;
 
 /** Match the existing animated-image behavior: loop forever. */
 export const AVIF_REPETITION_COUNT = -1;
@@ -25,6 +39,26 @@ const AVIF_QUALITY_MAP: Record<ConversionQuality, number> = {
 /** Return the libavif quality value for a conversion preset. */
 export function avifQualityFor(quality: ConversionQuality): number {
   return AVIF_QUALITY_MAP[quality];
+}
+
+/** Check whether the current AVIF WASM artifact can encode these dimensions. */
+export function isAvifEncodeResolutionSupported(width: number, height: number): boolean {
+  return (
+    Number.isSafeInteger(width) &&
+    Number.isSafeInteger(height) &&
+    width > 0 &&
+    height > 0 &&
+    width * height <= AVIF_MAX_ENCODE_PIXELS
+  );
+}
+
+/** Reject dimensions that would predictably exhaust the AVIF WASM heap. */
+export function assertAvifEncodeResolution(width: number, height: number): void {
+  if (isAvifEncodeResolutionSupported(width, height)) return;
+
+  throw new Error(
+    `AVIF WASM memory limit reached: output resolution ${width}x${height} exceeds the safe limit of ${AVIF_MAX_ENCODE_PIXELS.toLocaleString()} pixels; reduce the scale to 50% or use WebP.`
+  );
 }
 
 /**

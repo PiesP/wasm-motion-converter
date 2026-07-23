@@ -21,7 +21,7 @@ describe('avif-encoder-service', () => {
     const frame = new Uint8Array(4 * 4 * 3);
 
     encoder.addFrame(frame, 16.7);
-    expect(Encoder).toHaveBeenCalledWith(4, 4, 3, 75, 8, -1);
+    expect(Encoder).toHaveBeenCalledWith(4, 4, 3, 75, 10, -1);
     expect(addFrame).toHaveBeenCalledWith(frame, 17);
     expect(encoder.finish()).toEqual(new Uint8Array([0, 1, 2]));
     expect(deleteEncoder).toHaveBeenCalledOnce();

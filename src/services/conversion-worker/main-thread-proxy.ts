@@ -42,8 +42,16 @@ export class WorkerTimeoutError extends Error {
 /** A worker reached its conservative memory budget and must not be retried. */
 export class WorkerMemoryLimitError extends Error {
   constructor(message: string) {
-    super(message);
+    super(`Worker ran out of memory: ${message}`);
     this.name = 'WorkerMemoryLimitError';
+  }
+}
+
+/** An AVIF encoder failure is deterministic and must not be retried on main. */
+export class WorkerAvifEncoderError extends Error {
+  constructor(message: string) {
+    super(`AVIF encoder failed in Worker: ${message}`);
+    this.name = 'WorkerAvifEncoderError';
   }
 }
 
@@ -169,6 +177,8 @@ export async function runPipelineViaWorker(
             reject(new DOMException('Cancelled', 'AbortError'));
           } else if (response.code === 'OUT_OF_MEMORY') {
             reject(new WorkerMemoryLimitError(response.message));
+          } else if (options.format === 'avif' && response.code === 'ENCODER_ERROR') {
+            reject(new WorkerAvifEncoderError(response.message));
           } else {
             reject(new Error(`Worker error: ${response.message}`));
           }
@@ -255,7 +265,11 @@ export async function runPipelineWithFallback(
     );
   } catch (workerError) {
     // If the error is a cancellation, don't fall back — propagate it
-    if (isCancellationError(workerError) || workerError instanceof WorkerMemoryLimitError) {
+    if (
+      isCancellationError(workerError) ||
+      workerError instanceof WorkerMemoryLimitError ||
+      workerError instanceof WorkerAvifEncoderError
+    ) {
       throw workerError;
     }
 

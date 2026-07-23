@@ -13,6 +13,7 @@ import type { ProgressCallback } from '@t/conversion-types';
 import {
   AVIF_REPETITION_COUNT,
   AVIF_SPEED,
+  assertAvifEncodeResolution,
   avifQualityFor,
   durationToAvifTimescale,
 } from './avif-format';
@@ -122,6 +123,7 @@ export async function encodeAvif(
 ): Promise<Uint8Array> {
   const width = Math.max(1, Math.floor(opts.width * opts.scale));
   const height = Math.max(1, Math.floor(opts.height * opts.scale));
+  assertAvifEncodeResolution(width, height);
   const frameDecimation = opts.frameDecimation ?? 1;
   const encoder = await createAvifAnimationEncoder({
     width,
