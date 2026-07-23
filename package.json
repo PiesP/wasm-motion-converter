@@ -29,7 +29,6 @@
     "knip:full": "knip --files --exports --dependencies --reporter compact --max-show-issues 50 --no-exit-code",
     "prebuild": "npx tsx scripts/generate-licenses.ts && pnpm -s quality",
     "build": "NODE_OPTIONS=\"--no-deprecation\" vite build",
-    "build:avif": "bash tooling/avif/build.sh",
     "build:ci": "npx tsx scripts/generate-licenses.ts && NODE_OPTIONS=\"--no-deprecation\" vite build && npx tsx scripts/postbuild.ts",
     "postbuild": "npx tsx scripts/postbuild.ts",
     "analyze": "NODE_OPTIONS=\"--no-deprecation\" VITE_ANALYZE_BUNDLE=true vite build && node -e \"console.log('\\\\nBundle analysis generated at dist/stats.html')\"",

@@ -6,18 +6,15 @@
  * 1. Remove Cloudflare Pages auto-injected beacon scripts from index.html
  *    (Cloudflare injects Insights scripts that violate CSP strict-dynamic).
  *
- * 2. Generate CSP hashes for inline scripts in index.html and inject them
- *    into _headers so inline scripts are not blocked by Content-Security-Policy.
- *    Without this, inline scripts for lang detection and error suppression
- *    fail with "inline script violates CSP directive" errors.
+ * 2. Verify that the application does not ship inline scripts. The production
+ *    CSP intentionally has no application-owned inline-script hash; keeping
+ *    initialization in the external module prevents HTML/hash drift.
  */
-import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const dist = resolve('dist');
 const indexPath = resolve(dist, 'index.html');
-const headersPath = resolve(dist, '_headers');
 
 // ── Step 1: Remove Cloudflare auto-injected scripts ──────────────────
 
@@ -42,44 +39,18 @@ if (cleaned !== html) {
   console.log('[postbuild] No Cloudflare Insights beacon script found');
 }
 
-// ── Step 2: Generate CSP hashes for inline scripts ───────────────────
+// ── Step 2: Enforce an external-script-only application policy ─────────
 
-// Use the HTML (after Cloudflare script removal) for hash generation
-// so we don't create hashes for scripts that will be stripped at deploy time.
-const finalHtml = cleaned;
-
-// Find inline <script> blocks (no src attribute)
+// Cloudflare's own scripts are injected after this build step and are covered
+// by the stable hashes in public/_headers. Any application-owned inline script
+// would reintroduce the HTML/header hash drift this check is meant to prevent.
 const inlineScriptRegex = /<script(?![^>]*\bsrc\b)[^>]*>\s*([\s\S]*?)\s*<\/script>/gi;
-const hashes: string[] = [];
-let match: RegExpExecArray | null;
-
-while ((match = inlineScriptRegex.exec(finalHtml)) !== null) {
-  const content = match[1]!;
-  const hash = createHash('sha256').update(content).digest('base64');
-  hashes.push(`'sha256-${hash}'`);
+if (inlineScriptRegex.test(cleaned)) {
+  throw new Error(
+    '[postbuild] Inline application scripts are forbidden; move initialization into an external module.'
+  );
 }
-
-if (hashes.length > 0) {
-  console.log(`[postbuild] Computed ${hashes.length} CSP hashes for inline scripts`);
-
-  // Read _headers and inject hashes into script-src
-  let headers = readFileSync(headersPath, 'utf-8');
-
-  // Find the CSP line and inject hashes into script-src
-  // Pattern: script-src 'self' 'unsafe-eval' ...;
-  const cspScriptSrcRegex = /(script-src\s+'self'\s+'unsafe-eval')([^;]*);/;
-  const hashStr = hashes.join(' ');
-
-  if (cspScriptSrcRegex.test(headers)) {
-    headers = headers.replace(cspScriptSrcRegex, `$1 ${hashStr}$2;`);
-    writeFileSync(headersPath, headers);
-    console.log('[postbuild] Injected CSP hashes into _headers');
-  } else {
-    console.warn('[postbuild] Could not find script-src in _headers to inject hashes');
-  }
-} else {
-  console.log('[postbuild] No inline scripts found — CSP hash injection skipped');
-}
+console.log('[postbuild] Verified no application-owned inline scripts');
 
 // ── Step 3: Remove test video files from production dist ─────────────
 // Test videos (~12MB total) are placed in public/ for dev convenience

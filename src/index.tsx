@@ -22,6 +22,10 @@ import { LocaleProvider } from './hooks/use-locale.tsx';
 import { registerServiceWorker } from './sw-register';
 import './index.css';
 
+// Set the initial document language before rendering. Keeping this in the
+// external entry module avoids HTML inline-script/CSP hash drift.
+document.documentElement.lang = detectInitialLocale();
+
 /**
  * Initialize application by rendering App component
  *
@@ -37,9 +41,6 @@ if (!root) {
     'Root element (#root) not found in DOM. Ensure index.html contains a <div id="root"></div> element.'
   );
 }
-
-// Set initial document lang attribute
-document.documentElement.lang = detectInitialLocale();
 
 render(
   () => (

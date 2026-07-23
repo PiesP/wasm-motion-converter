@@ -2,7 +2,6 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
-import { AVIF_MIME_TYPE } from '@services/avif-format';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
 import { arrayBufferToHex } from '@services/conversion-worker/protocol';
 import { validateOutput } from '@services/error-recovery';
@@ -232,13 +231,16 @@ async function performConversion(
 
 function runMemoryCheck(settings: ConversionSettings): number | undefined {
   const md = videoMetadata();
+  if (!md) return undefined;
+
+  const outW = Math.max(1, Math.floor(md.width * settings.scale));
+  const outH = Math.max(1, Math.floor(md.height * settings.scale));
+
   const isHighRisk = settings.quality === 'high' && settings.scale >= 1.0;
   let forcedDecimation: number | undefined;
 
-  if (isHighRisk && md) {
+  if (isHighRisk) {
     const estFrames = md.duration > 0 ? Math.round(md.duration * (md.framerate ?? 30)) : 300;
-    const outW = Math.max(1, Math.floor(md.width * settings.scale));
-    const outH = Math.max(1, Math.floor(md.height * settings.scale));
     const memCheck = checkMemoryForConversion(outW, outH, estFrames, settings.format);
     logger.info('conversion', 'Pre-conversion memory check', {
       level: memCheck.level,
@@ -428,12 +430,7 @@ async function executePipeline(
 }
 
 function validateOutputBlob(output: ArrayBuffer, settings: ConversionSettings): Blob {
-  const mimeType =
-    settings.format === 'gif'
-      ? 'image/gif'
-      : settings.format === 'avif'
-        ? AVIF_MIME_TYPE
-        : 'image/webp';
+  const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';
   const blob = new Blob([output], { type: mimeType });
 
   if (blob.size === 0) {

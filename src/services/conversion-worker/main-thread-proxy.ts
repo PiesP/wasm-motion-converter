@@ -42,7 +42,7 @@ export class WorkerTimeoutError extends Error {
 /** A worker reached its conservative memory budget and must not be retried. */
 export class WorkerMemoryLimitError extends Error {
   constructor(message: string) {
-    super(message);
+    super(`Worker ran out of memory: ${message}`);
     this.name = 'WorkerMemoryLimitError';
   }
 }

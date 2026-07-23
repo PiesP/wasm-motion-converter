@@ -14,14 +14,13 @@
  *
  * - `gif`: Animated GIF format (widely supported, larger file sizes)
  * - `webp`: Animated WebP format (better compression, modern browsers)
- * - `avif`: Animated AVIF format (best compression, newest browser support)
  * @example
  * const format: ConversionFormat = 'gif';
  */
-export type ConversionFormat = 'gif' | 'webp' | 'avif';
+export type ConversionFormat = 'gif' | 'webp';
 
 /** Runtime-available list of all ConversionFormat values (single source of truth) */
-export const CONVERSION_FORMATS: readonly ConversionFormat[] = ['gif', 'webp', 'avif'] as const;
+export const CONVERSION_FORMATS: readonly ConversionFormat[] = ['gif', 'webp'] as const;
 
 /**
  * VideoDecoderConfig as extended by mediabunny at runtime.
@@ -114,7 +113,7 @@ export const SMART_FRAME_SKIP_MODES: readonly SmartFrameSkipMode[] = [
  * };
  */
 export interface ConversionSettings {
-  /** Output format (gif, webp, or avif) */
+  /** Output format (gif or webp) */
   format: ConversionFormat;
   /** Quality level (low, medium, high) */
   quality: ConversionQuality;

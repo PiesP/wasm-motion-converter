@@ -92,29 +92,6 @@ describe('classifyConversionError', () => {
       expect(result.suggestion).toContain('WebP');
     });
 
-    it('classifies AVIF format error', () => {
-      const result = classifyConversionError('AVIF encoding not supported', null);
-      expect(result.type).toBe('format');
-    });
-
-    it('keeps a concrete AVIF encoder error from falling through to complexity memory heuristics', () => {
-      const meta = {
-        width: 1920,
-        height: 1080,
-        duration: 6.75,
-        codec: 'h264',
-        framerate: 60,
-        bitrate: 8_000_000,
-      };
-      const result = classifyConversionError(
-        'Frame processing failed: AVIF frame encoding failed: Encoding of color planes failed',
-        meta
-      );
-
-      expect(result.type).toBe('format');
-      expect(result.code).toBe('ENCODER_ERROR');
-      expect(result.phase).toBe('encoder_error');
-    });
   });
 
   describe('general errors', () => {

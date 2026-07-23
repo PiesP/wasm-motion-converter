@@ -10,7 +10,7 @@ import type { SerializedConversionOptions } from './types';
  *
  * An omitted forceDecimation means "use the format's automatic target FPS".
  * It must not be normalized to 1 here: 1 is an explicit keep-every-frame
- * override and is unsafe for high-resolution AVIF sequences.
+ * override and can be unsafe for high-resolution conversions.
  */
 export function buildConversionRequest(
   inputBuffer: ArrayBuffer,

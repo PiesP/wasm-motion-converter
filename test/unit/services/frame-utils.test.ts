@@ -1,4 +1,4 @@
-import { convertRGBAToRGB } from '@services/frame-utils';
+import { convertRGBAToRGB, copyFrameToRGB } from '@services/frame-utils';
 import {
   clearCanvasCache,
   compute8x8Grayscale,
@@ -12,6 +12,57 @@ import {
 } from '@services/frame-utils';
 import { BufferPool } from '@services/buffer-pool';
 import { describe, expect, it, vi } from 'vitest';
+
+describe('copyFrameToRGB', () => {
+  it('uses the RGBX path and caches the detected copy strategy', async () => {
+    const allocationSize = vi.fn(() => 8);
+    const copyTo = vi.fn(async (buffer: Uint8Array) => {
+      buffer.set([10, 20, 30, 255, 40, 50, 60, 255]);
+    });
+    const frame = {
+      codedWidth: 2,
+      codedHeight: 1,
+      displayWidth: 2,
+      displayHeight: 1,
+      allocationSize,
+      copyTo,
+    } as unknown as VideoFrame;
+    const context = createFrameProcessingContext();
+
+    const first = await copyFrameToRGB(frame, 2, 1, context);
+    const second = await copyFrameToRGB(frame, 2, 1, context);
+
+    expect(Array.from(first.slice(0, 6))).toEqual([10, 20, 30, 40, 50, 60]);
+    expect(Array.from(second.slice(0, 6))).toEqual([10, 20, 30, 40, 50, 60]);
+    expect(context.copyPath).toBe('four-channel');
+    expect(copyTo).toHaveBeenCalledTimes(2);
+    expect(allocationSize).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to RGBA when RGBX is unsupported', async () => {
+    const allocationSize = vi.fn((options?: { format?: string }) => {
+      if (options?.format === 'RGBX') throw new Error('RGBX unsupported');
+      return 4;
+    });
+    const copyTo = vi.fn(async (buffer: Uint8Array, options?: { format?: string }) => {
+      expect(options?.format).toBe('RGBA');
+      buffer.set([70, 80, 90, 255]);
+    });
+    const frame = {
+      codedWidth: 1,
+      codedHeight: 1,
+      displayWidth: 1,
+      displayHeight: 1,
+      allocationSize,
+      copyTo,
+    } as unknown as VideoFrame;
+
+    const result = await copyFrameToRGB(frame, 1, 1, createFrameProcessingContext());
+
+    expect(Array.from(result.slice(0, 3))).toEqual([70, 80, 90]);
+    expect(copyTo).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('convertRGBAToRGB', () => {
   it('converts an unaligned Uint8Array view without reading outside the view', () => {

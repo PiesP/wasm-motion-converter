@@ -70,12 +70,12 @@ function estimatePeakMemoryMB(
 ): number {
   const bytesPerFrame = width * height * 3; // RGB
   // GIF: streaming encoder processes one frame at a time (~2 in flight)
-  // AVIF/GIF: one stateful encoder plus one pending RGB frame; WebP's
-  // parallel path can have several frames in flight.
-  const inFlightFrames = format === 'gif' || format === 'avif' ? 2 : Math.min(10, totalFrames);
+  // GIF is streaming and keeps one encoder frame plus one pending RGB frame;
+  // WebP's parallel path can have several frames in flight.
+  const inFlightFrames = format === 'gif' ? 2 : Math.min(10, totalFrames);
   const frameMemory = inFlightFrames * bytesPerFrame;
-  // Encoder output buffer: ~20% for GIF, ~8% for AVIF, ~5% for WebP
-  const outputRatio = format === 'gif' ? 0.2 : format === 'avif' ? 0.08 : 0.05;
+  // Encoder output buffer: ~20% for GIF, ~5% for WebP
+  const outputRatio = format === 'gif' ? 0.2 : 0.05;
   const outputMemory = totalFrames * bytesPerFrame * outputRatio;
   // Decoder overhead: ~50MB
   const decoderOverhead = 50 * BYTES_PER_MB;

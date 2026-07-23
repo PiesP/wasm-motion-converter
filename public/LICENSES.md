@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-> Auto-generated on 2026-07-22 by `scripts/generate-licenses.ts`.
+> Auto-generated on 2026-07-23 by `scripts/generate-licenses.ts`.
 > Do not edit manually — run `pnpm build` to regenerate.
 
 This project uses the following open-source libraries.
@@ -42,22 +42,6 @@ This project uses the following open-source libraries.
 - **Repository:** https://github.com/nieyuyao/webp-wasm/blob/main/README.md
 - **Purpose:** WebP encoding via WebAssembly (encodeRGB)
 
-### libavif
-
-- **Version:** 1.4.2
-- **License:** BSD-2-Clause
-- **Repository:** https://github.com/AOMediaCodec/libavif
-- **Purpose:** Animated AVIF container and RGB/YUV conversion in browser WASM
-- **Note:** Built from the v1.4.2 tag with the bundled libaom encoder.
-
-### libaom
-
-- **Version:** 3.14.1
-- **License:** BSD-2-Clause
-- **Repository:** https://aomedia.googlesource.com/aom
-- **Purpose:** AV1 encoding backend used by the libavif WASM build
-- **Note:** Built from the v3.14.1 tag with AOM_TARGET_CPU=generic for portable browser WASM.
-
 ## License Texts
 
 ### MIT (@piesp/browser-core, gifenc, solid-js, wasm-webp)
@@ -94,8 +78,4 @@ Key points:
 - Source code modifications to the library itself must be made available under MPL-2.0
 - This project (wasm-motion-converter) remains under MIT
 - No patent retaliation clause applies
-
-### BSD-2-Clause (libavif, libaom)
-
-See the package repository for full license text.
 
