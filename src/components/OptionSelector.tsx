@@ -9,9 +9,9 @@ import Icon from './ui/Icon';
 
 const BASE_OPTION_CLASS =
   'relative flex items-center justify-center px-3 py-2 sm:py-3 border rounded-lg cursor-pointer transition-all duration-200 text-sm min-h-[44px] focus-within:ring-2 focus-within:ring-brand/50 focus-within:outline-none';
-const SELECTED_OPTION_CLASS = 'bg-brand/20 border-brand text-text-primary ring-2 ring-brand/30';
+const SELECTED_OPTION_CLASS = 'bg-brand/15 border-brand text-text-primary ring-2 ring-brand/30';
 const DEFAULT_OPTION_CLASS =
-  'bg-white/[0.02] border-border-standard text-text-secondary hover:border-border-standard hover:bg-white/[0.04]';
+  'bg-white/[0.04] border-border-standard text-text-secondary hover:border-border-standard hover:bg-white/[0.06]';
 const DEFAULT_COLUMNS_MANY = 3;
 const DEFAULT_COLUMNS_FEW = 2;
 
@@ -94,6 +94,11 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
             </div>
           </Show>
         </div>
+        <Show when={option.value === local.value}>
+          <div class="absolute top-1 right-1 pointer-events-none" aria-hidden="true">
+            <Icon name="check" size="sm" class="text-brand" />
+          </div>
+        </Show>
       </label>
     );
   };

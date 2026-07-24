@@ -395,9 +395,9 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         >
           <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div class="flex flex-col gap-0.5">
-              <div class="w-0.5 h-0.5 rounded-full bg-blue-400/60" />
-              <div class="w-0.5 h-0.5 rounded-full bg-blue-400/60" />
-              <div class="w-0.5 h-0.5 rounded-full bg-blue-400/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-brand/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-brand/60" />
+              <div class="w-0.5 h-0.5 rounded-full bg-brand/60" />
             </div>
           </div>
         </div>
