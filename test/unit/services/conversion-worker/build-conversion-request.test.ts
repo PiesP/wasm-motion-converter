@@ -1,40 +1,72 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { describe, expect, it, vi } from 'vitest';
 import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
-import { calcAutoDecimation } from '@services/encoder-common';
-import { WEBP_TARGET_FPS } from '@utils/constants';
-import type { SerializedConversionOptions } from '@services/conversion-worker/types';
-
-function createOptions(
-  overrides: Partial<SerializedConversionOptions> = {}
-): SerializedConversionOptions {
-  return {
-    format: 'webp',
-    quality: 'high',
-    fps: 60,
-    scale: 1,
-    trimStart: 0,
-    trimEnd: 0,
-    maxFrames: 0,
-    ...overrides,
-  };
-}
+import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
 
 describe('buildConversionRequest', () => {
-  it('preserves an omitted force decimation for automatic WebP FPS control', () => {
-    const request = buildConversionRequest(new ArrayBuffer(8), createOptions());
+  const baseOptions = {
+    format: 'gif' as const,
+    quality: 0.8,
+    scale: 1,
+    trimStart: 0,
+    trimEnd: 10,
+    frameDecimation: undefined,
+    smartFrameSkip: 'off' as const,
+    hwAccel: 'prefer-hardware' as const,
+  };
 
-    expect(request.forceDecimation).toBeUndefined();
-    expect(calcAutoDecimation(60, WEBP_TARGET_FPS.high, request.forceDecimation)).toBe(2);
+  it('builds a ConversionRequest with all expected fields', () => {
+    const buffer = new ArrayBuffer(1024);
+    const request = buildConversionRequest(buffer, baseOptions);
+
+    expect(request.inputBuffer).toBe(buffer);
+    expect(request.format).toBe('gif');
+    expect(request.quality).toBe(0.8);
+    expect(request.scale).toBe(1);
   });
 
-  it('preserves an explicit memory-pressure override', () => {
+  it('includes inputBlob and fileName when provided', () => {
+    const buffer = new ArrayBuffer(1024);
+    const blob = new Blob(['test']);
     const request = buildConversionRequest(
-      new ArrayBuffer(8),
-      createOptions({ forceDecimation: 4 })
+      buffer,
+      baseOptions,
+      WORKER_MAX_MEMORY_MB,
+      blob,
+      'myvideo.webm'
     );
 
-    expect(request.forceDecimation).toBe(4);
+    expect(request.inputBlob).toBe(blob);
+    expect(request.fileName).toBe('myvideo.webm');
+  });
+
+  it('uses default maxMemoryMB when not specified', () => {
+    const buffer = new ArrayBuffer(1024);
+    const request = buildConversionRequest(buffer, baseOptions);
+
+    expect(request.inputBuffer).toBe(buffer);
+  });
+
+  it('preserves trimStart and trimEnd values', () => {
+    const buffer = new ArrayBuffer(1024);
+    const request = buildConversionRequest(buffer, {
+      ...baseOptions,
+      trimStart: 2,
+      trimEnd: 8,
+    });
+
+    expect(request.trimStart).toBe(2);
+    expect(request.trimEnd).toBe(8);
+  });
+
+  it('does not normalize forceDecimation: undefined stays undefined', () => {
+    const buffer = new ArrayBuffer(1024);
+    const request = buildConversionRequest(buffer, baseOptions);
+
+    // forceDecimation should be undefined (use format's automatic target FPS)
+    // not normalized to 1
+    expect(request.forceDecimation).toBeUndefined();
   });
 });
