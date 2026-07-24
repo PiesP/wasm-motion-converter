@@ -37,7 +37,7 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
       class="bg-bg-elevated border border-white/[0.06] rounded-lg p-4"
       data-testid="video-metadata"
     >
-      <h3 class="text-xs font-medium text-text-tertiary mb-2 uppercase tracking-wide">
+      <h3 class="text-xs font-medium text-text-tertiary mb-2 tracking-wide">
         {t('metadata.title')}
       </h3>
       <dl class="space-y-1.5 text-sm">

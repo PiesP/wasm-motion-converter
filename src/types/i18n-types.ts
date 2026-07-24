@@ -98,6 +98,9 @@ export interface TranslationKeys {
   'settings.tooltip.quality': string;
   'settings.tooltip.scale': string;
   'settings.tooltip.format': string;
+  'settings.section.inputRange': string;
+  'settings.section.outputSettings': string;
+  'settings.section.performance': string;
 
   // Format Selector
   'format.title': string;

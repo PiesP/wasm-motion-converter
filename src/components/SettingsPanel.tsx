@@ -61,7 +61,10 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     <Panel class="p-4">
       <h2 class="mb-4 text-lg font-semibold text-text-primary">{t('settings.heading')}</h2>
       <Show when={local.metadata}>
-        <div class="mb-4">
+        <div class="mb-6">
+          <h3 class="text-xs font-medium text-text-tertiary mb-2 tracking-wide">
+            {t('settings.section.inputRange')}
+          </h3>
           <TrimSelector
             duration={local.metadata!.duration}
             trimStart={local.settings.trimStart}
@@ -72,6 +75,9 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         </div>
       </Show>
 
+      <h3 class="text-xs font-medium text-text-tertiary mb-2 tracking-wide">
+        {t('settings.section.outputSettings')}
+      </h3>
       <FormatSelector
         disabled={local.isConversionActive}
         onChange={local.onFormatChange}
@@ -86,6 +92,9 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         value={local.settings.quality}
       />
 
+      <h3 class="text-xs font-medium text-text-tertiary mb-2 mt-2 tracking-wide">
+        {t('settings.section.performance')}
+      </h3>
       <SmartFrameSkipSelector
         disabled={local.isConversionActive}
         onChange={local.onSmartFrameSkipChange}
