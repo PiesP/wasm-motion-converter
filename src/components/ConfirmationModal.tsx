@@ -92,8 +92,6 @@ const ConfirmationModal: Component = () => {
   createEffect(() => {
     if (state().isVisible) {
       previouslyFocusedElement = (document.activeElement as HTMLElement | null) ?? null;
-      // Lock background scroll without disabling the modal itself.
-      // document.body.inert disables ALL body children including this modal.
       scrollY = window.scrollY;
       document.body.style.overflow = 'hidden';
       document.body.style.position = 'fixed';
