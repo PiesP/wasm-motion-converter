@@ -186,12 +186,11 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       elapsedDisplayRef.textContent = formatDurationSeconds(secs, locale());
     };
 
-    updateElapsed();
     const interval = setInterval(updateElapsed, 1000);
-
     onCleanup(() => {
       clearInterval(interval);
     });
+    updateElapsed();
   });
 
   // Compact layout: single inline row
