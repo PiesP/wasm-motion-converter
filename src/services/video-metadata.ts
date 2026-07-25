@@ -14,11 +14,22 @@ const COMPUTE_PACKET_STATS_TIMEOUT_MS = 2_000;
  * `ms` milliseconds the returned promise rejects with a descriptive error.
  */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timerId: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timerId = setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms);
+  });
   return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms)
+    promise.then(
+      (result) => {
+        clearTimeout(timerId!);
+        return result;
+      },
+      (error) => {
+        clearTimeout(timerId!);
+        throw error;
+      }
     ),
+    timeoutPromise,
   ]);
 }
 
