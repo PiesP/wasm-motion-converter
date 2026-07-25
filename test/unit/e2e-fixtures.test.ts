@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { validateGifMagic, validateWebpMagic } from '../../test/e2e/fixtures/verify';
+import { validateGifMagic, validateWebpMagic, validateFileMagic } from '../e2e/fixtures/validate-magic';
 
 describe('E2E media validation fixtures', () => {
   it('rejects a GIF without its trailer byte', () => {
