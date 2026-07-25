@@ -21,7 +21,7 @@ import type { ConversionProgress } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { buildConversionRequest } from './build-conversion-request';
-
+import { isWorkerResponse } from './guards';
 import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
@@ -133,6 +133,12 @@ export async function runPipelineViaWorker(
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       // Ignore messages after timeout — worker is already terminated
       if (timedOut) return;
+
+      // Runtime guard: validate message shape before processing.
+      // Malformed responses (null, arrays, primitives, missing fields)
+      // are silently ignored.
+      if (!isWorkerResponse(event.data)) return;
+
       const response = event.data;
 
       switch (response.type) {

@@ -11,8 +11,9 @@
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { classifyWorkerError } from './classify-worker-error';
+import { isWorkerRequest } from './guards';
 import { runWorkerPipeline } from './pipeline-worker';
-import type { WorkerRequest, WorkerResponse } from './types';
+import type { WorkerResponse } from './types';
 
 // ─── AbortController registry ────────────────────────────────────────────
 
@@ -20,7 +21,7 @@ const activeControllers = new Map<string, AbortController>();
 
 // ─── Message handler ────────────────────────────────────────────────────
 
-self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
+self.onmessage = async (event: MessageEvent) => {
   // Defense-in-depth: validate the message source.
   // Same-origin Workers have event.origin === '' and event.source === null
   // (the worker receives messages via its own MessagePort, not a cross-origin
@@ -30,6 +31,13 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   // was ineffective because same-origin workers always have empty origin,
   // making the first condition always false and the check always pass.
   if (event.source !== null && event.source !== self) {
+    return;
+  }
+
+  // Runtime guard: validate message shape before casting to WorkerRequest.
+  // Malformed messages (null, arrays, primitives, missing fields, NaN values)
+  // are silently ignored.
+  if (!isWorkerRequest(event.data)) {
     return;
   }
 

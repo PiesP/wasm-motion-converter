@@ -351,4 +351,133 @@ describe('conversion-settings-store', () => {
       'trimStart',
     ]);
   });
+
+  // ── Malformed input (runtime validation hardening) ────────────────
+  describe('malformed input rejection', () => {
+    it('rejects NaN scale and falls back to defaults', async () => {
+      const stored = makeTestSettings({ scale: NaN });
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().scale).toBe(0.75); // DEFAULT
+    });
+
+    it('rejects Infinity scale and falls back to defaults', async () => {
+      const stored = makeTestSettings({ scale: Infinity });
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().scale).toBe(0.75);
+    });
+
+    it('rejects -Infinity scale and falls back to defaults', async () => {
+      const stored = makeTestSettings({ scale: -Infinity });
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().scale).toBe(0.75);
+    });
+
+    it('rejects NaN trimStart and resets to 0', async () => {
+      const stored = makeTestSettings({ trimStart: NaN, trimEnd: 30 });
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().trimStart).toBe(0);
+    });
+
+    it('rejects Infinity trimEnd and resets to 0', async () => {
+      const stored = makeTestSettings({ trimStart: 5, trimEnd: Infinity });
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().trimEnd).toBe(0);
+    });
+
+    it('rejects negative trimStart and resets to 0', async () => {
+      const stored = makeTestSettings({ trimStart: -1, trimEnd: 30 });
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().trimStart).toBe(0);
+    });
+
+    it('clamps NaN __schemaVersion to 0 and migrates from scratch', async () => {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        __schemaVersion: NaN,
+        format: 'gif',
+        quality: 'low',
+        scale: 0.5,
+        trimStart: 0,
+        trimEnd: 0,
+        smartFrameSkip: 'off',
+      }));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().quality).toBe('low');
+    });
+
+    it('clamps -Infinity __schemaVersion and does not hang', async () => {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        __schemaVersion: -Infinity,
+        format: 'webp',
+        quality: 'high',
+        scale: 1.0,
+        trimStart: 0,
+        trimEnd: 0,
+        smartFrameSkip: 'off',
+      }));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().format).toBe('webp');
+    });
+
+    it('clamps future __schemaVersion to current to prevent migration gaps', async () => {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        __schemaVersion: 999,
+        format: 'gif',
+        quality: 'low',
+        scale: 0.5,
+        trimStart: 0,
+        trimEnd: 0,
+        smartFrameSkip: 'off',
+      }));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().format).toBe('gif');
+    });
+
+    it('rejects numeric string for enum field (format)', async () => {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        __schemaVersion: 1,
+        format: '123',
+        quality: 'low',
+        scale: 0.5,
+        trimStart: 0,
+        trimEnd: 0,
+        smartFrameSkip: 'off',
+      }));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().format).toBe('gif'); // DEFAULT
+    });
+
+    it('rejects null for enum field and falls back to defaults', async () => {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        __schemaVersion: 1,
+        format: null,
+        quality: 'low',
+        scale: 0.5,
+        trimStart: 0,
+        trimEnd: 0,
+        smartFrameSkip: 'off',
+      }));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().format).toBe('gif'); // DEFAULT
+    });
+
+    it('rejects boolean for enum field (format)', async () => {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        __schemaVersion: 1,
+        format: true,
+        quality: 'low',
+        scale: 0.5,
+        trimStart: 0,
+        trimEnd: 0,
+        smartFrameSkip: 'off',
+      }));
+      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      expect(conversionSettings().format).toBe('gif'); // DEFAULT
+    });
+  });
 });

@@ -44,6 +44,14 @@ const MIGRATIONS: ReadonlyArray<(settings: Record<string, unknown>) => Record<st
 
 // ── Load ─────────────────────────────────────────────────────────────────
 
+/**
+ * Pure type guard: returns true for finite, non-negative numbers.
+ * Rejects NaN, Infinity, -Infinity, negative numbers, and non-numbers.
+ */
+function isFiniteNonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
 function parseStoredSettings(raw: Record<string, unknown>): ConversionSettings | null {
   if (
     typeof raw.format === 'string' &&
@@ -51,12 +59,13 @@ function parseStoredSettings(raw: Record<string, unknown>): ConversionSettings |
     typeof raw.quality === 'string' &&
     isInTuple(raw.quality, CONVERSION_QUALITIES) &&
     typeof raw.scale === 'number' &&
+    Number.isFinite(raw.scale) &&
     isInTuple(raw.scale, CONVERSION_SCALES) &&
     typeof raw.smartFrameSkip === 'string' &&
     isInTuple(raw.smartFrameSkip, SMART_FRAME_SKIP_MODES)
   ) {
-    const trimStart = typeof raw.trimStart === 'number' && raw.trimStart >= 0 ? raw.trimStart : 0;
-    const trimEnd = typeof raw.trimEnd === 'number' && raw.trimEnd >= 0 ? raw.trimEnd : 0;
+    const trimStart = isFiniteNonNegativeNumber(raw.trimStart) ? raw.trimStart : 0;
+    const trimEnd = isFiniteNonNegativeNumber(raw.trimEnd) ? raw.trimEnd : 0;
     const validTrim =
       trimStart === 0 && trimEnd === 0 ? true : trimStart > 0 && trimEnd > 0 && trimStart < trimEnd;
     return {
@@ -83,7 +92,14 @@ const getInitialConversionSettings = (): ConversionSettings => {
     }
 
     const obj = parsed as Record<string, unknown>;
-    const storedVersion = typeof obj.__schemaVersion === 'number' ? obj.__schemaVersion : 0;
+    const rawVersion = typeof obj.__schemaVersion === 'number' ? obj.__schemaVersion : 0;
+    // Clamp version to prevent infinite loops from NaN/-Infinity/negative values.
+    // NaN < VERSION is false and NaN is not finite, so it normalizes to 0.
+    // -Infinity++ stays -Infinity forever — clamp prevents the infinite loop.
+    const storedVersion =
+      Number.isFinite(rawVersion) && rawVersion >= 0
+        ? Math.min(rawVersion, CONVERSION_SETTINGS_SCHEMA_VERSION)
+        : 0;
 
     // Run migration chain if stored version is behind
     let migrated: Record<string, unknown> = { ...obj };
