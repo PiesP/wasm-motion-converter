@@ -102,13 +102,17 @@ export async function runWorkerPipeline(
   // ── Memory sampling and guard (H3 fix) ──
   // Workers do not expose performance.memory. Include the transferred input,
   // pooled frame buffers, and any known output buffer in a conservative estimate.
-  const sampleMemoryMB = (additionalBytes = 0): number => {
+  const sampleMemoryMB = (chunkCount = 0, additionalBytes = 0): number => {
+    const estimatedChunkBytes = chunkCount * 4096; // conservative per-chunk estimate
     const estimatedBytes =
-      inputBuffer.byteLength + globalBufferPool.totalPooledMemory + additionalBytes;
+      inputBuffer.byteLength +
+      globalBufferPool.totalPooledMemory +
+      estimatedChunkBytes +
+      additionalBytes;
     return Math.ceil(estimatedBytes / BYTES_PER_MB);
   };
-  const assertMemoryBudget = (additionalBytes = 0): number => {
-    const memoryMB = sampleMemoryMB(additionalBytes);
+  const assertMemoryBudget = (chunkCount = 0, additionalBytes = 0): number => {
+    const memoryMB = sampleMemoryMB(chunkCount, additionalBytes);
     if (memoryMB >= maxMemoryMB * MEMORY_CRITICAL_RATIO) {
       throw new Error(`Worker memory estimate reached ${memoryMB}MB of ${maxMemoryMB}MB limit`);
     }
@@ -157,7 +161,7 @@ export async function runWorkerPipeline(
         const now = performance.now();
         if (now - progressState.lastPostTime >= 100) {
           progressState.lastPostTime = now;
-          const memoryMB = assertMemoryBudget();
+          const memoryMB = assertMemoryBudget(packetsExtracted);
           const demuxPct = Math.min(
             DEMUX_MAX,
             Math.round((packetsExtracted / Math.max(1, estimatedTotalFrames)) * DEMUX_MAX)

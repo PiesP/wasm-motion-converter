@@ -259,10 +259,10 @@ export class StreamingWebpMuxer {
     // Cast through unknown: TS strict mode treats Uint8Array<ArrayBufferLike>
     // as incompatible with BlobPart (ArrayBufferLike includes SharedArrayBuffer).
     const blob = new Blob(this.chunks as unknown as BlobPart[], { type: 'image/webp' });
-    const output = new Uint8Array(await blob.arrayBuffer());
-
-    // Release chunk references for GC
+    // Release chunk references early — Blob already holds its own references.
+    // This reduces peak memory during arrayBuffer() from ~2x to ~1x final size.
     this.chunks.length = 0;
+    const output = new Uint8Array(await blob.arrayBuffer());
 
     return output;
   }
