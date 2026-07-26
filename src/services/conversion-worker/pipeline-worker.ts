@@ -259,6 +259,7 @@ export async function runWorkerPipeline(
           quality: options.quality,
           scale: options.scale,
           frameDecimation: gifDecimation,
+          smartFrameSkip: options.smartFrameSkip,
           onFrameDecoded: decodeProgressCb,
           onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
             const now = performance.now();
@@ -327,6 +328,7 @@ export async function runWorkerPipeline(
             quality: options.quality,
             scale: options.scale,
             frameDecimation: webpDecimation,
+            smartFrameSkip: options.smartFrameSkip,
             onFrameDecoded: decodeProgressCb,
           },
           (p) => {

@@ -7,7 +7,21 @@ import {
   convertRGBAToRGB,
   convertRGBToRGBA,
   getFrameDurationMs,
+  resolveVideoDimensions,
 } from '@services/frame-utils';
+
+describe('resolveVideoDimensions', () => {
+  it('prefers display aspect dimensions for square-pixel animation output', () => {
+    expect(
+      resolveVideoDimensions({
+        codedWidth: 720,
+        codedHeight: 576,
+        displayAspectWidth: 1024,
+        displayAspectHeight: 576,
+      })
+    ).toEqual({ width: 1024, height: 576 });
+  });
+});
 
 // ═══════════════════════════════════════════════════════════════════
 // clearCanvasCache

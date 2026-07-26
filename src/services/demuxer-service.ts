@@ -18,6 +18,8 @@ export interface DemuxResult {
   sourceTotalMs: number;
   /** Average frame rate from pre-computed metadata (or fallback). Used for decimation calculation. */
   framerate: number;
+  /** First requested presentation timestamp in microseconds. Preroll packets may precede it. */
+  trimStartUs?: number | undefined;
 }
 
 type DemuxProgressCallback = (packetsExtracted: number, estimatedTotalFrames: number) => void;
@@ -90,38 +92,14 @@ export async function demuxVideo(
   }
   const sink = new EncodedPacketSink(videoTrack);
 
-  // Seek to trimStart if specified, otherwise start from first packet.
-  // Use getNextKeyPacket() instead of getPacket() to validate that mediabunny
-  // has correctly classified the packet as a keyframe. In rare cases mediabunny's
-  // determinePacketType() may reclassify a keyframe as delta, causing DataError
-  // on the first decode call. getNextKeyPacket() walks forward until it finds a
-  // verified keyframe.
+  // Decode from the key packet at or before trimStart. Frames before the requested
+  // presentation timestamp are preroll needed to decode the first visible frame;
+  // decoder-service filters those frames from encoder output.
   let startPacket: EncodedPacket | null;
   if (request.trimStart > 0) {
-    const nearPacket = await sink.getPacket(request.trimStart);
-    if (nearPacket) {
-      // Verify keyframe classification — walk forward if misclassified
-      const verified = await sink.getNextKeyPacket(nearPacket);
-      startPacket = verified ?? nearPacket;
-    } else {
-      startPacket = null;
-    }
+    startPacket = await sink.getKeyPacket(request.trimStart, { verifyKeyPackets: true });
   } else {
     startPacket = await sink.getFirstPacket();
-    if (startPacket) {
-      // Verify the first packet is a keyframe — some containers may
-      // misclassify the first packet, causing VideoDecoder.decode() to
-      // fail with DataError. getNextKeyPacket walks forward until it
-      // finds a verified keyframe.
-      const verified = await sink.getNextKeyPacket(startPacket);
-      if (verified && verified !== startPacket) {
-        logger.warn('demuxer', 'First packet reclassified as delta — using next keyframe', {
-          originalTimestamp: startPacket.timestamp,
-          keyframeTimestamp: verified.timestamp,
-        });
-        startPacket = verified;
-      }
-    }
   }
   if (!startPacket) {
     input.dispose();
@@ -190,5 +168,13 @@ export async function demuxVideo(
   // Compute total source duration from chunk durations (microseconds → milliseconds)
   const sourceTotalMs = chunks.reduce((sum, ch) => sum + Math.max(0, ch.duration ?? 0), 0) / 1000;
 
-  return { chunks, config, totalFrames, duration, sourceTotalMs, framerate };
+  return {
+    chunks,
+    config,
+    totalFrames,
+    duration,
+    sourceTotalMs,
+    framerate,
+    trimStartUs: request.trimStart * 1_000_000,
+  };
 }
