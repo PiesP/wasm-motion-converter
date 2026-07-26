@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 class FakeWorker {
   static instances: FakeWorker[] = [];
@@ -23,6 +23,10 @@ import { globalBufferPool } from '@services/buffer-pool';
 beforeEach(() => {
   FakeWorker.instances.length = 0;
   vi.spyOn(globalBufferPool, 'release').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('WebpWorkerPool public API', () => {
@@ -63,14 +67,20 @@ describe('WebpWorkerPool public API', () => {
     expect(release).not.toHaveBeenCalled();
   });
 
-  it('recreates an idle singleton when the requested conversion size changes', () => {
+  it('recreates a 720p pool with the calculated 4K concurrency cap', () => {
     vi.stubGlobal('OffscreenCanvas', class {});
     vi.stubGlobal('createImageBitmap', vi.fn());
+    vi.spyOn(navigator, 'hardwareConcurrency', 'get').mockReturnValue(8);
 
-    const initial = getWorkerPool(4);
-    expect(initial?.stats.poolSize).toBe(4);
+    const size720p = WebpWorkerPool.getOptimalWorkerCount(1280, 720);
+    const size4k = WebpWorkerPool.getOptimalWorkerCount(3840, 2160);
+    expect(size720p).toBe(7);
+    expect(size4k).toBe(2);
 
-    const resized = getWorkerPool(2);
+    const initial = getWorkerPool(size720p);
+    expect(initial?.stats.poolSize).toBe(7);
+
+    const resized = getWorkerPool(size4k);
 
     expect(initial?.stats.poolSize).toBe(0);
     expect(resized?.stats.poolSize).toBe(2);
