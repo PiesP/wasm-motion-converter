@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  confirmation: undefined as
+    | { onCancel: () => void; onConfirm: () => void }
+    | undefined,
+  runPipelineWithFallback: vi.fn(),
+  showConfirmation: vi.fn(),
   validateVideoDuration: vi.fn(),
 }));
 
@@ -13,16 +18,19 @@ vi.mock('@stores/conversion-settings-store', () => ({
     quality: 'medium',
     scale: 1,
     smartFrameSkip: 'off',
+    trimEnd: 0,
+    trimStart: 0,
   }),
 }));
 
 vi.mock('@stores/conversion-store', () => ({
   appState: () => 'idle',
-  getInputBuffer: vi.fn(),
+  getInputBuffer: () => new ArrayBuffer(8),
   inputFile: () => new File(['video'], 'video.mp4', { type: 'video/mp4' }),
   setAppState: vi.fn(),
   setConversionElapsedMs: vi.fn(),
   setConversionFps: vi.fn(),
+  setConversionProgress: vi.fn(),
   setConversionResults: vi.fn(),
   setConversionStatusMessage: vi.fn(),
   setCurrentFrame: vi.fn(),
@@ -30,20 +38,27 @@ vi.mock('@stores/conversion-store', () => ({
   setErrorMessage: vi.fn(),
   setInputBuffer: vi.fn(),
   setInputFile: vi.fn(),
+  setOutputFrames: vi.fn(),
   setTotalFrames: vi.fn(),
   setVideoMetadata: vi.fn(),
   setVideoPreviewUrl: vi.fn(),
   transitionToState: vi.fn(),
-  videoMetadata: () => ({ framerate: 30 }),
+  videoMetadata: () => ({
+    config: { codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16 },
+    duration: 1,
+    framerate: 30,
+  }),
   videoPreviewUrl: vi.fn(),
 }));
 
 vi.mock('@stores/confirmation-store', () => ({
-  showConfirmation: (
-    _warnings: unknown,
-    _onConfirm: () => void,
-    onCancel: () => void
-  ) => onCancel(),
+  showConfirmation: (warnings: unknown, onConfirm: () => void, onCancel: () => void) => {
+    mocks.confirmation = { onCancel, onConfirm };
+    mocks.showConfirmation(warnings, onConfirm, onCancel);
+  },
+}));
+vi.mock('@services/conversion-worker/main-thread-proxy', () => ({
+  runPipelineWithFallback: mocks.runPipelineWithFallback,
 }));
 vi.mock('@utils/file-validation', () => ({
   validateVideoDuration: mocks.validateVideoDuration,
@@ -55,8 +70,27 @@ vi.mock('@utils/dom-utils', () => ({
 }));
 
 import * as conversionModule from '@hooks/conversion-handlers/use-perform-conversion';
+import { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
 
-const { handleConvert } = conversionModule;
+const { handleCancelConversion, handleConvert } = conversionModule;
+
+function createRuntime(): ConversionRuntimeController {
+  return new ConversionRuntimeController({
+    setConversionStartTime: vi.fn(),
+    setEstimatedSecondsRemaining: vi.fn(),
+    setMemoryWarning: vi.fn(),
+    setMemoryUsageText: vi.fn(),
+  });
+}
+
+beforeEach(() => {
+  mocks.confirmation = undefined;
+  mocks.runPipelineWithFallback.mockReset().mockResolvedValue(
+    new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer
+  );
+  mocks.showConfirmation.mockClear();
+  mocks.validateVideoDuration.mockReset();
+});
 
 const localizedProgressT = ((key: string, params?: Record<string, string | number>) => {
   const translations: Record<string, string> = {
@@ -83,7 +117,7 @@ describe('handleConvert conversion ownership', () => {
         resolveValidation = resolve;
       })
     );
-    const runtime = {} as Parameters<typeof handleConvert>[0];
+    const runtime = createRuntime();
     const t = ((key: string) => key) as Parameters<typeof handleConvert>[1];
 
     const first = handleConvert(runtime, t);
@@ -91,11 +125,63 @@ describe('handleConvert conversion ownership', () => {
 
     expect(mocks.validateVideoDuration).toHaveBeenCalledTimes(1);
 
-    resolveValidation?.({
+    resolveValidation?.({ duration: 1_000, warnings: [] });
+    await Promise.all([first, second]);
+
+    expect(mocks.runPipelineWithFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start a pipeline after cancellation during duration validation', async () => {
+    let resolveValidation: ((value: unknown) => void) | undefined;
+    mocks.validateVideoDuration.mockReturnValue(
+      new Promise((resolve) => {
+        resolveValidation = resolve;
+      })
+    );
+    const runtime = createRuntime();
+    const t = ((key: string) => key) as Parameters<typeof handleConvert>[1];
+
+    const conversion = handleConvert(runtime, t);
+    handleCancelConversion(runtime);
+    resolveValidation?.({ duration: 1_000, warnings: [] });
+    await conversion;
+
+    expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+  });
+
+  it('does not start a pipeline after disposal during duration validation', async () => {
+    let resolveValidation: ((value: unknown) => void) | undefined;
+    mocks.validateVideoDuration.mockReturnValue(
+      new Promise((resolve) => {
+        resolveValidation = resolve;
+      })
+    );
+    const runtime = createRuntime();
+    const t = ((key: string) => key) as Parameters<typeof handleConvert>[1];
+
+    const conversion = handleConvert(runtime, t);
+    runtime.dispose();
+    resolveValidation?.({ duration: 1_000, warnings: [] });
+    await conversion;
+
+    expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+  });
+
+  it('does not start a confirmed pipeline after disposal', async () => {
+    mocks.validateVideoDuration.mockResolvedValue({
       duration: 1_000,
       warnings: [{ message: 'confirm', requiresConfirmation: true }],
     });
-    await Promise.all([first, second]);
+    const runtime = createRuntime();
+    const t = ((key: string) => key) as Parameters<typeof handleConvert>[1];
+
+    const conversion = handleConvert(runtime, t);
+    await vi.waitFor(() => expect(mocks.confirmation).toBeDefined());
+    runtime.dispose();
+    mocks.confirmation?.onConfirm();
+    await conversion;
+
+    expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
   });
 });
 

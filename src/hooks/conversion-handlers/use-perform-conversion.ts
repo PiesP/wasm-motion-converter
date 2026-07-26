@@ -47,27 +47,13 @@ import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { checkMemoryForConversion, getMemoryUsageMB } from '@utils/memory-monitor';
 import { batch } from 'solid-js';
-import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
+import type {
+  ConversionIntent,
+  ConversionRuntimeController,
+} from './use-conversion-runtime-controller';
 import { handleFileSelected } from './use-handle-file-selected';
 
 const startViewTransition = getStartViewTransition();
-
-/**
- * Module-level reference to the AbortController for the currently active
- * conversion. Set by performConversion and read by handleCancelConversion
- * so that the user's Stop button actually aborts the pipeline.
- *
- * Also exposed via the runtime controller's dispose() so that component
- * teardown (SolidJS onCleanup) aborts any in-flight conversion.
- */
-let activeAbortController: AbortController | null = null;
-let conversionIntentActive = false;
-
-/** Called by ConversionRuntimeController.dispose() during component teardown. */
-export function abortActiveConversion(): void {
-  activeAbortController?.abort();
-  activeAbortController = null;
-}
 
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
 
@@ -87,9 +73,7 @@ export async function handleConvert(
   // Guard against double-click: abort any in-flight conversion and prevent
   // a second pipeline from starting while the first is still running.
   if (appState() === 'converting') {
-    logger.warn('conversion', 'Convert called while already converting — skipping', {
-      activeAbortController: activeAbortController !== null,
-    });
+    logger.warn('conversion', 'Convert called while already converting — skipping');
     return;
   }
   // Also guard during the analyzing → converting transition
@@ -97,31 +81,37 @@ export async function handleConvert(
     logger.warn('conversion', 'Convert called while analyzing — skipping');
     return;
   }
-  if (conversionIntentActive) {
+  const intent = runtime.beginConversionIntent();
+  if (!intent) {
     logger.warn('conversion', 'Convert called while another request is being prepared — skipping');
     return;
   }
 
   const settings = conversionSettings();
-  conversionIntentActive = true;
 
   try {
     const durationValidation = await validateVideoDuration(
       file,
       settings.format,
       t,
-      videoMetadata()?.framerate
+      videoMetadata()?.framerate,
+      intent.signal
     );
+    if (!intent.isActive()) return;
     const needsConfirmation = durationValidation.warnings.some(
       (warning) => warning.requiresConfirmation
     );
 
     if (needsConfirmation) {
-      return new Promise<void>((resolve) => {
+      await new Promise<void>((resolve) => {
         showConfirmation(
           durationValidation.warnings,
           () => {
-            void performConversion(file, settings, runtime, t, durationValidation.duration)
+            if (!intent.isActive()) {
+              resolve();
+              return;
+            }
+            void performConversion(file, settings, runtime, t, intent, durationValidation.duration)
               .catch((error) => {
                 logger.error('conversion', 'Post-confirmation conversion failed', {
                   error: getErrorMessage(error),
@@ -149,16 +139,18 @@ export async function handleConvert(
           }
         );
       });
+      return;
     }
 
-    await performConversion(file, settings, runtime, t, durationValidation.duration);
+    await performConversion(file, settings, runtime, t, intent, durationValidation.duration);
   } catch (validationError) {
+    if (!intent.isActive() || isCancellationError(validationError)) return;
     logger.warn('conversion', 'Duration validation failed, proceeding anyway', {
       error: getErrorMessage(validationError),
     });
-    await performConversion(file, settings, runtime, t);
+    await performConversion(file, settings, runtime, t, intent);
   } finally {
-    conversionIntentActive = false;
+    runtime.finishConversionIntent(intent);
   }
 }
 
@@ -167,10 +159,10 @@ async function performConversion(
   settings: ConversionSettings,
   runtime: ConversionRuntimeController,
   t: TFunction,
-  videoDurationMs?: number,
-  signal?: AbortSignal
+  intent: ConversionIntent,
+  videoDurationMs?: number
 ): Promise<void> {
-  const { isActive, runId } = runtime.startNewRun();
+  const { isActive, runId, signal } = intent;
 
   try {
     batch(() => {
@@ -200,12 +192,9 @@ async function performConversion(
     runtime.startMemoryMonitoring();
 
     const forcedDecimation = runMemoryCheck(settings);
-    const abortController = new AbortController();
-    activeAbortController = abortController;
-    signal?.addEventListener('abort', () => abortController.abort(), { once: true });
 
     const buffer = await readInputBuffer(file);
-    if (abortController.signal.aborted) {
+    if (signal.aborted) {
       throw new DOMException('Cancelled', 'AbortError');
     }
 
@@ -217,7 +206,7 @@ async function performConversion(
       serializedConfig,
       serializedOptions,
       progressCallback,
-      abortController,
+      signal,
       file,
       videoMetadata()?.duration,
       videoMetadata()?.framerate
@@ -232,8 +221,6 @@ async function performConversion(
     focusDownloadButton();
   } catch (error) {
     await handleConversionError(error, isActive, runtime, t, settings);
-  } finally {
-    activeAbortController = null;
   }
 }
 
@@ -401,7 +388,7 @@ async function executePipeline(
   serializedConfig: Record<string, unknown> | null,
   serializedOptions: ReturnType<typeof buildSerializedOptions>,
   progressCallback: ProgressCallback,
-  abortController: AbortController,
+  signal: AbortSignal,
   file: File,
   duration?: number,
   framerate?: number
@@ -432,7 +419,7 @@ async function executePipeline(
     return runConversionPipeline(
       request as Parameters<typeof runConversionPipeline>[0],
       progressCallback as Parameters<typeof runConversionPipeline>[1],
-      abortController.signal
+      signal
     );
   }
 
@@ -441,7 +428,7 @@ async function executePipeline(
     serializedConfig as unknown as Parameters<typeof runPipelineWithFallback>[1],
     serializedOptions,
     progressCallback,
-    abortController.signal,
+    signal,
     file,
     duration,
     framerate
@@ -606,10 +593,8 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
   logger.info('conversion', 'User cancelled conversion', {
     appState: appState(),
   });
-  // Abort the active pipeline so demux/decode/encode can stop immediately
-  activeAbortController?.abort();
-  activeAbortController = null;
-  runtime.invalidateActiveConversions();
+  // Abort preparation or the active pipeline and invalidate its ownership token.
+  runtime.abortConversionIntent();
 
   // Always release the input buffer on cancel — even if no pipeline was
   // in flight (e.g., cancel during duration validation).  The buffer can
@@ -688,9 +673,13 @@ export function handleRetry(runtime: ConversionRuntimeController, t: TFunction):
     // extraction when only the conversion itself failed.
     if (videoMetadata()?.config) {
       const settings = conversionSettings();
-      void performConversion(file, settings, runtime, t).catch((error) =>
-        logger.error('conversion', 'Retry conversion failed', { error: getErrorMessage(error) })
-      );
+      const intent = runtime.beginConversionIntent();
+      if (!intent) return;
+      void performConversion(file, settings, runtime, t, intent)
+        .catch((error) =>
+          logger.error('conversion', 'Retry conversion failed', { error: getErrorMessage(error) })
+        )
+        .finally(() => runtime.finishConversionIntent(intent));
     } else {
       void handleFileSelected(file, runtime, t).catch((error) =>
         logger.error('conversion', 'Retry file selection failed', { error: getErrorMessage(error) })
