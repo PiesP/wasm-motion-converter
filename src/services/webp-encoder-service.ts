@@ -83,6 +83,7 @@ export async function encodeWebp(
     totalInputFrames: totalDecoded,
     skippedByDecimation: totalSkipped,
     smartSkipped: totalSmartSkipped,
+    tailAccumulatedMs,
   } = await decodeFrames(
     demux,
     {
@@ -168,10 +169,11 @@ export async function encodeWebp(
   // When dynamic decimation skips frames after the last kept frame, their
   // accumulated duration is never consumed by any subsequent encoding call.
   // Pad the last ANMF chunk's duration to preserve total playback time.
-  if (accumulatedDuration > 0) {
-    muxer.padLastFrameDuration(accumulatedDuration);
+  const totalTailDuration = accumulatedDuration + tailAccumulatedMs;
+  if (totalTailDuration > 0) {
+    muxer.padLastFrameDuration(totalTailDuration);
     logger.info('encoders', 'WebP tail duration padded', {
-      tailMs: Math.round(accumulatedDuration),
+      tailMs: Math.round(totalTailDuration),
     });
   }
 

@@ -59,6 +59,7 @@ const startViewTransition = getStartViewTransition();
  * teardown (SolidJS onCleanup) aborts any in-flight conversion.
  */
 let activeAbortController: AbortController | null = null;
+let conversionIntentActive = false;
 
 /** Called by ConversionRuntimeController.dispose() during component teardown. */
 export function abortActiveConversion(): void {
@@ -94,8 +95,13 @@ export async function handleConvert(
     logger.warn('conversion', 'Convert called while analyzing — skipping');
     return;
   }
+  if (conversionIntentActive) {
+    logger.warn('conversion', 'Convert called while another request is being prepared — skipping');
+    return;
+  }
 
   const settings = conversionSettings();
+  conversionIntentActive = true;
 
   try {
     const durationValidation = await validateVideoDuration(
@@ -149,6 +155,8 @@ export async function handleConvert(
       error: getErrorMessage(validationError),
     });
     await performConversion(file, settings, runtime, t);
+  } finally {
+    conversionIntentActive = false;
   }
 }
 

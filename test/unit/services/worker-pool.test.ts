@@ -17,7 +17,7 @@ class FakeWorker {
 
 vi.stubGlobal('Worker', FakeWorker);
 
-import { WebpWorkerPool } from '@services/worker-pool';
+import { getWorkerPool, WebpWorkerPool } from '@services/worker-pool';
 import { globalBufferPool } from '@services/buffer-pool';
 
 beforeEach(() => {
@@ -61,5 +61,20 @@ describe('WebpWorkerPool public API', () => {
     // The release spy may not be called directly since we don't submit a real task,
     // but the terminate path clears queue and calls release for each pending buffer
     expect(release).not.toHaveBeenCalled();
+  });
+
+  it('recreates an idle singleton when the requested conversion size changes', () => {
+    vi.stubGlobal('OffscreenCanvas', class {});
+    vi.stubGlobal('createImageBitmap', vi.fn());
+
+    const initial = getWorkerPool(4);
+    expect(initial?.stats.poolSize).toBe(4);
+
+    const resized = getWorkerPool(2);
+
+    expect(initial?.stats.poolSize).toBe(0);
+    expect(resized?.stats.poolSize).toBe(2);
+    expect(resized).not.toBe(initial);
+    resized?.terminate();
   });
 });
