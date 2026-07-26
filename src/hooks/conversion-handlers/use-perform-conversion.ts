@@ -104,11 +104,19 @@ export async function handleConvert(
 
     if (needsConfirmation) {
       await new Promise<void>((resolve) => {
+        let settled = false;
+        const settle = () => {
+          if (settled) return;
+          settled = true;
+          intent.signal.removeEventListener('abort', settle);
+          resolve();
+        };
+        intent.signal.addEventListener('abort', settle, { once: true });
         showConfirmation(
           durationValidation.warnings,
           () => {
             if (!intent.isActive()) {
-              resolve();
+              settle();
               return;
             }
             void performConversion(file, settings, runtime, t, intent, durationValidation.duration)
@@ -131,13 +139,14 @@ export async function handleConvert(
                 });
                 focusRetryButton();
               })
-              .finally(() => resolve());
+              .finally(settle);
           },
           () => {
             logger.info('conversion', 'User cancelled conversion after duration warning');
-            resolve();
+            settle();
           }
         );
+        if (intent.signal.aborted) settle();
       });
       return;
     }

@@ -167,7 +167,7 @@ describe('handleConvert conversion ownership', () => {
     expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
   });
 
-  it('does not start a confirmed pipeline after disposal', async () => {
+  it('settles without starting a confirmed pipeline after disposal', async () => {
     mocks.validateVideoDuration.mockResolvedValue({
       duration: 1_000,
       warnings: [{ message: 'confirm', requiresConfirmation: true }],
@@ -178,7 +178,6 @@ describe('handleConvert conversion ownership', () => {
     const conversion = handleConvert(runtime, t);
     await vi.waitFor(() => expect(mocks.confirmation).toBeDefined());
     runtime.dispose();
-    mocks.confirmation?.onConfirm();
     await conversion;
 
     expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
