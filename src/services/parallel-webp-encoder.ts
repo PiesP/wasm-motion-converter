@@ -73,6 +73,7 @@ export function createStreamingWebpEncoder(
   let nextExpectedId = 0;
   let submittedCount = 0;
   let failedCount = 0;
+  let pendingTailMs = 0;
   const inFlight = new Set<Promise<EncodeTaskResult | void>>();
 
   // Cap in-flight frames at 2× pool size so that (a) each worker has one
@@ -177,11 +178,16 @@ export function createStreamingWebpEncoder(
       throw new Error('No frames encoded for streaming WebP encoding');
     }
 
+    if (pendingTailMs > 0) {
+      muxer.padLastFrameDuration(pendingTailMs);
+      pendingTailMs = 0;
+    }
+
     return await muxer.finish();
   };
 
   const padLastFrame = (extraMs: number): void => {
-    muxer.padLastFrameDuration(extraMs);
+    if (extraMs > 0) pendingTailMs += extraMs;
   };
 
   return { submit, finish, padLastFrame };
