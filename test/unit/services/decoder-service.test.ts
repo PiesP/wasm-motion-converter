@@ -47,6 +47,10 @@ describe('decoder-service', () => {
 
   describe('adaptive frame skip', () => {
     class FakeVideoFrame {
+      static controlledCopies = false;
+      static copyResolvers = new Map<number, () => void>();
+      static copyStarts: number[] = [];
+
       readonly codedWidth = 8;
       readonly codedHeight = 8;
       readonly displayWidth = 8;
@@ -64,6 +68,12 @@ describe('decoder-service', () => {
       }
 
       async copyTo(destination: AllowSharedBufferSource): Promise<PlaneLayout[]> {
+        FakeVideoFrame.copyStarts.push(this.timestamp);
+        if (FakeVideoFrame.controlledCopies) {
+          await new Promise<void>((resolve) => {
+            FakeVideoFrame.copyResolvers.set(this.timestamp, resolve);
+          });
+        }
         const bytes = new Uint8Array(
           ArrayBuffer.isView(destination) ? destination.buffer : destination
         );
@@ -98,8 +108,10 @@ describe('decoder-service', () => {
       }
 
       decode(chunk: EncodedVideoChunk): void {
-        const intensity = Number(chunk.timestamp / 1_000);
-        this.output(new FakeVideoFrame(intensity) as unknown as VideoFrame);
+        const intensity =
+          (chunk as EncodedVideoChunk & { intensity?: number }).intensity ??
+          Number(chunk.timestamp / 1_000);
+        this.output(new FakeVideoFrame(intensity, chunk.timestamp) as unknown as VideoFrame);
       }
 
       async flush(): Promise<void> {}
@@ -109,23 +121,25 @@ describe('decoder-service', () => {
       vi.unstubAllGlobals();
       globalBufferPool.clear();
       FakeVideoDecoder.configureCalls = 0;
+      FakeVideoFrame.controlledCopies = false;
+      FakeVideoFrame.copyResolvers.clear();
+      FakeVideoFrame.copyStarts.length = 0;
     });
 
-    it('learns static motion instead of staying on normal decimation', async () => {
+    async function decodeAdaptive(intensities: number[]): Promise<number[]> {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
-      const chunks = Array.from(
-        { length: 40 },
-        (_, index) => ({ timestamp: index * 1_000 }) as EncodedVideoChunk
+      const chunks = intensities.map(
+        (intensity, index) => ({ intensity, timestamp: index * 1_000 }) as EncodedVideoChunk
       );
       const delivered: number[] = [];
 
-      const result = await decodeFrames(
+      await decodeFrames(
         {
           chunks,
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 1,
           framerate: 60,
-          sourceTotalMs: 667,
+          sourceTotalMs: chunks.length * 16.667,
           totalFrames: chunks.length,
         },
         {
@@ -140,8 +154,82 @@ describe('decoder-service', () => {
         }
       );
 
-      expect(result.smartSkipped).toBeGreaterThan(chunks.length / 2);
-      expect(delivered.length).toBeLessThan(chunks.length / 2);
+      return delivered;
+    }
+
+    it('classifies static, slow, normal, and fast fixtures with distinct decimation', async () => {
+      const warmup = Array.from({ length: 16 }, () => 0);
+      const staticFrames = await decodeAdaptive([...warmup, ...Array.from({ length: 24 }, () => 0)]);
+      const slowFrames = await decodeAdaptive([
+        ...warmup,
+        ...Array.from({ length: 24 }, (_, index) => (index + 1) * 2),
+      ]);
+      const normalFrames = await decodeAdaptive([
+        ...warmup,
+        ...Array.from({ length: 24 }, (_, index) => (index + 1) * 4),
+      ]);
+      const fastFrames = await decodeAdaptive([
+        ...warmup,
+        ...Array.from({ length: 24 }, (_, index) => (index + 1) * 8),
+      ]);
+
+      expect(staticFrames.length).toBeLessThan(slowFrames.length);
+      expect(slowFrames.length).toBeLessThan(normalFrames.length);
+      expect(normalFrames.length).toBeLessThan(fastFrames.length);
+    });
+
+    it('keeps a scene-change frame that lands on a static-scene skip slot', async () => {
+      const delivered = await decodeAdaptive([
+        ...Array.from({ length: 17 }, () => 0),
+        4,
+        8,
+        12,
+      ]);
+
+      expect(delivered).toContain(17);
+    });
+
+    it('preserves presentation order while frame copies complete in parallel', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      FakeVideoFrame.controlledCopies = true;
+      const delivered: number[] = [];
+
+      const decoding = decodeFrames(
+        {
+          chunks: [
+            { intensity: 0, timestamp: 0 },
+            { intensity: 10, timestamp: 1_000 },
+            { intensity: 20, timestamp: 2_000 },
+          ] as EncodedVideoChunk[],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.05,
+          framerate: 60,
+          sourceTotalMs: 50,
+          totalFrames: 3,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          smartFrameSkip: 'medium',
+          onFrameAvailable: (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            globalBufferPool.release(rgbData);
+          },
+        }
+      );
+
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toHaveLength(3));
+      FakeVideoFrame.copyResolvers.get(2_000)?.();
+      FakeVideoFrame.copyResolvers.get(1_000)?.();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(delivered).toEqual([]);
+
+      FakeVideoFrame.copyResolvers.get(0)?.();
+      await decoding;
+
+      expect(delivered).toEqual([0, 1, 2]);
     });
 
     it('decodes preroll packets but does not deliver frames before trimStart', async () => {

@@ -208,6 +208,12 @@ export async function decodeFrames(
   // Create per-conversion frame processing context (duration carry + copy path cache)
   const frameCtx: FrameProcessingContext = createFrameProcessingContext();
 
+  // Reserve presentation-ordered turns before asynchronous pixel copies begin.
+  // copyFrameToRGB() may complete out of order, so all stateful motion decisions
+  // and encoder delivery wait for the previous frame's turn while the copies
+  // themselves remain concurrent.
+  let orderedProcessingTail: Promise<void> = Promise.resolve();
+
   logger.info('decoders', 'VideoDecoder configured', {
     codec: demux.config.codec,
     hwAccel: activeConfig.hardwareAcceleration,
@@ -251,12 +257,18 @@ export async function decodeFrames(
         // Without this, smart-skipped frame durations are permanently lost.
         let smartCarryoverMs = 0;
 
+        const previousProcessing = orderedProcessingTail;
+        let releaseProcessing!: () => void;
+        orderedProcessingTail = new Promise<void>((resolve) => {
+          releaseProcessing = resolve;
+        });
+
         const conversion = (async () => {
+          let enteredOrderedProcessing = false;
           try {
             // Validate frame before attempting copy — frame may be invalid
             // if the decoder encountered an error or was flushed concurrently.
             if (!frame.codedWidth || !frame.codedHeight) {
-              frame.close();
               return;
             }
 
@@ -265,6 +277,8 @@ export async function decodeFrames(
             // Used by VP8 VideoEncoder path for zero-copy GPU encoding.
             // Smart frame skip and adaptive mode are disabled (require RGB data).
             if (typeof onVideoFrameAvailable === 'function') {
+              await previousProcessing;
+              enteredOrderedProcessing = true;
               // Transfer accumulated frame durations (decimation + smart skip carryover)
               const totalDur = totalDuration + smartCarryoverMs;
               smartCarryoverMs = 0;
@@ -274,6 +288,8 @@ export async function decodeFrames(
             }
 
             const rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
+            await previousProcessing;
+            enteredOrderedProcessing = true;
 
             const shouldMeasureMotion = streaming && (skipThreshold >= 0 || isAdaptive);
             const gray = shouldMeasureMotion ? compute8x8Grayscale(rgbData, width, height) : null;
@@ -404,6 +420,10 @@ export async function decodeFrames(
               onFrameDecoded(streaming ? keptFrameCount : rgbFrames.length, demux.totalFrames);
             }
           } finally {
+            if (!enteredOrderedProcessing) {
+              await previousProcessing;
+            }
+            releaseProcessing();
             frame.close();
           }
         })();
