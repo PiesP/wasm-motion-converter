@@ -2,12 +2,12 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { describe, it, expect } from 'vitest';
-import enTranslations from '../../../src/i18n/en.json';
-import arTranslations from '../../../src/i18n/ar.json';
-import esTranslations from '../../../src/i18n/es.json';
-import jaTranslations from '../../../src/i18n/ja.json';
-import koTranslations from '../../../src/i18n/ko.json';
-import zhCnTranslations from '../../../src/i18n/zh-CN.json';
+import arTranslations from '@i18n/ar.json';
+import enTranslations from '@i18n/en.json';
+import esTranslations from '@i18n/es.json';
+import jaTranslations from '@i18n/ja.json';
+import koTranslations from '@i18n/ko.json';
+import zhCnTranslations from '@i18n/zh-CN.json';
 import { LOCALES } from '../../../src/types/i18n-types';
 
 const allTranslations = {
