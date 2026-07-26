@@ -54,7 +54,26 @@ vi.mock('@utils/dom-utils', () => ({
   getStartViewTransition: () => undefined,
 }));
 
-import { handleConvert } from '@hooks/conversion-handlers/use-perform-conversion';
+import * as conversionModule from '@hooks/conversion-handlers/use-perform-conversion';
+
+const { handleConvert } = conversionModule;
+
+const localizedProgressT = ((key: string, params?: Record<string, string | number>) => {
+  const translations: Record<string, string> = {
+    'progress.preparing': '준비 중',
+    'progress.decoding': '디코딩 중',
+    'progress.encoding': '인코딩 중',
+    'progress.finalizing': '마무리 중',
+    'progress.frameCounter': '프레임 {current}/{total}',
+    'progress.statusFrame': '{frame} — {phase}',
+    'progress.statusFrameFps': '{frame} — {phase} @ 초당 {fps}프레임',
+  };
+  let value = translations[key] ?? key;
+  for (const [name, replacement] of Object.entries(params ?? {})) {
+    value = value.replace(`{${name}}`, String(replacement));
+  }
+  return value;
+}) as Parameters<typeof handleConvert>[1];
 
 describe('handleConvert conversion ownership', () => {
   it('admits only one request while duration validation is pending', async () => {
@@ -77,5 +96,40 @@ describe('handleConvert conversion ownership', () => {
       warnings: [{ message: 'confirm', requiresConfirmation: true }],
     });
     await Promise.all([first, second]);
+  });
+});
+
+describe('localized conversion progress status', () => {
+  const formatConversionProgressStatus = (
+    conversionModule as unknown as {
+      formatConversionProgressStatus?: (
+        progress: {
+          phase: 'demuxing' | 'decoding' | 'encoding' | 'assembling';
+          currentFrame?: number;
+          totalFrames?: number;
+          fps: number;
+        },
+        t: typeof localizedProgressT
+      ) => string;
+    }
+  ).formatConversionProgressStatus;
+
+  it('uses translated frame, phase, and fps text', () => {
+    expect(formatConversionProgressStatus).toBeTypeOf('function');
+    expect(
+      formatConversionProgressStatus?.(
+        { phase: 'decoding', currentFrame: 4, totalFrames: 20, fps: 30 },
+        localizedProgressT
+      )
+    ).toBe('프레임 4/20 — 디코딩 중 @ 초당 30프레임');
+  });
+
+  it('uses only the translated phase when frame progress is unavailable', () => {
+    expect(
+      formatConversionProgressStatus?.(
+        { phase: 'assembling', currentFrame: 0, totalFrames: 20, fps: 0 },
+        localizedProgressT
+      )
+    ).toBe('마무리 중');
   });
 });

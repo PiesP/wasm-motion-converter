@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
+import type { TFunction } from '@t/i18n-types';
+import { formatNumber, formatPercent } from '@utils/intl-utils';
 import type { Component } from 'solid-js';
 import { createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 
@@ -62,8 +64,27 @@ const parseTimeInput = (input: string): number | null => {
 
 const clampToStep = (value: number): number => Number((Math.round(value / STEP) * STEP).toFixed(2));
 
+export function formatTrimSummary(
+  durationSeconds: number,
+  totalDurationSeconds: number,
+  frameCount: number,
+  locale: string,
+  t: TFunction
+): string {
+  const duration = formatNumber(durationSeconds, locale, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  const percent = formatPercent(
+    totalDurationSeconds > 0 ? (durationSeconds / totalDurationSeconds) * 100 : 0,
+    locale
+  );
+  const frames = formatNumber(frameCount, locale);
+  return t('trim.summary', { duration, percent, frames });
+}
+
 const TrimSelector: Component<TrimSelectorProps> = (props) => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const fps = (): number => props.estimatedFps ?? 15;
 
   const effectiveEnd = createMemo(() => {
@@ -471,9 +492,8 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             class={textClass}
           />
         </div>
-        <span class="text-[10px] text-text-tertiary whitespace-nowrap">
-          {trimDuration().toFixed(1)}s ({Math.round((trimDuration() / props.duration) * 100)}%) · ~
-          {frameCount()}f
+        <span class="text-[10px] text-text-tertiary whitespace-nowrap" data-testid="trim-summary">
+          {formatTrimSummary(trimDuration(), props.duration, frameCount(), locale(), t)}
         </span>
       </div>
     </div>

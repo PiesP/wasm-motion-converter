@@ -3,8 +3,21 @@
 
 import { describe, it, expect } from 'vitest';
 import enTranslations from '../../../src/i18n/en.json';
+import arTranslations from '../../../src/i18n/ar.json';
+import esTranslations from '../../../src/i18n/es.json';
+import jaTranslations from '../../../src/i18n/ja.json';
 import koTranslations from '../../../src/i18n/ko.json';
+import zhCnTranslations from '../../../src/i18n/zh-CN.json';
 import { LOCALES } from '../../../src/types/i18n-types';
+
+const allTranslations = {
+  en: enTranslations,
+  ko: koTranslations,
+  ja: jaTranslations,
+  'zh-CN': zhCnTranslations,
+  es: esTranslations,
+  ar: arTranslations,
+};
 
 describe('translations', () => {
   describe('en.json and ko.json key parity', () => {
@@ -16,12 +29,12 @@ describe('translations', () => {
 
     it('has all translation keys in en.json', () => {
       const enKeys = Object.keys(enTranslations);
-      expect(enKeys.length).toBe(167);
+      expect(enKeys.length).toBe(170);
     });
 
     it('has all translation keys in ko.json', () => {
       const koKeys = Object.keys(koTranslations);
-      expect(koKeys.length).toBe(167);
+      expect(koKeys.length).toBe(170);
     });
 
     it('en.json keys are a subset of ko.json keys', () => {
@@ -42,6 +55,13 @@ describe('translations', () => {
       const enKeys = Object.keys(enTranslations).sort();
       const koKeys = Object.keys(koTranslations).sort();
       expect(enKeys).toEqual(koKeys);
+    });
+
+    it('all six locales have identical key sets', () => {
+      const enKeys = Object.keys(enTranslations).sort();
+      for (const translations of Object.values(allTranslations)) {
+        expect(Object.keys(translations).sort()).toEqual(enKeys);
+      }
     });
   });
 
@@ -191,6 +211,14 @@ describe('translations', () => {
       expect(progressKeys.length).toBeGreaterThan(0);
       for (const key of progressKeys) {
         expect(koTranslations[key]).toBeDefined();
+      }
+    });
+
+    it('has localized progress status and trim summary keys in every locale', () => {
+      for (const translations of Object.values(allTranslations)) {
+        expect(translations['progress.statusFrame']).toBeDefined();
+        expect(translations['progress.statusFrameFps']).toBeDefined();
+        expect(translations['trim.summary']).toBeDefined();
       }
     });
   });

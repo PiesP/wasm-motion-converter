@@ -30,14 +30,16 @@ import {
 } from '@stores/conversion-store';
 import type {
   ConversionFormat,
+  ConversionProgress,
   ConversionQuality,
   ConversionResult,
   ConversionScale,
   ConversionSettings,
   ProgressCallback,
+  ProgressPhase,
   SmartFrameSkipMode,
 } from '@t/conversion-types';
-import type { TFunction } from '@t/i18n-types';
+import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { focusElement, focusRetryButton, getStartViewTransition } from '@utils/dom-utils';
 import { validateVideoDuration } from '@utils/file-validation';
@@ -298,30 +300,39 @@ function createProgressCallback(
     setConversionElapsedMs(progress.elapsedMs ?? undefined);
     if (progress.currentFrame != null) setCurrentFrame(progress.currentFrame);
     if (progress.totalFrames != null) setTotalFrames(progress.totalFrames);
-
-    const phaseLabel =
-      progress.phase === 'demuxing'
-        ? t('progress.preparing')
-        : progress.phase === 'decoding'
-          ? t('progress.decoding')
-          : progress.phase === 'encoding'
-            ? t('progress.encoding')
-            : t('progress.finalizing');
-
-    if (
-      progress.currentFrame != null &&
-      progress.totalFrames != null &&
-      progress.currentFrame > 0 &&
-      progress.totalFrames > 0
-    ) {
-      const fpsLabel = progress.fps != null && progress.fps > 0 ? ` @ ${progress.fps}fps` : '';
-      runtime.updateStatus(
-        `Frame ${progress.currentFrame}/${progress.totalFrames} — ${phaseLabel}${fpsLabel}`
-      );
-    } else {
-      runtime.updateStatus(phaseLabel);
-    }
+    runtime.updateStatus(formatConversionProgressStatus(progress, t));
   };
+}
+
+const PROGRESS_PHASE_LABEL_KEYS = {
+  demuxing: 'progress.preparing',
+  decoding: 'progress.decoding',
+  encoding: 'progress.encoding',
+  assembling: 'progress.finalizing',
+} as const satisfies Record<ProgressPhase, TranslationKey>;
+
+export function formatConversionProgressStatus(
+  progress: Pick<ConversionProgress, 'phase' | 'currentFrame' | 'totalFrames' | 'fps'>,
+  t: TFunction
+): string {
+  const phase = t(PROGRESS_PHASE_LABEL_KEYS[progress.phase]);
+  if (
+    progress.currentFrame == null ||
+    progress.totalFrames == null ||
+    progress.currentFrame <= 0 ||
+    progress.totalFrames <= 0
+  ) {
+    return phase;
+  }
+
+  const frame = t('progress.frameCounter', {
+    current: progress.currentFrame,
+    total: progress.totalFrames,
+  });
+  if (progress.fps > 0) {
+    return t('progress.statusFrameFps', { frame, phase, fps: progress.fps });
+  }
+  return t('progress.statusFrame', { frame, phase });
 }
 
 function serializeConfig(forcedDecimation: number | undefined): {

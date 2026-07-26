@@ -35,7 +35,9 @@ import {
   videoMetadata,
   videoPreviewUrl,
 } from '@stores/conversion-store';
+import type { AppState } from '@t/app-types';
 import type { ProgressPhase } from '@t/conversion-types';
+import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
 import {
@@ -68,6 +70,19 @@ const MEMORY_REDUCTION_SCALE = 0.5;
 
 const ConversionProgress = lazy(() => import('@components/ConversionProgress'));
 const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
+
+const APP_STATE_LABEL_KEYS = {
+  idle: 'settings.selectVideo',
+  analyzing: 'progress.analyzing',
+  converting: 'progress.converting',
+  cancelling: 'progress.cancelling',
+  done: 'result.convertedAnimation',
+  error: 'error.conversionFailed',
+} as const satisfies Record<AppState, TranslationKey>;
+
+export function getAppStateAnnouncement(state: AppState, t: TFunction): string {
+  return t(APP_STATE_LABEL_KEYS[state]);
+}
 
 const App: Component = () => {
   const { t } = useLocale();
@@ -151,10 +166,9 @@ const App: Component = () => {
   createEffect(() => {
     const el = document.getElementById('app-state');
     if (!el) return;
-    const state = appState();
     // Only announce state transitions, not per-frame progress updates.
     // Per-frame announcements would flood the screen reader with noise.
-    el.textContent = state;
+    el.textContent = getAppStateAnnouncement(appState(), t);
   });
 
   const dropzoneStatus = createMemo(() => {
