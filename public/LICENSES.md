@@ -23,7 +23,7 @@ This project uses the following open-source libraries.
 
 ### mediabunny
 
-- **Version:** 1.50.8
+- **Version:** 1.51.0
 - **License:** MPL-2.0
 - **Repository:** https://mediabunny.dev/
 - **Purpose:** Video demuxing (Input, BufferSource, EncodedPacketSink)
