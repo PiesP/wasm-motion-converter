@@ -10,6 +10,7 @@ node_modules/
 dist/
 build/
 .vite-sw-temp/
+.wrangler/
 
 # TypeScript
 *.tsbuildinfo
@@ -19,6 +20,8 @@ logs/
 *.log
 tmp/
 temp/
+.cache/
+.stryker-tmp*/
 # Video files (test assets, large binaries)
 *.mp4
 *.webm
@@ -32,8 +35,8 @@ temp/
 
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # Editor / OS
 .idea/
@@ -82,6 +85,7 @@ TESTING.md
 
 test/node_modules/
 test-results/
+playwright-report/
 
 # Misc
 *.backup
