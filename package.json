@@ -25,7 +25,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "typecheck": "pnpm -s check",
     "knip": "knip --dependencies",
-    "circular": "dpdm --tsconfig tsconfig.json --circular --no-tree --no-warning src/**/*.ts",
+    "circular": "dpdm --tsconfig tsconfig.json --circular --no-tree --no-warning --exit-code circular:1 src/**/*.ts",
     "knip:full": "knip --files --exports --dependencies --reporter compact --max-show-issues 50 --no-exit-code",
     "prebuild": "npx tsx scripts/generate-licenses.ts && pnpm -s quality",
     "build": "NODE_OPTIONS=\"--no-deprecation\" vite build",
