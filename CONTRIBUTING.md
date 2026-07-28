@@ -37,8 +37,8 @@ Avoid attaching sensitive or private files.
 
 ### Prerequisites
 
-- Volta Node.js `24.15.0` (project default) or engines-compatible Node.js `>=22.16.0`
-- pnpm `>=10.29.2`
+- Use the Volta versions in `package.json` (currently Node.js `26.5.0` and pnpm
+  `11.17.0`), or engines-compatible Node.js `>=22.13.0` and pnpm `>=11.17.0`.
 
 ### Install
 
@@ -93,7 +93,17 @@ import { logger } from "@utils/logger";
 import type { ConversionSettings } from "@t/conversion-types";
 ```
 
-See [CODE_STANDARDS.md](./CODE_STANDARDS.md#1-file-organization) for details.
+## Dependency update policy
+
+- Prefer current stable libraries and tools; this project intentionally adopts
+  modern platform and ecosystem capabilities quickly.
+- pnpm and Dependabot enforce a 24-hour cooling window for newly published
+  packages. Do not bypass it for routine updates.
+- Dependabot checks npm packages and GitHub Actions daily. Passing patch/minor
+  updates from the reviewed tooling allowlist may auto-merge; majors and runtime
+  behavior changes require manual review.
+- `package.json`, `pnpm-workspace.yaml`, and pinned workflow digests are the
+  authoritative versions. Run `pnpm verify:full` after substantive upgrades.
 
 ## License
 
