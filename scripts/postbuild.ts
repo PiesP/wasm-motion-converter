@@ -10,7 +10,8 @@
  *    CSP intentionally has no application-owned inline-script hash; keeping
  *    initialization in the external module prevents HTML/hash drift.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const dist = resolve('dist');
@@ -52,11 +53,58 @@ if (inlineScriptRegex.test(cleaned)) {
 }
 console.log('[postbuild] Verified no application-owned inline scripts');
 
-// ── Step 3: Remove test video files from production dist ─────────────
+// ── Step 3: Deduplicate byte-identical WASM assets ───────────────────
+
+const assetsDir = resolve(dist, 'assets');
+const wasmByDigest = new Map<string, string[]>();
+
+for (const fileName of readdirSync(assetsDir).filter((entry) => entry.endsWith('.wasm'))) {
+  const contents = readFileSync(resolve(assetsDir, fileName));
+  const digest = createHash('sha256').update(contents).digest('hex');
+  const matches = wasmByDigest.get(digest) ?? [];
+  matches.push(fileName);
+  wasmByDigest.set(digest, matches);
+}
+
+let deduplicatedBytes = 0;
+for (const duplicateNames of wasmByDigest.values()) {
+  duplicateNames.sort();
+  const [canonicalName, ...redundantNames] = duplicateNames;
+  if (!canonicalName || redundantNames.length === 0) continue;
+
+  for (const redundantName of redundantNames) {
+    for (const chunkName of readdirSync(assetsDir).filter((entry) => entry.endsWith('.js'))) {
+      const chunkPath = resolve(assetsDir, chunkName);
+      const chunk = readFileSync(chunkPath, 'utf8');
+      const rewritten = chunk.replaceAll(redundantName, canonicalName);
+      if (rewritten !== chunk) writeFileSync(chunkPath, rewritten);
+    }
+
+    const redundantPath = resolve(assetsDir, redundantName);
+    deduplicatedBytes += statSync(redundantPath).size;
+    rmSync(redundantPath);
+    console.log(`[postbuild] Reused ${canonicalName} for duplicate ${redundantName}`);
+  }
+}
+
+console.log(`[postbuild] Removed ${deduplicatedBytes} duplicate WASM bytes`);
+
+for (const chunkName of readdirSync(assetsDir).filter((entry) => entry.endsWith('.js'))) {
+  const chunk = readFileSync(resolve(assetsDir, chunkName), 'utf8');
+  const referencedWasmAssets = [...chunk.matchAll(/\/assets\/([\w.-]+\.wasm)/g)].map(
+    (match) => match[1]!
+  );
+  for (const referencedWasm of referencedWasmAssets) {
+    if (!existsSync(resolve(assetsDir, referencedWasm))) {
+      throw new Error(`[postbuild] ${chunkName} references missing WASM asset ${referencedWasm}`);
+    }
+  }
+}
+console.log('[postbuild] Verified all emitted WASM references resolve');
+
+// ── Step 4: Remove test video files from production dist ─────────────
 // Test videos (~12MB total) are placed in public/ for dev convenience
 // but should not ship in the production deployment.
-
-import { readdirSync, rmSync } from 'node:fs';
 
 const publicDir = resolve(dist);
 try {
