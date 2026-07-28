@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-> Auto-generated on 2026-07-23 by `scripts/generate-licenses.ts`.
+> Auto-generated on 2026-07-28 by `scripts/generate-licenses.ts`.
 > Do not edit manually — run `pnpm build` to regenerate.
 
 This project uses the following open-source libraries.
@@ -23,7 +23,7 @@ This project uses the following open-source libraries.
 
 ### mediabunny
 
-- **Version:** 1.50.9
+- **Version:** 1.50.8
 - **License:** MPL-2.0
 - **Repository:** https://mediabunny.dev/
 - **Purpose:** Video demuxing (Input, BufferSource, EncodedPacketSink)
@@ -78,4 +78,3 @@ Key points:
 - Source code modifications to the library itself must be made available under MPL-2.0
 - This project (wasm-motion-converter) remains under MIT
 - No patent retaliation clause applies
-
