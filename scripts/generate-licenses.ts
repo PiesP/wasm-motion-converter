@@ -192,7 +192,7 @@ for (const entry of entries) {
   console.log(`    • ${entry.name}@${entry.version} — ${entry.license}`);
 }
 
-const licenseMd = generateLicenseText(entries);
+const licenseMd = `${generateLicenseText(entries).trimEnd()}\n`;
 const outputPath = join(ROOT, 'public', 'LICENSES.md');
 writeFileSync(outputPath, licenseMd, 'utf-8');
 

@@ -9,9 +9,9 @@ const DEV_SERVER_URL = `http://127.0.0.1:${DEV_SERVER_PORT}`;
 const TEST_PROFILE = process.env.PLAYWRIGHT_TEST_PROFILE ?? 'local';
 const IS_DEPLOY_PROFILE = TEST_PROFILE === 'deploy';
 const IS_CI_PROFILE = TEST_PROFILE === 'ci';
-// Fresh CI checkouts intentionally exclude the large, local-only codec fixtures.
-// Keep this profile limited to browser flows backed entirely by tracked files.
-const CI_TEST_MATCH = ['e2e/i18n.spec.ts'];
+// Fresh CI checkouts intentionally exclude the large, local-only codec matrix.
+// The smoke fixture is generated deterministically before this profile runs.
+const CI_TEST_MATCH = ['e2e/i18n.spec.ts', 'e2e/ci-conversion-smoke.spec.ts'];
 const LOCAL_TEST_IGNORE = [
   'e2e/fixtures/**',
   'e2e/lib/**',

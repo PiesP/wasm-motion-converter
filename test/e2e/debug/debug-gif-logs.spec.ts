@@ -15,8 +15,6 @@ import {
   waitForConversionComplete,
 } from '../fixtures/test-helpers';
 
-const PUBLIC_DIR = '/home/piesp/projects/wasm-motion-converter/public';
-
 test('H.264 → GIF debug logs', async ({ page }) => {
   const logs: string[] = [];
   page.on('console', (msg) => {
