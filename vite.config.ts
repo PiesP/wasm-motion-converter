@@ -36,9 +36,9 @@ export default defineConfig(({ mode }) => {
   // CSP: 'unsafe-inline' for styles is only needed in dev mode where Vite HMR
   // injects <style> tags. In production all CSS is bundled into a single file
   // served from 'self', so a strict hash/self policy suffices.
-  // 'unsafe-eval' is needed for WebAssembly (wasm-webp, gifenc use dynamic compilation).
+  // Allow WebAssembly compilation without enabling JavaScript eval()/Function().
   const styleSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
-  const scriptSrc = "'self' 'unsafe-eval'";
+  const scriptSrc = "'self' 'wasm-unsafe-eval'";
 
   const cspHeader = [
     "default-src 'self'",

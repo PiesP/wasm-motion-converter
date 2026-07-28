@@ -43,9 +43,6 @@ export interface TestVideoEntry {
   frameRate: number;
   /** File size in bytes. */
   fileSizeBytes: number;
-  /** Which conversion paths are expected to work. */
-  /** true = WebCodecs GPU path (fast), false = FFmpeg CPU path only. */
-  webCodecsSupported: boolean;
   /** Trim duration in seconds for testing (null = full video). */
   testTrimSeconds: number | null;
   /** Maximum acceptable conversion time in ms (for timeout). */
@@ -69,7 +66,6 @@ export const TEST_VIDEOS: ReadonlyArray<TestVideoEntry> = [
     duration: 9.75,
     frameRate: 60,
     fileSizeBytes: 842_356,
-    webCodecsSupported: true,
     testTrimSeconds: 5,
     maxConversionTimeMs: 60_000,
   },
@@ -83,7 +79,6 @@ export const TEST_VIDEOS: ReadonlyArray<TestVideoEntry> = [
     duration: 9.75,
     frameRate: 60,
     fileSizeBytes: 671_634,
-    webCodecsSupported: true,
     testTrimSeconds: 5,
     maxConversionTimeMs: 60_000,
   },
@@ -97,7 +92,6 @@ export const TEST_VIDEOS: ReadonlyArray<TestVideoEntry> = [
     duration: 9.75,
     frameRate: 60,
     fileSizeBytes: 675_613,
-    webCodecsSupported: true,
     testTrimSeconds: 5,
     maxConversionTimeMs: 60_000,
   },
@@ -111,9 +105,7 @@ export const TEST_VIDEOS: ReadonlyArray<TestVideoEntry> = [
     duration: 9.75,
     frameRate: 60,
     fileSizeBytes: 507_558,
-    // HEVC is WebCodecs-native but decode support in headless Chrome is
-    // hardware-dependent. Use conservative timeout.
-    webCodecsSupported: false,
+    // HEVC availability is hardware/build-dependent and checked at runtime.
     testTrimSeconds: 5,
     maxConversionTimeMs: 120_000,
   },
@@ -127,9 +119,6 @@ export const TEST_VIDEOS: ReadonlyArray<TestVideoEntry> = [
     duration: 9.75,
     frameRate: 60,
     fileSizeBytes: 3_889_439,
-    // VP8 is WebCodecs-native but FFmpeg WASM path is more reliable
-    // for WebM container. Use CPU path with generous timeout.
-    webCodecsSupported: false,
     testTrimSeconds: 5,
     maxConversionTimeMs: 180_000,
   },
@@ -143,9 +132,6 @@ export const TEST_VIDEOS: ReadonlyArray<TestVideoEntry> = [
     duration: 9.75,
     frameRate: 60,
     fileSizeBytes: 1_550_521,
-    // VP9 is WebCodecs-native but FFmpeg WASM decode is slow for 1080p60.
-    // Use CPU path with extended timeout.
-    webCodecsSupported: false,
     testTrimSeconds: 5,
     maxConversionTimeMs: 300_000,
   },
@@ -159,9 +145,6 @@ export const TEST_VIDEOS: ReadonlyArray<TestVideoEntry> = [
     duration: 9.75,
     frameRate: 60,
     fileSizeBytes: 1_540_616,
-    // AV1: FFmpeg WASM cannot decode → uses software decode (<video>+Canvas)
-    // then FFmpeg encode. Slowest path, needs longest timeout.
-    webCodecsSupported: false,
     testTrimSeconds: 5,
     maxConversionTimeMs: 300_000,
   },

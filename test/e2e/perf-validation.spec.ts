@@ -328,11 +328,6 @@ test.describe('Perf: Output quality regression', () => {
 
 test.describe('Perf: Per-phase profiling', () => {
   test.beforeEach(async ({ page }) => {
-    // The profiler is owned by the main-thread pipeline. Force that route so
-    // these assertions do not accidentally inspect a separate Worker realm.
-    await page.addInitScript(() => {
-      Object.defineProperty(window, 'Worker', { configurable: true, value: undefined });
-    });
     await page.goto('/');
     await page.waitForTimeout(3000);
   });

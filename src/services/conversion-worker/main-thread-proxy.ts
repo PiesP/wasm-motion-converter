@@ -20,6 +20,10 @@ import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error'
 import type { ConversionProgress } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
+import {
+  clearLastConversionProfileReport,
+  setLastConversionProfileReport,
+} from '../conversion-profile-store';
 import { buildConversionRequest } from './build-conversion-request';
 import { isWorkerResponse } from './guards';
 import type {
@@ -71,6 +75,8 @@ export async function runPipelineViaWorker(
   duration?: number,
   framerate?: number
 ): Promise<ArrayBuffer> {
+  clearLastConversionProfileReport();
+
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const requestId = crypto.randomUUID();
 
@@ -160,6 +166,9 @@ export async function runPipelineViaWorker(
 
         case 'complete': {
           cleanup();
+          if (response.profile) {
+            setLastConversionProfileReport(response.profile);
+          }
           // Terminate immediately — transfer is complete once message received.
           // Deferring with queueMicrotask can race with consumer .then() handlers.
           worker.terminate();

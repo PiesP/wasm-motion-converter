@@ -26,7 +26,7 @@
  * 9. eval `__TEST_HELPERS__.resetApp()` — clean up, repeat
  */
 
-import { getLastConversionProfiler } from '@services/conversion-pipeline';
+import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
 import { confirmDialog } from '@stores/confirmation-store';
 import {
@@ -390,11 +390,7 @@ const testHelpers: TestHelpers = {
   // Test flow helpers
   autoConfirm,
   // Profiler
-  getConversionProfile: () => {
-    const profiler = getLastConversionProfiler();
-    if (!profiler) return null;
-    return profiler.getLastReport() ?? profiler.getReport();
-  },
+  getConversionProfile: getLastConversionProfileReport,
 };
 
 export function attachTestHelpers(): void {

@@ -30,6 +30,44 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+const PROGRESS_PHASES = ['demuxing', 'decoding', 'encoding', 'assembling'] as const;
+
+function isProgressPhase(value: unknown): value is (typeof PROGRESS_PHASES)[number] {
+  return typeof value === 'string' && PROGRESS_PHASES.some((phase) => phase === value);
+}
+
+function isValidPhaseMetrics(value: unknown): boolean {
+  if (!isRecord(value) || !isProgressPhase(value.phase)) return false;
+  return [
+    value.startMs,
+    value.endMs,
+    value.durationMs,
+    value.heapStartMB,
+    value.heapEndMB,
+    value.heapPeakMB,
+    value.framesProcessed,
+    value.fps,
+    value.outputBytes,
+    value.throughputMBps,
+  ].every(isFiniteNonNegative);
+}
+
+/** Validate a profiler report crossing the Worker boundary. */
+function isValidProfileReport(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!isFiniteNonNegative(value.totalDurationMs)) return false;
+  if (!isFiniteNonNegative(value.heapStartMB)) return false;
+  if (!isFiniteNonNegative(value.heapEndMB)) return false;
+  if (!isFiniteNonNegative(value.heapPeakMB)) return false;
+  if (!Array.isArray(value.phases) || !value.phases.every(isValidPhaseMetrics)) return false;
+  if (!isRecord(value.phaseTimePct)) return false;
+  const phaseTimePct = value.phaseTimePct;
+  if (!PROGRESS_PHASES.every((phase) => isFiniteNonNegative(phaseTimePct[phase]))) {
+    return false;
+  }
+  return isProgressPhase(value.bottleneck) && typeof value.summary === 'string';
+}
+
 /** Validate SerializedDecoderConfig fields from unknown record */
 function isValidDecoderConfig(config: unknown): config is Record<string, unknown> {
   if (!isRecord(config)) return false;
@@ -113,6 +151,7 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
       if (!isNonEmptyString(value.requestId)) return false;
       if (!(value.outputBuffer instanceof ArrayBuffer)) return false;
       if (!isFiniteNonNegative(value.durationMs)) return false;
+      if (value.profile !== undefined && !isValidProfileReport(value.profile)) return false;
       return true;
     }
     case 'error': {
