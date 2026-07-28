@@ -17,8 +17,6 @@ import {
   getErrorMessage,
 } from '../fixtures/test-helpers';
 
-const PUBLIC_DIR = '/home/piesp/projects/wasm-motion-converter/public';
-
 test.describe('Debug: Local Server Diagnosis', () => {
   test('page loads and FFmpeg becomes available', async ({ page }) => {
     const logs: string[] = [];
@@ -40,8 +38,7 @@ test.describe('Debug: Local Server Diagnosis', () => {
     console.log(`  Environment: ${JSON.stringify(env)}`);
 
     // Inject file
-    const input = page.locator('input[type="file"]').first();
-    await input.setInputFiles(`${PUBLIC_DIR}/test-video-h264-baseline.mp4`);
+    await injectTestFile(page, 'test-video-h264-baseline.mp4');
     console.log('  File injected');
 
     await page.waitForTimeout(3000);

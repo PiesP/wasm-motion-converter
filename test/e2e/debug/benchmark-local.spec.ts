@@ -16,8 +16,6 @@ import {
   waitForConversionComplete,
 } from '../fixtures/test-helpers';
 
-const PUBLIC_DIR = '/home/piesp/projects/wasm-motion-converter/public';
-
 interface BenchmarkResult {
   codec: string;
   format: string;

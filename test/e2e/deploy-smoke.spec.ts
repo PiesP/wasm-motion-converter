@@ -11,10 +11,13 @@
 //   DEPLOY_URL — the deployed URL to test (default: https://wasm-motion-converter.pages.dev)
 
 import { test, expect, type Page } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { isCloudflareInsightsResource } from './fixtures/url-utils';
 
 const DEPLOY_URL = process.env.DEPLOY_URL || 'https://wasm-motion-converter.pages.dev';
+const TEST_VIDEO_PATH =
+  process.env.DEPLOY_TEST_VIDEO || resolve(process.cwd(), 'public/test-video-ci-h264.mp4');
 
 // Skip all tests in this file when running against local dev server
 // (no __TEST_HELPERS__, no file injection support).
@@ -47,13 +50,23 @@ async function getFailedResources(page: Page): Promise<string[]> {
  * Used for visual inspection of the deployed UI.
  */
 async function captureScreenshot(page: Page, name: string): Promise<void> {
-  const screenshotDir = '/home/piesp/projects/wasm-motion-converter/test-results/screenshots';
-  // Ensure directory exists
-  const fs = await import('node:fs');
-  if (!fs.existsSync(screenshotDir)) {
-    fs.mkdirSync(screenshotDir, { recursive: true });
+  const screenshotDir = resolve(process.cwd(), 'test-results/screenshots');
+  mkdirSync(screenshotDir, { recursive: true });
+  await page.screenshot({ path: resolve(screenshotDir, `${name}.png`), fullPage: false });
+}
+
+async function uploadTestVideo(page: Page): Promise<void> {
+  await page.locator('input[type="file"]').first().setInputFiles(TEST_VIDEO_PATH);
+  await expect(page.locator('[data-testid="convert-button"]')).toBeEnabled();
+  await expect(page.getByText(basename(TEST_VIDEO_PATH), { exact: true })).toBeVisible();
+}
+
+async function startConversion(page: Page): Promise<void> {
+  await page.locator('[data-testid="convert-button"]').click();
+  const modalProceed = page.locator('[data-testid="modal-confirm-button"]');
+  if (await modalProceed.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await modalProceed.click();
   }
-  await page.screenshot({ path: `${screenshotDir}/${name}.png`, fullPage: false });
 }
 
 // ---------------------------------------------------------------------------
@@ -151,11 +164,7 @@ test.describe('Deployment: Visual — File Upload', () => {
   test('convert button enables after file upload', async ({ page }) => {
     await page.goto(DEPLOY_URL);
 
-    // Upload a test file
-    const fileInput = page.locator('input[type="file"]').first();
-    const testVideoPath = '/home/piesp/projects/wasm-motion-converter/public/sample-h264-test.mp4';
-    await fileInput.setInputFiles(testVideoPath);
-    await page.waitForTimeout(2000);
+    await uploadTestVideo(page);
 
     // Capture file uploaded state
     await captureScreenshot(page, 'deploy-file-uploaded');
@@ -165,7 +174,7 @@ test.describe('Deployment: Visual — File Upload', () => {
     await expect(convertBtn).toBeEnabled();
 
     // Verify metadata is displayed
-    await expect(page.locator('text=sample-h264-test.mp4')).toBeVisible();
+    await expect(page.getByText(basename(TEST_VIDEO_PATH), { exact: true })).toBeVisible();
   });
 });
 
@@ -180,60 +189,35 @@ test.describe('Deployment: Visual — Progress UI', () => {
     await page.waitForLoadState('domcontentloaded');
   });
 
-  test('progress UI elements are visible during conversion', async ({ page }) => {
-    // Upload file
-    const fileInput = page.locator('input[type="file"]').first();
-    const testVideoPath = '/home/piesp/projects/wasm-motion-converter/public/sample-h264-test.mp4';
-    await fileInput.setInputFiles(testVideoPath);
-    await page.waitForTimeout(2000);
+  test('conversion exposes progress or completes, then renders a result', async ({ page }) => {
+    await uploadTestVideo(page);
+    await startConversion(page);
 
-    // Start conversion
-    const convertBtn = page.locator('[data-testid="convert-button"]');
-    await convertBtn.click();
-
-    // Handle warning dialog — the modal may appear for large GIF files
-    await page.waitForTimeout(2000);
-    const modalProceed = page.locator('[data-testid="modal-confirm-button"]');
-    const isModalVisible = await modalProceed.isVisible({ timeout: 5000 }).catch(() => false);
-    if (isModalVisible) {
-      await modalProceed.click();
-      await page.waitForTimeout(2000);
-    }
-
-    // Wait for conversion to start
-    await page.waitForTimeout(5000);
+    const progressBar = page.locator('[data-progress]');
+    const resultSection = page.locator('[data-testid="result-section"]');
+    await expect
+      .poll(
+        async () =>
+          (await progressBar.isVisible()) || (await resultSection.isVisible()),
+        { timeout: 30_000 },
+      )
+      .toBe(true);
 
     // Capture progress UI during conversion
     await captureScreenshot(page, 'deploy-progress-active');
 
-    // Verify progress bar is visible
-    const progressBar = page.locator('[data-progress]');
-    const isProgressVisible = await progressBar.isVisible({ timeout: 5000 }).catch(() => false);
-
-    if (isProgressVisible) {
+    if (await progressBar.isVisible()) {
       // Verify progress bar has valid value
       const progressValue = await progressBar.getAttribute('data-progress');
-      expect(progressValue).toBeTruthy();
-      const progressNum = parseInt(progressValue || '0', 10);
+      expect(progressValue).not.toBeNull();
+      const progressNum = Number(progressValue);
       expect(progressNum).toBeGreaterThanOrEqual(0);
       expect(progressNum).toBeLessThanOrEqual(100);
     }
 
-    // Wait for conversion to complete (poll for result or timeout)
-    const resultSection = page.locator('[data-testid="result-section"]');
-    const isDone = await resultSection.isVisible({ timeout: 120_000 }).catch(() => false);
-    
-    if (isDone) {
-      // Capture completion state
-      await captureScreenshot(page, 'deploy-conversion-complete');
-
-      // Verify result section is visible
-      await expect(resultSection).toBeVisible();
-
-      // Verify download button is visible
-      const downloadBtn = page.locator('[data-testid="download-result-button"]');
-      await expect(downloadBtn).toBeVisible();
-    }
+    await expect(resultSection).toBeVisible({ timeout: 120_000 });
+    await captureScreenshot(page, 'deploy-conversion-complete');
+    await expect(page.locator('[data-testid="download-result-button"]')).toBeVisible();
   });
 });
 
@@ -249,23 +233,8 @@ test.describe('Deployment: Visual — Result Section', () => {
   });
 
   test('result section shows correct stats after conversion', async ({ page }) => {
-    // Upload and convert
-    const fileInput = page.locator('input[type="file"]').first();
-    const testVideoPath = '/home/piesp/projects/wasm-motion-converter/public/sample-h264-test.mp4';
-    await fileInput.setInputFiles(testVideoPath);
-    await page.waitForTimeout(2000);
-
-    const convertBtn = page.locator('[data-testid="convert-button"]');
-    await convertBtn.click();
-
-    // Handle warning dialog
-    await page.waitForTimeout(2000);
-    const modalProceed = page.locator('[data-testid="modal-confirm-button"]');
-    const isModalVisible = await modalProceed.isVisible({ timeout: 5000 }).catch(() => false);
-    if (isModalVisible) {
-      await modalProceed.click();
-      await page.waitForTimeout(2000);
-    }
+    await uploadTestVideo(page);
+    await startConversion(page);
 
     // Wait for completion — GIF conversion of 1920x1080 can take 30-90s
     const resultSection = page.locator('[data-testid="result-section"]');
@@ -290,11 +259,9 @@ test.describe('Deployment: Visual — Result Section', () => {
 
     // Verify preview image is loaded
     const resultImage = page.locator('[data-testid="result-image"]');
-    const isImageVisible = await resultImage.isVisible({ timeout: 10_000 }).catch(() => false);
-    if (isImageVisible) {
-      const naturalWidth = await resultImage.evaluate((el) => (el as HTMLImageElement).naturalWidth);
-      expect(naturalWidth).toBeGreaterThan(0);
-    }
+    await expect(resultImage).toBeVisible();
+    const naturalWidth = await resultImage.evaluate((el) => (el as HTMLImageElement).naturalWidth);
+    expect(naturalWidth).toBeGreaterThan(0);
   });
 });
 

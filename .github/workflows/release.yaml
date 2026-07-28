@@ -105,13 +105,18 @@ jobs:
       - name: 📦 Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: 🎞️ Install fixture encoder
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+
       - name: 🏗️ Build for E2E
         run: pnpm build:ci
 
       - name: 🎭 Run E2E tests
         run: |
           pnpm exec playwright install --with-deps chromium
-          pnpm test:e2e
+          pnpm test:e2e:ci
 
   duplication:
     name: 🔍 Release duplication
