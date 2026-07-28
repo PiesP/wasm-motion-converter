@@ -32,8 +32,8 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(false)).toBe('false');
   });
 
-  it('handles objects without message property', () => {
-    expect(getErrorMessage({ code: 500 })).toBe('{"code":500}');
+  it('does not serialize objects without a useful message property', () => {
+    expect(getErrorMessage({ code: 500 })).toBe('[object Object]');
   });
 
   it('prefers message property over Error instance check', () => {
@@ -42,10 +42,8 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(error)).toBe('overridden');
   });
 
-  it('handles nested error-like objects', () => {
-    expect(getErrorMessage({ message: { nested: 'object' } })).toBe(
-      '{"message":{"nested":"object"}}'
-    );
+  it('does not serialize non-string message properties', () => {
+    expect(getErrorMessage({ message: { nested: 'object' } })).toBe('[object Object]');
   });
 
   it('extracts native exception text from objects with a what property', () => {
