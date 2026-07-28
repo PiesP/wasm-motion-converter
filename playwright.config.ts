@@ -6,14 +6,27 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 const DEV_SERVER_PORT = Number(process.env.PLAYWRIGHT_DEV_PORT) || 5173;
 const DEV_SERVER_URL = `http://127.0.0.1:${DEV_SERVER_PORT}`;
+const TEST_PROFILE = process.env.PLAYWRIGHT_TEST_PROFILE ?? 'local';
+const IS_DEPLOY_PROFILE = TEST_PROFILE === 'deploy';
+const IS_CI_PROFILE = TEST_PROFILE === 'ci';
+const LOCAL_TEST_IGNORE = [
+  'e2e/fixtures/**',
+  'e2e/lib/**',
+  'e2e/__screenshots__/**',
+  'e2e/debug/**',
+  'e2e/deploy-smoke.spec.ts',
+  'e2e/dogfood-qa.spec.ts',
+];
 
 export default defineConfig({
   testDir: __dirname,
-  testMatch: ['e2e/*.spec.ts'],
-  testIgnore: ['e2e/fixtures/**', 'e2e/lib/**', 'e2e/__screenshots__/**', 'e2e/debug/**'],
+  testMatch: IS_DEPLOY_PROFILE
+    ? ['e2e/deploy-smoke.spec.ts', 'e2e/dogfood-qa.spec.ts']
+    : ['e2e/*.spec.ts'],
+  testIgnore: IS_DEPLOY_PROFILE ? [] : LOCAL_TEST_IGNORE,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: IS_CI_PROFILE ? 1 : process.env.CI ? 2 : 0,
   workers: 1,
   reporter: process.env.CI ? 'github' : [['list'], ['html', { open: 'never' }]],
   timeout: 300_000,
@@ -54,7 +67,7 @@ export default defineConfig({
 
   // Auto-start dev server unless SKIP_WEB_SERVER is set (e.g. when running
   // tests against an already-running instance via `pnpm dev`).
-  ...(process.env.SKIP_WEB_SERVER
+  ...(process.env.SKIP_WEB_SERVER || IS_DEPLOY_PROFILE
     ? {}
     : {
         webServer: {
