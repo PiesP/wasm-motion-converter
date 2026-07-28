@@ -23,6 +23,7 @@ import {
   GIF_LZW_RATIO,
   GIF_MAX_BUFFER_BYTES,
   GIF_MAX_FRAME_DELAY_CS,
+  GIF_MAX_TAIL_SPLIT_FRAMES,
   GIF_MIN_FRAME_DELAY_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -351,6 +352,13 @@ export async function encodeGif(
       // Pass ms directly — gifenc converts ms→cs internally via Math.round(delay/10)
       let remainingTailMs = totalTailDuration;
       while (remainingTailMs > 0) {
+        if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
+        if (splitFrames >= GIF_MAX_TAIL_SPLIT_FRAMES) {
+          logger.warn('encoders', 'GIF tail duration truncated at output frame limit', {
+            maxFrames: GIF_MAX_TAIL_SPLIT_FRAMES,
+          });
+          break;
+        }
         const delay = Math.min(remainingTailMs, GIF_MAX_FRAME_DELAY_CS * 10);
         encoder.writeFrame(lastIndexedData, w, h, {
           palette: globalPalette,
@@ -360,6 +368,7 @@ export async function encodeGif(
         outputTotalDelay += Math.round(delay / 10);
         remainingTailMs -= delay;
         if (remainingTailMs > 0) splitFrames++;
+        if ((splitFrames & 63) === 0) await yieldToMain();
       }
       logger.info('encoders', 'GIF tail duration added', {
         tailMs: Math.round(totalTailDuration),

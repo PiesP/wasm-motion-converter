@@ -84,10 +84,11 @@ export function formatBytes(bytes: number, locale?: string): string {
  * Falls back to `defaultLocale` if nothing matches.
  */
 export function detectUserLocale(
-  _supportedLocales: Locale[],
+  supportedLocales: Locale[],
   defaultLocale: Locale = DEFAULT_LOCALE
 ): Locale {
-  return detectLocale({ defaultLocale });
+  const detected = detectLocale({ defaultLocale });
+  return supportedLocales.includes(detected as Locale) ? (detected as Locale) : defaultLocale;
 }
 
 /**

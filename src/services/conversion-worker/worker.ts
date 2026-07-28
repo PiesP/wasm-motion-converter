@@ -62,6 +62,7 @@ self.onmessage = async (event: MessageEvent) => {
           inputBuffer,
           options,
           respond,
+          requestId,
           abortController.signal,
           config,
           duration,

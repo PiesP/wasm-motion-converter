@@ -70,6 +70,7 @@ export async function runWorkerPipeline(
   inputBuffer: ArrayBuffer,
   options: SerializedConversionOptions,
   postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
+  requestId: string,
   signal?: AbortSignal,
   config?: SerializedDecoderConfig,
   duration?: number,
@@ -92,7 +93,7 @@ export async function runWorkerPipeline(
   // Post initial log
   postMessage({
     type: 'log',
-    requestId: '',
+    requestId,
     level: 'info',
     message: `Worker pipeline started: ${options.format} ${options.quality} ${options.scale}x`,
   });
@@ -168,7 +169,7 @@ export async function runWorkerPipeline(
           );
           postMessage({
             type: 'progress',
-            requestId: '',
+            requestId,
             phase: 'demuxing',
             percent: demuxPct,
             fps: 0,
@@ -218,7 +219,7 @@ export async function runWorkerPipeline(
             : 0;
         postMessage({
           type: 'progress',
-          requestId: '',
+          requestId,
           phase: 'decoding',
           percent: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
           fps: progressState.fpsTracker.current,
@@ -272,7 +273,7 @@ export async function runWorkerPipeline(
                   : 0;
               postMessage({
                 type: 'progress',
-                requestId: '',
+                requestId,
                 phase: 'encoding',
                 percent: DECODE_MAX + Math.min(ENCODE_RANGE, encodePct),
                 fps: progressState.fpsTracker.current,
@@ -342,7 +343,7 @@ export async function runWorkerPipeline(
                   : 0;
               postMessage({
                 type: 'progress',
-                requestId: '',
+                requestId,
                 phase: 'encoding',
                 percent: Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
                 fps: progressState.fpsTracker.current,
@@ -374,10 +375,10 @@ export async function runWorkerPipeline(
     }
 
     const totalElapsedMs = Math.round(performance.now() - pipelineStart);
-    const memoryMB = assertMemoryBudget(output.byteLength);
+    const memoryMB = assertMemoryBudget(0, output.byteLength);
     postMessage({
       type: 'progress',
-      requestId: '',
+      requestId,
       phase: 'assembling',
       percent: 100,
       fps: 0,

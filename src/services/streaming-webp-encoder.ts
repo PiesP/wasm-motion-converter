@@ -222,8 +222,8 @@ export class StreamingWebpMuxer {
     // VP8 sub-chunk (FourCC + size + data + optional pad byte)
     view.setUint32(off, StreamingWebpMuxer.VP8_FOURCC, false);
     off += 4;
-    // VP8 chunk size includes the padding byte when present
-    view.setUint32(off, paddedBitstreamLen, true);
+    // RIFF chunk sizes exclude the optional alignment padding byte.
+    view.setUint32(off, bitstream.length, true);
     off += 4;
     chunk.set(bitstream, off);
     if (needsPadding) {
