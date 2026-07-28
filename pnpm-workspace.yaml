@@ -2,46 +2,6 @@
 overrides:
   qs@>=6.11.1: ">=6.15.2"
 
-# Dependabot cooldown (7 days) handles supply-chain cooling;
-# minimumReleaseAge explicitly set to 0 to avoid pnpm supply-chain
-# policy failures on freshly-published packages in Dependabot PRs.
-minimumReleaseAge: 0
-
-# Security-critical packages that should bypass the minimum release age.
-# These packages receive immediate updates even within the 7-day cooling period:
-#   - esbuild/minimatch/rollup/seroval: build toolchain + serialization, known targets
-#   - ffmpeg.wasm: WebAssembly binaries shipped from CDN, security-sensitive
-#   - comlink: workers serialization bridge
-minimumReleaseAgeExclude:
-  - esbuild
-  - "@esbuild/*"
-  - minimatch
-  - rollup
-  - seroval
-  - "@ffmpeg/*"
-  - comlink
-  - '@typescript/typescript-aix-ppc64@7.0.2'
-  - '@typescript/typescript-darwin-arm64@7.0.2'
-  - '@typescript/typescript-darwin-x64@7.0.2'
-  - '@typescript/typescript-freebsd-arm64@7.0.2'
-  - '@typescript/typescript-freebsd-x64@7.0.2'
-  - '@typescript/typescript-linux-arm64@7.0.2'
-  - '@typescript/typescript-linux-arm@7.0.2'
-  - '@typescript/typescript-linux-loong64@7.0.2'
-  - '@typescript/typescript-linux-mips64el@7.0.2'
-  - '@typescript/typescript-linux-ppc64@7.0.2'
-  - '@typescript/typescript-linux-riscv64@7.0.2'
-  - '@typescript/typescript-linux-s390x@7.0.2'
-  - '@typescript/typescript-linux-x64@7.0.2'
-  - '@typescript/typescript-netbsd-arm64@7.0.2'
-  - '@typescript/typescript-netbsd-x64@7.0.2'
-  - '@typescript/typescript-openbsd-arm64@7.0.2'
-  - '@typescript/typescript-openbsd-x64@7.0.2'
-  - '@typescript/typescript-sunos-x64@7.0.2'
-  - '@typescript/typescript-win32-arm64@7.0.2'
-  - '@typescript/typescript-win32-x64@7.0.2'
-  - typescript@7.0.2
-
 allowBuilds:
   esbuild: true
   core-js: true
