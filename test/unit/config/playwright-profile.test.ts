@@ -5,11 +5,11 @@ import { describe, expect, it } from 'vitest';
 const root = resolve(import.meta.dirname, '../../..');
 
 describe('Playwright workflow profiles', () => {
-  it('keeps deployment and local-only media checks out of the CI suite', () => {
+  it('uses only repository-backed and generated fixtures in the CI suite', () => {
     const config = readFileSync(resolve(root, 'playwright.config.ts'), 'utf8');
 
     expect(config).toContain("PLAYWRIGHT_TEST_PROFILE");
-    expect(config).toContain("CI_TEST_MATCH = ['e2e/i18n.spec.ts']");
+    expect(config).toContain("'e2e/i18n.spec.ts', 'e2e/ci-conversion-smoke.spec.ts'");
     expect(config).toContain('IS_CI_PROFILE ? 0');
     expect(config).toContain('--strictPort');
     expect(config).toContain("e2e/deploy-smoke.spec.ts");
@@ -23,7 +23,9 @@ describe('Playwright workflow profiles', () => {
     const workflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
 
     expect(packageJson.scripts?.['test:e2e:ci']).toContain('PLAYWRIGHT_TEST_PROFILE=ci');
+    expect(packageJson.scripts?.['pretest:e2e:ci']).toBe('pnpm prepare:e2e:fixture');
     expect(workflow).toContain('pnpm test:e2e:ci');
+    expect(workflow).toContain('sudo apt-get install --yes ffmpeg');
     expect(workflow).not.toContain('pnpm exec playwright test\n');
   });
 });
