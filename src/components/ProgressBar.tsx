@@ -246,6 +246,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
             aria-valuemin={0}
             aria-valuemax={100}
             aria-label={local.status}
+            data-progress={progressValue()}
           >
             <div
               class="h-full rounded-full bg-brand transition-[width] duration-150 ease-out"
@@ -293,7 +294,9 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
         {/* Elapsed time */}
         <Show when={local.showElapsedTime && local.startTime}>
           <div class="text-center text-[10px] text-text-tertiary font-mono tabular-nums">
-            <span ref={elapsedDisplayRef}>{t('progress.initialElapsed')}</span>
+            <span ref={elapsedDisplayRef} data-testid="elapsed-time">
+              {t('progress.initialElapsed')}
+            </span>
           </div>
         </Show>
       </div>
@@ -392,7 +395,9 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       {/* Elapsed / ETA row */}
       <Show when={local.showElapsedTime && local.startTime}>
         <div class="flex items-center justify-center gap-2 text-[10px] text-text-tertiary font-mono tabular-nums">
-          <span ref={elapsedDisplayRef}>{t('progress.initialElapsed')}</span>
+          <span ref={elapsedDisplayRef} data-testid="elapsed-time">
+            {t('progress.initialElapsed')}
+          </span>
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >

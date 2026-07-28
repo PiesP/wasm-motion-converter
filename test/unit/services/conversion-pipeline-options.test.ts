@@ -40,7 +40,10 @@ vi.mock('@services/worker-pool', () => ({
   WebpWorkerPool: { getOptimalWorkerCount: () => 1 },
 }));
 
-import { runConversionPipeline } from '@services/conversion-pipeline';
+import {
+  getLastConversionProfiler,
+  runConversionPipeline,
+} from '@services/conversion-pipeline';
 
 const baseRequest: ConversionRequest = {
   inputBuffer: new ArrayBuffer(8),
@@ -65,6 +68,15 @@ afterEach(() => {
 });
 
 describe('main conversion pipeline encoder options', () => {
+  it('retains the latest completed development profile for diagnostics', async () => {
+    await runConversionPipeline(baseRequest, vi.fn());
+
+    const profiler = getLastConversionProfiler();
+
+    expect(profiler).not.toBeNull();
+    expect(profiler?.getLastReport()).not.toBeNull();
+  });
+
   it('forwards smartFrameSkip to the GIF encoder', async () => {
     await runConversionPipeline(baseRequest, vi.fn());
 

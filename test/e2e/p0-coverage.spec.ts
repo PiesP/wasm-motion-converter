@@ -520,9 +520,9 @@ test.describe('Language selector interaction (F21)', () => {
     const selector = page.locator('[data-testid="language-selector"]');
     await expect(selector).toBeVisible({ timeout: 5000 });
 
-    // Default should be English
+    // Default preserves automatic browser-language detection.
     const defaultValue = await selector.inputValue();
-    expect(defaultValue).toBe('en');
+    expect(defaultValue).toBe('auto');
   });
 
   test('switching language via selector shows Korean UI after reload', async ({ page }) => {

@@ -50,35 +50,15 @@ import { getWorkerPool, WebpWorkerPool } from './worker-pool';
 /** Active profilers keyed by run ID — supports concurrent conversions */
 const activeProfilers = new Map<string, import('./conversion-profiler').ConversionProfiler>();
 
-/**
- * Evict stale profilers from previous failed/aborted runs.
- * Without this, profilers for crashed runs accumulate indefinitely because
- * the cleanup below only runs after a *successful* conversion. This function
- * is called on both success and failure paths to prevent unbounded growth.
- */
-function evictStaleProfilers(): void {
-  if (activeProfilers.size <= 5) return;
-
-  for (const [key, p] of activeProfilers) {
-    // getLastReport() is non-null only after finish() has been called
-    if (p.getLastReport() !== null) {
-      activeProfilers.delete(key);
-    }
-  }
-  // Hard cap: if still over limit (all profilers are active), evict oldest
-  while (activeProfilers.size > 10) {
-    const oldestKey = activeProfilers.keys().next().value;
-    if (oldestKey === undefined) break;
-    activeProfilers.delete(oldestKey);
-  }
-}
+/** Retain one completed profile for diagnostics without accumulating run history. */
+let lastCompletedProfiler: import('./conversion-profiler').ConversionProfiler | null = null;
 
 /** Get the most recent profiler (for test helpers / diagnostics) */
 export function getLastConversionProfiler():
   | import('./conversion-profiler').ConversionProfiler
   | null {
   const lastKey = [...activeProfilers.keys()].pop();
-  return lastKey ? activeProfilers.get(lastKey)! : null;
+  return lastKey ? activeProfilers.get(lastKey)! : lastCompletedProfiler;
 }
 
 /** Incrementing counter for non-security run identifiers.
@@ -130,17 +110,10 @@ export async function runConversionPipeline(
   let output: ArrayBuffer;
   try {
     output = await _runPipelineInner(request, onProgress, signal, pipelineStart, profiler);
-  } catch (err) {
-    // Evict stale profilers on failure too — prevents unbounded growth
-    // when conversions keep failing (the old code only cleaned up after success)
-    evictStaleProfilers();
-    throw err;
+    if (profiler) lastCompletedProfiler = profiler;
   } finally {
     activeProfilers.delete(runId);
   }
-
-  // Proactive cleanup: evict stale profilers from previous failed/aborted runs.
-  evictStaleProfilers();
 
   return output;
 }

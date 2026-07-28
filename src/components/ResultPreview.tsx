@@ -211,7 +211,9 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           </Show>
           <Show when={conversionTimeLabel()}>
             <span class="text-brand/60">·</span>
-            <span class="text-text-tertiary">⚡ {conversionTimeLabel()}</span>
+            <span class="text-text-tertiary" data-testid="conversion-time">
+              ⚡ {conversionTimeLabel()}
+            </span>
           </Show>
         </div>
 
