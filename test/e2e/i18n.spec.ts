@@ -220,13 +220,8 @@ test.describe('i18n: All UI elements translated', () => {
   });
 
   test('scale group legend is translated', async ({ page }) => {
-    // Note: ScaleSelector currently uses a hardcoded English title ("Output Scale")
-    // instead of t('scale.title'). This test documents the expected translated text.
-    // When the app is fixed to use t('scale.title'), this test will verify Korean text.
-    // TODO: Change to KO.scaleTitle once ScaleSelector uses t('scale.title')
     const legend = page.locator('[data-testid="option-group-scale"] legend');
-    // After fix, use: await expect(legend).toContainText(KO.scaleTitle);
-    await expect(legend).toContainText('Scale');
+    await expect(legend).toContainText(KO.scaleTitle);
   });
 
   test('convert button label is translated', async ({ page }) => {

@@ -114,7 +114,7 @@ jobs:
       - name: 📦 Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: 🎭 Run E2E tests
+      - name: 🎭 Run repository-backed E2E tests
         run: |
           pnpm exec playwright install --with-deps chromium
           pnpm test:e2e:ci

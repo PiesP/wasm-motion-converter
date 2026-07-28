@@ -5,10 +5,13 @@ import { describe, expect, it } from 'vitest';
 const root = resolve(import.meta.dirname, '../../..');
 
 describe('Playwright workflow profiles', () => {
-  it('keeps production checks out of the local CI suite', () => {
+  it('keeps deployment and local-only media checks out of the CI suite', () => {
     const config = readFileSync(resolve(root, 'playwright.config.ts'), 'utf8');
 
     expect(config).toContain("PLAYWRIGHT_TEST_PROFILE");
+    expect(config).toContain("CI_TEST_MATCH = ['e2e/i18n.spec.ts']");
+    expect(config).toContain('IS_CI_PROFILE ? 0');
+    expect(config).toContain('--strictPort');
     expect(config).toContain("e2e/deploy-smoke.spec.ts");
     expect(config).toContain("e2e/dogfood-qa.spec.ts");
   });
