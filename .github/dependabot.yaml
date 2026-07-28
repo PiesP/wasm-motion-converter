@@ -23,6 +23,9 @@ updates:
       prefix-development: "chore(deps-dev)"
     reviewers:
       - "PiesP"
+    labels:
+      - "dependencies"
+      - "automated"
 
     # Auto-rebase to reduce merge conflicts
     rebase-strategy: "auto"
@@ -111,6 +114,10 @@ updates:
       prefix: "ci(deps)"
     reviewers:
       - "PiesP"
+    labels:
+      - "ci"
+      - "dependencies"
+      - "automated"
     groups:
       actions:
         patterns:
