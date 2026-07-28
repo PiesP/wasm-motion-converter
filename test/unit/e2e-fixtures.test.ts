@@ -41,6 +41,6 @@ describe('E2E fixture security', () => {
   it.each(invalidFileSpecs)('%s avoids fixed files in shared OS temp directories', (relativePath) => {
     const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
 
-    expect(source).not.toMatch(/['"]\/tmp\//);
+    expect(source).not.toMatch(/\/tmp(?:\/|['"`])/);
   });
 });
