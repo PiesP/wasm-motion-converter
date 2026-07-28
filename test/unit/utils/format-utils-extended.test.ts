@@ -51,7 +51,7 @@ describe('locale-aware format utilities', () => {
     expect(formatDurationLocale(500, 'en')).toBe('500ms');
     expect(formatDurationLocale(1500, 'en')).toBe('1.5s');
     expect(formatDurationLocale(90_000, 'ko')).toBe('1분 30초');
-    expect(formatDurationLocale(1500, 'fr' as never)).toBe('1.5s');
+    expect(formatDurationLocale(1500, 'fr' as never)).toBe('1,5s');
   });
 
   it('selects an exact locale before a base-language match', () => {
