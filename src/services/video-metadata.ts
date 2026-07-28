@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { MediabunnyVideoDecoderConfig, VideoMetadata } from '@t/conversion-types';
-import { DEFAULT_FPS } from '@utils/constants';
+import { DEFAULT_FPS, MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 
@@ -147,8 +147,18 @@ export async function extractVideoMetadata(
     // displayAspectWidth/Height: present when pixel aspect ratio is non-square (mediabunny v1.40.0+).
     // These represent the display dimensions directly.
     const cfg = config as MediabunnyVideoDecoderConfig;
-    const width = cfg.displayAspectWidth ?? cfg.displayWidth ?? config.codedWidth ?? 0;
-    const height = cfg.displayAspectHeight ?? cfg.displayHeight ?? config.codedHeight ?? 0;
+    const codedWidth = config.codedWidth ?? 0;
+    const codedHeight = config.codedHeight ?? 0;
+    const displayWidth = cfg.displayAspectWidth ?? cfg.displayWidth;
+    const displayHeight = cfg.displayAspectHeight ?? cfg.displayHeight;
+    const hasSafeDisplayDimensions =
+      Number.isSafeInteger(displayWidth) &&
+      Number.isSafeInteger(displayHeight) &&
+      displayWidth! > 0 &&
+      displayHeight! > 0 &&
+      displayWidth! <= MAX_TOTAL_PIXEL_COUNT / displayHeight!;
+    const width = hasSafeDisplayDimensions ? displayWidth! : codedWidth;
+    const height = hasSafeDisplayDimensions ? displayHeight! : codedHeight;
 
     // Extract codec string (e.g. "avc1.42E01E" → "avc1")
     const codec = config.codec?.split('.')[0] ?? 'unknown';

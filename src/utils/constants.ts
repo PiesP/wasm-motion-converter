@@ -100,6 +100,8 @@ export const MIN_OUTPUT_FPS = 3;
 
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */
 export const GIF_MAX_FRAME_DELAY_CS = 200;
+/** Hard ceiling for duplicate continuation frames emitted for a long GIF tail. */
+export const GIF_MAX_TAIL_SPLIT_FRAMES = 9_000;
 
 /** GIF encoder minimum first frame delay in milliseconds.
  *  Set to 20ms — the minimum safe delay for GIF viewers (sub-20ms frames
