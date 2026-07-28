@@ -172,6 +172,12 @@ async function handleEncode(
 // ─── Message Handler ───────────────────────────────────────────────
 
 self.onmessage = async (event: MessageEvent<EncodeRequest>) => {
+  // Dedicated Worker messages arrive through the worker's private channel with
+  // a null source. Reject any cross-context source before reading its payload.
+  if (event.source !== null && event.source !== self) {
+    return;
+  }
+
   const request = event.data;
 
   try {

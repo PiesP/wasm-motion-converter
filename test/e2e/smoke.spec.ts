@@ -202,9 +202,9 @@ test.describe('Smoke: Error handling', () => {
     await page.waitForTimeout(2000);
   });
 
-  test('shows error for unsupported file type', async ({ page }) => {
+  test('shows error for unsupported file type', async ({ page }, testInfo) => {
     const fs = await import('node:fs');
-    const tmpFile = '/tmp/test-invalid.txt';
+    const tmpFile = testInfo.outputPath('test-invalid.txt');
     fs.writeFileSync(tmpFile, 'not a video');
 
     const file = page.locator('input[type="file"]').first();

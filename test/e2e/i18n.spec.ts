@@ -241,7 +241,7 @@ test.describe('i18n: All UI elements translated', () => {
 // ══════════════════════════════════════════════════════════════════
 
 test.describe('i18n: Error messages in selected language', () => {
-  test('error display uses Korean when locale is ko', async ({ page }) => {
+  test('error display uses Korean when locale is ko', async ({ page }, testInfo) => {
     await page.goto('/');
     await waitForAppReady(page);
     await setLocaleAndReload(page, 'ko');
@@ -249,7 +249,7 @@ test.describe('i18n: Error messages in selected language', () => {
 
     // Inject an invalid file to trigger an error
     const fs = await import('node:fs');
-    const tmpFile = '/tmp/test-i18n-invalid.txt';
+    const tmpFile = testInfo.outputPath('test-i18n-invalid.txt');
     fs.writeFileSync(tmpFile, 'not a video');
 
     const fileInput = page.locator('input[type="file"]').first();
