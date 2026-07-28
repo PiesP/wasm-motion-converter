@@ -13,7 +13,7 @@
     "@i18n": ["src/i18n"]
   },
   "ignore": ["**/*.d.ts"],
-  "ignoreBinaries": ["sha256sum"],
+  "ignoreBinaries": ["ffmpeg", "sha256sum"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["@types/dom-webcodecs", "@tailwindcss/vite"]
 }
