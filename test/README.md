@@ -99,11 +99,13 @@ pnpm test -- debug/benchmark-local.spec.ts
   duration: 10,
   frameRate: 30,
   fileSizeBytes: 1000000,
-  webCodecsSupported: true,  // FFmpeg direct path 사용 여부
   testTrimSeconds: 5,
   maxConversionTimeMs: 60_000,
 }
 ```
+
+디코더 지원 여부는 정적 매니페스트 값이 아니라 실행 중인 브라우저의
+`VideoDecoder.isConfigSupported()` 결과로 판정됩니다.
 
 베이스라인 결과도 `BASELINE_RESULTS`와 `BASELINE_TIMINGS`에 추가합니다.
 

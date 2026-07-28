@@ -30,6 +30,7 @@ import {
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
+import type { ConversionProfileReport } from '../conversion-profiler';
 import { buildConversionRequest } from './build-conversion-request';
 import { hexToArrayBuffer } from './protocol';
 import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
@@ -75,8 +76,13 @@ export async function runWorkerPipeline(
   config?: SerializedDecoderConfig,
   duration?: number,
   framerate?: number
-): Promise<ArrayBuffer> {
+): Promise<{ outputBuffer: ArrayBuffer; profile?: ConversionProfileReport }> {
   const pipelineStart = performance.now();
+  const profilerClass = import.meta.env.DEV
+    ? (await import('../conversion-profiler')).ConversionProfiler
+    : undefined;
+  const profiler = profilerClass ? new profilerClass() : null;
+  profiler?.start();
 
   // Build a ConversionRequest for the existing pipeline code.
   // Use maxMemoryMB from options (if provided) so the worker can receive
@@ -154,11 +160,13 @@ export async function runWorkerPipeline(
       : undefined;
 
     // ── Demux Phase ────────────────────────────────────────────
+    profiler?.startPhase('demuxing');
     let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
     demuxResult = await demuxVideo(
       request,
       preComputedMetadata,
       (packetsExtracted, estimatedTotalFrames) => {
+        profiler?.updatePhase('demuxing', packetsExtracted);
         const now = performance.now();
         if (now - progressState.lastPostTime >= 100) {
           progressState.lastPostTime = now;
@@ -182,6 +190,7 @@ export async function runWorkerPipeline(
       },
       signal
     );
+    profiler?.endPhase('demuxing', { frames: demuxResult.totalFrames });
 
     const cfg = demuxResult.config;
     const dims = resolveVideoDimensions(cfg);
@@ -201,6 +210,7 @@ export async function runWorkerPipeline(
     let estimatedOutputFrames = 1;
 
     const decodeProgressCb = (frameIdx: number, _totalFrames: number) => {
+      profiler?.updatePhase('decoding', frameIdx);
       const now = performance.now();
       const deltaMs = now - progressState.fpsTracker.lastTime;
       const framesDelta = frameIdx - progressState.fpsTracker.lastFrame;
@@ -235,6 +245,9 @@ export async function runWorkerPipeline(
       }
     };
 
+    profiler?.startPhase('decoding');
+    profiler?.startPhase('encoding');
+
     if (options.format === 'gif') {
       const gifDecimation = calcAutoDecimation(
         sourceFps,
@@ -263,6 +276,7 @@ export async function runWorkerPipeline(
           smartFrameSkip: options.smartFrameSkip,
           onFrameDecoded: decodeProgressCb,
           onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
+            profiler?.updatePhase('encoding', frameIdx);
             const now = performance.now();
             if (now - progressState.lastPostTime >= 100) {
               progressState.lastPostTime = now;
@@ -333,6 +347,7 @@ export async function runWorkerPipeline(
             onFrameDecoded: decodeProgressCb,
           },
           (p) => {
+            profiler?.updatePhase('encoding', p.currentFrame ?? 0);
             const now = performance.now();
             if (now - progressState.lastPostTime >= 100) {
               progressState.lastPostTime = now;
@@ -366,7 +381,14 @@ export async function runWorkerPipeline(
       }
     }
 
+    profiler?.endPhase('decoding', { frames: estimatedOutputFrames });
+    profiler?.endPhase('encoding', {
+      frames: estimatedOutputFrames,
+      outputBytes: output?.byteLength ?? 0,
+    });
+
     // ── Assembly Phase ─────────────────────────────────────────────
+    profiler?.startPhase('assembling');
     globalBufferPool.clear();
 
     // Guard: ensure output was produced (M10 fix).
@@ -390,7 +412,10 @@ export async function runWorkerPipeline(
       elapsedMs: totalElapsedMs,
     });
 
-    return output;
+    profiler?.endPhase('assembling');
+    const profile = profiler?.finish();
+
+    return { outputBuffer: output, ...(profile ? { profile } : {}) };
   } finally {
     // Ensure buffer pool is cleared on any error path (matching main thread)
     globalBufferPool.clear();

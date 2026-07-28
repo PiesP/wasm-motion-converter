@@ -30,7 +30,6 @@ export function generateTestMatrix(options?: {
   formats?: TestFormat[];
   qualities?: TestQuality[];
   scales?: TestScale[];
-  webCodecsOnly?: boolean;
   maxDurationSec?: number;
 }): ConversionTestCase[] {
   const {
@@ -38,13 +37,11 @@ export function generateTestMatrix(options?: {
     formats = ['gif', 'webp'],
     qualities = ['medium', 'high'],
     scales = ['100%'],
-    webCodecsOnly = false,
     maxDurationSec,
   } = options ?? {};
 
   const videos = TEST_VIDEOS.filter((v) => {
     if (codecs && !codecs.includes(v.codec)) return false;
-    if (webCodecsOnly && !v.webCodecsSupported) return false;
     if (maxDurationSec && v.duration > maxDurationSec) return false;
     return true;
   });
@@ -54,13 +51,12 @@ export function generateTestMatrix(options?: {
     for (const format of formats) {
       for (const quality of qualities) {
         for (const scale of scales) {
-          const pathLabel = video.webCodecsSupported ? 'gpu' : 'cpu';
           cases.push({
             video,
             format,
             quality,
             scale,
-            name: `${video.id} → ${format.toUpperCase()} (${quality}, ${scale}, ${pathLabel})`,
+            name: `${video.id} → ${format.toUpperCase()} (${quality}, ${scale}, WebCodecs)`,
           });
         }
       }

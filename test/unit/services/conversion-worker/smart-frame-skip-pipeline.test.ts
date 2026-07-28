@@ -43,13 +43,23 @@ beforeEach(() => {
 
 describe('worker pipeline smart frame skip forwarding', () => {
   it('forwards smartFrameSkip to the GIF encoder', async () => {
-    await runWorkerPipeline(new ArrayBuffer(8), baseOptions, vi.fn());
+    const result = await runWorkerPipeline(new ArrayBuffer(8), baseOptions, vi.fn());
 
     expect(mocks.encodeGif).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ smartFrameSkip: 'adaptive' }),
       undefined
     );
+    expect(result.profile?.phases.map((phase) => phase.phase)).toEqual([
+      'demuxing',
+      'decoding',
+      'encoding',
+      'assembling',
+    ]);
+    expect(result.profile?.phases.find((phase) => phase.phase === 'encoding')).toMatchObject({
+      framesProcessed: 10,
+      outputBytes: 3,
+    });
   });
 
   it('forwards smartFrameSkip to the WebP encoder', async () => {

@@ -3,6 +3,7 @@
 
 // Message protocol types for the conversion worker
 
+import type { ConversionProfileReport } from '@services/conversion-profiler';
 import type { ConversionFormat, ConversionQuality, SmartFrameSkipMode } from '@t/conversion-types';
 
 export type WorkerRequest =
@@ -37,6 +38,8 @@ export type WorkerResponse =
       requestId: string;
       outputBuffer: ArrayBuffer;
       durationMs: number;
+      /** Development-only profile captured inside the Worker realm. */
+      profile?: ConversionProfileReport;
     }
   | { type: 'error'; requestId: string; message: string; code: string }
   | { type: 'log'; requestId: string; level: string; message: string };

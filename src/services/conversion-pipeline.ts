@@ -36,6 +36,10 @@ import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
 import { createThrottledProgress } from '@utils/throttled-progress';
 import { globalBufferPool } from './buffer-pool';
+import {
+  clearLastConversionProfileReport,
+  setLastConversionProfileReport,
+} from './conversion-profile-store';
 import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
@@ -46,26 +50,6 @@ import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
 import { encodeWebp } from './webp-encoder-service';
 import { getWorkerPool, WebpWorkerPool } from './worker-pool';
-
-/** Active profilers keyed by run ID — supports concurrent conversions */
-const activeProfilers = new Map<string, import('./conversion-profiler').ConversionProfiler>();
-
-/** Retain one completed profile for diagnostics without accumulating run history. */
-let lastCompletedProfiler: import('./conversion-profiler').ConversionProfiler | null = null;
-
-/** Get the most recent profiler (for test helpers / diagnostics) */
-export function getLastConversionProfiler():
-  | import('./conversion-profiler').ConversionProfiler
-  | null {
-  const lastKey = [...activeProfilers.keys()].pop();
-  return lastKey ? activeProfilers.get(lastKey)! : lastCompletedProfiler;
-}
-
-/** Incrementing counter for non-security run identifiers.
- * crypto.randomUUID() is unnecessary for profiling session IDs;
- * a simple counter is sufficient and avoids crypto entropy overhead.
- */
-let nextRunId = 0;
 
 /** Device/environment check — isolated to this module-level constant */
 const isDev = import.meta.env.DEV;
@@ -89,12 +73,13 @@ export async function runConversionPipeline(
   logger.performance('Pipeline started', logCtx);
   logger.info('conversion', `▶ Pipeline route: MAINTHREAD_${format.toUpperCase()}`, logCtx);
 
+  clearLastConversionProfileReport();
+
   // Clear buffer pool from any previous conversion
   globalBufferPool.clear();
 
   // Initialize profiler — in DEV, dynamically import the real profiler
   // (tree-shaken from production bundles). In prod, use null.
-  const runId = `run-${nextRunId++}`;
   const profilerClass = isDev
     ? (await import('./conversion-profiler')).ConversionProfiler
     : undefined;
@@ -102,20 +87,8 @@ export async function runConversionPipeline(
     ? new profilerClass()
     : null;
   profiler?.start();
-  if (profiler) {
-    activeProfilers.set(runId, profiler);
-  }
 
-  // Ensure profiler is removed from active map on completion or failure
-  let output: ArrayBuffer;
-  try {
-    output = await _runPipelineInner(request, onProgress, signal, pipelineStart, profiler);
-    if (profiler) lastCompletedProfiler = profiler;
-  } finally {
-    activeProfilers.delete(runId);
-  }
-
-  return output;
+  return _runPipelineInner(request, onProgress, signal, pipelineStart, profiler);
 }
 
 /** Inner pipeline logic — demux → decode → encode with throttled progress cleanup */
@@ -651,6 +624,7 @@ async function _runPipelineInner(
     // ── Profile Report ──
     if (profiler) {
       const profileReport = profiler.finish();
+      setLastConversionProfileReport(profileReport);
       scheduleTask(
         () => {
           const report = profileReport!;

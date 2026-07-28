@@ -138,6 +138,31 @@ describe('isWorkerResponse', () => {
     durationMs: 5000,
   };
 
+  const validProfile = {
+    totalDurationMs: 5000,
+    heapStartMB: 0,
+    heapEndMB: 0,
+    heapPeakMB: 0,
+    phases: [
+      {
+        phase: 'demuxing',
+        startMs: 0,
+        endMs: 10,
+        durationMs: 10,
+        heapStartMB: 0,
+        heapEndMB: 0,
+        heapPeakMB: 0,
+        framesProcessed: 30,
+        fps: 3000,
+        outputBytes: 0,
+        throughputMBps: 0,
+      },
+    ],
+    phaseTimePct: { demuxing: 0.2, decoding: 70, encoding: 25, assembling: 4.8 },
+    bottleneck: 'decoding',
+    summary: '[5000ms total]',
+  };
+
   const validError = {
     type: 'error',
     requestId: 'req-123',
@@ -158,6 +183,10 @@ describe('isWorkerResponse', () => {
 
   it('accepts valid complete message', () => {
     expect(isWorkerResponse(validComplete)).toBe(true);
+  });
+
+  it('accepts a complete message with a valid profile', () => {
+    expect(isWorkerResponse({ ...validComplete, profile: validProfile })).toBe(true);
   });
 
   it('accepts valid error message', () => {
@@ -204,6 +233,21 @@ describe('isWorkerResponse', () => {
 
   it('rejects complete with non-ArrayBuffer outputBuffer', () => {
     expect(isWorkerResponse({ ...validComplete, outputBuffer: 'not-a-buffer' })).toBe(false);
+  });
+
+  it('rejects a malformed profile at the Worker boundary', () => {
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: { ...validProfile, totalDurationMs: Number.NaN },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: { ...validProfile, phases: [{ phase: 'unknown' }] },
+      })
+    ).toBe(false);
   });
 
   it('rejects error without message', () => {

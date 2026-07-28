@@ -26,9 +26,24 @@ export interface TestHelpers {
     smartFrameSkip: string;
   };
   getInputFile(): { name: string; size: number; type: string } | null;
-  getMetadata(): { width: number; height: number; duration: number; codec: string; frameRate: number } | null;
+  getMetadata(): {
+    width: number;
+    height: number;
+    duration: number;
+    codec: string;
+    framerate: number;
+    config?: VideoDecoderConfig;
+  } | null;
   getError(): string | null;
-  injectFile(file: File | { name: string; size: number; type: string }, metadata?: { width: number; height: number; duration: number; codec: string; frameRate: number }): Promise<void>;
+  injectFile(file: File, metadata?: {
+    width: number;
+    height: number;
+    duration: number;
+    codec: string;
+    framerate: number;
+    bitrate: number;
+    config?: VideoDecoderConfig;
+  }): Promise<void>;
   resetApp(): Promise<void>;
   isConvertButtonEnabled(): boolean;
   isResultVisible(): boolean;
@@ -110,7 +125,8 @@ export interface VideoMetadata {
   height: number;
   duration: number;
   codec: string;
-  frameRate: number;
+  framerate: number;
+  bitrate: number;
 }
 
 /** Inject a real test video file via file input (uses test video files from public/). */
@@ -132,6 +148,19 @@ export async function injectTestFile(page: Page, filename: string): Promise<void
     () => window.__TEST_HELPERS__?.isConvertButtonEnabled() === true,
     { timeout: 15_000 },
   );
+}
+
+/** Check the decoder configuration extracted from the currently selected file. */
+export async function isCurrentVideoCodecSupported(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const config = window.__TEST_HELPERS__?.getMetadata()?.config;
+    if (!config || typeof VideoDecoder === 'undefined') return false;
+    try {
+      return (await VideoDecoder.isConfigSupported(config)).supported === true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Create and inject a synthetic test file (no real video needed). */

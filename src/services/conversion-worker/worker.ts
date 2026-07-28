@@ -58,7 +58,7 @@ self.onmessage = async (event: MessageEvent) => {
       };
 
       try {
-        const outputBuffer = await runWorkerPipeline(
+        const { outputBuffer, profile } = await runWorkerPipeline(
           inputBuffer,
           options,
           respond,
@@ -78,6 +78,7 @@ self.onmessage = async (event: MessageEvent) => {
             requestId,
             outputBuffer,
             durationMs,
+            ...(profile ? { profile } : {}),
           },
           [outputBuffer]
         );

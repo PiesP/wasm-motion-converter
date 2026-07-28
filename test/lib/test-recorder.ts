@@ -39,8 +39,8 @@ export interface ConversionTestResult {
   outputSizeBytes?: number;
   /** Conversion time in milliseconds. */
   conversionTimeMs?: number;
-  /** Conversion path used. */
-  path?: 'gpu' | 'cpu';
+  /** Conversion API used. Legacy result files may contain gpu/cpu labels. */
+  path?: 'webcodecs' | 'gpu' | 'cpu';
   /** Encoder backend used. */
   encoder?: string;
   /** Browser name if available. */
