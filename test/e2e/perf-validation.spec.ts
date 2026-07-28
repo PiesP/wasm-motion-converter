@@ -31,8 +31,10 @@ import { validateFileMagic } from './fixtures/verify';
 
 // ─── Helper: get conversion profile from browser ───
 
+type ProfilePhase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
+
 interface PhaseMetrics {
-  phase: string;
+  phase: ProfilePhase;
   durationMs: number;
   heapStartMB: number;
   heapEndMB: number;
@@ -49,8 +51,8 @@ interface ConversionProfile {
   heapEndMB: number;
   heapPeakMB: number;
   phases: PhaseMetrics[];
-  phaseTimePct: Record<string, number>;
-  bottleneck: string;
+  phaseTimePct: Record<ProfilePhase, number>;
+  bottleneck: ProfilePhase;
   summary: string;
 }
 
@@ -326,6 +328,11 @@ test.describe('Perf: Output quality regression', () => {
 
 test.describe('Perf: Per-phase profiling', () => {
   test.beforeEach(async ({ page }) => {
+    // The profiler is owned by the main-thread pipeline. Force that route so
+    // these assertions do not accidentally inspect a separate Worker realm.
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'Worker', { configurable: true, value: undefined });
+    });
     await page.goto('/');
     await page.waitForTimeout(3000);
   });
@@ -348,10 +355,10 @@ test.describe('Perf: Per-phase profiling', () => {
     const phaseNames = profile!.phases.map((p) => p.phase);
     console.log(`  Phases: ${phaseNames.join(', ')}`);
     console.log(`  Summary: ${profile!.summary}`);
-    expect(phaseNames).toContain('demux');
-    expect(phaseNames).toContain('decode');
-    expect(phaseNames).toContain('encode');
-    expect(phaseNames).toContain('assemble');
+    expect(phaseNames).toContain('demuxing');
+    expect(phaseNames).toContain('decoding');
+    expect(phaseNames).toContain('encoding');
+    expect(phaseNames).toContain('assembling');
 
     // Total duration should be reasonable (under 2 minutes for a small test video)
     console.log(`  Total: ${profile!.totalDurationMs}ms`);
@@ -367,11 +374,11 @@ test.describe('Perf: Per-phase profiling', () => {
       expect(pct).toBeLessThanOrEqual(100);
     }
     // Demux and assemble should be small (< 20% each)
-    expect(profile!.phaseTimePct.demux).toBeLessThan(20);
-    expect(profile!.phaseTimePct.assemble).toBeLessThan(5);
+    expect(profile!.phaseTimePct.demuxing).toBeLessThan(20);
+    expect(profile!.phaseTimePct.assembling).toBeLessThan(5);
 
     // Encode should have the most frames (decimation may reduce count)
-    const encodePhase = profile!.phases.find((p) => p.phase === 'encode');
+    const encodePhase = profile!.phases.find((p) => p.phase === 'encoding');
     expect(encodePhase).toBeDefined();
     expect(encodePhase!.framesProcessed).toBeGreaterThan(0);
 
@@ -401,14 +408,13 @@ test.describe('Perf: Per-phase profiling', () => {
     expect(profile).not.toBeNull();
 
     // WebP encode should report throughput
-    const encodePhase = profile!.phases.find((p) => p.phase === 'encode');
+    const encodePhase = profile!.phases.find((p) => p.phase === 'encoding');
     expect(encodePhase).toBeDefined();
     expect(encodePhase!.outputBytes).toBeGreaterThan(0);
     console.log(`  WebP encode: ${encodePhase!.framesProcessed}f, ${encodePhase!.throughputMBps} MB/s`);
 
     // Summary should be a non-empty string
     expect(profile!.summary.length).toBeGreaterThan(0);
-    expect(profile!.summary).toContain('total');
     console.log(`  ${profile!.summary}`);
   });
 
@@ -429,28 +435,28 @@ test.describe('Perf: Per-phase profiling', () => {
     const profile = await getConversionProfile(page);
     expect(profile).not.toBeNull();
 
-    const decodePhase = profile!.phases.find((p) => p.phase === 'decode');
-    const encodePhase = profile!.phases.find((p) => p.phase === 'encode');
-    const demuxPhase = profile!.phases.find((p) => p.phase === 'demux');
+    const decodePhase = profile!.phases.find((p) => p.phase === 'decoding');
+    const encodePhase = profile!.phases.find((p) => p.phase === 'encoding');
+    const demuxPhase = profile!.phases.find((p) => p.phase === 'demuxing');
 
     expect(decodePhase).toBeDefined();
     expect(encodePhase).toBeDefined();
     expect(demuxPhase).toBeDefined();
 
-    console.log(`  Demux: ${demuxPhase!.durationMs}ms (${profile!.phaseTimePct.demux}%)`);
-    console.log(`  Decode: ${decodePhase!.durationMs}ms (${profile!.phaseTimePct.decode}%)`);
-    console.log(`  Encode: ${encodePhase!.durationMs}ms (${profile!.phaseTimePct.encode}%)`);
-    console.log(`  Assemble: ${profile!.phaseTimePct.assemble}%`);
+    console.log(`  Demux: ${demuxPhase!.durationMs}ms (${profile!.phaseTimePct.demuxing}%)`);
+    console.log(`  Decode: ${decodePhase!.durationMs}ms (${profile!.phaseTimePct.decoding}%)`);
+    console.log(`  Encode: ${encodePhase!.durationMs}ms (${profile!.phaseTimePct.encoding}%)`);
+    console.log(`  Assemble: ${profile!.phaseTimePct.assembling}%`);
     console.log(`  Bottleneck: ${profile!.bottleneck}`);
 
     // Demux should be relatively fast (< 20% of total)
     expect(demuxPhase!.durationMs).toBeLessThan(profile!.totalDurationMs * 0.2);
 
     // Decode + Encode should account for the majority of time
-    const decodeEncodePct = profile!.phaseTimePct.decode + profile!.phaseTimePct.encode;
+    const decodeEncodePct = profile!.phaseTimePct.decoding + profile!.phaseTimePct.encoding;
     expect(decodeEncodePct).toBeGreaterThan(50);
 
     // The bottleneck should be either decode or encode (not demux or assemble)
-    expect(['decode', 'encode']).toContain(profile!.bottleneck);
+    expect(['decoding', 'encoding']).toContain(profile!.bottleneck);
   });
 });

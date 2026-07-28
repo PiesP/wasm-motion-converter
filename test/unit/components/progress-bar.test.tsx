@@ -92,4 +92,16 @@ describe('ProgressBar pipeline phase segments', () => {
     const segments = container.querySelector<HTMLElement>('[role="progressbar"]')!.children;
     expect(segments[3]?.classList.contains('animate-pulse')).toBe(false);
   });
+
+  it('preserves the progress diagnostic attribute in compact mode', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(
+      () => <ProgressBar compact progress={42.4} status="Converting" phase="decoding" />,
+      container
+    );
+
+    const progressbar = container.querySelector<HTMLElement>('[role="progressbar"]');
+    expect(progressbar?.dataset.progress).toBe('42');
+  });
 });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { globalBufferPool } from '@services/buffer-pool';
 
@@ -20,6 +20,10 @@ import { WebpWorkerPool } from '@services/worker-pool';
 
 beforeEach(() => {
   FakeWorker.instances.length = 0;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('WebpWorkerPool buffer ownership', () => {
@@ -82,6 +86,36 @@ describe('WebpWorkerPool buffer ownership', () => {
 
       await expect(pending).rejects.toThrow('Worker pool terminated');
       expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns buffer ownership and clears the timeout when transfer throws synchronously', async () => {
+    vi.useFakeTimers();
+    try {
+      const release = vi.spyOn(globalBufferPool, 'release').mockImplementation(() => {});
+      const pool = new WebpWorkerPool(1, 1000);
+      const worker = FakeWorker.instances[0];
+      const buffer = new Uint8Array(16);
+      worker?.postMessage.mockImplementationOnce(() => {
+        throw new DOMException('transfer failed', 'DataCloneError');
+      });
+
+      const pending = pool.encode({
+        id: 7,
+        rgbData: buffer,
+        width: 2,
+        height: 2,
+        quality: 80,
+        durationMs: 100,
+      });
+
+      await expect(pending).rejects.toThrow('transfer failed');
+      expect(release).toHaveBeenCalledWith(buffer);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(pool.stats).toMatchObject({ poolSize: 1, idle: 1, active: 0, queued: 0 });
+      pool.terminate();
     } finally {
       vi.useRealTimers();
     }

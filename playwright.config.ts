@@ -22,7 +22,7 @@ const LOCAL_TEST_IGNORE = [
 ];
 
 export default defineConfig({
-  testDir: __dirname,
+  testDir: path.resolve(__dirname, 'test'),
   testMatch: IS_DEPLOY_PROFILE
     ? ['e2e/deploy-smoke.spec.ts', 'e2e/dogfood-qa.spec.ts']
     : IS_CI_PROFILE
@@ -44,6 +44,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'off',
     headless: true,
+    colorScheme: 'light',
     viewport: { width: 1280, height: 720 },
   },
 

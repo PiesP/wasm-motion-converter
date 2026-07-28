@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { globalBufferPool } from '@services/buffer-pool';
 import {
   clearCanvasCache,
+  copyFrameToRGB,
   convertRGBAToRGB,
   convertRGBToRGBA,
   getFrameDurationMs,
   resolveVideoDimensions,
 } from '@services/frame-utils';
+
+afterEach(() => {
+  clearCanvasCache();
+  vi.unstubAllGlobals();
+});
 
 describe('resolveVideoDimensions', () => {
   it('prefers display aspect dimensions for square-pixel animation output', () => {
@@ -35,6 +42,64 @@ describe('clearCanvasCache', () => {
   it('is idempotent — calling twice does not throw', () => {
     clearCanvasCache();
     expect(() => clearCanvasCache()).not.toThrow();
+  });
+
+  it('closes transient bitmaps and releases cached canvas backing stores', async () => {
+    const canvases: Array<{ width: number; height: number }> = [];
+    const closeBitmap = vi.fn();
+    const context = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({
+        data: new Uint8ClampedArray([
+          255, 0, 0, 255,
+          0, 255, 0, 255,
+          0, 0, 255, 255,
+          255, 255, 255, 255,
+        ]),
+      })),
+    };
+    class FakeOffscreenCanvas {
+      width: number;
+      height: number;
+
+      constructor(width: number, height: number) {
+        this.width = width;
+        this.height = height;
+        canvases.push(this);
+      }
+
+      getContext(): typeof context {
+        return context;
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({ width: 2, height: 2, close: closeBitmap }))
+    );
+    const frame = {
+      codedWidth: 4,
+      codedHeight: 4,
+      displayWidth: 4,
+      displayHeight: 4,
+    } as VideoFrame;
+
+    const rgb = await copyFrameToRGB(frame, 2, 2, { durationCarryUs: 0, copyPath: null });
+
+    expect([...rgb.subarray(0, 12)]).toEqual([
+      255, 0, 0,
+      0, 255, 0,
+      0, 0, 255,
+      255, 255, 255,
+    ]);
+    expect(closeBitmap).toHaveBeenCalledOnce();
+    expect(canvases).toEqual([{ width: 2, height: 2 }]);
+    globalBufferPool.release(rgb);
+
+    clearCanvasCache();
+
+    expect(canvases).toEqual([{ width: 0, height: 0 }]);
   });
 });
 
