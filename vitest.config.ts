@@ -16,9 +16,18 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     include: ['test/unit/**/*.test.{ts,tsx}'],
     exclude: ['node_modules', 'dist'],
-    passWithNoTests: true,
+    passWithNoTests: false,
     slowTestThreshold: 2000,
     testTimeout: 30000,
+    coverage: {
+      provider: 'v8',
+      thresholds: {
+        statements: 40,
+        branches: 30,
+        functions: 40,
+        lines: 40,
+      },
+    },
   },
   resolve: {
     alias: {
