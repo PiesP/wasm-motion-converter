@@ -370,6 +370,7 @@ async function _runPipelineInner(
                 quality: request.quality,
                 scale: request.scale,
                 frameDecimation: gifDecimation,
+                smartFrameSkip: request.smartFrameSkip,
                 onFrameDecoded: decodeProgressCb,
                 onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
                   gifEncodeFrames = frameIdx;
@@ -558,7 +559,7 @@ async function _runPipelineInner(
           frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
         };
-      } else if (typeof OffscreenCanvas !== 'undefined') {
+      } else if (offscreenOk) {
         logger.info(
           'conversion',
           '  ├─ Branch: WebP encoder (OffscreenCanvas convertToBlob + mux)',
@@ -583,6 +584,7 @@ async function _runPipelineInner(
                 quality: request.quality,
                 scale: request.scale,
                 frameDecimation: webpDecimation,
+                smartFrameSkip: request.smartFrameSkip,
                 onFrameDecoded: decodeProgressCb,
               },
               onEncodeProgress,
@@ -616,6 +618,7 @@ async function _runPipelineInner(
                 quality: request.quality,
                 scale: request.scale,
                 frameDecimation: webpDecimation,
+                smartFrameSkip: request.smartFrameSkip,
                 onFrameDecoded: decodeProgressCb,
               },
               onEncodeProgress,

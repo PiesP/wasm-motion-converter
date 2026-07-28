@@ -22,7 +22,7 @@
  * 3. Check duration warnings to inform or block conversion attempts
  */
 
-import { getErrorMessage } from '@piesp/browser-core/error';
+import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import type { TranslationKeys } from '@t/i18n-types';
 import type { DurationValidationResult, ValidationWarning } from '@t/validation-types';
 import {
@@ -234,7 +234,7 @@ export async function validateVideoFile(file: File, t: TFunction): Promise<FileV
  *   logger.warn('conversion', 'Unreadable video format', { error });
  * }
  */
-async function extractVideoDuration(file: File): Promise<number> {
+async function extractVideoDuration(file: File, signal?: AbortSignal): Promise<number> {
   return new Promise((resolve, reject) => {
     // STEP 1: Create hidden video element and blob URL
     const video = document.createElement('video');
@@ -246,7 +246,10 @@ async function extractVideoDuration(file: File): Promise<number> {
     // Timeout guard (M6 fix): reject if metadata doesn't load within 5 seconds.
     // Prevents hanging indefinitely on corrupt files that fire neither
     // loadedmetadata nor error events.
+    let settled = false;
     const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       cleanup();
       reject(new Error('Video duration extraction timed out after 5s'));
     }, 5000);
@@ -255,9 +258,23 @@ async function extractVideoDuration(file: File): Promise<number> {
     // Critical to prevent blob URL memory leak and orphaned video element
     const cleanup = () => {
       clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', onAbort);
       video.src = ''; // Clear source before revoking URL
       URL.revokeObjectURL(url); // Release blob URL memory
     };
+
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new DOMException('Cancelled', 'AbortError'));
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
 
     // STEP 2: Configure video element for metadata-only loading
     // preload='metadata' tells browser to fetch only header (fast, no full download)
@@ -272,6 +289,8 @@ async function extractVideoDuration(file: File): Promise<number> {
     // STEP 3: Listen for 'loadedmetadata' event (duration is now available)
     // This fires when video duration and dimensions are readable from metadata
     video.onloadedmetadata = () => {
+      if (settled) return;
+      settled = true;
       metadataLoaded = true;
       // Duration from video.duration is in seconds, convert to milliseconds
       if (!Number.isFinite(video.duration) || video.duration <= 0) {
@@ -290,7 +309,8 @@ async function extractVideoDuration(file: File): Promise<number> {
     // from later playback (e.g. corrupted seek), and the promise is already
     // resolved — the error is ignored.
     video.onerror = () => {
-      if (metadataLoaded) return; // Already resolved duration
+      if (metadataLoaded || settled) return; // Already resolved duration
+      settled = true;
       cleanup();
       reject(new Error('Failed to extract video duration'));
     };
@@ -356,11 +376,12 @@ export async function validateVideoDuration(
   file: File,
   targetFormat: string,
   t: TFunction,
-  fps?: number
+  fps?: number,
+  signal?: AbortSignal
 ): Promise<DurationValidationResult> {
   try {
     // STEP 1: Extract video metadata
-    const duration = await extractVideoDuration(file);
+    const duration = await extractVideoDuration(file, signal);
     const estimatedFrames = estimateFrameCount(duration, fps);
     const warnings: ValidationWarning[] = [];
 
@@ -404,6 +425,7 @@ export async function validateVideoDuration(
       warnings,
     };
   } catch (error) {
+    if (isCancellationError(error)) throw error;
     // ERROR HANDLING: If duration extraction fails (unsupported codec, corrupted file, network error)
     // Allow conversion to proceed with default settings.
     // The conversion service will eventually handle errors if the video is truly unreadable.

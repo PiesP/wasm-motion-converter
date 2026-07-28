@@ -30,15 +30,20 @@ export interface VideoConfigWithDimensions {
 }
 
 /**
- * Resolve video dimensions from decoder config, preferring coded dimensions
- * over display aspect dimensions over raw display dimensions.
+ * Resolve square-pixel output dimensions from decoder config, preferring display
+ * aspect dimensions over coded dimensions and raw display dimensions.
  * Returns null if no valid dimensions can be determined.
  */
 export function resolveVideoDimensions(
   config: VideoConfigWithDimensions
 ): { width: number; height: number } | null {
-  const width = config.codedWidth ?? config.displayAspectWidth ?? config.displayWidth;
-  const height = config.codedHeight ?? config.displayAspectHeight ?? config.displayHeight;
+  const hasDisplayAspect = config.displayAspectWidth && config.displayAspectHeight;
+  const width = hasDisplayAspect
+    ? config.displayAspectWidth
+    : (config.codedWidth ?? config.displayWidth);
+  const height = hasDisplayAspect
+    ? config.displayAspectHeight
+    : (config.codedHeight ?? config.displayHeight);
   if (!width || !height) return null;
   return { width, height };
 }

@@ -152,6 +152,7 @@ export interface TranslationKeys {
   'trim.tooShort': string;
   'trim.startLabel': string;
   'trim.endLabel': string;
+  'trim.summary': string;
 
   // Progress
   'progress.demux': string;
@@ -173,6 +174,8 @@ export interface TranslationKeys {
   'progress.eta': string;
   'progress.calculating': string;
   'progress.initialElapsed': string;
+  'progress.statusFrame': string;
+  'progress.statusFrameFps': string;
 
   // Result
   'result.download': string;

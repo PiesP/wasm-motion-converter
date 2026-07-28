@@ -3,6 +3,7 @@
 
 import { useLocale } from '@hooks/use-locale';
 import type { ProgressPhase } from '@t/conversion-types';
+import { PROGRESS_PHASE } from '@utils/constants';
 import { formatDurationSeconds } from '@utils/format-utils';
 import type { Component } from 'solid-js';
 import { createEffect, createMemo, onCleanup, Show, splitProps } from 'solid-js';
@@ -37,6 +38,34 @@ const PHASE_CONFIG = [
     phase: 'assembling' as ProgressPhase,
   },
 ] as const;
+
+const PROGRESS_PHASE_BOUNDARIES = [
+  0,
+  PROGRESS_PHASE.DEMUX_MAX,
+  PROGRESS_PHASE.DECODE_MAX,
+  PROGRESS_PHASE.ENCODE_MAX,
+  100,
+] as const;
+
+export function getActivePhaseIndex(phase?: ProgressPhase): number {
+  if (phase === 'assembling') return 3;
+  if (phase === 'encoding') return 2;
+  if (phase === 'decoding') return 1;
+  return 0;
+}
+
+export function getProgressSegmentWidths(progress: number): readonly number[] {
+  const normalizedProgress = Number.isFinite(progress)
+    ? Math.min(100, Math.max(0, Math.round(progress)))
+    : 0;
+
+  return PROGRESS_PHASE_BOUNDARIES.slice(0, -1).map((start, index) => {
+    const end = PROGRESS_PHASE_BOUNDARIES[index + 1]!;
+    return Math.max(0, Math.min(normalizedProgress, end) - start);
+  });
+}
+
+const PROGRESS_SEGMENT_CAPACITIES = getProgressSegmentWidths(100);
 
 interface ProgressBarProps {
   progress: number;
@@ -95,40 +124,23 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     return Math.min(100, Math.max(0, Math.round(raw)));
   });
 
-  const activePhaseIndex = createMemo(() => {
-    const p = local.phase;
-    if (p === 'assembling') return 3;
-    if (p === 'encoding') return 2;
-    if (p === 'decoding') return 1;
-    return 0;
-  });
+  const activePhaseIndex = createMemo(() => getActivePhaseIndex(local.phase));
 
   const isCompact = createMemo(() => local.compact === true);
 
   // Memoize segment rendering
   const segmentDivs = createMemo(() => {
     const activeIdx = activePhaseIndex();
+    const widths = getProgressSegmentWidths(progressValue());
     return PHASE_CONFIG.map((seg, idx) => {
-      const isPast = idx < activeIdx;
       const isActive = idx === activeIdx;
-
-      let widthPercent: number;
-      if (isPast) {
-        widthPercent = 25;
-      } else if (isActive) {
-        const segmentStart = idx * 25;
-        const segmentEnd = (idx + 1) * 25;
-        const clampedProgress = Math.max(segmentStart, Math.min(segmentEnd, progressValue()));
-        widthPercent = ((clampedProgress - segmentStart) / (segmentEnd - segmentStart)) * 25;
-      } else {
-        widthPercent = 0;
-      }
+      const widthPercent = widths[idx]!;
 
       return (
         <div
           class={`h-full transition-[width] duration-150 ease-out ${
             widthPercent > 0 ? seg.colorClass : 'bg-transparent'
-          } ${idx === 0 ? 'rounded-l-full' : ''} ${idx === PHASE_CONFIG.length - 1 ? 'rounded-r-full' : ''} ${isActive && widthPercent > 0 && widthPercent < 25 ? 'animate-pulse' : ''}`}
+          } ${idx === 0 ? 'rounded-l-full' : ''} ${idx === PHASE_CONFIG.length - 1 ? 'rounded-r-full' : ''} ${isActive && widthPercent > 0 && widthPercent < PROGRESS_SEGMENT_CAPACITIES[idx]! ? 'animate-pulse' : ''}`}
           style={{ width: `${widthPercent}%` }}
         />
       );

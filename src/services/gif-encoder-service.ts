@@ -346,20 +346,25 @@ export async function encodeGif(
     // durations accumulated by the decoder but never consumed. Add this tail
     // duration as extra delay on the last frame by writing a continuation frame
     // with the same pixel data and only the tail delay.
-    if (tailAccumulatedMs > 0 && lastIndexedData && globalPalette) {
+    const totalTailDuration = tailAccumulatedMs + accumulatedDuration;
+    if (totalTailDuration > 0 && lastIndexedData && globalPalette) {
       // Pass ms directly — gifenc converts ms→cs internally via Math.round(delay/10)
-      if (tailAccumulatedMs > 0) {
+      let remainingTailMs = totalTailDuration;
+      while (remainingTailMs > 0) {
+        const delay = Math.min(remainingTailMs, GIF_MAX_FRAME_DELAY_CS * 10);
         encoder.writeFrame(lastIndexedData, w, h, {
           palette: globalPalette,
           repeat: 0,
-          delay: tailAccumulatedMs,
+          delay,
         });
-        outputTotalDelay += Math.round(tailAccumulatedMs / 10);
-        logger.info('encoders', 'GIF tail duration added', {
-          tailMs: Math.round(tailAccumulatedMs),
-          tailCs: Math.round(tailAccumulatedMs / 10),
-        });
+        outputTotalDelay += Math.round(delay / 10);
+        remainingTailMs -= delay;
+        if (remainingTailMs > 0) splitFrames++;
       }
+      logger.info('encoders', 'GIF tail duration added', {
+        tailMs: Math.round(totalTailDuration),
+        tailCs: Math.round(totalTailDuration / 10),
+      });
     }
 
     encoder.finish();

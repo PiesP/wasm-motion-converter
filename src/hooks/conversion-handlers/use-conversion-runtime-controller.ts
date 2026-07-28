@@ -15,13 +15,24 @@ interface ConversionRuntimeControllerDeps {
   setMemoryWarning: Setter<boolean>;
   setMemoryUsageText: Setter<string | null>;
   setConversionPhase?: Setter<import('@t/conversion-types').ProgressPhase> | undefined;
-  /** Optional callback to abort the active conversion pipeline on teardown. */
-  abortActiveConversion?: (() => void) | undefined;
+}
+
+export interface ConversionIntent {
+  readonly isActive: () => boolean;
+  readonly runId: string;
+  readonly signal: AbortSignal;
+  readonly token: symbol;
 }
 
 export class ConversionRuntimeController {
   private memoryCheckTimer: ReturnType<typeof setInterval> | null = null;
   private activeConversionSeq = 0;
+  private activeConversionIntent: {
+    abortController: AbortController;
+    seq: number;
+    token: symbol;
+  } | null = null;
+  private disposed = false;
 
   readonly progress: ProgressState;
 
@@ -38,6 +49,7 @@ export class ConversionRuntimeController {
   }
 
   startNewRun(): { isActive: () => boolean; runId: string } {
+    this.abortConversionIntent();
     const seq = (this.activeConversionSeq += 1);
     const runId = `run-${seq}-${performance.now().toString(36)}`;
     this.progress.activeRunId = runId;
@@ -46,6 +58,42 @@ export class ConversionRuntimeController {
       isActive: () => seq === this.activeConversionSeq,
       runId,
     };
+  }
+
+  beginConversionIntent(): ConversionIntent | null {
+    if (this.disposed || this.activeConversionIntent) return null;
+
+    const seq = (this.activeConversionSeq += 1);
+    const token = Symbol('conversion-intent');
+    const abortController = new AbortController();
+    const runId = `run-${seq}-${performance.now().toString(36)}`;
+    this.activeConversionIntent = { abortController, seq, token };
+    this.progress.activeRunId = runId;
+
+    return {
+      isActive: () =>
+        !this.disposed &&
+        !abortController.signal.aborted &&
+        this.activeConversionSeq === seq &&
+        this.activeConversionIntent?.token === token,
+      runId,
+      signal: abortController.signal,
+      token,
+    };
+  }
+
+  finishConversionIntent(intent: ConversionIntent): void {
+    if (this.activeConversionIntent?.token === intent.token) {
+      this.activeConversionIntent = null;
+    }
+  }
+
+  abortConversionIntent(): void {
+    const active = this.activeConversionIntent;
+    if (!active) return;
+    this.activeConversionIntent = null;
+    active.abortController.abort();
+    this.activeConversionSeq += 1;
   }
 
   resetRuntimeState(): void {
@@ -60,7 +108,8 @@ export class ConversionRuntimeController {
    */
   dispose(): void {
     this.stopMemoryMonitoring();
-    this.deps.abortActiveConversion?.();
+    this.disposed = true;
+    this.abortConversionIntent();
     this.progress.disposed = true;
   }
 

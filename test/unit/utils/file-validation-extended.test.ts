@@ -137,4 +137,22 @@ describe('validateVideoDuration', () => {
     await expect(promise).resolves.toMatchObject({ valid: true, duration: 0 });
     vi.useRealTimers();
   });
+
+  it('rejects cancellation and cleans up duration extraction resources', async () => {
+    const controller = new AbortController();
+    const promise = validateVideoDuration(
+      new File(['x'], 'video.bin'),
+      'gif',
+      t,
+      30,
+      controller.signal
+    );
+
+    controller.abort();
+    video.onerror?.();
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(video.src).toBe('');
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:validation-test');
+  });
 });

@@ -456,6 +456,14 @@ export function getWorkerPool(size?: number): WebpWorkerPool | null {
   }
   if (!singletonPool) {
     singletonPool = new WebpWorkerPool(size);
+  } else if (
+    size !== undefined &&
+    singletonPool.stats.poolSize !== size &&
+    singletonPool.stats.active === 0 &&
+    singletonPool.stats.queued === 0
+  ) {
+    singletonPool.terminate();
+    singletonPool = new WebpWorkerPool(size);
   }
   return singletonPool;
 }

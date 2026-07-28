@@ -208,6 +208,12 @@ export async function decodeFrames(
   // Create per-conversion frame processing context (duration carry + copy path cache)
   const frameCtx: FrameProcessingContext = createFrameProcessingContext();
 
+  // Reserve presentation-ordered turns before asynchronous pixel copies begin.
+  // copyFrameToRGB() may complete out of order, so all stateful motion decisions
+  // and encoder delivery wait for the previous frame's turn while the copies
+  // themselves remain concurrent.
+  let orderedProcessingTail: Promise<void> = Promise.resolve();
+
   logger.info('decoders', 'VideoDecoder configured', {
     codec: demux.config.codec,
     hwAccel: activeConfig.hardwareAcceleration,
@@ -220,6 +226,10 @@ export async function decodeFrames(
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
       try {
+        if ((demux.trimStartUs ?? 0) > 0 && frame.timestamp < (demux.trimStartUs ?? 0)) {
+          frame.close();
+          return;
+        }
         const { durationMs: frameDuration, ctx: nextFrameCtx } = getFrameDurationMs(
           frame,
           frameCtx
@@ -247,12 +257,18 @@ export async function decodeFrames(
         // Without this, smart-skipped frame durations are permanently lost.
         let smartCarryoverMs = 0;
 
+        const previousProcessing = orderedProcessingTail;
+        let releaseProcessing!: () => void;
+        orderedProcessingTail = new Promise<void>((resolve) => {
+          releaseProcessing = resolve;
+        });
+
         const conversion = (async () => {
+          let enteredOrderedProcessing = false;
           try {
             // Validate frame before attempting copy — frame may be invalid
             // if the decoder encountered an error or was flushed concurrently.
             if (!frame.codedWidth || !frame.codedHeight) {
-              frame.close();
               return;
             }
 
@@ -261,6 +277,8 @@ export async function decodeFrames(
             // Used by VP8 VideoEncoder path for zero-copy GPU encoding.
             // Smart frame skip and adaptive mode are disabled (require RGB data).
             if (typeof onVideoFrameAvailable === 'function') {
+              await previousProcessing;
+              enteredOrderedProcessing = true;
               // Transfer accumulated frame durations (decimation + smart skip carryover)
               const totalDur = totalDuration + smartCarryoverMs;
               smartCarryoverMs = 0;
@@ -270,30 +288,30 @@ export async function decodeFrames(
             }
 
             const rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
+            await previousProcessing;
+            enteredOrderedProcessing = true;
+
+            const shouldMeasureMotion = streaming && (skipThreshold >= 0 || isAdaptive);
+            const gray = shouldMeasureMotion ? compute8x8Grayscale(rgbData, width, height) : null;
+            const frameDistance =
+              gray !== null && prevGray !== null ? computeMAD(gray, prevGray) : null;
+
+            if (frameDistance !== null && noiseFloorSamples.length < NOISE_SAMPLE_COUNT) {
+              noiseFloorSamples.push(frameDistance);
+              if (noiseFloorSamples.length === NOISE_SAMPLE_COUNT) {
+                const sorted = [...noiseFloorSamples].sort((a, b) => a - b);
+                const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+                noiseFloor = median * 3.5;
+              }
+            }
 
             // ── Smart frame skip: similarity-based deduplication ──
-            if (streaming && skipThreshold >= 0) {
-              const gray = compute8x8Grayscale(rgbData, width, height);
-
-              if (prevGray !== null) {
-                const dist = computeMAD(gray, prevGray);
-
-                // Noise floor estimation from first N frames
-                if (noiseFloorSamples.length < NOISE_SAMPLE_COUNT) {
-                  noiseFloorSamples.push(dist);
-                  if (noiseFloorSamples.length === NOISE_SAMPLE_COUNT) {
-                    // Use median as noise floor, scaled by factor k=3.5
-                    // Create a sorted copy to avoid mutating the source array
-                    const sorted = [...noiseFloorSamples].sort((a, b) => a - b);
-                    const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-                    noiseFloor = median * 3.5;
-                  }
-                }
-
+            if (streaming && skipThreshold >= 0 && gray !== null) {
+              if (frameDistance !== null) {
                 // Skip if similar AND consecutive skip time < 500ms
                 // Use max of user threshold and noise-adapted floor
                 const effectiveThreshold = Math.max(skipThreshold, noiseFloor);
-                if (dist <= effectiveThreshold && consecutiveSkipMs < 500) {
+                if (frameDistance <= effectiveThreshold && consecutiveSkipMs < 500) {
                   // Skip this frame: accumulate duration, release buffer, return
                   consecutiveSkipMs += totalDuration;
                   smartSkippedCount++;
@@ -322,14 +340,10 @@ export async function decodeFrames(
             // (initially 'normal') because prevGray is null until at least two frames
             // have been processed. This initial misclassification is expected and has
             // negligible impact — only one frame's decimation is affected.
-            if (streaming && isAdaptive) {
+            if (streaming && isAdaptive && gray !== null) {
               let motionClass: 'static' | 'slow' | 'normal' | 'fast' = adaptLastMotionClass;
 
-              if (prevGray !== null && noiseFloorSamples.length >= NOISE_SAMPLE_COUNT) {
-                // Re-compute grayscale if smart skip didn't do it (threshold=-2 path)
-                const gray = compute8x8Grayscale(rgbData, width, height);
-                const dist = computeMAD(gray, prevGray);
-
+              if (frameDistance !== null && noiseFloorSamples.length >= NOISE_SAMPLE_COUNT) {
                 // Classify motion level using noise-floor-adapted thresholds.
                 // Lower-noise videos get tighter thresholds (more aggressive skip),
                 // noisier videos get wider thresholds (conservative skip).
@@ -339,11 +353,11 @@ export async function decodeFrames(
                 );
                 const effectiveSlow = Math.max(ADAPT_SLOW_THRESHOLD, noiseFloor / 1.8);
                 const effectiveNormal = Math.max(ADAPT_NORMAL_THRESHOLD, noiseFloor / 1.2);
-                if (dist <= effectiveStatic) {
+                if (frameDistance <= effectiveStatic) {
                   motionClass = 'static';
-                } else if (dist <= effectiveSlow) {
+                } else if (frameDistance <= effectiveSlow) {
                   motionClass = 'slow';
-                } else if (dist <= effectiveNormal) {
+                } else if (frameDistance <= effectiveNormal) {
                   motionClass = 'normal';
                 } else {
                   motionClass = 'fast';
@@ -355,8 +369,9 @@ export async function decodeFrames(
                   adaptFrameCounter = 0; // force keep on significant motion increase
                 }
                 adaptLastMotionClass = motionClass;
-                prevGray = gray;
               }
+
+              prevGray = gray;
 
               const decimation = ADAPT_DECIMATION[motionClass];
               const shouldSkip = adaptFrameCounter % decimation !== 0 && consecutiveSkipMs < 500; // 500ms safety limit
@@ -405,6 +420,10 @@ export async function decodeFrames(
               onFrameDecoded(streaming ? keptFrameCount : rgbFrames.length, demux.totalFrames);
             }
           } finally {
+            if (!enteredOrderedProcessing) {
+              await previousProcessing;
+            }
+            releaseProcessing();
             frame.close();
           }
         })();
