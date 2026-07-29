@@ -1,3 +1,4 @@
+import defaultTranslationsJson from '@i18n/en.json';
 import {
   DEFAULT_LOCALE,
   LOCALES,
@@ -7,7 +8,6 @@ import {
   type TranslationKeys,
   type Translations,
 } from '@t/i18n-types';
-import defaultTranslationsJson from '@i18n/en.json';
 import { detectInitialLocale, detectUserLocale, updateDocumentLang } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import type { Component, JSX } from 'solid-js';
@@ -34,9 +34,7 @@ export interface LocaleContextValue {
 const LocaleContext = createContext<LocaleContextValue | undefined>(undefined);
 
 const defaultTranslations = defaultTranslationsJson as Translations;
-const translationCache = new Map<Locale, Translations>([
-  [DEFAULT_LOCALE, defaultTranslations],
-]);
+const translationCache = new Map<Locale, Translations>([[DEFAULT_LOCALE, defaultTranslations]]);
 
 async function importLocale(locale: Locale): Promise<Translations> {
   const translations = (await import(`@i18n/${locale}.json`)) as {

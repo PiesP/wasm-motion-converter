@@ -357,6 +357,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       </div>
 
       {/* Range Bar */}
+      {/* biome-ignore lint/a11y/useSemanticElements: The focusable range track is an ARIA group containing two slider controls; a fieldset would change native disabled and layout behavior. */}
       <div
         ref={trackRef}
         class={`relative h-8 rounded-lg bg-bg-elevated select-none touch-none cursor-pointer ${props.disabled ? 'opacity-50 pointer-events-none' : ''}`}

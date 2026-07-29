@@ -208,10 +208,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
   // Compact layout: single inline row
   if (isCompact()) {
     return (
-      <div
-        class="flex flex-col gap-1.5"
-        aria-busy={progressValue() > 0 && progressValue() < 100}
-      >
+      <div class="flex flex-col gap-1.5" aria-busy={progressValue() > 0 && progressValue() < 100}>
         {/* Inline: status + bar + percent + ETA */}
         <div class="flex items-center gap-2 text-xs">
           <Show when={local.showSpinner}>
