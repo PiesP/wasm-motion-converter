@@ -79,4 +79,119 @@ describe('TrimSelector localized summary', () => {
       expectedArabicSummary()
     );
   });
+
+  it('renders precise time fields and dependent slider constraints', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(
+      () => (
+        <TrimSelector
+          duration={10}
+          trimStart={2}
+          trimEnd={8}
+          estimatedFps={20}
+          onChange={() => {}}
+        />
+      ),
+      container
+    );
+
+    const startHandle = container.querySelector('[data-testid="trim-start-handle"]');
+    const endHandle = container.querySelector('[data-testid="trim-end-handle"]');
+    const timeline = container.querySelector<HTMLInputElement>(
+      '[data-testid="trim-timeline"] input[type="range"]'
+    );
+
+    expect(container.querySelector<HTMLInputElement>('#trim-start-input')?.value).toBe('0:02.0');
+    expect(container.querySelector<HTMLInputElement>('#trim-end-input')?.value).toBe('0:08.0');
+    expect(startHandle?.getAttribute('aria-valuemax')).toBe('7.9');
+    expect(endHandle?.getAttribute('aria-valuemin')).toBe('2.1');
+    expect(timeline?.max).toBe('10');
+  });
+
+  it('uses hours in precise time fields for long videos', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(
+      () => (
+        <TrimSelector duration={3661.2} trimStart={0} trimEnd={0} onChange={() => {}} />
+      ),
+      container
+    );
+
+    expect(container.querySelector<HTMLInputElement>('#trim-end-input')?.value).toBe('1:01:01.2');
+  });
+
+  it('supports standard slider keys and seeks to the adjusted boundary', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    const onSeek = vi.fn();
+    render(
+      () => (
+        <TrimSelector
+          duration={10}
+          trimStart={2}
+          trimEnd={8}
+          onChange={onChange}
+          onSeek={onSeek}
+        />
+      ),
+      container
+    );
+
+    container
+      .querySelector('[data-testid="trim-start-handle"]')
+      ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+
+    expect(onChange).toHaveBeenCalledWith(0, 8);
+    expect(onSeek).toHaveBeenCalledWith(0);
+  });
+
+  it('reports invalid text input without changing the selected range', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    render(
+      () => <TrimSelector duration={10} trimStart={2} trimEnd={8} onChange={onChange} />,
+      container
+    );
+
+    const input = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    input.focus();
+    input.value = '9.0';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    input.blur();
+
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(container.querySelector('#trim-start-error')).not.toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('keeps common presets visible and delegates selection preview', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    const onPreviewSelection = vi.fn();
+    render(
+      () => (
+        <TrimSelector
+          duration={40}
+          trimStart={0}
+          trimEnd={0}
+          onChange={onChange}
+          onPreviewSelection={onPreviewSelection}
+        />
+      ),
+      container
+    );
+
+    expect(container.querySelectorAll('[data-testid^="trim-preset-"]')).toHaveLength(3);
+    expect(
+      container.querySelectorAll<HTMLSelectElement>('[data-testid="trim-more-presets"] option')
+    ).toHaveLength(7);
+
+    container.querySelector<HTMLButtonElement>('[data-testid="trim-preview-button"]')?.click();
+    expect(onPreviewSelection).toHaveBeenCalledOnce();
+  });
 });
