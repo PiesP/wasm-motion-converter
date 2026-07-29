@@ -210,8 +210,6 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
     return (
       <div
         class="flex flex-col gap-1.5"
-        role="status"
-        aria-live="polite"
         aria-busy={progressValue() > 0 && progressValue() < 100}
       >
         {/* Inline: status + bar + percent + ETA */}
@@ -309,11 +307,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
   // aria-live on ProgressBar would cause screen readers to announce
   // per-frame progress updates redundantly.
   return (
-    <div
-      class="flex flex-col gap-1.5"
-      role="status"
-      aria-busy={progressValue() > 0 && progressValue() < 100}
-    >
+    <div class="flex flex-col gap-1.5" aria-busy={progressValue() > 0 && progressValue() < 100}>
       {/* Header row: spinner + status + percent */}
       <div class="flex items-center gap-1.5 text-xs font-medium text-text-secondary">
         <Show when={local.showSpinner}>

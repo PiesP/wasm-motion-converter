@@ -9,7 +9,7 @@ import { createRoot } from 'solid-js';
 // SolidJS 1.9 reactive updates don't flush reliably in jsdom (MessageChannel-based
 // scheduler), so we verify source code patterns for components that rely on
 // reactive state changes, and verify static DOM structure for initial render.
-const { appSrc, indexCss, tooltipSrc, modalSrc, fileDropzoneSrc, optionSelectorSrc } = vi.hoisted(() => {
+const { appSrc, indexCss, modalSrc, fileDropzoneSrc, optionSelectorSrc } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const fs = require('fs');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -18,7 +18,6 @@ const { appSrc, indexCss, tooltipSrc, modalSrc, fileDropzoneSrc, optionSelectorS
   return {
     appSrc: fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf-8'),
     indexCss: fs.readFileSync(path.join(srcDir, 'index.css'), 'utf-8'),
-    tooltipSrc: fs.readFileSync(path.join(srcDir, 'components/Tooltip.tsx'), 'utf-8'),
     modalSrc: fs.readFileSync(path.join(srcDir, 'components/ConfirmationModal.tsx'), 'utf-8'),
     fileDropzoneSrc: fs.readFileSync(path.join(srcDir, 'components/FileDropzone.tsx'), 'utf-8'),
     optionSelectorSrc: fs.readFileSync(path.join(srcDir, 'components/OptionSelector.tsx'), 'utf-8'),
@@ -64,42 +63,59 @@ describe('Accessibility', () => {
   // ── 1. Tooltip ────────────────────────────────────────────────
 
   describe('Tooltip', () => {
-    it('has aria-describedby in initial hidden state', () => {
+    it('puts aria-describedby on the focusable trigger itself', () => {
       const container = mountComponent(() => (
         <Tooltip content="Helpful info">
-          <button type="button">Hover me</button>
+          {(triggerProps) => (
+            <button {...triggerProps} type="button">
+              Hover me
+            </button>
+          )}
         </Tooltip>
       ));
 
-      const trigger = container.querySelector('[aria-describedby]');
-      expect(trigger).not.toBeNull();
+      const trigger = container.querySelector('button');
+      expect(trigger?.getAttribute('aria-describedby')).toMatch(/^tooltip-/);
+      expect(trigger?.parentElement?.hasAttribute('aria-describedby')).toBe(false);
     });
 
-    it('trigger element has aria-describedby attribute', () => {
+    it('renders the referenced tooltip while the trigger has focus', () => {
       const container = mountComponent(() => (
         <Tooltip content="Helpful info">
-          <button type="button">Hover me</button>
+          {(triggerProps) => (
+            <button {...triggerProps} type="button">
+              Hover me
+            </button>
+          )}
         </Tooltip>
       ));
 
-      const trigger = container.querySelector('[aria-describedby]')!;
+      const trigger = container.querySelector<HTMLButtonElement>('button')!;
       const describedBy = trigger.getAttribute('aria-describedby');
-      expect(describedBy).not.toBeNull();
-      expect(describedBy!.length).toBeGreaterThan(0);
+      trigger.focus();
+
+      const tooltip = container.querySelector<HTMLElement>(`#${describedBy}`);
+      expect(tooltip?.getAttribute('role')).toBe('tooltip');
+      expect(tooltip?.textContent).toContain('Helpful info');
     });
 
-    it('source code includes aria-describedby binding to tooltipId signal', () => {
-      expect(tooltipSrc).toContain('aria-describedby={tooltipId()}');
-    });
+    it('dismisses the tooltip when Escape is pressed', () => {
+      const container = mountComponent(() => (
+        <Tooltip content="Helpful info">
+          {(triggerProps) => (
+            <button {...triggerProps} type="button">
+              Hover me
+            </button>
+          )}
+        </Tooltip>
+      ));
 
-    it('source code includes Escape key dismiss handler', () => {
-      expect(tooltipSrc).toContain("event.key === 'Escape'");
-      expect(tooltipSrc).toContain('onKeyDown={handleKeyDown}');
-    });
+      const trigger = container.querySelector<HTMLButtonElement>('button')!;
+      trigger.focus();
+      expect(container.querySelector('[role="tooltip"]')).not.toBeNull();
 
-    it('source code includes aria-describedby and role=tooltip', () => {
-      expect(tooltipSrc).toContain('aria-describedby={tooltipId()}');
-      expect(tooltipSrc).toContain('role="tooltip"');
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(container.querySelector('[role="tooltip"]')).toBeNull();
     });
   });
 
@@ -283,21 +299,4 @@ describe('Accessibility', () => {
     });
   });
 
-  // ── 9. Tooltip source-level a11y patterns ────────────────────
-
-  describe('Tooltip source-level patterns', () => {
-    it('source code includes aria-describedby binding to tooltipId signal', () => {
-      expect(tooltipSrc).toContain('aria-describedby={tooltipId()}');
-    });
-
-    it('source code includes Escape key dismiss handler', () => {
-      expect(tooltipSrc).toContain("event.key === 'Escape'");
-      expect(tooltipSrc).toContain('onKeyDown={handleKeyDown}');
-    });
-
-    it('source code includes aria-describedby linking to tooltip', () => {
-      expect(tooltipSrc).toContain('aria-describedby={tooltipId()}');
-      expect(tooltipSrc).toContain('role="tooltip"');
-    });
-  });
 });

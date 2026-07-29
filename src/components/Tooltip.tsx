@@ -11,7 +11,16 @@ const TOOLTIP_ESTIMATED_HEIGHT = 40;
 
 interface TooltipProps {
   content: string;
-  children: JSX.Element;
+  children: (triggerProps: TooltipTriggerProps) => JSX.Element;
+}
+
+interface TooltipTriggerProps {
+  'aria-describedby': string;
+  onMouseEnter: (event: MouseEvent) => void;
+  onMouseLeave: () => void;
+  onFocus: (event: FocusEvent) => void;
+  onBlur: () => void;
+  onKeyDown: (event: KeyboardEvent) => void;
 }
 
 const Tooltip: Component<TooltipProps> = (props) => {
@@ -19,10 +28,14 @@ const Tooltip: Component<TooltipProps> = (props) => {
   const [isVisible, setIsVisible] = createSignal(false);
   const [placement, setPlacement] = createSignal<'above' | 'below'>('above');
   const [tooltipId] = createSignal(`tooltip-${crypto.randomUUID()}`);
-  let triggerEl: HTMLDivElement | undefined;
+  let triggerEl: HTMLElement | undefined;
   let enterTimeout: ReturnType<typeof setTimeout> | undefined;
+  let leaveTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  const showTooltipImmediate = () => {
+  const showTooltipImmediate = (event?: Event) => {
+    if (event?.currentTarget instanceof HTMLElement) {
+      triggerEl = event.currentTarget;
+    }
     // Check if showing above would overflow viewport
     const triggerRect = triggerEl?.getBoundingClientRect();
     if (triggerRect) {
@@ -35,8 +48,10 @@ const Tooltip: Component<TooltipProps> = (props) => {
     setIsVisible(true);
   };
 
-  const showTooltipDelayed = () => {
+  const showTooltipDelayed = (event: MouseEvent) => {
+    triggerEl = event.currentTarget as HTMLElement;
     clearTimeout(enterTimeout);
+    clearTimeout(leaveTimeout);
     enterTimeout = setTimeout(() => {
       showTooltipImmediate();
     }, 150);
@@ -44,7 +59,18 @@ const Tooltip: Component<TooltipProps> = (props) => {
 
   const hideTooltip = () => {
     clearTimeout(enterTimeout);
+    clearTimeout(leaveTimeout);
     setIsVisible(false);
+  };
+
+  const hideTooltipDelayed = () => {
+    clearTimeout(enterTimeout);
+    clearTimeout(leaveTimeout);
+    leaveTimeout = setTimeout(hideTooltip, 100);
+  };
+
+  const keepTooltipVisible = () => {
+    clearTimeout(leaveTimeout);
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -55,6 +81,7 @@ const Tooltip: Component<TooltipProps> = (props) => {
 
   onCleanup(() => {
     clearTimeout(enterTimeout);
+    clearTimeout(leaveTimeout);
     triggerEl = undefined;
   });
 
@@ -62,26 +89,25 @@ const Tooltip: Component<TooltipProps> = (props) => {
 
   const arrowClass = () => (placement() === 'above' ? '-bottom-1' : '-top-1');
 
+  const triggerProps: TooltipTriggerProps = {
+    'aria-describedby': tooltipId(),
+    onMouseEnter: showTooltipDelayed,
+    onMouseLeave: hideTooltipDelayed,
+    onFocus: showTooltipImmediate,
+    onBlur: hideTooltip,
+    onKeyDown: handleKeyDown,
+  };
+
   return (
     <div class="relative inline-block">
-      <div
-        ref={(el) => {
-          triggerEl = el;
-        }}
-        onMouseEnter={showTooltipDelayed}
-        onMouseLeave={hideTooltip}
-        onFocus={showTooltipImmediate}
-        onBlur={hideTooltip}
-        onKeyDown={handleKeyDown}
-        aria-describedby={tooltipId()}
-      >
-        {local.children}
-      </div>
+      {local.children(triggerProps)}
       <Show when={isVisible()}>
         <div
           id={tooltipId()}
-          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-text-primary bg-bg-elevated rounded-lg shadow-lg ${tooltipClass()} left-1/2 -translate-x-1/2 w-max max-w-[240px] whitespace-normal pointer-events-none`}
+          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-text-primary bg-bg-elevated rounded-lg shadow-lg ${tooltipClass()} left-1/2 -translate-x-1/2 w-max max-w-[240px] whitespace-normal`}
           role="tooltip"
+          onMouseEnter={keepTooltipVisible}
+          onMouseLeave={hideTooltip}
         >
           {local.content}
           <div

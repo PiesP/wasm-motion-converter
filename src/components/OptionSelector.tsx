@@ -124,15 +124,21 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
         <span>{local.title}</span>
         <Show when={local.tooltip}>
           <Tooltip content={local.tooltip!}>
-            <button
-              type="button"
-              tabIndex={0}
-              class="inline-flex items-center justify-center w-11 h-11 -m-2 min-h-[44px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded-md cursor-pointer"
-              aria-label={t('option.aria.tooltipInfo', { title: local.title })}
-              onKeyDown={handleTooltipKeyDown}
-            >
-              <Icon name="info" size="sm" class="text-text-quaternary cursor-help" />
-            </button>
+            {(tooltipTriggerProps) => (
+              <button
+                {...tooltipTriggerProps}
+                type="button"
+                tabIndex={0}
+                class="inline-flex items-center justify-center w-11 h-11 -m-2 min-h-[44px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded-md cursor-pointer"
+                aria-label={t('option.aria.tooltipInfo', { title: local.title })}
+                onKeyDown={(event) => {
+                  tooltipTriggerProps.onKeyDown(event);
+                  handleTooltipKeyDown(event);
+                }}
+              >
+                <Icon name="info" size="sm" class="text-text-quaternary cursor-help" />
+              </button>
+            )}
           </Tooltip>
         </Show>
       </legend>

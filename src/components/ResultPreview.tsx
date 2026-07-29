@@ -242,7 +242,6 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
           })}
           class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand text-white text-sm font-medium shadow-lg hover:bg-brand-hover transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           data-testid="download-result-button"
-          role="button"
         >
           <svg
             class="h-4 w-4"

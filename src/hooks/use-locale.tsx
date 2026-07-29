@@ -7,6 +7,7 @@ import {
   type TranslationKeys,
   type Translations,
 } from '@t/i18n-types';
+import defaultTranslationsJson from '@i18n/en.json';
 import { detectInitialLocale, detectUserLocale, updateDocumentLang } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import type { Component, JSX } from 'solid-js';
@@ -32,7 +33,10 @@ export interface LocaleContextValue {
 
 const LocaleContext = createContext<LocaleContextValue | undefined>(undefined);
 
-const translationCache = new Map<Locale, Translations>();
+const defaultTranslations = defaultTranslationsJson as Translations;
+const translationCache = new Map<Locale, Translations>([
+  [DEFAULT_LOCALE, defaultTranslations],
+]);
 
 async function importLocale(locale: Locale): Promise<Translations> {
   const translations = (await import(`@i18n/${locale}.json`)) as {
@@ -48,10 +52,11 @@ async function loadTranslations(locale: Locale): Promise<Translations> {
     const translations = await importLocale(locale);
     translationCache.set(locale, translations);
     return translations;
-  } catch {
+  } catch (error) {
     logger.warn('general', 'i18n.load-failed', { locale });
     if (locale !== DEFAULT_LOCALE) return loadTranslations(DEFAULT_LOCALE);
-    throw new Error(`Failed to load default translations: ${DEFAULT_LOCALE}`);
+    logger.error('general', 'i18n.default-load-failed', { locale, error });
+    return defaultTranslations;
   }
 }
 
@@ -112,11 +117,21 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
     const info = LOCALES.find((l) => l.code === currentLocaleValue)!;
     updateDocumentLang(currentLocaleValue, info.dir);
     const gen = ++loadGeneration;
-    loadTranslations(currentLocaleValue).then((loaded) => {
-      if (gen === loadGeneration) {
-        setTranslations(loaded);
-      }
-    });
+    void loadTranslations(currentLocaleValue)
+      .then((loaded) => {
+        if (gen === loadGeneration) {
+          setTranslations(loaded);
+        }
+      })
+      .catch((error: unknown) => {
+        logger.error('general', 'i18n.unexpected-load-failed', {
+          locale: currentLocaleValue,
+          error,
+        });
+        if (gen === loadGeneration) {
+          setTranslations(defaultTranslations);
+        }
+      });
   });
 
   const setLocale = (setting: SettingLocale): void => {
