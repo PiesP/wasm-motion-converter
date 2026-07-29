@@ -1,5 +1,5 @@
 name: "Bug report"
-description: "Report a problem with dropconvert-wasm"
+description: "Report a problem with dropconvert"
 labels: ["bug"]
 body:
   - type: markdown
@@ -105,7 +105,7 @@ body:
     id: sab
     attributes:
       label: "SharedArrayBuffer / crossOriginIsolated"
-      description: "Paste the output from your browser console. This is required for ffmpeg.wasm multi-threading."
+      description: "Paste the output from your browser console. These capabilities are required by the conversion pipeline."
       placeholder: |
         ({
           sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",

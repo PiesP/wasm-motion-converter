@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions / support
-    url: https://github.com/PiesP/dropconvert-wasm/discussions
-    about: "Use GitHub Discussions for Q&A (if enabled). If Discussions are not available, open an issue with context."
+    url: https://github.com/PiesP/wasm-motion-converter/blob/master/SUPPORT.md
+    about: "Read the support guide, then open an issue with enough context to reproduce or understand the problem."
   - name: Security & privacy reports
-    url: https://github.com/PiesP/dropconvert-wasm/security/advisories
+    url: https://github.com/PiesP/wasm-motion-converter/security/advisories
     about: "Please do not open public issues for vulnerabilities. Use GitHub Security Advisories."
   - name: Troubleshooting
-    url: https://github.com/PiesP/dropconvert-wasm/blob/main/TESTING.md
-    about: "Check isolation and common issues before filing a bug."
+    url: https://github.com/PiesP/wasm-motion-converter/blob/master/test/README.md
+    about: "Review the test and browser requirements before filing a bug."

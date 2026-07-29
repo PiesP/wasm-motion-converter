@@ -1,6 +1,6 @@
 #+#+#+#+#############################################
 # wasm-motion-converter - .gitignore
-# Stack: Vite + SolidJS + TypeScript + ffmpeg.wasm
+# Stack: Vite + SolidJS + TypeScript + WebCodecs/WASM encoders
 #+#+#+#+#############################################
 
 # Dependencies
@@ -52,19 +52,10 @@ Thumbs.db
 # Local-only (AI instructions, testing, docs)
 # ──────────────────────────────────────────────
 
-# Documentation (keep essential files tracked)
-docs/
+# Local plans and historical audit snapshots
 plans/
-*.md
-!README.md
-!CHANGELOG.md
-!LICENSE
-!CODE_OF_CONDUCT.md
-!CONTRIBUTING.md
-!SUPPORT.md
-!.github/pull_request_template.md
-!.github/SECURITY.md
-!public/LICENSES.md
+AUDIT-REPORT.md
+audit-report.md
 
 # AI Instructions (not shared to remote)
 AGENTS.md
