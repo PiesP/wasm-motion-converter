@@ -15,7 +15,7 @@ const LICENSES_URL = '/LICENSES.md';
 const GITHUB_ISSUES_URL = 'https://github.com/PiesP/wasm-motion-converter/issues';
 
 const linkClass =
-  'text-[#828fff] hover:text-[#aeb4ff] underline underline-offset-2 px-1.5 py-1 inline-flex items-center min-h-[44px]';
+  'text-link hover:text-link-hover underline underline-offset-2 px-1.5 py-1 inline-flex items-center min-h-[44px]';
 
 const LicenseAttribution: Component = () => {
   const { t } = useLocale();

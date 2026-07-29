@@ -7,28 +7,30 @@
  *
  * @theme block defines design tokens as Tailwind utility classes.
  * Each variable here generates a corresponding utility (e.g. bg-bg-base, text-brand).
- * Values here are dark-mode defaults used by Tailwind utility generation.
+ * Theme-aware values are used directly by both Tailwind utilities and runtime CSS.
  */
 @theme {
   /* ── Surface / Background ── */
-  --color-bg-base: #08090a; /* marketing black — page background */
-  --color-bg-panel: #0f1011; /* panel / sidebar background */
-  --color-bg-elevated: #191a1b; /* elevated surfaces — cards, modals */
+  --color-bg-base: light-dark(#ffffff, #08090a);
+  --color-bg-panel: light-dark(#f7f8fa, #0f1011);
+  --color-bg-elevated: light-dark(#ffffff, #191a1b);
 
   /* ── Text ── */
-  --color-text-primary: #f7f8f8; /* headings, primary content */
-  --color-text-secondary: #d0d6e0; /* body text, descriptions */
-  --color-text-tertiary: #8a8f98; /* captions, labels, hints */
-  --color-text-quaternary: #62666d; /* disabled, placeholder text */
+  --color-text-primary: light-dark(#171717, #f7f8f8);
+  --color-text-secondary: light-dark(#525252, #d0d6e0);
+  --color-text-tertiary: light-dark(#6b6b6b, #8a8f98);
+  --color-text-quaternary: light-dark(#717171, #62666d);
 
   /* ── Brand Accent — oklch for perceptual uniformity ── */
   --color-brand: oklch(56.7% 0.159 275.2);
   --color-brand-interactive: oklch(62.3% 0.207 278.8);
   --color-brand-hover: oklch(69.1% 0.164 276.2);
+  --color-link: light-dark(#4f46b5, #aeb4ff);
+  --color-link-hover: light-dark(#3730a3, #c7d2fe);
 
   /* ── Borders ── */
-  --color-border-subtle: rgba(255, 255, 255, 0.05);
-  --color-border-standard: rgba(255, 255, 255, 0.08);
+  --color-border-subtle: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
+  --color-border-standard: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
 
   /* ── Radii ── */
   --radius-button: 6px;

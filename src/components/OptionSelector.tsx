@@ -89,7 +89,7 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
         <div class="text-center pointer-events-none">
           <div class="font-medium">{option.label}</div>
           <Show when={option.description}>
-            <div id={descriptionId} class="text-[10px] mt-0.5 opacity-75">
+            <div id={descriptionId} class="text-[10px] mt-0.5">
               {option.description}
             </div>
           </Show>

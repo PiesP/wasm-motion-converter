@@ -13,4 +13,5 @@ test('landing page has no automated WCAG A/AA violations', async ({ page }) => {
     .analyze();
 
   expect(results.violations).toEqual([]);
+  await expect(page.getByRole('contentinfo')).toHaveCount(1);
 });

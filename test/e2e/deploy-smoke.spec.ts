@@ -58,7 +58,9 @@ async function captureScreenshot(page: Page, name: string): Promise<void> {
 async function uploadTestVideo(page: Page): Promise<void> {
   await page.locator('input[type="file"]').first().setInputFiles(TEST_VIDEO_PATH);
   await expect(page.locator('[data-testid="convert-button"]')).toBeEnabled();
-  await expect(page.getByText(basename(TEST_VIDEO_PATH), { exact: true })).toBeVisible();
+  await expect(page.locator('[data-testid="video-metadata"]')).toContainText(
+    basename(TEST_VIDEO_PATH)
+  );
 }
 
 async function startConversion(page: Page): Promise<void> {
@@ -133,7 +135,7 @@ test.describe('Deployment: Visual — Initial State', () => {
     await expect(page.locator('[data-testid="app"]')).toBeVisible();
     await expect(page.locator('[data-testid="dropzone"]')).toBeVisible();
     await expect(page.locator('[data-testid="convert-button"]')).toBeDisabled();
-    await expect(page.locator('h1')).toHaveText('Motion Converter');
+    await expect(page.locator('h1')).toHaveText('dropconvert');
   });
 
   test('format selector options are visible', async ({ page }) => {
@@ -174,7 +176,9 @@ test.describe('Deployment: Visual — File Upload', () => {
     await expect(convertBtn).toBeEnabled();
 
     // Verify metadata is displayed
-    await expect(page.getByText(basename(TEST_VIDEO_PATH), { exact: true })).toBeVisible();
+    await expect(page.locator('[data-testid="video-metadata"]')).toContainText(
+      basename(TEST_VIDEO_PATH)
+    );
   });
 });
 
@@ -280,7 +284,7 @@ test.describe('Deployment: Cross-environment', () => {
       '[data-testid="app"]',
       '[data-testid="dropzone"]',
       '[data-testid="convert-button"]',
-      '[data-testid="theme-toggle"]',
+      '[data-testid="language-selector"]',
       '[data-testid="option-format-gif"]',
       '[data-testid="option-format-webp"]',
     ];
