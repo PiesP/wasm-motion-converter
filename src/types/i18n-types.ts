@@ -145,10 +145,17 @@ export interface TranslationKeys {
   'trim.last30s': string;
   'trim.firstHalf': string;
   'trim.secondHalf': string;
+  'trim.invalidEnd': string;
+  'trim.invalidStart': string;
+  'trim.morePresets': string;
+  'trim.previewSelection': string;
+  'trim.quickSelect': string;
   'trim.range': string;
   'trim.start': string;
   'trim.end': string;
   'trim.reset': string;
+  'trim.stopPreview': string;
+  'trim.timeline': string;
   'trim.tooShort': string;
   'trim.startLabel': string;
   'trim.endLabel': string;
