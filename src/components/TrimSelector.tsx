@@ -126,10 +126,10 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   let trackRef: HTMLFieldSetElement | undefined;
 
   createEffect(() => {
-    if (!startFocused()) setStartText(formatTimePrecise(props.trimStart));
+    if (!startFocused() && !startError()) setStartText(formatTimePrecise(props.trimStart));
   });
   createEffect(() => {
-    if (!endFocused()) setEndText(formatTimePrecise(effectiveEnd()));
+    if (!endFocused() && !endError()) setEndText(formatTimePrecise(effectiveEnd()));
   });
 
   const normalizeEnd = (seconds: number): number =>
@@ -284,7 +284,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       presets.push({
         id: 'last-5',
         label: t('trim.last5s'),
-        start: Math.max(0, duration - 5),
+        start: clampToStep(Math.max(0, duration - 5)),
         end: TRIM_END_FULL_DURATION,
       });
     }
@@ -299,7 +299,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       presets.push({
         id: 'last-15',
         label: t('trim.last15s'),
-        start: Math.max(0, duration - 15),
+        start: clampToStep(Math.max(0, duration - 15)),
         end: TRIM_END_FULL_DURATION,
       });
     }
@@ -308,16 +308,17 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       presets.push({
         id: 'last-30',
         label: t('trim.last30s'),
-        start: Math.max(0, duration - 30),
+        start: clampToStep(Math.max(0, duration - 30)),
         end: TRIM_END_FULL_DURATION,
       });
     }
     if (duration >= 2) {
-      presets.push({ id: 'first-half', label: t('trim.firstHalf'), start: 0, end: duration / 2 });
+      const half = clampToStep(duration / 2);
+      presets.push({ id: 'first-half', label: t('trim.firstHalf'), start: 0, end: half });
       presets.push({
         id: 'second-half',
         label: t('trim.secondHalf'),
-        start: duration / 2,
+        start: half,
         end: TRIM_END_FULL_DURATION,
       });
     }

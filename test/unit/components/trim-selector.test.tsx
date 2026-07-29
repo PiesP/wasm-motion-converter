@@ -3,6 +3,7 @@
 
 import * as TrimSelectorModule from '@components/TrimSelector';
 import type { TFunction } from '@t/i18n-types';
+import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -148,7 +149,7 @@ describe('TrimSelector localized summary', () => {
     expect(onSeek).toHaveBeenCalledWith(0);
   });
 
-  it('reports invalid text input without changing the selected range', () => {
+  it('preserves invalid text inputs without changing the selected range', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const onChange = vi.fn();
@@ -163,9 +164,52 @@ describe('TrimSelector localized summary', () => {
     input.dispatchEvent(new InputEvent('input', { bubbles: true }));
     input.blur();
 
+    expect(input.value).toBe('9.0');
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(container.querySelector('#trim-start-error')).not.toBeNull();
+
+    const endInput = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    endInput.focus();
+    endInput.value = '1.0';
+    endInput.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    endInput.blur();
+
+    expect(endInput.value).toBe('1.0');
+    expect(endInput.getAttribute('aria-invalid')).toBe('true');
+    expect(container.querySelector('#trim-end-error')).not.toBeNull();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('keeps rounded half presets active after applying them', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const changes: Array<[number, number]> = [];
+    const TestHarness = () => {
+      const [range, setRange] = createSignal<[number, number]>([0, 0]);
+      return (
+        <TrimSelector
+          duration={9.9}
+          trimStart={range()[0]}
+          trimEnd={range()[1]}
+          onChange={(start, end) => {
+            changes.push([start, end]);
+            setRange([start, end]);
+          }}
+        />
+      );
+    };
+    render(TestHarness, container);
+
+    const select = container.querySelector<HTMLSelectElement>('[data-testid="trim-more-presets"]')!;
+    select.value = 'first-half';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(changes.at(-1)).toEqual([0, 5]);
+    expect(select.value).toBe('first-half');
+
+    select.value = 'second-half';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(changes.at(-1)).toEqual([5, 0]);
+    expect(select.value).toBe('second-half');
   });
 
   it('keeps common presets visible and delegates selection preview', () => {
