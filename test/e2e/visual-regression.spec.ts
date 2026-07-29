@@ -230,6 +230,17 @@ test.describe('Visual: Result Section', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Visual: Theme', () => {
+  test('follows the system color scheme', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.goto('/');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(page.locator('body')).toHaveCSS('color', 'rgb(23, 23, 23)');
+
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(8, 9, 10)');
+    await expect(page.locator('body')).toHaveCSS('color', 'rgb(247, 248, 248)');
+  });
+
   test('dark mode renders correctly', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.goto('/');
