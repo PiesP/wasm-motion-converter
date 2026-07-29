@@ -4,8 +4,8 @@ Thanks for using **dropconvert**! This app converts a single video to GIF/WebP e
 
 ## Questions
 
-- If Discussions are enabled, ask there.
-- Otherwise, open a GitHub issue with a clear question and context.
+Open a [GitHub issue](https://github.com/PiesP/wasm-motion-converter/issues) with
+a clear question and enough context to understand the workflow.
 
 ## Bug reports
 
@@ -23,4 +23,5 @@ Open a GitHub issue using the Feature Request template. Describe the workflow an
 
 ## Security or privacy issues
 
-Follow [.github/SECURITY.md](./.github/SECURITY.md).
+Do not file vulnerability details in a public issue. Follow the
+[security policy](./.github/SECURITY.md).

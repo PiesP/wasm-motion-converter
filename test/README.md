@@ -1,125 +1,80 @@
-# wasm-motion-converter 테스트 관리 가이드
+# Testing
 
-## 개요
+dropconvert uses Vitest for unit and integration coverage and Playwright for
+browser conversion flows. Tests are tracked in the main repository and run from
+the repository root.
 
-wasm-motion-converter의 변환 테스트는 Playwright 기반 E2E 테스트입니다.
-로컬 개발 서버(`pnpm dev`)에서 실행되며, 배포 페이지에 의존하지 않습니다.
+## Setup
 
-## 디렉토리 구조
+Use the toolchain pinned in `package.json`, initialize the shared submodule, and
+install dependencies:
 
-```
-test/
-├── lib/
-│   ├── test-manifest.ts    ← 단일 진실 소스: 비디오 정의, 베이스라인 결과
-│   ├── test-matrix.ts      ← 매트릭스 생성기: codec × format × quality 조합
-│   └── test-recorder.ts    ← 결과 기록: JSONL + 회귀 감지 + 리포트
-├── e2e/
-│   ├── fixtures/
-│   │   ├── test-helpers.ts  ← 공통 헬퍼 (__TEST_HELPERS__ 기반)
-│   │   └── verify.ts        ← 출력 검증 (GIF/WebP 유효성)
-│   ├── smoke.spec.ts        ← 스모크 테스트: 핵심 경로 빠른 검증
-│   ├── matrix.spec.ts       ← 매트릭스 테스트: 전체 코덱×포맷 조합
-│   ├── regression.spec.ts   ← 회귀 테스트: 베이스라인 비교
-│   └── debug/               ← 디버그/벤치마크 (자동 실행 제외)
-│       ├── debug-local.spec.ts
-│       ├── debug-gif-logs.spec.ts
-│       └── benchmark-local.spec.ts
-├── playwright.config.ts      ← Playwright 설정 (로컬 서버 자동 시작)
-└── tsconfig.playwright.json ← Playwright 전용 TS 설정
-```
-
-## 테스트 비디오 파일
-
-`public/` 디렉토리에 7개 테스트 비디오가 있습니다:
-
-| 파일 | 코덱 | 해상도 | 길이 | 크기 |
-|------|------|--------|------|------|
-| test-video-h264-baseline.mp4 | H.264 Baseline | 1920×1080 | 9.75s | 822 KB |
-| test-video-h264-main.mp4 | H.264 Main | 1920×1080 | 9.75s | 656 KB |
-| test-video-h264-high.mp4 | H.264 High | 1920×1080 | 9.75s | 660 KB |
-| test-video-hevc.mp4 | HEVC Main | 1920×1080 | 9.75s | 496 KB |
-| test-video-vp8.webm | VP8 | 1920×1080 | 9.75s | 3.7 MB |
-| test-video-vp9.webm | VP9 Profile 0 | 1920×1080 | 9.75s | 1.5 MB |
-| test-video-av1.webm | AV1 Main | 1920×1080 | 9.75s | 1.5 MB |
-
-## 실행 명령어
-
-### 전체 테스트 실행 (스모크 + 매트릭스 + 회귀)
 ```bash
-cd test
-pnpm test
+git submodule update --init --recursive
+pnpm install
 ```
 
-### 스모크 테스트만 (빠른 검증)
-```bash
-cd test
-pnpm test -- smoke.spec.ts
-```
+Playwright requires a Chromium installation. The CI profile also requires
+FFmpeg to generate its small deterministic H.264 fixture.
 
-### 매트릭스 테스트만 (전체 코덱×포맷)
-```bash
-cd test
-pnpm test -- matrix.spec.ts
-```
+## Test layout
 
-### 회귀 테스트 (매트릭스 실행 후)
-```bash
-cd test
-pnpm test -- regression.spec.ts
-```
+- `unit/`: Vitest component, service, store, and utility tests
+- `e2e/`: Playwright conversion, i18n, regression, and visual flows
+- `e2e/fixtures/`: browser helpers and output validation
+- `e2e/debug/`: opt-in diagnostics and benchmarks
+- `lib/`: local codec matrix, baseline data, and result recording
+- `setup.ts`: shared Vitest setup
+- `../vitest.config.ts`: Vitest and coverage configuration
+- `../playwright.config.ts`: Playwright profiles and development server setup
 
-### 디버그/벤치마크 (수동 실행)
-```bash
-cd test
-pnpm test -- debug/debug-local.spec.ts
-pnpm test -- debug/benchmark-local.spec.ts
-```
+## Commands
 
-## 테스트 계층
+| Command | Purpose |
+| --- | --- |
+| `pnpm test` | Run all Vitest tests once |
+| `pnpm test -- path/to/file.test.ts` | Run a focused Vitest file |
+| `pnpm test:cov` | Run Vitest with coverage thresholds |
+| `pnpm test:e2e:ci` | Generate the CI fixture and run the CI Playwright profile |
+| `pnpm test:e2e` | Run the local Playwright profile |
+| `pnpm exec playwright test test/e2e/smoke.spec.ts` | Run one browser test file |
+| `pnpm mut:fast` | Run the focused mutation profile used by deep CI |
+| `pnpm verify:full` | Run quality, build, coverage, and browser validation |
 
-| 계층 | 파일 | 목적 | 실행 시간 |
-|------|------|------|-----------|
-| **Smoke** | `smoke.spec.ts` | 핵심 경로 빠른 검증 | ~5분 |
-| **Matrix** | `matrix.spec.ts` | 전체 코덱×포맷 조합 | ~30분 |
-| **Regression** | `regression.spec.ts` | 베이스라인 비교 | ~1분 |
-| **Debug** | `debug/*` | 문제 진단 (수동) | 상황별 |
+The Playwright configuration starts a local Vite server unless
+`SKIP_WEB_SERVER` is set. Use `PLAYWRIGHT_TEST_PROFILE=ci` or `deploy` only when
+you need the corresponding restricted profile.
 
-## 매니페스트 수정
+## Media fixtures
 
-새 비디오를 추가하려면 `test/lib/test-manifest.ts`의 `TEST_VIDEOS` 배열에 엔트리를 추가합니다:
+Fresh CI checkouts generate `public/test-video-ci-h264.mp4` before the CI browser
+profile. The larger codec matrix referenced by `lib/test-manifest.ts` is
+local-only and intentionally excluded from Git; add compatible files under
+`public/` before running matrix, variation, regression, or performance suites.
 
-```typescript
-{
-  id: 'my-new-video',
-  file: '/test-video-my-new.mp4',
-  label: 'My New Video',
-  codec: 'h264-main',
-  width: 1920,
-  height: 1080,
-  duration: 10,
-  frameRate: 30,
-  fileSizeBytes: 1000000,
-  testTrimSeconds: 5,
-  maxConversionTimeMs: 60_000,
-}
-```
+Browser codec support is detected at runtime with
+`VideoDecoder.isConfigSupported()`. Do not replace capability detection with a
+static browser or codec allowlist.
 
-디코더 지원 여부는 정적 매니페스트 값이 아니라 실행 중인 브라우저의
-`VideoDecoder.isConfigSupported()` 결과로 판정됩니다.
+## Results and artifacts
 
-베이스라인 결과도 `BASELINE_RESULTS`와 `BASELINE_TIMINGS`에 추가합니다.
+- Conversion measurements are written under `.results/` and are not release
+  artifacts.
+- Playwright output is written to the root `test-results/` and
+  `playwright-report/` directories.
+- Keep screenshots, traces, and temporary fixtures out of commits unless they
+  are intentional test assets.
 
-## 회귀 감지
+## CI coverage
 
-`test/.results/conversion-results.jsonl`에 모든 변환 결과가 기록됩니다.
-- 출력 크기가 베이스라인의 1.5배를 초과하면 크기 회귀
-- 변환 시간이 베이스라인의 2배를 초과하면 시간 회귀
-- 이전 성공 케이스가 실패하면 실패 회귀
+Fast CI runs the quality gate, unit coverage, the repository-backed E2E profile,
+the production build, and duplication checks. Deep verification adds mutation
+testing. The workflow files in `.github/workflows/` are authoritative when this
+summary changes.
 
-## 주의사항
+## Common pitfalls
 
-- `test/`는 별도 git 레포지토리입니다 (`git init`으로 초기화됨)
-- 메인 레포의 `.gitignore`에 `test/`가 포함되어 있습니다
-- 테스트는 로컬 개발 서버(`http://127.0.0.1:5173`)에서 실행됩니다
-- Playwright가 자동으로 개발 서버를 시작합니다 (`webServer` 설정)
-- Headless Chrome에서 SharedArrayBuffer를 위해 `--enable-features=SharedArrayBuffer` 플래그 사용
+- E2E behavior cannot be established by a successful TypeScript build alone.
+- `SharedArrayBuffer` requires the configured cross-origin isolation headers.
+- A cached browser-core submodule revision can hide fresh-checkout failures.
+- Locale-sensitive assertions must specify the intended locale.

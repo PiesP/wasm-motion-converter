@@ -1,12 +1,12 @@
 # Contributing
 
-Thanks for improving **dropconvert**. This is a Vite + SolidJS + TypeScript SPA that converts a single video to GIF/WebP entirely in the browser (no uploads).
+Thanks for improving **dropconvert**.
 
 ## Communication
 
-- Bugs/features: GitHub Issues
-- Security/privacy: see [.github/SECURITY.md](./.github/SECURITY.md)
-- Questions: GitHub Discussions (if enabled)
+- Questions and troubleshooting: [SUPPORT.md](./SUPPORT.md)
+- Bugs and feature requests: [GitHub Issues](https://github.com/PiesP/wasm-motion-converter/issues)
+- Security and privacy reports: [.github/SECURITY.md](./.github/SECURITY.md)
 
 ## Before opening an issue
 
@@ -35,63 +35,49 @@ Avoid attaching sensitive or private files.
 
 ## Development setup
 
-### Prerequisites
-
-- Use the Volta versions in `package.json` (currently Node.js `26.5.0` and pnpm
-  `11.17.0`), or engines-compatible Node.js `>=22.13.0` and pnpm `>=11.17.0`.
-
-### Install
+Use the toolchain pinned in `package.json`, or versions that satisfy its
+`engines` fields. Then initialize the shared submodule and install dependencies:
 
 ```bash
+git submodule update --init --recursive
 pnpm install
 ```
-
-### Run locally
 
 ```bash
 pnpm dev
 ```
 
-- COOP/COEP headers are configured in `vite.config.ts` for dev/preview.
+COOP/COEP headers are configured in `vite.config.ts` for development and preview.
 
-### Quality checks (run before PRs)
+## Validation
 
-- `pnpm quality`
-- `pnpm build`
-- Optional focused checks: `pnpm lint`, `pnpm fmt`, `pnpm check`, `pnpm knip`
-- Use `pnpm quality:fix` if you want to apply the repository-standard format/lint fixes before rerunning `pnpm quality`.
+Run the narrowest relevant test while working. Before opening a pull request, run:
+
+```bash
+pnpm verify
+pnpm test
+```
+
+Use `pnpm verify:full` for substantive or publication-level changes. Browser
+behavior changes also require the relevant Playwright flow. See the
+[testing guide](./test/README.md) for profiles and fixtures.
 
 ## Project constraints
 
-- No server upload (files stay in-browser).
-- SharedArrayBuffer requires COOP/COEP headers:
-  - Cloudflare Pages: `public/_headers`
-  - Local dev/preview: `vite.config.ts`
-- Video decoding: WebCodecs VideoDecoder + MediaBunny demuxer
-- Encoding: OffscreenCanvas WebP, wasm-webp, gifenc (GIF)
-- No runtime CDN dependencies — all code is bundled at build time
+- Keep media processing in the browser; do not add server uploads.
+- Preserve the COOP/COEP headers required for `SharedArrayBuffer`.
+- Bundle runtime code locally; do not add runtime CDN dependencies.
+- Keep progress, cancellation, error, and cleanup behavior explicit.
 
 ## Code style
 
-- Source, comments, and docs are English only.
+- Source, comments, documentation, and commit messages are English.
 - Keep diffs small and focused; keep loading/progress/error states intact.
 - Provide explicit user feedback for long-running actions.
 - Use alias-based, leaf imports for cross-folder modules.
-
-## Import rules (enforced)
-
-- Use alias-based, leaf imports for cross-folder modules.
 - No barrel imports.
-- No deep relative imports (`../`) across folders.
-- No `src/` absolute paths.
-
-Example:
-
-```typescript
-import { Button } from "@components/Button";
-import { logger } from "@utils/logger";
-import type { ConversionSettings } from "@t/conversion-types";
-```
+- Same-folder relative imports are allowed; do not use parent-relative imports
+  across folders or `src/` absolute paths.
 
 ## Dependency update policy
 
@@ -107,4 +93,5 @@ import type { ConversionSettings } from "@t/conversion-types";
 
 ## License
 
-By contributing, you agree your contributions are licensed under the project license (see [LICENSE](./LICENSE) and [public/LICENSES.md](./public/LICENSES.md)).
+By contributing, you agree that your changes are licensed under the
+[project license](./LICENSE).

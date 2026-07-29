@@ -63,7 +63,7 @@ export default defineConfig({
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
-            // Required for FFmpeg WASM multithreading (SharedArrayBuffer)
+            // Expose SharedArrayBuffer for the cross-origin-isolated app.
             '--enable-features=SharedArrayBuffer',
           ],
         },

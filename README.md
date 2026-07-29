@@ -1,78 +1,73 @@
 # dropconvert
 
-SolidJS SPA that converts a single video into GIF or animated WebP entirely in the browser. Uses WebCodecs VideoDecoder + MediaBunny for demuxing and OffscreenCanvas/wasm-webp/gifenc for encoding. No uploads, no servers, no CDN.
+Convert a video to an animated GIF or WebP without uploading it. dropconvert
+runs entirely in the browser and bundles all runtime code with the application.
 
-Live demo: https://wasm-motion-converter.pages.dev/
+[Open dropconvert](https://wasm-motion-converter.pages.dev/)
 
 ## Features
 
-- Single-video dropzone with video-only validation
-- GIF/WebP output with quality + scale presets
-- WebCodecs-based decoding with MediaBunny demuxer
-- Fully client-side conversion (SharedArrayBuffer required)
-- Clear progress, elapsed time, and preview/download flow
-- Environment checks for `crossOriginIsolated` / `SharedArrayBuffer`
-- Offline/network warning banner and downloadable diagnostics logs
-- Dark theme (Linear-style)
+- GIF and animated WebP output with quality and scale presets
+- WebCodecs decoding with MediaBunny demuxing
+- Local encoding with OffscreenCanvas, wasm-webp, and gifenc
+- Progress, elapsed time, cancellation, preview, and download states
+- Environment checks and downloadable diagnostic logs
+- No uploads, server-side processing, or runtime CDN dependencies
 
-## Quick start (dev)
+## Browser requirements
 
-Prerequisites: use the Volta versions in `package.json` (currently Node.js
-`26.5.0` and pnpm `11.17.0`), or an engines-compatible Node.js `>=22.13.0` and
-pnpm `>=11.17.0`.
+The application requires WebCodecs, `SharedArrayBuffer`, and cross-origin
+isolation. It checks these capabilities before conversion and reports missing
+requirements in the browser.
+
+## Development
+
+Use the toolchain pinned in `package.json`, or versions that satisfy its
+`engines` fields. Initialize the shared browser-core submodule before installing.
 
 ```bash
+git submodule update --init --recursive
 pnpm install
 pnpm dev
 ```
 
-Local: http://localhost:5173
+The development server runs at <http://localhost:5173>.
 
 ## Commands
 
-```bash
-pnpm dev
-pnpm check
-pnpm typecheck
-pnpm lint
-pnpm lint:fix
-pnpm fmt
-pnpm fmt:fix
-pnpm knip
-pnpm quality
-pnpm quality:fix
-pnpm build
-pnpm preview
-```
+| Command | Purpose |
+| --- | --- |
+| `pnpm dev` | Start the development server |
+| `pnpm test` | Run the Vitest suite |
+| `pnpm test:cov` | Run unit tests with coverage thresholds |
+| `pnpm test:e2e:ci` | Generate the CI fixture and run the CI Playwright profile |
+| `pnpm quality` | Run formatting, lint, type, i18n, dependency, and source checks |
+| `pnpm verify` | Run the quality gate and production CI build |
+| `pnpm verify:full` | Add coverage and browser tests to `verify` |
 
 ## Technical notes
 
-- COOP/COEP headers are required for SharedArrayBuffer:
-  - Cloudflare Pages: `public/_headers`
-  - Local dev/preview: `vite.config.ts`
+- COOP/COEP headers are configured in `public/_headers` for Cloudflare Pages and
+  in `vite.config.ts` for local development and preview.
 - Video decoding: WebCodecs VideoDecoder + MediaBunny demuxer
 - Encoding: OffscreenCanvas WebP, wasm-webp, and gifenc (GIF)
-- No runtime CDN dependencies — all code is bundled at build time
-- `pnpm build` runs quality checks + Vite build + postbuild
 - Build output: `dist/`
 
 ## Testing
 
-- `pnpm quality`
-- `pnpm build`
-- `pnpm preview`
-- Manual checklist: [TESTING.md](./TESTING.md)
+See the [testing guide](./test/README.md) for test profiles, fixtures, and focused
+commands.
 
 ## Support
 
-- Docs: [README.md](./README.md) + [SUPPORT.md](./SUPPORT.md)
-- Bugs/features: GitHub Issues
-- Security: [.github/SECURITY.md](./.github/SECURITY.md)
+- Usage questions and troubleshooting: [Support](./SUPPORT.md)
+- Bugs and feature requests: [GitHub Issues](https://github.com/PiesP/wasm-motion-converter/issues)
+- Vulnerabilities and privacy concerns: [Security policy](./.github/SECURITY.md)
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+See [Contributing](./CONTRIBUTING.md).
 
 ## License
 
-MIT. See [LICENSE](./LICENSE) and [public/LICENSES.md](./public/LICENSES.md).
+MIT. See [LICENSE](./LICENSE) and [third-party licenses](./public/LICENSES.md).
