@@ -18,6 +18,8 @@
 import type { BufferPool } from './buffer-pool';
 import { globalBufferPool } from './buffer-pool';
 
+export { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
+
 // ─── Video Dimension Resolution ────────────────────────────────────
 
 export interface VideoConfigWithDimensions {
@@ -107,20 +109,6 @@ export async function copyFrameToRGB(
   // ── Strategy 2: Canvas fallback (cached for subsequent frames) ──
   ctx.copyPath = 'canvas';
   return copyFrameCanvas(frame, width, height);
-}
-
-/**
- * Yield to the event loop to keep the UI responsive.
- * Uses scheduler.yield() (Chrome 115+) if available, falls back to setTimeout(0).
- * The availability check is cached since it doesn't change during a page session.
- */
-const hasSchedulerYield = typeof globalThis.scheduler?.yield === 'function';
-
-export function yieldToMain(): Promise<void> {
-  if (hasSchedulerYield) {
-    return scheduler.yield();
-  }
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 /**

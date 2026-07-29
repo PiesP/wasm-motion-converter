@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { withTimeout } from '@piesp/browser-core/async';
 import type { MediabunnyVideoDecoderConfig, VideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS, MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -8,30 +9,6 @@ import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 
 /** Timeout for computePacketStats to prevent mediabunny internal hangs. */
 const COMPUTE_PACKET_STATS_TIMEOUT_MS = 2_000;
-
-/**
- * Race a promise against a timeout.  If the promise does not settle within
- * `ms` milliseconds the returned promise rejects with a descriptive error.
- */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timerId: ReturnType<typeof setTimeout>;
-  const timeoutPromise = new Promise<T>((_, reject) => {
-    timerId = setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms);
-  });
-  return Promise.race([
-    promise.then(
-      (result) => {
-        clearTimeout(timerId!);
-        return result;
-      },
-      (error) => {
-        clearTimeout(timerId!);
-        throw error;
-      }
-    ),
-    timeoutPromise,
-  ]);
-}
 
 /**
  * Extract video metadata from an ArrayBuffer using MediaBunny.
@@ -81,7 +58,7 @@ export async function extractVideoMetadata(
       const packetStats = await withTimeout(
         track.computePacketStats(50),
         COMPUTE_PACKET_STATS_TIMEOUT_MS,
-        'computePacketStats'
+        `Timeout: computePacketStats exceeded ${COMPUTE_PACKET_STATS_TIMEOUT_MS}ms`
       );
       if (packetStats.averagePacketRate > 0) {
         computedFps = Math.round(packetStats.averagePacketRate * 100) / 100;
@@ -115,7 +92,7 @@ export async function extractVideoMetadata(
         const avgBitrate = await withTimeout(
           track.getAverageBitrate(),
           COMPUTE_PACKET_STATS_TIMEOUT_MS,
-          'getAverageBitrate'
+          `Timeout: getAverageBitrate exceeded ${COMPUTE_PACKET_STATS_TIMEOUT_MS}ms`
         );
         if (avgBitrate != null && avgBitrate > 0) bitrate = avgBitrate;
       } catch {
@@ -127,7 +104,7 @@ export async function extractVideoMetadata(
         const peakBitrate = await withTimeout(
           track.getBitrate(),
           COMPUTE_PACKET_STATS_TIMEOUT_MS,
-          'getBitrate'
+          `Timeout: getBitrate exceeded ${COMPUTE_PACKET_STATS_TIMEOUT_MS}ms`
         );
         if (peakBitrate != null && peakBitrate > 0) bitrate = peakBitrate;
       } catch {
