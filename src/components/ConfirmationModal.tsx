@@ -152,17 +152,16 @@ const ConfirmationModal: Component = () => {
             {state().title ?? t('modal.title')}
           </h2>
 
-          <div id="modal-description" class="space-y-3 mb-6" role="list">
+          <ul id="modal-description" class="space-y-3 mb-6">
             <For each={state().warnings}>
               {(warning) => (
-                <div
+                <li
                   class="border-l-4 pl-4 py-2"
                   classList={{
                     'border-red-500': warning.severity === 'error',
                     'border-yellow-500': warning.severity === 'warning',
                     'border-blue-500': warning.severity === 'info',
                   }}
-                  role="listitem"
                 >
                   <div class="flex items-start gap-2">
                     <span class="text-lg" aria-hidden="true">
@@ -182,10 +181,10 @@ const ConfirmationModal: Component = () => {
                       </Show>
                     </div>
                   </div>
-                </div>
+                </li>
               )}
             </For>
-          </div>
+          </ul>
 
           <div class="flex gap-3 justify-end">
             <button

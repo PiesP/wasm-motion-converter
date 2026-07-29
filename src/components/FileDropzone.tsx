@@ -123,6 +123,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           </svg>
         </button>
       </Show>
+      {/* biome-ignore lint/a11y/useSemanticElements: This is a drag-and-drop group with its own native file control; fieldset disabled semantics would block cancellation and progress controls. */}
       <div
         class={`relative rounded-lg border border-dashed transition-all duration-300 ${
           isDragging()
@@ -134,6 +135,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        role="group"
         aria-label={ariaLabel()}
         aria-busy={isBusy()}
         data-testid="dropzone"
@@ -330,7 +332,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 />
               </div>
               <p class="mt-2 text-sm text-text-tertiary">{t('dropzone.clickSelect')}</p>
-              <p class="mt-1 text-xs text-brand/60">{t('dropzone.formats')}</p>
+              <p class="mt-1 text-xs text-text-tertiary">{t('dropzone.formats')}</p>
             </div>
           </Show>
         </Show>

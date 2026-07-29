@@ -104,4 +104,22 @@ describe('ProgressBar pipeline phase segments', () => {
     const progressbar = container.querySelector<HTMLElement>('[role="progressbar"]');
     expect(progressbar?.dataset.progress).toBe('42');
   });
+
+  it.each([false, true])(
+    'does not expose the frequently changing container as a live status region (compact=%s)',
+    (compact) => {
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      render(
+        () => (
+          <ProgressBar compact={compact} progress={42} status="Converting" phase="decoding" />
+        ),
+        container
+      );
+
+      expect(container.querySelector('[role="status"]')).toBeNull();
+      expect(container.querySelector('[aria-live]')).toBeNull();
+      expect(container.querySelector('[role="progressbar"]')).not.toBeNull();
+    }
+  );
 });

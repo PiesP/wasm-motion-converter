@@ -11,7 +11,11 @@ const IS_DEPLOY_PROFILE = TEST_PROFILE === 'deploy';
 const IS_CI_PROFILE = TEST_PROFILE === 'ci';
 // Fresh CI checkouts intentionally exclude the large, local-only codec matrix.
 // The smoke fixture is generated deterministically before this profile runs.
-const CI_TEST_MATCH = ['e2e/i18n.spec.ts', 'e2e/ci-conversion-smoke.spec.ts'];
+const CI_TEST_MATCH = [
+  'e2e/accessibility.spec.ts',
+  'e2e/i18n.spec.ts',
+  'e2e/ci-conversion-smoke.spec.ts',
+];
 const LOCAL_TEST_IGNORE = [
   'e2e/fixtures/**',
   'e2e/lib/**',

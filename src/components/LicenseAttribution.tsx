@@ -15,7 +15,7 @@ const LICENSES_URL = '/LICENSES.md';
 const GITHUB_ISSUES_URL = 'https://github.com/PiesP/wasm-motion-converter/issues';
 
 const linkClass =
-  'text-brand hover:text-[#828fff] underline underline-offset-2 px-1.5 py-1 inline-flex items-center min-h-[44px]';
+  'text-[#828fff] hover:text-[#aeb4ff] underline underline-offset-2 px-1.5 py-1 inline-flex items-center min-h-[44px]';
 
 const LicenseAttribution: Component = () => {
   const { t } = useLocale();
@@ -42,9 +42,9 @@ const LicenseAttribution: Component = () => {
                 >
                   {lib.name}
                 </a>
-                <span class="text-text-quaternary">({lib.license})</span>
+                <span class="text-text-tertiary">({lib.license})</span>
                 {i < LIBRARIES.length - 1 && (
-                  <span class="text-text-quaternary hidden sm:inline">, </span>
+                  <span class="text-text-tertiary hidden sm:inline">, </span>
                 )}
               </span>
             ))}
@@ -52,7 +52,7 @@ const LicenseAttribution: Component = () => {
         </p>
 
         {/* Line 2: Processing note — hidden on mobile to save space */}
-        <p class="hidden sm:block text-text-quaternary">{t('license.processingNote')}</p>
+        <p class="hidden sm:block text-text-tertiary">{t('license.processingNote')}</p>
 
         {/* Line 3: Licenses + feedback in one line */}
         <p>
@@ -65,7 +65,7 @@ const LicenseAttribution: Component = () => {
           >
             {t('footer.viewLicenses')}
           </a>
-          <span class="hidden sm:inline text-text-quaternary mx-1">·</span>
+          <span class="hidden sm:inline text-text-tertiary mx-1">·</span>
           <span class="hidden sm:inline">{t('footer.questions')}</span>
           <a
             href={GITHUB_ISSUES_URL}
