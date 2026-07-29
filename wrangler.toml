@@ -1,10 +1,12 @@
 # Cloudflare Pages Build Configuration
 # https://developers.cloudflare.com/pages/configuration/build-configuration/
 
-name = "wasm-motion-converter"
+name = "dropconvert"
 compatibility_date = "2026-06-15"
 pages_build_output_dir = "dist"
 
 # Production environment variables
 [vars]
 NODE_ENV = "production"
+# Cloudflare does not read the Volta pin from package.json when selecting Node.
+NODE_VERSION = "26.5.0"
