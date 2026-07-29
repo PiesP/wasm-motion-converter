@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversionRequest } from '@t/conversion-types';
 
 const mocks = vi.hoisted(() => ({
+  demuxVideo: vi.fn(),
   encodeGif: vi.fn(),
   encodeWebp: vi.fn(),
   encodeWebpOffscreen: vi.fn(),
@@ -21,15 +22,17 @@ vi.mock('@utils/logger', () => ({
   },
 }));
 vi.mock('@services/demuxer-service', () => ({
-  demuxVideo: vi.fn().mockResolvedValue({
+  demuxVideo: mocks.demuxVideo,
+}));
+
+const demuxResult = {
     chunks: [],
     config: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
     duration: 1,
     framerate: 30,
     sourceTotalMs: 1000,
     totalFrames: 30,
-  }),
-}));
+};
 vi.mock('@services/gif-encoder-service', () => ({ encodeGif: mocks.encodeGif }));
 vi.mock('@services/webp-encoder-service', () => ({ encodeWebp: mocks.encodeWebp }));
 vi.mock('@services/offscreen-webp-encoder', () => ({
@@ -56,6 +59,7 @@ const baseRequest: ConversionRequest = {
 };
 
 beforeEach(() => {
+  mocks.demuxVideo.mockReset().mockResolvedValue(demuxResult);
   mocks.encodeGif.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
   mocks.encodeWebp.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
   mocks.encodeWebpOffscreen.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
@@ -80,6 +84,29 @@ describe('main conversion pipeline encoder options', () => {
       expect.objectContaining({ smartFrameSkip: 'adaptive' }),
       undefined
     );
+  });
+
+  it('forwards cancellation to demuxing', async () => {
+    const signal = new AbortController().signal;
+
+    await runConversionPipeline(baseRequest, vi.fn(), signal);
+
+    expect(mocks.demuxVideo).toHaveBeenCalledWith(
+      baseRequest,
+      undefined,
+      expect.any(Function),
+      signal
+    );
+  });
+
+  it('returns only the encoder view bytes in a fresh ArrayBuffer', async () => {
+    const backing = new Uint8Array([9, 1, 2, 3, 9]);
+    mocks.encodeGif.mockResolvedValue(backing.subarray(1, 4));
+
+    const result = await runConversionPipeline(baseRequest, vi.fn());
+
+    expect(Array.from(new Uint8Array(result))).toEqual([1, 2, 3]);
+    expect(result).not.toBe(backing.buffer);
   });
 
   it('forwards smartFrameSkip to the wasm WebP fallback', async () => {
