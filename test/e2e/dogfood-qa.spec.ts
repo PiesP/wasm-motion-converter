@@ -8,14 +8,13 @@
 //
 // Run with: pnpm exec playwright test test/e2e/dogfood-qa.spec.ts --reporter=list
 //
-// Last inspection: 2026-06-15
-// Findings: 14 issues (3 HIGH, 5 MEDIUM, 6 LOW)
-// All HIGH + MEDIUM + LOW fixes committed in df4c936.
+// Last inspection: 2026-07-29
 
 import { test, expect, type Page } from '@playwright/test';
 import { isCloudflareInsightsResource } from './fixtures/url-utils';
 
-const PROD_URL = 'https://wasm-motion-converter.pages.dev';
+const SITE_URL = 'https://wasm-motion-converter.pages.dev';
+const DEPLOY_URL = process.env.DEPLOY_URL || SITE_URL;
 
 // Skip all dogfood-qa tests when running against dev server (SKIP_WEB_SERVER=1).
 // These tests inspect the production deployment and require a built+deployed site.
@@ -52,7 +51,7 @@ async function getFailedResources(page: Page): Promise<string[]> {
 test.describe('Page Load & Console Health', () => {
   test('page loads without critical console errors', async ({ page }) => {
     const errors = await getConsoleErrors(page);
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
     await page.waitForLoadState('domcontentloaded');
 
     // Filter out known non-critical errors (e.g., CSP report-only)
@@ -66,7 +65,7 @@ test.describe('Page Load & Console Health', () => {
 
   test('no failed static resource loads', async ({ page }) => {
     const failed = await getFailedResources(page);
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
     await page.waitForLoadState('networkidle');
 
     // static.cloudflareinsights.com may fail in some networks — non-critical
@@ -78,7 +77,7 @@ test.describe('Page Load & Console Health', () => {
 
   test('DOMContentLoaded within 3s', async ({ page }) => {
     const start = Date.now();
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
     await page.waitForLoadState('domcontentloaded');
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(3000);
@@ -91,13 +90,13 @@ test.describe('Page Load & Console Health', () => {
 
 test.describe('SEO & Meta Tags', () => {
   test('has required meta tags', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
     const metaChecks = [
       { selector: 'meta[name="description"]', attr: 'content', minLen: 20 },
       { selector: 'meta[name="robots"]', attr: 'content', expected: 'index, follow' },
       { selector: 'meta[name="viewport"]', attr: 'content', expected: 'width=device-width, initial-scale=1.0' },
-      { selector: 'link[rel="canonical"]', attr: 'href', expected: `${PROD_URL}/` },
+      { selector: 'link[rel="canonical"]', attr: 'href', expected: `${SITE_URL}/` },
     ];
 
     for (const check of metaChecks) {
@@ -110,9 +109,9 @@ test.describe('SEO & Meta Tags', () => {
   });
 
   test('has Open Graph tags', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
-    const ogTags = ['og:title', 'og:description', 'og:type', 'og:url', 'og:image'];
+    const ogTags = ['og:title', 'og:description', 'og:type', 'og:url'];
     for (const tag of ogTags) {
       const el = page.locator(`meta[property="${tag}"]`).first();
       await expect(el).toBeAttached();
@@ -123,33 +122,34 @@ test.describe('SEO & Meta Tags', () => {
   });
 
   test('has Twitter Card tags', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
-    const twitterTags = ['twitter:card', 'twitter:title', 'twitter:description', 'twitter:image'];
+    const twitterTags = ['twitter:card', 'twitter:title', 'twitter:description'];
     for (const tag of twitterTags) {
       const el = page.locator(`meta[name="${tag}"]`).first();
       await expect(el).toBeAttached();
       const content = await el.getAttribute('content');
       expect(content).toBeTruthy();
     }
+    await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute('content', 'summary');
   });
 
   test('has theme-color meta tags', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
     const lightTheme = page.locator('meta[name="theme-color"][media="(prefers-color-scheme: light)"]');
     const darkTheme = page.locator('meta[name="theme-color"][media="(prefers-color-scheme: dark)"]');
-    await expect(lightTheme).toBeAttached();
-    await expect(darkTheme).toBeAttached();
+    await expect(lightTheme).toHaveAttribute('content', '#ffffff');
+    await expect(darkTheme).toHaveAttribute('content', '#0f172a');
   });
 
-  test('has preconnect hints for CDN origins', async ({ page }) => {
-    await page.goto(PROD_URL);
+  test('does not preconnect to external code CDNs', async ({ page }) => {
+    await page.goto(DEPLOY_URL);
 
     const preconnects = await page.locator('link[rel="preconnect"]').all();
     const hrefs = await Promise.all(preconnects.map((el) => el.getAttribute('href')));
-    expect(hrefs).toContain('https://cdn.jsdelivr.net');
-    expect(hrefs).toContain('https://esm.sh');
+    expect(hrefs).not.toContain('https://cdn.jsdelivr.net');
+    expect(hrefs).not.toContain('https://esm.sh');
   });
 });
 
@@ -159,26 +159,26 @@ test.describe('SEO & Meta Tags', () => {
 
 test.describe('Accessibility', () => {
   test('has skip to main content link', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
     const skipLink = page.locator('a[href="#main-content"]');
     await expect(skipLink).toBeAttached();
     await expect(skipLink).toHaveText(/skip to main content/i);
   });
 
   test('has lang attribute on html', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
     const lang = await page.locator('html').getAttribute('lang');
     expect(lang).toBe('en');
   });
 
   test('has exactly one h1', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
     const h1s = await page.locator('h1').all();
     expect(h1s.length).toBe(1);
   });
 
   test('radio inputs have associated labels via id/for', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
     const radios = await page.locator('input[type="radio"]').all();
     expect(radios.length).toBeGreaterThan(0);
@@ -194,7 +194,7 @@ test.describe('Accessibility', () => {
   });
 
   test('convert button is disabled without file and enabled text changes', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
     const convertBtn = page.locator('[data-testid="convert-button"]');
     await expect(convertBtn).toBeDisabled();
@@ -202,71 +202,42 @@ test.describe('Accessibility', () => {
   });
 
   test('app state indicator shows current state', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
-    // On mount, the app creates <div id="app-state"> with the current state.
-    // This is designed for MCP Playwright / AI agent consumption.
-    // In Playwright test runner, timing may vary — poll with fallback.
-    const state = await page.evaluate(() => {
-      const el = document.getElementById('app-state');
-      return el ? el.textContent : null;
-    });
-
-    // Pass on null (timing variance) or 'idle' (normal)
-    expect(state === null || state === 'idle').toBeTruthy();
+    await expect(page.locator('#app-state')).toHaveText('Select a video to start conversion');
   });
 
   test('tooltip info buttons have aria-label', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
-    const infoBtns = await page.locator('button[aria-label^="Information about"]').all();
-    expect(infoBtns.length).toBe(3); // Output Format, Quality Preset, Output Scale
-
-    for (const btn of infoBtns) {
-      const label = await btn.getAttribute('aria-label');
-      expect(label).toMatch(/^Information about /);
-    }
+    const infoBtns = page.locator('button[aria-label^="Information about"]');
+    await expect(infoBtns).toHaveCount(4);
+    const labels = await infoBtns.evaluateAll((buttons) =>
+      buttons.map((button) => button.getAttribute('aria-label'))
+    );
+    expect(labels).toEqual([
+      'Information about Output Format',
+      'Information about Quality Preset',
+      'Information about Smart Frame Skip',
+      'Information about Output Scale',
+    ]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 4. Theme Toggle
+// 4. System Theme
 // ---------------------------------------------------------------------------
 
-test.describe('Theme Toggle', () => {
-  test('toggles between light and dark', async ({ page }) => {
-    await page.goto(PROD_URL);
+test.describe('System Theme', () => {
+  test('follows light and dark system preferences', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.goto(DEPLOY_URL);
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(page.locator('body')).toHaveCSS('color', 'rgb(23, 23, 23)');
 
-    const toggle = page.locator('[data-testid="theme-toggle"]');
-
-    // Initially light
-    const initialScheme = await page.evaluate(() => document.documentElement.style.colorScheme);
-    expect(initialScheme).toBe('light');
-
-    // Toggle to dark
-    await toggle.click();
-    const darkScheme = await page.evaluate(() => document.documentElement.style.colorScheme);
-    expect(darkScheme).toBe('dark');
-
-    // Toggle back to light
-    await toggle.click();
-    const lightScheme = await page.evaluate(() => document.documentElement.style.colorScheme);
-    expect(lightScheme).toBe('light');
-  });
-
-  test('theme toggle button label updates', async ({ page }) => {
-    await page.goto(PROD_URL);
-
-    const toggle = page.locator('[data-testid="theme-toggle"]');
-
-    // Light mode → button says "Switch to dark theme"
-    const lightLabel = await toggle.getAttribute('aria-label');
-    expect(lightLabel).toMatch(/dark/i);
-
-    // Toggle to dark
-    await toggle.click();
-    const darkLabel = await toggle.getAttribute('aria-label');
-    expect(darkLabel).toMatch(/light/i);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(8, 9, 10)');
+    await expect(page.locator('body')).toHaveCSS('color', 'rgb(247, 248, 248)');
   });
 });
 
@@ -276,7 +247,7 @@ test.describe('Theme Toggle', () => {
 
 test.describe('Performance', () => {
   test('JS bundle count is reasonable (< 6 chunks)', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
     await page.waitForLoadState('networkidle');
 
     const jsChunks = await page.locator('script[src*="assets/"]').all();
@@ -284,23 +255,24 @@ test.describe('Performance', () => {
     expect(jsChunks.length).toBeLessThanOrEqual(6);
   });
 
-  test('modulepreload hints for CDN deps have as=script', async ({ page }) => {
+  test('modulepreload hints stay on the deployment origin', async ({ page }) => {
     // Production-only: modulepreload hints are generated by Vite build, not dev server.
     test.skip(process.env.SKIP_WEB_SERVER === '1', 'modulepreload only in production build');
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
-    // Only CDN-external preloads have as="script" (Vite auto-generates internal ones without it)
-    const cdnPreloads = await page.locator('link[rel="modulepreload"][href^="https://"]').all();
-    expect(cdnPreloads.length).toBeGreaterThan(0);
+    const modulePreloads = await page.locator('link[rel="modulepreload"]').all();
+    expect(modulePreloads.length).toBeGreaterThan(0);
+    const deploymentOrigin = new URL(DEPLOY_URL).origin;
 
-    for (const preload of cdnPreloads) {
-      const as = await preload.getAttribute('as');
-      expect(as).toBe('script');
+    for (const preload of modulePreloads) {
+      const href = await preload.getAttribute('href');
+      expect(href).not.toBeNull();
+      expect(new URL(href!, DEPLOY_URL).origin).toBe(deploymentOrigin);
     }
   });
 
   test('total JS transfer size under 150KB', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
     await page.waitForLoadState('networkidle');
 
     const totalSize = await page.evaluate(() => {
@@ -320,14 +292,15 @@ test.describe('Performance', () => {
 
 test.describe('Footer & Links', () => {
   test('footer has license attribution', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
-    const footer = page.locator('[contentinfo], footer');
+    const footer = page.getByRole('contentinfo');
+    await expect(footer).toHaveCount(1);
     await expect(footer).toContainText('mediabunny');
   });
 
   test('external links have rel=noopener noreferrer', async ({ page }) => {
-    await page.goto(PROD_URL);
+    await page.goto(DEPLOY_URL);
 
     const extLinks = await page.locator('a[target="_blank"]').all();
     expect(extLinks.length).toBeGreaterThan(0);
