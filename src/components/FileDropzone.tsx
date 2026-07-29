@@ -3,9 +3,10 @@
 
 import { useLocale } from '@hooks/use-locale';
 import type { Component } from 'solid-js';
-import { createMemo, createSignal, Show, splitProps } from 'solid-js';
+import { createEffect, createMemo, createSignal, onCleanup, Show, splitProps } from 'solid-js';
 
 import ProgressBar from './ProgressBar';
+import TrimSelector from './TrimSelector';
 
 const SELECTION_FEEDBACK_DURATION_MS = 500;
 
@@ -28,6 +29,11 @@ interface FileDropzoneProps {
   fileName?: string | undefined;
   fileSize?: number | undefined;
   metadataSummary?: string | undefined;
+  duration?: number | undefined;
+  estimatedFps?: number | undefined;
+  trimStart?: number | undefined;
+  trimEnd?: number | undefined;
+  onTrimChange?: ((start: number, end: number) => void) | undefined;
 }
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
@@ -51,10 +57,17 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     'fileName',
     'fileSize',
     'metadataSummary',
+    'duration',
+    'estimatedFps',
+    'trimStart',
+    'trimEnd',
+    'onTrimChange',
   ]);
   const [isDragging, setIsDragging] = createSignal(false);
   const [justSelected, setJustSelected] = createSignal(false);
+  const [isSelectionPreviewing, setIsSelectionPreviewing] = createSignal(false);
   let fileInputElement: HTMLInputElement | undefined;
+  let previewVideoElement: HTMLVideoElement | undefined;
 
   const isBusy = createMemo(() => !!local.status);
   const isInteractive = createMemo(() => !local.disabled && !isBusy());
@@ -69,6 +82,60 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     if (!Number.isFinite(raw)) return 0;
     return Math.min(100, Math.max(0, Math.round(raw)));
   });
+  const effectiveTrimEnd = createMemo(() => {
+    const duration = local.duration ?? 0;
+    const trimEnd = local.trimEnd ?? 0;
+    return trimEnd === 0 || trimEnd > duration ? duration : trimEnd;
+  });
+
+  const stopSelectionPreview = (): void => {
+    previewVideoElement?.pause();
+    setIsSelectionPreviewing(false);
+  };
+
+  const seekPreview = (seconds: number): void => {
+    stopSelectionPreview();
+    const video = previewVideoElement;
+    if (!video || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+    const duration = Number.isFinite(video.duration) ? video.duration : (local.duration ?? 0);
+    video.currentTime = Math.max(0, Math.min(seconds, duration));
+  };
+
+  const handleTrimChange = (start: number, end: number): void => {
+    const previousStart = local.trimStart ?? 0;
+    const previewTime =
+      Math.abs(start - previousStart) >= 0.05 ? start : end === 0 ? effectiveTrimEnd() : end;
+    local.onTrimChange?.(start, end);
+    seekPreview(previewTime);
+  };
+
+  const toggleSelectionPreview = (): void => {
+    const video = previewVideoElement;
+    if (!video || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+    if (isSelectionPreviewing()) {
+      stopSelectionPreview();
+      return;
+    }
+    video.currentTime = local.trimStart ?? 0;
+    setIsSelectionPreviewing(true);
+    void video.play().catch(() => setIsSelectionPreviewing(false));
+  };
+
+  const handlePreviewTimeUpdate = (): void => {
+    const video = previewVideoElement;
+    if (!video || !isSelectionPreviewing()) return;
+    if (video.currentTime < effectiveTrimEnd() - 0.02) return;
+    video.pause();
+    video.currentTime = local.trimStart ?? 0;
+    setIsSelectionPreviewing(false);
+  };
+
+  createEffect(() => {
+    local.previewUrl;
+    stopSelectionPreview();
+  });
+
+  onCleanup(() => stopSelectionPreview());
 
   const selectFile = (files?: FileList | null): void => {
     const file = files?.[0];
@@ -268,13 +335,35 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
               {/* Video preview */}
               <Show when={local.previewUrl}>
                 <video
+                  ref={(element) => {
+                    previewVideoElement = element;
+                  }}
                   src={local.previewUrl!}
                   class="w-full rounded-lg shadow-md bg-black aspect-video"
                   muted
                   playsinline
                   preload="metadata"
                   aria-label={t('dropzone.preview')}
+                  onTimeUpdate={handlePreviewTimeUpdate}
+                  onEnded={() => setIsSelectionPreviewing(false)}
+                  onPause={() => setIsSelectionPreviewing(false)}
                 />
+              </Show>
+
+              <Show when={(local.duration ?? 0) > 0 && local.onTrimChange}>
+                <div class="border-t border-border-standard pt-4" data-testid="input-range-editor">
+                  <TrimSelector
+                    duration={local.duration!}
+                    trimStart={local.trimStart ?? 0}
+                    trimEnd={local.trimEnd ?? 0}
+                    estimatedFps={local.estimatedFps}
+                    disabled={local.disabled}
+                    isPreviewing={isSelectionPreviewing()}
+                    onChange={handleTrimChange}
+                    onPreviewSelection={toggleSelectionPreview}
+                    onSeek={seekPreview}
+                  />
+                </div>
               </Show>
             </div>
           </Show>

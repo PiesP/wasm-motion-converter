@@ -366,6 +366,13 @@ const App: Component = () => {
                 fileName={inputFile()?.name}
                 fileSize={inputFile()?.size}
                 metadataSummary={metadataSummary()}
+                duration={videoMetadata()?.duration}
+                estimatedFps={videoMetadata()?.framerate}
+                trimStart={conversionSettings().trimStart}
+                trimEnd={conversionSettings().trimEnd}
+                onTrimChange={(start, end) =>
+                  setConversionSettings({ ...conversionSettings(), trimStart: start, trimEnd: end })
+                }
               />
 
               <Show when={appState() === 'cancelling'}>
@@ -400,9 +407,6 @@ const App: Component = () => {
                   setConversionSettings({ ...conversionSettings(), quality })
                 }
                 onScaleChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
-                onTrimChange={(start, end) =>
-                  setConversionSettings({ ...conversionSettings(), trimStart: start, trimEnd: end })
-                }
                 onSmartFrameSkipChange={(mode) =>
                   setConversionSettings({ ...conversionSettings(), smartFrameSkip: mode })
                 }
