@@ -16,6 +16,7 @@
  */
 
 import { getErrorMessage } from '@piesp/browser-core/error';
+import { LruMap } from '@piesp/browser-core/util';
 import type { SmartFrameSkipMode } from '@t/conversion-types';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
@@ -581,43 +582,7 @@ interface CachedConfig {
 
 const CONFIG_CACHE_MAX_SIZE = 20;
 
-/**
- * LRU-evicting cache for VideoDecoder config support checks.
- * Map iteration order is insertion order in JS, so deleting + re-inserting
- * an existing key moves it to the most-recently-used position.
- */
-class LruConfigCache {
-  private cache = new Map<string, CachedConfig>();
-
-  get(key: string): CachedConfig | undefined {
-    const entry = this.cache.get(key);
-    if (entry) {
-      // Move to most-recently-used position
-      this.cache.delete(key);
-      this.cache.set(key, entry);
-    }
-    return entry;
-  }
-
-  set(key: string, value: CachedConfig): void {
-    if (this.cache.has(key)) {
-      this.cache.delete(key);
-    } else if (this.cache.size >= CONFIG_CACHE_MAX_SIZE) {
-      // Evict the oldest (first) entry
-      const oldestKey = this.cache.keys().next().value;
-      if (oldestKey !== undefined) {
-        this.cache.delete(oldestKey);
-      }
-    }
-    this.cache.set(key, value);
-  }
-
-  has(key: string): boolean {
-    return this.cache.get(key) !== undefined;
-  }
-}
-
-const configCache = new LruConfigCache();
+const configCache = new LruMap<string, CachedConfig>(CONFIG_CACHE_MAX_SIZE);
 
 function configCacheKey(cfg: VideoDecoderConfig): string {
   return `${cfg.codec}-${cfg.codedWidth}x${cfg.codedHeight}-${cfg.hardwareAcceleration ?? 'default'}`;
@@ -628,7 +593,7 @@ async function resolveDecoderConfig(
   hwAccel: 'prefer-hardware' | 'prefer-software'
 ): Promise<VideoDecoderConfig> {
   const key = configCacheKey(baseConfig);
-  const cached = configCache.get(key);
+  let cached = configCache.get(key);
 
   if (!cached) {
     const support = await VideoDecoder.isConfigSupported(baseConfig);
@@ -638,11 +603,11 @@ async function resolveDecoderConfig(
     // Check HW support with a HW-specific config
     const hwConfig = { ...baseConfig, hardwareAcceleration: 'prefer-hardware' as const };
     const hwSupport = await VideoDecoder.isConfigSupported(hwConfig);
-    configCache.set(key, { config: baseConfig, hwSupported: hwSupport.supported === true });
+    cached = { config: baseConfig, hwSupported: hwSupport.supported === true };
+    configCache.set(key, cached);
   }
 
-  const finalCached = configCache.get(key)!;
-  if (hwAccel === 'prefer-hardware' && finalCached.hwSupported) {
+  if (hwAccel === 'prefer-hardware' && cached.hwSupported) {
     return { ...baseConfig, hardwareAcceleration: 'prefer-hardware', optimizeForLatency: false };
   }
   return { ...baseConfig, hardwareAcceleration: 'prefer-software', optimizeForLatency: false };

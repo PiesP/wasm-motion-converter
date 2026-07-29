@@ -10,13 +10,10 @@
  * through the type cast and cause unexpected behavior or crashes.
  */
 
+import { isRecord } from '@piesp/browser-core/util';
 import type { WorkerRequest, WorkerResponse } from './types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
