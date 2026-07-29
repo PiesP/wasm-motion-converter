@@ -208,60 +208,9 @@ jobs:
         run: pnpm build:ci
 
       - name: 📦 Prepare release bundle
-        run: |
-          set -euo pipefail
-          VERSION="${{ steps.version.outputs.version }}"
-          mkdir -p release-bundle/dist release-bundle/release
-          cp -r dist/* release-bundle/dist/
-          cp -r dist/* release-bundle/release/
-
-          (
-            cd release-bundle/release
-            find . -type f -not -name checksums.txt -not -name metadata.json -exec sha256sum {} + > checksums.txt
-          )
-
-          cat > release-bundle/release/metadata.json << EOF
-          {
-            "version": "$VERSION",
-            "build_date": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
-            "commit": "${GITHUB_SHA}",
-            "node_version": "${NODE_VERSION}",
-            "runner_os": "${RUNNER_OS}",
-            "runner_arch": "${RUNNER_ARCH}",
-            "runner_image": "${ImageOS:-unknown}",
-            "runner_image_version": "${ImageVersion:-unknown}"
-          }
-          EOF
-
-          CHANGELOG_CONTENT="$(awk -v ver="$VERSION" '
-            /^## \[/ {
-              if (found) exit;
-              if ($0 ~ "\\[" ver "\\]") {
-                found=1;
-                next;
-              }
-            }
-            found { print }
-          ' CHANGELOG.md)"
-          if [[ -z "${CHANGELOG_CONTENT//[[:space:]]/}" ]]; then
-            echo "❌ CHANGELOG.md has no entry for version $VERSION"
-            exit 1
-          fi
-
-          cat > release-bundle/RELEASE_NOTES.md << EOF
-          # 🚀 Release v${VERSION}
-
-          ## 📝 What's Changed
-
-          ${CHANGELOG_CONTENT}
-
-          ## 📋 Build Details
-
-          - **Commit**: \`${GITHUB_SHA}\`
-          - **Built**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          - **Node.js**: \`${NODE_VERSION}\`
-          - **Runner**: \`${RUNNER_OS}/${RUNNER_ARCH}\` (\`${ImageOS:-unknown} ${ImageVersion:-unknown}\`)
-          EOF
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: pnpm release:prepare
 
       - name: 📊 Upload release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

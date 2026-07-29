@@ -49,6 +49,7 @@
     "verify:full": "pnpm verify && pnpm test:cov && node --experimental-strip-types scripts/test/run-e2e-on-free-port.ts",
     "mut": "stryker run --reporters=progress",
     "mut:fast": "stryker run stryker.conf.fast.json --reporters=progress",
+    "release:prepare": "node --experimental-strip-types scripts/release/prepare.ts",
     "test:cov": "vitest run --coverage",
     "check:i18n": "node --experimental-strip-types scripts/check/i18n.ts"
   },
