@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# CI bootstrap remains shell-based because it runs before project Node setup.
 
 set -euo pipefail
 

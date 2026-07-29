@@ -6,7 +6,7 @@
 // This file documents the systematic QA inspection performed via MCP Playwright
 // against the production deployment at https://wasm-motion-converter.pages.dev/.
 //
-// Run with: npx playwright test test/e2e/dogfood-qa.spec.ts --reporter=list
+// Run with: pnpm exec playwright test test/e2e/dogfood-qa.spec.ts --reporter=list
 //
 // Last inspection: 2026-06-15
 // Findings: 14 issues (3 HIGH, 5 MEDIUM, 6 LOW)

@@ -5,7 +5,7 @@
 // Verifies core functionality works in the deployed environment.
 //
 // Run with:
-//   npx playwright test test/e2e/deploy-smoke.spec.ts --reporter=list
+//   pnpm exec playwright test test/e2e/deploy-smoke.spec.ts --reporter=list
 //
 // Environment variables:
 //   DEPLOY_URL — the deployed URL to test (default: https://wasm-motion-converter.pages.dev)

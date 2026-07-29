@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-> Auto-generated on 2026-07-28 by `scripts/generate-licenses.ts`.
+> Auto-generated on 2026-07-29 by `scripts/build/generate-licenses.ts`.
 > Do not edit manually — run `pnpm build` to regenerate.
 
 This project uses the following open-source libraries.

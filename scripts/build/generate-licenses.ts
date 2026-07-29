@@ -5,7 +5,7 @@
 // generate-licenses.ts — Collect license info from all runtime dependencies
 // and generate public/LICENSES.md automatically.
 //
-// Usage: npx tsx scripts/generate-licenses.ts
+// Usage: node --experimental-strip-types scripts/build/generate-licenses.ts
 // Called automatically during `pnpm build` via the `prebuild` script.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+const ROOT = join(__dirname, '..', '..');
 
 interface LicenseEntry {
   name: string;
@@ -126,7 +126,7 @@ function generateLicenseText(entries: LicenseEntry[]): string {
 
   let md = `# Third-Party Licenses
 
-> Auto-generated on ${now} by \`scripts/generate-licenses.ts\`.
+> Auto-generated on ${now} by \`scripts/build/generate-licenses.ts\`.
 > Do not edit manually — run \`pnpm build\` to regenerate.
 
 This project uses the following open-source libraries.

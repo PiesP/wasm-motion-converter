@@ -66,9 +66,6 @@ importers:
       rollup-plugin-visualizer:
         specifier: 7.0.1
         version: 7.0.1(rolldown@1.1.5)
-      tsx:
-        specifier: ^4.23.1
-        version: 4.23.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -4555,6 +4552,7 @@ snapshots:
       esbuild: 0.28.1
     optionalDependencies:
       fsevents: 2.3.3
+    optional: true
 
   tunnel@0.0.6: {}
 
