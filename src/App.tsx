@@ -414,9 +414,7 @@ const App: Component = () => {
           <ResultSection results={conversionResults()} />
         </main>
 
-        <footer>
-          <LicenseAttribution />
-        </footer>
+        <LicenseAttribution />
         <ConfirmationModal />
       </div>
     </ErrorBoundary>
