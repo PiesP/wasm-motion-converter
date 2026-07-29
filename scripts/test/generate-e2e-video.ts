@@ -35,8 +35,12 @@ const result = spawnSync(
   { encoding: 'utf8' }
 );
 
-if (result.error?.code === 'ENOENT') {
-  throw new Error('ffmpeg is required to generate the E2E codec fixture.');
+if (result.error) {
+  const error = result.error as NodeJS.ErrnoException;
+  if (error.code === 'ENOENT') {
+    throw new Error('ffmpeg is required to generate the E2E codec fixture.');
+  }
+  throw error;
 }
 if (result.status !== 0) {
   throw new Error(`ffmpeg failed to generate the E2E codec fixture:\n${result.stderr.trim()}`);

@@ -3,7 +3,7 @@ import { createServer } from 'node:net';
 
 const server = createServer();
 
-await new Promise((resolve, reject) => {
+await new Promise<void>((resolve, reject) => {
   server.once('error', reject);
   server.listen({ host: '127.0.0.1', port: 0 }, resolve);
 });
@@ -13,7 +13,7 @@ if (!address || typeof address === 'string') {
   throw new Error('Could not allocate a local TCP port for Playwright.');
 }
 
-await new Promise((resolve, reject) => {
+await new Promise<void>((resolve, reject) => {
   server.close((error) => (error ? reject(error) : resolve()));
 });
 
@@ -30,7 +30,7 @@ const child = spawn(process.execPath, [packageManagerPath, 'test:e2e:ci'], {
   stdio: 'inherit',
 });
 
-const exitCode = await new Promise((resolve, reject) => {
+const exitCode = await new Promise<number>((resolve, reject) => {
   child.once('error', reject);
   child.once('exit', (code, signal) => {
     if (signal) {

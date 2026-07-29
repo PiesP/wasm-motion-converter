@@ -1,6 +1,6 @@
 /**
  * check-i18n: Verify that all JSON locale files have identical key sets.
- * Run via: node scripts/check-i18n.mjs
+ * Run via: node --experimental-strip-types scripts/check/i18n.ts
  * Expected: silent exit 0. On mismatch, prints missing/extra keys and exits 1.
  */
 import { readdirSync, readFileSync } from 'node:fs';
@@ -8,9 +8,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const i18nDir = resolve(__dirname, '..', 'src', 'i18n');
+const i18nDir = resolve(__dirname, '..', '..', 'src', 'i18n');
 
-const files = readdirSync(i18nDir).filter((f) => f.endsWith('.json'));
+const files = readdirSync(i18nDir).filter((file) => file.endsWith('.json'));
 if (files.length === 0) {
   console.error('No JSON locale files found in src/i18n/');
   process.exit(1);
@@ -18,14 +18,14 @@ if (files.length === 0) {
 
 // Load English keys as the reference
 const enPath = resolve(i18nDir, 'en.json');
-const enKeys = Object.keys(JSON.parse(readFileSync(enPath, 'utf-8')));
+const enKeys = Object.keys(JSON.parse(readFileSync(enPath, 'utf-8')) as Record<string, unknown>);
 const enKeySet = new Set(enKeys);
 
 let hasErrors = false;
 
 for (const file of files) {
   if (file === 'en.json') continue;
-  const data = JSON.parse(readFileSync(resolve(i18nDir, file), 'utf-8'));
+  const data = JSON.parse(readFileSync(resolve(i18nDir, file), 'utf-8')) as Record<string, unknown>;
   const localeKeys = new Set(Object.keys(data));
 
   // Check for missing keys (in en but not in this locale)

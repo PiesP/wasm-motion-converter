@@ -5,10 +5,10 @@
 // Captures screenshots at critical UI states and compares against baselines.
 //
 // Run with:
-//   npx playwright test test/e2e/visual-regression.spec.ts --reporter=list
+//   pnpm exec playwright test test/e2e/visual-regression.spec.ts --reporter=list
 //
 // Update baselines:
-//   npx playwright test test/e2e/visual-regression.spec.ts --update-snapshots
+//   pnpm exec playwright test test/e2e/visual-regression.spec.ts --update-snapshots
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { injectTestFile } from './fixtures/test-helpers';
