@@ -55,15 +55,11 @@ import {
 
 import './index.css';
 
-// Lazy import for test helpers (dev only)
-let attachTestHelpers: (() => void) | null = null;
-if (import.meta.env.DEV) {
-  import('./test-helpers')
-    .then((mod) => {
-      attachTestHelpers = mod.attachTestHelpers;
-    })
-    .catch(() => {});
-}
+// Lazy import for test helpers (dev only). Keep the promise so App.onMount can
+// attach after the separate module chunk finishes loading.
+const attachTestHelpersPromise = import.meta.env.DEV
+  ? import('./test-helpers').then((mod) => mod.attachTestHelpers).catch(() => null)
+  : null;
 
 const SETTINGS_DEBOUNCE_MS = 500;
 const MEMORY_REDUCTION_SCALE = 0.5;
@@ -125,9 +121,12 @@ const App: Component = () => {
     setEnvironmentSupported(isSupported);
 
     // Attach test helpers in dev mode (AI-driven browser testing)
-    if (attachTestHelpers) {
-      attachTestHelpers();
-      logger.debug('general', 'Test helpers attached via App onMount');
+    if (attachTestHelpersPromise) {
+      void attachTestHelpersPromise.then((attachTestHelpers) => {
+        if (!attachTestHelpers) return;
+        attachTestHelpers();
+        logger.debug('general', 'Test helpers attached via App onMount');
+      });
     }
   });
 
