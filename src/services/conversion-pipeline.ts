@@ -53,6 +53,11 @@ import { getWorkerPool, WebpWorkerPool } from './worker-pool';
 
 /** Device/environment check — isolated to this module-level constant */
 const isDev = import.meta.env.DEV;
+
+function toOwnedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.slice().buffer;
+}
+
 export async function runConversionPipeline(
   request: ConversionRequest,
   onProgress: ProgressCallback,
@@ -151,7 +156,8 @@ async function _runPipelineInner(
               totalFrames: estimatedTotalFrames,
               elapsedMs,
             });
-          }
+          },
+          signal
         ),
       { priority: 'user-blocking' }
     );
@@ -305,7 +311,7 @@ async function _runPipelineInner(
       });
 
       let gifEncodeFrames = 0;
-      output = (
+      output = toOwnedArrayBuffer(
         await scheduleTask(
           () =>
             encodeGif(
@@ -344,7 +350,7 @@ async function _runPipelineInner(
             ),
           { priority: 'user-visible' }
         )
-      ).buffer as ArrayBuffer;
+      );
       encodeResult = {
         frames: gifEncodeFrames,
         outputBytes: output.byteLength,
@@ -499,8 +505,9 @@ async function _runPipelineInner(
           streamingEncoder.padLastFrame(totalTail);
         }
 
-        output = (await scheduleTask(() => streamingEncoder.finish(), { priority: 'user-visible' }))
-          .buffer as ArrayBuffer;
+        output = toOwnedArrayBuffer(
+          await scheduleTask(() => streamingEncoder.finish(), { priority: 'user-visible' })
+        );
         encodeResult = {
           frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
@@ -538,7 +545,7 @@ async function _runPipelineInner(
             ),
           { priority: 'user-visible' }
         );
-        output = encoded.buffer as ArrayBuffer;
+        output = toOwnedArrayBuffer(encoded);
         encodeResult = {
           frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
@@ -572,7 +579,7 @@ async function _runPipelineInner(
             ),
           { priority: 'user-visible' }
         );
-        output = encoded.buffer as ArrayBuffer;
+        output = toOwnedArrayBuffer(encoded);
         encodeResult = {
           frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
