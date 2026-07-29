@@ -31,6 +31,7 @@
   /* ── Borders ── */
   --color-border-subtle: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
   --color-border-standard: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
+  --color-border-control: light-dark(rgba(0, 0, 0, 0.32), rgba(255, 255, 255, 0.32));
 
   /* ── Radii ── */
   --radius-button: 6px;

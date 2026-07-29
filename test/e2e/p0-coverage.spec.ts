@@ -412,6 +412,35 @@ test.describe('Trim controls (F07)', () => {
     // Trim selector should be visible after file is loaded
     const trimSelector = page.locator('[data-testid="trim-selector"]');
     await expect(trimSelector).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="dropzone"] [data-testid="input-range-editor"]')).toBeVisible();
+  });
+
+  test('trim handles support keyboard adjustment and expose dependent bounds', async ({ page }) => {
+    await injectTestFile(page, 'test-video-h264-baseline.mp4');
+
+    const startHandle = page.locator('[data-testid="trim-start-handle"]');
+    const endHandle = page.locator('[data-testid="trim-end-handle"]');
+    await startHandle.focus();
+    await page.keyboard.press('ArrowRight');
+
+    const settings = await page.evaluate(() => window.__TEST_HELPERS__?.getSettings());
+    expect(settings?.trimStart).toBeCloseTo(0.1, 1);
+    await expect(endHandle).toHaveAttribute('aria-valuemin', '0.2');
+  });
+
+  test('invalid trim text is reported without changing settings', async ({ page }) => {
+    await injectTestFile(page, 'test-video-h264-baseline.mp4');
+
+    const before = await page.evaluate(() => window.__TEST_HELPERS__?.getSettings());
+    const trimStartInput = page.locator('#trim-start-input');
+    await trimStartInput.fill('99:00');
+    await trimStartInput.evaluate((element) => element.blur());
+
+    await expect(trimStartInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('#trim-start-error')).toBeVisible();
+    const after = await page.evaluate(() => window.__TEST_HELPERS__?.getSettings());
+    expect(after?.trimStart).toBe(before?.trimStart);
+    expect(after?.trimEnd).toBe(before?.trimEnd);
   });
 
   test('trim reset button appears after trim is modified', async ({ page }) => {

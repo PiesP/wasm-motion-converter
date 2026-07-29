@@ -5,7 +5,6 @@ import FormatSelector from '@components/FormatSelector';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
 import SmartFrameSkipSelector from '@components/SmartFrameSkipSelector';
-import TrimSelector from '@components/TrimSelector';
 import Button from '@components/ui/Button';
 import Panel from '@components/ui/Panel';
 import { useLocale } from '@hooks/use-locale';
@@ -24,7 +23,6 @@ interface SettingsPanelProps {
   onFormatChange: (format: ConversionSettings['format']) => void;
   onQualityChange: (quality: ConversionSettings['quality']) => void;
   onScaleChange: (scale: ConversionSettings['scale']) => void;
-  onTrimChange: (start: number, end: number) => void;
   onSmartFrameSkipChange: (mode: ConversionSettings['smartFrameSkip']) => void;
 }
 
@@ -41,7 +39,6 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     'onFormatChange',
     'onQualityChange',
     'onScaleChange',
-    'onTrimChange',
     'onSmartFrameSkipChange',
   ]);
 
@@ -60,21 +57,6 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   return (
     <Panel class="p-4">
       <h2 class="mb-4 text-lg font-semibold text-text-primary">{t('settings.heading')}</h2>
-      <Show when={local.metadata}>
-        <div class="mb-6">
-          <h3 class="text-xs font-medium text-text-tertiary mb-2 tracking-wide">
-            {t('settings.section.inputRange')}
-          </h3>
-          <TrimSelector
-            duration={local.metadata!.duration}
-            trimStart={local.settings.trimStart}
-            trimEnd={local.settings.trimEnd}
-            disabled={local.isConversionActive}
-            onChange={local.onTrimChange}
-          />
-        </div>
-      </Show>
-
       <h3 class="text-xs font-medium text-text-tertiary mb-2 tracking-wide">
         {t('settings.section.outputSettings')}
       </h3>
