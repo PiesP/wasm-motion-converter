@@ -181,7 +181,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         <button
           type="button"
           onClick={local.onCancel}
-          class="absolute right-3 top-3 z-10 inline-flex min-w-[44px] min-h-[44px] items-center justify-center rounded-full bg-red-500/10 text-red-400 transition-colors hover:bg-red-500/20 cursor-pointer"
+          class="absolute right-3 top-3 z-10 inline-flex min-w-target-minimum min-h-target-minimum items-center justify-center rounded-full bg-status-danger/10 text-status-danger transition-colors hover:bg-status-danger/20 cursor-pointer"
           aria-label={t('dropzone.cancelConversion')}
           title={t('dropzone.cancelConversion')}
         >
@@ -397,7 +397,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 <button
                   type="button"
                   onClick={openFilePicker}
-                  class="inline-flex items-center px-4 py-3 min-h-[44px] text-sm font-medium rounded-md text-white bg-brand hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand transition-colors cursor-pointer"
+                  class="inline-flex items-center px-4 py-3 min-h-target-minimum text-sm font-medium rounded-button text-brand-foreground bg-brand hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus transition-colors cursor-pointer"
                   disabled={!isInteractive()}
                   data-testid="choose-file-button"
                 >
@@ -427,7 +427,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         </Show>
 
         <Show when={justSelected()}>
-          <div class="mt-2 text-center text-sm text-green-400">{t('dropzone.dropHere')}</div>
+          <div class="mt-2 text-center text-sm text-status-success">{t('dropzone.dropHere')}</div>
         </Show>
       </div>
     </div>

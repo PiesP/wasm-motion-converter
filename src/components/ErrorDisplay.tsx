@@ -67,7 +67,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
 
   return (
     <Panel
-      class="relative border-l-4 border-red-500/60 p-4 bg-bg-elevated rounded-lg"
+      class="relative border-l-4 border-status-danger/60 p-4 bg-bg-elevated rounded-lg"
       role="alert"
       aria-live="assertive"
       aria-atomic="true"
@@ -100,7 +100,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
-            class="h-5 w-5 text-red-500"
+            class="h-5 w-5 text-status-danger"
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden="true"
@@ -144,7 +144,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 <button
                   type="button"
                   data-testid="error-select-different-fallback-button"
-                  class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-500 cursor-pointer"
+                  class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
                   onClick={handleSelectNewFile}
                   aria-label={t('error.selectDifferent')}
                 >
@@ -156,7 +156,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
                 ref={retryButtonRef}
                 type="button"
                 data-testid="error-retry-button"
-                class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-500 cursor-pointer"
+                class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
                 onClick={handleRetry}
                 aria-label={t('error.retry')}
               >
@@ -165,7 +165,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               <button
                 type="button"
                 data-testid="error-select-different-button"
-                class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-text-secondary bg-white/[0.02] border-border-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-500 cursor-pointer"
+                class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-text-secondary bg-white/[0.02] border-border-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
                 onClick={handleSelectNewFile}
                 aria-label={t('error.selectDifferent')}
               >

@@ -18,11 +18,11 @@ interface ButtonProps {
 }
 
 const BASE_CLASS =
-  'inline-flex justify-center items-center px-4 py-2 min-h-[44px] border text-sm font-medium rounded-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-panel transition-all duration-150';
+  'inline-flex justify-center items-center px-4 py-2 min-h-target-minimum border text-sm font-medium rounded-button disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-panel transition-all duration-standard ease-standard';
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary: 'border-transparent text-white bg-brand hover:bg-brand-hover',
-  danger: 'border-transparent text-white bg-red-600/80 hover:bg-red-500',
+  primary: 'border-transparent text-brand-foreground bg-brand hover:bg-brand-hover',
+  danger: 'border-transparent text-bg-base bg-status-danger hover:bg-status-danger-hover',
   ghost: 'border-border-standard text-text-secondary bg-white/[0.02] hover:bg-white/[0.05]',
 };
 

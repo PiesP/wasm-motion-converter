@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
+import { DESIGN_ICON_CONTRACT } from '@piesp/browser-core/design';
 import type { Component, JSX } from 'solid-js';
 import { Match, Switch, splitProps } from 'solid-js';
 
@@ -43,7 +44,7 @@ const Icon: Component<IconProps> = (props) => {
   const sizeClass = () => ICON_SIZES[local.size ?? 'md'];
   const combinedClasses = () =>
     [sizeClass(), 'text-text-secondary', local.class].filter(Boolean).join(' ');
-  const ariaHidden = () => local['aria-hidden'] ?? true;
+  const ariaHidden = () => local['aria-hidden'] !== false && local['aria-hidden'] !== 'false';
 
   const ariaLabel = () => {
     const labels: Record<IconName, () => string> = {
@@ -68,66 +69,39 @@ const Icon: Component<IconProps> = (props) => {
       {...others}
       class={combinedClasses()}
       xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
+      fill={DESIGN_ICON_CONTRACT.fill}
+      viewBox={DESIGN_ICON_CONTRACT.viewBox}
       stroke="currentColor"
+      stroke-linecap={DESIGN_ICON_CONTRACT.strokeLinecap}
+      stroke-linejoin={DESIGN_ICON_CONTRACT.strokeLinejoin}
+      stroke-width={DESIGN_ICON_CONTRACT.strokeWidth}
       role="img"
       aria-label={ariaHidden() ? undefined : ariaLabel()}
       aria-hidden={ariaHidden() ? true : undefined}
     >
       <Switch>
         <Match when={local.name === 'info'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
+          <path d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </Match>
 
         <Match when={local.name === 'warning'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-          />
+          <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
         </Match>
 
         <Match when={local.name === 'error'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
+          <path d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </Match>
 
         <Match when={local.name === 'success'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
+          <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </Match>
 
         <Match when={local.name === 'download'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-          />
+          <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
         </Match>
 
         <Match when={local.name === 'upload'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-          />
+          <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
         </Match>
 
         <Match when={local.name === 'spinner'}>
@@ -147,48 +121,23 @@ const Icon: Component<IconProps> = (props) => {
         </Match>
 
         <Match when={local.name === 'check'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M5 13l4 4L19 7"
-          />
+          <path d="M5 13l4 4L19 7" />
         </Match>
 
         <Match when={local.name === 'x'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M6 18L18 6M6 6l12 12"
-          />
+          <path d="M6 18L18 6M6 6l12 12" />
         </Match>
 
         <Match when={local.name === 'chevron-down'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M19 9l-7 7-7-7"
-          />
+          <path d="M19 9l-7 7-7-7" />
         </Match>
 
         <Match when={local.name === 'moon'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
-          />
+          <path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
         </Match>
 
         <Match when={local.name === 'sun'}>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
-          />
+          <path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
         </Match>
       </Switch>
     </svg>

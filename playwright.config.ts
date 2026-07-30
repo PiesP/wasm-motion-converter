@@ -13,6 +13,7 @@ const IS_CI_PROFILE = TEST_PROFILE === 'ci';
 // The smoke fixture is generated deterministically before this profile runs.
 const CI_TEST_MATCH = [
   'e2e/accessibility.spec.ts',
+  'e2e/design-system.spec.ts',
   'e2e/i18n.spec.ts',
   'e2e/ci-conversion-smoke.spec.ts',
 ];

@@ -125,9 +125,9 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const compressionColorClass = createMemo(() => {
     const ratio = compressionRatio();
     if (ratio === null) return '';
-    if (ratio > 50) return 'text-green-400';
-    if (ratio > 0) return 'text-green-500';
-    return 'text-orange-400';
+    if (ratio > 50) return 'text-status-success';
+    if (ratio > 0) return 'text-status-success/80';
+    return 'text-status-warning';
   });
 
   const handlePreviewLoad = () => setLoaded(true);
@@ -240,7 +240,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             format: outputExtension().toUpperCase(),
             fileName: downloadFileName(),
           })}
-          class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand text-white text-sm font-medium shadow-lg hover:bg-brand-hover transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          class="inline-flex min-h-target-minimum items-center gap-2 px-4 py-2 rounded-button bg-brand text-brand-foreground text-sm font-medium shadow-lg hover:bg-brand-hover transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
           data-testid="download-result-button"
         >
           <svg

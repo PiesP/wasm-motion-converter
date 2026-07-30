@@ -233,12 +233,12 @@ test.describe('Visual: Theme', () => {
   test('follows the system color scheme', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
     await page.goto('/');
-    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-    await expect(page.locator('body')).toHaveCSS('color', 'rgb(23, 23, 23)');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(247, 248, 250)');
+    await expect(page.locator('body')).toHaveCSS('color', 'rgb(21, 24, 29)');
 
     await page.emulateMedia({ colorScheme: 'dark' });
-    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(8, 9, 10)');
-    await expect(page.locator('body')).toHaveCSS('color', 'rgb(247, 248, 248)');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(11, 14, 19)');
+    await expect(page.locator('body')).toHaveCSS('color', 'rgb(243, 246, 249)');
   });
 
   test('dark mode renders correctly', async ({ page }) => {

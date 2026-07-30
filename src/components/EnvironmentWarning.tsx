@@ -56,7 +56,7 @@ const EnvironmentWarning: Component = () => {
 
   return (
     <div
-      class="bg-bg-elevated border-l-4 border-amber-500/60 p-4"
+      class="bg-bg-elevated border-l-4 border-status-warning/60 p-4"
       role="alert"
       aria-live="polite"
       data-testid="environment-warning"
@@ -64,7 +64,7 @@ const EnvironmentWarning: Component = () => {
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
-            class="h-5 w-5 text-amber-500/60"
+            class="h-5 w-5 text-status-warning/60"
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden="true"
@@ -82,7 +82,7 @@ const EnvironmentWarning: Component = () => {
             <button
               type="button"
               onClick={handleToggleExpanded}
-              class="ml-3 text-sm text-text-secondary hover:text-text-primary underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded cursor-pointer"
+              class="ml-3 text-sm text-text-secondary hover:text-text-primary underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 rounded cursor-pointer"
               aria-expanded={isExpanded()}
               aria-label={isExpanded() ? t('env.hideDetails') : t('env.showDetails')}
             >
@@ -112,7 +112,7 @@ const EnvironmentWarning: Component = () => {
               <button
                 type="button"
                 onClick={handleTestEnvironment}
-                class="inline-flex items-center px-3 py-1.5 border border-border-standard text-sm font-medium rounded text-text-secondary bg-white/[0.02] hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 cursor-pointer"
+                class="inline-flex items-center px-3 py-1.5 border border-border-standard text-sm font-medium rounded text-text-secondary bg-white/[0.02] hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 cursor-pointer"
                 aria-label={t('env.logCapabilities')}
               >
                 {t('env.logCapabilities')}
