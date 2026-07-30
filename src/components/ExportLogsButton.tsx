@@ -11,7 +11,7 @@ type ExportLogsButtonProps = {
 };
 
 const DEFAULT_BUTTON_CLASS =
-  'p-2 rounded-lg border border-border-standard bg-white/[0.02] text-text-secondary hover:bg-white/[0.05] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 cursor-pointer';
+  'p-2 rounded-lg border border-border-standard bg-white/[0.02] text-text-secondary hover:bg-white/[0.05] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 cursor-pointer';
 const LOG_FILENAME_PREFIX = 'motion-converter-logs';
 
 const formatTimestampForFilename = (date: Date): string => {

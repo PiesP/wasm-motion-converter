@@ -8,9 +8,9 @@ import type { Component, JSX } from 'solid-js';
 import { createEffect, For, onCleanup, onMount, Show } from 'solid-js';
 
 const SEVERITY_COLORS: Record<ValidationWarning['severity'], string> = {
-  error: 'text-red-400',
-  warning: 'text-yellow-400',
-  info: 'text-blue-400',
+  error: 'text-status-danger',
+  warning: 'text-status-warning',
+  info: 'text-status-info',
 };
 
 const SEVERITY_ICONS: Record<ValidationWarning['severity'], string> = {
@@ -158,9 +158,9 @@ const ConfirmationModal: Component = () => {
                 <li
                   class="border-l-4 pl-4 py-2"
                   classList={{
-                    'border-red-500': warning.severity === 'error',
-                    'border-yellow-500': warning.severity === 'warning',
-                    'border-blue-500': warning.severity === 'info',
+                    'border-status-danger': warning.severity === 'error',
+                    'border-status-warning': warning.severity === 'warning',
+                    'border-status-info': warning.severity === 'info',
                   }}
                 >
                   <div class="flex items-start gap-2">

@@ -139,8 +139,8 @@ test.describe('SEO & Meta Tags', () => {
 
     const lightTheme = page.locator('meta[name="theme-color"][media="(prefers-color-scheme: light)"]');
     const darkTheme = page.locator('meta[name="theme-color"][media="(prefers-color-scheme: dark)"]');
-    await expect(lightTheme).toHaveAttribute('content', '#ffffff');
-    await expect(darkTheme).toHaveAttribute('content', '#0f172a');
+    await expect(lightTheme).toHaveAttribute('content', '#f7f8fa');
+    await expect(darkTheme).toHaveAttribute('content', '#0b0e13');
   });
 
   test('does not preconnect to external code CDNs', async ({ page }) => {
@@ -232,12 +232,12 @@ test.describe('System Theme', () => {
   test('follows light and dark system preferences', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
     await page.goto(DEPLOY_URL);
-    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-    await expect(page.locator('body')).toHaveCSS('color', 'rgb(23, 23, 23)');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(247, 248, 250)');
+    await expect(page.locator('body')).toHaveCSS('color', 'rgb(21, 24, 29)');
 
     await page.emulateMedia({ colorScheme: 'dark' });
-    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(8, 9, 10)');
-    await expect(page.locator('body')).toHaveCSS('color', 'rgb(247, 248, 248)');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(11, 14, 19)');
+    await expect(page.locator('body')).toHaveCSS('color', 'rgb(243, 246, 249)');
   });
 });
 

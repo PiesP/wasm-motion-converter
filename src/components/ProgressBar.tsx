@@ -34,7 +34,7 @@ const PHASE_CONFIG = [
     labelKey: 'progress.final',
     icon: '📦',
     doneIcon: '✓',
-    colorClass: 'bg-green-400',
+    colorClass: 'bg-status-success',
     phase: 'assembling' as ProgressPhase,
   },
 ] as const;
@@ -155,7 +155,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
       const isActive = idx === activeIdx;
       const marker = isPast ? '✓' : isActive ? '●' : '○';
       const markerClass = isPast
-        ? 'text-green-400'
+        ? 'text-status-success'
         : isActive
           ? 'text-brand'
           : 'text-text-tertiary';
@@ -356,7 +356,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           return (
             <span
               class={`inline-flex items-center gap-0.5 ${
-                isPast ? 'text-green-400' : isActive ? 'text-brand' : ''
+                isPast ? 'text-status-success' : isActive ? 'text-brand' : ''
               }`}
             >
               <span>{isPast ? '✓' : seg.icon}</span>

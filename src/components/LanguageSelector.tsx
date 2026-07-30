@@ -23,7 +23,7 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
       onChange={handleChange}
       class={
         props.class ??
-        'rounded-md border border-border-standard bg-white/[0.02] px-2 py-1.5 text-xs text-text-secondary focus:outline-none focus:ring-2 focus:ring-brand/50 cursor-pointer'
+        'rounded-md border border-border-standard bg-white/[0.02] px-2 py-1.5 text-xs text-text-secondary focus:outline-none focus:ring-2 focus:ring-focus/50 cursor-pointer'
       }
       aria-label={t('lang.select')}
       aria-live="polite"

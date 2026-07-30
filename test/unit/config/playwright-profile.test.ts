@@ -10,6 +10,7 @@ describe('Playwright workflow profiles', () => {
 
     expect(config).toContain("PLAYWRIGHT_TEST_PROFILE");
     expect(config).toContain("'e2e/accessibility.spec.ts'");
+    expect(config).toContain("'e2e/design-system.spec.ts'");
     expect(config).toContain("'e2e/i18n.spec.ts'");
     expect(config).toContain("'e2e/ci-conversion-smoke.spec.ts'");
     expect(config).toContain('IS_CI_PROFILE ? 0');

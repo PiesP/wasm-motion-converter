@@ -397,13 +397,13 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   };
 
   const controlClass =
-    'min-h-11 sm:min-h-9 rounded-md border border-border-control bg-bg-elevated px-3 text-xs font-medium text-text-secondary transition-colors hover:border-brand hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none';
+    'min-h-11 sm:min-h-9 rounded-md border border-border-control bg-bg-elevated px-3 text-xs font-medium transition-colors hover:border-brand hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/60 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none';
   const inputClass =
-    'mt-1 min-h-11 w-full rounded-md border border-border-control bg-bg-elevated px-3 text-right font-mono text-sm tabular-nums text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:cursor-not-allowed disabled:opacity-50';
+    'mt-1 min-h-11 w-full rounded-md border border-border-control bg-bg-elevated px-3 text-right font-mono text-sm tabular-nums text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/60 disabled:cursor-not-allowed disabled:opacity-50';
   const handleClass = (which: 'start' | 'end'): string =>
     [
       'absolute top-1/2 z-20 h-14 w-11 -translate-x-1/2 -translate-y-1/2 touch-none cursor-ew-resize rounded-md',
-      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg-panel',
+      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2 focus-visible:ring-offset-bg-panel',
       'disabled:cursor-not-allowed disabled:opacity-50',
       dragging() === which ? 'scale-105' : '',
     ]
@@ -426,7 +426,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             onClick={handleReset}
             disabled={props.disabled}
             data-testid="trim-reset-button"
-            class={controlClass}
+            class={`${controlClass} text-text-secondary`}
           >
             {t('trim.reset')}
           </button>
@@ -596,14 +596,14 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       </div>
       <Show when={startError()}>
         {(message) => (
-          <p id="trim-start-error" class="-mt-2 text-xs text-red-600" role="alert">
+          <p id="trim-start-error" class="-mt-2 text-xs text-status-danger" role="alert">
             {message()}
           </p>
         )}
       </Show>
       <Show when={endError()}>
         {(message) => (
-          <p id="trim-end-error" class="-mt-2 text-xs text-red-600" role="alert">
+          <p id="trim-end-error" class="-mt-2 text-xs text-status-danger" role="alert">
             {message()}
           </p>
         )}
@@ -624,7 +624,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
                 disabled={props.disabled}
                 aria-pressed={isPresetActive(preset)}
                 data-testid={`trim-preset-${preset.id}`}
-                class={`${controlClass} ${isPresetActive(preset) ? 'border-brand bg-brand/15 text-text-primary' : ''}`}
+                class={`${controlClass} ${isPresetActive(preset) ? 'border-brand bg-brand/15 text-text-primary' : 'text-text-secondary'}`}
               >
                 {preset.label}
               </button>
@@ -636,7 +636,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
               disabled={props.disabled}
               aria-label={t('trim.morePresets')}
               data-testid="trim-more-presets"
-              class={`${controlClass} cursor-pointer appearance-auto pe-8`}
+              class={`${controlClass} cursor-pointer appearance-auto pe-8 text-text-secondary`}
               onChange={(event) => {
                 const preset = additionalPresets().find(
                   (item) => item.id === event.currentTarget.value

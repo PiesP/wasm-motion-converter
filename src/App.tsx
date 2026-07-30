@@ -259,14 +259,14 @@ const App: Component = () => {
     <ErrorBoundary
       fallback={(error, reset) => (
         <div class="flex min-h-screen items-center justify-center bg-bg-base p-4">
-          <div class="max-w-2xl border-l-4 border-red-500/60 bg-bg-elevated p-6 rounded-lg">
+          <div class="max-w-2xl border-l-4 border-status-danger/60 bg-bg-elevated p-6 rounded-lg">
             <h2 class="mb-2 text-lg font-semibold text-text-primary">{t('app.error.title')}</h2>
             <p class="mb-4 text-sm text-text-secondary">{t('app.error.description')}</p>
             <div class="mb-4 flex gap-3">
               <button
                 type="button"
                 onClick={reset}
-                class="inline-flex items-center rounded-md bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elevated cursor-pointer"
+                class="inline-flex items-center rounded-md bg-brand px-4 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elevated cursor-pointer"
               >
                 {t('app.error.retry')}
               </button>
@@ -290,7 +290,7 @@ const App: Component = () => {
     >
       <div class="flex min-h-screen flex-col bg-bg-base transition-colors" data-testid="app">
         <a
-          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-brand focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
+          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-brand focus:px-4 focus:py-2 focus:text-brand-foreground focus:shadow-lg"
           href="#main-content"
         >
           {t('app.skipToMain')}
