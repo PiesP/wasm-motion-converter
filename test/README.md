@@ -14,8 +14,8 @@ git submodule update --init --recursive
 pnpm install
 ```
 
-Playwright requires a Chromium installation. The CI profile also requires
-FFmpeg to generate its small deterministic H.264 fixture.
+Playwright requires a Chromium installation. The CI and resource profiles also
+require FFmpeg on `PATH` to generate their deterministic H.264 fixtures.
 
 ## Test layout
 
@@ -36,7 +36,7 @@ FFmpeg to generate its small deterministic H.264 fixture.
 | `pnpm test -- path/to/file.test.ts` | Run a focused Vitest file |
 | `pnpm test:cov` | Run Vitest with coverage thresholds |
 | `pnpm test:e2e:ci` | Generate the CI fixture and run the CI Playwright profile |
-| `pnpm test:e2e:resource` | Run the opt-in Linux Chromium resource and cancellation profile |
+| `pnpm test:e2e:resource` | Generate fixtures and run the opt-in Linux Chromium resource profile (requires FFmpeg) |
 | `pnpm test:e2e` | Run the local Playwright profile |
 | `pnpm exec playwright test test/e2e/smoke.spec.ts` | Run one browser test file |
 | `pnpm mut:fast` | Run the focused mutation profile used by deep CI |

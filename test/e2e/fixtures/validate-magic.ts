@@ -66,13 +66,15 @@ export function inspectAnimatedWebp(bytes: Uint8Array): AnimatedWebpMetrics {
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const declaredEnd = view.getUint32(4, true) + 8;
-  if (declaredEnd > bytes.length) {
+  if (declaredEnd !== bytes.length) {
     return { valid: false, frameCount: 0, durationMs: 0 };
   }
 
   let offset = 12;
   let frameCount = 0;
   let durationMs = 0;
+  let hasAnimatedVp8x = false;
+  let hasAnimationControl = false;
 
   while (offset + 8 <= declaredEnd) {
     const chunkType = String.fromCharCode(
@@ -88,7 +90,20 @@ export function inspectAnimatedWebp(bytes: Uint8Array): AnimatedWebpMetrics {
       return { valid: false, frameCount, durationMs };
     }
 
-    if (chunkType === 'ANMF') {
+    if (chunkType === 'VP8X') {
+      if (offset !== 12 || chunkSize < 10 || (bytes[payloadOffset]! & 0x02) === 0) {
+        return { valid: false, frameCount, durationMs };
+      }
+      hasAnimatedVp8x = true;
+    } else if (chunkType === 'ANIM') {
+      if (!hasAnimatedVp8x || hasAnimationControl || frameCount > 0 || chunkSize < 6) {
+        return { valid: false, frameCount, durationMs };
+      }
+      hasAnimationControl = true;
+    } else if (chunkType === 'ANMF') {
+      if (!hasAnimatedVp8x || !hasAnimationControl) {
+        return { valid: false, frameCount, durationMs };
+      }
       if (chunkSize < 16) {
         return { valid: false, frameCount, durationMs };
       }
@@ -103,7 +118,11 @@ export function inspectAnimatedWebp(bytes: Uint8Array): AnimatedWebpMetrics {
     offset = chunkEnd + (chunkSize & 1);
   }
 
-  return { valid: offset === declaredEnd, frameCount, durationMs };
+  return {
+    valid: offset === declaredEnd && hasAnimatedVp8x && hasAnimationControl && frameCount > 0,
+    frameCount,
+    durationMs,
+  };
 }
 
 /**

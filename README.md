@@ -41,7 +41,7 @@ The development server runs at <http://localhost:5173>.
 | `pnpm test` | Run the Vitest suite |
 | `pnpm test:cov` | Run unit tests with coverage thresholds |
 | `pnpm test:e2e:ci` | Generate the CI fixture and run the CI Playwright profile |
-| `pnpm test:e2e:resource` | Run the opt-in Chromium CPU and memory profile on Linux |
+| `pnpm test:e2e:resource` | Generate fixtures and run the opt-in Linux Chromium resource profile (requires FFmpeg) |
 | `pnpm quality` | Run formatting, lint, type, i18n, dependency, and source checks |
 | `pnpm verify` | Run the quality gate and production CI build |
 | `pnpm verify:full` | Add coverage and browser tests to `verify` |

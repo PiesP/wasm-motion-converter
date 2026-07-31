@@ -180,6 +180,7 @@ async function runMeasuredConversion(
   }
   samples.push(await sampleResources(page, browserCdp));
   expect(state).toBe('done');
+  const elapsedMs = performance.now() - startedAt;
 
   const output = await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null);
   expect(output?.type).toBe(`image/${format}`);
@@ -191,7 +192,7 @@ async function runMeasuredConversion(
   const postGcUaMemoryMB = await measureUaMemoryMB(page);
 
   return {
-    elapsedMs: performance.now() - startedAt,
+    elapsedMs,
     cpuSeconds: samples.at(-1)!.cpuTimeSeconds - samples[0]!.cpuTimeSeconds,
     outputBytes: output!.size,
     peakJsDeltaMB: peakDelta(samples, 'jsHeapMB'),
@@ -203,6 +204,8 @@ async function runMeasuredConversion(
 }
 
 test.describe('opt-in Chromium resource profile', () => {
+  test.skip(process.platform !== 'linux', 'Chromium process PSS/RSS sampling requires Linux /proc');
+
   for (const format of ['gif', 'webp'] as const) {
     test(`${format.toUpperCase()} reaches a post-warm-up resource plateau`, async ({
       browser,
@@ -295,7 +298,9 @@ test.describe('opt-in Chromium resource profile', () => {
       await expect(stopButton).toBeVisible();
       const cancelledAt = performance.now();
       await stopButton.click();
-      await expect.poll(() => getAppState(page), { timeout: 5_000 }).toBe('idle');
+      await expect
+        .poll(() => getAppState(page), { timeout: 5_000, intervals: [25] })
+        .toBe('idle');
       const idleLatencyMs = performance.now() - cancelledAt;
       expect(idleLatencyMs).toBeLessThanOrEqual(500);
       expect(await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null)).toBeNull();

@@ -40,14 +40,20 @@ describe('E2E media validation fixtures', () => {
   });
 
   it('counts animated WebP frames and their encoded durations', () => {
-    const bytes = new Uint8Array(60);
+    const bytes = new Uint8Array(92);
     bytes.set(new TextEncoder().encode('RIFF'), 0);
     bytes.set(new TextEncoder().encode('WEBP'), 8);
     const view = new DataView(bytes.buffer);
     view.setUint32(4, bytes.length - 8, true);
 
+    bytes.set(new TextEncoder().encode('VP8X'), 12);
+    view.setUint32(16, 10, true);
+    bytes[20] = 0x02;
+    bytes.set(new TextEncoder().encode('ANIM'), 30);
+    view.setUint32(34, 6, true);
+
     for (const [index, durationMs] of [33, 34].entries()) {
-      const offset = 12 + index * 24;
+      const offset = 44 + index * 24;
       bytes.set(new TextEncoder().encode('ANMF'), offset);
       view.setUint32(offset + 4, 16, true);
       bytes[offset + 20] = durationMs;
@@ -58,10 +64,39 @@ describe('E2E media validation fixtures', () => {
       frameCount: 2,
       durationMs: 67,
     });
+
+    const missingAnimationFlag = new Uint8Array(bytes);
+    missingAnimationFlag[20] = 0;
+    expect(inspectAnimatedWebp(missingAnimationFlag).valid).toBe(false);
+
+    const missingAnimationControl = new Uint8Array(bytes);
+    missingAnimationControl.set(new TextEncoder().encode('JUNK'), 30);
+    expect(inspectAnimatedWebp(missingAnimationControl).valid).toBe(false);
+
+    const trailingBytes = new Uint8Array(bytes.length + 1);
+    trailingBytes.set(bytes);
+    expect(inspectAnimatedWebp(trailingBytes).valid).toBe(false);
   });
 
   it('rejects an animated WebP chunk that exceeds its RIFF boundary', () => {
-    const bytes = new Uint8Array(20);
+    const bytes = new Uint8Array(52);
+    bytes.set(new TextEncoder().encode('RIFF'), 0);
+    bytes.set(new TextEncoder().encode('WEBP'), 8);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(4, bytes.length - 8, true);
+    bytes.set(new TextEncoder().encode('VP8X'), 12);
+    view.setUint32(16, 10, true);
+    bytes[20] = 0x02;
+    bytes.set(new TextEncoder().encode('ANIM'), 30);
+    view.setUint32(34, 6, true);
+    bytes.set(new TextEncoder().encode('ANMF'), 44);
+    view.setUint32(48, 16, true);
+
+    expect(inspectAnimatedWebp(bytes).valid).toBe(false);
+  });
+
+  it('rejects a WebP without the extended animation structure', () => {
+    const bytes = new Uint8Array(36);
     bytes.set(new TextEncoder().encode('RIFF'), 0);
     bytes.set(new TextEncoder().encode('WEBP'), 8);
     bytes.set(new TextEncoder().encode('ANMF'), 12);
