@@ -143,7 +143,8 @@ const App: Component = () => {
     // Revoke video preview blob URL to prevent memory leak on unmount
     const url = videoPreviewUrl();
     if (url) URL.revokeObjectURL(url);
-    debouncedSaveSettings.cancel();
+    // Persist the final change even when the app unmounts inside the debounce window.
+    debouncedSaveSettings.flush();
     dismissConfirmation();
   });
 

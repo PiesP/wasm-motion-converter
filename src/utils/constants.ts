@@ -145,6 +145,9 @@ export const GIF_MAX_BUFFER_BYTES = 32 * BYTES_PER_MB;
 /** Max time before a worker task is considered stalled (30 seconds) */
 export const WORKER_TIMEOUT_MS = 30_000;
 
+/** Absolute WebP encoder worker cap to bound Canvas and in-flight frame memory. */
+export const WEBP_WORKER_MAX_COUNT = 4;
+
 /** Max time for pipeline worker conversion (5 minutes) */
 export const WORKER_PIPELINE_TIMEOUT_MS = 5 * 60 * 1000;
 

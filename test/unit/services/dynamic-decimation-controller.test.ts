@@ -39,6 +39,13 @@ describe('createDynamicDecimationController', () => {
     expect(logger.warn).toHaveBeenCalledTimes(3);
   });
 
+  it('always keeps the first frame when memory is already critical', () => {
+    const controller = createDynamicDecimationController(() => ({ usagePercentage: 90 }));
+
+    expect(controller.shouldSkip(0)).toBe(false);
+    expect(controller.shouldSkip(1)).toBe(true);
+  });
+
   it('starts sustained-pressure skipping after three warnings', () => {
     const controller = createDynamicDecimationController(() => ({ usagePercentage: 80 }));
 

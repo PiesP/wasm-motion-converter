@@ -192,13 +192,18 @@ describe('decoder-service', () => {
       expect(durations).toEqual([40]);
     });
 
-    it('uses adaptive selection instead of multiplying it by fixed decimation', async () => {
+    it('combines adaptive and preset decimation without multiplying them', async () => {
       const intensities = [
         ...Array.from({ length: 16 }, () => 0),
         ...Array.from({ length: 24 }, (_, index) => (index + 1) * 4),
       ];
 
-      expect(await decodeAdaptive(intensities, 5)).toEqual(await decodeAdaptive(intensities, 1));
+      const delivered = await decodeAdaptive(intensities, 5);
+      const gaps = delivered.slice(1).map((frame, index) => frame - delivered[index]!);
+
+      expect(delivered).toHaveLength(8);
+      expect(delivered).toContain(16); // scene change remains visible
+      expect(Math.max(...gaps)).toBeLessThanOrEqual(6);
     });
 
     it('caps adaptive decimation at the minimum output fps', async () => {

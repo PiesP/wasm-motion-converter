@@ -74,11 +74,11 @@ describe('WebpWorkerPool public API', () => {
 
     const size720p = WebpWorkerPool.getOptimalWorkerCount(1280, 720);
     const size4k = WebpWorkerPool.getOptimalWorkerCount(3840, 2160);
-    expect(size720p).toBe(7);
+    expect(size720p).toBe(4);
     expect(size4k).toBe(2);
 
     const initial = getWorkerPool(size720p);
-    expect(initial?.stats.poolSize).toBe(7);
+    expect(initial?.stats.poolSize).toBe(4);
 
     const resized = getWorkerPool(size4k);
 

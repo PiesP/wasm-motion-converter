@@ -382,7 +382,10 @@ export async function decodeFrames(
 
               prevGray = gray;
 
-              const decimation = Math.min(ADAPT_DECIMATION[motionClass], maxAdaptiveDecimation);
+              const decimation = Math.min(
+                Math.max(Math.max(1, Math.round(frameDecimation)), ADAPT_DECIMATION[motionClass]),
+                maxAdaptiveDecimation
+              );
               const shouldSkip = adaptFrameCounter % decimation !== 0 && consecutiveSkipMs < 500; // 500ms safety limit
 
               adaptFrameCounter++;

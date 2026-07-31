@@ -158,6 +158,7 @@ export async function encodeGif(
   });
 
   let globalPalette: number[][] | null = null;
+  let globalPaletteWritten = false;
   let outputTotalDelay = 0;
   let encodeIdx = 0;
   let splitFrames = 0;
@@ -184,6 +185,17 @@ export async function encodeGif(
   // we can skip re-quantization. This also avoids redundant work for split frames.
   let lastQuantizedData: Uint8Array | null = null;
   let lastIndexedData: Uint8Array | null = null;
+
+  function writeIndexedFrame(indexed: Uint8Array, delay: number): void {
+    const palette = globalPalette;
+    if (!palette) return;
+    encoder.writeFrame(indexed, w, h, {
+      ...(globalPaletteWritten ? {} : { palette }),
+      repeat: 0,
+      delay,
+    });
+    globalPaletteWritten = true;
+  }
 
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     const pal = globalPalette;
@@ -212,7 +224,7 @@ export async function encodeGif(
     // internally to centiseconds via Math.round(delay/10).
     // Do NOT pre-convert to cs — that would double-divide by 10.
     if (delayMs <= GIF_MAX_FRAME_DELAY_CS * 10) {
-      encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: delayMs });
+      writeIndexedFrame(indexedBuffer, delayMs);
       outputTotalDelay += Math.round(delayMs / 10);
       return;
     }
@@ -221,7 +233,7 @@ export async function encodeGif(
     let remainingMs = delayMs;
     while (remainingMs > 0) {
       const chunk = Math.min(remainingMs, GIF_MAX_FRAME_DELAY_CS * 10);
-      encoder.writeFrame(indexedBuffer, w, h, { palette: pal, repeat: 0, delay: chunk });
+      writeIndexedFrame(indexedBuffer, chunk);
       outputTotalDelay += Math.round(chunk / 10);
       remainingMs -= chunk;
       if (remainingMs > 0) splitFrames++;
@@ -360,11 +372,7 @@ export async function encodeGif(
           break;
         }
         const delay = Math.min(remainingTailMs, GIF_MAX_FRAME_DELAY_CS * 10);
-        encoder.writeFrame(lastIndexedData, w, h, {
-          palette: globalPalette,
-          repeat: 0,
-          delay,
-        });
+        writeIndexedFrame(lastIndexedData, delay);
         outputTotalDelay += Math.round(delay / 10);
         remainingTailMs -= delay;
         if (remainingTailMs > 0) splitFrames++;
