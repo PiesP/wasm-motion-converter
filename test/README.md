@@ -14,8 +14,8 @@ git submodule update --init --recursive
 pnpm install
 ```
 
-Playwright requires a Chromium installation. The CI profile also requires
-FFmpeg to generate its small deterministic H.264 fixture.
+Playwright requires a Chromium installation. The CI and resource profiles also
+require FFmpeg on `PATH` to generate their deterministic H.264 fixtures.
 
 ## Test layout
 
@@ -36,6 +36,7 @@ FFmpeg to generate its small deterministic H.264 fixture.
 | `pnpm test -- path/to/file.test.ts` | Run a focused Vitest file |
 | `pnpm test:cov` | Run Vitest with coverage thresholds |
 | `pnpm test:e2e:ci` | Generate the CI fixture and run the CI Playwright profile |
+| `pnpm test:e2e:resource` | Generate fixtures and run the opt-in Linux Chromium resource profile (requires FFmpeg) |
 | `pnpm test:e2e` | Run the local Playwright profile |
 | `pnpm exec playwright test test/e2e/smoke.spec.ts` | Run one browser test file |
 | `pnpm mut:fast` | Run the focused mutation profile used by deep CI |
@@ -44,6 +45,15 @@ FFmpeg to generate its small deterministic H.264 fixture.
 The Playwright configuration starts a local Vite server unless
 `SKIP_WEB_SERVER` is set. Use `PLAYWRIGHT_TEST_PROFILE=ci` or `deploy` only when
 you need the corresponding restricted profile.
+
+The resource profile is intentionally separate from the regular and CI suites
+because process memory varies by host. On Linux it samples Chromium process PSS,
+RSS, and CPU time through CDP and `/proc`, alongside page JS heap and the optional
+user-agent-specific memory API. It does not pass the deterministic
+`--disable-gpu` setting used by regular tests; the actual hardware or software
+GPU remains environment-dependent, and GPU VRAM is not measured. The profile
+warms each encoder before five same-page conversions and also measures
+cancellation latency and recovery.
 
 ## Media fixtures
 

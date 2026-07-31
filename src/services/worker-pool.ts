@@ -447,8 +447,10 @@ export class WebpWorkerPool {
 let singletonPool: WebpWorkerPool | null = null;
 
 /**
- * Get the shared worker pool instance.
- * Creates it on first access. Returns null if Worker is unsupported.
+ * Get the shared worker pool instance for the active conversion.
+ * Creates it on first access. Returns null if Worker is unsupported. The
+ * conversion pipeline disposes it at its cleanup boundary so native Canvas and
+ * encoder resources cannot accumulate across conversions.
  */
 export function getWorkerPool(size?: number): WebpWorkerPool | null {
   if (!WebpWorkerPool.isSupported()) {
@@ -466,4 +468,10 @@ export function getWorkerPool(size?: number): WebpWorkerPool | null {
     singletonPool = new WebpWorkerPool(size);
   }
   return singletonPool;
+}
+
+/** Release persistent worker, OffscreenCanvas, and native encoder resources. */
+export function disposeWorkerPool(): void {
+  singletonPool?.terminate();
+  singletonPool = null;
 }

@@ -9,6 +9,7 @@ const DEV_SERVER_URL = `http://127.0.0.1:${DEV_SERVER_PORT}`;
 const TEST_PROFILE = process.env.PLAYWRIGHT_TEST_PROFILE ?? 'local';
 const IS_DEPLOY_PROFILE = TEST_PROFILE === 'deploy';
 const IS_CI_PROFILE = TEST_PROFILE === 'ci';
+const IS_RESOURCE_PROFILE = TEST_PROFILE === 'resource';
 // Fresh CI checkouts intentionally exclude the large, local-only codec matrix.
 // The smoke fixture is generated deterministically before this profile runs.
 const CI_TEST_MATCH = [
@@ -16,6 +17,7 @@ const CI_TEST_MATCH = [
   'e2e/design-system.spec.ts',
   'e2e/i18n.spec.ts',
   'e2e/ci-conversion-smoke.spec.ts',
+  'e2e/adaptive-resource-safety.spec.ts',
 ];
 const LOCAL_TEST_IGNORE = [
   'e2e/fixtures/**',
@@ -24,6 +26,7 @@ const LOCAL_TEST_IGNORE = [
   'e2e/debug/**',
   'e2e/deploy-smoke.spec.ts',
   'e2e/dogfood-qa.spec.ts',
+  'e2e/resource-profile.spec.ts',
 ];
 
 export default defineConfig({
@@ -32,8 +35,10 @@ export default defineConfig({
     ? ['e2e/deploy-smoke.spec.ts', 'e2e/dogfood-qa.spec.ts']
     : IS_CI_PROFILE
       ? CI_TEST_MATCH
-      : ['e2e/*.spec.ts'],
-  testIgnore: IS_DEPLOY_PROFILE ? [] : LOCAL_TEST_IGNORE,
+      : IS_RESOURCE_PROFILE
+        ? ['e2e/resource-profile.spec.ts']
+        : ['e2e/*.spec.ts'],
+  testIgnore: IS_DEPLOY_PROFILE || IS_RESOURCE_PROFILE ? [] : LOCAL_TEST_IGNORE,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: IS_CI_PROFILE ? 0 : process.env.CI ? 2 : 0,
@@ -67,7 +72,7 @@ export default defineConfig({
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-gpu',
+            ...(IS_RESOURCE_PROFILE ? ['--enable-precise-memory-info'] : ['--disable-gpu']),
             // Expose SharedArrayBuffer for the cross-origin-isolated app.
             '--enable-features=SharedArrayBuffer',
           ],

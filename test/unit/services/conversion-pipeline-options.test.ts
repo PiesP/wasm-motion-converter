@@ -39,6 +39,7 @@ vi.mock('@services/offscreen-webp-encoder', () => ({
   encodeWebpOffscreen: mocks.encodeWebpOffscreen,
 }));
 vi.mock('@services/worker-pool', () => ({
+  disposeWorkerPool: vi.fn(),
   getWorkerPool: () => null,
   WebpWorkerPool: { getOptimalWorkerCount: () => 1 },
 }));

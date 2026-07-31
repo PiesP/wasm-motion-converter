@@ -51,6 +51,7 @@ export interface TestHelpers {
   isMemoryWarningVisible(): boolean;
   getVisibleStatusText(): string | null;
   getVisibleResultStats(): { originalSize: string; outputSize: string; format: string; quality: string; scale: string } | null;
+  getResultBlob(): { size: number; type: string } | null;
   waitFor(condition: () => boolean, options?: { timeoutMs?: number }): Promise<void>;
 }
 
@@ -195,6 +196,13 @@ export async function setQuality(page: Page, quality: 'low' | 'medium' | 'high')
 export async function setScale(page: Page, scale: '50%' | '75%' | '100%'): Promise<void> {
   const scaleValue = scale === '50%' ? '0.5' : scale === '75%' ? '0.75' : '1';
   await page.click(`label:has(input[value="${scaleValue}"])`);
+}
+
+export async function setSmartFrameSkip(
+  page: Page,
+  mode: 'off' | 'low' | 'medium' | 'high' | 'adaptive',
+): Promise<void> {
+  await page.locator(`[data-testid="option-smart-frame-skip-${mode}"]`).click();
 }
 
 // ── Actions ────────────────────────────────────────────────────
