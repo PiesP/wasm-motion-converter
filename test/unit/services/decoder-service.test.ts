@@ -234,6 +234,72 @@ describe('decoder-service', () => {
       ]);
     });
 
+    it('falls back to preset decimation when batch mode cannot run adaptive analysis', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const chunks = Array.from(
+        { length: 16 },
+        (_, index) => ({ intensity: index, timestamp: index * 1_000 }) as EncodedVideoChunk
+      );
+
+      const result = await decodeFrames(
+        {
+          chunks,
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 1,
+          framerate: 120,
+          sourceTotalMs: chunks.length * 16.667,
+          totalFrames: chunks.length,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'batch',
+          frameDecimation: 8,
+          smartFrameSkip: 'adaptive',
+        }
+      );
+
+      expect(result.frames).toHaveLength(2);
+      expect(result.skippedByDecimation).toBe(14);
+      expect(result.smartSkipped).toBe(0);
+      for (const frame of result.frames) globalBufferPool.release(frame.data);
+    });
+
+    it('falls back to preset decimation when GPU streaming cannot run adaptive analysis', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const chunks = Array.from(
+        { length: 16 },
+        (_, index) => ({ intensity: index, timestamp: index * 1_000 }) as EncodedVideoChunk
+      );
+      const delivered: number[] = [];
+
+      const result = await decodeFrames(
+        {
+          chunks,
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 1,
+          framerate: 120,
+          sourceTotalMs: chunks.length * 16.667,
+          totalFrames: chunks.length,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          frameDecimation: 8,
+          smartFrameSkip: 'adaptive',
+          onVideoFrameAvailable: (frame, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            frame.close();
+          },
+        }
+      );
+
+      expect(delivered).toEqual([0, 8]);
+      expect(result.skippedByDecimation).toBe(14);
+      expect(result.smartSkipped).toBe(0);
+    });
+
     it('caps adaptive decimation at the minimum output fps', async () => {
       const delivered = await decodeAdaptive(Array.from({ length: 40 }, () => 0), 1, 15);
 

@@ -212,6 +212,8 @@ export async function decodeFrames(
     Number.isFinite(frameDecimation) && frameDecimation > 0
       ? Math.max(1, Math.round(frameDecimation))
       : 1;
+  const canRunAdaptiveAnalysis =
+    isAdaptive && streaming && typeof onVideoFrameAvailable !== 'function';
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
   let adaptLastMotionClass: 'static' | 'slow' | 'normal' | 'fast' = 'normal';
 
@@ -254,7 +256,11 @@ export async function decodeFrames(
         const frameNum = inputFrameCount++;
 
         // Frame decimation: skip every Nth frame
-        if (!isAdaptive && frameDecimation > 1 && frameNum % frameDecimation !== 0) {
+        if (
+          !canRunAdaptiveAnalysis &&
+          requestedDecimation > 1 &&
+          frameNum % requestedDecimation !== 0
+        ) {
           accumulatedDuration += frameDuration;
           frame.close();
           skippedByDecimation++;
@@ -355,7 +361,7 @@ export async function decodeFrames(
             // (initially 'normal') because prevGray is null until at least two frames
             // have been processed. This initial misclassification is expected and has
             // negligible impact — only one frame's decimation is affected.
-            if (streaming && isAdaptive && gray !== null) {
+            if (canRunAdaptiveAnalysis && gray !== null) {
               let motionClass: 'static' | 'slow' | 'normal' | 'fast' = adaptLastMotionClass;
 
               if (frameDistance !== null && noiseFloorSamples.length >= NOISE_SAMPLE_COUNT) {
