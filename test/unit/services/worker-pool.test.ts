@@ -17,7 +17,7 @@ class FakeWorker {
 
 vi.stubGlobal('Worker', FakeWorker);
 
-import { getWorkerPool, WebpWorkerPool } from '@services/worker-pool';
+import { disposeWorkerPool, getWorkerPool, WebpWorkerPool } from '@services/worker-pool';
 import { globalBufferPool } from '@services/buffer-pool';
 
 beforeEach(() => {
@@ -26,6 +26,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  disposeWorkerPool();
   vi.restoreAllMocks();
 });
 
@@ -86,5 +87,20 @@ describe('WebpWorkerPool public API', () => {
     expect(resized?.stats.poolSize).toBe(2);
     expect(resized).not.toBe(initial);
     resized?.terminate();
+  });
+
+  it('disposes the singleton workers before the next conversion', () => {
+    vi.stubGlobal('OffscreenCanvas', class {});
+    vi.stubGlobal('createImageBitmap', vi.fn());
+
+    const initial = getWorkerPool(2);
+    expect(initial?.stats.poolSize).toBe(2);
+
+    disposeWorkerPool();
+
+    expect(initial?.stats.poolSize).toBe(0);
+    const replacement = getWorkerPool(2);
+    expect(replacement).not.toBe(initial);
+    expect(replacement?.stats.poolSize).toBe(2);
   });
 });

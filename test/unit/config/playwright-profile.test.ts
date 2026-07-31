@@ -13,10 +13,25 @@ describe('Playwright workflow profiles', () => {
     expect(config).toContain("'e2e/design-system.spec.ts'");
     expect(config).toContain("'e2e/i18n.spec.ts'");
     expect(config).toContain("'e2e/ci-conversion-smoke.spec.ts'");
+    expect(config).toContain("'e2e/adaptive-resource-safety.spec.ts'");
     expect(config).toContain('IS_CI_PROFILE ? 0');
     expect(config).toContain('--strictPort');
     expect(config).toContain("e2e/deploy-smoke.spec.ts");
     expect(config).toContain("e2e/dogfood-qa.spec.ts");
+  });
+
+  it('keeps the host-dependent resource profile opt-in', () => {
+    const config = readFileSync(resolve(root, 'playwright.config.ts'), 'utf8');
+    const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(config).toContain("TEST_PROFILE === 'resource'");
+    expect(config).toContain("'e2e/resource-profile.spec.ts'");
+    expect(packageJson.scripts?.['test:e2e:resource']).toContain(
+      'PLAYWRIGHT_TEST_PROFILE=resource',
+    );
+    expect(packageJson.scripts?.['pretest:e2e:resource']).toBe('pnpm prepare:e2e:fixture');
   });
 
   it('runs the explicit CI profile from the Actions workflow', () => {

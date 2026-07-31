@@ -49,7 +49,7 @@ import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
 import { encodeWebp } from './webp-encoder-service';
-import { getWorkerPool, WebpWorkerPool } from './worker-pool';
+import { disposeWorkerPool, getWorkerPool, WebpWorkerPool } from './worker-pool';
 
 /** Device/environment check — isolated to this module-level constant */
 const isDev = import.meta.env.DEV;
@@ -666,5 +666,6 @@ async function _runPipelineInner(
     throttled.cleanup();
     globalBufferPool.clear();
     clearCanvasCache();
+    disposeWorkerPool();
   }
 }
