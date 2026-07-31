@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { calcAutoDecimation } from '@services/encoder-common';
+import {
+  calcAutoDecimation,
+  calcMemoryPressureDecimation,
+} from '@services/encoder-common';
 import { MIN_OUTPUT_FPS } from '@utils/constants';
 
 describe('calcAutoDecimation', () => {
@@ -93,8 +96,16 @@ describe('calcAutoDecimation', () => {
     expect(calcAutoDecimation(60, 5, 1)).toBe(1);
   });
 
-  it('returns forceDecimation for edge case 0 (keep all frames)', () => {
-    expect(calcAutoDecimation(60, 5, 0)).toBe(0);
+  it('ignores an invalid zero forceDecimation and uses the automatic preset', () => {
+    expect(calcAutoDecimation(60, 5, 0)).toBe(12);
+  });
+
+  it('rounds a positive fractional forceDecimation to a valid integer', () => {
+    expect(calcAutoDecimation(60, 5, 2.6)).toBe(3);
+  });
+
+  it('ignores a non-finite forceDecimation', () => {
+    expect(calcAutoDecimation(60, 5, Number.POSITIVE_INFINITY)).toBe(12);
   });
 
   // ── Scale independence ─────────────────────────────────────
@@ -125,5 +136,19 @@ describe('calcAutoDecimation', () => {
   it('always returns at least 1', () => {
     expect(calcAutoDecimation(10, 60)).toBe(1);
     expect(calcAutoDecimation(1, 30)).toBe(1);
+  });
+});
+
+describe('calcMemoryPressureDecimation', () => {
+  it('never keeps more frames than the selected quality preset', () => {
+    expect(calcMemoryPressureDecimation(60, 8)).toBe(8);
+  });
+
+  it('reduces a smooth preset to at most 15fps under critical pressure', () => {
+    expect(calcMemoryPressureDecimation(60, 30)).toBe(4);
+  });
+
+  it('does not push low-fps input below the minimum output fps', () => {
+    expect(calcMemoryPressureDecimation(10, 30)).toBe(1);
   });
 });

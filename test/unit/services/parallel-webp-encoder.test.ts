@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   pending: new Map<number, (result: EncodeTaskResult) => void>(),
+  tasks: new Map<number, EncodeTask>(),
 }));
 
 vi.mock('@services/worker-pool', () => ({
@@ -13,6 +14,7 @@ vi.mock('@services/worker-pool', () => ({
     activeWorkers: 2,
     encode: (task: EncodeTask) =>
       new Promise<EncodeTaskResult>((resolve) => {
+        mocks.tasks.set(task.id, task);
         mocks.pending.set(task.id, resolve);
       }),
     stats: { active: 0, idle: 2, poolSize: 2, queued: 0 },
@@ -44,12 +46,15 @@ function readFrameDurations(output: Uint8Array): number[] {
 describe('createStreamingWebpEncoder tail timing', () => {
   beforeEach(() => {
     mocks.pending.clear();
+    mocks.tasks.clear();
   });
 
   it('applies deferred tail duration to the final frame after in-flight work settles', async () => {
     const encoder = createStreamingWebpEncoder(16, 16, 'medium', 2);
     await encoder.submit(new Uint8Array(16), 100);
     await encoder.submit(new Uint8Array(16), 200);
+
+    expect(mocks.tasks.get(0)?.quality).toBe(0.75);
 
     encoder.padLastFrame(75);
     mocks.pending.get(1)?.({ id: 1, bitstream: new Uint8Array(8) });

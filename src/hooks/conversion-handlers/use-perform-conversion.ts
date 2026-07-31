@@ -4,6 +4,7 @@
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
 import { arrayBufferToHex } from '@services/conversion-worker/protocol';
+import { calcMemoryPressureDecimation } from '@services/encoder-common';
 import { validateOutput } from '@services/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
@@ -41,6 +42,7 @@ import type {
 } from '@t/conversion-types';
 import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
+import { GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
 import { focusElement, focusRetryButton, getStartViewTransition } from '@utils/dom-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
@@ -258,7 +260,11 @@ function runMemoryCheck(settings: ConversionSettings): number | undefined {
     });
     if (memCheck.level === 'critical') {
       const srcFps = md.framerate ?? 30;
-      forcedDecimation = Math.max(2, Math.round(srcFps / 15));
+      const targetFps =
+        settings.format === 'gif'
+          ? GIF_TARGET_FPS[settings.quality]
+          : WEBP_TARGET_FPS[settings.quality];
+      forcedDecimation = calcMemoryPressureDecimation(srcFps, targetFps);
       logger.warn('conversion', 'Forcing frame decimation due to memory pressure', {
         forcedDecimation,
         estimatedMB: memCheck.estimatedMB,

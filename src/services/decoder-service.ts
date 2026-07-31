@@ -18,6 +18,7 @@
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { LruMap } from '@piesp/browser-core/util';
 import type { SmartFrameSkipMode } from '@t/conversion-types';
+import { DEFAULT_FPS, FPS_CLAMP_MAX, MIN_OUTPUT_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import type { DemuxResult } from './demuxer-service';
@@ -169,6 +170,11 @@ export async function decodeFrames(
 
   // ── Smart frame skip state (continued) ──
   const isAdaptive = skipThreshold === -2;
+  const sourceFps =
+    Number.isFinite(demux.framerate) && demux.framerate > 0
+      ? Math.min(demux.framerate, FPS_CLAMP_MAX)
+      : DEFAULT_FPS;
+  const fallbackFrameDurationMs = 1000 / sourceFps;
   let prevGray: Uint8Array | null = null;
   let consecutiveSkipMs = 0; // accumulated duration of skipped frames
 
@@ -201,6 +207,7 @@ export async function decodeFrames(
     normal: 2, // keep every 2nd frame (≈30fps from 60fps)
     fast: 1, // keep every frame
   };
+  const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
   let adaptLastMotionClass: 'static' | 'slow' | 'normal' | 'fast' = 'normal';
 
   // Check codec support (cached per codec+hw combo)
@@ -233,7 +240,8 @@ export async function decodeFrames(
         }
         const { durationMs: frameDuration, ctx: nextFrameCtx } = getFrameDurationMs(
           frame,
-          frameCtx
+          frameCtx,
+          fallbackFrameDurationMs
         );
         // Mutable update — avoid Object.assign spread allocation per frame
         frameCtx.durationCarryUs = nextFrameCtx.durationCarryUs;
@@ -241,7 +249,7 @@ export async function decodeFrames(
         const frameNum = inputFrameCount++;
 
         // Frame decimation: skip every Nth frame
-        if (frameDecimation > 1 && frameNum % frameDecimation !== 0) {
+        if (!isAdaptive && frameDecimation > 1 && frameNum % frameDecimation !== 0) {
           accumulatedDuration += frameDuration;
           frame.close();
           skippedByDecimation++;
@@ -374,7 +382,7 @@ export async function decodeFrames(
 
               prevGray = gray;
 
-              const decimation = ADAPT_DECIMATION[motionClass];
+              const decimation = Math.min(ADAPT_DECIMATION[motionClass], maxAdaptiveDecimation);
               const shouldSkip = adaptFrameCounter % decimation !== 0 && consecutiveSkipMs < 500; // 500ms safety limit
 
               adaptFrameCounter++;

@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  encodeRGBReuse: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
   padLastFrameDuration: vi.fn(),
 }));
 
@@ -41,7 +42,7 @@ vi.mock('@services/streaming-webp-encoder', () => ({
   },
 }));
 vi.mock('@services/wasm-webp-singleton', () => ({
-  encodeRGBReuse: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
+  encodeRGBReuse: mocks.encodeRGBReuse,
 }));
 
 import { encodeWebp } from '@services/webp-encoder-service';
@@ -61,5 +62,6 @@ describe('encodeWebp timing', () => {
     );
 
     expect(mocks.padLastFrameDuration).toHaveBeenCalledWith(75);
+    expect(mocks.encodeRGBReuse).toHaveBeenCalledWith(expect.any(Uint8Array), 1, 1, 75);
   });
 });

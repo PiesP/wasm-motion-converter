@@ -26,13 +26,16 @@ describe('createDynamicDecimationController', () => {
     expect(controller.getSkipCount()).toBe(0);
   });
 
-  it('skips every other checked frame under critical pressure', () => {
+  it('samples every five frames and then skips every other frame under critical pressure', () => {
     const controller = createDynamicDecimationController(() => ({ usagePercentage: 90 }));
 
     expect(controller.shouldSkip(5)).toBe(true);
+    expect(controller.shouldSkip(6)).toBe(false);
+    expect(controller.shouldSkip(7)).toBe(true);
+    expect(controller.shouldSkip(8)).toBe(false);
+    expect(controller.shouldSkip(9)).toBe(true);
     expect(controller.shouldSkip(10)).toBe(false);
-    expect(controller.shouldSkip(15)).toBe(true);
-    expect(controller.getSkipCount()).toBe(2);
+    expect(controller.getSkipCount()).toBe(3);
     expect(logger.warn).toHaveBeenCalledTimes(3);
   });
 
@@ -40,12 +43,14 @@ describe('createDynamicDecimationController', () => {
     const controller = createDynamicDecimationController(() => ({ usagePercentage: 80 }));
 
     expect(controller.shouldSkip(5)).toBe(false);
+    expect(controller.shouldSkip(6)).toBe(false);
     expect(controller.shouldSkip(10)).toBe(false);
     expect(controller.shouldSkip(15)).toBe(true);
-    expect(controller.shouldSkip(20)).toBe(false);
-    expect(controller.shouldSkip(25)).toBe(false);
-    expect(controller.getSkipCount()).toBe(1);
-    expect(logger.info).toHaveBeenCalledTimes(3);
+    expect(controller.shouldSkip(16)).toBe(false);
+    expect(controller.shouldSkip(17)).toBe(false);
+    expect(controller.shouldSkip(18)).toBe(true);
+    expect(controller.getSkipCount()).toBe(2);
+    expect(logger.info).toHaveBeenCalledTimes(2);
   });
 
   it('resets warning streak when memory becomes unavailable or safe', () => {
