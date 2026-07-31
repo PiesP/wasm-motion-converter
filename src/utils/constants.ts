@@ -93,10 +93,27 @@ export const WEBP_TARGET_FPS: Record<ConversionQuality, number> = {
   high: 30,
 };
 
+/**
+ * Canonical lossy WebP quality on libwebp's 0-100 scale.
+ * Browser Canvas encoders receive the same values normalized to 0-1.
+ */
+export const WEBP_QUALITY_PERCENT: Readonly<Record<ConversionQuality, number>> = {
+  low: 60,
+  medium: 75,
+  high: 85,
+};
+
+export function getCanvasWebpQuality(quality: ConversionQuality): number {
+  return WEBP_QUALITY_PERCENT[quality] / 100;
+}
+
 /** Minimum output FPS guard — ensures output never drops below this.
  *  Applied after decimation calculation to prevent excessively choppy output
  *  even with low quality + high source FPS combinations. */
 export const MIN_OUTPUT_FPS = 3;
+
+/** Target FPS used only when the pre-conversion memory check is critical. */
+export const MEMORY_PRESSURE_TARGET_FPS = 15;
 
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */
 export const GIF_MAX_FRAME_DELAY_CS = 200;
@@ -127,6 +144,9 @@ export const GIF_MAX_BUFFER_BYTES = 32 * BYTES_PER_MB;
 
 /** Max time before a worker task is considered stalled (30 seconds) */
 export const WORKER_TIMEOUT_MS = 30_000;
+
+/** Absolute WebP encoder worker cap to bound Canvas and in-flight frame memory. */
+export const WEBP_WORKER_MAX_COUNT = 4;
 
 /** Max time for pipeline worker conversion (5 minutes) */
 export const WORKER_PIPELINE_TIMEOUT_MS = 5 * 60 * 1000;

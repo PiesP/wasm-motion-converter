@@ -18,7 +18,7 @@
  */
 
 import type { ProgressCallback } from '@t/conversion-types';
-import { VP8_FOURCC } from '@utils/constants';
+import { getCanvasWebpQuality } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
@@ -28,19 +28,7 @@ import type { BaseEncoderOptions } from './encoder-common';
 import { convertRGBToRGBA } from './frame-utils';
 import { withPooledBuffer } from './pooled-buffer';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
-
-/**
- * OffscreenCanvas quality parameter (0.0–1.0 float).
- * Maps ConversionQuality to browser WebP encoder quality:
- *   low    → 0.6  (visually transparent, smaller files)
- *   medium → 0.75 (near-identical to source for animated content)
- *   high   → 0.85 (excellent quality, diminishing returns above 0.85)
- */
-const OFFSCREEN_QUALITY_MAP: Record<BaseEncoderOptions['quality'], number> = {
-  low: 0.6,
-  medium: 0.75,
-  high: 0.85,
-};
+import { extractAndNormalizeCanvasVp8 } from './webp-bitstream';
 
 /**
  * Check if OffscreenCanvas is available in the current context.
@@ -68,104 +56,6 @@ function isOffscreenCanvasAvailable(): boolean {
  * size prefix before the VP8 keyframe tag (0x9d 0x01 0x2a). This is
  * stripped to produce a clean VP8 bitstream for the animated WebP muxer.
  */
-function extractVP8FromOffscreenBlob(webpBuffer: Uint8Array): Uint8Array {
-  if (webpBuffer.length < 24) {
-    throw new Error(`WebP too small: ${webpBuffer.length} bytes (minimum 24)`);
-  }
-
-  const view = new DataView(webpBuffer.buffer, webpBuffer.byteOffset, webpBuffer.byteLength);
-
-  // Verify RIFF header
-  if (view.getUint32(0, false) !== StreamingWebpMuxer.RIFF_MAGIC) {
-    throw new Error(`Invalid RIFF header: 0x${view.getUint32(0, false).toString(16)}`);
-  }
-
-  // Verify WEBP type
-  if (view.getUint32(8, false) !== StreamingWebpMuxer.WEBP_MAGIC) {
-    throw new Error(`Invalid WEBP type: 0x${view.getUint32(8, false).toString(16)}`);
-  }
-
-  let vp8Data: Uint8Array;
-
-  // Determine format: simple VP8 (VP8_FOURCC) or extended VP8X (0x56503858)
-  const fourCC = view.getUint32(12, false);
-
-  if (fourCC === VP8_FOURCC) {
-    // Simple VP8 format — bitstream starts at offset 20
-    const frameSize = view.getUint32(16, true);
-    if (20 + frameSize > webpBuffer.length) {
-      throw new Error(`Frame size ${frameSize} exceeds buffer ${webpBuffer.length}`);
-    }
-    vp8Data = webpBuffer.subarray(20, 20 + frameSize);
-  } else if (fourCC === 0x56503858) {
-    // VP8X extended format — scan chunks to find VP8
-    const vp8xSize = view.getUint32(16, true);
-    let offset = 12 + 8 + vp8xSize; // skip past VP8X chunk (header 8 + data)
-
-    while (offset + 8 <= webpBuffer.length) {
-      const chunkFourCC = view.getUint32(offset, false);
-      const chunkSize = view.getUint32(offset + 4, true);
-
-      if (chunkFourCC === VP8_FOURCC) {
-        // Found VP8 chunk
-        if (offset + 8 + chunkSize > webpBuffer.length) {
-          throw new Error(`VP8 chunk size ${chunkSize} exceeds buffer ${webpBuffer.length}`);
-        }
-        vp8Data = webpBuffer.subarray(offset + 8, offset + 8 + chunkSize);
-        break;
-      }
-
-      // Advance to next chunk (with padding for odd sizes)
-      offset += 8 + chunkSize + (chunkSize % 2);
-    }
-
-    if (!vp8Data!) {
-      throw new Error('VP8X container does not contain a VP8 chunk');
-    }
-  } else {
-    // Unknown format
-    const codecStr = String.fromCharCode(
-      webpBuffer[12]!,
-      webpBuffer[13]!,
-      webpBuffer[14]!,
-      webpBuffer[15]!
-    );
-    throw new Error(`Unknown WebP format: "${codecStr}" (0x${fourCC.toString(16)})`);
-  }
-
-  // Find the VP8 keyframe tag (0x9d 0x01 0x2a) to locate the keyframe byte.
-  // Chromium's VP8 bitstream has a 3-byte header before the frame tag.
-  // DO NOT strip these 3 bytes — they are part of the valid VP8 bitstream
-  // that libwebp's decoder expects (verified with dwebp).
-  let tagOffset = -1;
-  for (let i = 0; i < Math.min(vp8Data.length - 2, 16); i++) {
-    if (vp8Data[i] === 0x9d && vp8Data[i + 1] === 0x01 && vp8Data[i + 2] === 0x2a) {
-      tagOffset = i;
-      break;
-    }
-  }
-
-  if (tagOffset < 0) {
-    // Fallback: return as-is if frame tag not found (shouldn't happen)
-    return vp8Data;
-  }
-
-  // Create a mutable copy of ALL VP8 data (including the 3-byte header
-  // that must be preserved for libwebp compatibility).
-  // Then patch the keyframe byte at (tagOffset + 3):
-  //   - show_frame=0 (invisible) at bit 3 → set to 1 for WebP ANMF
-  //   - version=2 at bits 6-4 → clear to 0 per RFC 6386
-  // Patch: (byte & 0x8f) | 0x08  (e.g. 0x80 → 0x88, 0xa0 → 0x88)
-  const frame = new Uint8Array(vp8Data);
-  const keyIdx = tagOffset + 3;
-  const keyByte = frame[keyIdx];
-  if (keyByte !== undefined) {
-    frame[keyIdx] = (keyByte & 0x8f) | 0x08; // clear version bits 6-4, set show_frame bit 3
-  }
-
-  return frame;
-}
-
 /**
  * Encode demuxed video frames to animated WebP using OffscreenCanvas.
  *
@@ -188,7 +78,7 @@ export async function encodeWebpOffscreen(
   const srcH = opts.height;
   const w = Math.max(1, Math.floor(srcW * opts.scale));
   const h = Math.max(1, Math.floor(srcH * opts.scale));
-  const quality = OFFSCREEN_QUALITY_MAP[opts.quality];
+  const quality = getCanvasWebpQuality(opts.quality);
   const frameDecimation = opts.frameDecimation ?? 1;
 
   if (!isOffscreenCanvasAvailable()) {
@@ -315,7 +205,7 @@ export async function encodeWebpOffscreen(
           // Extract VP8 bitstream from the single-frame WebP.
           // Always use the full parser — convertToBlob may produce VP8X
           // format for any frame, not just the first.
-          const bitstream = extractVP8FromOffscreenBlob(webpBuffer);
+          const bitstream = extractAndNormalizeCanvasVp8(webpBuffer);
 
           muxer.addFrame(bitstream, totalDuration);
           encodeIdx++;

@@ -69,6 +69,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
 
       <QualitySelector
         disabled={local.isConversionActive}
+        format={local.settings.format}
         onChange={local.onQualityChange}
         tooltip={t('settings.tooltip.quality')}
         value={local.settings.quality}

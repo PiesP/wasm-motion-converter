@@ -21,17 +21,12 @@
  */
 
 import type { ProgressCallback } from '@t/conversion-types';
+import { getCanvasWebpQuality } from '@utils/constants';
 import { logger } from '@utils/logger';
 import type { BaseEncoderOptions } from './encoder-common';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
 import type { EncodeTask, EncodeTaskResult } from './worker-pool';
 import { getWorkerPool, WebpWorkerPool } from './worker-pool';
-
-const WORKER_QUALITY_MAP: Record<BaseEncoderOptions['quality'], number> = {
-  low: 0.6,
-  medium: 0.75,
-  high: 0.85,
-};
 
 interface FrameEncodeResult {
   bitstream: Uint8Array;
@@ -58,7 +53,7 @@ export function createStreamingWebpEncoder(
   /** Pad the last frame's duration (for tail-accumulated durations from decimation/smart-skip). */
   padLastFrame: (extraMs: number) => void;
 } {
-  const qualityF = WORKER_QUALITY_MAP[quality];
+  const qualityF = getCanvasWebpQuality(quality);
   const pool = getWorkerPool(WebpWorkerPool.getOptimalWorkerCount(width, height));
 
   // Pool may be non-null but have 0 workers if all Worker() init attempts

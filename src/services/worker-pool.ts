@@ -17,7 +17,7 @@
  */
 
 import { getErrorMessage } from '@piesp/browser-core/error';
-import { WORKER_TIMEOUT_MS } from '@utils/constants';
+import { WEBP_WORKER_MAX_COUNT, WORKER_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 
@@ -71,8 +71,8 @@ export class WebpWorkerPool {
    * plus encoding overhead, so large frames need fewer concurrent workers.
    *
    * Caps applied in order (most restrictive wins):
-   *   - CPU: hardwareConcurrency - 1, minimum 1
-   *   - Device memory: ≤4GB → 2, ≤8GB → 4, >8GB → unlimited
+   *   - CPU: hardwareConcurrency - 1, minimum 1, absolute maximum 4
+   *   - Device memory: ≤4GB → 2, otherwise bounded by the absolute maximum
    *   - Frame resolution: >1080p → 2, >720p → 4
    */
   static getOptimalWorkerCount(frameWidth?: number, frameHeight?: number): number {
@@ -81,7 +81,7 @@ export class WebpWorkerPool {
     if (typeof navigator !== 'undefined') {
       // CPU-based cap
       if (navigator.hardwareConcurrency) {
-        count = Math.max(1, navigator.hardwareConcurrency - 1);
+        count = Math.min(WEBP_WORKER_MAX_COUNT, Math.max(1, navigator.hardwareConcurrency - 1));
       } else {
         count = 2;
       }

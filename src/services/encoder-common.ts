@@ -11,7 +11,7 @@
  */
 
 import type { SmartFrameSkipMode } from '@t/conversion-types';
-import { FPS_CLAMP_MAX, MIN_OUTPUT_FPS } from '@utils/constants';
+import { FPS_CLAMP_MAX, MEMORY_PRESSURE_TARGET_FPS, MIN_OUTPUT_FPS } from '@utils/constants';
 
 /** Base options shared by all format encoders */
 export interface BaseEncoderOptions {
@@ -61,14 +61,20 @@ export function calcAutoDecimation(
   targetFps: number,
   forceDecimation?: number
 ): number {
-  if (forceDecimation !== undefined) return forceDecimation;
+  if (forceDecimation !== undefined && Number.isFinite(forceDecimation) && forceDecimation > 0) {
+    return Math.max(1, Math.round(forceDecimation));
+  }
 
   // Guard against unreliable fps detection: clamp to reasonable range
-  const clampedFps = Math.max(1, Math.min(sourceFps, FPS_CLAMP_MAX));
+  const clampedFps =
+    Number.isFinite(sourceFps) && sourceFps > 0
+      ? Math.max(1, Math.min(sourceFps, FPS_CLAMP_MAX))
+      : 1;
+  const safeTargetFps = Number.isFinite(targetFps) && targetFps > 0 ? targetFps : clampedFps;
 
   // Base decimation: keep every Nth frame to approximately match target FPS
   const baseDecimation =
-    clampedFps > targetFps ? Math.max(1, Math.round(clampedFps / targetFps)) : 1;
+    clampedFps > safeTargetFps ? Math.max(1, Math.round(clampedFps / safeTargetFps)) : 1;
 
   // MIN_OUTPUT_FPS guard: ensure output never drops below the floor.
   // E.g., 120fps source with 8fps target → decimation=15 → output=8fps ✓
@@ -81,4 +87,15 @@ export function calcAutoDecimation(
   }
 
   return baseDecimation;
+}
+
+/**
+ * Combine the selected quality preset with the critical-memory target without
+ * ever keeping more frames than the preset already requested.
+ */
+export function calcMemoryPressureDecimation(sourceFps: number, targetFps: number): number {
+  return Math.max(
+    calcAutoDecimation(sourceFps, targetFps),
+    calcAutoDecimation(sourceFps, MEMORY_PRESSURE_TARGET_FPS)
+  );
 }

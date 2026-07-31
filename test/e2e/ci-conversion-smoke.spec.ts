@@ -25,6 +25,17 @@ test.describe('CI codec smoke', () => {
       expect(result.error).toBeNull();
       expect(result.state).toBe('done');
 
+      const preview = page.locator('[data-testid="result-image"]');
+      await expect(preview).toBeVisible();
+      await expect
+        .poll(() =>
+          preview.evaluate((image) => ({
+            width: (image as HTMLImageElement).naturalWidth,
+            height: (image as HTMLImageElement).naturalHeight,
+          }))
+        )
+        .toEqual({ width: 80, height: 45 });
+
       const output = await downloadResult(page);
       const validation = validateFileMagic(output, format);
       expect(validation).toMatchObject({ valid: true });
