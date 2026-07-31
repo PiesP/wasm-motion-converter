@@ -16,6 +16,7 @@ const CI_TEST_MATCH = [
   'e2e/design-system.spec.ts',
   'e2e/i18n.spec.ts',
   'e2e/ci-conversion-smoke.spec.ts',
+  'e2e/adaptive-resource-safety.spec.ts',
 ];
 const LOCAL_TEST_IGNORE = [
   'e2e/fixtures/**',

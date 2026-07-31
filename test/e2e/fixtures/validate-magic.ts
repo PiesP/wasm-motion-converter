@@ -52,6 +52,60 @@ export function validateWebpMagic(bytes: Uint8Array): { valid: boolean; width?: 
   return { valid: true };
 }
 
+export interface AnimatedWebpMetrics {
+  valid: boolean;
+  frameCount: number;
+  durationMs: number;
+}
+
+/** Inspect top-level ANMF chunks without decoding the VP8 payloads. */
+export function inspectAnimatedWebp(bytes: Uint8Array): AnimatedWebpMetrics {
+  if (!validateWebpMagic(bytes).valid || bytes.length < 20) {
+    return { valid: false, frameCount: 0, durationMs: 0 };
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const declaredEnd = view.getUint32(4, true) + 8;
+  if (declaredEnd > bytes.length) {
+    return { valid: false, frameCount: 0, durationMs: 0 };
+  }
+
+  let offset = 12;
+  let frameCount = 0;
+  let durationMs = 0;
+
+  while (offset + 8 <= declaredEnd) {
+    const chunkType = String.fromCharCode(
+      bytes[offset]!,
+      bytes[offset + 1]!,
+      bytes[offset + 2]!,
+      bytes[offset + 3]!,
+    );
+    const chunkSize = view.getUint32(offset + 4, true);
+    const payloadOffset = offset + 8;
+    const chunkEnd = payloadOffset + chunkSize;
+    if (chunkEnd > declaredEnd) {
+      return { valid: false, frameCount, durationMs };
+    }
+
+    if (chunkType === 'ANMF') {
+      if (chunkSize < 16) {
+        return { valid: false, frameCount, durationMs };
+      }
+      const durationOffset = payloadOffset + 12;
+      durationMs +=
+        bytes[durationOffset]! |
+        (bytes[durationOffset + 1]! << 8) |
+        (bytes[durationOffset + 2]! << 16);
+      frameCount++;
+    }
+
+    offset = chunkEnd + (chunkSize & 1);
+  }
+
+  return { valid: offset === declaredEnd, frameCount, durationMs };
+}
+
 /**
  * Validate a downloaded file's magic bytes against expected format.
  * Works without ffprobe — pure byte inspection.

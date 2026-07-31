@@ -7,48 +7,73 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-const outputPath = resolve('public/test-video-ci-h264.mp4');
-mkdirSync(dirname(outputPath), { recursive: true });
+interface VideoFixture {
+  fileName: string;
+  input: string;
+  extraEncoderArgs?: string[];
+}
 
-const result = spawnSync(
-  'ffmpeg',
-  [
-    '-hide_banner',
-    '-loglevel',
-    'error',
-    '-f',
-    'lavfi',
-    '-i',
-    'testsrc=size=160x90:rate=10:duration=1',
-    '-an',
-    '-c:v',
-    'libx264',
-    '-profile:v',
-    'baseline',
-    '-pix_fmt',
-    'yuv420p',
-    '-movflags',
-    '+faststart',
-    '-y',
-    outputPath,
-  ],
-  { encoding: 'utf8' }
-);
+const fixtures: VideoFixture[] = [
+  {
+    fileName: 'test-video-ci-h264.mp4',
+    input: 'testsrc=size=160x90:rate=10:duration=1',
+  },
+  {
+    fileName: 'test-video-ci-high-motion-120fps.mp4',
+    input:
+      'color=c=black:size=320x180:rate=120:duration=0.25[still];' +
+      'nullsrc=size=320x180:rate=120:duration=2.75,' +
+      "geq=lum='if(mod(N,2),255,0)':cb=128:cr=128[fast];" +
+      '[still][fast]concat=n=2:v=1:a=0,fps=120',
+    extraEncoderArgs: ['-preset', 'ultrafast', '-crf', '18'],
+  },
+];
 
-if (result.error) {
-  const error = result.error as NodeJS.ErrnoException;
-  if (error.code === 'ENOENT') {
-    throw new Error('ffmpeg is required to generate the E2E codec fixture.');
+for (const fixture of fixtures) {
+  const outputPath = resolve('public', fixture.fileName);
+  mkdirSync(dirname(outputPath), { recursive: true });
+
+  const result = spawnSync(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      fixture.input,
+      '-an',
+      '-c:v',
+      'libx264',
+      '-profile:v',
+      'baseline',
+      ...(fixture.extraEncoderArgs ?? []),
+      '-pix_fmt',
+      'yuv420p',
+      '-movflags',
+      '+faststart',
+      '-y',
+      outputPath,
+    ],
+    { encoding: 'utf8' }
+  );
+
+  if (result.error) {
+    const error = result.error as NodeJS.ErrnoException;
+    if (error.code === 'ENOENT') {
+      throw new Error('ffmpeg is required to generate the E2E codec fixtures.');
+    }
+    throw error;
   }
-  throw error;
-}
-if (result.status !== 0) {
-  throw new Error(`ffmpeg failed to generate the E2E codec fixture:\n${result.stderr.trim()}`);
-}
+  if (result.status !== 0) {
+    throw new Error(`ffmpeg failed to generate ${fixture.fileName}:\n${result.stderr.trim()}`);
+  }
 
-const size = statSync(outputPath).size;
-if (size === 0) {
-  throw new Error(`Generated an empty E2E codec fixture: ${outputPath}`);
-}
+  const size = statSync(outputPath).size;
+  if (size === 0) {
+    throw new Error(`Generated an empty E2E codec fixture: ${outputPath}`);
+  }
 
-console.log(`[e2e-fixture] Generated ${outputPath} (${size} bytes)`);
+  console.log(`[e2e-fixture] Generated ${outputPath} (${size} bytes)`);
+}
