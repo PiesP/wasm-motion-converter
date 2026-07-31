@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
     | { onCancel: () => void; onConfirm: () => void }
     | undefined,
   runPipelineWithFallback: vi.fn(),
+  setInputBuffer: vi.fn(),
+  setInputFile: vi.fn(),
+  setVideoMetadata: vi.fn(),
+  setVideoPreviewUrl: vi.fn(),
   showConfirmation: vi.fn(),
   validateVideoDuration: vi.fn(),
   settings: {
@@ -37,12 +41,12 @@ vi.mock('@stores/conversion-store', () => ({
   setCurrentFrame: vi.fn(),
   setErrorContext: vi.fn(),
   setErrorMessage: vi.fn(),
-  setInputBuffer: vi.fn(),
-  setInputFile: vi.fn(),
+  setInputBuffer: mocks.setInputBuffer,
+  setInputFile: mocks.setInputFile,
   setOutputFrames: vi.fn(),
   setTotalFrames: vi.fn(),
-  setVideoMetadata: vi.fn(),
-  setVideoPreviewUrl: vi.fn(),
+  setVideoMetadata: mocks.setVideoMetadata,
+  setVideoPreviewUrl: mocks.setVideoPreviewUrl,
   transitionToState: vi.fn(),
   videoMetadata: () => ({
     config: { codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16 },
@@ -73,7 +77,7 @@ vi.mock('@utils/dom-utils', () => ({
 import * as conversionModule from '@hooks/conversion-handlers/use-perform-conversion';
 import { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
 
-const { handleCancelConversion, handleConvert } = conversionModule;
+const { handleCancelConversion, handleConvert, handleDismissError } = conversionModule;
 
 function createRuntime(): ConversionRuntimeController {
   return new ConversionRuntimeController({
@@ -89,6 +93,10 @@ beforeEach(() => {
   mocks.runPipelineWithFallback.mockReset().mockResolvedValue(
     new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer
   );
+  mocks.setInputBuffer.mockClear();
+  mocks.setInputFile.mockClear();
+  mocks.setVideoMetadata.mockClear();
+  mocks.setVideoPreviewUrl.mockClear();
   mocks.showConfirmation.mockClear();
   mocks.validateVideoDuration.mockReset();
   mocks.settings = {
@@ -231,6 +239,17 @@ describe('handleConvert conversion ownership', () => {
       expect.anything(),
       expect.anything()
     );
+  });
+});
+
+describe('handleDismissError resource cleanup', () => {
+  it('releases the input buffer and metadata when the error is dismissed', () => {
+    handleDismissError();
+
+    expect(mocks.setInputBuffer).toHaveBeenCalledWith(null);
+    expect(mocks.setVideoMetadata).toHaveBeenCalledWith(null);
+    expect(mocks.setInputFile).toHaveBeenCalledWith(null);
+    expect(mocks.setVideoPreviewUrl).toHaveBeenCalledWith(null);
   });
 });
 

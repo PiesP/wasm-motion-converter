@@ -724,6 +724,10 @@ export function handleDismissError(): void {
     // Clear inputFile too — revoking the preview URL without clearing the file
     // creates orphaned state where inputFile is set but videoPreviewUrl is null.
     setInputFile(null);
+    // Dismiss abandons retry, so release the potentially large input buffer and
+    // its metadata together with the rest of the file-scoped state.
+    setInputBuffer(null);
+    setVideoMetadata(null);
 
     setAppState('idle');
   });
