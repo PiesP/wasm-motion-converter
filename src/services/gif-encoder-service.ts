@@ -126,6 +126,24 @@ function bayerDitherRGB(rgb: Uint8Array, width: number, height: number, strength
 }
 
 /**
+ * Quantize streaming frame delays to GIF centiseconds without accumulating
+ * per-frame rounding error. The returned value is the next encoded delay in
+ * centiseconds; callers skip a continuation frame when it is zero.
+ */
+export function createGifDelayQuantizer(): (delayMs: number) => number {
+  let scheduledDurationMs = 0;
+  let emittedDurationCs = 0;
+
+  return (delayMs: number): number => {
+    scheduledDurationMs += Math.max(0, delayMs);
+    const targetDurationCs = Math.max(emittedDurationCs, Math.round(scheduledDurationMs / 10));
+    const nextDelayCs = targetDurationCs - emittedDurationCs;
+    emittedDurationCs = targetDurationCs;
+    return nextDelayCs;
+  };
+}
+
+/**
  * Encode demuxed video frames to GIF with streaming decode→encode.
  *
  * Instead of collecting all decoded frames into an array first, each frame
@@ -160,6 +178,7 @@ export async function encodeGif(
   let globalPalette: number[][] | null = null;
   let globalPaletteWritten = false;
   let outputTotalDelay = 0;
+  const quantizeDelay = createGifDelayQuantizer();
   let encodeIdx = 0;
   let splitFrames = 0;
   let totalInputFrames = 0;
@@ -197,6 +216,14 @@ export async function encodeGif(
     globalPaletteWritten = true;
   }
 
+  function writeQuantizedFrame(indexed: Uint8Array, delayMs: number): boolean {
+    const delayCs = quantizeDelay(delayMs);
+    if (delayCs <= 0) return false;
+    writeIndexedFrame(indexed, delayCs * 10);
+    outputTotalDelay += delayCs;
+    return true;
+  }
+
   function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
     const pal = globalPalette;
     if (!pal) return;
@@ -224,8 +251,7 @@ export async function encodeGif(
     // internally to centiseconds via Math.round(delay/10).
     // Do NOT pre-convert to cs — that would double-divide by 10.
     if (delayMs <= GIF_MAX_FRAME_DELAY_CS * 10) {
-      writeIndexedFrame(indexedBuffer, delayMs);
-      outputTotalDelay += Math.round(delayMs / 10);
+      writeQuantizedFrame(indexedBuffer, delayMs);
       return;
     }
     // Split long-delay frames into multiple writes with the same indexed data.
@@ -233,8 +259,7 @@ export async function encodeGif(
     let remainingMs = delayMs;
     while (remainingMs > 0) {
       const chunk = Math.min(remainingMs, GIF_MAX_FRAME_DELAY_CS * 10);
-      writeIndexedFrame(indexedBuffer, chunk);
-      outputTotalDelay += Math.round(chunk / 10);
+      writeQuantizedFrame(indexedBuffer, chunk);
       remainingMs -= chunk;
       if (remainingMs > 0) splitFrames++;
     }
@@ -372,8 +397,7 @@ export async function encodeGif(
           break;
         }
         const delay = Math.min(remainingTailMs, GIF_MAX_FRAME_DELAY_CS * 10);
-        writeIndexedFrame(lastIndexedData, delay);
-        outputTotalDelay += Math.round(delay / 10);
+        writeQuantizedFrame(lastIndexedData, delay);
         remainingTailMs -= delay;
         if (remainingTailMs > 0) splitFrames++;
         if ((splitFrames & 63) === 0) await yieldToMain();

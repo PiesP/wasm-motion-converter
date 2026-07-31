@@ -45,6 +45,24 @@ export async function probeFile(filePath: string): Promise<{
   };
 }
 
+/** Decode every video frame and fail on any FFmpeg warning promoted by -xerror. */
+export async function decodeFileFully(filePath: string): Promise<void> {
+  await execFileAsync('ffmpeg', [
+    '-hide_banner',
+    '-nostdin',
+    '-v',
+    'error',
+    '-xerror',
+    '-i',
+    filePath,
+    '-map',
+    '0:v:0',
+    '-f',
+    'null',
+    '-',
+  ]);
+}
+
 /**
  * Extract a specific frame from a GIF/WebP and return raw RGBA pixel data.
  */
