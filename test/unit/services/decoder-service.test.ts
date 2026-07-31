@@ -5,9 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeFrames, type DecodeResult } from '@services/decoder-service';
 import { globalBufferPool } from '@services/buffer-pool';
 
-vi.mock('@utils/logger', () => ({
+const { logger } = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+vi.mock('@utils/logger', () => ({ logger }));
 
 describe('decoder-service', () => {
   describe(' DecodeResult structure (type validation)', () => {
@@ -120,6 +121,7 @@ describe('decoder-service', () => {
 
     afterEach(() => {
       vi.unstubAllGlobals();
+      vi.clearAllMocks();
       globalBufferPool.clear();
       FakeVideoDecoder.configureCalls = 0;
       FakeVideoFrame.controlledCopies = false;
@@ -232,6 +234,77 @@ describe('decoder-service', () => {
       expect(await decodeAdaptive(intensities, 8, 120)).toEqual([
         0, 8, 16, 24, 32, 40, 48, 56, 64, 72,
       ]);
+    });
+
+    it('falls back to preset decimation when batch mode cannot run adaptive analysis', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const chunks = Array.from(
+        { length: 16 },
+        (_, index) => ({ intensity: index, timestamp: index * 1_000 }) as EncodedVideoChunk
+      );
+
+      const result = await decodeFrames(
+        {
+          chunks,
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 1,
+          framerate: 120,
+          sourceTotalMs: chunks.length * 16.667,
+          totalFrames: chunks.length,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'batch',
+          frameDecimation: 8,
+          smartFrameSkip: 'adaptive',
+        }
+      );
+
+      expect(result.frames).toHaveLength(2);
+      expect(result.skippedByDecimation).toBe(14);
+      expect(result.smartSkipped).toBe(0);
+      for (const frame of result.frames) globalBufferPool.release(frame.data);
+    });
+
+    it('falls back to preset decimation when GPU streaming cannot run adaptive analysis', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const chunks = Array.from(
+        { length: 16 },
+        (_, index) => ({ intensity: index, timestamp: index * 1_000 }) as EncodedVideoChunk
+      );
+      const delivered: number[] = [];
+
+      const result = await decodeFrames(
+        {
+          chunks,
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 1,
+          framerate: 120,
+          sourceTotalMs: chunks.length * 16.667,
+          totalFrames: chunks.length,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          frameDecimation: 8,
+          smartFrameSkip: 'adaptive',
+          onVideoFrameAvailable: (frame, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            frame.close();
+          },
+        }
+      );
+
+      expect(delivered).toEqual([0, 8]);
+      expect(result.skippedByDecimation).toBe(14);
+      expect(result.smartSkipped).toBe(0);
+      expect(logger.info).toHaveBeenCalledWith(
+        'decoders',
+        'Decoding complete',
+        expect.objectContaining({ outputFrames: 2 })
+      );
     });
 
     it('caps adaptive decimation at the minimum output fps', async () => {
