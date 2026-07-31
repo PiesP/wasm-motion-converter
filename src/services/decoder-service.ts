@@ -196,6 +196,7 @@ export async function decodeFrames(
   // ── Adaptive motion-classified decimation state ──
   // Running window of motion distances for scene analysis
   let adaptFrameCounter = 0;
+  let lastAdaptiveKeptFrame = Number.NEGATIVE_INFINITY;
   // Motion class thresholds (MAD — mean absolute difference, 0-255 scale)
   const ADAPT_STATIC_THRESHOLD = 1.5; // ≤1.5 → static (very similar)
   const ADAPT_SLOW_THRESHOLD = 3; // ≤3 → slow motion
@@ -205,8 +206,12 @@ export async function decodeFrames(
     static: 8, // keep every 8th frame (≈7.5fps from 60fps)
     slow: 3, // keep every 3rd frame (≈20fps from 60fps)
     normal: 2, // keep every 2nd frame (≈30fps from 60fps)
-    fast: 1, // keep every frame
+    fast: 1, // least aggressive adaptive skip; preset/memory floor still applies
   };
+  const requestedDecimation =
+    Number.isFinite(frameDecimation) && frameDecimation > 0
+      ? Math.max(1, Math.round(frameDecimation))
+      : 1;
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
   let adaptLastMotionClass: 'static' | 'slow' | 'normal' | 'fast' = 'normal';
 
@@ -338,7 +343,8 @@ export async function decodeFrames(
             // ── Adaptive motion-classified decimation ──
             // Instead of fixed decimation, classify each frame's motion level
             // and apply variable decimation: static scenes get aggressive skip,
-            // fast motion keeps all frames. Uses 8×8 grayscale + MAD for comparison.
+            // while fast motion uses the preset/memory decimation floor. Uses 8×8
+            // grayscale + MAD for comparison.
             //
             // NOTE: This block is NEVER entered when onVideoFrameAvailable is active
             // (GPU-only path) because that path skips copyFrameToRGB entirely, meaning
@@ -372,9 +378,14 @@ export async function decodeFrames(
                   motionClass = 'fast';
                 }
 
-                // Scene change detection: if motion class jumps up, force keep
+                // Scene change detection: align the adaptive cadence so the new
+                // scene remains visible, but never reset it before the requested
+                // preset or memory floor allows another frame.
                 const classOrder = { static: 0, slow: 1, normal: 2, fast: 3 } as const;
-                if (classOrder[motionClass] > classOrder[adaptLastMotionClass] + 1) {
+                if (
+                  classOrder[motionClass] > classOrder[adaptLastMotionClass] + 1 &&
+                  frameNum - lastAdaptiveKeptFrame >= requestedDecimation
+                ) {
                   adaptFrameCounter = 0; // force keep on significant motion increase
                 }
                 adaptLastMotionClass = motionClass;
@@ -382,15 +393,18 @@ export async function decodeFrames(
 
               prevGray = gray;
 
-              const decimation = Math.min(
-                Math.max(Math.max(1, Math.round(frameDecimation)), ADAPT_DECIMATION[motionClass]),
-                maxAdaptiveDecimation
+              const decimation = Math.max(
+                requestedDecimation,
+                Math.min(ADAPT_DECIMATION[motionClass], maxAdaptiveDecimation)
               );
-              const shouldSkip = adaptFrameCounter % decimation !== 0 && consecutiveSkipMs < 500; // 500ms safety limit
+              const violatesRequestedFloor = frameNum - lastAdaptiveKeptFrame < requestedDecimation;
+              const shouldSkip =
+                violatesRequestedFloor ||
+                (adaptFrameCounter % decimation !== 0 && consecutiveSkipMs < 500); // 500ms adaptive safety limit
 
               adaptFrameCounter++;
 
-              if (shouldSkip && motionClass !== 'fast') {
+              if (shouldSkip) {
                 consecutiveSkipMs += totalDuration;
                 smartSkippedCount++;
                 globalBufferPool.release(rgbData);
@@ -398,6 +412,7 @@ export async function decodeFrames(
               }
 
               // Frame kept: reset counters, transfer accumulated duration
+              lastAdaptiveKeptFrame = frameNum;
               smartCarryoverMs = consecutiveSkipMs;
               consecutiveSkipMs = 0;
             }
