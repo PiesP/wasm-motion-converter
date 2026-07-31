@@ -302,6 +302,7 @@ export async function decodeFrames(
               // Transfer accumulated frame durations (decimation + smart skip carryover)
               const totalDur = totalDuration + smartCarryoverMs;
               smartCarryoverMs = 0;
+              keptFrameCount++;
               await onVideoFrameAvailable(frame, totalDur, frameNum);
               // Caller owns frame and MUST call frame.close()
               return;

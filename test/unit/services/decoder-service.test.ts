@@ -5,9 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeFrames, type DecodeResult } from '@services/decoder-service';
 import { globalBufferPool } from '@services/buffer-pool';
 
-vi.mock('@utils/logger', () => ({
+const { logger } = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+vi.mock('@utils/logger', () => ({ logger }));
 
 describe('decoder-service', () => {
   describe(' DecodeResult structure (type validation)', () => {
@@ -120,6 +121,7 @@ describe('decoder-service', () => {
 
     afterEach(() => {
       vi.unstubAllGlobals();
+      vi.clearAllMocks();
       globalBufferPool.clear();
       FakeVideoDecoder.configureCalls = 0;
       FakeVideoFrame.controlledCopies = false;
@@ -298,6 +300,11 @@ describe('decoder-service', () => {
       expect(delivered).toEqual([0, 8]);
       expect(result.skippedByDecimation).toBe(14);
       expect(result.smartSkipped).toBe(0);
+      expect(logger.info).toHaveBeenCalledWith(
+        'decoders',
+        'Decoding complete',
+        expect.objectContaining({ outputFrames: 2 })
+      );
     });
 
     it('caps adaptive decimation at the minimum output fps', async () => {
