@@ -24,6 +24,7 @@
  */
 
 import type { ProgressCallback } from '@t/conversion-types';
+import { WEBP_QUALITY_PERCENT } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
@@ -33,15 +34,6 @@ import type { BaseEncoderOptions } from './encoder-common';
 import { withPooledBuffer } from './pooled-buffer';
 import { extractVP8Bitstream, StreamingWebpMuxer } from './streaming-webp-encoder';
 import { encodeRGBReuse } from './wasm-webp-singleton';
-
-const QUALITY_MAP: Record<BaseEncoderOptions['quality'], number> = {
-  low: 50, // 70 → 50: matches SSIM perceptual transparency threshold
-  // while reducing output size ~60% vs quality 70
-  medium: 55, // 80 → 55: visually near-identical to 80 for animated content,
-  // but produces files ~70% smaller (42MB → ~12MB for 1080p60 test)
-  high: 70, // 92 → 70: still excellent quality, avoids the extreme
-  // file sizes that provide diminishing returns above q=70
-};
 
 /**
  * Encode demuxed video frames to animated WebP with streaming decode→encode.
@@ -61,7 +53,7 @@ export async function encodeWebp(
   const srcH = opts.height;
   const w = Math.max(1, Math.floor(srcW * opts.scale));
   const h = Math.max(1, Math.floor(srcH * opts.scale));
-  const quality = QUALITY_MAP[opts.quality];
+  const quality = WEBP_QUALITY_PERCENT[opts.quality];
   const frameDecimation = opts.frameDecimation ?? 1;
 
   logger.info('encoders', '  │  ├─ WebP: codec support check', { codec: demux.config.codec });

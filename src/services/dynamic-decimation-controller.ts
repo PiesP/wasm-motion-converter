@@ -48,11 +48,13 @@ export interface DecimationMemoryInfo {
 export function createDynamicDecimationController(
   memoryCheck?: () => DecimationMemoryInfo | null
 ): DynamicDecimationController {
+  type SkipPolicy = 'none' | 'sustained' | 'critical';
+
   let actualSkipCount = 0;
-  let dynamicSkipCount = 0;
+  let policyFrameCount = 0;
   let consecutiveMemWarnings = 0;
-  let cachedFrameNum = -1;
-  let cachedMemInfo: DecimationMemoryInfo | null = null;
+  let policy: SkipPolicy = 'none';
+  let usagePercentage = 0;
 
   const checkMemory =
     memoryCheck ??
@@ -61,57 +63,61 @@ export function createDynamicDecimationController(
       return info ? { usagePercentage: info.usagePercentage } : null;
     });
 
+  function setPolicy(nextPolicy: SkipPolicy): void {
+    if (policy !== nextPolicy) {
+      policy = nextPolicy;
+      policyFrameCount = 0;
+    }
+  }
+
   function shouldSkip(frameNum: number): boolean {
-    // Check JS heap usage every 5 frames to avoid per-frame overhead
-    if (frameNum % 5 !== 0) return false;
+    // Sampling is intentionally sparse, but an active skip policy applies to
+    // every frame until the next sample changes it.
+    if (frameNum % 5 === 0) {
+      const memInfo = checkMemory();
+      usagePercentage = memInfo?.usagePercentage ?? 0;
 
-    // Cache memory result within the same 5-frame window
-    if (frameNum !== cachedFrameNum) {
-      cachedFrameNum = frameNum;
-      cachedMemInfo = checkMemory();
-    }
-
-    const memInfo = cachedMemInfo;
-    if (!memInfo || memInfo.usagePercentage <= DYNAMIC_DECIMATION_MEM_THRESHOLD) {
-      consecutiveMemWarnings = 0;
-      return false;
-    }
-
-    consecutiveMemWarnings++;
-
-    if (memInfo.usagePercentage > DYNAMIC_DECIMATION_MEM_CRITICAL) {
-      // Critical: skip every other frame (aggressive)
-      const skip = dynamicSkipCount % 2 === 0;
-      dynamicSkipCount++;
-      if (skip) {
-        actualSkipCount++;
+      if (!memInfo || usagePercentage <= DYNAMIC_DECIMATION_MEM_THRESHOLD) {
+        consecutiveMemWarnings = 0;
+        setPolicy('none');
+      } else {
+        consecutiveMemWarnings++;
+        if (usagePercentage > DYNAMIC_DECIMATION_MEM_CRITICAL) {
+          setPolicy('critical');
+        } else if (consecutiveMemWarnings >= 3) {
+          setPolicy('sustained');
+        } else {
+          setPolicy('none');
+        }
       }
+    }
+
+    // Always retain the first frame so short conversions produce a visible
+    // result even when the heap is already under pressure.
+    if (frameNum === 0 || policy === 'none') return false;
+
+    const divisor = policy === 'critical' ? 2 : 3;
+    const skip = policyFrameCount % divisor === 0;
+    policyFrameCount++;
+    if (!skip) return false;
+
+    actualSkipCount++;
+    if (policy === 'critical') {
       logger.warn('encoders', 'Critical memory pressure, dynamic frame skip', {
-        usagePct: Math.round(memInfo.usagePercentage),
+        usagePct: Math.round(usagePercentage),
         frameNum,
-        dynamicSkipCount,
+        policyFrameCount,
         actualSkipCount,
       });
-      return skip;
-    }
-
-    if (consecutiveMemWarnings >= 3) {
-      // Sustained pressure: skip every 3rd frame
-      const skip = dynamicSkipCount % 3 === 0;
-      dynamicSkipCount++;
-      if (skip) {
-        actualSkipCount++;
-      }
+    } else {
       logger.info('encoders', 'Sustained memory pressure, dynamic frame skip', {
-        usagePct: Math.round(memInfo.usagePercentage),
+        usagePct: Math.round(usagePercentage),
         frameNum,
-        dynamicSkipCount,
+        policyFrameCount,
         actualSkipCount,
       });
-      return skip;
     }
-
-    return false;
+    return true;
   }
 
   function getSkipCount(): number {

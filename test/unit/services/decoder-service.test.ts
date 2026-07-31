@@ -50,17 +50,18 @@ describe('decoder-service', () => {
       static controlledCopies = false;
       static copyResolvers = new Map<number, () => void>();
       static copyStarts: number[] = [];
+      static frameDuration: number | null = 16_667;
 
       readonly codedWidth = 8;
       readonly codedHeight = 8;
       readonly displayWidth = 8;
       readonly displayHeight = 8;
-      readonly duration = 16_667;
       readonly close = vi.fn();
 
       constructor(
         private readonly intensity: number,
-        readonly timestamp = intensity * 1_000
+        readonly timestamp = intensity * 1_000,
+        readonly duration: number | null = FakeVideoFrame.frameDuration
       ) {}
 
       allocationSize(): number {
@@ -122,11 +123,16 @@ describe('decoder-service', () => {
       globalBufferPool.clear();
       FakeVideoDecoder.configureCalls = 0;
       FakeVideoFrame.controlledCopies = false;
+      FakeVideoFrame.frameDuration = 16_667;
       FakeVideoFrame.copyResolvers.clear();
       FakeVideoFrame.copyStarts.length = 0;
     });
 
-    async function decodeAdaptive(intensities: number[]): Promise<number[]> {
+    async function decodeAdaptive(
+      intensities: number[],
+      frameDecimation = 1,
+      framerate = 60
+    ): Promise<number[]> {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       const chunks = intensities.map(
         (intensity, index) => ({ intensity, timestamp: index * 1_000 }) as EncodedVideoChunk
@@ -138,7 +144,7 @@ describe('decoder-service', () => {
           chunks,
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 1,
-          framerate: 60,
+          framerate,
           sourceTotalMs: chunks.length * 16.667,
           totalFrames: chunks.length,
         },
@@ -146,6 +152,7 @@ describe('decoder-service', () => {
           width: 8,
           height: 8,
           mode: 'stream',
+          frameDecimation,
           smartFrameSkip: 'adaptive',
           onFrameAvailable: (rgbData, _durationMs, frameNumber) => {
             delivered.push(frameNumber);
@@ -156,6 +163,54 @@ describe('decoder-service', () => {
 
       return delivered;
     }
+
+    it('derives a missing frame duration from source fps', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      FakeVideoFrame.frameDuration = null;
+      const durations: number[] = [];
+
+      await decodeFrames(
+        {
+          chunks: [{ intensity: 0, timestamp: 0 } as unknown as EncodedVideoChunk],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.04,
+          framerate: 25,
+          sourceTotalMs: 40,
+          totalFrames: 1,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData, durationMs) => {
+            durations.push(durationMs);
+            globalBufferPool.release(rgbData);
+          },
+        }
+      );
+
+      expect(durations).toEqual([40]);
+    });
+
+    it('combines adaptive and preset decimation without multiplying them', async () => {
+      const intensities = [
+        ...Array.from({ length: 16 }, () => 0),
+        ...Array.from({ length: 24 }, (_, index) => (index + 1) * 4),
+      ];
+
+      const delivered = await decodeAdaptive(intensities, 5);
+      const gaps = delivered.slice(1).map((frame, index) => frame - delivered[index]!);
+
+      expect(delivered).toHaveLength(8);
+      expect(delivered).toContain(16); // scene change remains visible
+      expect(Math.max(...gaps)).toBeLessThanOrEqual(6);
+    });
+
+    it('caps adaptive decimation at the minimum output fps', async () => {
+      const delivered = await decodeAdaptive(Array.from({ length: 40 }, () => 0), 1, 15);
+
+      expect(delivered.length).toBeGreaterThanOrEqual(8);
+    });
 
     it('classifies static, slow, normal, and fast fixtures with distinct decimation', async () => {
       const warmup = Array.from({ length: 16 }, () => 0);

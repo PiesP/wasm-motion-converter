@@ -64,5 +64,11 @@ describe('encodeGif timing', () => {
       1,
       expect.objectContaining({ delay: 100 })
     );
+    expect(mocks.writeFrame.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({ palette: [[0, 0, 0]] })
+    );
+    for (const call of mocks.writeFrame.mock.calls.slice(1)) {
+      expect(call[3]).not.toHaveProperty('palette');
+    }
   });
 });

@@ -3,6 +3,7 @@
 
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { extractVideoMetadata } from '@services/video-metadata';
+import { conversionSettings, setConversionSettings } from '@stores/conversion-settings-store';
 import {
   setErrorContext,
   setErrorMessage,
@@ -63,6 +64,11 @@ export async function handleFileSelected(
   }
 
   if (isStale()) return;
+
+  // Trim points belong to the previously selected video. Carrying them into
+  // another file can produce an empty or unintended range, especially when
+  // the next video is shorter.
+  setConversionSettings({ ...conversionSettings(), trimStart: 0, trimEnd: 0 });
 
   // Show "analyzing" state before reading the file so the UI reflects
   // that work is happening (important for large files).

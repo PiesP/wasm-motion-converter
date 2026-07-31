@@ -66,8 +66,10 @@ function parseStoredSettings(raw: Record<string, unknown>): ConversionSettings |
   ) {
     const trimStart = isFiniteNonNegativeNumber(raw.trimStart) ? raw.trimStart : 0;
     const trimEnd = isFiniteNonNegativeNumber(raw.trimEnd) ? raw.trimEnd : 0;
-    const validTrim =
-      trimStart === 0 && trimEnd === 0 ? true : trimStart > 0 && trimEnd > 0 && trimStart < trimEnd;
+    // Either endpoint may use 0 as a sentinel: trimStart=0 means "from the
+    // beginning" and trimEnd=0 means "through the full duration". Only a
+    // closed range with both endpoints set can be inverted or empty.
+    const validTrim = trimStart === 0 || trimEnd === 0 || trimStart < trimEnd;
     return {
       ...DEFAULT_CONVERSION_SETTINGS,
       format: raw.format,

@@ -110,14 +110,14 @@ describe('conversion-settings-store', () => {
     expect(mod2.conversionSettings()).toEqual(testSettings);
   });
 
-  it('strips out DTRIM_END_FULL_DURATION sentinel as 0 on restore (trimEnd=0 → 0)', async () => {
+  it('preserves a last-segment trim that uses trimEnd=0 as the full-duration sentinel', async () => {
     const mod1 = await import('@stores/conversion-settings-store');
-    // Save with trimEnd=0 (full duration sentinel)
-    mod1.saveConversionSettings(makeTestSettings({ trimEnd: 0 }));
+    mod1.saveConversionSettings(makeTestSettings({ trimStart: 5, trimEnd: 0 }));
 
     vi.resetModules();
     const mod2 = await import('@stores/conversion-settings-store');
     const restored = mod2.conversionSettings();
+    expect(restored.trimStart).toBe(5);
     expect(restored.trimEnd).toBe(0);
   });
 
@@ -203,6 +203,16 @@ describe('conversion-settings-store', () => {
     expect(conversionSettings().trimEnd).toBe(30);
   });
 
+  it('preserves a first-segment trim whose start is zero', async () => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(makeTestSettings({ trimStart: 0, trimEnd: 5 })),
+    );
+    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    expect(conversionSettings().trimStart).toBe(0);
+    expect(conversionSettings().trimEnd).toBe(5);
+  });
+
   it('clamps negative trimStart to 0 and preserves other settings', async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
@@ -210,10 +220,9 @@ describe('conversion-settings-store', () => {
     );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     const restored = conversionSettings();
-    // Negative trimStart clamped to 0, but trimEnd=10 > 0 with trimStart=0
-    // means one-sided trim is invalid → trim is reset, other settings preserved
+    // Invalid trimStart falls back to the beginning while preserving the valid end.
     expect(restored.trimStart).toBe(0);
-    expect(restored.trimEnd).toBe(0);
+    expect(restored.trimEnd).toBe(10);
     expect(restored.format).toBe('webp');
     expect(restored.quality).toBe('high');
     expect(restored.scale).toBe(1.0);
@@ -227,9 +236,8 @@ describe('conversion-settings-store', () => {
     );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     const restored = conversionSettings();
-    // trimEnd clamped to 0, trimStart=5 — one-sided trim is invalid
-    // → trim is reset, other settings preserved
-    expect(restored.trimStart).toBe(0);
+    // Invalid trimEnd falls back to the full-duration sentinel while preserving the start.
+    expect(restored.trimStart).toBe(5);
     expect(restored.trimEnd).toBe(0);
     expect(restored.format).toBe('webp');
     expect(restored.quality).toBe('high');
