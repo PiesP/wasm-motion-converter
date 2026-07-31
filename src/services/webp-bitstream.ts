@@ -55,8 +55,9 @@ function extractVp8Chunk(webpBuffer: Uint8Array): Uint8Array {
 }
 
 /**
- * Extract a Canvas-produced VP8 frame and normalize Chromium's keyframe
- * version/show-frame bits for use in an animated WebP ANMF chunk.
+ * Extract a Canvas-produced VP8 frame and ensure the display flag in its
+ * three-byte frame tag is set for use in an animated WebP ANMF chunk.
+ * The encoder profile, partition size, and coded dimensions are preserved.
  */
 export function extractAndNormalizeCanvasVp8(webpBuffer: Uint8Array): Uint8Array {
   const vp8Data = extractVp8Chunk(webpBuffer);
@@ -68,13 +69,13 @@ export function extractAndNormalizeCanvasVp8(webpBuffer: Uint8Array): Uint8Array
     }
   }
 
-  if (tagOffset < 0) return vp8Data;
+  if (tagOffset < 3) return vp8Data;
 
   const frame = new Uint8Array(vp8Data);
-  const keyframeIndex = tagOffset + 3;
-  const keyframeByte = frame[keyframeIndex];
-  if (keyframeByte !== undefined) {
-    frame[keyframeIndex] = (keyframeByte & 0x8f) | 0x08;
+  const frameTagIndex = tagOffset - 3;
+  const frameTagByte = frame[frameTagIndex];
+  if (frameTagByte !== undefined) {
+    frame[frameTagIndex] = frameTagByte | 0x10;
   }
   return frame;
 }

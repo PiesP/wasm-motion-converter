@@ -39,8 +39,8 @@ describe('WebP encoder worker message security', () => {
     expect(workerScope.postMessage).not.toHaveBeenCalled();
   });
 
-  it('normalizes Canvas VP8 keyframe bits before returning a worker result', async () => {
-    const bitstream = new Uint8Array([0, 0, 0, 0x9d, 0x01, 0x2a, 0xa0, 0]);
+  it('sets the Canvas VP8 display flag without changing coded dimensions', async () => {
+    const bitstream = new Uint8Array([0x06, 0, 0, 0x9d, 0x01, 0x2a, 0xa0, 0]);
     const webp = new Uint8Array(20 + bitstream.length);
     webp.set([0x52, 0x49, 0x46, 0x46], 0);
     webp.set([0x57, 0x45, 0x42, 0x50], 8);
@@ -82,7 +82,7 @@ describe('WebP encoder worker message security', () => {
       | undefined;
     expect(result?.id).toBe(7);
     expect(result?.bitstream).toEqual(
-      new Uint8Array([0, 0, 0, 0x9d, 0x01, 0x2a, 0x88, 0])
+      new Uint8Array([0x16, 0, 0, 0x9d, 0x01, 0x2a, 0xa0, 0])
     );
   });
 });

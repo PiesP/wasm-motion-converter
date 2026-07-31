@@ -14,12 +14,12 @@ function makeSimpleWebp(bitstream: number[]): Uint8Array {
 }
 
 describe('extractAndNormalizeCanvasVp8', () => {
-  it('normalizes Chromium keyframe version and show-frame bits', () => {
-    const input = makeSimpleWebp([0, 0, 0, 0x9d, 0x01, 0x2a, 0xa0, 0]);
+  it('sets show-frame in the frame tag without changing profile or coded width', () => {
+    const input = makeSimpleWebp([0x06, 0, 0, 0x9d, 0x01, 0x2a, 0xa0, 0]);
 
     const output = extractAndNormalizeCanvasVp8(input);
 
-    expect(output).toEqual(new Uint8Array([0, 0, 0, 0x9d, 0x01, 0x2a, 0x88, 0]));
+    expect(output).toEqual(new Uint8Array([0x16, 0, 0, 0x9d, 0x01, 0x2a, 0xa0, 0]));
     expect(output.buffer).not.toBe(input.buffer);
   });
 
