@@ -208,7 +208,7 @@ async function performConversion(
     }
 
     const progressCallback = createProgressCallback(isActive, runtime, t);
-    const { serializedConfig, serializedOptions } = serializeConfig(forcedDecimation);
+    const { serializedConfig, serializedOptions } = serializeConfig(forcedDecimation, settings);
 
     const output = await executePipeline(
       buffer,
@@ -331,12 +331,15 @@ export function formatConversionProgressStatus(
   return t('progress.statusFrame', { frame, phase });
 }
 
-function serializeConfig(forcedDecimation: number | undefined): {
+function serializeConfig(
+  forcedDecimation: number | undefined,
+  settings: ConversionSettings
+): {
   serializedConfig: ReturnType<typeof buildSerializedConfig>;
   serializedOptions: ReturnType<typeof buildSerializedOptions>;
 } {
   const serializedConfig = buildSerializedConfig();
-  const serializedOptions = buildSerializedOptions(forcedDecimation);
+  const serializedOptions = buildSerializedOptions(forcedDecimation, settings);
   return { serializedConfig, serializedOptions };
 }
 
@@ -364,7 +367,10 @@ function buildSerializedConfig(): Record<string, unknown> | null {
   };
 }
 
-function buildSerializedOptions(forcedDecimation: number | undefined): {
+function buildSerializedOptions(
+  forcedDecimation: number | undefined,
+  settings: ConversionSettings
+): {
   format: ConversionFormat;
   quality: ConversionQuality;
   fps: number;
@@ -376,7 +382,6 @@ function buildSerializedOptions(forcedDecimation: number | undefined): {
   smartFrameSkip: SmartFrameSkipMode | undefined;
 } {
   const md = videoMetadata();
-  const settings = conversionSettings();
   const fps = md?.framerate ?? 30;
 
   return {

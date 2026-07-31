@@ -10,17 +10,18 @@ const mocks = vi.hoisted(() => ({
   runPipelineWithFallback: vi.fn(),
   showConfirmation: vi.fn(),
   validateVideoDuration: vi.fn(),
+  settings: {
+    format: 'gif' as const,
+    quality: 'medium' as const,
+    scale: 1 as const,
+    smartFrameSkip: 'off' as const,
+    trimEnd: 0,
+    trimStart: 0,
+  },
 }));
 
 vi.mock('@stores/conversion-settings-store', () => ({
-  conversionSettings: () => ({
-    format: 'gif',
-    quality: 'medium',
-    scale: 1,
-    smartFrameSkip: 'off',
-    trimEnd: 0,
-    trimStart: 0,
-  }),
+  conversionSettings: () => mocks.settings,
 }));
 
 vi.mock('@stores/conversion-store', () => ({
@@ -90,6 +91,14 @@ beforeEach(() => {
   );
   mocks.showConfirmation.mockClear();
   mocks.validateVideoDuration.mockReset();
+  mocks.settings = {
+    format: 'gif',
+    quality: 'medium',
+    scale: 1,
+    smartFrameSkip: 'off',
+    trimEnd: 0,
+    trimStart: 0,
+  };
 });
 
 const localizedProgressT = ((key: string, params?: Record<string, string | number>) => {
@@ -181,6 +190,47 @@ describe('handleConvert conversion ownership', () => {
     await conversion;
 
     expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+  });
+
+  it('uses the settings snapshot captured before asynchronous validation', async () => {
+    let resolveValidation: ((value: unknown) => void) | undefined;
+    mocks.validateVideoDuration.mockReturnValue(
+      new Promise((resolve) => {
+        resolveValidation = resolve;
+      })
+    );
+    const runtime = createRuntime();
+    const t = ((key: string) => key) as Parameters<typeof handleConvert>[1];
+
+    const conversion = handleConvert(runtime, t);
+    mocks.settings = {
+      format: 'gif',
+      quality: 'high',
+      scale: 0.5,
+      smartFrameSkip: 'high',
+      trimStart: 0.25,
+      trimEnd: 0.75,
+    };
+    resolveValidation?.({ duration: 1_000, warnings: [] });
+    await conversion;
+
+    expect(mocks.runPipelineWithFallback).toHaveBeenCalledWith(
+      expect.any(ArrayBuffer),
+      expect.any(Object),
+      expect.objectContaining({
+        format: 'gif',
+        quality: 'medium',
+        scale: 1,
+        smartFrameSkip: 'off',
+        trimStart: 0,
+        trimEnd: 0,
+      }),
+      expect.any(Function),
+      expect.any(AbortSignal),
+      expect.any(File),
+      expect.anything(),
+      expect.anything()
+    );
   });
 });
 
