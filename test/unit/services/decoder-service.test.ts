@@ -206,6 +206,34 @@ describe('decoder-service', () => {
       expect(Math.max(...gaps)).toBeLessThanOrEqual(6);
     });
 
+    it('enforces preset decimation for fast adaptive motion without degrading uncapped motion', async () => {
+      const intensities = [
+        ...Array.from({ length: 16 }, () => 0),
+        ...Array.from({ length: 64 }, (_, index) => (index % 2 === 0 ? 255 : 0)),
+      ];
+
+      const capped = await decodeAdaptive(intensities, 8, 120);
+      const uncapped = await decodeAdaptive(intensities, 1, 120);
+
+      expect(capped).toEqual([0, 8, 16, 24, 32, 40, 48, 56, 64, 72]);
+      expect(uncapped.filter((frame) => frame >= 16)).toEqual(
+        Array.from({ length: 64 }, (_, index) => index + 16)
+      );
+    });
+
+    it('does not let repeated scene changes reset a requested decimation floor', async () => {
+      const intensities = [
+        ...Array.from({ length: 16 }, () => 0),
+        ...Array.from({ length: 64 }, (_, index) =>
+          Math.floor(index / 2) % 2 === 0 ? 255 : 0
+        ),
+      ];
+
+      expect(await decodeAdaptive(intensities, 8, 120)).toEqual([
+        0, 8, 16, 24, 32, 40, 48, 56, 64, 72,
+      ]);
+    });
+
     it('caps adaptive decimation at the minimum output fps', async () => {
       const delivered = await decodeAdaptive(Array.from({ length: 40 }, () => 0), 1, 15);
 
