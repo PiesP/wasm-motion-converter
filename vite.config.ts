@@ -1,9 +1,9 @@
 import { visualizer } from 'rollup-plugin-visualizer';
 import type { PluginOption } from 'vite';
 import { defineConfig, loadEnv, mergeConfig } from 'vite';
-import { stripDataTestIdPlugin } from './tooling/vite/plugins/strip-data-testid';
-import basePreset from './tooling/vite/presets/base';
-import browserAppPreset from './tooling/vite/presets/browser-app';
+import { stripDataTestIdPlugin } from './tooling/vite/plugins/strip-data-testid.ts';
+import basePreset from './tooling/vite/presets/base.ts';
+import browserAppPreset from './tooling/vite/presets/browser-app.ts';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
