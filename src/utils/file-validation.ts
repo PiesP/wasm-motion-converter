@@ -24,16 +24,10 @@
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import type { TranslationKeys } from '@t/i18n-types';
-import type { DurationValidationResult, ValidationWarning } from '@t/validation-types';
-import {
-  DEFAULT_FPS,
-  MAX_FILE_SIZE,
-  SUPPORTED_VIDEO_EXTENSIONS,
-  SUPPORTED_VIDEO_MIMES,
-  WEBP_MAX_DURATION_MS,
-  WEBP_MAX_FRAMES,
-} from './constants';
+import type { DurationValidationResult } from '@t/validation-types';
+import { MAX_FILE_SIZE, SUPPORTED_VIDEO_EXTENSIONS, SUPPORTED_VIDEO_MIMES } from './constants';
 import { logger } from './logger';
+import { assessVideoDuration } from './video-duration-policy';
 
 type TFunction = <K extends keyof TranslationKeys>(
   key: K,
@@ -321,33 +315,6 @@ async function extractVideoDuration(file: File, signal?: AbortSignal): Promise<n
 }
 
 /**
- * Estimate frame count based on duration and framerate
- *
- * Calculates estimated frame count using the formula: frames = (duration / 1000) * fps
- * Uses conservative 30fps estimate for unknown framerates (typical default across platforms).
- * Note: The 30fps fallback may underestimate frame count for 60fps sources.
- *       Pass the actual fps from VideoMetadata when available for accurate estimation.
- * Frame count is useful for memory planning and performance estimation in conversion pipeline.
- *
- * @param durationMs - Duration in milliseconds (e.g., 5000ms for 5 second video)
- * @param fps - Known framerate from video metadata, or 30fps fallback for unknown videos
- * @returns Estimated frame count (rounded up to nearest integer with Math.ceil)
- *
- * @example
- * // 5 second video at unknown framerate (30fps fallback)
- * estimateFrameCount(5000); // (5000 / 1000) * 30 = 150 frames
- *
- * @example
- * // 10 second video at 60fps
- * estimateFrameCount(10000, 60); // (10000 / 1000) * 60 = 600 frames
- */
-function estimateFrameCount(durationMs: number, fps = DEFAULT_FPS): number {
-  // Convert milliseconds to seconds, multiply by fps, round up
-  // Math.ceil ensures we don't underestimate frame count (e.g., 5.1 frames → 6 frames)
-  return Math.ceil((durationMs / 1000) * fps);
-}
-
-/**
  * Validate video duration against format-specific constraints and limits
  *
  * Extracts video duration and estimated frame count, then validates against
@@ -382,48 +349,7 @@ export async function validateVideoDuration(
   try {
     // STEP 1: Extract video metadata
     const duration = await extractVideoDuration(file, signal);
-    const estimatedFrames = estimateFrameCount(duration, fps);
-    const warnings: ValidationWarning[] = [];
-
-    // STEP 2a: WebP validation (soft warnings - user can proceed despite warnings)
-    // Animated WebP conversion is possible for longer videos but may have performance implications.
-    if (targetFormat === 'webp') {
-      // Check duration limit: safety limit of 900 seconds (WEBP_MAX_DURATION_MS = 900000ms)
-      if (duration > WEBP_MAX_DURATION_MS) {
-        warnings.push({
-          severity: 'warning', // Soft warning - user can override
-          message: `Video duration (${(duration / 1000).toFixed(
-            1
-          )}s) exceeds WebP safety limit (${WEBP_MAX_DURATION_MS / 1000}s)`,
-          details: 'Very long WebP conversions may experience performance or file size issues',
-          suggestedAction: 'Consider trimming the video for better results',
-          requiresConfirmation: false, // User can proceed without confirmation
-        });
-      }
-
-      // Check frame count limit: safety limit of 9000 frames (WEBP_MAX_FRAMES = 9000)
-      // Guards against performance/memory issues in encoding
-      if (estimatedFrames > WEBP_MAX_FRAMES) {
-        warnings.push({
-          severity: 'warning', // Soft warning
-          message: `Estimated frame count (${estimatedFrames}) exceeds WebP safety limit (${WEBP_MAX_FRAMES} frames)`,
-          details: 'High frame counts may cause performance or memory issues during encoding',
-          suggestedAction: 'Consider reducing video duration or framerate',
-          requiresConfirmation: false,
-        });
-      }
-    }
-
-    // STEP 2b: GIF validation — no soft warnings; GIF conversion proceeds directly
-
-    // STEP 3: Determine validity: false if any ERROR warnings, true otherwise
-    // (warnings with severity='warning' or 'info' don't block conversion)
-    return {
-      valid: warnings.filter((w) => w.severity === 'error').length === 0,
-      duration,
-      estimatedFrames,
-      warnings,
-    };
+    return assessVideoDuration(duration, targetFormat, fps);
   } catch (error) {
     if (isCancellationError(error)) throw error;
     // ERROR HANDLING: If duration extraction fails (unsupported codec, corrupted file, network error)
