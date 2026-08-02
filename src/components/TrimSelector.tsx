@@ -4,16 +4,21 @@
 import { useLocale } from '@hooks/use-locale';
 import type { TFunction } from '@t/i18n-types';
 import { formatNumber, formatPercent } from '@utils/intl-utils';
+import {
+  clampToStep,
+  formatTimePrecise,
+  isFullDuration,
+  parseTimeInput,
+  TRIM_END_FULL_DURATION,
+  TRIM_STEP,
+} from '@utils/trim-time';
 import type { Component } from 'solid-js';
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 
-const TRIM_END_FULL_DURATION = 0;
 const MIN_DURATION = 0.5;
-const STEP = 0.1;
+const STEP = TRIM_STEP;
 const LARGE_STEP = 1;
 const TIMELINE_DIVISIONS = Array.from({ length: 8 }, (_, index) => index);
-
-const isFullDuration = (trimEnd: number): boolean => trimEnd === TRIM_END_FULL_DURATION;
 
 interface TrimSelectorProps {
   duration: number;
@@ -33,45 +38,6 @@ interface TrimPreset {
   start: number;
   end: number;
 }
-
-const formatTimePrecise = (seconds: number): string => {
-  const safeSeconds = Math.max(0, seconds);
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-  const remainingSeconds = safeSeconds % 60;
-  const secondsText = remainingSeconds.toFixed(1).padStart(4, '0');
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, '0')}:${secondsText}`;
-  }
-  return `${minutes}:${secondsText}`;
-};
-
-const parseTimeInput = (input: string): number | null => {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-  const colonCount = (trimmed.match(/:/g) || []).length;
-  if (colonCount >= 1) {
-    const parts = trimmed.split(':');
-    if (colonCount === 1 && parts.length === 2) {
-      const minutes = Number.parseFloat(parts[0]!);
-      const seconds = Number.parseFloat(parts[1]!);
-      if (Number.isNaN(minutes) || Number.isNaN(seconds)) return null;
-      return minutes * 60 + seconds;
-    }
-    if (colonCount === 2 && parts.length === 3) {
-      const hours = Number.parseFloat(parts[0]!);
-      const minutes = Number.parseFloat(parts[1]!);
-      const seconds = Number.parseFloat(parts[2]!);
-      if (Number.isNaN(hours) || Number.isNaN(minutes) || Number.isNaN(seconds)) return null;
-      return hours * 3600 + minutes * 60 + seconds;
-    }
-    return null;
-  }
-  const value = Number.parseFloat(trimmed);
-  return Number.isNaN(value) ? null : value;
-};
-
-const clampToStep = (value: number): number => Number((Math.round(value / STEP) * STEP).toFixed(2));
 
 export function formatTrimSummary(
   durationSeconds: number,

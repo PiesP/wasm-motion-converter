@@ -44,6 +44,46 @@ interface PendingTask {
   submittedAt: number;
 }
 
+export interface WorkerCountCapabilities {
+  hardwareConcurrency?: number | undefined;
+  deviceMemory?: number | undefined;
+}
+
+export function calculateOptimalWorkerCount(
+  capabilities: WorkerCountCapabilities | undefined,
+  frameWidth?: number,
+  frameHeight?: number
+): number {
+  let count = 1;
+  if (!capabilities) return count;
+
+  if (capabilities.hardwareConcurrency) {
+    count = Math.min(WEBP_WORKER_MAX_COUNT, Math.max(1, capabilities.hardwareConcurrency - 1));
+  } else {
+    count = 2;
+  }
+
+  const { deviceMemory } = capabilities;
+  if (typeof deviceMemory === 'number' && deviceMemory > 0) {
+    if (deviceMemory <= 4) {
+      count = Math.min(count, 2);
+    } else if (deviceMemory <= 8) {
+      count = Math.min(count, 4);
+    }
+  }
+
+  if (frameWidth && frameHeight) {
+    const pixels = frameWidth * frameHeight;
+    if (pixels > 1920 * 1080) {
+      count = Math.min(count, 2);
+    } else if (pixels > 1280 * 720) {
+      count = Math.min(count, 4);
+    }
+  }
+
+  return count;
+}
+
 // ─── Worker Pool ───────────────────────────────────────────────────
 
 export class WebpWorkerPool {
@@ -76,41 +116,14 @@ export class WebpWorkerPool {
    *   - Frame resolution: >1080p → 2, >720p → 4
    */
   static getOptimalWorkerCount(frameWidth?: number, frameHeight?: number): number {
-    let count = 1;
-
-    if (typeof navigator !== 'undefined') {
-      // CPU-based cap
-      if (navigator.hardwareConcurrency) {
-        count = Math.min(WEBP_WORKER_MAX_COUNT, Math.max(1, navigator.hardwareConcurrency - 1));
-      } else {
-        count = 2;
-      }
-
-      // Device memory cap (navigator.deviceMemory in GB, Chrome only)
-      const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-      if (typeof deviceMemory === 'number' && deviceMemory > 0) {
-        if (deviceMemory <= 4) {
-          count = Math.min(count, 2);
-        } else if (deviceMemory <= 8) {
-          count = Math.min(count, 4);
-        }
-      }
-
-      // Frame resolution cap: each worker needs an OffscreenCanvas
-      // at frame size (~w·h·4 bytes RGBA)
-      if (frameWidth && frameHeight) {
-        const pixels = frameWidth * frameHeight;
-        if (pixels > 1920 * 1080) {
-          // >1080p: limit to 2 workers (~66MB canvas memory at 4K)
-          count = Math.min(count, 2);
-        } else if (pixels > 1280 * 720) {
-          // >720p: limit to 4 workers (~32MB canvas memory at 1080p)
-          count = Math.min(count, 4);
-        }
-      }
-    }
-
-    return count;
+    const capabilities =
+      typeof navigator === 'undefined'
+        ? undefined
+        : {
+            hardwareConcurrency: navigator.hardwareConcurrency,
+            deviceMemory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
+          };
+    return calculateOptimalWorkerCount(capabilities, frameWidth, frameHeight);
   }
 
   /**
@@ -138,18 +151,7 @@ export class WebpWorkerPool {
   private initWorkers(): void {
     for (let i = 0; i < this.size; i++) {
       try {
-        const worker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
-          type: 'module',
-        });
-
-        worker.onmessage = (event: MessageEvent<EncodeTaskResult & { error?: string }>) => {
-          this.handleWorkerMessage(worker, event.data);
-        };
-
-        worker.onerror = (event: ErrorEvent) => {
-          this.handleWorkerError(worker, event);
-        };
-
+        const worker = this.createWorker();
         this.workers.push(worker);
         this.idleWorkers.push(worker);
       } catch (err) {
@@ -167,6 +169,19 @@ export class WebpWorkerPool {
       created: this.workers.length,
       optimalCount: WebpWorkerPool.getOptimalWorkerCount(),
     });
+  }
+
+  private createWorker(): Worker {
+    const worker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    worker.onmessage = (event: MessageEvent<EncodeTaskResult & { error?: string }>) => {
+      this.handleWorkerMessage(worker, event.data);
+    };
+    worker.onerror = (event: ErrorEvent) => {
+      this.handleWorkerError(worker, event);
+    };
+    return worker;
   }
 
   private handleWorkerMessage(worker: Worker, data: EncodeTaskResult & { error?: string }): void {
@@ -355,15 +370,7 @@ export class WebpWorkerPool {
     }
 
     try {
-      const newWorker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
-        type: 'module',
-      });
-      newWorker.onmessage = (event: MessageEvent<EncodeTaskResult & { error?: string }>) => {
-        this.handleWorkerMessage(newWorker, event.data);
-      };
-      newWorker.onerror = (event: ErrorEvent) => {
-        this.handleWorkerError(newWorker, event);
-      };
+      const newWorker = this.createWorker();
       this.workers[idx] = newWorker;
       this.idleWorkers.push(newWorker);
     } catch (err) {

@@ -21,7 +21,6 @@ import type {
   ConversionRequest,
   MediabunnyVideoDecoderConfig,
   ProgressCallback,
-  ProgressPhase,
 } from '@t/conversion-types';
 import {
   DEFAULT_FPS,
@@ -40,6 +39,7 @@ import {
   clearLastConversionProfileReport,
   setLastConversionProfileReport,
 } from './conversion-profile-store';
+import { buildEncodingProgress } from './conversion-progress';
 import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
@@ -111,8 +111,8 @@ async function _runPipelineInner(
   //   decode:  3 ~ 73%  (typically ~70% of total time — dominant bottleneck)
   //   encode: 73 ~ 93%  (typically ~20% of total time)
   //   finish: 93 ~ 100% (file finalization)
-  const { DEMUX_MAX, DECODE_MAX, ENCODE_MAX } = PROGRESS_PHASE;
-  const { DECODE_RANGE, ENCODE_RANGE } = PROGRESS_PHASE_RANGES;
+  const { DEMUX_MAX, ENCODE_MAX } = PROGRESS_PHASE;
+  const { DECODE_RANGE } = PROGRESS_PHASE_RANGES;
 
   try {
     // ── Throttled memory sampling (PERF-H1) ──
@@ -199,30 +199,6 @@ async function _runPipelineInner(
     // estimatedOutputFrames is computed after decimationRatio is determined
     let estimatedOutputFrames = 1;
 
-    /**
-     * Build a ConversionProgress object with standard fields.
-     * elapsedMs is passed from callers that already computed performance.now().
-     */
-    const buildProgressData = (
-      phase: ProgressPhase,
-      progress: number,
-      fps: number,
-      etaSeconds: number | null,
-      memoryMB: number,
-      currentFrame: number,
-      totalFrames: number,
-      elapsedMs: number
-    ): Parameters<typeof throttled.callback>[0] => ({
-      phase,
-      progress,
-      fps,
-      etaSeconds,
-      memoryMB,
-      currentFrame,
-      totalFrames,
-      elapsedMs,
-    });
-
     const decodeProgressCb = (frameIdx: number, _totalFrames: number) => {
       const now = performance.now();
       const deltaMs = now - fpsTracker.lastTime;
@@ -255,33 +231,29 @@ async function _runPipelineInner(
       });
     };
 
-    /**
-     * Build an encoding progress callback that tracks frame count and dispatches
-     * throttled progress updates. Replaces the factory function previously in
-     * pipeline-progress-factory.ts.
-     */
+    const reportEncodingProgress = (
+      progressFrame: number,
+      currentFrame: number,
+      etaFrame: number | null
+    ): void => {
+      throttled.callback(
+        buildEncodingProgress({
+          progressFrame,
+          currentFrame,
+          etaFrame,
+          totalFrames: estimatedOutputFrames,
+          fps: fpsTracker.current,
+          memoryMB: sampleMemory(),
+          elapsedMs: Math.round(performance.now() - pipelineStart),
+        })
+      );
+    };
+
     const createEncodeProgressCb = (): ProgressCallback => {
       let encodedFrames = 0;
       return (p) => {
         encodedFrames = p.currentFrame ?? encodedFrames;
-        const encodePct =
-          estimatedOutputFrames > 0
-            ? Math.round((encodedFrames / estimatedOutputFrames) * ENCODE_RANGE)
-            : 0;
-        throttled.callback(
-          buildProgressData(
-            'encoding',
-            Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
-            fpsTracker.current,
-            fpsTracker.current > 0 && p.currentFrame != null
-              ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
-              : null,
-            sampleMemory(),
-            p.currentFrame ?? 0,
-            estimatedOutputFrames,
-            Math.round(performance.now() - pipelineStart)
-          )
-        );
+        reportEncodingProgress(encodedFrames, p.currentFrame ?? 0, p.currentFrame ?? null);
       };
     };
 
@@ -326,24 +298,7 @@ async function _runPipelineInner(
                 onFrameDecoded: decodeProgressCb,
                 onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
                   gifEncodeFrames = frameIdx;
-                  const encodePct =
-                    estimatedOutputFrames > 0
-                      ? Math.round((frameIdx / estimatedOutputFrames) * ENCODE_RANGE)
-                      : 0;
-                  throttled.callback(
-                    buildProgressData(
-                      'encoding',
-                      DECODE_MAX + Math.min(ENCODE_RANGE, encodePct),
-                      fpsTracker.current,
-                      fpsTracker.current > 0
-                        ? Math.round((estimatedOutputFrames - frameIdx) / fpsTracker.current)
-                        : null,
-                      sampleMemory(),
-                      frameIdx,
-                      estimatedOutputFrames,
-                      Math.round(performance.now() - pipelineStart)
-                    )
-                  );
+                  reportEncodingProgress(frameIdx, frameIdx, frameIdx);
                 },
               },
               signal
@@ -416,24 +371,8 @@ async function _runPipelineInner(
           request.quality,
           estimatedOutputFrames,
           (p) => {
-            const encodePct =
-              estimatedOutputFrames > 0
-                ? Math.round(((p.currentFrame ?? 0) / estimatedOutputFrames) * ENCODE_RANGE)
-                : 0;
-            throttled.callback(
-              buildProgressData(
-                'encoding',
-                DECODE_MAX + Math.min(ENCODE_RANGE, encodePct),
-                fpsTracker.current,
-                fpsTracker.current > 0 && p.currentFrame != null
-                  ? Math.round((estimatedOutputFrames - p.currentFrame) / fpsTracker.current)
-                  : null,
-                sampleMemory(),
-                p.currentFrame ?? 0,
-                estimatedOutputFrames,
-                Math.round(performance.now() - pipelineStart)
-              )
-            );
+            const currentFrame = p.currentFrame ?? 0;
+            reportEncodingProgress(currentFrame, currentFrame, p.currentFrame ?? null);
           }
         );
 

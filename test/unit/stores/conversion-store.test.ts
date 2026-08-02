@@ -37,11 +37,9 @@ describe('conversion-store', () => {
     setAppState('done');
     expect(appState()).toBe('done');
 
-    const transition = vi.fn((callback: () => void) => callback());
-    transitionToState('converting', transition);
+    transitionToState('converting');
     expect(appState()).toBe('converting');
-    expect(transition).not.toHaveBeenCalled();
-    transitionToState('converting', transition);
+    transitionToState('converting');
     expect(appState()).toBe('converting');
 
     setAppState('idle');

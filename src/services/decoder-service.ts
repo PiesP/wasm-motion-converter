@@ -20,6 +20,15 @@ import { LruMap } from '@piesp/browser-core/util';
 import type { SmartFrameSkipMode } from '@t/conversion-types';
 import { DEFAULT_FPS, FPS_CLAMP_MAX, MIN_OUTPUT_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
+import {
+  ADAPTIVE_NOISE_SAMPLE_COUNT,
+  type AdaptiveMotionClass,
+  calculateAdaptiveDecimation,
+  calculateAdaptiveNoiseFloor,
+  classifyAdaptiveMotion,
+  isSignificantMotionIncrease,
+  shouldSkipAdaptiveFrame,
+} from './adaptive-frame-skip';
 import { globalBufferPool } from './buffer-pool';
 import type { DemuxResult } from './demuxer-service';
 import {
@@ -190,24 +199,12 @@ export async function decodeFrames(
   let smartSkippedCount = 0;
   // Noise floor estimation: collect frame diff stdDev from first N frames
   const noiseFloorSamples: number[] = [];
-  const NOISE_SAMPLE_COUNT = 15; // reduced from 30 → faster adaptation for short videos
   let noiseFloor = 0; // will be set after sampling phase
 
   // ── Adaptive motion-classified decimation state ──
   // Running window of motion distances for scene analysis
   let adaptFrameCounter = 0;
   let lastAdaptiveKeptFrame = Number.NEGATIVE_INFINITY;
-  // Motion class thresholds (MAD — mean absolute difference, 0-255 scale)
-  const ADAPT_STATIC_THRESHOLD = 1.5; // ≤1.5 → static (very similar)
-  const ADAPT_SLOW_THRESHOLD = 3; // ≤3 → slow motion
-  const ADAPT_NORMAL_THRESHOLD = 6; // ≤6 → normal motion (>6 → fast)
-  // Decimation per motion class
-  const ADAPT_DECIMATION = {
-    static: 8, // keep every 8th frame (≈7.5fps from 60fps)
-    slow: 3, // keep every 3rd frame (≈20fps from 60fps)
-    normal: 2, // keep every 2nd frame (≈30fps from 60fps)
-    fast: 1, // least aggressive adaptive skip; preset/memory floor still applies
-  };
   const requestedDecimation =
     Number.isFinite(frameDecimation) && frameDecimation > 0
       ? Math.max(1, Math.round(frameDecimation))
@@ -215,7 +212,7 @@ export async function decodeFrames(
   const canRunAdaptiveAnalysis =
     isAdaptive && streaming && typeof onVideoFrameAvailable !== 'function';
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
-  let adaptLastMotionClass: 'static' | 'slow' | 'normal' | 'fast' = 'normal';
+  let adaptLastMotionClass: AdaptiveMotionClass = 'normal';
 
   // Check codec support (cached per codec+hw combo)
   const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
@@ -317,12 +314,10 @@ export async function decodeFrames(
             const frameDistance =
               gray !== null && prevGray !== null ? computeMAD(gray, prevGray) : null;
 
-            if (frameDistance !== null && noiseFloorSamples.length < NOISE_SAMPLE_COUNT) {
+            if (frameDistance !== null && noiseFloorSamples.length < ADAPTIVE_NOISE_SAMPLE_COUNT) {
               noiseFloorSamples.push(frameDistance);
-              if (noiseFloorSamples.length === NOISE_SAMPLE_COUNT) {
-                const sorted = [...noiseFloorSamples].sort((a, b) => a - b);
-                const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-                noiseFloor = median * 3.5;
+              if (noiseFloorSamples.length === ADAPTIVE_NOISE_SAMPLE_COUNT) {
+                noiseFloor = calculateAdaptiveNoiseFloor(noiseFloorSamples);
               }
             }
 
@@ -363,34 +358,22 @@ export async function decodeFrames(
             // have been processed. This initial misclassification is expected and has
             // negligible impact — only one frame's decimation is affected.
             if (canRunAdaptiveAnalysis && gray !== null) {
-              let motionClass: 'static' | 'slow' | 'normal' | 'fast' = adaptLastMotionClass;
+              let motionClass: AdaptiveMotionClass = adaptLastMotionClass;
 
-              if (frameDistance !== null && noiseFloorSamples.length >= NOISE_SAMPLE_COUNT) {
+              if (
+                frameDistance !== null &&
+                noiseFloorSamples.length >= ADAPTIVE_NOISE_SAMPLE_COUNT
+              ) {
                 // Classify motion level using noise-floor-adapted thresholds.
                 // Lower-noise videos get tighter thresholds (more aggressive skip),
                 // noisier videos get wider thresholds (conservative skip).
-                const effectiveStatic = Math.max(
-                  ADAPT_STATIC_THRESHOLD,
-                  noiseFloor / 3.5 // undo 3.5x scaling for raw threshold
-                );
-                const effectiveSlow = Math.max(ADAPT_SLOW_THRESHOLD, noiseFloor / 1.8);
-                const effectiveNormal = Math.max(ADAPT_NORMAL_THRESHOLD, noiseFloor / 1.2);
-                if (frameDistance <= effectiveStatic) {
-                  motionClass = 'static';
-                } else if (frameDistance <= effectiveSlow) {
-                  motionClass = 'slow';
-                } else if (frameDistance <= effectiveNormal) {
-                  motionClass = 'normal';
-                } else {
-                  motionClass = 'fast';
-                }
+                motionClass = classifyAdaptiveMotion(frameDistance, noiseFloor);
 
                 // Scene change detection: align the adaptive cadence so the new
                 // scene remains visible, but never reset it before the requested
                 // preset or memory floor allows another frame.
-                const classOrder = { static: 0, slow: 1, normal: 2, fast: 3 } as const;
                 if (
-                  classOrder[motionClass] > classOrder[adaptLastMotionClass] + 1 &&
+                  isSignificantMotionIncrease(motionClass, adaptLastMotionClass) &&
                   frameNum - lastAdaptiveKeptFrame >= requestedDecimation
                 ) {
                   adaptFrameCounter = 0; // force keep on significant motion increase
@@ -400,14 +383,19 @@ export async function decodeFrames(
 
               prevGray = gray;
 
-              const decimation = Math.max(
+              const decimation = calculateAdaptiveDecimation(
+                motionClass,
                 requestedDecimation,
-                Math.min(ADAPT_DECIMATION[motionClass], maxAdaptiveDecimation)
+                maxAdaptiveDecimation
               );
-              const violatesRequestedFloor = frameNum - lastAdaptiveKeptFrame < requestedDecimation;
-              const shouldSkip =
-                violatesRequestedFloor ||
-                (adaptFrameCounter % decimation !== 0 && consecutiveSkipMs < 500); // 500ms adaptive safety limit
+              const shouldSkip = shouldSkipAdaptiveFrame({
+                frameNum,
+                lastKeptFrame: lastAdaptiveKeptFrame,
+                requestedDecimation,
+                frameCounter: adaptFrameCounter,
+                decimation,
+                consecutiveSkipMs,
+              });
 
               adaptFrameCounter++;
 

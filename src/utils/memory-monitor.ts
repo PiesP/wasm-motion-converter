@@ -19,8 +19,6 @@ import { getMemoryInfo as getRawMemoryInfo } from './memory-info.js';
  * The underlying raw memory access is owned by memory-info.ts.
  */
 
-export type { MemoryInfo } from './memory-info.js';
-
 /**
  * Get current JS heap memory info.
  * Delegates to memory-info.ts (the SSOT for performance.memory access).

@@ -19,6 +19,7 @@
  *   3. Encoder writes GIF incrementally
  */
 
+import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 import {
   GIF_LZW_RATIO,
   GIF_MAX_BUFFER_BYTES,
@@ -33,7 +34,7 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
-import { convertRGBToRGBA, yieldToMain } from './frame-utils';
+import { convertRGBToRGBA } from './frame-utils';
 
 const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
   low: 64, // 128 → 64: perceptual studies show banding is visible below ~32 colors,

@@ -43,7 +43,7 @@ import type {
 import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
-import { focusElement, focusRetryButton, getStartViewTransition } from '@utils/dom-utils';
+import { focusElement, focusRetryButton } from '@utils/dom-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
@@ -54,8 +54,6 @@ import type {
   ConversionRuntimeController,
 } from './use-conversion-runtime-controller';
 import { handleFileSelected } from './use-handle-file-selected';
-
-const startViewTransition = getStartViewTransition();
 
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
 
@@ -137,7 +135,7 @@ export async function handleConvert(
                   );
                   setErrorMessage(context.originalError);
                   setErrorContext(context);
-                  transitionToState('error', startViewTransition);
+                  transitionToState('error');
                 });
                 focusRetryButton();
               })
@@ -177,7 +175,7 @@ async function performConversion(
 
   try {
     batch(() => {
-      transitionToState('converting', startViewTransition);
+      transitionToState('converting');
       setConversionStatusMessage('');
       setConversionResults([]);
     });
@@ -541,7 +539,7 @@ function handleResult(
   });
 
   batch(() => {
-    transitionToState('done', startViewTransition);
+    transitionToState('done');
     setConversionStatusMessage('');
     runtime.resetRuntimeState();
     // Input buffer was already released after pipeline completion
@@ -603,7 +601,7 @@ async function handleConversionError(
     runtime.resetRuntimeState();
     setErrorMessage(context.originalError);
     setErrorContext(context);
-    transitionToState('error', startViewTransition);
+    transitionToState('error');
   });
 
   focusRetryButton();

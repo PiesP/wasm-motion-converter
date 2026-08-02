@@ -17,7 +17,6 @@ import {
 } from './conversion-handlers/use-perform-conversion';
 
 interface ConversionHandlersOptions {
-  conversionStartTime: () => number;
   setConversionStartTime: Setter<number>;
   setEstimatedSecondsRemaining: Setter<number | null>;
   setMemoryWarning: Setter<boolean>;
