@@ -2,12 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  focusElement,
-  focusRetryButton,
-  getStartViewTransition,
-  scheduleTask,
-} from '@utils/dom-utils';
+import { focusElement, focusRetryButton, scheduleTask } from '@utils/dom-utils';
 
 describe('dom utilities', () => {
   beforeEach(() => vi.useFakeTimers());
@@ -44,9 +39,5 @@ describe('dom utilities', () => {
     focusRetryButton();
     await Promise.resolve();
     expect(focus).toHaveBeenCalled();
-  });
-
-  it('returns undefined when view transitions are unsupported', () => {
-    expect(getStartViewTransition()).toBeUndefined();
   });
 });

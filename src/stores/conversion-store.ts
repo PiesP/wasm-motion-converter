@@ -24,28 +24,9 @@ import { createSignal } from 'solid-js';
 export const [appState, setAppState] = createSignal<AppState>('idle');
 export const [environmentSupported, setEnvironmentSupported] = createSignal<boolean>(true);
 
-/**
- * Transition to a new app state using the View Transition API.
- * Accepts an optional startViewTransition callback — when provided, the
- * state update is wrapped in a view transition. When omitted, the state
- * is updated synchronously.
- *
- * The store layer no longer calls document.startViewTransition directly;
- * that concern is pushed to the component/hook layer which passes the
- * callback from a Solid.js effect or event handler.
- */
-export function transitionToState(
-  newState: AppState,
-  _startViewTransition?: (callback: () => void) => void
-): void {
-  // Guard: avoid unnecessary state transitions (and potential double
-  // startViewTransition) when the state hasn't actually changed.
+/** Update the app state synchronously when it has changed. */
+export function transitionToState(newState: AppState): void {
   if (appState() === newState) return;
-  // NOTE: document.startViewTransition is intentionally NOT used here.
-  // It blocks DOM updates until the transition's .finished promise
-  // resolves, which never happens in headless Chrome and can also fail
-  // in real browsers after repeated calls.  Direct setAppState is the
-  // reliable path for state-driven UI updates in this SPA.
   setAppState(newState);
 }
 

@@ -18,8 +18,6 @@
 import type { BufferPool } from './buffer-pool';
 import { globalBufferPool } from './buffer-pool';
 
-export { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
-
 // ─── Video Dimension Resolution ────────────────────────────────────
 
 export interface VideoConfigWithDimensions {

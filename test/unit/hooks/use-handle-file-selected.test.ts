@@ -39,7 +39,6 @@ vi.mock('@utils/file-validation', () => ({
 }));
 vi.mock('@utils/dom-utils', () => ({
   focusRetryButton: vi.fn(),
-  getStartViewTransition: () => undefined,
 }));
 vi.mock('@utils/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

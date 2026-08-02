@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { yieldToMain } from '@services/frame-utils';
+import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 import { extractVideoMetadata } from '@services/video-metadata';
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS } from '@utils/constants';
