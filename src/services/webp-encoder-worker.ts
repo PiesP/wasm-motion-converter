@@ -14,6 +14,8 @@
  */
 
 import { getErrorMessage } from '@piesp/browser-core/error';
+import { isRecord } from '@piesp/browser-core/util';
+import { BYTES_PER_MB, WORKER_MAX_MEMORY_MB } from '@utils/constants';
 import { extractAndNormalizeCanvasVp8 } from './webp-bitstream';
 
 // ─── Worker Entry Point ────────────────────────────────────────────
@@ -25,6 +27,56 @@ interface EncodeRequest {
   height: number;
   quality: number;
   durationMs: number;
+}
+
+const RGB_BYTES_PER_PIXEL = 3;
+const MAX_POOLED_RGB_BYTES_PER_PIXEL = RGB_BYTES_PER_PIXEL * 2;
+const RGBA_BYTES_PER_PIXEL = 4;
+const CANVAS_BYTES_PER_PIXEL = 4;
+const MAX_FRAME_PIXELS = Math.floor(
+  (WORKER_MAX_MEMORY_MB * BYTES_PER_MB) /
+    (MAX_POOLED_RGB_BYTES_PER_PIXEL + RGBA_BYTES_PER_PIXEL + CANVAS_BYTES_PER_PIXEL)
+);
+
+function isEncodeTaskId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function isEncodeRequest(value: unknown): value is EncodeRequest {
+  if (!isRecord(value)) return false;
+  if (!isEncodeTaskId(value.id)) return false;
+  if (!(value.rgbData instanceof Uint8Array)) return false;
+  if (!isPositiveSafeInteger(value.width)) return false;
+  if (!isPositiveSafeInteger(value.height)) return false;
+  if (
+    typeof value.quality !== 'number' ||
+    !Number.isFinite(value.quality) ||
+    value.quality < 0 ||
+    value.quality > 1
+  ) {
+    return false;
+  }
+  if (
+    typeof value.durationMs !== 'number' ||
+    !Number.isFinite(value.durationMs) ||
+    value.durationMs < 0
+  ) {
+    return false;
+  }
+
+  const pixelCount = value.width * value.height;
+  const expectedRgbBytes = pixelCount * RGB_BYTES_PER_PIXEL;
+  const maxPooledRgbBytes = 2 ** Math.ceil(Math.log2(expectedRgbBytes));
+  return (
+    Number.isSafeInteger(pixelCount) &&
+    pixelCount <= MAX_FRAME_PIXELS &&
+    value.rgbData.byteLength >= expectedRgbBytes &&
+    value.rgbData.byteLength <= maxPooledRgbBytes
+  );
 }
 
 let canvas: OffscreenCanvas | null = null;
@@ -61,7 +113,7 @@ async function handleEncode(
   const pixelCount = width * height;
   const rgbaData = new Uint8ClampedArray(pixelCount * 4);
   // Fast conversion: unrolled step-3/step-4
-  for (let i = 0, j = 0; i < rgbData.length; i += 3, j += 4) {
+  for (let i = 0, j = 0; j < rgbaData.length; i += 3, j += 4) {
     rgbaData[j] = rgbData[i]!;
     rgbaData[j + 1] = rgbData[i + 1]!;
     rgbaData[j + 2] = rgbData[i + 2]!;
@@ -96,7 +148,7 @@ async function handleEncode(
 
 // ─── Message Handler ───────────────────────────────────────────────
 
-self.onmessage = async (event: MessageEvent<EncodeRequest>) => {
+self.onmessage = async (event: MessageEvent) => {
   // Dedicated Worker messages arrive through the worker's private channel with
   // a null source. Reject any cross-context source before reading its payload.
   if (event.source !== null && event.source !== self) {
@@ -104,6 +156,12 @@ self.onmessage = async (event: MessageEvent<EncodeRequest>) => {
   }
 
   const request = event.data;
+  if (!isEncodeRequest(request)) {
+    if (isRecord(request) && isEncodeTaskId(request.id)) {
+      self.postMessage({ id: request.id, error: 'Invalid WebP encode request' });
+    }
+    return;
+  }
 
   try {
     const result = await handleEncode(request);

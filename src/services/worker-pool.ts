@@ -17,6 +17,7 @@
  */
 
 import { getErrorMessage } from '@piesp/browser-core/error';
+import { isRecord } from '@piesp/browser-core/util';
 import { WEBP_WORKER_MAX_COUNT, WORKER_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
@@ -175,7 +176,7 @@ export class WebpWorkerPool {
     const worker = new Worker(new URL('./webp-encoder-worker.ts', import.meta.url), {
       type: 'module',
     });
-    worker.onmessage = (event: MessageEvent<EncodeTaskResult & { error?: string }>) => {
+    worker.onmessage = (event: MessageEvent) => {
       this.handleWorkerMessage(worker, event.data);
     };
     worker.onerror = (event: ErrorEvent) => {
@@ -184,7 +185,7 @@ export class WebpWorkerPool {
     return worker;
   }
 
-  private handleWorkerMessage(worker: Worker, data: EncodeTaskResult & { error?: string }): void {
+  private handleWorkerMessage(worker: Worker, data: unknown): void {
     // Find the pending task that was assigned to this worker
     const activeTask = this.activeTasks.get(worker);
     if (!activeTask) {
@@ -201,22 +202,40 @@ export class WebpWorkerPool {
     }
 
     this.activeTasks.delete(worker);
+    const pending = this.findPendingByTaskId(activeTask.id);
 
-    if (data.error) {
-      // Reject the promise
-      const pending = this.findPendingByTaskId(data.id);
-      if (pending) {
-        pending.reject(new Error(`Worker encoding failed: ${data.error}`));
-      }
-    } else {
-      // Resolve the promise with the result
-      const pending = this.findPendingByTaskId(data.id);
-      if (pending) {
-        pending.resolve({ id: data.id, bitstream: data.bitstream });
-      }
+    if (!isRecord(data) || data.id !== activeTask.id || !Number.isSafeInteger(data.id)) {
+      this.rejectInvalidWorkerResponse(worker, pending, activeTask.id);
+      return;
     }
 
+    if (data.error !== undefined) {
+      if (typeof data.error !== 'string' || data.error.length === 0) {
+        this.rejectInvalidWorkerResponse(worker, pending, activeTask.id);
+        return;
+      }
+      pending?.reject(new Error(`Worker encoding failed: ${data.error}`));
+      this.releaseWorker(worker);
+      return;
+    }
+
+    if (!(data.bitstream instanceof Uint8Array) || data.bitstream.byteLength === 0) {
+      this.rejectInvalidWorkerResponse(worker, pending, activeTask.id);
+      return;
+    }
+
+    pending?.resolve({ id: activeTask.id, bitstream: data.bitstream });
     this.releaseWorker(worker);
+  }
+
+  private rejectInvalidWorkerResponse(
+    worker: Worker,
+    pending: PendingTask | undefined,
+    taskId: number
+  ): void {
+    logger.warn('encoders', 'Invalid WebP worker response', { taskId });
+    pending?.reject(new Error(`Invalid WebP worker response for task ${taskId}`));
+    this.replaceWorker(worker);
   }
 
   private handleWorkerError(worker: Worker, event: ErrorEvent): void {
