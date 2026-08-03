@@ -30,7 +30,7 @@ import {
   shouldSkipAdaptiveFrame,
 } from './adaptive-frame-skip';
 import { globalBufferPool } from './buffer-pool';
-import type { DemuxResult } from './demuxer-service';
+import { type DemuxResult, getEncodedChunkRetainedBytes } from './demuxer-service';
 import {
   compute8x8Grayscale,
   computeMAD,
@@ -192,6 +192,9 @@ export async function decodeFrames(
 
   let decodeError: Error | null = null;
   const conversionErrors: Error[] = [];
+  const encodedChunkReservations = new Map<number, EncodedChunkReservation[]>();
+  const encodedChunkBudgetBytes = demux.encodedChunkBudgetBytes;
+  let retainedEncodedChunkBytes = 0;
   let inputFrameCount = 0;
   let keptFrameCount = 0;
   let accumulatedDuration = 0;
@@ -235,9 +238,70 @@ export async function decodeFrames(
     streaming,
   });
 
+  interface EncodedChunkReservation {
+    bytes: number;
+    released: boolean;
+    timestamp: number;
+  }
+
+  const releaseEncodedChunk = (reservation: EncodedChunkReservation): void => {
+    if (reservation.released) return;
+    reservation.released = true;
+    retainedEncodedChunkBytes = Math.max(0, retainedEncodedChunkBytes - reservation.bytes);
+
+    const timestampReservations = encodedChunkReservations.get(reservation.timestamp);
+    if (!timestampReservations) return;
+    const index = timestampReservations.indexOf(reservation);
+    if (index >= 0) timestampReservations.splice(index, 1);
+    if (timestampReservations.length === 0) {
+      encodedChunkReservations.delete(reservation.timestamp);
+    }
+  };
+
+  const releaseEncodedChunkForOutput = (timestamp: number): void => {
+    const timestampReservations = encodedChunkReservations.get(timestamp);
+    let reservation = timestampReservations?.[0];
+    if (timestampReservations && reservation) {
+      // Duplicate presentation timestamps do not identify which encoded input produced
+      // this output. Release only the smallest candidate so retained bytes never fall
+      // below the worst-case amount still owned by the codec.
+      for (const candidate of timestampReservations) {
+        if (candidate.bytes < reservation.bytes) reservation = candidate;
+      }
+    }
+    if (reservation) releaseEncodedChunk(reservation);
+  };
+
+  const reserveEncodedChunk = (chunk: EncodedVideoChunk): EncodedChunkReservation => {
+    const bytes = getEncodedChunkRetainedBytes(chunk);
+    if (
+      encodedChunkBudgetBytes !== undefined &&
+      retainedEncodedChunkBytes + bytes > encodedChunkBudgetBytes
+    ) {
+      throw new Error(
+        `Demux memory limit exceeded while queueing encoded packets (${encodedChunkBudgetBytes} byte budget)`
+      );
+    }
+
+    const reservation: EncodedChunkReservation = {
+      bytes,
+      released: false,
+      timestamp: chunk.timestamp,
+    };
+    const timestampReservations = encodedChunkReservations.get(chunk.timestamp);
+    if (timestampReservations) {
+      timestampReservations.push(reservation);
+    } else {
+      encodedChunkReservations.set(chunk.timestamp, [reservation]);
+    }
+    retainedEncodedChunkBytes += bytes;
+    return reservation;
+  };
+
   const decoder = new VideoDecoder({
     output(frame: VideoFrame) {
       try {
+        releaseEncodedChunkForOutput(frame.timestamp);
         if ((demux.trimStartUs ?? 0) > 0 && frame.timestamp < (demux.trimStartUs ?? 0)) {
           frame.close();
           return;
@@ -527,7 +591,13 @@ export async function decodeFrames(
 
       streamedSourceDurationUs += Math.max(0, nextChunk.value.duration ?? 0);
 
-      decoder.decode(nextChunk.value);
+      const reservation = reserveEncodedChunk(nextChunk.value);
+      try {
+        decoder.decode(nextChunk.value);
+      } catch (error) {
+        releaseEncodedChunk(reservation);
+        throw error;
+      }
     }
 
     // Flush decoder

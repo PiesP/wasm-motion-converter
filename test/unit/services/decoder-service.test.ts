@@ -437,6 +437,145 @@ describe('decoder-service', () => {
       );
     });
 
+    it('rejects cumulative in-flight encoded chunks above the demux budget', async () => {
+      class HoldingVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        decodeQueueSize = 0;
+
+        configure(): void {}
+
+        decode(): void {
+          // Keep every encoded input in the codec without producing output.
+        }
+
+        async flush(): Promise<void> {}
+      }
+
+      vi.stubGlobal('VideoDecoder', HoldingVideoDecoder);
+      const chunks = Array.from(
+        { length: 3 },
+        (_, index) =>
+          ({
+            byteLength: 1_500,
+            duration: 1_000,
+            timestamp: index * 1_000,
+          }) as EncodedVideoChunk
+      );
+
+      await expect(
+        decodeFrames(
+          {
+            chunks,
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.003,
+            encodedChunkBudgetBytes: 6_000,
+            framerate: 1_000,
+            sourceTotalMs: 3,
+            totalFrames: chunks.length,
+          } as never,
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+          }
+        )
+      ).rejects.toThrow('Demux memory limit exceeded while queueing encoded packets');
+    });
+
+    it('releases encoded chunk budget when the matching decoder output arrives', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const chunks = Array.from(
+        { length: 3 },
+        (_, index) =>
+          ({
+            byteLength: 1_500,
+            duration: 1_000,
+            intensity: index,
+            timestamp: index * 1_000,
+          }) as unknown as EncodedVideoChunk
+      );
+
+      const result = await decodeFrames(
+        {
+          chunks,
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.003,
+          encodedChunkBudgetBytes: 6_000,
+          framerate: 1_000,
+          sourceTotalMs: 3,
+          totalFrames: chunks.length,
+        } as never,
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+        }
+      );
+
+      expect(result.totalInputFrames).toBe(3);
+    });
+
+    it('keeps a conservative byte bound for duplicate output timestamps', async () => {
+      class DuplicateTimestampDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        decodeQueueSize = 0;
+        private decodedChunks = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          this.output = init.output;
+        }
+
+        configure(): void {}
+
+        decode(): void {
+          this.decodedChunks++;
+          if (this.decodedChunks === 2) {
+            this.output(new FakeVideoFrame(0, 0) as unknown as VideoFrame);
+          }
+        }
+
+        async flush(): Promise<void> {}
+      }
+
+      vi.stubGlobal('VideoDecoder', DuplicateTimestampDecoder);
+      const chunks = [
+        { byteLength: 3_000, duration: 1_000, timestamp: 0 },
+        { byteLength: 1_000, duration: 1_000, timestamp: 0 },
+        { byteLength: 3_000, duration: 1_000, timestamp: 1_000 },
+      ] as EncodedVideoChunk[];
+
+      await expect(
+        decodeFrames(
+          {
+            chunks,
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.003,
+            encodedChunkBudgetBytes: 7_000,
+            framerate: 1_000,
+            sourceTotalMs: 3,
+            totalFrames: chunks.length,
+          } as never,
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+          }
+        )
+      ).rejects.toThrow('Demux memory limit exceeded while queueing encoded packets');
+    });
+
     it('decodes preroll packets but does not deliver frames before trimStart', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       const delivered: number[] = [];
