@@ -187,7 +187,7 @@ export async function encodeGif(
   let estimatedTotalFrames = 0;
   let skippedByDecimation = 0;
   let smartSkipped = 0;
-  const sourceTotalMs = demux.sourceTotalMs;
+  let sourceTotalMs = demux.sourceTotalMs;
 
   // Reusable indexed pixel buffer — avoids per-frame ~2MB allocation.
   // applyPalette() returns a new Uint8Array each call; we reuse this buffer
@@ -272,6 +272,7 @@ export async function encodeGif(
       totalInputFrames: totalDecoded,
       skippedByDecimation: decoderSkippedByDecimation,
       smartSkipped: decoderSmartSkipped,
+      sourceTotalMs: decodedSourceTotalMs,
       tailAccumulatedMs,
     } = await decodeFrames(
       demux,
@@ -371,6 +372,7 @@ export async function encodeGif(
       },
       signal
     );
+    sourceTotalMs = decodedSourceTotalMs;
 
     totalInputFrames = totalDecoded;
     skippedByDecimation = decoderSkippedByDecimation;

@@ -202,7 +202,9 @@ async function performConversion(
 
     const forcedDecimation = runMemoryCheck(settings);
 
-    const buffer = await readInputBuffer(file);
+    // The GIF worker protocol transfers an ArrayBuffer. WebP runs on the main
+    // thread with BlobSource, so avoid retaining a full-file copy for that path.
+    const buffer = settings.format === 'gif' ? await readInputBuffer(file) : undefined;
     if (signal.aborted) {
       throw new DOMException('Cancelled', 'AbortError');
     }
@@ -402,7 +404,7 @@ function buildSerializedOptions(
 }
 
 async function executePipeline(
-  buffer: ArrayBuffer,
+  buffer: ArrayBuffer | undefined,
   serializedConfig: Record<string, unknown> | null,
   serializedOptions: ReturnType<typeof buildSerializedOptions>,
   progressCallback: ProgressCallback,
@@ -422,7 +424,6 @@ async function executePipeline(
   if (isWebP) {
     const { runConversionPipeline } = await import('@services/conversion-pipeline');
     const request = {
-      inputBuffer: buffer,
       inputBlob: file,
       fileName: file.name,
       format: 'webp' as const,
@@ -439,6 +440,10 @@ async function executePipeline(
       progressCallback as Parameters<typeof runConversionPipeline>[1],
       signal
     );
+  }
+
+  if (!buffer) {
+    throw new Error('Unable to read the input video for GIF conversion');
   }
 
   return runPipelineWithFallback(

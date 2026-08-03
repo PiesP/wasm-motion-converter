@@ -11,7 +11,7 @@ import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 const COMPUTE_PACKET_STATS_TIMEOUT_MS = 2_000;
 
 /**
- * Extract video metadata from an ArrayBuffer using MediaBunny.
+ * Extract video metadata from an ArrayBuffer or Blob using MediaBunny.
  *
  * Shared utility to avoid duplicating the BufferSource → Input → getVideoTracks()
  * → getDecoderConfig() pipeline across demuxer-service and file-selected handler.
@@ -21,16 +21,16 @@ const COMPUTE_PACKET_STATS_TIMEOUT_MS = 2_000;
  * rate) videos this returns the exact frame rate; for VFR it returns a close
  * approximation. See <https://mediabunny.dev/guide/reading-media-files#packet-statistics>.
  *
- * @param buffer - The video file's ArrayBuffer
+ * @param source - The video file source. Blob avoids materializing the whole file.
  * @param defaultFps - Fallback frame rate if not derivable from config (default: DEFAULT_FPS)
  * @returns VideoMetadata including the VideoDecoderConfig for WebCodecs
  * @throws Error if no video track found or decoder config unavailable
  */
 export async function extractVideoMetadata(
-  buffer: ArrayBuffer,
+  source: ArrayBuffer | Blob,
   defaultFps: number = DEFAULT_FPS
 ): Promise<VideoMetadata> {
-  const input = createMediaBunnyInput(buffer);
+  const input = createMediaBunnyInput(source);
 
   try {
     const videoTracks = await input.getVideoTracks();

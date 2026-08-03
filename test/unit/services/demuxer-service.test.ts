@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 
 const mocks = vi.hoisted(() => {
@@ -57,7 +57,12 @@ vi.mock('mediabunny', () => ({
 import { demuxVideo } from '@services/demuxer-service';
 
 describe('demuxVideo trim start', () => {
-  it('enforces the request memory budget while retaining encoded packets', async () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.startPacket = undefined;
+  });
+
+  it('rejects an individual encoded packet that exceeds the demux budget', async () => {
     const request: ConversionRequest = {
       inputBuffer: new ArrayBuffer(8),
       fileName: 'packet-bomb.mp4',
@@ -74,7 +79,14 @@ describe('demuxVideo trim start', () => {
       framerate: 30,
     } as VideoMetadata;
 
-    await expect(demuxVideo(request, metadata)).rejects.toThrow('Demux memory limit exceeded');
+    const result = await demuxVideo(request, metadata);
+    const consume = async (): Promise<void> => {
+      for await (const _chunk of result.chunks) {
+        // Consume the lazy stream to trigger the per-packet budget check.
+      }
+    };
+
+    await expect(consume()).rejects.toThrow('Demux memory limit exceeded');
     expect(mocks.dispose).toHaveBeenCalled();
   });
 
@@ -96,10 +108,16 @@ describe('demuxVideo trim start', () => {
     } as VideoMetadata;
 
     const result = await demuxVideo(request, metadata);
+    const chunks: EncodedVideoChunk[] = [];
+    for await (const chunk of result.chunks) chunks.push(chunk);
 
     expect(mocks.getKeyPacket).toHaveBeenCalledWith(5, { verifyKeyPackets: true });
     expect(mocks.getNextKeyPacket).not.toHaveBeenCalled();
     expect(mocks.startPacket).toEqual(expect.objectContaining({ timestamp: 4 }));
-    expect(result).toEqual(expect.objectContaining({ trimStartUs: 5_000_000 }));
+    expect(result).toEqual(
+      expect.objectContaining({ trimStartUs: 5_000_000, totalFrames: 2, sourceTotalMs: 2_000 })
+    );
+    expect(chunks).toHaveLength(2);
+    expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 });

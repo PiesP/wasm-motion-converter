@@ -251,8 +251,8 @@ export interface VideoMetadata {
 export type ProgressCallback = (progress: ConversionProgress) => void;
 
 export interface ConversionRequest {
-  /** Full file content as ArrayBuffer (required for legacy paths, optional when inputBlob is provided) */
-  inputBuffer: ArrayBuffer;
+  /** Full file content for worker/legacy paths. Omit when inputBlob is provided. */
+  inputBuffer?: ArrayBuffer | undefined;
   /** File as Blob — enables on-demand reading via BlobSource, avoiding full memory load */
   inputBlob?: Blob | undefined;
   fileName: string;

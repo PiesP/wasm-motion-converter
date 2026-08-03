@@ -72,10 +72,6 @@ export async function handleFileSelected(
   // that work is happening (important for large files).
   transitionToState('analyzing');
 
-  // Read file once upfront, then share the buffer between metadata extraction and conversion
-  const buffer = await file.arrayBuffer();
-  if (isStale()) return;
-
   setInputFile(file);
 
   const previousPreviewUrl = videoPreviewUrl();
@@ -85,13 +81,12 @@ export async function handleFileSelected(
   setVideoPreviewUrl(URL.createObjectURL(file));
 
   try {
-    // Pass a copy of the buffer to extractVideoMetadata so the original
-    // stays intact (mediabunny's BufferSource may detach the buffer on dispose).
-    const metadata = await extractVideoMetadata(buffer.slice(0), DEFAULT_FPS);
+    // BlobSource lets MediaBunny read only the ranges needed for metadata.
+    // Keep the file itself as the source of truth and materialize an
+    // ArrayBuffer later only when the GIF worker path needs one.
+    const metadata = await extractVideoMetadata(file, DEFAULT_FPS);
     if (isStale()) return;
 
-    // Store buffer only after successful metadata extraction so performConversion can reuse it
-    setInputBuffer(buffer);
     setVideoMetadata(metadata);
     transitionToState('idle');
   } catch (error) {
