@@ -115,7 +115,12 @@ describe('demuxVideo trim start', () => {
     expect(mocks.getNextKeyPacket).not.toHaveBeenCalled();
     expect(mocks.startPacket).toEqual(expect.objectContaining({ timestamp: 4 }));
     expect(result).toEqual(
-      expect.objectContaining({ trimStartUs: 5_000_000, totalFrames: 2, sourceTotalMs: 2_000 })
+      expect.objectContaining({
+        encodedChunkBudgetBytes: 128 * 1024 * 1024,
+        trimStartUs: 5_000_000,
+        totalFrames: 2,
+        sourceTotalMs: 2_000,
+      })
     );
     expect(chunks).toHaveLength(2);
     expect(mocks.dispose).toHaveBeenCalledOnce();

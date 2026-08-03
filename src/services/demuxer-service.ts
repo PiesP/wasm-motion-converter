@@ -13,6 +13,8 @@ export interface DemuxResult {
   /** One-shot packet stream. The producer advances only when the decoder requests a chunk. */
   chunks: Iterable<EncodedVideoChunk> | AsyncIterable<EncodedVideoChunk>;
   config: VideoDecoderConfig;
+  /** Maximum encoded bytes that the decoder may retain before emitting matching output. */
+  encodedChunkBudgetBytes?: number | undefined;
   /** Estimated frame count until the stream finishes, then the exact packet count. */
   totalFrames: number;
   duration: number;
@@ -31,6 +33,10 @@ type DemuxPreparedCallback = (estimatedTotalFrames: number) => void;
 const BYTES_PER_MIB = 1024 * 1024;
 const DEMUX_MEMORY_BUDGET_RATIO = 0.25;
 const ENCODED_CHUNK_OVERHEAD_BYTES = 1024;
+
+export function getEncodedChunkRetainedBytes(chunk: EncodedVideoChunk): number {
+  return chunk.byteLength + ENCODED_CHUNK_OVERHEAD_BYTES;
+}
 
 function resolveInputSource(request: ConversionRequest): Blob | ArrayBuffer {
   const source = request.inputBlob ?? request.inputBuffer;
@@ -175,7 +181,7 @@ export async function demuxVideo(
           signal?.throwIfAborted();
 
           const chunk = packet.toEncodedVideoChunk();
-          const retainedBytes = chunk.byteLength + ENCODED_CHUNK_OVERHEAD_BYTES;
+          const retainedBytes = getEncodedChunkRetainedBytes(chunk);
           if (retainedBytes > memoryBudgetBytes) {
             throw new Error(
               `Demux memory limit exceeded by one encoded packet (${request.maxMemoryMB} MB budget)`
@@ -210,6 +216,7 @@ export async function demuxVideo(
     result = {
       chunks,
       config,
+      encodedChunkBudgetBytes: memoryBudgetBytes,
       totalFrames: estimatedTotalFrames,
       duration,
       sourceTotalMs: 0,
