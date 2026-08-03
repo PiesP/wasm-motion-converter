@@ -120,7 +120,7 @@ export interface DecodeResult {
  *
  * Pipeline:
  *   1. Configure VideoDecoder (hwAccel with software fallback)
- *   2. Feed all chunks from DemuxResult
+ *   2. Pull chunks from DemuxResult only as decoder/output capacity becomes available
  *   3. Per-frame: copyTo RGB → optional filter → accumulate skipped durations
  *   4a. Batch mode: collect into frames array
  *   4b. Stream mode: call onFrameAvailable callback per frame
@@ -480,16 +480,20 @@ export async function decodeFrames(
 
   decoder.configure(activeConfig);
 
+  let streamedSourceDurationUs = 0;
+  const chunkStream = (async function* iterateChunks(): AsyncGenerator<EncodedVideoChunk> {
+    yield* demux.chunks;
+  })();
+
   try {
-    // Feed all chunks with backpressure — prevent decode queue from growing unbounded.
+    // Pull and feed chunks with backpressure — prevent both MediaBunny and the
+    // VideoDecoder queue from growing unbounded. Backpressure is checked before
+    // requesting the next chunk, so the producer cannot run ahead.
     // VideoDecoder internally queues decoded frames; if we feed chunks faster than
     // they can be decoded, memory grows and GC pressure increases.
     // We pause when queue size exceeds a threshold and resume when it drains.
     const MAX_DECODE_QUEUE = 8;
-    const chunks = demux.chunks;
-    let chunkIdx = 0;
-
-    while (chunkIdx < chunks.length) {
+    while (true) {
       if (signal?.aborted) {
         throw new DOMException('Cancelled', 'AbortError');
       }
@@ -518,8 +522,12 @@ export async function decodeFrames(
       }
       if (decodeError) break;
 
-      decoder.decode(chunks[chunkIdx]!);
-      chunkIdx++;
+      const nextChunk = await chunkStream.next();
+      if (nextChunk.done) break;
+
+      streamedSourceDurationUs += Math.max(0, nextChunk.value.duration ?? 0);
+
+      decoder.decode(nextChunk.value);
     }
 
     // Flush decoder
@@ -555,7 +563,8 @@ export async function decodeFrames(
     }
 
     // Compute timing summary
-    const sourceTotalMs = demux.sourceTotalMs;
+    const sourceTotalMs =
+      streamedSourceDurationUs > 0 ? streamedSourceDurationUs / 1000 : demux.sourceTotalMs;
     // Streaming mode: encoder handles frame timing internally, so outputTotalMs is not
     // tracked here. GIF/WebP encoders compute their own timing from frame durations.
     // Non-streaming: sum of all RGB frame durations.
@@ -582,6 +591,8 @@ export async function decodeFrames(
       tailAccumulatedMs: streaming ? accumulatedDuration + consecutiveSkipMs : 0,
     };
   } finally {
+    await chunkStream.return(undefined);
+    demux.dispose?.();
     // Close decoder only after all pending frame conversions have settled.
     // This guarantees no VideoFrame is still being processed when the decoder
     // is closed, preventing \"close() called while a flush is in progress\"

@@ -388,6 +388,55 @@ describe('decoder-service', () => {
       expect(delivered).toEqual([0, 1, 2]);
     });
 
+    it('applies output backpressure before pulling more demuxed chunks', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      FakeVideoFrame.controlledCopies = true;
+      const pulled: number[] = [];
+      const durationsUs = Array.from({ length: 12 }, (_, index) => (index + 1) * 1_000);
+
+      const chunks = (async function* streamChunks(): AsyncGenerator<EncodedVideoChunk> {
+        for (const [index, duration] of durationsUs.entries()) {
+          pulled.push(index);
+          yield {
+            duration,
+            intensity: index,
+            timestamp: index * 1_000,
+          } as unknown as EncodedVideoChunk;
+        }
+      })();
+
+      const decoding = decodeFrames(
+        {
+          chunks,
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.1,
+          framerate: 120,
+          sourceTotalMs: 0,
+          totalFrames: 12,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+        }
+      );
+
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toHaveLength(10));
+      expect(pulled).toHaveLength(10);
+
+      for (const resolve of FakeVideoFrame.copyResolvers.values()) resolve();
+      await vi.waitFor(() => expect(pulled).toHaveLength(12));
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toHaveLength(12));
+      FakeVideoFrame.copyResolvers.get(10_000)?.();
+      FakeVideoFrame.copyResolvers.get(11_000)?.();
+
+      const result = await decoding;
+      expect(result.sourceTotalMs).toBe(
+        durationsUs.reduce((sum, duration) => sum + duration, 0) / 1000
+      );
+    });
+
     it('decodes preroll packets but does not deliver frames before trimStart', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       const delivered: number[] = [];

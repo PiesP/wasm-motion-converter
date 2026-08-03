@@ -109,22 +109,20 @@ export async function runWorkerPipeline(
   // ── Memory sampling and guard (H3 fix) ──
   // Workers do not expose performance.memory. Include the transferred input,
   // pooled frame buffers, and any known output buffer in a conservative estimate.
-  const sampleMemoryMB = (chunkCount = 0, additionalBytes = 0): number => {
-    const estimatedChunkBytes = chunkCount * 4096; // conservative per-chunk estimate
+  const sampleMemoryMB = (additionalBytes = 0): number => {
     const estimatedBytes =
-      inputBuffer.byteLength +
-      globalBufferPool.totalPooledMemory +
-      estimatedChunkBytes +
-      additionalBytes;
+      inputBuffer.byteLength + globalBufferPool.totalPooledMemory + additionalBytes;
     return Math.ceil(estimatedBytes / BYTES_PER_MB);
   };
-  const assertMemoryBudget = (chunkCount = 0, additionalBytes = 0): number => {
-    const memoryMB = sampleMemoryMB(chunkCount, additionalBytes);
+  const assertMemoryBudget = (additionalBytes = 0): number => {
+    const memoryMB = sampleMemoryMB(additionalBytes);
     if (memoryMB >= maxMemoryMB * MEMORY_CRITICAL_RATIO) {
       throw new Error(`Worker memory estimate reached ${memoryMB}MB of ${maxMemoryMB}MB limit`);
     }
     return memoryMB;
   };
+
+  let demuxSession: Awaited<ReturnType<typeof demuxVideo>> | undefined;
 
   try {
     assertMemoryBudget();
@@ -161,35 +159,31 @@ export async function runWorkerPipeline(
 
     // ── Demux Phase ────────────────────────────────────────────
     profiler?.startPhase('demuxing');
-    let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
-    demuxResult = await demuxVideo(
+    const demuxResult = await demuxVideo(
       request,
       preComputedMetadata,
-      (packetsExtracted, estimatedTotalFrames) => {
-        profiler?.updatePhase('demuxing', packetsExtracted);
+      (estimatedTotalFrames) => {
+        profiler?.updatePhase('demuxing', estimatedTotalFrames);
         const now = performance.now();
         if (now - progressState.lastPostTime >= 100) {
           progressState.lastPostTime = now;
-          const memoryMB = assertMemoryBudget(packetsExtracted);
-          const demuxPct = Math.min(
-            DEMUX_MAX,
-            Math.round((packetsExtracted / Math.max(1, estimatedTotalFrames)) * DEMUX_MAX)
-          );
+          const memoryMB = assertMemoryBudget();
           postMessage({
             type: 'progress',
             requestId,
             phase: 'demuxing',
-            percent: demuxPct,
+            percent: DEMUX_MAX,
             fps: 0,
             etaSeconds: 0,
             memoryMB,
-            currentFrame: packetsExtracted,
+            currentFrame: estimatedTotalFrames,
             totalFrames: estimatedTotalFrames,
           });
         }
       },
       signal
     );
+    demuxSession = demuxResult;
     profiler?.endPhase('demuxing', { frames: demuxResult.totalFrames });
 
     const cfg = demuxResult.config;
@@ -397,7 +391,7 @@ export async function runWorkerPipeline(
     }
 
     const totalElapsedMs = Math.round(performance.now() - pipelineStart);
-    const memoryMB = assertMemoryBudget(0, output.byteLength);
+    const memoryMB = assertMemoryBudget(output.byteLength);
     postMessage({
       type: 'progress',
       requestId,
@@ -417,6 +411,7 @@ export async function runWorkerPipeline(
 
     return { outputBuffer: output, ...(profile ? { profile } : {}) };
   } finally {
+    demuxSession?.dispose?.();
     // Ensure buffer pool is cleared on any error path (matching main thread)
     globalBufferPool.clear();
   }

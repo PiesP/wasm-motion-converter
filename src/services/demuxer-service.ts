@@ -10,26 +10,30 @@ import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { type EncodedPacket, EncodedPacketSink } from 'mediabunny';
 
 export interface DemuxResult {
-  chunks: EncodedVideoChunk[];
+  /** One-shot packet stream. The producer advances only when the decoder requests a chunk. */
+  chunks: Iterable<EncodedVideoChunk> | AsyncIterable<EncodedVideoChunk>;
   config: VideoDecoderConfig;
+  /** Estimated frame count until the stream finishes, then the exact packet count. */
   totalFrames: number;
   duration: number;
-  /** Total source duration in milliseconds (computed from chunk durations) */
+  /** Exact streamed source duration in milliseconds once chunks are consumed. */
   sourceTotalMs: number;
   /** Average frame rate from pre-computed metadata (or fallback). Used for decimation calculation. */
   framerate: number;
   /** First requested presentation timestamp in microseconds. Preroll packets may precede it. */
   trimStartUs?: number | undefined;
+  /** Idempotently release the MediaBunny input if the stream is not consumed. */
+  dispose?: (() => void) | undefined;
 }
 
-type DemuxProgressCallback = (packetsExtracted: number, estimatedTotalFrames: number) => void;
+type DemuxPreparedCallback = (estimatedTotalFrames: number) => void;
 
 const BYTES_PER_MIB = 1024 * 1024;
 const DEMUX_MEMORY_BUDGET_RATIO = 0.25;
 const ENCODED_CHUNK_OVERHEAD_BYTES = 1024;
 
 /**
- * Demux a video buffer using MediaBunny, extracting encoded video chunks.
+ * Prepare a lazy MediaBunny packet stream for the decoder.
  *
  * When `preComputedMetadata` is provided (from file selection's metadata extraction),
  * the config, duration, and framerate are reused — avoiding a second
@@ -37,13 +41,13 @@ const ENCODED_CHUNK_OVERHEAD_BYTES = 1024;
  *
  * @param request - Conversion settings + input buffer
  * @param preComputedMetadata - Optional pre-extracted metadata (from handleFileSelected)
- * @param onProgress - Callback for demux progress reporting
+ * @param onPrepared - Callback after metadata, track, and trim start are ready
  * @param signal - AbortSignal for cancellation
  */
 export async function demuxVideo(
   request: ConversionRequest,
   preComputedMetadata?: VideoMetadata,
-  onProgress?: DemuxProgressCallback,
+  onPrepared?: DemuxPreparedCallback,
   signal?: AbortSignal
 ): Promise<DemuxResult> {
   const startTime = performance.now();
@@ -88,6 +92,13 @@ export async function demuxVideo(
     throw new Error('No video input source provided');
   }
   const input = createMediaBunnyInput(inputSource);
+  let disposed = false;
+  const dispose = (): void => {
+    if (disposed) return;
+    disposed = true;
+    input.dispose();
+  };
+
   try {
     const videoTracks = await input.getVideoTracks();
     const videoTrack = videoTracks[0];
@@ -129,11 +140,7 @@ export async function demuxVideo(
       Math.floor(request.maxMemoryMB * BYTES_PER_MIB * DEMUX_MEMORY_BUDGET_RATIO)
     );
 
-    const chunks: EncodedVideoChunk[] = [];
-    let retainedBytes = 0;
-    let totalFrames = 0;
-
-    logger.info('demuxer', 'Demuxing started', {
+    logger.info('demuxer', 'Demux stream prepared', {
       fileName: request.fileName,
       fileSizeBytes: request.inputBlob?.size ?? request.inputBuffer?.byteLength ?? 0,
       codec: config.codec,
@@ -141,58 +148,72 @@ export async function demuxVideo(
       memoryBudgetBytes,
     });
 
-    // Check for cancellation before starting packet iteration
+    // Check for cancellation before handing ownership of Input to the stream.
     signal?.throwIfAborted();
-    // Iterate all packets from startPacket — no end boundary since
-    // MediaBunny's packets() excludes the boundary packet.
-    // Manual break when exceeding trimEnd.
-    for await (const packet of sink.packets(startPacket)) {
-      // Stop if we've passed the trim end boundary
-      if (trimEnd !== undefined && packet.timestamp > trimEnd) {
-        break;
-      }
-      signal?.throwIfAborted();
-      const chunk = packet.toEncodedVideoChunk();
-      retainedBytes += chunk.byteLength + ENCODED_CHUNK_OVERHEAD_BYTES;
-      if (retainedBytes > memoryBudgetBytes) {
-        throw new Error(
-          `Demux memory limit exceeded while retaining encoded packets (${request.maxMemoryMB} MB budget)`
-        );
-      }
-      chunks.push(chunk);
-      totalFrames++;
-      if (onProgress && totalFrames % 10 === 0) {
-        onProgress(totalFrames, estimatedTotalFrames);
-      }
-      // Yield to browser event loop every 50 packets to prevent UI freezing
-      // during demuxing of large files with thousands of packets.
-      if (totalFrames % 50 === 0) {
-        await yieldToMain();
-      }
-    }
+    onPrepared?.(estimatedTotalFrames);
 
-    const elapsed = performance.now() - startTime;
-    logger.info('demuxer', 'Demuxing complete', {
-      totalFrames,
-      chunkCount: chunks.length,
-      retainedBytes,
-      elapsedMs: Math.round(elapsed),
-      elapsed: `${(elapsed / 1000).toFixed(2)}s`,
-    });
+    let result!: DemuxResult;
+    const chunks = (async function* streamChunks(): AsyncGenerator<EncodedVideoChunk> {
+      let totalFrames = 0;
+      let sourceDurationUs = 0;
+      let peakChunkBytes = 0;
+      let completed = false;
 
-    // Compute total source duration from chunk durations (microseconds → milliseconds)
-    const sourceTotalMs = chunks.reduce((sum, ch) => sum + Math.max(0, ch.duration ?? 0), 0) / 1000;
+      try {
+        // Iterate all packets from startPacket — no end boundary since
+        // MediaBunny's packets() excludes the boundary packet. The consumer's
+        // next() calls provide backpressure, so only one encoded chunk is held
+        // between this generator and VideoDecoder.
+        for await (const packet of sink.packets(startPacket)) {
+          if (trimEnd !== undefined && packet.timestamp > trimEnd) break;
+          signal?.throwIfAborted();
 
-    return {
+          const chunk = packet.toEncodedVideoChunk();
+          const retainedBytes = chunk.byteLength + ENCODED_CHUNK_OVERHEAD_BYTES;
+          if (retainedBytes > memoryBudgetBytes) {
+            throw new Error(
+              `Demux memory limit exceeded by one encoded packet (${request.maxMemoryMB} MB budget)`
+            );
+          }
+
+          peakChunkBytes = Math.max(peakChunkBytes, retainedBytes);
+          totalFrames++;
+          sourceDurationUs += Math.max(0, chunk.duration ?? 0);
+          yield chunk;
+
+          // Yield periodically even when the decoder accepts packets quickly.
+          if (totalFrames % 50 === 0) await yieldToMain();
+        }
+        completed = true;
+      } finally {
+        result.totalFrames = totalFrames;
+        result.sourceTotalMs = sourceDurationUs / 1000;
+        dispose();
+
+        const elapsed = performance.now() - startTime;
+        logger.info('demuxer', completed ? 'Demux stream complete' : 'Demux stream closed', {
+          totalFrames,
+          sourceTotalMs: result.sourceTotalMs,
+          peakChunkBytes,
+          elapsedMs: Math.round(elapsed),
+          elapsed: `${(elapsed / 1000).toFixed(2)}s`,
+        });
+      }
+    })();
+
+    result = {
       chunks,
       config,
-      totalFrames,
+      totalFrames: estimatedTotalFrames,
       duration,
-      sourceTotalMs,
+      sourceTotalMs: 0,
       framerate,
       trimStartUs: request.trimStart * 1_000_000,
+      dispose,
     };
-  } finally {
-    input.dispose();
+    return result;
+  } catch (error) {
+    dispose();
+    throw error;
   }
 }

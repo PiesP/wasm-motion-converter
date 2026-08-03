@@ -113,6 +113,7 @@ async function _runPipelineInner(
   //   finish: 93 ~ 100% (file finalization)
   const { DEMUX_MAX, ENCODE_MAX } = PROGRESS_PHASE;
   const { DECODE_RANGE } = PROGRESS_PHASE_RANGES;
+  let demuxSession: Awaited<ReturnType<typeof demuxVideo>> | undefined;
 
   try {
     // ── Throttled memory sampling (PERF-H1) ──
@@ -130,29 +131,24 @@ async function _runPipelineInner(
     };
 
     profiler?.startPhase('demuxing');
-    let demuxResult: Awaited<ReturnType<typeof demuxVideo>>;
     const demuxProgressThrottled = throttled.callback;
-    demuxResult = await scheduleTask(
+    const demuxResult = await scheduleTask(
       () =>
         demuxVideo(
           request,
           videoMetadata() ?? undefined,
-          (packetsExtracted, estimatedTotalFrames) => {
+          (estimatedTotalFrames) => {
             if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-            profiler?.updatePhase('demuxing', packetsExtracted);
+            profiler?.updatePhase('demuxing', estimatedTotalFrames);
             const memMB = sampleMemory();
             const elapsedMs = Math.round(performance.now() - pipelineStart);
-            const demuxPct = Math.min(
-              DEMUX_MAX,
-              Math.round((packetsExtracted / estimatedTotalFrames) * DEMUX_MAX)
-            );
             demuxProgressThrottled({
               phase: 'demuxing',
-              progress: demuxPct,
+              progress: DEMUX_MAX,
               fps: 0,
               etaSeconds: null,
               memoryMB: memMB,
-              currentFrame: packetsExtracted,
+              currentFrame: estimatedTotalFrames,
               totalFrames: estimatedTotalFrames,
               elapsedMs,
             });
@@ -161,6 +157,7 @@ async function _runPipelineInner(
         ),
       { priority: 'user-blocking' }
     );
+    demuxSession = demuxResult;
 
     if (signal?.aborted) {
       logger.info('conversion', 'Conversion aborted after demux');
@@ -602,6 +599,7 @@ async function _runPipelineInner(
 
     return output!;
   } finally {
+    demuxSession?.dispose?.();
     throttled.cleanup();
     globalBufferPool.clear();
     clearCanvasCache();

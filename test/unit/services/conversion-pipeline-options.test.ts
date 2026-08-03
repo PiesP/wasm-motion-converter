@@ -26,12 +26,13 @@ vi.mock('@services/demuxer-service', () => ({
 }));
 
 const demuxResult = {
-    chunks: [],
-    config: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
-    duration: 1,
-    framerate: 30,
-    sourceTotalMs: 1000,
-    totalFrames: 30,
+  chunks: [],
+  config: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
+  dispose: vi.fn(),
+  duration: 1,
+  framerate: 30,
+  sourceTotalMs: 1000,
+  totalFrames: 30,
 };
 vi.mock('@services/gif-encoder-service', () => ({ encodeGif: mocks.encodeGif }));
 vi.mock('@services/webp-encoder-service', () => ({ encodeWebp: mocks.encodeWebp }));
@@ -60,6 +61,7 @@ const baseRequest: ConversionRequest = {
 };
 
 beforeEach(() => {
+  demuxResult.dispose.mockClear();
   mocks.demuxVideo.mockReset().mockResolvedValue(demuxResult);
   mocks.encodeGif.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
   mocks.encodeWebp.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
@@ -98,6 +100,12 @@ describe('main conversion pipeline encoder options', () => {
       expect.any(Function),
       signal
     );
+  });
+
+  it('disposes the demux stream after conversion', async () => {
+    await runConversionPipeline(baseRequest, vi.fn());
+
+    expect(demuxResult.dispose).toHaveBeenCalledOnce();
   });
 
   it('returns only the encoder view bytes in a fresh ArrayBuffer', async () => {
