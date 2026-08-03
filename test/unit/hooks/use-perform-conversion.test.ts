@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     | { onCancel: () => void; onConfirm: () => void }
     | undefined,
   runPipelineWithFallback: vi.fn(),
+  runConversionPipeline: vi.fn(),
   setInputBuffer: vi.fn(),
   setInputFile: vi.fn(),
   setVideoMetadata: vi.fn(),
@@ -65,6 +66,9 @@ vi.mock('@stores/confirmation-store', () => ({
 vi.mock('@services/conversion-worker/main-thread-proxy', () => ({
   runPipelineWithFallback: mocks.runPipelineWithFallback,
 }));
+vi.mock('@services/conversion-pipeline', () => ({
+  runConversionPipeline: mocks.runConversionPipeline,
+}));
 vi.mock('@utils/file-validation', () => ({
   validateVideoDuration: mocks.validateVideoDuration,
 }));
@@ -91,6 +95,9 @@ beforeEach(() => {
   mocks.confirmation = undefined;
   mocks.runPipelineWithFallback.mockReset().mockResolvedValue(
     new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer
+  );
+  mocks.runConversionPipeline.mockReset().mockResolvedValue(
+    new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
   );
   mocks.setInputBuffer.mockClear();
   mocks.setInputFile.mockClear();
@@ -237,6 +244,26 @@ describe('handleConvert conversion ownership', () => {
       expect.any(File),
       expect.anything(),
       expect.anything()
+    );
+  });
+
+  it('uses the input Blob without creating or retaining an ArrayBuffer for WebP', async () => {
+    mocks.settings = { ...mocks.settings, format: 'webp' };
+    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
+    const runtime = createRuntime();
+
+    await handleConvert(runtime, ((key: string) => key) as Parameters<typeof handleConvert>[1]);
+
+    expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+    expect(mocks.runConversionPipeline).toHaveBeenCalledWith(
+      expect.not.objectContaining({ inputBuffer: expect.anything() }),
+      expect.any(Function),
+      expect.any(AbortSignal)
+    );
+    expect(mocks.runConversionPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ inputBlob: expect.any(File), format: 'webp' }),
+      expect.any(Function),
+      expect.any(AbortSignal)
     );
   });
 });

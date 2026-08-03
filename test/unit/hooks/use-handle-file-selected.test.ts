@@ -66,8 +66,11 @@ describe('handleFileSelected conversion settings', () => {
       resetRuntimeState: vi.fn(),
     } as unknown as ConversionRuntimeController;
 
+    const file = new File(['video'], 'next.mp4', { type: 'video/mp4' });
+    const arrayBufferSpy = vi.spyOn(file, 'arrayBuffer');
+
     await handleFileSelected(
-      new File(['video'], 'next.mp4', { type: 'video/mp4' }),
+      file,
       runtime,
       ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
     );
@@ -77,5 +80,7 @@ describe('handleFileSelected conversion settings', () => {
       trimStart: 0,
       trimEnd: 0,
     });
+    expect(mocks.extractVideoMetadata).toHaveBeenCalledWith(file, 30);
+    expect(arrayBufferSpy).not.toHaveBeenCalled();
   });
 });

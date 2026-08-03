@@ -61,9 +61,11 @@ export async function demuxVideo(
     framerate = preComputedMetadata.framerate;
   } else {
     // Extract metadata (also validates the video track exists and config is obtainable).
-    // Pass a copy so the original buffer stays intact for demuxing below —
-    // mediabunny's BufferSource may detach the buffer on dispose.
-    const metadata = await extractVideoMetadata(request.inputBuffer.slice(0));
+    const metadataSource = request.inputBlob ?? request.inputBuffer;
+    if (!metadataSource) {
+      throw new Error('No video input source provided');
+    }
+    const metadata = await extractVideoMetadata(metadataSource);
     if (!metadata.config) {
       throw new Error('Unable to obtain VideoDecoderConfig from video track');
     }
@@ -82,6 +84,9 @@ export async function demuxVideo(
   // Prefer inputBlob (on-demand read via BlobSource) over inputBuffer
   // (full in-memory BufferSource) to reduce memory usage for large files.
   const inputSource = request.inputBlob ?? request.inputBuffer;
+  if (!inputSource) {
+    throw new Error('No video input source provided');
+  }
   const input = createMediaBunnyInput(inputSource);
   try {
     const videoTracks = await input.getVideoTracks();
@@ -89,7 +94,7 @@ export async function demuxVideo(
     if (!videoTrack) {
       logger.warn('demuxer', 'no-video-track', {
         fileName: request.fileName,
-        fileSizeBytes: request.inputBlob?.size ?? request.inputBuffer.byteLength,
+        fileSizeBytes: request.inputBlob?.size ?? request.inputBuffer?.byteLength ?? 0,
       });
       throw new Error('No video track found in input');
     }
@@ -130,7 +135,7 @@ export async function demuxVideo(
 
     logger.info('demuxer', 'Demuxing started', {
       fileName: request.fileName,
-      fileSizeBytes: request.inputBuffer.byteLength,
+      fileSizeBytes: request.inputBlob?.size ?? request.inputBuffer?.byteLength ?? 0,
       codec: config.codec,
       duration: `${duration.toFixed(2)}s`,
       memoryBudgetBytes,

@@ -72,7 +72,7 @@ export async function runConversionPipeline(
     fileName: request.fileName,
     trimStart: request.trimStart,
     trimEnd: request.trimEnd,
-    inputBytes: request.inputBuffer.byteLength,
+    inputBytes: request.inputBlob?.size ?? request.inputBuffer?.byteLength ?? 0,
   };
 
   logger.performance('Pipeline started', logCtx);
