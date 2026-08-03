@@ -32,6 +32,18 @@ const BYTES_PER_MIB = 1024 * 1024;
 const DEMUX_MEMORY_BUDGET_RATIO = 0.25;
 const ENCODED_CHUNK_OVERHEAD_BYTES = 1024;
 
+function resolveInputSource(request: ConversionRequest): Blob | ArrayBuffer {
+  const source = request.inputBlob ?? request.inputBuffer;
+  if (!source) {
+    throw new Error('No video input source provided');
+  }
+  return source;
+}
+
+function getInputSizeBytes(source: Blob | ArrayBuffer): number {
+  return source instanceof Blob ? source.size : source.byteLength;
+}
+
 /**
  * Prepare a lazy MediaBunny packet stream for the decoder.
  *
@@ -51,6 +63,8 @@ export async function demuxVideo(
   signal?: AbortSignal
 ): Promise<DemuxResult> {
   const startTime = performance.now();
+  const inputSource = resolveInputSource(request);
+  const inputSizeBytes = getInputSizeBytes(inputSource);
 
   // Reuse pre-computed metadata when available (avoids second extractVideoMetadata call).
   // Keep the extractVideoMetadata fallback for callers that don't pass metadata
@@ -65,11 +79,7 @@ export async function demuxVideo(
     framerate = preComputedMetadata.framerate;
   } else {
     // Extract metadata (also validates the video track exists and config is obtainable).
-    const metadataSource = request.inputBlob ?? request.inputBuffer;
-    if (!metadataSource) {
-      throw new Error('No video input source provided');
-    }
-    const metadata = await extractVideoMetadata(metadataSource);
+    const metadata = await extractVideoMetadata(inputSource);
     if (!metadata.config) {
       throw new Error('Unable to obtain VideoDecoderConfig from video track');
     }
@@ -87,10 +97,6 @@ export async function demuxVideo(
   // Set up source/input for demuxing.
   // Prefer inputBlob (on-demand read via BlobSource) over inputBuffer
   // (full in-memory BufferSource) to reduce memory usage for large files.
-  const inputSource = request.inputBlob ?? request.inputBuffer;
-  if (!inputSource) {
-    throw new Error('No video input source provided');
-  }
   const input = createMediaBunnyInput(inputSource);
   let disposed = false;
   const dispose = (): void => {
@@ -105,7 +111,7 @@ export async function demuxVideo(
     if (!videoTrack) {
       logger.warn('demuxer', 'no-video-track', {
         fileName: request.fileName,
-        fileSizeBytes: request.inputBlob?.size ?? request.inputBuffer?.byteLength ?? 0,
+        fileSizeBytes: inputSizeBytes,
       });
       throw new Error('No video track found in input');
     }
@@ -142,7 +148,7 @@ export async function demuxVideo(
 
     logger.info('demuxer', 'Demux stream prepared', {
       fileName: request.fileName,
-      fileSizeBytes: request.inputBlob?.size ?? request.inputBuffer?.byteLength ?? 0,
+      fileSizeBytes: inputSizeBytes,
       codec: config.codec,
       duration: `${duration.toFixed(2)}s`,
       memoryBudgetBytes,
