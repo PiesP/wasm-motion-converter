@@ -120,4 +120,59 @@ describe('WebpWorkerPool buffer ownership', () => {
       vi.useRealTimers();
     }
   });
+
+  it.each([
+    {
+      name: 'a mismatched task id',
+      response: { id: 999, bitstream: new Uint8Array([1, 2, 3]) },
+    },
+    {
+      name: 'a non-binary bitstream',
+      response: { id: 21, bitstream: 'not-a-bitstream' },
+    },
+    {
+      name: 'an empty bitstream',
+      response: { id: 21, bitstream: new Uint8Array() },
+    },
+  ])('rejects and retires the worker after $name response', async ({ response }) => {
+    const pool = new WebpWorkerPool(1, 1000);
+    const worker = FakeWorker.instances[0];
+    const pending = pool.encode({
+      id: 21,
+      rgbData: new Uint8Array([0, 0, 0]),
+      width: 1,
+      height: 1,
+      quality: 0.8,
+      durationMs: 40,
+    });
+
+    worker?.onmessage?.({ data: response } as MessageEvent);
+    try {
+      expect(worker?.terminate).toHaveBeenCalled();
+      await expect(pending).rejects.toThrow('Invalid WebP worker response for task 21');
+    } finally {
+      pool.terminate();
+    }
+  });
+
+  it('accepts a matching non-empty bitstream response', async () => {
+    const pool = new WebpWorkerPool(1, 1000);
+    const worker = FakeWorker.instances[0];
+    const pending = pool.encode({
+      id: 22,
+      rgbData: new Uint8Array([0, 0, 0]),
+      width: 1,
+      height: 1,
+      quality: 0.8,
+      durationMs: 40,
+    });
+    const bitstream = new Uint8Array([1, 2, 3]);
+
+    worker?.onmessage?.({ data: { id: 22, bitstream } } as MessageEvent);
+
+    await expect(pending).resolves.toEqual({ id: 22, bitstream });
+    expect(worker?.terminate).not.toHaveBeenCalled();
+    expect(pool.stats).toMatchObject({ poolSize: 1, idle: 1, active: 0, queued: 0 });
+    pool.terminate();
+  });
 });
