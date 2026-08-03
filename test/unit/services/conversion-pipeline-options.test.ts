@@ -118,6 +118,15 @@ describe('main conversion pipeline encoder options', () => {
     expect(result).not.toBe(backing.buffer);
   });
 
+  it('reuses a WebP encoder buffer when its view covers the entire allocation', async () => {
+    const encoded = new Uint8Array([1, 2, 3]);
+    mocks.encodeWebp.mockResolvedValue(encoded);
+
+    const result = await runConversionPipeline({ ...baseRequest, format: 'webp' }, vi.fn());
+
+    expect(result).toBe(encoded.buffer);
+  });
+
   it('forwards smartFrameSkip to the wasm WebP fallback', async () => {
     await runConversionPipeline({ ...baseRequest, format: 'webp' }, vi.fn());
 

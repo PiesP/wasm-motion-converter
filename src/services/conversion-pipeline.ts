@@ -55,6 +55,13 @@ import { disposeWorkerPool, getWorkerPool, WebpWorkerPool } from './worker-pool'
 const isDev = import.meta.env.DEV;
 
 function toOwnedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  if (
+    bytes.buffer instanceof ArrayBuffer &&
+    bytes.byteOffset === 0 &&
+    bytes.byteLength === bytes.buffer.byteLength
+  ) {
+    return bytes.buffer;
+  }
   return bytes.slice().buffer;
 }
 
