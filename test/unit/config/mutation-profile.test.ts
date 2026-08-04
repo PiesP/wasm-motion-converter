@@ -22,9 +22,9 @@ describe('Fast mutation profile', () => {
     expect(config.reporters).toEqual(
       expect.arrayContaining(['clear-text', 'json', 'html'])
     );
-    expect(config.mutator?.excludedMutations).not.toEqual(
-      expect.arrayContaining(['ConditionalExpression', 'EqualityOperator', 'BooleanLiteral'])
-    );
+    expect(config.mutator?.excludedMutations).not.toContain('ConditionalExpression');
+    expect(config.mutator?.excludedMutations).not.toContain('EqualityOperator');
+    expect(config.mutator?.excludedMutations).not.toContain('BooleanLiteral');
     expect(packageJson.scripts?.['mut:fast']).toBe('stryker run stryker.conf.fast.json');
     expect(workflow).toContain('path: reports/mutation/');
     expect(workflow).toContain('if-no-files-found: error');
