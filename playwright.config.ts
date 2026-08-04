@@ -43,16 +43,18 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: IS_CI_PROFILE ? 0 : process.env.CI ? 2 : 0,
   workers: 1,
-  reporter: process.env.CI ? 'github' : [['list'], ['html', { open: 'never' }]],
+  reporter: process.env.CI
+    ? [['github'], ['html', { open: 'never' }]]
+    : [['list'], ['html', { open: 'never' }]],
   timeout: 300_000,
   expect: { timeout: 30_000 },
   tsconfig: path.resolve(__dirname, 'test/tsconfig.playwright.json'),
 
   use: {
     baseURL: DEV_SERVER_URL,
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'off',
+    video: process.env.CI ? 'retain-on-failure' : 'off',
     headless: true,
     colorScheme: 'light',
     viewport: { width: 1280, height: 720 },
