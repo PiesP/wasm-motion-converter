@@ -459,33 +459,17 @@ async function executePipeline(
 }
 
 function validateOutputBlob(output: ArrayBuffer, settings: ConversionSettings): Blob {
-  const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';
-  const blob = new Blob([output], { type: mimeType });
-
-  if (blob.size === 0) {
+  if (output.byteLength === 0) {
     throw new Error('Conversion produced an empty output file');
   }
 
-  // Validate output integrity — read only the first 16 bytes to check header
-  // instead of loading the entire blob into memory (avoids 2x memory for large outputs)
-  const headerBuf = blob.slice(0, 16).arrayBuffer();
-  // Fire-and-forget validation: we intentionally do NOT throw on mismatch.
-  // Some valid outputs may have non-standard headers (e.g., animated WebP with VP8L codec).
-  void headerBuf.then((buf) => {
-    const blobData = new Uint8Array(buf);
-    if (!validateOutput(blobData, settings.format)) {
-      const hexHeader = Array.from(blobData.slice(0, 10))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join(' ');
-      logger.warn('conversion', 'Output validation failed — header mismatch', {
-        format: settings.format,
-        size: blobData.length,
-        headerHex: hexHeader,
-      });
-    }
-  });
+  const header = new Uint8Array(output, 0, Math.min(output.byteLength, 16));
+  if (!validateOutput(header, settings.format)) {
+    throw new Error(`Conversion produced an invalid output header for ${settings.format}`);
+  }
 
-  return blob;
+  const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';
+  return new Blob([output], { type: mimeType });
 }
 
 function handleResult(

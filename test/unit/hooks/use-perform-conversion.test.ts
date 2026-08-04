@@ -11,9 +11,12 @@ const mocks = vi.hoisted(() => ({
   runConversionPipeline: vi.fn(),
   setInputBuffer: vi.fn(),
   setInputFile: vi.fn(),
+  setConversionResults: vi.fn(),
+  setErrorMessage: vi.fn(),
   setVideoMetadata: vi.fn(),
   setVideoPreviewUrl: vi.fn(),
   showConfirmation: vi.fn(),
+  transitionToState: vi.fn(),
   validateVideoDuration: vi.fn(),
   settings: {
     format: 'gif' as const,
@@ -37,18 +40,18 @@ vi.mock('@stores/conversion-store', () => ({
   setConversionElapsedMs: vi.fn(),
   setConversionFps: vi.fn(),
   setConversionProgress: vi.fn(),
-  setConversionResults: vi.fn(),
+  setConversionResults: mocks.setConversionResults,
   setConversionStatusMessage: vi.fn(),
   setCurrentFrame: vi.fn(),
   setErrorContext: vi.fn(),
-  setErrorMessage: vi.fn(),
+  setErrorMessage: mocks.setErrorMessage,
   setInputBuffer: mocks.setInputBuffer,
   setInputFile: mocks.setInputFile,
   setOutputFrames: vi.fn(),
   setTotalFrames: vi.fn(),
   setVideoMetadata: mocks.setVideoMetadata,
   setVideoPreviewUrl: mocks.setVideoPreviewUrl,
-  transitionToState: vi.fn(),
+  transitionToState: mocks.transitionToState,
   videoMetadata: () => ({
     config: { codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16 },
     duration: 1,
@@ -101,9 +104,12 @@ beforeEach(() => {
   );
   mocks.setInputBuffer.mockClear();
   mocks.setInputFile.mockClear();
+  mocks.setConversionResults.mockClear();
+  mocks.setErrorMessage.mockClear();
   mocks.setVideoMetadata.mockClear();
   mocks.setVideoPreviewUrl.mockClear();
   mocks.showConfirmation.mockClear();
+  mocks.transitionToState.mockClear();
   mocks.validateVideoDuration.mockReset();
   mocks.settings = {
     format: 'gif',
@@ -265,6 +271,26 @@ describe('handleConvert conversion ownership', () => {
       expect.any(Function),
       expect.any(AbortSignal)
     );
+  });
+
+  it.each([
+    ['gif', new Uint8Array([0x50, 0x4e, 0x47, 0x00]).buffer],
+    ['webp', new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x50, 0x4e, 0x47, 0x00]).buffer],
+  ] as const)('rejects invalid %s output before publishing a result', async (format, output) => {
+    mocks.settings = { ...mocks.settings, format };
+    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
+    const pipeline = format === 'gif' ? mocks.runPipelineWithFallback : mocks.runConversionPipeline;
+    pipeline.mockResolvedValueOnce(output);
+
+    await handleConvert(createRuntime(), ((key: string) => key) as Parameters<typeof handleConvert>[1]);
+
+    expect(mocks.setErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('invalid output header')
+    );
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
+    expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
+      expect.objectContaining({ outputBlob: expect.any(Blob) }),
+    ]);
   });
 });
 
