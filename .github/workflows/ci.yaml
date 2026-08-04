@@ -124,12 +124,14 @@ jobs:
           pnpm exec playwright install --with-deps chromium
           pnpm test:e2e:ci
 
-      - name: 📊 Upload E2E failure artifacts
+      - name: 📊 Upload Playwright diagnostics
         if: ${{ failure() && !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-failure-${{ github.sha }}
-          path: test-results/
+          name: playwright-diagnostics-${{ github.sha }}
+          path: |
+            test-results/
+            playwright-report/
           if-no-files-found: warn
           retention-days: 7
 

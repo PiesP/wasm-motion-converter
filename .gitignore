@@ -78,6 +78,7 @@ TESTING.md
 test/node_modules/
 test-results/
 playwright-report/
+reports/
 
 # Misc
 *.backup

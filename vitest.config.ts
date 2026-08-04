@@ -21,6 +21,16 @@ export default defineConfig({
     testTimeout: 30000,
     coverage: {
       provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.d.ts',
+        'src/types/**',
+        // Browser and worker bootstrap modules are exercised by Playwright.
+        'src/index.tsx',
+        'src/services/conversion-worker/worker.ts',
+        // Development-only browser automation bridge, also covered by Playwright.
+        'src/test-helpers.ts',
+      ],
       thresholds: {
         statements: 60,
         branches: 45,

@@ -22,13 +22,13 @@
     "configFile": "vitest.config.ts",
     "related": false
   },
-  "reporters": ["progress"],
+  "reporters": ["progress", "clear-text", "json", "html"],
   "coverageAnalysis": "all",
   "inPlace": true,
   "thresholds": {
-    "high": 60,
-    "low": 40,
-    "break": null
+    "high": 70,
+    "low": 60,
+    "break": 60
   },
   "concurrency": 2,
   "timeoutMS": 60000,
@@ -40,7 +40,6 @@
       "ObjectLiteral",
       "ArrowFunction",
       "BlockStatement",
-      "ConditionalExpression",
       "Regex",
       "UnaryOperator",
       "UpdateOperator",
@@ -55,9 +54,7 @@
       "CheckedStatement",
       "SwitchCase",
       "WhileStatement",
-      "ForStatement",
-      "EqualityOperator",
-      "BooleanLiteral"
+      "ForStatement"
     ]
   }
 }
