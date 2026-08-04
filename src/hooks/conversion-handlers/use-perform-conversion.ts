@@ -3,8 +3,6 @@
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
-import { arrayBufferToHex } from '@services/conversion-worker/protocol';
-import { calcMemoryPressureDecimation } from '@services/encoder-common';
 import { validateOutput } from '@services/error-recovery';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
@@ -30,25 +28,26 @@ import {
   videoPreviewUrl,
 } from '@stores/conversion-store';
 import type {
-  ConversionFormat,
   ConversionProgress,
-  ConversionQuality,
   ConversionResult,
-  ConversionScale,
   ConversionSettings,
   ProgressCallback,
   ProgressPhase,
-  SmartFrameSkipMode,
+  VideoMetadata,
 } from '@t/conversion-types';
 import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
-import { GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
 import { focusElement, focusRetryButton } from '@utils/dom-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { checkMemoryForConversion, getMemoryUsageMB } from '@utils/memory-monitor';
 import { batch } from 'solid-js';
+import {
+  buildConversionMemoryPlan,
+  resolveMemoryPressureDecimation,
+  serializeConversionInputs,
+} from './conversion-planning';
 import type {
   ConversionIntent,
   ConversionRuntimeController,
@@ -200,7 +199,8 @@ async function performConversion(
 
     runtime.startMemoryMonitoring();
 
-    const forcedDecimation = runMemoryCheck(settings);
+    const metadata = videoMetadata();
+    const forcedDecimation = runMemoryCheck(metadata, settings);
 
     // The GIF worker protocol transfers an ArrayBuffer. WebP runs on the main
     // thread with BlobSource, so avoid retaining a full-file copy for that path.
@@ -210,7 +210,11 @@ async function performConversion(
     }
 
     const progressCallback = createProgressCallback(isActive, runtime, t);
-    const { serializedConfig, serializedOptions } = serializeConfig(forcedDecimation, settings);
+    const { serializedConfig, serializedOptions } = serializeConversionInputs(
+      metadata,
+      forcedDecimation,
+      settings
+    );
 
     const output = await executePipeline(
       buffer,
@@ -219,8 +223,8 @@ async function performConversion(
       progressCallback,
       signal,
       file,
-      videoMetadata()?.duration,
-      videoMetadata()?.framerate
+      metadata?.duration,
+      metadata?.framerate
     );
 
     // Pipeline has consumed the buffer — release immediately so GC
@@ -237,40 +241,35 @@ async function performConversion(
 
 // ─── Private Step Functions ────────────────────────────────────────────
 
-function runMemoryCheck(settings: ConversionSettings): number | undefined {
-  const md = videoMetadata();
-  if (!md) return undefined;
+function runMemoryCheck(
+  metadata: VideoMetadata | null,
+  settings: ConversionSettings
+): number | undefined {
+  const plan = buildConversionMemoryPlan(metadata, settings);
+  if (!plan) return undefined;
 
-  const outW = Math.max(1, Math.floor(md.width * settings.scale));
-  const outH = Math.max(1, Math.floor(md.height * settings.scale));
+  const memCheck = checkMemoryForConversion(
+    plan.width,
+    plan.height,
+    plan.estimatedFrames,
+    plan.format
+  );
+  logger.info('conversion', 'Pre-conversion memory check', {
+    level: memCheck.level,
+    estimatedMB: memCheck.estimatedMB,
+    availableMB: memCheck.availableMB,
+    width: plan.width,
+    height: plan.height,
+    estFrames: plan.estimatedFrames,
+  });
 
-  const isHighRisk = settings.quality === 'high' && settings.scale >= 1.0;
-  let forcedDecimation: number | undefined;
-
-  if (isHighRisk) {
-    const estFrames = md.duration > 0 ? Math.round(md.duration * (md.framerate ?? 30)) : 300;
-    const memCheck = checkMemoryForConversion(outW, outH, estFrames, settings.format);
-    logger.info('conversion', 'Pre-conversion memory check', {
-      level: memCheck.level,
+  const forcedDecimation = resolveMemoryPressureDecimation(plan, memCheck.level);
+  if (forcedDecimation !== undefined) {
+    logger.warn('conversion', 'Forcing frame decimation due to memory pressure', {
+      forcedDecimation,
       estimatedMB: memCheck.estimatedMB,
       availableMB: memCheck.availableMB,
-      width: outW,
-      height: outH,
-      estFrames,
     });
-    if (memCheck.level === 'critical') {
-      const srcFps = md.framerate ?? 30;
-      const targetFps =
-        settings.format === 'gif'
-          ? GIF_TARGET_FPS[settings.quality]
-          : WEBP_TARGET_FPS[settings.quality];
-      forcedDecimation = calcMemoryPressureDecimation(srcFps, targetFps);
-      logger.warn('conversion', 'Forcing frame decimation due to memory pressure', {
-        forcedDecimation,
-        estimatedMB: memCheck.estimatedMB,
-        availableMB: memCheck.availableMB,
-      });
-    }
   }
 
   return forcedDecimation;
@@ -337,76 +336,10 @@ export function formatConversionProgressStatus(
   return t('progress.statusFrame', { frame, phase });
 }
 
-function serializeConfig(
-  forcedDecimation: number | undefined,
-  settings: ConversionSettings
-): {
-  serializedConfig: ReturnType<typeof buildSerializedConfig>;
-  serializedOptions: ReturnType<typeof buildSerializedOptions>;
-} {
-  const serializedConfig = buildSerializedConfig();
-  const serializedOptions = buildSerializedOptions(forcedDecimation, settings);
-  return { serializedConfig, serializedOptions };
-}
-
-function buildSerializedConfig(): Record<string, unknown> | null {
-  const md = videoMetadata();
-  const decoderConfig = md?.config;
-  if (!decoderConfig) return null;
-
-  return {
-    codec: decoderConfig.codec,
-    codedWidth: decoderConfig.codedWidth ?? 0,
-    codedHeight: decoderConfig.codedHeight ?? 0,
-    ...(decoderConfig.displayAspectWidth && decoderConfig.displayAspectHeight
-      ? {
-          displayAspectWidth: decoderConfig.displayAspectWidth,
-          displayAspectHeight: decoderConfig.displayAspectHeight,
-        }
-      : {}),
-    ...(decoderConfig.hardwareAcceleration
-      ? { hardwareAcceleration: decoderConfig.hardwareAcceleration }
-      : {}),
-    ...(decoderConfig.description
-      ? { description: arrayBufferToHex(decoderConfig.description as ArrayBuffer) }
-      : {}),
-  };
-}
-
-function buildSerializedOptions(
-  forcedDecimation: number | undefined,
-  settings: ConversionSettings
-): {
-  format: ConversionFormat;
-  quality: ConversionQuality;
-  fps: number;
-  scale: ConversionScale;
-  trimStart: number;
-  trimEnd: number;
-  maxFrames: number;
-  forceDecimation: number | undefined;
-  smartFrameSkip: SmartFrameSkipMode | undefined;
-} {
-  const md = videoMetadata();
-  const fps = md?.framerate ?? 30;
-
-  return {
-    format: settings.format,
-    quality: settings.quality,
-    fps,
-    scale: settings.scale,
-    trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
-    trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
-    maxFrames: 0,
-    forceDecimation: forcedDecimation,
-    smartFrameSkip: settings.smartFrameSkip,
-  };
-}
-
 async function executePipeline(
   buffer: ArrayBuffer | undefined,
-  serializedConfig: Record<string, unknown> | null,
-  serializedOptions: ReturnType<typeof buildSerializedOptions>,
+  serializedConfig: ReturnType<typeof serializeConversionInputs>['serializedConfig'],
+  serializedOptions: ReturnType<typeof serializeConversionInputs>['serializedOptions'],
   progressCallback: ProgressCallback,
   signal: AbortSignal,
   file: File,
