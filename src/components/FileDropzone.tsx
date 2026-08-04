@@ -68,6 +68,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [isSelectionPreviewing, setIsSelectionPreviewing] = createSignal(false);
   let fileInputElement: HTMLInputElement | undefined;
   let previewVideoElement: HTMLVideoElement | undefined;
+  let selectionFeedbackTimeout: ReturnType<typeof setTimeout> | undefined;
 
   const isBusy = createMemo(() => !!local.status);
   const isInteractive = createMemo(() => !local.disabled && !isBusy());
@@ -135,14 +136,27 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     stopSelectionPreview();
   });
 
-  onCleanup(() => stopSelectionPreview());
+  const clearSelectionFeedbackTimeout = (): void => {
+    if (selectionFeedbackTimeout === undefined) return;
+    clearTimeout(selectionFeedbackTimeout);
+    selectionFeedbackTimeout = undefined;
+  };
+
+  onCleanup(() => {
+    stopSelectionPreview();
+    clearSelectionFeedbackTimeout();
+  });
 
   const selectFile = (files?: FileList | null): void => {
     const file = files?.[0];
     if (!file) return;
 
+    clearSelectionFeedbackTimeout();
     setJustSelected(true);
-    setTimeout(() => setJustSelected(false), SELECTION_FEEDBACK_DURATION_MS);
+    selectionFeedbackTimeout = setTimeout(() => {
+      selectionFeedbackTimeout = undefined;
+      setJustSelected(false);
+    }, SELECTION_FEEDBACK_DURATION_MS);
     local.onFileSelected(file);
   };
 
