@@ -52,6 +52,7 @@ describe('decoder-service', () => {
       static copyResolvers = new Map<number, () => void>();
       static copyStarts: number[] = [];
       static frameDuration: number | null = 16_667;
+      static instances: FakeVideoFrame[] = [];
 
       readonly codedWidth = 8;
       readonly codedHeight = 8;
@@ -63,7 +64,9 @@ describe('decoder-service', () => {
         private readonly intensity: number,
         readonly timestamp = intensity * 1_000,
         readonly duration: number | null = FakeVideoFrame.frameDuration
-      ) {}
+      ) {
+        FakeVideoFrame.instances.push(this);
+      }
 
       allocationSize(): number {
         return 8 * 8 * 4;
@@ -126,6 +129,7 @@ describe('decoder-service', () => {
       FakeVideoDecoder.configureCalls = 0;
       FakeVideoFrame.controlledCopies = false;
       FakeVideoFrame.frameDuration = 16_667;
+      FakeVideoFrame.instances.length = 0;
       FakeVideoFrame.copyResolvers.clear();
       FakeVideoFrame.copyStarts.length = 0;
     });
@@ -435,6 +439,59 @@ describe('decoder-service', () => {
       expect(result.sourceTotalMs).toBe(
         durationsUs.reduce((sum, duration) => sum + duration, 0) / 1000
       );
+    });
+
+    it('stops pulling chunks after the first frame-processing error and closes in-flight frames', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const firstError = new Error('first frame failure');
+      const pulled: number[] = [];
+      let producerClosed = false;
+      let pullsAfterFailure = 0;
+      let submissions = 0;
+      const chunks = (async function* streamChunks(): AsyncGenerator<EncodedVideoChunk> {
+        try {
+          for (let index = 0; index < 20; index++) {
+            if (submissions > 0) pullsAfterFailure++;
+            pulled.push(index);
+            yield { intensity: index, timestamp: index * 1_000 } as EncodedVideoChunk;
+          }
+        } finally {
+          producerClosed = true;
+        }
+      })();
+
+      await expect(
+        decodeFrames(
+          {
+            chunks,
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.3,
+            framerate: 60,
+            sourceTotalMs: 300,
+            totalFrames: 20,
+          },
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onFrameAvailable: (rgbData) => {
+              submissions++;
+              globalBufferPool.release(rgbData);
+              throw firstError;
+            },
+          }
+        )
+      ).rejects.toThrow('Frame processing failed: first frame failure');
+
+      expect(submissions).toBe(1);
+      expect(pullsAfterFailure).toBe(0);
+      expect(pulled.length).toBeLessThan(20);
+      expect(producerClosed).toBe(true);
+      expect(FakeVideoFrame.instances.length).toBeGreaterThan(0);
+      expect(FakeVideoFrame.instances.length).toBeLessThanOrEqual(pulled.length);
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
     });
 
     it('rejects cumulative in-flight encoded chunks above the demux budget', async () => {

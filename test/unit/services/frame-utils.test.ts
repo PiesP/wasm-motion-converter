@@ -11,6 +11,7 @@ import {
   getFrameDurationMs,
   resolveVideoDimensions,
 } from '@services/frame-utils';
+import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 
 afterEach(() => {
   clearCanvasCache();
@@ -27,6 +28,51 @@ describe('resolveVideoDimensions', () => {
         displayAspectHeight: 576,
       })
     ).toEqual({ width: 1024, height: 576 });
+  });
+
+  it.each([
+    ['zero', 0, 576],
+    ['negative', -1, 576],
+    ['fractional', 1024.5, 576],
+    ['NaN', Number.NaN, 576],
+    ['infinite', Number.POSITIVE_INFINITY, 576],
+    ['incomplete', 1024, undefined],
+  ])('rejects %s display aspect dimensions instead of falling back to coded size', (_name, width, height) => {
+    expect(
+      resolveVideoDimensions({
+        codedWidth: 720,
+        codedHeight: 576,
+        displayAspectWidth: width,
+        displayAspectHeight: height,
+      })
+    ).toBeNull();
+  });
+
+  it('rejects display aspect dimensions above the per-frame working-memory budget', () => {
+    expect(
+      resolveVideoDimensions({
+        codedWidth: 720,
+        codedHeight: 576,
+        displayAspectWidth: MAX_FRAME_PIXEL_COUNT + 1,
+        displayAspectHeight: 1,
+      })
+    ).toBeNull();
+  });
+
+  it('accepts dimensions at the conservative per-frame working-memory boundary', () => {
+    expect(
+      resolveVideoDimensions({
+        displayAspectWidth: MAX_FRAME_PIXEL_COUNT,
+        displayAspectHeight: 1,
+      })
+    ).toEqual({ width: MAX_FRAME_PIXEL_COUNT, height: 1 });
+  });
+
+  it.each([
+    ['coded', { codedWidth: Number.MAX_SAFE_INTEGER, codedHeight: 2 }],
+    ['raw display', { displayWidth: Number.MAX_SAFE_INTEGER, displayHeight: 2 }],
+  ])('rejects unsafe %s dimensions at the shared allocation boundary', (_name, config) => {
+    expect(resolveVideoDimensions(config)).toBeNull();
   });
 });
 

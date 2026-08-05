@@ -23,6 +23,7 @@
 import type { ProgressCallback } from '@t/conversion-types';
 import { getCanvasWebpQuality } from '@utils/constants';
 import { logger } from '@utils/logger';
+import { globalBufferPool } from './buffer-pool';
 import type { BaseEncoderOptions } from './encoder-common';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
 import type { EncodeTask, EncodeTaskResult } from './worker-pool';
@@ -32,6 +33,15 @@ interface FrameEncodeResult {
   bitstream: Uint8Array;
   durationMs: number;
   encodeIdx: number;
+}
+
+interface StreamingWebpEncoder {
+  submit: (rgbData: Uint8Array, durationMs: number) => Promise<void>;
+  finish: () => Promise<Uint8Array>;
+  /** Signals the first asynchronous worker failure to the decoder immediately. */
+  failureSignal: AbortSignal;
+  /** Pad the last frame's duration (for tail-accumulated durations from decimation/smart-skip). */
+  padLastFrame: (extraMs: number) => void;
 }
 
 /**
@@ -47,12 +57,7 @@ export function createStreamingWebpEncoder(
   quality: BaseEncoderOptions['quality'],
   totalFrames: number,
   onProgress?: ProgressCallback
-): {
-  submit: (rgbData: Uint8Array, durationMs: number) => Promise<void>;
-  finish: () => Promise<Uint8Array>;
-  /** Pad the last frame's duration (for tail-accumulated durations from decimation/smart-skip). */
-  padLastFrame: (extraMs: number) => void;
-} {
+): StreamingWebpEncoder {
   const qualityF = getCanvasWebpQuality(quality);
   const pool = getWorkerPool(WebpWorkerPool.getOptimalWorkerCount(width, height));
 
@@ -67,9 +72,10 @@ export function createStreamingWebpEncoder(
   const resultBuffer = new Map<number, FrameEncodeResult>();
   let nextExpectedId = 0;
   let submittedCount = 0;
-  let failedCount = 0;
+  let firstEncodeError: Error | null = null;
   let pendingTailMs = 0;
   const inFlight = new Set<Promise<EncodeTaskResult | void>>();
+  const failureController = new AbortController();
 
   // Cap in-flight frames at 2× pool size so that (a) each worker has one
   // frame encoding + one queued frame ready with no gap, and (b) backup
@@ -101,12 +107,26 @@ export function createStreamingWebpEncoder(
   async function waitForSlot(): Promise<void> {
     while (inFlight.size >= MAX_IN_FLIGHT) {
       await Promise.race([...inFlight]);
+      if (firstEncodeError) throw firstEncodeError;
     }
   }
 
+  function throwIfFailed(rgbData: Uint8Array): void {
+    if (!firstEncodeError) return;
+    globalBufferPool.release(rgbData);
+    throw firstEncodeError;
+  }
+
   const submit = async (rgbData: Uint8Array, durationMs: number): Promise<void> => {
+    throwIfFailed(rgbData);
     // Backpressure: wait if we have too many frames in-flight
-    await waitForSlot();
+    try {
+      await waitForSlot();
+    } catch (error) {
+      globalBufferPool.release(rgbData);
+      throw error;
+    }
+    throwIfFailed(rgbData);
 
     const id = submittedCount++;
 
@@ -146,10 +166,13 @@ export function createStreamingWebpEncoder(
         return result;
       })
       .catch((err: Error) => {
-        failedCount++;
+        if (!firstEncodeError) {
+          firstEncodeError = err;
+          failureController.abort(err);
+        }
         logger.warn('encoders', 'worker-encode-failed', { encodeId: id, error: err.message });
-        // Don't rethrow — let remaining frames complete.
-        // finish() will throw if ALL frames failed.
+        // Existing in-flight work is drained by finish(); the failure signal stops
+        // the decoder from feeding more chunks or submitting additional frames.
       })
       .finally(() => {
         // Self-clean: remove from in-flight set when settled
@@ -161,13 +184,13 @@ export function createStreamingWebpEncoder(
 
   const finish = async (): Promise<Uint8Array> => {
     await Promise.allSettled([...inFlight]);
-    flushResultsToMuxer(true);
 
-    if (failedCount > 0) {
-      throw new Error(
-        `${failedCount}/${submittedCount} submitted frames failed to encode in streaming WebP`
-      );
+    if (firstEncodeError) {
+      resultBuffer.clear();
+      throw firstEncodeError;
     }
+
+    flushResultsToMuxer(true);
 
     if (muxer.frames === 0) {
       throw new Error('No frames encoded for streaming WebP encoding');
@@ -185,5 +208,5 @@ export function createStreamingWebpEncoder(
     if (extraMs > 0) pendingTailMs += extraMs;
   };
 
-  return { submit, finish, padLastFrame };
+  return { submit, finish, failureSignal: failureController.signal, padLastFrame };
 }

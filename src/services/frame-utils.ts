@@ -15,6 +15,7 @@
  * BufferPool: Reuses Uint8Array allocations across frames to reduce GC.
  */
 
+import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 import type { BufferPool } from './buffer-pool';
 import { globalBufferPool } from './buffer-pool';
 
@@ -37,14 +38,26 @@ export interface VideoConfigWithDimensions {
 export function resolveVideoDimensions(
   config: VideoConfigWithDimensions
 ): { width: number; height: number } | null {
-  const hasDisplayAspect = config.displayAspectWidth && config.displayAspectHeight;
+  const hasDisplayAspect =
+    config.displayAspectWidth !== undefined || config.displayAspectHeight !== undefined;
   const width = hasDisplayAspect
     ? config.displayAspectWidth
     : (config.codedWidth ?? config.displayWidth);
   const height = hasDisplayAspect
     ? config.displayAspectHeight
     : (config.codedHeight ?? config.displayHeight);
-  if (!width || !height) return null;
+
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width === undefined ||
+    height === undefined ||
+    width <= 0 ||
+    height <= 0 ||
+    width > MAX_FRAME_PIXEL_COUNT / height
+  ) {
+    return null;
+  }
   return { width, height };
 }
 

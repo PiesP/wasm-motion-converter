@@ -394,6 +394,7 @@ async function _runPipelineInner(
                 frameDecimation: webpDecimation,
                 hwAccel: 'prefer-hardware',
                 smartFrameSkip: request.smartFrameSkip,
+                processingFailureSignal: streamingEncoder.failureSignal,
                 onFrameDecoded: (frameIdx, _total) => {
                   const decodePct =
                     estimatedOutputFrames > 0
