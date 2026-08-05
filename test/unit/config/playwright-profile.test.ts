@@ -22,6 +22,11 @@ describe('Playwright workflow profiles', () => {
 
   it('keeps the host-dependent resource profile opt-in', () => {
     const config = readFileSync(resolve(root, 'playwright.config.ts'), 'utf8');
+    const fixtureGenerator = readFileSync(
+      resolve(root, 'scripts/test/generate-e2e-video.ts'),
+      'utf8',
+    );
+    const resourceProfile = readFileSync(resolve(root, 'test/e2e/resource-profile.spec.ts'), 'utf8');
     const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
       scripts?: Record<string, string>;
     };
@@ -31,7 +36,13 @@ describe('Playwright workflow profiles', () => {
     expect(packageJson.scripts?.['test:e2e:resource']).toContain(
       'PLAYWRIGHT_TEST_PROFILE=resource',
     );
-    expect(packageJson.scripts?.['pretest:e2e:resource']).toBe('pnpm prepare:e2e:fixture');
+    expect(packageJson.scripts?.['pretest:e2e:resource']).toContain(
+      'PREPARE_RESOURCE_FIXTURES=true',
+    );
+    expect(fixtureGenerator).toContain('test-video-resource-hostile-par.webm');
+    expect(fixtureGenerator).toContain('setsar=100/1:max=100');
+    expect(resourceProfile).toContain('HOSTILE_PAR_FIXTURE');
+    expect(resourceProfile).toContain('postGcPssSlope');
   });
 
   it('runs the explicit CI profile from the Actions workflow', () => {

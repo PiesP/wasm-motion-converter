@@ -3,6 +3,7 @@
 
 import { expect, test, type CDPSession, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 
 import {
   clickConvert,
@@ -17,7 +18,9 @@ import {
 } from './fixtures/test-helpers';
 
 const STRESS_FIXTURE = 'test-video-ci-high-motion-120fps.mp4';
+const HOSTILE_PAR_FIXTURE = 'test-video-resource-hostile-par.webm';
 const MEASURED_CYCLES = 5;
+const FAST_SAMPLE_INTERVAL_MS = 20;
 
 interface ChromiumProcessInfo {
   type: string;
@@ -44,6 +47,15 @@ interface ConversionMeasurement {
   peakRssDeltaMB: number;
   postGc: ResourceSample;
   postGcUaMemoryMB: number | null;
+}
+
+interface RejectedInputMeasurement {
+  elapsedMs: number;
+  error: string;
+  peakPssDeltaMB: number;
+  peakRssDeltaMB: number;
+  sampleCount: number;
+  postGc: ResourceSample;
 }
 
 function readKilobytes(text: string, field: string): number {
@@ -156,6 +168,32 @@ function theilSenSlope(values: number[]): number {
   return median(slopes);
 }
 
+async function captureFastResourceSamples<T>(
+  page: Page,
+  browserCdp: CDPSession,
+  operation: () => Promise<T>,
+): Promise<{ result: T; samples: ResourceSample[] }> {
+  const samples = [await sampleResources(page, browserCdp)];
+  let sampling = true;
+  const sampler = (async () => {
+    while (sampling) {
+      await page.waitForTimeout(FAST_SAMPLE_INTERVAL_MS);
+      if (sampling) samples.push(await sampleResources(page, browserCdp));
+    }
+  })();
+
+  let result: T;
+  try {
+    result = await operation();
+  } finally {
+    sampling = false;
+    await sampler;
+    samples.push(await sampleResources(page, browserCdp));
+  }
+
+  return { result, samples };
+}
+
 async function runMeasuredConversion(
   page: Page,
   browserCdp: CDPSession,
@@ -200,6 +238,60 @@ async function runMeasuredConversion(
     peakRssDeltaMB: peakDelta(samples, 'rssMB')!,
     postGc,
     postGcUaMemoryMB,
+  };
+}
+
+async function runMeasuredHostileParRejection(
+  page: Page,
+  browserCdp: CDPSession,
+): Promise<RejectedInputMeasurement> {
+  await injectTestFile(page, HOSTILE_PAR_FIXTURE);
+  await setFormat(page, 'gif');
+  await setQuality(page, 'high');
+  await setScale(page, '100%');
+
+  const metadata = await page.evaluate(() => window.__TEST_HELPERS__?.getMetadata() ?? null);
+  expect(metadata?.config).toMatchObject({
+    codedWidth: 520,
+    codedHeight: 520,
+    displayAspectWidth: 52_000,
+    displayAspectHeight: 520,
+  });
+  expect(
+    (metadata?.config?.displayAspectWidth ?? 0) *
+      (metadata?.config?.displayAspectHeight ?? 0),
+  ).toBeGreaterThan(MAX_FRAME_PIXEL_COUNT);
+
+  const startedAt = performance.now();
+  const { result: error, samples } = await captureFastResourceSamples(
+    page,
+    browserCdp,
+    async () => {
+      await clickConvert(page);
+      await dismissWarningDialog(page);
+      await expect
+        .poll(() => getAppState(page), { timeout: 5_000, intervals: [10, 25, 50] })
+        .toBe('error');
+      return page.evaluate(() => window.__TEST_HELPERS__?.getError() ?? '');
+    },
+  );
+  const elapsedMs = performance.now() - startedAt;
+
+  expect(error).toBe('Unable to determine video dimensions');
+  expect(await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null)).toBeNull();
+
+  await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
+  await page.requestGC();
+  await page.waitForTimeout(500);
+  const postGc = await sampleResources(page, browserCdp);
+
+  return {
+    elapsedMs,
+    error,
+    peakPssDeltaMB: peakDelta(samples, 'pssMB')!,
+    peakRssDeltaMB: peakDelta(samples, 'rssMB')!,
+    sampleCount: samples.length,
+    postGc,
   };
 }
 
@@ -275,6 +367,62 @@ test.describe('opt-in Chromium resource profile', () => {
       }
     });
   }
+
+  test('hostile pixel-aspect metadata is rejected without a large native allocation', async ({
+    browser,
+    page,
+  }) => {
+    test.slow();
+    await page.goto('/');
+    const browserCdp = await browser.newBrowserCDPSession();
+    const workerFallbackLogs: string[] = [];
+    page.on('console', (message) => {
+      if (message.text().includes('worker.fallback')) workerFallbackLogs.push(message.text());
+    });
+
+    try {
+      // Exclude one-time application and MediaBunny initialization from leak slopes.
+      await runMeasuredHostileParRejection(page, browserCdp);
+
+      const measurements: RejectedInputMeasurement[] = [];
+      for (let cycle = 0; cycle < MEASURED_CYCLES; cycle++) {
+        measurements.push(await runMeasuredHostileParRejection(page, browserCdp));
+      }
+
+      for (const measurement of measurements) {
+        expect(measurement.elapsedMs).toBeLessThan(5_000);
+        expect(measurement.peakPssDeltaMB).toBeLessThan(128);
+        expect(measurement.peakRssDeltaMB).toBeLessThan(256);
+        expect(measurement.sampleCount).toBeGreaterThanOrEqual(2);
+        expect(measurement.postGc.pssMB).toBeGreaterThan(0);
+        expect(measurement.postGc.processCount).toBeGreaterThan(0);
+      }
+
+      const postGcPssSlope = theilSenSlope(
+        measurements.map((measurement) => measurement.postGc.pssMB),
+      );
+      const postGcRssSlope = theilSenSlope(
+        measurements.map((measurement) => measurement.postGc.rssMB),
+      );
+
+      console.info(
+        '[hostile-par-profile]',
+        JSON.stringify({
+          fixture: HOSTILE_PAR_FIXTURE,
+          maxFramePixels: MAX_FRAME_PIXEL_COUNT,
+          measurements,
+          postGcPssSlope,
+          postGcRssSlope,
+        }),
+      );
+
+      expect(postGcPssSlope).toBeLessThan(16);
+      expect(postGcRssSlope).toBeLessThan(16);
+      expect(workerFallbackLogs).toEqual([]);
+    } finally {
+      await browserCdp.detach();
+    }
+  });
 
   test('cancellation becomes idle, quiesces, and permits a new conversion', async ({
     browser,
