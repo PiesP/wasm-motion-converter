@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 class ThrowingWorker {
+  static constructionCount = 0;
   static instance: ThrowingWorker | null = null;
   static response: unknown = null;
   readonly terminate = vi.fn();
@@ -8,6 +9,7 @@ class ThrowingWorker {
   onerror: ((event: ErrorEvent) => void) | null = null;
 
   constructor() {
+    ThrowingWorker.constructionCount++;
     ThrowingWorker.instance = this;
   }
 
@@ -25,10 +27,19 @@ class ThrowingWorker {
 vi.stubGlobal('Worker', ThrowingWorker);
 vi.stubGlobal('crypto', { randomUUID: () => 'request-1' });
 
-import { runPipelineViaWorker } from '@services/conversion-worker/main-thread-proxy';
+import {
+  runPipelineViaWorker,
+  runPipelineWithFallback,
+} from '@services/conversion-worker/main-thread-proxy';
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 
 describe('runPipelineViaWorker lifecycle', () => {
+  beforeEach(() => {
+    ThrowingWorker.constructionCount = 0;
+    ThrowingWorker.instance = null;
+    ThrowingWorker.response = null;
+  });
+
   it('cleans up the worker when starting the pipeline throws synchronously', async () => {
     vi.useFakeTimers();
 
@@ -72,5 +83,58 @@ describe('runPipelineViaWorker lifecycle', () => {
     } finally {
       ThrowingWorker.response = null;
     }
+  });
+
+  it('rejects oversized display-aspect dimensions before constructing a Worker', async () => {
+    ThrowingWorker.response = {
+      type: 'error',
+      requestId: 'request-1',
+      message: 'synthetic worker failure',
+      code: 'OUT_OF_MEMORY',
+    };
+
+    await expect(
+      runPipelineWithFallback(
+        new ArrayBuffer(8),
+        {
+          codec: 'vp09.00.30.08.01.02.02.02.00',
+          codedWidth: 520,
+          codedHeight: 520,
+          displayAspectWidth: 52_000,
+          displayAspectHeight: 520,
+        },
+        {} as never,
+        vi.fn()
+      )
+    ).rejects.toThrow('Unable to determine video dimensions');
+
+    expect(ThrowingWorker.constructionCount).toBe(0);
+  });
+
+  it('continues through the Worker path for safe display-aspect dimensions', async () => {
+    const outputBuffer = new ArrayBuffer(4);
+    ThrowingWorker.response = {
+      type: 'complete',
+      requestId: 'request-1',
+      outputBuffer,
+      durationMs: 1,
+    };
+
+    await expect(
+      runPipelineWithFallback(
+        new ArrayBuffer(8),
+        {
+          codec: 'vp09.00.10.08',
+          codedWidth: 16,
+          codedHeight: 16,
+          displayAspectWidth: 32,
+          displayAspectHeight: 16,
+        },
+        {} as never,
+        vi.fn()
+      )
+    ).resolves.toBe(outputBuffer);
+
+    expect(ThrowingWorker.constructionCount).toBe(1);
   });
 });

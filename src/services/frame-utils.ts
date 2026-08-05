@@ -22,12 +22,12 @@ import { globalBufferPool } from './buffer-pool';
 // ─── Video Dimension Resolution ────────────────────────────────────
 
 export interface VideoConfigWithDimensions {
-  codedWidth?: number;
-  codedHeight?: number;
-  displayAspectWidth?: number;
-  displayAspectHeight?: number;
-  displayWidth?: number;
-  displayHeight?: number;
+  codedWidth?: number | undefined;
+  codedHeight?: number | undefined;
+  displayAspectWidth?: number | undefined;
+  displayAspectHeight?: number | undefined;
+  displayWidth?: number | undefined;
+  displayHeight?: number | undefined;
 }
 
 /**
