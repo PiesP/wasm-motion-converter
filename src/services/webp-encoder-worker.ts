@@ -15,7 +15,7 @@
 
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { isRecord } from '@piesp/browser-core/util';
-import { BYTES_PER_MB, WORKER_MAX_MEMORY_MB } from '@utils/constants';
+import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 import { extractAndNormalizeCanvasVp8 } from './webp-bitstream';
 
 // ─── Worker Entry Point ────────────────────────────────────────────
@@ -30,13 +30,6 @@ interface EncodeRequest {
 }
 
 const RGB_BYTES_PER_PIXEL = 3;
-const MAX_POOLED_RGB_BYTES_PER_PIXEL = RGB_BYTES_PER_PIXEL * 2;
-const RGBA_BYTES_PER_PIXEL = 4;
-const CANVAS_BYTES_PER_PIXEL = 4;
-const MAX_FRAME_PIXELS = Math.floor(
-  (WORKER_MAX_MEMORY_MB * BYTES_PER_MB) /
-    (MAX_POOLED_RGB_BYTES_PER_PIXEL + RGBA_BYTES_PER_PIXEL + CANVAS_BYTES_PER_PIXEL)
-);
 
 function isEncodeTaskId(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -73,7 +66,7 @@ function isEncodeRequest(value: unknown): value is EncodeRequest {
   const maxPooledRgbBytes = 2 ** Math.ceil(Math.log2(expectedRgbBytes));
   return (
     Number.isSafeInteger(pixelCount) &&
-    pixelCount <= MAX_FRAME_PIXELS &&
+    pixelCount <= MAX_FRAME_PIXEL_COUNT &&
     value.rgbData.byteLength >= expectedRgbBytes &&
     value.rgbData.byteLength <= maxPooledRgbBytes
   );

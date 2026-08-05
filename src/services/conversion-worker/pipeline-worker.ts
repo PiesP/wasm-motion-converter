@@ -143,11 +143,11 @@ export async function runWorkerPipeline(
             codec: config.codec,
             codedWidth: config.codedWidth,
             codedHeight: config.codedHeight,
-            ...(config.displayAspectWidth && config.displayAspectHeight
-              ? {
-                  displayAspectWidth: config.displayAspectWidth,
-                  displayAspectHeight: config.displayAspectHeight,
-                }
+            ...(config.displayAspectWidth !== undefined
+              ? { displayAspectWidth: config.displayAspectWidth }
+              : {}),
+            ...(config.displayAspectHeight !== undefined
+              ? { displayAspectHeight: config.displayAspectHeight }
               : {}),
             ...(config.hardwareAcceleration
               ? { hardwareAcceleration: config.hardwareAcceleration as HardwareAcceleration }

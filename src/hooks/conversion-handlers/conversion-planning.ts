@@ -81,11 +81,11 @@ function serializeDecoderConfig(metadata: VideoMetadata | null): SerializedDecod
     codec: decoderConfig.codec,
     codedWidth: decoderConfig.codedWidth ?? 0,
     codedHeight: decoderConfig.codedHeight ?? 0,
-    ...(decoderConfig.displayAspectWidth && decoderConfig.displayAspectHeight
-      ? {
-          displayAspectWidth: decoderConfig.displayAspectWidth,
-          displayAspectHeight: decoderConfig.displayAspectHeight,
-        }
+    ...(decoderConfig.displayAspectWidth !== undefined
+      ? { displayAspectWidth: decoderConfig.displayAspectWidth }
+      : {}),
+    ...(decoderConfig.displayAspectHeight !== undefined
+      ? { displayAspectHeight: decoderConfig.displayAspectHeight }
       : {}),
     ...(decoderConfig.hardwareAcceleration
       ? { hardwareAcceleration: decoderConfig.hardwareAcceleration }

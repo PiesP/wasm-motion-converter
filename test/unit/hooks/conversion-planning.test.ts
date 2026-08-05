@@ -144,4 +144,24 @@ describe('serializeConversionInputs', () => {
       }),
     });
   });
+
+  it('preserves malformed display aspect fields so the worker allocation boundary can reject them', () => {
+    const metadata: VideoMetadata = {
+      ...defaultMetadata,
+      config: {
+        codec: 'avc1.640028',
+        codedHeight: 1080,
+        codedWidth: 1920,
+        displayAspectHeight: 1080,
+        displayAspectWidth: 0,
+      },
+    };
+
+    expect(serializeConversionInputs(metadata, undefined, defaultSettings).serializedConfig).toEqual(
+      expect.objectContaining({
+        displayAspectHeight: 1080,
+        displayAspectWidth: 0,
+      })
+    );
+  });
 });
