@@ -11,6 +11,7 @@ import {
   getFrameDurationMs,
   resolveVideoDimensions,
 } from '@services/frame-utils';
+import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 
 afterEach(() => {
   clearCanvasCache();
@@ -52,10 +53,19 @@ describe('resolveVideoDimensions', () => {
       resolveVideoDimensions({
         codedWidth: 720,
         codedHeight: 576,
-        displayAspectWidth: 38_347_923,
+        displayAspectWidth: MAX_FRAME_PIXEL_COUNT + 1,
         displayAspectHeight: 1,
       })
     ).toBeNull();
+  });
+
+  it('accepts dimensions at the conservative per-frame working-memory boundary', () => {
+    expect(
+      resolveVideoDimensions({
+        displayAspectWidth: MAX_FRAME_PIXEL_COUNT,
+        displayAspectHeight: 1,
+      })
+    ).toEqual({ width: MAX_FRAME_PIXEL_COUNT, height: 1 });
   });
 
   it.each([

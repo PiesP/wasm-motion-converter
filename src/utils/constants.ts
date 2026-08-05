@@ -192,12 +192,12 @@ export const WORKER_MAX_MEMORY_MB = 512;
 /**
  * Maximum pixels in one decoded frame under the default worker memory budget.
  *
- * A frame can simultaneously retain two power-of-two RGB pool buffers (6 B/px),
+ * A frame can simultaneously retain two power-of-two RGB pool buffers (up to 12 B/px),
  * one RGBA staging buffer (4 B/px), and one Canvas backing store (4 B/px).
  * Keep this budget shared by dimension resolution and the WebP worker protocol
  * so untrusted metadata is rejected before either path allocates native memory.
  */
-export const MAX_FRAME_PIXEL_COUNT = Math.floor((WORKER_MAX_MEMORY_MB * BYTES_PER_MB) / 14);
+export const MAX_FRAME_PIXEL_COUNT = Math.floor((WORKER_MAX_MEMORY_MB * BYTES_PER_MB) / 20);
 
 /** Minimum allowed maxMemoryMB for worker pipeline */
 export const WORKER_MIN_MEMORY_MB = 128;
