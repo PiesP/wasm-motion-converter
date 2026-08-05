@@ -222,10 +222,10 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    # semgrep/semgrep:1.171.0 — last checked: 2026-07-28
+    # semgrep/semgrep:1.172.0 — last checked: 2026-08-05
     # Check for updates: https://github.com/semgrep/semgrep/releases
     container:
-      image: semgrep/semgrep:1.171.0@sha256:296fc4912420833abfcf5090ec49a81bf1330bb61fc193cd09255f88b8267ba9
+      image: semgrep/semgrep:1.172.0@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
