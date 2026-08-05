@@ -49,7 +49,7 @@
     "prepare:e2e:fixture": "node --experimental-strip-types scripts/test/generate-e2e-video.ts",
     "pretest:e2e:ci": "pnpm prepare:e2e:fixture",
     "test:e2e:ci": "PLAYWRIGHT_TEST_PROFILE=ci playwright test",
-    "pretest:e2e:resource": "pnpm prepare:e2e:fixture",
+    "pretest:e2e:resource": "PREPARE_RESOURCE_FIXTURES=true pnpm prepare:e2e:fixture",
     "test:e2e:resource": "PLAYWRIGHT_TEST_PROFILE=resource playwright test",
     "pretest:e2e:deploy": "pnpm prepare:e2e:fixture",
     "test:e2e:deploy": "PLAYWRIGHT_TEST_PROFILE=deploy playwright test",

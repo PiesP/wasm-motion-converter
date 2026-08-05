@@ -10,7 +10,10 @@ import { dirname, resolve } from 'node:path';
 interface VideoFixture {
   fileName: string;
   input: string;
+  videoFilter?: string;
+  encoderArgs?: string[];
   extraEncoderArgs?: string[];
+  outputArgs?: string[];
 }
 
 const fixtures: VideoFixture[] = [
@@ -29,6 +32,16 @@ const fixtures: VideoFixture[] = [
   },
 ];
 
+if (process.env.PREPARE_RESOURCE_FIXTURES === 'true') {
+  fixtures.push({
+    fileName: 'test-video-resource-hostile-par.webm',
+    input: 'testsrc=size=520x520:rate=1:duration=1',
+    videoFilter: 'setsar=100/1:max=100',
+    encoderArgs: ['-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8'],
+    outputArgs: [],
+  });
+}
+
 for (const fixture of fixtures) {
   const outputPath = resolve('public', fixture.fileName);
   mkdirSync(dirname(outputPath), { recursive: true });
@@ -44,15 +57,12 @@ for (const fixture of fixtures) {
       '-i',
       fixture.input,
       '-an',
-      '-c:v',
-      'libx264',
-      '-profile:v',
-      'baseline',
+      ...(fixture.videoFilter ? ['-vf', fixture.videoFilter] : []),
+      ...(fixture.encoderArgs ?? ['-c:v', 'libx264', '-profile:v', 'baseline']),
       ...(fixture.extraEncoderArgs ?? []),
       '-pix_fmt',
       'yuv420p',
-      '-movflags',
-      '+faststart',
+      ...(fixture.outputArgs ?? ['-movflags', '+faststart']),
       '-y',
       outputPath,
     ],

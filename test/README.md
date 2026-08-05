@@ -53,7 +53,17 @@ user-agent-specific memory API. It does not pass the deterministic
 `--disable-gpu` setting used by regular tests; the actual hardware or software
 GPU remains environment-dependent, and GPU VRAM is not measured. The profile
 warms each encoder before five same-page conversions and also measures
-cancellation latency and recovery.
+cancellation latency and recovery. PSS is the primary process-memory signal;
+RSS is retained as a diagnostic because shared mappings are counted in every
+Chromium process's RSS.
+
+The resource pretest additionally generates a small VP9/WebM fixture with coded
+dimensions of 520×520 and a 100:1 pixel aspect ratio. MediaBunny exposes this as
+52,000×520 display-aspect dimensions, just beyond the conservative per-frame
+working-memory limit. The profile verifies the real container metadata, samples
+the fast rejection path at 20 ms intervals, and checks repeated post-GC PSS/RSS
+slopes. This demonstrates rejection before large Canvas, Worker, or frame-buffer
+allocations; it is not a GPU VRAM measurement.
 
 ## Media fixtures
 

@@ -17,6 +17,7 @@
  */
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+import { resolveVideoDimensions } from '@services/frame-utils';
 import type { ConversionProgress } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -258,6 +259,13 @@ export async function runPipelineWithFallback(
   duration?: number,
   framerate?: number
 ): Promise<ArrayBuffer> {
+  // Reject untrusted display-aspect metadata before allocating a Worker or
+  // transferring the input buffer. The worker pipeline repeats this check
+  // after demux as defense in depth.
+  if (!resolveVideoDimensions(config)) {
+    throw new Error('Unable to determine video dimensions');
+  }
+
   try {
     return await runPipelineViaWorker(
       inputBuffer,
