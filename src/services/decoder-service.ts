@@ -82,6 +82,12 @@ export interface DecodeOptions {
    * @default 'off'
    */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
+  /**
+   * Signals a downstream processing failure (for example, an asynchronous
+   * encoder worker rejection) so decoding can stop before pulling more chunks.
+   * The signal reason should be the original Error.
+   */
+  processingFailureSignal?: AbortSignal | undefined;
 }
 
 export interface DecodedFrame {
@@ -140,6 +146,7 @@ export async function decodeFrames(
     onVideoFrameAvailable,
     mode,
     smartFrameSkip: effectiveSmartSkip = 'off',
+    processingFailureSignal,
   } = opts;
 
   // ── Smart frame skip state (must be before parallel decode block) ──
@@ -191,7 +198,8 @@ export async function decodeFrames(
   const MAX_PENDING_CONVERSIONS = 10;
 
   let decodeError: Error | null = null;
-  const conversionErrors: Error[] = [];
+  let firstConversionError: Error | null = null;
+  let conversionErrorCount = 0;
   const encodedChunkReservations = new Map<number, EncodedChunkReservation[]>();
   const encodedChunkBudgetBytes = demux.encodedChunkBudgetBytes;
   let retainedEncodedChunkBytes = 0;
@@ -216,6 +224,18 @@ export async function decodeFrames(
     isAdaptive && streaming && typeof onVideoFrameAvailable !== 'function';
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
   let adaptLastMotionClass: AdaptiveMotionClass = 'normal';
+
+  const recordConversionError = (error: unknown): void => {
+    conversionErrorCount++;
+    firstConversionError ??= error instanceof Error ? error : new Error(getErrorMessage(error));
+  };
+
+  const hasProcessingFailure = (): boolean => {
+    if (processingFailureSignal?.aborted && !firstConversionError) {
+      recordConversionError(processingFailureSignal.reason);
+    }
+    return firstConversionError !== null;
+  };
 
   // Check codec support (cached per codec+hw combo)
   const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
@@ -302,6 +322,10 @@ export async function decodeFrames(
     output(frame: VideoFrame) {
       try {
         releaseEncodedChunkForOutput(frame.timestamp);
+        if (hasProcessingFailure()) {
+          frame.close();
+          return;
+        }
         if ((demux.trimStartUs ?? 0) > 0 && frame.timestamp < (demux.trimStartUs ?? 0)) {
           frame.close();
           return;
@@ -360,6 +384,7 @@ export async function decodeFrames(
             if (typeof onVideoFrameAvailable === 'function') {
               await previousProcessing;
               enteredOrderedProcessing = true;
+              if (hasProcessingFailure()) return;
               // Transfer accumulated frame durations (decimation + smart skip carryover)
               const totalDur = totalDuration + smartCarryoverMs;
               smartCarryoverMs = 0;
@@ -372,6 +397,10 @@ export async function decodeFrames(
             const rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
             await previousProcessing;
             enteredOrderedProcessing = true;
+            if (hasProcessingFailure()) {
+              globalBufferPool.release(rgbData);
+              return;
+            }
 
             const shouldMeasureMotion = streaming && (skipThreshold >= 0 || isAdaptive);
             const gray = shouldMeasureMotion ? compute8x8Grayscale(rgbData, width, height) : null;
@@ -505,6 +534,8 @@ export async function decodeFrames(
             ) {
               onFrameDecoded(streaming ? keptFrameCount : rgbFrames.length, demux.totalFrames);
             }
+          } catch (error) {
+            recordConversionError(error);
           } finally {
             if (!enteredOrderedProcessing) {
               await previousProcessing;
@@ -517,11 +548,11 @@ export async function decodeFrames(
         // Track pending conversion for backpressure and final flush.
         // Use a self-cleaning Set: each promise removes itself on completion,
         // so pendingConversions.size always reflects actual in-flight work.
-        // .catch() captures async IIFE errors that would otherwise be
-        // silently swallowed — the error set is checked after all frames settle.
+        // The inner catch records errors before releasing the ordered turn;
+        // this outer catch is a final guard for cleanup-path failures.
         conversion
           .catch((err: unknown) => {
-            conversionErrors.push(new Error(getErrorMessage(err)));
+            recordConversionError(err);
           })
           .finally(() => {
             pendingConversions.delete(conversion);
@@ -561,13 +592,18 @@ export async function decodeFrames(
       if (signal?.aborted) {
         throw new DOMException('Cancelled', 'AbortError');
       }
-      if (decodeError) break;
+      if (decodeError || hasProcessingFailure()) break;
 
       // Backpressure: wait if decode queue is full.
       // Use setTimeout(0) as primary yield mechanism because
       // requestAnimationFrame pauses in background tabs, causing deadlock
       // when the decoder still queues frames but rAF never fires.
-      while (decoder.decodeQueueSize > MAX_DECODE_QUEUE && !signal?.aborted && !decodeError) {
+      while (
+        decoder.decodeQueueSize > MAX_DECODE_QUEUE &&
+        !signal?.aborted &&
+        !decodeError &&
+        !hasProcessingFailure()
+      ) {
         await new Promise<void>((resolve) => {
           setTimeout(() => resolve(), 0);
         });
@@ -584,10 +620,11 @@ export async function decodeFrames(
       if (signal?.aborted) {
         throw new DOMException('Cancelled', 'AbortError');
       }
-      if (decodeError) break;
+      if (decodeError || hasProcessingFailure()) break;
 
       const nextChunk = await chunkStream.next();
       if (nextChunk.done) break;
+      if (hasProcessingFailure()) break;
 
       streamedSourceDurationUs += Math.max(0, nextChunk.value.duration ?? 0);
 
@@ -600,28 +637,38 @@ export async function decodeFrames(
       }
     }
 
-    // Flush decoder
-    try {
-      await decoder.flush();
-    } catch (e) {
-      if (!decodeError) decodeError = new Error(getErrorMessage(e));
+    // A processing failure makes the output unusable, so discard queued codec
+    // work instead of producing more frames. Existing conversion promises are
+    // still drained below to guarantee VideoFrame cleanup.
+    if (hasProcessingFailure()) {
+      try {
+        decoder.reset();
+      } catch {
+        // Preserve the original processing error.
+      }
+    } else {
+      try {
+        await decoder.flush();
+      } catch (e) {
+        if (!decodeError) decodeError = new Error(getErrorMessage(e));
+      }
     }
     // Always await pending conversions before closing decoder to avoid VideoFrame leak.
     // Use Promise.allSettled so that even if some conversions fail (e.g., due to abort),
     // we still drain all pending work and close frames properly.
     await Promise.allSettled([...pendingConversions]);
 
-    // After all frame conversions have settled, check for errors that were
-    // captured by the .catch() handler.  Any frame encoding failure means
-    // the output is incomplete — throw so the caller can surface the error.
-    if (conversionErrors.length > 0) {
+    // Any frame or downstream encoding failure makes the output incomplete.
+    // Preserve the first cause after every already-created frame is closed.
+    const processingError = firstConversionError as Error | null;
+    if (processingError) {
       logger.error('decoders', 'Frame conversion errors detected', {
-        errorCount: conversionErrors.length,
-        firstError: conversionErrors[0]?.message,
+        errorCount: conversionErrorCount,
+        firstError: processingError.message,
       });
-      throw new Error(
-        `Frame processing failed: ${conversionErrors[0]?.message ?? 'unknown error'}`
-      );
+      throw new Error(`Frame processing failed: ${processingError.message}`, {
+        cause: processingError,
+      });
     }
 
     if (decodeError) throw decodeError;
