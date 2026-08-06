@@ -1,0 +1,35 @@
+# Cloudflare Pages _headers
+# Ordered: extension rules before catch-all. Cloudflare Pages merges
+# matching rules by specificity; most specific match wins.
+#
+# NOTE: Due to Cloudflare Pages header merging behavior, extension-based
+# Content-Type rules MUST appear before the /* catch-all to avoid
+# multiple Content-Type values being concatenated.
+
+# MIME type overrides — must be listed before /* catch-all
+*.webm
+  Content-Type: video/webm
+
+*.mp4
+  Content-Type: video/mp4
+
+*.m4v
+  Content-Type: video/mp4
+
+/*.wasm
+  Content-Type: application/wasm
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Catch-all headers — applied last
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-dhTAj/p2tcWB3q8ACHjAvUY9vq8602iOu4/ItmGkyJQ=' 'sha256-9aZj+ksN13qgCb5jrVDA3Hisq1nb33/Vq6OxRwHLtY1='; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' blob:; worker-src 'self'
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Permissions-Policy: camera=(), geolocation=(), microphone=(), accelerometer=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
