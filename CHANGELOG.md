@@ -8,6 +8,12 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-06
+
+### Fixed
+
+- **Release bundle integrity** — Packaged the deployable app tree as a single archive so GitHub Release downloads preserve asset paths and pass standard checksum verification.
+
 ## [0.2.0] - 2026-08-06
 
 ### Added
