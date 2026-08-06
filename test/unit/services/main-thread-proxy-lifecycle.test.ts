@@ -31,7 +31,78 @@ import {
   runPipelineViaWorker,
   runPipelineWithFallback,
 } from '@services/conversion-worker/main-thread-proxy';
+import type { SerializedDecoderConfig } from '@services/conversion-worker/types';
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
+
+const validDecoderConfig: SerializedDecoderConfig = {
+  codec: 'vp09.00.10.08',
+  codedWidth: 16,
+  codedHeight: 16,
+};
+
+const invalidPreWorkerConfigs: Array<{
+  name: string;
+  config: SerializedDecoderConfig;
+}> = [
+  {
+    name: 'zero display width',
+    config: { ...validDecoderConfig, displayAspectWidth: 0, displayAspectHeight: 16 },
+  },
+  {
+    name: 'negative display height',
+    config: {
+      ...validDecoderConfig,
+      displayAspectWidth: 16,
+      displayAspectHeight: -1,
+    },
+  },
+  {
+    name: 'fractional display width',
+    config: {
+      ...validDecoderConfig,
+      displayAspectWidth: 16.5,
+      displayAspectHeight: 16,
+    },
+  },
+  {
+    name: 'NaN display height',
+    config: {
+      ...validDecoderConfig,
+      displayAspectWidth: 16,
+      displayAspectHeight: Number.NaN,
+    },
+  },
+  {
+    name: 'infinite display width',
+    config: {
+      ...validDecoderConfig,
+      displayAspectWidth: Number.POSITIVE_INFINITY,
+      displayAspectHeight: 16,
+    },
+  },
+  {
+    name: 'one-sided display-aspect metadata',
+    config: { ...validDecoderConfig, displayAspectHeight: 16 },
+  },
+  {
+    name: 'hostile pixel-aspect dimensions above the rounded RGB pool budget',
+    config: {
+      codec: 'vp09.00.30.08.01.02.02.02.00',
+      codedWidth: 520,
+      codedHeight: 520,
+      displayAspectWidth: 52_000,
+      displayAspectHeight: 520,
+    },
+  },
+  {
+    name: 'an unsafe coded-dimension product',
+    config: {
+      ...validDecoderConfig,
+      codedWidth: Number.MAX_SAFE_INTEGER,
+      codedHeight: 2,
+    },
+  },
+];
 
 describe('runPipelineViaWorker lifecycle', () => {
   beforeEach(() => {
@@ -85,31 +156,21 @@ describe('runPipelineViaWorker lifecycle', () => {
     }
   });
 
-  it('rejects oversized display-aspect dimensions before constructing a Worker', async () => {
-    ThrowingWorker.response = {
-      type: 'error',
-      requestId: 'request-1',
-      message: 'synthetic worker failure',
-      code: 'OUT_OF_MEMORY',
-    };
+  it.each(invalidPreWorkerConfigs)(
+    'rejects $name before constructing a Worker or transferring input',
+    async ({ config }) => {
+      const inputBuffer = new ArrayBuffer(8);
+      const onProgress = vi.fn();
 
-    await expect(
-      runPipelineWithFallback(
-        new ArrayBuffer(8),
-        {
-          codec: 'vp09.00.30.08.01.02.02.02.00',
-          codedWidth: 520,
-          codedHeight: 520,
-          displayAspectWidth: 52_000,
-          displayAspectHeight: 520,
-        },
-        {} as never,
-        vi.fn()
-      )
-    ).rejects.toThrow('Unable to determine video dimensions');
+      await expect(
+        runPipelineWithFallback(inputBuffer, config, {} as never, onProgress)
+      ).rejects.toThrow('Unable to determine video dimensions');
 
-    expect(ThrowingWorker.constructionCount).toBe(0);
-  });
+      expect(ThrowingWorker.constructionCount).toBe(0);
+      expect(inputBuffer.byteLength).toBe(8);
+      expect(onProgress).not.toHaveBeenCalled();
+    }
+  );
 
   it('continues through the Worker path for safe display-aspect dimensions', async () => {
     const outputBuffer = new ArrayBuffer(4);

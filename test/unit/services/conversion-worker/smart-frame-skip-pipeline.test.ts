@@ -5,20 +5,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SerializedConversionOptions } from '@services/conversion-worker/types';
 
 const mocks = vi.hoisted(() => ({
+  demuxVideo: vi.fn(),
   encodeGif: vi.fn(),
   encodeWebp: vi.fn(),
 }));
 
 vi.mock('@services/demuxer-service', () => ({
-  demuxVideo: vi.fn().mockResolvedValue({
-    chunks: [],
-    config: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
-    duration: 1,
-    framerate: 30,
-    sourceTotalMs: 1000,
-    totalFrames: 30,
-  }),
+  demuxVideo: mocks.demuxVideo,
 }));
+
+const demuxResult = {
+  chunks: [],
+  config: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
+  dispose: vi.fn(),
+  duration: 1,
+  framerate: 30,
+  sourceTotalMs: 1000,
+  totalFrames: 30,
+};
 
 vi.mock('@services/gif-encoder-service', () => ({ encodeGif: mocks.encodeGif }));
 vi.mock('@services/webp-encoder-service', () => ({ encodeWebp: mocks.encodeWebp }));
@@ -37,13 +41,20 @@ const baseOptions: SerializedConversionOptions = {
 };
 
 beforeEach(() => {
+  demuxResult.dispose.mockClear();
+  mocks.demuxVideo.mockReset().mockResolvedValue(demuxResult);
   mocks.encodeGif.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
   mocks.encodeWebp.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
 });
 
 describe('worker pipeline smart frame skip forwarding', () => {
   it('forwards smartFrameSkip to the GIF encoder', async () => {
-    const result = await runWorkerPipeline(new ArrayBuffer(8), baseOptions, vi.fn());
+    const result = await runWorkerPipeline(
+      new ArrayBuffer(8),
+      baseOptions,
+      vi.fn(),
+      'request-1'
+    );
 
     expect(mocks.encodeGif).toHaveBeenCalledWith(
       expect.anything(),
@@ -66,7 +77,8 @@ describe('worker pipeline smart frame skip forwarding', () => {
     await runWorkerPipeline(
       new ArrayBuffer(8),
       { ...baseOptions, format: 'webp' },
-      vi.fn()
+      vi.fn(),
+      'request-1'
     );
 
     expect(mocks.encodeWebp).toHaveBeenCalledWith(
@@ -74,6 +86,34 @@ describe('worker pipeline smart frame skip forwarding', () => {
       expect.objectContaining({ smartFrameSkip: 'adaptive' }),
       expect.anything(),
       undefined
+    );
+  });
+
+  it('rejects hostile decoded dimensions before encoding and disposes the demux session', async () => {
+    const dispose = vi.fn();
+    const postMessage = vi.fn();
+    mocks.demuxVideo.mockResolvedValueOnce({
+      ...demuxResult,
+      config: {
+        codec: 'vp09.00.30.08.01.02.02.02.00',
+        codedWidth: 520,
+        codedHeight: 520,
+        displayAspectWidth: 52_000,
+        displayAspectHeight: 520,
+      },
+      dispose,
+    });
+
+    await expect(
+      runWorkerPipeline(new ArrayBuffer(8), baseOptions, postMessage, 'request-1')
+    ).rejects.toThrow('Unable to determine video dimensions');
+
+    expect(mocks.encodeGif).not.toHaveBeenCalled();
+    expect(mocks.encodeWebp).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(postMessage).toHaveBeenCalledOnce();
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'log', requestId: 'request-1' })
     );
   });
 });
