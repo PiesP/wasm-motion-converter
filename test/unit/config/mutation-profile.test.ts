@@ -20,6 +20,7 @@ describe('Fast mutation profile', () => {
       scripts?: Record<string, string>;
     };
     const workflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
+    const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
 
     expect(config.thresholds?.break).toBe(68);
     expect(config.coverageAnalysis).toBe('perTest');
@@ -34,6 +35,8 @@ describe('Fast mutation profile', () => {
     expect(config.mutator?.excludedMutations).not.toContain('EqualityOperator');
     expect(config.mutator?.excludedMutations).not.toContain('BooleanLiteral');
     expect(packageJson.scripts?.['mut:fast']).toBe('stryker run stryker.conf.fast.json');
+    expect(workflow).toContain("github.event_name != 'push' &&");
+    expect(ciWorkflow).toContain('name: pr-gate/duplication');
     expect(workflow).toContain('path: reports/mutation/');
     expect(workflow).toContain('if-no-files-found: error');
   });
