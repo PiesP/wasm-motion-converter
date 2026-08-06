@@ -8,5 +8,3 @@ pages_build_output_dir = "dist"
 # Production environment variables
 [vars]
 NODE_ENV = "production"
-# Cloudflare does not read the Volta pin from package.json when selecting Node.
-NODE_VERSION = "26.5.0"
