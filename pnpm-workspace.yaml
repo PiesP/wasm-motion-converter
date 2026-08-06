@@ -5,6 +5,7 @@ overrides:
 allowBuilds:
   esbuild: true
   core-js: true
+  workerd: false
 
 strictDepBuilds: true
 
