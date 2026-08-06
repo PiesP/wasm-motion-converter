@@ -8,6 +8,27 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-06
+
+### Added
+
+- **Preview timeline trimming** — Added an interactive video timeline with precise seeking, keyboard-accessible handles, validated trim ranges, and persistent editor state.
+- **Adaptive conversion safeguards** — Added resource-aware frame decimation, conversion profiling, hostile-input fixtures, and browser resource tests for demanding GIF and WebP workloads.
+
+### Changed
+
+- **Conversion pipeline** — Streamed demuxed chunks into the decoder, bounded resource-heavy presets, and aligned adaptive behavior across primary and fallback encoders.
+- **Interface and accessibility** — Adopted the shared Quiet Instruments design foundation and expanded automated accessibility, responsive layout, localization, and interaction coverage.
+- **Shared runtime** — Updated browser-core and consolidated shared async, locale, error, logging, and utility behavior.
+- **Release verification** — Expanded quality, coverage, browser, duplication, mutation, security, artifact, and deployment gates.
+
+### Fixed
+
+- **Memory and resource lifecycle** — Bounded cumulative encoded-chunk memory and released decoder, frame, buffer, canvas, and Worker resources on success, cancellation, fallback, and failure paths.
+- **Conversion correctness** — Preserved frame timing, presentation order, trim boundaries, progress, output ownership, and adaptive decimation across GIF and WebP pipelines.
+- **Input and protocol hardening** — Strengthened media validation, Worker message contracts, cancellation ownership, and malformed-input handling while preserving fully local processing.
+- **Cloudflare build consistency** — Aligned the Pages build runtime with the repository Node.js pin and made complete security scans mandatory after changes land on `master`.
+
 ## [0.1.5] - 2026-07-19
 
 ### Fixed

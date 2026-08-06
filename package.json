@@ -1,6 +1,6 @@
 {
   "name": "wasm-motion-converter",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Convert videos to animated GIF or WebP entirely in the browser.",
   "homepage": "https://wasm-motion-converter.pages.dev/",
   "repository": {
