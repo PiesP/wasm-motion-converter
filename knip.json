@@ -15,5 +15,10 @@
   "ignore": ["**/*.d.ts"],
   "ignoreBinaries": ["ffmpeg"],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["@axe-core/playwright", "@types/dom-webcodecs", "@tailwindcss/vite"]
+  "ignoreDependencies": [
+    "@axe-core/playwright",
+    "@types/dom-webcodecs",
+    "@tailwindcss/vite",
+    "wrangler"
+  ]
 }
