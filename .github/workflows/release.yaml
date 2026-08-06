@@ -249,7 +249,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           body_path: release-bundle/RELEASE_NOTES.md
           files: |
-            release-bundle/release/**
+            release-bundle/release/*
           draft: false
           prerelease: false
         env:

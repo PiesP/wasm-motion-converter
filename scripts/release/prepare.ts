@@ -1,15 +1,7 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..', '..');
 const distDir = join(root, 'dist');
@@ -33,15 +25,6 @@ if (!existsSync(distDir)) {
   throw new Error('dist/ does not exist. Run the production build before preparing a release.');
 }
 
-function listFiles(directory: string): string[] {
-  return readdirSync(directory)
-    .flatMap((entry) => {
-      const path = join(directory, entry);
-      return statSync(path).isDirectory() ? listFiles(path) : [path];
-    })
-    .sort();
-}
-
 function changelogEntry(markdown: string, releaseVersion: string): string {
   const lines = markdown.split(/\r?\n/);
   const heading = new RegExp(`^## \\[${releaseVersion.replaceAll('.', '\\.')}\\](?:\\s|$)`);
@@ -61,16 +44,27 @@ function changelogEntry(markdown: string, releaseVersion: string): string {
 }
 
 rmSync(bundleDir, { force: true, recursive: true });
-mkdirSync(bundleDir, { recursive: true });
+mkdirSync(releaseDir, { recursive: true });
 cpSync(distDir, join(bundleDir, 'dist'), { recursive: true });
-cpSync(distDir, releaseDir, { recursive: true });
 
-const checksumLines = listFiles(releaseDir).map((path) => {
-  const digest = createHash('sha256').update(readFileSync(path)).digest('hex');
-  const relativePath = relative(releaseDir, path).split(sep).join('/');
-  return `${digest}  ./${relativePath}`;
-});
-writeFileSync(join(releaseDir, 'checksums.txt'), `${checksumLines.join('\n')}\n`);
+const archiveName = `wasm-motion-converter-${version}.tar.gz`;
+const archivePath = join(releaseDir, archiveName);
+execFileSync(
+  'tar',
+  [
+    '--sort=name',
+    '--mtime=@0',
+    '--owner=0',
+    '--group=0',
+    '--numeric-owner',
+    '-czf',
+    archivePath,
+    '-C',
+    distDir,
+    '.',
+  ],
+  { stdio: 'inherit' }
+);
 
 const buildDate = new Date().toISOString();
 const commit = process.env.GITHUB_SHA ?? 'unknown';
@@ -80,8 +74,9 @@ const runnerArch = process.env.RUNNER_ARCH ?? process.arch;
 const runnerImage = process.env.ImageOS ?? 'unknown';
 const runnerImageVersion = process.env.ImageVersion ?? 'unknown';
 
+const metadataPath = join(releaseDir, 'metadata.json');
 writeFileSync(
-  join(releaseDir, 'metadata.json'),
+  metadataPath,
   `${JSON.stringify(
     {
       version,
@@ -97,6 +92,13 @@ writeFileSync(
     2
   )}\n`
 );
+
+const releaseAssets = [archivePath, metadataPath];
+const checksumLines = releaseAssets.map((path) => {
+  const digest = createHash('sha256').update(readFileSync(path)).digest('hex');
+  return `${digest}  ./${basename(path)}`;
+});
+writeFileSync(join(releaseDir, 'checksums.txt'), `${checksumLines.join('\n')}\n`);
 
 const changes = changelogEntry(readFileSync(join(root, 'CHANGELOG.md'), 'utf8'), version);
 const releaseNotes = `# 🚀 Release v${version}
@@ -114,4 +116,4 @@ ${changes}
 `;
 writeFileSync(join(bundleDir, 'RELEASE_NOTES.md'), releaseNotes);
 
-console.log(`Prepared release-bundle/ for v${version} (${checksumLines.length} files).`);
+console.log(`Prepared release-bundle/ for v${version} (${checksumLines.length} release assets).`);

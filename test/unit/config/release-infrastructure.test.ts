@@ -36,4 +36,25 @@ describe('Release infrastructure', () => {
     expect(workflow).toContain('expect_success "Semgrep" "$SEMGREP_RESULT"');
     expect(workflow).toContain('expect_success "OSV full" "$OSV_FULL_RESULT"');
   });
+
+  it('publishes a checksum-verifiable archive without flattening the app tree', () => {
+    const workflow = readFileSync(
+      resolve(root, '.github/workflows/release.yaml'),
+      'utf8'
+    );
+    const prepareScript = readFileSync(
+      resolve(root, 'scripts/release/prepare.ts'),
+      'utf8'
+    );
+
+    expect(workflow).toContain('release-bundle/release/*');
+    expect(workflow).not.toContain('release-bundle/release/**');
+    expect(prepareScript).toContain(
+      'const archiveName = `wasm-motion-converter-${version}.tar.gz`;'
+    );
+    expect(prepareScript).toContain(
+      'const releaseAssets = [archivePath, metadataPath];'
+    );
+    expect(prepareScript).not.toContain('cpSync(distDir, releaseDir');
+  });
 });
