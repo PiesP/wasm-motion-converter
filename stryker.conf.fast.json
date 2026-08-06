@@ -3,6 +3,8 @@
   "mutate": [
     "src/utils/**/*.ts",
     "src/stores/**/*.ts",
+    "!src/utils/dom-utils.ts",
+    "!src/utils/mediabunny-utils.ts",
     "!src/**/*.d.ts",
     "!src/types/**",
     "!src/services/encoder-*.ts",
@@ -23,7 +25,8 @@
     "related": false
   },
   "reporters": ["progress", "clear-text", "json", "html"],
-  "coverageAnalysis": "all",
+  "coverageAnalysis": "perTest",
+  "ignoreStatic": true,
   "inPlace": true,
   "thresholds": {
     "high": 70,

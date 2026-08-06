@@ -9,6 +9,9 @@ describe('Fast mutation profile', () => {
     const config = JSON.parse(
       readFileSync(resolve(root, 'stryker.conf.fast.json'), 'utf8')
     ) as {
+      ignoreStatic?: boolean;
+      mutate?: string[];
+      coverageAnalysis?: string;
       reporters?: string[];
       thresholds?: { break?: number | null };
       mutator?: { excludedMutations?: string[] };
@@ -19,6 +22,11 @@ describe('Fast mutation profile', () => {
     const workflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
 
     expect(config.thresholds?.break).toBeGreaterThan(0);
+    expect(config.coverageAnalysis).toBe('perTest');
+    expect(config.ignoreStatic).toBe(true);
+    expect(config.mutate).toEqual(
+      expect.arrayContaining(['!src/utils/dom-utils.ts', '!src/utils/mediabunny-utils.ts'])
+    );
     expect(config.reporters).toEqual(
       expect.arrayContaining(['clear-text', 'json', 'html'])
     );
