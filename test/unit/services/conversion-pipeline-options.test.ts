@@ -6,6 +6,7 @@ import type { ConversionRequest } from '@t/conversion-types';
 
 const mocks = vi.hoisted(() => ({
   demuxVideo: vi.fn(),
+  disposeWorkerPool: vi.fn(),
   encodeGif: vi.fn(),
   encodeWebp: vi.fn(),
   encodeWebpOffscreen: vi.fn(),
@@ -40,7 +41,7 @@ vi.mock('@services/offscreen-webp-encoder', () => ({
   encodeWebpOffscreen: mocks.encodeWebpOffscreen,
 }));
 vi.mock('@services/worker-pool', () => ({
-  disposeWorkerPool: vi.fn(),
+  disposeWorkerPool: mocks.disposeWorkerPool,
   getWorkerPool: () => null,
   WebpWorkerPool: { getOptimalWorkerCount: () => 1 },
 }));
@@ -66,6 +67,7 @@ beforeEach(() => {
   mocks.encodeGif.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
   mocks.encodeWebp.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
   mocks.encodeWebpOffscreen.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
+  mocks.disposeWorkerPool.mockReset();
 });
 
 afterEach(() => {
@@ -106,6 +108,33 @@ describe('main conversion pipeline encoder options', () => {
     await runConversionPipeline(baseRequest, vi.fn());
 
     expect(demuxResult.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('rejects hostile decoded dimensions before encoding and releases pipeline resources', async () => {
+    const dispose = vi.fn();
+    const onProgress = vi.fn();
+    mocks.demuxVideo.mockResolvedValueOnce({
+      ...demuxResult,
+      config: {
+        codec: 'vp09.00.30.08.01.02.02.02.00',
+        codedWidth: 520,
+        codedHeight: 520,
+        displayAspectWidth: 52_000,
+        displayAspectHeight: 520,
+      },
+      dispose,
+    });
+
+    await expect(runConversionPipeline(baseRequest, onProgress)).rejects.toThrow(
+      'Unable to determine video dimensions'
+    );
+
+    expect(mocks.encodeGif).not.toHaveBeenCalled();
+    expect(mocks.encodeWebp).not.toHaveBeenCalled();
+    expect(mocks.encodeWebpOffscreen).not.toHaveBeenCalled();
+    expect(onProgress).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(mocks.disposeWorkerPool).toHaveBeenCalledOnce();
   });
 
   it('returns only the encoder view bytes in a fresh ArrayBuffer', async () => {

@@ -78,6 +78,17 @@ describe('WebP encoder worker message security', () => {
       },
     },
     {
+      name: 'an RGB plane larger than its pooled allocation bucket',
+      request: {
+        id: 14,
+        rgbData: new Uint8Array(5),
+        width: 1,
+        height: 1,
+        quality: 0.8,
+        durationMs: 40,
+      },
+    },
+    {
       name: 'a non-finite quality value',
       request: {
         id: 13,
