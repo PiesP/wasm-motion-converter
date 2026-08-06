@@ -21,7 +21,7 @@ describe('Fast mutation profile', () => {
     };
     const workflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
 
-    expect(config.thresholds?.break).toBeGreaterThan(0);
+    expect(config.thresholds?.break).toBe(68);
     expect(config.coverageAnalysis).toBe('perTest');
     expect(config.ignoreStatic).toBe(true);
     expect(config.mutate).toEqual(

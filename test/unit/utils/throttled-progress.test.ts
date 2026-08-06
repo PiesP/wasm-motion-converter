@@ -24,6 +24,7 @@ describe('createThrottledProgress', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -87,6 +88,7 @@ describe('createThrottledProgress', () => {
 
     // Only first call fired
     expect(onProgress).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
 
     // Flush the deferred timer (setTimeout(flush, 100-60=40))
     vi.advanceTimersByTime(40); // total: 200ms
@@ -95,6 +97,7 @@ describe('createThrottledProgress', () => {
     expect(onProgress).toHaveBeenLastCalledWith(
       expect.objectContaining({ progress: 50 })
     );
+    expect(vi.getTimerCount()).toBe(0);
 
     cleanup();
   });
@@ -159,6 +162,43 @@ describe('createThrottledProgress', () => {
     cleanup();
   });
 
+  it('manual flush cancels its timer and re-arms trailing delivery', () => {
+    const onProgress = vi.fn();
+    const { callback, flush, cleanup } = createThrottledProgress(onProgress, 100);
+
+    vi.advanceTimersByTime(100);
+    callback(makeProgress({ progress: 10 }));
+    callback(makeProgress({ progress: 20 }));
+    expect(vi.getTimerCount()).toBe(1);
+
+    flush();
+    expect(onProgress).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+
+    callback(makeProgress({ progress: 30 }));
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(100);
+
+    expect(onProgress).toHaveBeenCalledTimes(3);
+    expect(onProgress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ progress: 30 })
+    );
+    cleanup();
+  });
+
+  it('flush and cleanup avoid timer work when no update is pending', () => {
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+    const onProgress = vi.fn();
+    const { flush, cleanup } = createThrottledProgress(onProgress, 100);
+
+    flush();
+    cleanup();
+    cleanup();
+
+    expect(onProgress).not.toHaveBeenCalled();
+    expect(clearTimeoutSpy).not.toHaveBeenCalled();
+  });
+
   // ── Disposed prevents further calls ────────────────────────
 
   it('callback does nothing after cleanup is called', () => {
@@ -171,8 +211,29 @@ describe('createThrottledProgress', () => {
     cleanup();
 
     callback(makeProgress({ progress: 30 })); // disposed, no-op
+    vi.advanceTimersByTime(100);
 
     // Only the pre-cleanup call should have fired
+    expect(onProgress).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('cleanup removes a pending timer and keeps manual flush disposed', () => {
+    const onProgress = vi.fn();
+    const { callback, flush, cleanup } = createThrottledProgress(onProgress, 100);
+
+    vi.advanceTimersByTime(100);
+    callback(makeProgress({ progress: 10 }));
+    callback(makeProgress({ progress: 20 }));
+    expect(vi.getTimerCount()).toBe(1);
+
+    cleanup();
+    expect(vi.getTimerCount()).toBe(0);
+
+    callback(makeProgress({ progress: 30 }));
+    flush();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(100);
     expect(onProgress).toHaveBeenCalledTimes(1);
   });
 
