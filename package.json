@@ -71,7 +71,7 @@
   "dependencies": {
     "@piesp/browser-core": "file:packages/core",
     "gifenc": "^1.0.3",
-    "mediabunny": "^1.52.3",
+    "mediabunny": "^1.53.0",
     "solid-js": "1.9.14",
     "wasm-webp": "^0.1.0"
   },
@@ -86,7 +86,7 @@
     "@types/node": "26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
     "dpdm": "4.3.0",
-    "esbuild": "0.28.1",
+    "esbuild": "0.28.2",
     "jsdom": "^30.0.1",
     "knip": "^6.32.0",
     "rollup-plugin-visualizer": "7.0.1",
