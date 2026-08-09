@@ -16,9 +16,11 @@ runs entirely in the browser and bundles all runtime code with the application.
 
 ## Browser requirements
 
-The application requires WebCodecs, `SharedArrayBuffer`, and cross-origin
-isolation. It checks these capabilities before conversion and reports missing
-requirements in the browser.
+The application requires WebCodecs (`VideoDecoder` and `VideoFrame`) and
+WebAssembly. It checks these capabilities before conversion and reports missing
+requirements in the browser. Cross-origin isolation headers remain enabled as a
+security boundary and to make `SharedArrayBuffer` available, but the current
+single-threaded WASM encoders do not require either capability.
 
 ## Development
 

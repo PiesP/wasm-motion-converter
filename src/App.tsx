@@ -39,6 +39,7 @@ import {
 import type { AppState } from '@t/app-types';
 import type { ProgressPhase } from '@t/conversion-types';
 import type { TFunction, TranslationKey } from '@t/i18n-types';
+import { assessEnvironmentCapabilities } from '@utils/environment-capabilities';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
 import {
@@ -113,12 +114,7 @@ const App: Component = () => {
   useNetworkState();
 
   onMount(() => {
-    const isSupported =
-      typeof SharedArrayBuffer !== 'undefined' &&
-      typeof crossOriginIsolated !== 'undefined' &&
-      crossOriginIsolated === true;
-
-    setEnvironmentSupported(isSupported);
+    setEnvironmentSupported(assessEnvironmentCapabilities().isSupported);
 
     // Attach test helpers in dev mode (AI-driven browser testing)
     if (attachTestHelpersPromise) {

@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
+import { assessEnvironmentCapabilities } from '@utils/environment-capabilities';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
 import { createMemo, createSignal, onMount, Show } from 'solid-js';
@@ -12,8 +13,7 @@ const EnvironmentWarning: Component = () => {
   const { t } = useLocale();
   const [isExpanded, setIsExpanded] = createSignal(true);
 
-  const hasSharedArrayBuffer = createMemo(() => typeof SharedArrayBuffer !== 'undefined');
-  const isCrossOriginIsolated = createMemo(() => crossOriginIsolated === true);
+  const capabilities = createMemo(() => assessEnvironmentCapabilities());
 
   onMount(() => {
     try {
@@ -44,15 +44,12 @@ const EnvironmentWarning: Component = () => {
 
   const handleTestEnvironment = () => {
     logger.warn('general', 'Environment test results', {
-      hasSharedArrayBuffer: hasSharedArrayBuffer(),
-      isCrossOriginIsolated: isCrossOriginIsolated(),
+      ...capabilities(),
     });
   };
 
-  const sharedArrayBufferLabel = createMemo(() =>
-    hasSharedArrayBuffer() ? t('env.available') : t('env.unavailable')
-  );
-  const crossOriginIsolatedLabel = createMemo(() => (isCrossOriginIsolated() ? 'true' : 'false'));
+  const capabilityLabel = (available: boolean) =>
+    available ? t('env.available') : t('env.unavailable');
 
   return (
     <div
@@ -92,13 +89,16 @@ const EnvironmentWarning: Component = () => {
 
           <Show when={isExpanded()}>
             <div class="mt-2 text-sm text-text-secondary">
-              <Show when={!hasSharedArrayBuffer()} fallback={<p>{t('env.coiFalse')}</p>}>
-                <p>{t('env.sabUnavailable')}</p>
+              <Show when={!capabilities().hasWebCodecs}>
+                <p>{t('env.webCodecsUnavailable')}</p>
+              </Show>
+              <Show when={!capabilities().hasWebAssembly}>
+                <p>{t('env.webAssemblyUnavailable')}</p>
               </Show>
               <p class="mt-2">
                 {t('env.detected', {
-                  sab: sharedArrayBufferLabel(),
-                  coi: crossOriginIsolatedLabel(),
+                  webCodecs: capabilityLabel(capabilities().hasWebCodecs),
+                  webAssembly: capabilityLabel(capabilities().hasWebAssembly),
                 })}
               </p>
               <p class="mt-2">
