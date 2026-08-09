@@ -36,6 +36,9 @@ describe('memory monitor', () => {
     expect(isMemoryCritical()).toBe(true);
     expect(getMemoryUsageMB()).toBe(80);
     expect(getMemoryInfoFromMonitor()).toBe(info);
+
+    getMemoryInfo.mockReturnValue({ ...info, usagePercentage: 80 });
+    expect(isMemoryCritical()).toBe(false);
   });
 
   it('classifies conversion estimates as ok, warning, or critical', () => {
@@ -50,5 +53,8 @@ describe('memory monitor', () => {
     });
     expect(checkMemoryForConversion(1000, 1000, 100, 'webp').level).toBe('critical');
     expect(checkMemoryForConversion(1000, 1000, 10, 'gif').level).toBe('warning');
+
+    expect(checkMemoryForConversion(1000, 1000, 10, 'gif').estimatedMB).toBe(61);
+    expect(checkMemoryForConversion(1000, 1000, 10, 'webp').estimatedMB).toBe(80);
   });
 });

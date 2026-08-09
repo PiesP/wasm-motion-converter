@@ -37,6 +37,8 @@ describe('logger', () => {
     const entries = logger.getRecentEntries();
     expect(entries.map((entry) => entry.level)).toEqual(['INFO', 'WARN']);
     expect(entries[1]?.line).toContain('▶ route started');
+    expect(console.info).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledTimes(1);
   });
 
   it('serializes rich context, circular values, and truncates only the inline line', () => {
@@ -44,6 +46,7 @@ describe('logger', () => {
     circular.self = circular;
     logger.warn('general', 'context', {
       error: new Error('boom'),
+      bigint: 42n,
       map: new Map([['key', 'value']]),
       set: new Set(['value']),
       buffer: new ArrayBuffer(4),
@@ -54,8 +57,16 @@ describe('logger', () => {
     });
 
     const entry = logger.getRecentEntries()[0]!;
-    expect(entry.contextJson).toContain('Circular');
-    expect(entry.contextJson).toContain('Uint8Array');
+    expect(JSON.parse(entry.contextJson!)).toMatchObject({
+      error: { name: 'Error', message: 'boom' },
+      bigint: '42',
+      map: { type: 'Map', entries: [['key', 'value']] },
+      set: { type: 'Set', values: ['value'] },
+      buffer: { type: 'ArrayBuffer', byteLength: 4 },
+      bytes: { type: 'Uint8Array', length: 2 },
+      date: '2026-01-01T00:00:00.000Z',
+      circular: { self: '[Circular]' },
+    });
     expect(entry.line).toContain('…(truncated)');
   });
 
@@ -65,14 +76,23 @@ describe('logger', () => {
     logger.setConversionProgress(42.4);
     logger.warn('general', 'with progress');
     expect(logger.getRecentEntries()[0]?.conversionProgress).toBe(42);
+    expect(logger.getRecentEntries()[0]?.line).toContain('[42%]');
+
+    logger.setConversionProgress(Number.NaN);
+    logger.warn('progress', 'progress category');
+    expect(logger.getRecentEntries()[1]?.conversionProgress).toBeNull();
+
+    now.mockReturnValue(1000 + 10 * 60 * 1000);
+    logger.warn('general', 'boundary progress');
+    expect(logger.getRecentEntries()[2]?.conversionProgress).toBe(42);
 
     now.mockReturnValue(1000 + 10 * 60 * 1000 + 1);
     logger.warn('general', 'stale progress');
-    expect(logger.getRecentEntries()[1]?.conversionProgress).toBeNull();
+    expect(logger.getRecentEntries()[3]?.conversionProgress).toBeNull();
 
     logger.setConversionProgress(200);
     logger.warn('general', 'completed progress');
-    expect(logger.getRecentEntries()[2]?.conversionProgress).toBeNull();
+    expect(logger.getRecentEntries()[4]?.conversionProgress).toBeNull();
     now.mockRestore();
   });
 
@@ -85,5 +105,13 @@ describe('logger', () => {
     for (let i = 0; i < 751; i++) logger.warn('general', `general-${i}`);
     expect(logger.getRecentLogs()).toHaveLength(750);
     expect(logger.getRecentLogs()[0]).toContain('general-1');
+
+    logger.clearRecentLogs();
+    for (let i = 0; i < 749; i++) logger.warn('general', `general-${i}`);
+    logger.warn('cdn', 'disposable');
+    logger.warn('general', 'latest important');
+    expect(logger.getRecentEntries()).toHaveLength(750);
+    expect(logger.getRecentEntries().some((entry) => entry.message === 'disposable')).toBe(false);
+    expect(logger.getRecentEntries().at(-1)?.message).toBe('latest important');
   });
 });
