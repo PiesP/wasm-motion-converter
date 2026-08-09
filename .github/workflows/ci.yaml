@@ -121,7 +121,7 @@ jobs:
 
       - name: 🎭 Run repository-backed E2E tests
         run: |
-          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright install --with-deps chromium firefox webkit
           pnpm test:e2e:ci
 
       - name: 📊 Upload Playwright diagnostics

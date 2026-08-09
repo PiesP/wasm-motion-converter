@@ -10,6 +10,7 @@ const TEST_PROFILE = process.env.PLAYWRIGHT_TEST_PROFILE ?? 'local';
 const IS_DEPLOY_PROFILE = TEST_PROFILE === 'deploy';
 const IS_CI_PROFILE = TEST_PROFILE === 'ci';
 const IS_RESOURCE_PROFILE = TEST_PROFILE === 'resource';
+const BROWSER_CAPABILITY_TEST = 'e2e/browser-capability.spec.ts';
 // Fresh CI checkouts intentionally exclude the large, local-only codec matrix.
 // The smoke fixture is generated deterministically before this profile runs.
 const CI_TEST_MATCH = [
@@ -18,6 +19,7 @@ const CI_TEST_MATCH = [
   'e2e/i18n.spec.ts',
   'e2e/ci-conversion-smoke.spec.ts',
   'e2e/adaptive-resource-safety.spec.ts',
+  BROWSER_CAPABILITY_TEST,
 ];
 const LOCAL_TEST_IGNORE = [
   'e2e/fixtures/**',
@@ -27,6 +29,37 @@ const LOCAL_TEST_IGNORE = [
   'e2e/deploy-smoke.spec.ts',
   'e2e/dogfood-qa.spec.ts',
   'e2e/resource-profile.spec.ts',
+];
+
+const chromiumProject = {
+  name: 'chromium',
+  use: {
+    ...devices['Desktop Chrome'],
+    headless: true,
+    launchOptions: {
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        ...(IS_RESOURCE_PROFILE ? ['--enable-precise-memory-info'] : ['--disable-gpu']),
+        // Expose SharedArrayBuffer for the cross-origin-isolated app.
+        '--enable-features=SharedArrayBuffer',
+      ],
+    },
+  },
+};
+
+const capabilitySmokeProjects = [
+  {
+    name: 'firefox',
+    testMatch: BROWSER_CAPABILITY_TEST,
+    use: { ...devices['Desktop Firefox'] },
+  },
+  {
+    name: 'webkit',
+    testMatch: BROWSER_CAPABILITY_TEST,
+    use: { ...devices['Desktop Safari'] },
+  },
 ];
 
 export default defineConfig({
@@ -63,25 +96,10 @@ export default defineConfig({
   // Snapshot configuration for visual regression tests
   snapshotPathTemplate: '{testDir}/__screenshots__/{testFilePath}/{arg}{ext}',
 
-  projects: [
-    {
-      name: 'chromium',
-      use: {
-        ...devices['Desktop Chrome'],
-        headless: true,
-        launchOptions: {
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            ...(IS_RESOURCE_PROFILE ? ['--enable-precise-memory-info'] : ['--disable-gpu']),
-            // Expose SharedArrayBuffer for the cross-origin-isolated app.
-            '--enable-features=SharedArrayBuffer',
-          ],
-        },
-      },
-    },
-  ],
+  projects:
+    IS_DEPLOY_PROFILE || IS_RESOURCE_PROFILE
+      ? [chromiumProject]
+      : [chromiumProject, ...capabilitySmokeProjects],
 
   // Auto-start dev server unless SKIP_WEB_SERVER is set (e.g. when running
   // tests against an already-running instance via `pnpm dev`).
