@@ -190,7 +190,6 @@ export class WebpWorkerPool {
     const pending = this.activeTasks.get(worker);
     if (!pending) {
       logger.warn('encoders', 'Worker message received but no active task found');
-      this.releaseWorker(worker);
       return;
     }
     const { task } = pending;
