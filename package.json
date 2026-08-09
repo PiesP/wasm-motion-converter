@@ -61,6 +61,10 @@
     "mut": "stryker run --reporters=progress",
     "mut:fast": "stryker run stryker.conf.fast.json",
     "release:prepare": "node --experimental-strip-types scripts/release/prepare.ts",
+    "security:codex:branch": "scripts/security/codex-security.sh branch",
+    "security:codex:dry-run": "scripts/security/codex-security.sh dry-run",
+    "security:codex:full": "scripts/security/codex-security.sh full",
+    "security:codex:working-tree": "scripts/security/codex-security.sh working-tree",
     "test:cov": "vitest run --coverage",
     "check:i18n": "node --experimental-strip-types scripts/check/i18n.ts"
   },
