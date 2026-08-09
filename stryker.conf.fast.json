@@ -22,7 +22,7 @@
   "testRunner": "vitest",
   "vitest": {
     "configFile": "vitest.config.ts",
-    "related": false
+    "related": true
   },
   "reporters": ["progress", "clear-text", "json", "html"],
   "coverageAnalysis": "perTest",
@@ -31,7 +31,7 @@
   "thresholds": {
     "high": 75,
     "low": 70,
-    "break": 68
+    "break": 70
   },
   "concurrency": 2,
   "timeoutMS": 60000,
