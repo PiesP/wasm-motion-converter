@@ -43,10 +43,24 @@ is available.
   pnpm retain a 24-hour supply-chain cooling window; pnpm also rejects recent
   trust-level downgrades and unapproved dependency build scripts.
 - A daily freshness check covers pinned Nose, OSV Scanner, and Semgrep releases
-  that Dependabot cannot update directly. Major upgrades remain manual.
+  that Dependabot cannot update directly. It also checks the pinned Codex
+  Security CLI package after the same 24-hour cooling window. Major upgrades
+  remain manual.
 - TypeScript strict checking, Biome, Knip, circular-dependency detection, unit
   tests, browser tests, mutation tests, and duplication checks cover changes at
   different stages of CI.
+- Codex Security adds an advisory, source-to-sink review of eligible same-repository
+  pull requests and supports manually dispatched full scans. It complements, and
+  does not replace, deterministic CodeQL, OSV, Semgrep, test, or browser gates.
+  Enable it by setting the `CODEX_SECURITY_ENABLED` repository variable to
+  `true` and the `CODEX_SECURITY_API_KEY` Actions secret.
+- Local report-only checks are available through `pnpm security:codex:dry-run`,
+  `pnpm security:codex:working-tree`, `pnpm security:codex:branch`, and
+  `pnpm security:codex:full`. Local authenticated scans default to ChatGPT login.
+- Scan artifacts can contain source excerpts and vulnerability details. CI sends
+  findings to GitHub code scanning and retains only manifest and coverage
+  metadata for seven days. A human must validate findings and deferred coverage
+  before remediation or severity gating.
 
 ## Scope
 
