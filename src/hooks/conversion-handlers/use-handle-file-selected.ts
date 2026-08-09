@@ -46,6 +46,8 @@ export async function handleFileSelected(
   resetAnalysisState();
 
   const validation = await validateVideoFile(file, t);
+  if (isStale()) return;
+
   if (!validation.valid) {
     logger.warn('conversion', 'File validation failed — conversion blocked', {
       fileName: file.name,
@@ -60,8 +62,6 @@ export async function handleFileSelected(
     focusRetryButton();
     return;
   }
-
-  if (isStale()) return;
 
   // Trim points belong to the previously selected video. Carrying them into
   // another file can produce an empty or unintended range, especially when
