@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 env:
-  CODEX_SECURITY_VERSION: "0.1.8"
   NODE_VERSION: "26"
   PYTHON_VERSION: "3.14"
 
@@ -42,21 +41,33 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install pinned Codex Security outside the checkout
+      - name: Check out trusted CLI lock
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Install locked Codex Security
         run: |
           set -euo pipefail
-          install -d -m 0700 "$RUNNER_TEMP/codex-security-cli"
-          npm install \
-            --prefix "$RUNNER_TEMP/codex-security-cli" \
+          install -d -m 0700 "$RUNNER_TEMP/codex-security"
+          install -m 0600 \
+            .github/codex-security/package.json \
+            .github/codex-security/package-lock.json \
+            "$RUNNER_TEMP/codex-security/"
+          npm ci \
+            --prefix "$RUNNER_TEMP/codex-security" \
             --ignore-scripts \
             --no-audit \
-            --no-fund \
-            "@openai/codex-security@$CODEX_SECURITY_VERSION"
-          CODEX_SECURITY_BIN="$RUNNER_TEMP/codex-security-cli/node_modules/.bin/codex-security"
+            --no-fund
+          node scripts/security/patch-codex-security.mjs "$RUNNER_TEMP/codex-security"
+          CODEX_SECURITY_BIN="$RUNNER_TEMP/codex-security/node_modules/.bin/codex-security"
           test -x "$CODEX_SECURITY_BIN"
           "$CODEX_SECURITY_BIN" --version
 
-      - name: Check out the exact target
+      - name: Check out exact source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -79,7 +90,7 @@ jobs:
           CODEX_SECURITY_STATE_DIR: ${{ runner.temp }}/codex-security-state
         run: |
           set -euo pipefail
-          CODEX_SECURITY_BIN="$RUNNER_TEMP/codex-security-cli/node_modules/.bin/codex-security"
+          CODEX_SECURITY_BIN="$RUNNER_TEMP/codex-security/node_modules/.bin/codex-security"
           SCAN_DIR="$RUNNER_TEMP/codex-security-results"
           COMMON_ARGS=(
             scan .
@@ -110,7 +121,7 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
-          CODEX_SECURITY_BIN="$RUNNER_TEMP/codex-security-cli/node_modules/.bin/codex-security"
+          CODEX_SECURITY_BIN="$RUNNER_TEMP/codex-security/node_modules/.bin/codex-security"
           SCAN_DIR="$RUNNER_TEMP/codex-security-results"
           if [[ -f "$SCAN_DIR/scan-manifest.json" ]]; then
             "$CODEX_SECURITY_BIN" export "$SCAN_DIR" \
