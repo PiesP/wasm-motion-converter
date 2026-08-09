@@ -57,8 +57,9 @@ is available.
 - Local report-only checks are available through `pnpm security:codex:dry-run`,
   `pnpm security:codex:working-tree`, `pnpm security:codex:branch`, and
   `pnpm security:codex:full`. Local authenticated scans default to ChatGPT login.
-- Scan artifacts can contain source excerpts and vulnerability details. CI keeps
-  them for seven days, and a human must validate findings and deferred coverage
+- Scan artifacts can contain source excerpts and vulnerability details. CI sends
+  findings to GitHub code scanning and retains only manifest and coverage
+  metadata for seven days. A human must validate findings and deferred coverage
   before remediation or severity gating.
 
 ## Scope
