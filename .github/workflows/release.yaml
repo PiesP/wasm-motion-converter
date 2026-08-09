@@ -115,7 +115,7 @@ jobs:
 
       - name: 🎭 Run E2E tests
         run: |
-          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright install --with-deps chromium firefox webkit
           pnpm test:e2e:ci
 
   duplication:

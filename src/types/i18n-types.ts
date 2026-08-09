@@ -250,8 +250,8 @@ export interface TranslationKeys {
   'env.showDetails': string;
   'env.hideDetails': string;
   'env.notSupported': string;
-  'env.coiFalse': string;
-  'env.sabUnavailable': string;
+  'env.webCodecsUnavailable': string;
+  'env.webAssemblyUnavailable': string;
   'env.detected': string;
   'env.localDevHint': string;
   'env.deployedHint': string;

@@ -61,4 +61,17 @@ describe('Playwright workflow profiles', () => {
     expect(config).toContain("video: process.env.CI ? 'retain-on-failure' : 'off'");
     expect(workflow).toContain('playwright-report/');
   });
+
+  it('runs capability smoke coverage in Firefox and WebKit', () => {
+    const config = readFileSync(resolve(root, 'playwright.config.ts'), 'utf8');
+    const workflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
+    const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
+
+    expect(config).toContain("name: 'firefox'");
+    expect(config).toContain("name: 'webkit'");
+    expect(config).toContain("'e2e/browser-capability.spec.ts'");
+    expect(config).toContain('IS_DEPLOY_PROFILE || IS_RESOURCE_PROFILE');
+    expect(workflow).toContain('playwright install --with-deps chromium firefox webkit');
+    expect(releaseWorkflow).toContain('playwright install --with-deps chromium firefox webkit');
+  });
 });
