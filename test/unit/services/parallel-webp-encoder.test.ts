@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { globalBufferPool } from '@services/buffer-pool';
-import type { EncodeTask, EncodeTaskResult } from '@services/worker-pool';
+import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from '@services/worker-pool';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -13,8 +13,8 @@ const mocks = vi.hoisted(() => ({
   tasks: new Map<number, EncodeTask>(),
 }));
 
-vi.mock('@services/worker-pool', () => ({
-  getWorkerPool: () => ({
+function createWorkerPool(): WebpWorkerPool {
+  return {
     activeWorkers: 2,
     encode: (task: EncodeTask) =>
       new Promise<EncodeTaskResult>((resolve, reject) => {
@@ -22,9 +22,8 @@ vi.mock('@services/worker-pool', () => ({
         mocks.pending.set(task.id, { reject, resolve });
       }),
     stats: { active: 0, idle: 2, poolSize: 2, queued: 0 },
-  }),
-  WebpWorkerPool: { getOptimalWorkerCount: () => 2 },
-}));
+  } as unknown as WebpWorkerPool;
+}
 
 import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
 
@@ -55,7 +54,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
   });
 
   it('applies deferred tail duration to the final frame after in-flight work settles', async () => {
-    const encoder = createStreamingWebpEncoder(16, 16, 'medium', 2);
+    const encoder = createStreamingWebpEncoder(createWorkerPool(), 16, 16, 'medium', 2);
     await encoder.submit(new Uint8Array(16), 100);
     await encoder.submit(new Uint8Array(16), 200);
 
@@ -73,7 +72,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
   });
 
   it('preserves the first worker error and refuses submissions after failure', async () => {
-    const encoder = createStreamingWebpEncoder(16, 16, 'medium', 5);
+    const encoder = createStreamingWebpEncoder(createWorkerPool(), 16, 16, 'medium', 5);
     const rejectedBuffer = new Uint8Array(16);
     const firstError = new Error('first worker failure');
 

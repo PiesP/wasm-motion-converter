@@ -175,4 +175,57 @@ describe('WebpWorkerPool buffer ownership', () => {
     expect(pool.stats).toMatchObject({ poolSize: 1, idle: 1, active: 0, queued: 0 });
     pool.terminate();
   });
+
+  it('ignores a late message from a timed-out worker and dispatches to its replacement', async () => {
+    vi.useFakeTimers();
+    const pool = new WebpWorkerPool(1, 1000);
+    const retiredWorker = FakeWorker.instances[0];
+    let nextTask: Promise<unknown> | undefined;
+
+    try {
+      const timedOutTask = pool.encode({
+        id: 30,
+        rgbData: new Uint8Array(4),
+        width: 1,
+        height: 1,
+        quality: 0.8,
+        durationMs: 40,
+      });
+      const timeoutRejection = expect(timedOutTask).rejects.toThrow(
+        'Encoding task 30 timed out after 1000ms'
+      );
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await timeoutRejection;
+
+      const replacementWorker = FakeWorker.instances[1];
+      expect(retiredWorker?.terminate).toHaveBeenCalledOnce();
+      expect(replacementWorker).toBeDefined();
+
+      retiredWorker?.onmessage?.({
+        data: { id: 30, bitstream: new Uint8Array([1]) },
+      } as MessageEvent);
+
+      nextTask = pool.encode({
+        id: 31,
+        rgbData: new Uint8Array(4),
+        width: 1,
+        height: 1,
+        quality: 0.8,
+        durationMs: 40,
+      });
+
+      expect(retiredWorker?.postMessage).toHaveBeenCalledOnce();
+      expect(replacementWorker?.postMessage).toHaveBeenCalledOnce();
+
+      const bitstream = new Uint8Array([2]);
+      replacementWorker?.onmessage?.({ data: { id: 31, bitstream } } as MessageEvent);
+      await expect(nextTask).resolves.toEqual({ id: 31, bitstream });
+      expect(pool.stats).toMatchObject({ poolSize: 1, idle: 1, active: 0, queued: 0 });
+    } finally {
+      pool.terminate();
+      await nextTask?.catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
 });

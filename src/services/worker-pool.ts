@@ -91,7 +91,7 @@ export class WebpWorkerPool {
   private workers: Worker[] = [];
   private idleWorkers: Worker[] = [];
   private queue: PendingTask[] = [];
-  private activeTasks: Map<Worker, EncodeTask> = new Map();
+  private activeTasks: Map<Worker, PendingTask> = new Map();
   private terminated = false;
   private readonly size: number;
   private readonly timeoutMs: number;
@@ -187,44 +187,43 @@ export class WebpWorkerPool {
 
   private handleWorkerMessage(worker: Worker, data: unknown): void {
     // Find the pending task that was assigned to this worker
-    const activeTask = this.activeTasks.get(worker);
-    if (!activeTask) {
+    const pending = this.activeTasks.get(worker);
+    if (!pending) {
       logger.warn('encoders', 'Worker message received but no active task found');
-      this.releaseWorker(worker);
       return;
     }
+    const { task } = pending;
 
     // Clear the timeout for this task (it completed successfully)
-    const timeoutHandle = this.taskTimeouts.get(activeTask.id);
+    const timeoutHandle = this.taskTimeouts.get(worker);
     if (timeoutHandle !== undefined) {
       clearTimeout(timeoutHandle);
-      this.taskTimeouts.delete(activeTask.id);
+      this.taskTimeouts.delete(worker);
     }
 
     this.activeTasks.delete(worker);
-    const pending = this.findPendingByTaskId(activeTask.id);
 
-    if (!isRecord(data) || data.id !== activeTask.id || !Number.isSafeInteger(data.id)) {
-      this.rejectInvalidWorkerResponse(worker, pending, activeTask.id);
+    if (!isRecord(data) || data.id !== task.id || !Number.isSafeInteger(data.id)) {
+      this.rejectInvalidWorkerResponse(worker, pending, task.id);
       return;
     }
 
     if (data.error !== undefined) {
       if (typeof data.error !== 'string' || data.error.length === 0) {
-        this.rejectInvalidWorkerResponse(worker, pending, activeTask.id);
+        this.rejectInvalidWorkerResponse(worker, pending, task.id);
         return;
       }
-      pending?.reject(new Error(`Worker encoding failed: ${data.error}`));
+      pending.reject(new Error(`Worker encoding failed: ${data.error}`));
       this.releaseWorker(worker);
       return;
     }
 
     if (!(data.bitstream instanceof Uint8Array) || data.bitstream.byteLength === 0) {
-      this.rejectInvalidWorkerResponse(worker, pending, activeTask.id);
+      this.rejectInvalidWorkerResponse(worker, pending, task.id);
       return;
     }
 
-    pending?.resolve({ id: activeTask.id, bitstream: data.bitstream });
+    pending.resolve({ id: task.id, bitstream: data.bitstream });
     this.releaseWorker(worker);
   }
 
@@ -241,45 +240,30 @@ export class WebpWorkerPool {
   private handleWorkerError(worker: Worker, event: ErrorEvent): void {
     logger.warn('encoders', 'worker-error', { message: event.message });
 
-    const activeTask = this.activeTasks.get(worker);
+    const pending = this.activeTasks.get(worker);
     this.activeTasks.delete(worker);
 
     // Clear timeout for this task
-    if (activeTask) {
-      const timeoutHandle = this.taskTimeouts.get(activeTask.id);
+    if (pending) {
+      const timeoutHandle = this.taskTimeouts.get(worker);
       if (timeoutHandle !== undefined) {
         clearTimeout(timeoutHandle);
-        this.taskTimeouts.delete(activeTask.id);
+        this.taskTimeouts.delete(worker);
       }
     }
 
     // Reject the pending task
-    if (activeTask) {
-      const pending = this.findPendingByTaskId(activeTask.id);
-      if (pending) {
-        pending.reject(new Error(`Worker error: ${event.message}`));
-      }
+    if (pending) {
+      pending.reject(new Error(`Worker error: ${event.message}`));
     }
 
     // Replace dead worker (with try/catch inside replaceWorker)
     this.replaceWorker(worker);
   }
 
-  private findPendingByTaskId(id: number): PendingTask | undefined {
-    // Pending tasks that have been submitted are tracked via pendingResolvers map keyed by task id.
-    const resolver = this.pendingResolvers.get(id);
-    if (resolver) {
-      this.pendingResolvers.delete(id);
-      return resolver;
-    }
-    return undefined;
-  }
-
-  // Map task id → pending task with resolve/reject (for submitted tasks awaiting result)
-  private pendingResolvers = new Map<number, PendingTask>();
-
-  // Map task id → setTimeout handle (for timeout cleanup on task completion)
-  private taskTimeouts = new Map<number, ReturnType<typeof setTimeout>>();
+  // Timeout ownership follows the Worker and its exact active PendingTask. Task IDs
+  // are encoder-local and may overlap across conversion sessions.
+  private taskTimeouts = new Map<Worker, ReturnType<typeof setTimeout>>();
 
   private releaseWorker(worker: Worker): void {
     if (this.terminated) return;
@@ -329,9 +313,9 @@ export class WebpWorkerPool {
     // postMessage can throw synchronously (e.g. detached ArrayBuffer),
     // in which case the timeout will clean up and reject the task.
     const timeoutHandle = setTimeout(() => {
-      this.taskTimeouts.delete(pending.task.id);
+      this.taskTimeouts.delete(worker);
 
-      if (!this.activeTasks.has(worker)) return; // already completed
+      if (this.activeTasks.get(worker) !== pending) return; // already completed or replaced
 
       logger.warn('encoders', 'Worker task timed out, retiring worker', {
         taskId: pending.task.id,
@@ -339,7 +323,6 @@ export class WebpWorkerPool {
       });
 
       this.activeTasks.delete(worker);
-      this.pendingResolvers.delete(pending.task.id);
       pending.reject(
         new Error(`Encoding task ${pending.task.id} timed out after ${this.timeoutMs}ms`)
       );
@@ -348,7 +331,7 @@ export class WebpWorkerPool {
       this.replaceWorker(worker);
     }, this.timeoutMs);
 
-    this.taskTimeouts.set(pending.task.id, timeoutHandle);
+    this.taskTimeouts.set(worker, timeoutHandle);
 
     // Transfer the rgbData buffer to the worker (zero-copy).
     // postMessage is called BEFORE registering in activeTasks so that
@@ -360,7 +343,7 @@ export class WebpWorkerPool {
     } catch (err) {
       // postMessage threw synchronously — clean up and reject
       clearTimeout(timeoutHandle);
-      this.taskTimeouts.delete(pending.task.id);
+      this.taskTimeouts.delete(worker);
       // The pool owns task buffers once encode() is called. If transfer failed
       // before detaching the buffer, return it so a failed submission cannot
       // strand a frame allocation.
@@ -374,8 +357,7 @@ export class WebpWorkerPool {
 
     // Only register the task AFTER successful postMessage.
     // If the transfer succeeded, the worker now owns the buffer.
-    this.activeTasks.set(worker, pending.task);
-    this.pendingResolvers.set(pending.task.id, pending);
+    this.activeTasks.set(worker, pending);
   }
 
   private replaceWorker(worker: Worker): void {
@@ -440,14 +422,13 @@ export class WebpWorkerPool {
       globalBufferPool.release(pending.task.rgbData);
       pending.reject(new Error('Worker pool terminated'));
     }
-    for (const pending of this.pendingResolvers.values()) {
+    for (const pending of this.activeTasks.values()) {
       pending.reject(new Error('Worker pool terminated'));
     }
 
     this.queue.length = 0;
     this.idleWorkers.length = 0;
     this.activeTasks.clear();
-    this.pendingResolvers.clear();
     for (const timeoutHandle of this.taskTimeouts.values()) {
       clearTimeout(timeoutHandle);
     }
@@ -468,36 +449,18 @@ export class WebpWorkerPool {
   }
 }
 
-// ─── Singleton Pool (lazy) ─────────────────────────────────────────
-
-let singletonPool: WebpWorkerPool | null = null;
-
 /**
- * Get the shared worker pool instance for the active conversion.
- * Creates it on first access. Returns null if Worker is unsupported. The
- * conversion pipeline disposes it at its cleanup boundary so native Canvas and
- * encoder resources cannot accumulate across conversions.
+ * Create a conversion-owned worker pool. Concurrent conversions must never
+ * share a pool: their frame IDs are local, and each pipeline owns its teardown.
  */
-export function getWorkerPool(size?: number): WebpWorkerPool | null {
+export function createWorkerPool(size?: number): WebpWorkerPool | null {
   if (!WebpWorkerPool.isSupported()) {
     return null;
   }
-  if (!singletonPool) {
-    singletonPool = new WebpWorkerPool(size);
-  } else if (
-    size !== undefined &&
-    singletonPool.stats.poolSize !== size &&
-    singletonPool.stats.active === 0 &&
-    singletonPool.stats.queued === 0
-  ) {
-    singletonPool.terminate();
-    singletonPool = new WebpWorkerPool(size);
-  }
-  return singletonPool;
+  return new WebpWorkerPool(size);
 }
 
-/** Release persistent worker, OffscreenCanvas, and native encoder resources. */
-export function disposeWorkerPool(): void {
-  singletonPool?.terminate();
-  singletonPool = null;
+/** Release one conversion's Worker, OffscreenCanvas, and native encoder resources. */
+export function disposeWorkerPool(pool: WebpWorkerPool | null): void {
+  pool?.terminate();
 }

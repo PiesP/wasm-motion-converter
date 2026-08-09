@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   extractVideoMetadata: vi.fn(),
+  focusRetryButton: vi.fn(),
+  setErrorMessage: vi.fn(),
   setConversionSettings: vi.fn(),
+  transitionToState: vi.fn(),
   validateVideoFile: vi.fn(),
   settings: {
     format: 'gif' as const,
@@ -26,19 +29,19 @@ vi.mock('@stores/conversion-settings-store', () => ({
 }));
 vi.mock('@stores/conversion-store', () => ({
   setErrorContext: vi.fn(),
-  setErrorMessage: vi.fn(),
+  setErrorMessage: mocks.setErrorMessage,
   setInputBuffer: vi.fn(),
   setInputFile: vi.fn(),
   setVideoMetadata: vi.fn(),
   setVideoPreviewUrl: vi.fn(),
-  transitionToState: vi.fn(),
+  transitionToState: mocks.transitionToState,
   videoPreviewUrl: () => null,
 }));
 vi.mock('@utils/file-validation', () => ({
   validateVideoFile: mocks.validateVideoFile,
 }));
 vi.mock('@utils/dom-utils', () => ({
-  focusRetryButton: vi.fn(),
+  focusRetryButton: mocks.focusRetryButton,
 }));
 vi.mock('@utils/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -49,7 +52,10 @@ import type { ConversionRuntimeController } from '@hooks/conversion-handlers/use
 
 describe('handleFileSelected conversion settings', () => {
   beforeEach(() => {
+    mocks.focusRetryButton.mockReset();
+    mocks.setErrorMessage.mockReset();
     mocks.setConversionSettings.mockReset();
+    mocks.transitionToState.mockReset();
     mocks.validateVideoFile.mockReset().mockResolvedValue({ valid: true });
     mocks.extractVideoMetadata.mockReset().mockResolvedValue({
       config: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
@@ -82,5 +88,45 @@ describe('handleFileSelected conversion settings', () => {
     });
     expect(mocks.extractVideoMetadata).toHaveBeenCalledWith(file, 30);
     expect(arrayBufferSpy).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stale invalid result after a newer file is accepted', async () => {
+    let resolveStaleValidation: ((result: { valid: false; error: Error }) => void) | undefined;
+    const staleValidation = new Promise<{ valid: false; error: Error }>((resolve) => {
+      resolveStaleValidation = resolve;
+    });
+    mocks.validateVideoFile
+      .mockImplementationOnce(() => staleValidation)
+      .mockResolvedValueOnce({ valid: true });
+
+    let activeRun = 0;
+    const runtime = {
+      startNewRun: () => {
+        const run = ++activeRun;
+        return { isActive: () => run === activeRun, runId: `run-${run}` };
+      },
+      resetRuntimeState: vi.fn(),
+    } as unknown as ConversionRuntimeController;
+
+    const staleSelection = handleFileSelected(
+      new File(['old'], 'old.bin'),
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await handleFileSelected(
+      new File(['new'], 'new.mp4', { type: 'video/mp4' }),
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+
+    mocks.setErrorMessage.mockClear();
+    mocks.transitionToState.mockClear();
+    mocks.focusRetryButton.mockClear();
+    resolveStaleValidation?.({ valid: false, error: new Error('stale validation failed') });
+    await staleSelection;
+
+    expect(mocks.setErrorMessage).not.toHaveBeenCalled();
+    expect(mocks.transitionToState).not.toHaveBeenCalled();
+    expect(mocks.focusRetryButton).not.toHaveBeenCalled();
   });
 });

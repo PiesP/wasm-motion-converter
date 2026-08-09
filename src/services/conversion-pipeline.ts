@@ -49,7 +49,7 @@ import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
 import { encodeWebp } from './webp-encoder-service';
-import { disposeWorkerPool, getWorkerPool, WebpWorkerPool } from './worker-pool';
+import { createWorkerPool, disposeWorkerPool, WebpWorkerPool } from './worker-pool';
 
 /** Device/environment check — isolated to this module-level constant */
 const isDev = import.meta.env.DEV;
@@ -121,6 +121,7 @@ async function _runPipelineInner(
   const { DEMUX_MAX, ENCODE_MAX } = PROGRESS_PHASE;
   const { DECODE_RANGE } = PROGRESS_PHASE_RANGES;
   let demuxSession: Awaited<ReturnType<typeof demuxVideo>> | undefined;
+  let workerPool: WebpWorkerPool | null = null;
 
   try {
     // ── Throttled memory sampling (PERF-H1) ──
@@ -325,11 +326,12 @@ async function _runPipelineInner(
       // Use parallel Worker-based encoder when available (distributes frame
       // encoding across multiple CPU cores for 2-3x speedup).
       // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
-      // Pass scaled dimensions to getWorkerPool() so the 4K 2-worker limit
+      // Pass scaled dimensions to createWorkerPool() so the 4K 2-worker limit
       // is properly enforced at the gate level (not just inside the encoder).
       const w = Math.max(1, Math.floor(codedWidth * request.scale));
       const h = Math.max(1, Math.floor(codedHeight * request.scale));
-      const pool = getWorkerPool(WebpWorkerPool.getOptimalWorkerCount(w, h));
+      workerPool = createWorkerPool(WebpWorkerPool.getOptimalWorkerCount(w, h));
+      const pool = workerPool;
 
       // Verify actual capability, not just typeof — some browsers expose
       // OffscreenCanvas but fail on getContext('2d') or lack convertToBlob.
@@ -370,6 +372,7 @@ async function _runPipelineInner(
         const decimationController = createDynamicDecimationController();
 
         const streamingEncoder = createStreamingWebpEncoder(
+          pool,
           w,
           h,
           request.quality,
@@ -611,6 +614,6 @@ async function _runPipelineInner(
     throttled.cleanup();
     globalBufferPool.clear();
     clearCanvasCache();
-    disposeWorkerPool();
+    disposeWorkerPool(workerPool);
   }
 }

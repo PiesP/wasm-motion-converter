@@ -26,8 +26,7 @@ import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import type { BaseEncoderOptions } from './encoder-common';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
-import type { EncodeTask, EncodeTaskResult } from './worker-pool';
-import { getWorkerPool, WebpWorkerPool } from './worker-pool';
+import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from './worker-pool';
 
 interface FrameEncodeResult {
   bitstream: Uint8Array;
@@ -52,6 +51,7 @@ interface StreamingWebpEncoder {
  * @returns { submit, finish } — submit frames during decode, call finish after
  */
 export function createStreamingWebpEncoder(
+  pool: WebpWorkerPool,
   width: number,
   height: number,
   quality: BaseEncoderOptions['quality'],
@@ -59,12 +59,10 @@ export function createStreamingWebpEncoder(
   onProgress?: ProgressCallback
 ): StreamingWebpEncoder {
   const qualityF = getCanvasWebpQuality(quality);
-  const pool = getWorkerPool(WebpWorkerPool.getOptimalWorkerCount(width, height));
 
-  // Pool may be non-null but have 0 workers if all Worker() init attempts
-  // failed (e.g. CSP blocks). The caller (conversion-pipeline) already gates
-  // on pool.activeWorkers > 0, but we check here for defense-in-depth.
-  if (!pool || pool.activeWorkers === 0) {
+  // The caller owns this conversion-scoped pool and its teardown. A pool may
+  // still have 0 workers if all Worker() init attempts failed (e.g. CSP blocks).
+  if (pool.activeWorkers === 0) {
     throw new Error('Worker pool has no active workers');
   }
 
@@ -80,7 +78,7 @@ export function createStreamingWebpEncoder(
   // Cap in-flight frames at 2× pool size so that (a) each worker has one
   // frame encoding + one queued frame ready with no gap, and (b) backup
   // never grows unbounded even if encoding is slower than decoding.
-  const MAX_IN_FLIGHT = pool ? pool.stats.poolSize * 2 : 4;
+  const MAX_IN_FLIGHT = pool.stats.poolSize * 2;
 
   function flushResultsToMuxer(finalFlush = false): void {
     while (resultBuffer.has(nextExpectedId)) {
@@ -139,7 +137,7 @@ export function createStreamingWebpEncoder(
       durationMs,
     };
 
-    const promise = pool!
+    const promise = pool
       .encode(task)
       .then((result: EncodeTaskResult) => {
         resultBuffer.set(result.id, {
