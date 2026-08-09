@@ -12,6 +12,7 @@ describe('Fast mutation profile', () => {
       ignoreStatic?: boolean;
       mutate?: string[];
       coverageAnalysis?: string;
+      vitest?: { related?: boolean };
       reporters?: string[];
       thresholds?: { break?: number | null };
       mutator?: { excludedMutations?: string[] };
@@ -24,6 +25,7 @@ describe('Fast mutation profile', () => {
 
     expect(config.thresholds?.break).toBe(68);
     expect(config.coverageAnalysis).toBe('perTest');
+    expect(config.vitest?.related).toBe(true);
     expect(config.ignoreStatic).toBe(true);
     expect(config.mutate).toEqual(
       expect.arrayContaining(['!src/utils/dom-utils.ts', '!src/utils/mediabunny-utils.ts'])
