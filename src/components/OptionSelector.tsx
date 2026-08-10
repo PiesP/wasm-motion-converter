@@ -8,7 +8,7 @@ import Tooltip from './Tooltip';
 import Icon from './ui/Icon';
 
 const BASE_OPTION_CLASS =
-  'relative flex items-center justify-center px-3 py-2 sm:py-3 border rounded-lg cursor-pointer transition-all duration-200 text-sm min-h-[44px] focus-within:ring-2 focus-within:ring-brand/50 focus-within:outline-none';
+  'relative flex items-center justify-center px-3 py-2 sm:py-3 border rounded-lg cursor-pointer transition-[color,background-color,border-color] duration-200 text-sm min-h-[44px] focus-within:ring-2 focus-within:ring-brand/50 focus-within:outline-none';
 const SELECTED_OPTION_CLASS = 'bg-brand/15 border-brand text-text-primary ring-2 ring-brand/30';
 const DEFAULT_OPTION_CLASS =
   'bg-white/[0.04] border-border-standard text-text-secondary hover:border-border-standard hover:bg-white/[0.06]';
