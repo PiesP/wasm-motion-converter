@@ -180,6 +180,46 @@ describe('TrimSelector localized summary', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it('keeps per-input error slots stable and associated across validation states', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(
+      () => <TrimSelector duration={10} trimStart={2} trimEnd={8} onChange={() => {}} />,
+      container
+    );
+
+    const startInput = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    const endInput = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    const startSlot = container.querySelector<HTMLElement>('#trim-start-error')!;
+    const endSlot = container.querySelector<HTMLElement>('#trim-end-error')!;
+
+    expect(startSlot).not.toBeNull();
+    expect(endSlot).not.toBeNull();
+    expect(startSlot.parentElement).toBe(startInput.parentElement?.parentElement);
+    expect(endSlot.parentElement).toBe(endInput.parentElement?.parentElement);
+    expect(startInput.parentElement?.tagName).toBe('LABEL');
+    expect(endInput.parentElement?.tagName).toBe('LABEL');
+    expect(startInput.getAttribute('aria-describedby')).toBe('trim-start-error');
+    expect(endInput.getAttribute('aria-describedby')).toBe('trim-end-error');
+    expect(startSlot.textContent).toBe('');
+    expect(endSlot.textContent).toBe('');
+
+    startInput.focus();
+    startInput.value = '9.0';
+    startInput.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    startInput.blur();
+
+    expect(container.querySelector('#trim-start-error')).toBe(startSlot);
+    expect(startSlot.textContent).not.toBe('');
+
+    startInput.focus();
+    startInput.value = '2.0';
+    startInput.dispatchEvent(new InputEvent('input', { bubbles: true }));
+
+    expect(container.querySelector('#trim-start-error')).toBe(startSlot);
+    expect(startSlot.textContent).toBe('');
+  });
+
   it('keeps rounded half presets active after applying them', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

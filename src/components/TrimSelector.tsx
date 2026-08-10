@@ -513,67 +513,71 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       </div>
 
       <div class="grid grid-cols-2 gap-3">
-        <label for="trim-start-input" class="text-xs font-medium text-text-secondary">
-          {t('trim.startLabel')}
-          <input
-            id="trim-start-input"
-            name="trim-start"
-            type="text"
-            inputmode="decimal"
-            dir="ltr"
-            value={startText()}
-            disabled={props.disabled}
-            autocomplete="off"
-            aria-invalid={startError() ? 'true' : undefined}
-            aria-describedby={startError() ? 'trim-start-error' : undefined}
-            onInput={(event) => {
-              setStartText(event.currentTarget.value);
-              setStartError(null);
-            }}
-            onFocus={() => setStartFocused(true)}
-            onBlur={commitStartText}
-            onKeyDown={handleStartTextKeyDown}
-            class={inputClass}
-          />
-        </label>
-        <label for="trim-end-input" class="text-xs font-medium text-text-secondary">
-          {t('trim.endLabel')}
-          <input
-            id="trim-end-input"
-            name="trim-end"
-            type="text"
-            inputmode="decimal"
-            dir="ltr"
-            value={endText()}
-            disabled={props.disabled}
-            autocomplete="off"
-            aria-invalid={endError() ? 'true' : undefined}
-            aria-describedby={endError() ? 'trim-end-error' : undefined}
-            onInput={(event) => {
-              setEndText(event.currentTarget.value);
-              setEndError(null);
-            }}
-            onFocus={() => setEndFocused(true)}
-            onBlur={commitEndText}
-            onKeyDown={handleEndTextKeyDown}
-            class={inputClass}
-          />
-        </label>
+        <div>
+          <label for="trim-start-input" class="text-xs font-medium text-text-secondary">
+            {t('trim.startLabel')}
+            <input
+              id="trim-start-input"
+              name="trim-start"
+              type="text"
+              inputmode="decimal"
+              dir="ltr"
+              value={startText()}
+              disabled={props.disabled}
+              autocomplete="off"
+              aria-invalid={startError() ? 'true' : undefined}
+              aria-describedby="trim-start-error"
+              onInput={(event) => {
+                setStartText(event.currentTarget.value);
+                setStartError(null);
+              }}
+              onFocus={() => setStartFocused(true)}
+              onBlur={commitStartText}
+              onKeyDown={handleStartTextKeyDown}
+              class={inputClass}
+            />
+          </label>
+          <p
+            id="trim-start-error"
+            class="block min-h-[1lh] pt-1 text-xs text-status-danger"
+            role="alert"
+          >
+            {startError() ?? ''}
+          </p>
+        </div>
+        <div>
+          <label for="trim-end-input" class="text-xs font-medium text-text-secondary">
+            {t('trim.endLabel')}
+            <input
+              id="trim-end-input"
+              name="trim-end"
+              type="text"
+              inputmode="decimal"
+              dir="ltr"
+              value={endText()}
+              disabled={props.disabled}
+              autocomplete="off"
+              aria-invalid={endError() ? 'true' : undefined}
+              aria-describedby="trim-end-error"
+              onInput={(event) => {
+                setEndText(event.currentTarget.value);
+                setEndError(null);
+              }}
+              onFocus={() => setEndFocused(true)}
+              onBlur={commitEndText}
+              onKeyDown={handleEndTextKeyDown}
+              class={inputClass}
+            />
+          </label>
+          <p
+            id="trim-end-error"
+            class="block min-h-[1lh] pt-1 text-xs text-status-danger"
+            role="alert"
+          >
+            {endError() ?? ''}
+          </p>
+        </div>
       </div>
-      <Show when={startError()}>
-        {(message) => (
-          <p id="trim-start-error" class="-mt-2 text-xs text-status-danger" role="alert">
-            {message()}
-          </p>
-        )}
-      </Show>
-      <Show when={endError()}>
-        {(message) => (
-          <p id="trim-end-error" class="-mt-2 text-xs text-status-danger" role="alert">
-            {message()}
-          </p>
-        )}
-      </Show>
 
       <p id="trim-summary" class="text-xs text-text-tertiary" data-testid="trim-summary">
         {formatTrimSummary(trimDuration(), props.duration, frameCount(), locale(), t)}
