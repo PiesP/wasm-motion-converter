@@ -3,14 +3,11 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(import.meta.dirname, '../../..');
-const toolchainAction = readFileSync(
-  resolve(root, '.github/actions/setup-toolchain/action.yaml'),
-  'utf8'
-);
-const projectAction = readFileSync(resolve(root, '.github/actions/setup-project/action.yaml'), 'utf8');
 const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
 const deepChecksWorkflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
+const centralSetupAction =
+  'uses: PiesP/browser-core/automation/actions/setup-project@f630a8f0119dd6b4f1aa011f8510489936c7a7b9';
 
 function jobBlock(workflow: string, jobId: string): string {
   const marker = `  ${jobId}:\n`;
@@ -22,28 +19,14 @@ function jobBlock(workflow: string, jobId: string): string {
   return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
 }
 
-describe('setup-toolchain action', () => {
-  it('uses pnpm/setup with repository pins and dependency caching', () => {
-    expect(toolchainAction).toContain(
-      'uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2'
-    );
-    expect(toolchainAction).toContain('package-json-file: package.json');
-    expect(toolchainAction).toContain('runtime: "node@${{ inputs.node-version }}"');
-    expect(toolchainAction).toContain('cache: true');
-    expect(toolchainAction).toContain('install: false');
-    expect(toolchainAction).not.toContain('self-update');
-    expect(
-      existsSync(resolve(root, '.github/actions/setup-toolchain/bootstrap-package.json'))
-    ).toBe(false);
+describe('central project setup action', () => {
+  it('pins the shared action independently from the runtime gitlink', () => {
+    expect(centralSetupAction).toMatch(/@[0-9a-f]{40}$/);
+    expect(existsSync(resolve(root, '.github/actions/setup-project/action.yaml'))).toBe(false);
+    expect(existsSync(resolve(root, '.github/actions/setup-toolchain/action.yaml'))).toBe(false);
   });
 
-  it('installs frozen dependencies through the project setup action', () => {
-    expect(projectAction).toContain('uses: ./.github/actions/setup-toolchain');
-    expect(projectAction).toContain('node-version: ${{ inputs.node-version }}');
-    expect(projectAction).toContain('run: pnpm install --frozen-lockfile');
-  });
-
-  it('configures every expected project job through the local project action', () => {
+  it('configures every expected project job through the central action', () => {
     const expectedJobs = [
       ['CI quality', ciWorkflow, 'quality'],
       ['CI unit', ciWorkflow, 'unit'],
@@ -59,7 +42,7 @@ describe('setup-toolchain action', () => {
 
     for (const [label, workflow, jobId] of expectedJobs) {
       const job = jobBlock(workflow, jobId);
-      expect(job, label).toContain('uses: ./.github/actions/setup-project');
+      expect(job, label).toContain(centralSetupAction);
       expect(job, label).toContain('node-version: ${{ env.NODE_VERSION }}');
     }
   });
@@ -67,6 +50,7 @@ describe('setup-toolchain action', () => {
   it('keeps direct toolchain setup and frozen installs out of project workflows', () => {
     for (const workflow of [ciWorkflow, deepChecksWorkflow, releaseWorkflow]) {
       expect(workflow).not.toContain('uses: ./.github/actions/setup-toolchain');
+      expect(workflow).not.toContain('uses: ./.github/actions/setup-project');
       expect(workflow).not.toContain('run: pnpm install --frozen-lockfile');
       expect(workflow).not.toContain('uses: pnpm/action-setup@');
       expect(workflow).not.toContain('uses: actions/setup-node@');
