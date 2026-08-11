@@ -98,9 +98,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
 
-      - name: 🏗️ Build for E2E
-        run: pnpm build:ci
-
       - name: 🎭 Run E2E tests
         run: |
           pnpm exec playwright install --with-deps chromium firefox webkit

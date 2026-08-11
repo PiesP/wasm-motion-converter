@@ -16,4 +16,14 @@ describe('Vitest coverage gate', () => {
     expect(source).toMatch(/thresholds:\s*\{[\s\S]*functions:\s*[1-9]\d*/);
     expect(source).toMatch(/thresholds:\s*\{[\s\S]*lines:\s*[1-9]\d*/);
   });
+
+  it('re-runs the complete quality contract after automatic fixes', () => {
+    const packageJson = JSON.parse(
+      readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')
+    ) as { scripts?: Record<string, string> };
+
+    expect(packageJson.scripts?.['quality:fix']).toBe(
+      'pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s quality'
+    );
+  });
 });
