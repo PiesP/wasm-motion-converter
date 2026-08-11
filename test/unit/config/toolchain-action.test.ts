@@ -24,6 +24,16 @@ function jobBlock(workflow: string, jobId: string): string {
   return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
 }
 
+function topLevelBlock(workflow: string, key: string): string {
+  const marker = `${key}:\n`;
+  const start = workflow.indexOf(marker);
+  if (start === -1) throw new Error(`Workflow key not found: ${key}`);
+
+  const afterMarker = start + marker.length;
+  const nextKey = workflow.slice(afterMarker).search(/\n[A-Za-z][A-Za-z0-9_-]*:\n/);
+  return workflow.slice(start, nextKey === -1 ? undefined : afterMarker + nextKey).trimEnd();
+}
+
 describe('central project setup action', () => {
   it('pins the shared action independently from the runtime gitlink', () => {
     expect(centralSetupAction).toMatch(/@[0-9a-f]{40}$/);
@@ -44,6 +54,10 @@ describe('central project setup action', () => {
       const job = jobBlock(workflow, jobId);
       expect(job, label).toContain(centralSetupAction);
       expect(job, label).toContain('node-version: ${{ env.NODE_VERSION }}');
+    }
+
+    for (const workflow of [ciWorkflow, deepChecksWorkflow]) {
+      expect(workflow).not.toContain(localReleaseSetupAction);
     }
   });
 
@@ -72,6 +86,7 @@ describe('central project setup action', () => {
       expect(job, label).toContain('node-version: ${{ env.NODE_VERSION }}');
     }
 
+    expect(releaseWorkflow.split(localReleaseSetupAction)).toHaveLength(expectedJobs.length + 1);
     expect(releaseWorkflow).not.toContain(centralSetupAction);
   });
 
@@ -86,8 +101,8 @@ describe('central project setup action', () => {
   });
 
   it('runs releases only from version tag pushes', () => {
-    expect(releaseWorkflow).toContain('on:\n  push:\n    tags:\n      - "v*"');
-    expect(releaseWorkflow).not.toContain('pull_request:');
-    expect(releaseWorkflow).not.toContain('branches:');
+    expect(topLevelBlock(releaseWorkflow, 'on')).toBe(
+      'on:\n  push:\n    tags:\n      - "v*"'
+    );
   });
 });
