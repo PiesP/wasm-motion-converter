@@ -1,0 +1,22 @@
+name: Setup release
+description: Configure the pinned toolchain and install locked release dependencies
+
+inputs:
+  node-version:
+    description: Node.js version passed to the pinned setup action
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install pnpm and Node.js
+      uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+      with:
+        package-json-file: package.json
+        runtime: "node@${{ inputs.node-version }}"
+        cache: true
+        install: false
+
+    - name: Install locked dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile --no-runtime
