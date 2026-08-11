@@ -8,7 +8,19 @@ const toolchainAction = readFileSync(
   'utf8'
 );
 const projectAction = readFileSync(resolve(root, '.github/actions/setup-project/action.yaml'), 'utf8');
-const workflowFiles = ['ci.yaml', 'deep-checks.yaml', 'release.yaml'];
+const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
+const deepChecksWorkflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
+const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
+
+function jobBlock(workflow: string, jobId: string): string {
+  const marker = `  ${jobId}:\n`;
+  const start = workflow.indexOf(marker);
+  if (start === -1) throw new Error(`Workflow job not found: ${jobId}`);
+
+  const afterMarker = start + marker.length;
+  const nextJob = workflow.slice(afterMarker).search(/\n  [a-z][a-z0-9-]*:\n/);
+  return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
+}
 
 describe('setup-toolchain action', () => {
   it('uses pnpm/setup with repository pins and dependency caching', () => {
@@ -31,15 +43,29 @@ describe('setup-toolchain action', () => {
     expect(projectAction).toContain('run: pnpm install --frozen-lockfile');
   });
 
-  it('keeps normal Node and pnpm workflow setup behind the local project action', () => {
-    for (const filename of workflowFiles) {
-      const workflow = readFileSync(
-        resolve(root, '.github/workflows', filename),
-        'utf8'
-      );
+  it('configures every expected project job through the local project action', () => {
+    const expectedJobs = [
+      ['CI quality', ciWorkflow, 'quality'],
+      ['CI unit', ciWorkflow, 'unit'],
+      ['CI E2E', ciWorkflow, 'e2e'],
+      ['CI build', ciWorkflow, 'build'],
+      ['Deep mutation', deepChecksWorkflow, 'mutation'],
+      ['Release quality', releaseWorkflow, 'quality'],
+      ['Release unit', releaseWorkflow, 'unit'],
+      ['Release E2E', releaseWorkflow, 'e2e'],
+      ['Release mutation', releaseWorkflow, 'mutation'],
+      ['Release build', releaseWorkflow, 'build'],
+    ] as const;
 
-      expect(workflow).toContain('uses: ./.github/actions/setup-project');
-      expect(workflow).toContain('node-version: ${{ env.NODE_VERSION }}');
+    for (const [label, workflow, jobId] of expectedJobs) {
+      const job = jobBlock(workflow, jobId);
+      expect(job, label).toContain('uses: ./.github/actions/setup-project');
+      expect(job, label).toContain('node-version: ${{ env.NODE_VERSION }}');
+    }
+  });
+
+  it('keeps direct toolchain setup and frozen installs out of project workflows', () => {
+    for (const workflow of [ciWorkflow, deepChecksWorkflow, releaseWorkflow]) {
       expect(workflow).not.toContain('uses: ./.github/actions/setup-toolchain');
       expect(workflow).not.toContain('run: pnpm install --frozen-lockfile');
       expect(workflow).not.toContain('uses: pnpm/action-setup@');
