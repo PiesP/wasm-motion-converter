@@ -57,6 +57,41 @@ describe('App state announcement', () => {
     });
 
     dispose();
+    expect(document.getElementById('app-state')).toBeNull();
+  });
+
+  it('owns one live region across unmount and remount', async () => {
+    const { default: App } = await import('@/App');
+    const firstContainer = document.createElement('div');
+    document.body.appendChild(firstContainer);
+    const disposeFirst = render(() => App({}), firstContainer);
+
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('#app-state')).toHaveLength(1);
+    });
+    const firstLiveRegion = document.getElementById('app-state');
+
+    disposeFirst();
+    expect(firstLiveRegion?.isConnected).toBe(false);
+
+    const secondContainer = document.createElement('div');
+    document.body.appendChild(secondContainer);
+    const disposeSecond = render(() => App({}), secondContainer);
+
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('#app-state')).toHaveLength(1);
+    });
+    expect(document.getElementById('app-state')).not.toBe(firstLiveRegion);
+
+    setAppState('done');
+    await vi.waitFor(() => {
+      expect(document.getElementById('app-state')?.textContent).toBe(
+        'translated:result.convertedAnimation'
+      );
+    });
+    expect(firstLiveRegion?.textContent).not.toBe('translated:result.convertedAnimation');
+
+    disposeSecond();
   });
 
   it('maps every app state to an existing localized status label', async () => {
