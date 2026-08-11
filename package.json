@@ -54,7 +54,7 @@
     "pretest:e2e:deploy": "pnpm prepare:e2e:fixture",
     "test:e2e:deploy": "PLAYWRIGHT_TEST_PROFILE=deploy playwright test",
     "quality": "pnpm -s fmt && pnpm -s lint && pnpm -s check && pnpm -s check:i18n && pnpm -s circular && pnpm -s knip && pnpm -s quality:nose",
-    "quality:fix": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s check && pnpm -s circular && pnpm -s knip",
+    "quality:fix": "pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s quality",
     "quality:nose": "bash -c 'if command -v nose &>/dev/null; then nose query src --baseline .nose-baseline.json --fail-on new; else echo \"[nose] not installed — skipping\"; fi'",
     "verify": "pnpm -s quality && pnpm -s build:ci",
     "verify:full": "pnpm verify && pnpm test:cov && node --experimental-strip-types scripts/test/run-e2e-on-free-port.ts",

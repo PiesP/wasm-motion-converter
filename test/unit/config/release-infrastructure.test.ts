@@ -57,4 +57,15 @@ describe('Release infrastructure', () => {
     );
     expect(prepareScript).not.toContain('cpSync(distDir, releaseDir');
   });
+
+  it('runs release E2E against its development server without a redundant build', () => {
+    const workflow = readFileSync(
+      resolve(root, '.github/workflows/release.yaml'),
+      'utf8'
+    );
+    const e2eJob = workflow.match(/\n  e2e:[\s\S]*?\n  duplication:/)?.[0] ?? '';
+
+    expect(e2eJob).toContain('pnpm test:e2e:ci');
+    expect(e2eJob).not.toContain('pnpm build:ci');
+  });
 });
