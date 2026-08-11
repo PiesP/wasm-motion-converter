@@ -83,6 +83,8 @@ export function getAppStateAnnouncement(state: AppState, t: TFunction): string {
 }
 
 const App: Component = () => {
+  let disposed = false;
+  let appStateLiveRegion: HTMLDivElement | undefined;
   const { t } = useLocale();
   const [conversionStartTime, setConversionStartTime] = createSignal(0);
   const [estimatedSecondsRemaining, setEstimatedSecondsRemaining] = createSignal<number | null>(
@@ -119,7 +121,7 @@ const App: Component = () => {
     // Attach test helpers in dev mode (AI-driven browser testing)
     if (attachTestHelpersPromise) {
       void attachTestHelpersPromise.then((attachTestHelpers) => {
-        if (!attachTestHelpers) return;
+        if (!attachTestHelpers || disposed) return;
         attachTestHelpers();
         logger.debug('general', 'Test helpers attached via App onMount');
       });
@@ -136,6 +138,7 @@ const App: Component = () => {
   const debouncedSaveSettings = debounce(saveConversionSettings, SETTINGS_DEBOUNCE_MS);
 
   onCleanup(() => {
+    disposed = true;
     // Revoke video preview blob URL to prevent memory leak on unmount
     const url = videoPreviewUrl();
     if (url) URL.revokeObjectURL(url);
@@ -157,10 +160,16 @@ const App: Component = () => {
     el.style.cssText =
       'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0';
     document.body.appendChild(el);
+    appStateLiveRegion = el;
+
+    onCleanup(() => {
+      el.remove();
+      if (appStateLiveRegion === el) appStateLiveRegion = undefined;
+    });
   });
 
   createEffect(() => {
-    const el = document.getElementById('app-state');
+    const el = appStateLiveRegion;
     if (!el) return;
     // Only announce state transitions, not per-frame progress updates.
     // Per-frame announcements would flood the screen reader with noise.
