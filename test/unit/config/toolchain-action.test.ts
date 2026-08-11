@@ -8,6 +8,11 @@ const deepChecksWorkflow = readFileSync(resolve(root, '.github/workflows/deep-ch
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
 const centralSetupAction =
   'uses: PiesP/browser-core/automation/actions/setup-project@f630a8f0119dd6b4f1aa011f8510489936c7a7b9';
+const releaseSetupActionPath = resolve(root, '.github/actions/setup-release/action.yaml');
+const releaseSetupAction = existsSync(releaseSetupActionPath)
+  ? readFileSync(releaseSetupActionPath, 'utf8')
+  : '';
+const localReleaseSetupAction = 'uses: ./.github/actions/setup-release';
 
 function jobBlock(workflow: string, jobId: string): string {
   const marker = `  ${jobId}:\n`;
@@ -26,18 +31,13 @@ describe('central project setup action', () => {
     expect(existsSync(resolve(root, '.github/actions/setup-toolchain/action.yaml'))).toBe(false);
   });
 
-  it('configures every expected project job through the central action', () => {
+  it('configures CI and deep jobs through the central action', () => {
     const expectedJobs = [
       ['CI quality', ciWorkflow, 'quality'],
       ['CI unit', ciWorkflow, 'unit'],
       ['CI E2E', ciWorkflow, 'e2e'],
       ['CI build', ciWorkflow, 'build'],
       ['Deep mutation', deepChecksWorkflow, 'mutation'],
-      ['Release quality', releaseWorkflow, 'quality'],
-      ['Release unit', releaseWorkflow, 'unit'],
-      ['Release E2E', releaseWorkflow, 'e2e'],
-      ['Release mutation', releaseWorkflow, 'mutation'],
-      ['Release build', releaseWorkflow, 'build'],
     ] as const;
 
     for (const [label, workflow, jobId] of expectedJobs) {
@@ -45,6 +45,34 @@ describe('central project setup action', () => {
       expect(job, label).toContain(centralSetupAction);
       expect(job, label).toContain('node-version: ${{ env.NODE_VERSION }}');
     }
+  });
+
+  it('uses a locally reviewable setup action for every dependency-backed release job', () => {
+    const expectedJobs = [
+      ['Release quality', 'quality'],
+      ['Release unit', 'unit'],
+      ['Release E2E', 'e2e'],
+      ['Release mutation', 'mutation'],
+      ['Release build', 'build'],
+    ] as const;
+
+    expect(existsSync(releaseSetupActionPath)).toBe(true);
+    expect(releaseSetupAction).toContain(
+      'uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2'
+    );
+    expect(releaseSetupAction).toContain('package-json-file: package.json');
+    expect(releaseSetupAction).toContain('runtime: "node@${{ inputs.node-version }}"');
+    expect(releaseSetupAction).toContain('cache: true');
+    expect(releaseSetupAction).toContain('install: false');
+    expect(releaseSetupAction).toContain('run: pnpm install --frozen-lockfile --no-runtime');
+
+    for (const [label, jobId] of expectedJobs) {
+      const job = jobBlock(releaseWorkflow, jobId);
+      expect(job, label).toContain(localReleaseSetupAction);
+      expect(job, label).toContain('node-version: ${{ env.NODE_VERSION }}');
+    }
+
+    expect(releaseWorkflow).not.toContain(centralSetupAction);
   });
 
   it('keeps direct toolchain setup and frozen installs out of project workflows', () => {
@@ -55,5 +83,11 @@ describe('central project setup action', () => {
       expect(workflow).not.toContain('uses: pnpm/action-setup@');
       expect(workflow).not.toContain('uses: actions/setup-node@');
     }
+  });
+
+  it('runs releases only from version tag pushes', () => {
+    expect(releaseWorkflow).toContain('on:\n  push:\n    tags:\n      - "v*"');
+    expect(releaseWorkflow).not.toContain('pull_request:');
+    expect(releaseWorkflow).not.toContain('branches:');
   });
 });
