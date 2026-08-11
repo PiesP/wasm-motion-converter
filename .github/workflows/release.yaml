@@ -35,13 +35,10 @@ jobs:
         with:
           submodules: true
 
-      - name: 📦 Setup pnpm and Node.js
-        uses: ./.github/actions/setup-toolchain
+      - name: 📦 Setup project
+        uses: ./.github/actions/setup-project
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: 📦 Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: ✅ Run quality gate
         run: pnpm quality
@@ -56,13 +53,10 @@ jobs:
         with:
           submodules: true
 
-      - name: 📦 Setup pnpm and Node.js
-        uses: ./.github/actions/setup-toolchain
+      - name: 📦 Setup project
+        uses: ./.github/actions/setup-project
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: 📦 Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: 🧪 Run unit tests and coverage thresholds
         run: pnpm test:cov
@@ -77,11 +71,6 @@ jobs:
         with:
           submodules: true
 
-      - name: 📦 Setup pnpm and Node.js
-        uses: ./.github/actions/setup-toolchain
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
       - name: 🎭 Cache Playwright browsers
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -90,8 +79,10 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
-      - name: 📦 Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: 📦 Setup project
+        uses: ./.github/actions/setup-project
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: 🎞️ Install fixture encoder
         run: |
@@ -129,13 +120,10 @@ jobs:
         with:
           submodules: true
 
-      - name: 📦 Setup pnpm and Node.js
-        uses: ./.github/actions/setup-toolchain
+      - name: 📦 Setup project
+        uses: ./.github/actions/setup-project
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: 📦 Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: 🧬 Run mutation gate
         run: pnpm mut:fast
@@ -153,13 +141,10 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: 📦 Setup pnpm and Node.js
-        uses: ./.github/actions/setup-toolchain
+      - name: 📦 Setup project
+        uses: ./.github/actions/setup-project
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: 📦 Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: 📝 Determine version
         id: version
