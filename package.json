@@ -76,8 +76,8 @@
     "wasm-webp": "^0.1.0"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.12.1",
-    "@biomejs/biome": "^2.5.7",
+    "@axe-core/playwright": "^4.13.0",
+    "@biomejs/biome": "^2.5.8",
     "@playwright/test": "^1.62.1",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/vitest-runner": "^9.6.1",
@@ -88,12 +88,12 @@
     "dpdm": "4.3.0",
     "esbuild": "0.28.2",
     "jsdom": "^30.0.1",
-    "knip": "^6.32.1",
+    "knip": "^6.32.2",
     "rollup-plugin-visualizer": "7.0.1",
     "typescript": "^7.0.2",
     "vite": "8.2.1",
     "vite-plugin-solid": "2.11.14",
     "vitest": "^4.1.10",
-    "wrangler": "^4.120.1"
+    "wrangler": "^4.121.0"
   }
 }
