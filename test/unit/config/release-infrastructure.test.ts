@@ -23,7 +23,7 @@ describe('Release infrastructure', () => {
     );
 
     expect(workflow).toContain('name: Classify security changes');
-    expect(workflow).toContain('bash scripts/ci/classify-workflow-changes.sh');
+    expect(workflow).toContain('bash "$classifier"');
     expect(workflow).toContain("needs.changes.outputs.security_tools == 'true'");
     expect(workflow).toContain("needs.changes.outputs.dependency == 'true'");
     expect(workflow).toContain("needs.changes.outputs.codeql == 'true'");
