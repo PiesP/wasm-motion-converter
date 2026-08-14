@@ -3,6 +3,34 @@ name: Codex Security advisory scan
 on:
   pull_request:
     branches: [master]
+    paths:
+      - ".github/SECURITY.md"
+      - ".github/actions/**"
+      - ".github/codex-security/**"
+      - ".github/dependabot.yaml"
+      - ".github/workflows/**"
+      - ".githooks/**"
+      - ".gitmodules"
+      - ".node-version"
+      - "biome.json"
+      - "functions/**"
+      - "index.html"
+      - "knip.json"
+      - "package.json"
+      - "packages/core"
+      - "playwright.config.ts"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "public/**"
+      - "scripts/**"
+      - "src/**"
+      - "stryker.conf*.json"
+      - "test/**"
+      - "tooling/**"
+      - "tsconfig*.json"
+      - "vite.config.ts"
+      - "vitest.config.ts"
+      - "wrangler.toml"
   workflow_dispatch:
 
 env:
