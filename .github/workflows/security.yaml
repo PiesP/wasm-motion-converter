@@ -25,7 +25,7 @@ permissions:
   security-events: write
 
 concurrency:
-  group: security-${{ github.ref }}
+  group: security-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -35,9 +35,73 @@ env:
   OSV_SCANNER_IMAGE: "ghcr.io/google/osv-scanner-action@sha256:4cc9d6b5a6bb3a81c38c8d1610f6855512ddd1ba5af77083a856f171dbd0d463"
 
 jobs:
+  changes:
+    name: Classify security changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      dependency: ${{ steps.route.outcome == 'success' && steps.route.outputs.dependency || 'true' }}
+      codeql: ${{ steps.route.outcome == 'success' && steps.route.outputs.codeql || 'true' }}
+      semgrep: ${{ steps.route.outcome == 'success' && steps.route.outputs.semgrep || 'true' }}
+      semgrep_full: ${{ steps.route.outcome == 'success' && steps.route.outputs.semgrep_full || 'true' }}
+      security_tools: ${{ steps.route.outcome == 'success' && steps.route.outputs.security_tools || 'true' }}
+    steps:
+      - name: 📥 Checkout routing inputs
+        id: routing_checkout
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: 🧭 Classify changed paths
+        id: classify
+        if: ${{ steps.routing_checkout.outcome == 'success' }}
+        continue-on-error: true
+        run: bash scripts/ci/classify-workflow-changes.sh
+
+      - name: 🛡️ Resolve fail-open routing
+        id: route
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          CLASSIFY_OUTCOME: ${{ steps.classify.outcome }}
+          DEPENDENCY: ${{ steps.classify.outputs.dependency }}
+          CODEQL: ${{ steps.classify.outputs.codeql }}
+          SEMGREP: ${{ steps.classify.outputs.semgrep }}
+          SEMGREP_FULL: ${{ steps.classify.outputs.semgrep_full }}
+          SECURITY_TOOLS: ${{ steps.classify.outputs.security_tools }}
+        run: |
+          set -euo pipefail
+          valid=true
+          for value in "$DEPENDENCY" "$CODEQL" "$SEMGREP" "$SEMGREP_FULL" "$SECURITY_TOOLS"; do
+            if [[ ! "$value" =~ ^(true|false)$ ]]; then
+              valid=false
+            fi
+          done
+
+          if [[ "$CLASSIFY_OUTCOME" != "success" || "$valid" != "true" ]]; then
+            echo "Change routing failed; enabling every security gate."
+            DEPENDENCY=true
+            CODEQL=true
+            SEMGREP=true
+            SEMGREP_FULL=true
+            SECURITY_TOOLS=true
+          fi
+
+          {
+            echo "dependency=$DEPENDENCY"
+            echo "codeql=$CODEQL"
+            echo "semgrep=$SEMGREP"
+            echo "semgrep_full=$SEMGREP_FULL"
+            echo "security_tools=$SECURITY_TOOLS"
+          } >> "$GITHUB_OUTPUT"
+
   pinned-tools:
     name: 🔄 Pinned tool freshness
-    if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    needs: changes
+    if: ${{ (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.security_tools == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -55,6 +119,7 @@ jobs:
 
   osv-scan-pr:
     name: pr-gate/osv / osv-scan
+    needs: changes
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -63,7 +128,12 @@ jobs:
       contents: read
       security-events: write
     steps:
+      - name: ⏭️ No dependency-relevant changes
+        if: ${{ needs.changes.outputs.dependency != 'true' }}
+        run: echo "OSV dependency scanning is not affected by this change set."
+
       - name: 📥 Checkout code
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -71,6 +141,7 @@ jobs:
           persist-credentials: false
 
       - name: ⏪ Checkout the PR base
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -79,11 +150,13 @@ jobs:
           git submodule update --init --recursive
 
       - name: 📁 Prepare isolated OSV result directory
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         run: |
           set -euo pipefail
           install -d -m 0700 "$RUNNER_TEMP/osv-results"
 
       - name: 🛡️ Scan dependencies before the PR
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         continue-on-error: true
         run: |
           docker run --rm \
@@ -99,12 +172,14 @@ jobs:
             .
 
       - name: ⏩ Checkout the PR result
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         run: |
           set -euo pipefail
           git switch --force --detach "$GITHUB_SHA"
           git submodule update --init --recursive
 
       - name: 🛡️ Scan dependencies after the PR
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         continue-on-error: true
         run: |
           docker run --rm \
@@ -120,6 +195,7 @@ jobs:
             .
 
       - name: 📋 Report newly introduced vulnerabilities
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         run: |
           docker run --rm \
             --entrypoint /root/osv-reporter \
@@ -133,24 +209,31 @@ jobs:
             --fail-on-vuln=true
 
       - name: 📊 Upload OSV SARIF to GitHub Security
-        if: ${{ !cancelled() }}
+        if: ${{ needs.changes.outputs.dependency == 'true' && !cancelled() }}
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: ${{ runner.temp }}/osv-results/osv-results.sarif
 
   osv-scan-dispatch:
     name: pr-gate/osv / osv-scan
+    needs: changes
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || github.event_name == 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: ⏭️ No dependency-relevant changes
+        if: ${{ needs.changes.outputs.dependency != 'true' }}
+        run: echo "OSV dependency scanning is not affected by this change set."
+
       - name: 📥 Checkout code
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
           persist-credentials: false
 
       - name: 🛡️ Run OSV scan
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -168,6 +251,7 @@ jobs:
             .
 
       - name: 📋 Convert OSV results to SARIF and enforce the vulnerability gate
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
         run: |
           docker run --rm \
             --entrypoint /root/osv-reporter \
@@ -179,13 +263,15 @@ jobs:
             --fail-on-vuln=true
 
       - name: 📊 Upload OSV SARIF to GitHub Security
-        if: ${{ !cancelled() }}
+        if: ${{ needs.changes.outputs.dependency == 'true' && !cancelled() }}
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: ${{ runner.temp }}/osv-results/osv-results.sarif
 
   codeql:
     name: 🔎 CodeQL Analysis (${{ matrix.language }})
+    needs: changes
+    if: ${{ needs.changes.outputs.codeql == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -216,6 +302,7 @@ jobs:
 
   semgrep:
     name: pr-gate/semgrep
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     if: ${{ github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
@@ -227,13 +314,19 @@ jobs:
     container:
       image: semgrep/semgrep:1.172.0@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b
     steps:
+      - name: ⏭️ No Semgrep-relevant changes
+        if: ${{ needs.changes.outputs.semgrep != 'true' }}
+        run: echo "Semgrep is not affected by this change set."
+
       - name: 📥 Checkout code
+        if: ${{ needs.changes.outputs.semgrep == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
           persist-credentials: false
 
       - name: 🔍 Run Semgrep scan
+        if: ${{ needs.changes.outputs.semgrep_full == 'true' }}
         run: |
           set -euo pipefail
           semgrep scan \
@@ -246,8 +339,19 @@ jobs:
             --output=semgrep.sarif \
             .
 
+      - name: 🔐 Scan documentation for secrets
+        if: ${{ needs.changes.outputs.semgrep == 'true' && needs.changes.outputs.semgrep_full != 'true' }}
+        run: |
+          set -euo pipefail
+          semgrep scan \
+            --config=p/secrets \
+            --error \
+            --sarif \
+            --output=semgrep.sarif \
+            .
+
       - name: 📊 Upload SARIF to GitHub Security
-        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' }}
+        if: ${{ needs.changes.outputs.semgrep == 'true' && !cancelled() && hashFiles('semgrep.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: semgrep.sarif
@@ -294,7 +398,7 @@ jobs:
     name: Security scan summary
     if: ${{ always() }}
     needs:
-      [pinned-tools, osv-scan-pr, osv-scan-dispatch, codeql, semgrep, report-pr-gate-statuses]
+      [changes, pinned-tools, osv-scan-pr, osv-scan-dispatch, codeql, semgrep, report-pr-gate-statuses]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -309,6 +413,8 @@ jobs:
           CODEQL_RESULT: ${{ needs.codeql.result }}
           SEMGREP_RESULT: ${{ needs.semgrep.result }}
           STATUS_REPORT_RESULT: ${{ needs.report-pr-gate-statuses.result }}
+          CODEQL_REQUIRED: ${{ needs.changes.outputs.codeql }}
+          PINNED_TOOLS_REQUIRED: ${{ needs.changes.outputs.security_tools }}
         run: |
           set -euo pipefail
 
@@ -335,7 +441,19 @@ jobs:
             fi
           }
 
-          expect_success "CodeQL" "$CODEQL_RESULT"
+          expect_when_required() {
+            local required="$1"
+            local label="$2"
+            local result="$3"
+            if [[ "$required" == "true" ]]; then
+              expect_success "$label" "$result"
+            elif [[ "$result" != "skipped" ]]; then
+              echo "Expected irrelevant $label to skip for $EVENT_NAME, got: $result" >&2
+              failed=1
+            fi
+          }
+
+          expect_when_required "$CODEQL_REQUIRED" "CodeQL" "$CODEQL_RESULT"
           expect_success "Semgrep" "$SEMGREP_RESULT"
           case "$EVENT_NAME" in
             pull_request)
@@ -345,7 +463,7 @@ jobs:
               expect_success "OSV full" "$OSV_FULL_RESULT"
               ;;
             push|schedule)
-              expect_success "pinned tool freshness" "$PINNED_TOOLS_RESULT"
+              expect_when_required "$PINNED_TOOLS_REQUIRED" "pinned tool freshness" "$PINNED_TOOLS_RESULT"
               expect_success "OSV full" "$OSV_FULL_RESULT"
               ;;
             workflow_dispatch)

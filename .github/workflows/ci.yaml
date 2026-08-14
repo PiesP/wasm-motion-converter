@@ -30,57 +30,143 @@ permissions:
   contents: read
 
 concurrency:
-  group: verify-${{ github.ref }}
+  group: verify-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Classify workflow changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      quality: ${{ steps.route.outcome == 'success' && steps.route.outputs.quality || 'true' }}
+      unit: ${{ steps.route.outcome == 'success' && steps.route.outputs.unit || 'true' }}
+      e2e: ${{ steps.route.outcome == 'success' && steps.route.outputs.e2e || 'true' }}
+      build: ${{ steps.route.outcome == 'success' && steps.route.outputs.build || 'true' }}
+      duplication: ${{ steps.route.outcome == 'success' && steps.route.outputs.duplication || 'true' }}
+    steps:
+      - name: 📥 Checkout routing inputs
+        id: routing_checkout
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: 🧭 Classify changed paths
+        id: classify
+        if: ${{ steps.routing_checkout.outcome == 'success' }}
+        continue-on-error: true
+        run: bash scripts/ci/classify-workflow-changes.sh
+
+      - name: 🛡️ Resolve fail-open routing
+        id: route
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          CLASSIFY_OUTCOME: ${{ steps.classify.outcome }}
+          QUALITY: ${{ steps.classify.outputs.quality }}
+          UNIT: ${{ steps.classify.outputs.unit }}
+          E2E: ${{ steps.classify.outputs.e2e }}
+          BUILD: ${{ steps.classify.outputs.build }}
+          DUPLICATION: ${{ steps.classify.outputs.duplication }}
+        run: |
+          set -euo pipefail
+          valid=true
+          for value in "$QUALITY" "$UNIT" "$E2E" "$BUILD" "$DUPLICATION"; do
+            if [[ ! "$value" =~ ^(true|false)$ ]]; then
+              valid=false
+            fi
+          done
+
+          if [[ "$CLASSIFY_OUTCOME" != "success" || "$valid" != "true" ]]; then
+            echo "Change routing failed; enabling every CI gate."
+            QUALITY=true
+            UNIT=true
+            E2E=true
+            BUILD=true
+            DUPLICATION=true
+          fi
+
+          {
+            echo "quality=$QUALITY"
+            echo "unit=$UNIT"
+            echo "e2e=$E2E"
+            echo "build=$BUILD"
+            echo "duplication=$DUPLICATION"
+          } >> "$GITHUB_OUTPUT"
+
   quality:
     name: pr-gate/quality
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: ⏭️ No quality-relevant changes
+        if: ${{ needs.changes.outputs.quality != 'true' }}
+        run: echo "Quality gate is not affected by this change set."
+
       - name: 📥 Checkout code
+        if: ${{ needs.changes.outputs.quality == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
       - name: 📦 Setup project
+        if: ${{ needs.changes.outputs.quality == 'true' }}
         uses: PiesP/browser-core/automation/actions/setup-project@f630a8f0119dd6b4f1aa011f8510489936c7a7b9
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: ✅ Run quality gate
+        if: ${{ needs.changes.outputs.quality == 'true' }}
         run: pnpm quality
 
   unit:
     name: pr-gate/unit
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: ⏭️ No unit-relevant changes
+        if: ${{ needs.changes.outputs.unit != 'true' }}
+        run: echo "Unit tests are not affected by this change set."
+
       - name: 📥 Checkout code
+        if: ${{ needs.changes.outputs.unit == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
       - name: 📦 Setup project
+        if: ${{ needs.changes.outputs.unit == 'true' }}
         uses: PiesP/browser-core/automation/actions/setup-project@f630a8f0119dd6b4f1aa011f8510489936c7a7b9
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: 🧪 Run unit tests and coverage thresholds
+        if: ${{ needs.changes.outputs.unit == 'true' }}
         run: pnpm test:cov
 
   e2e:
     name: pr-gate/e2e
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: ⏭️ No E2E-relevant changes
+        if: ${{ needs.changes.outputs.e2e != 'true' }}
+        run: echo "Browser E2E is not affected by this change set."
+
       - name: 📥 Checkout code
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
       - name: 🎭 Cache Playwright browsers
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
@@ -89,22 +175,25 @@ jobs:
             playwright-${{ runner.os }}-
 
       - name: 📦 Setup project
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
         uses: PiesP/browser-core/automation/actions/setup-project@f630a8f0119dd6b4f1aa011f8510489936c7a7b9
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: 🎞️ Install fixture encoder
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
 
       - name: 🎭 Run repository-backed E2E tests
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
         run: |
           pnpm exec playwright install --with-deps chromium firefox webkit
           pnpm test:e2e:ci
 
       - name: 📊 Upload Playwright diagnostics
-        if: ${{ failure() && !cancelled() }}
+        if: ${{ needs.changes.outputs.e2e == 'true' && failure() && !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-diagnostics-${{ github.sha }}
@@ -116,26 +205,33 @@ jobs:
 
   build:
     name: pr-gate/build
-    needs: quality
+    needs: [changes, quality]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: ⏭️ No build-relevant changes
+        if: ${{ needs.changes.outputs.build != 'true' }}
+        run: echo "Production build is not affected by this change set."
+
       - name: 📥 Checkout code
+        if: ${{ needs.changes.outputs.build == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
       - name: 📦 Setup project
+        if: ${{ needs.changes.outputs.build == 'true' }}
         uses: PiesP/browser-core/automation/actions/setup-project@f630a8f0119dd6b4f1aa011f8510489936c7a7b9
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: 🏗️ Build app
+        if: ${{ needs.changes.outputs.build == 'true' }}
         run: pnpm build:ci
 
       - name: 📊 Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        if: ${{ needs.changes.outputs.build == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' }}
         with:
           name: build-${{ github.sha }}
           path: dist/
@@ -145,18 +241,26 @@ jobs:
 
   duplication:
     name: pr-gate/duplication
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: ⏭️ No duplication-relevant changes
+        if: ${{ needs.changes.outputs.duplication != 'true' }}
+        run: echo "Source duplication is not affected by this change set."
+
       - name: 📥 Checkout code
+        if: ${{ needs.changes.outputs.duplication == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
       - name: 🔧 Install nose
+        if: ${{ needs.changes.outputs.duplication == 'true' }}
         run: bash scripts/ci/install-nose.sh
 
       - name: 🔎 Check for new duplication
+        if: ${{ needs.changes.outputs.duplication == 'true' }}
         run: nose query src --baseline .nose-baseline.json --fail-on new
 
   report-pr-gate-statuses:

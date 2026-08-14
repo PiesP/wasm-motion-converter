@@ -16,15 +16,19 @@ describe('Release infrastructure', () => {
     expect(wrangler).not.toMatch(/^NODE_VERSION\s*=/m);
   });
 
-  it('requires complete security scans after changes land on master', () => {
+  it('preserves security gates while routing expensive scans by changed path', () => {
     const workflow = readFileSync(
       resolve(root, '.github/workflows/security.yaml'),
       'utf8'
     );
 
-    expect(workflow).toContain(
-      "github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
-    );
+    expect(workflow).toContain('name: Classify security changes');
+    expect(workflow).toContain('bash scripts/ci/classify-workflow-changes.sh');
+    expect(workflow).toContain("needs.changes.outputs.security_tools == 'true'");
+    expect(workflow).toContain("needs.changes.outputs.dependency == 'true'");
+    expect(workflow).toContain("needs.changes.outputs.codeql == 'true'");
+    expect(workflow).toContain("needs.changes.outputs.semgrep_full == 'true'");
+    expect(workflow).toContain('Scan documentation for secrets');
     expect(workflow).toContain(
       "github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || github.event_name == 'schedule'"
     );
@@ -32,7 +36,9 @@ describe('Release infrastructure', () => {
       "github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event_name == 'merge_group'"
     );
     expect(workflow).toContain('security-summary:');
-    expect(workflow).toContain('expect_success "CodeQL" "$CODEQL_RESULT"');
+    expect(workflow).toContain(
+      'expect_when_required "$CODEQL_REQUIRED" "CodeQL" "$CODEQL_RESULT"'
+    );
     expect(workflow).toContain('expect_success "Semgrep" "$SEMGREP_RESULT"');
     expect(workflow).toContain('expect_success "OSV full" "$OSV_FULL_RESULT"');
   });
