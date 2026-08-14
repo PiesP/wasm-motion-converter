@@ -209,4 +209,18 @@ describe('Workflow change routing', () => {
       expect(securityChanges).toContain(`${output}=true`);
     }
   });
+
+  it('executes the change classifier from the trusted base revision for PR-like events', () => {
+    const ci = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
+    const security = readFileSync(resolve(root, '.github/workflows/security.yaml'), 'utf8');
+
+    for (const workflow of [ci, security]) {
+      const changes = jobBlock(workflow, 'changes');
+      expect(changes).toContain('pull_request | merge_group');
+      expect(changes).toContain(
+        'git show "$TRUSTED_BASE_SHA:scripts/ci/classify-workflow-changes.sh"'
+      );
+      expect(changes).toContain('bash "$classifier"');
+    }
+  });
 });
