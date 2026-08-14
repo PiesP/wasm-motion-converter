@@ -10,6 +10,7 @@ function classify(files: string[]): Record<string, string> {
   const result = spawnSync('bash', [classifier, '--files-from-stdin'], {
     cwd: root,
     encoding: 'utf8',
+    env: { ...process.env, GITHUB_OUTPUT: '' },
     input: `${files.join('\n')}\n`,
   });
 
@@ -28,6 +29,7 @@ function classifyEvent(eventName: string, eventPath?: string): Record<string, st
     encoding: 'utf8',
     env: {
       ...process.env,
+      GITHUB_OUTPUT: '',
       GITHUB_EVENT_NAME: eventName,
       GITHUB_EVENT_PATH: eventPath ?? '',
     },
