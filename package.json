@@ -89,7 +89,7 @@
     "esbuild": "0.28.2",
     "jsdom": "^30.0.1",
     "knip": "^6.32.2",
-    "rollup-plugin-visualizer": "7.0.1",
+    "rollup-plugin-visualizer": "7.1.1",
     "typescript": "^7.0.2",
     "vite": "8.2.1",
     "vite-plugin-solid": "2.11.14",
