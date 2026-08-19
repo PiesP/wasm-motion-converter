@@ -82,7 +82,7 @@
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",
     "@tailwindcss/vite": "4.3.3",
-    "@types/dom-webcodecs": "^0.1.18",
+    "@types/dom-webcodecs": "^0.1.19",
     "@types/node": "26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
     "dpdm": "4.3.0",
