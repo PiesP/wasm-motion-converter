@@ -51,11 +51,13 @@ describe('Playwright workflow profiles', () => {
     };
     const config = readFileSync(resolve(root, 'playwright.config.ts'), 'utf8');
     const workflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
+    const e2eJob = workflow.slice(workflow.indexOf('  e2e:\n'), workflow.indexOf('\n  build:\n'));
 
     expect(packageJson.scripts?.['test:e2e:ci']).toContain('PLAYWRIGHT_TEST_PROFILE=ci');
     expect(packageJson.scripts?.['pretest:e2e:ci']).toBe('pnpm prepare:e2e:fixture');
     expect(workflow).toContain('pnpm test:e2e:ci');
     expect(workflow).toContain('sudo apt-get install --yes ffmpeg');
+    expect(e2eJob).toContain('timeout-minutes: 60');
     expect(workflow).not.toContain('pnpm exec playwright test\n');
     expect(config).toContain("trace: 'retain-on-failure'");
     expect(config).toContain("video: process.env.CI ? 'retain-on-failure' : 'off'");

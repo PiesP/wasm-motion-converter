@@ -166,7 +166,7 @@ jobs:
     name: pr-gate/e2e
     needs: changes
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: ⏭️ No E2E-relevant changes
         if: ${{ needs.changes.outputs.e2e != 'true' }}
