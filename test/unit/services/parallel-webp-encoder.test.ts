@@ -95,4 +95,23 @@ describe('createStreamingWebpEncoder tail timing', () => {
 
     await expect(encoder.finish()).rejects.toBe(firstError);
   });
+
+  it('applies output limits to out-of-order worker results', async () => {
+    const encoder = createStreamingWebpEncoder(
+      createWorkerPool(),
+      16,
+      16,
+      'medium',
+      2,
+      undefined,
+      { maxFrames: 1, maxOutputBytes: 1024 }
+    );
+    await encoder.submit(new Uint8Array(16), 100);
+    await encoder.submit(new Uint8Array(16), 100);
+
+    mocks.pending.get(1)?.resolve({ id: 1, bitstream: new Uint8Array(8) });
+    mocks.pending.get(0)?.resolve({ id: 0, bitstream: new Uint8Array(8) });
+
+    await expect(encoder.finish()).rejects.toThrow('WebP output frame limit exceeded');
+  });
 });

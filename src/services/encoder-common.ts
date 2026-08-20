@@ -19,6 +19,10 @@ export interface BaseEncoderOptions {
   height: number;
   quality: import('@t/conversion-types').ConversionQuality;
   scale: number;
+  /** Hard ceiling for frames emitted into this output. */
+  maxFrames?: number | undefined;
+  /** Hard ceiling for cumulative encoded output bytes. */
+  maxOutputBytes?: number | undefined;
   /** Frame decimation: keep every Nth frame (1 = keep all) */
   frameDecimation?: number | undefined;
   /** Callback fired after each frame is decoded */

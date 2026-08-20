@@ -262,6 +262,10 @@ export interface ConversionRequest {
   trimStart: number;
   trimEnd: number;
   maxMemoryMB: number;
+  /** Hard ceiling for frames emitted into the encoded output. */
+  maxFrames?: number | undefined;
+  /** Hard ceiling for cumulative encoded output bytes. */
+  maxOutputBytes?: number | undefined;
   /** Force frame decimation (overrides auto-decimation) */
   forceDecimation?: number | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */

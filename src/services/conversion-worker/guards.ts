@@ -93,7 +93,12 @@ function isValidConversionOptions(options: unknown): options is Record<string, u
     options.scale > 0 &&
     isFiniteNonNegative(options.trimStart) &&
     isFiniteNonNegative(options.trimEnd) &&
-    isFiniteNonNegative(options.maxFrames)
+    typeof options.maxFrames === 'number' &&
+    Number.isFinite(options.maxFrames) &&
+    options.maxFrames > 0 &&
+    typeof options.maxOutputBytes === 'number' &&
+    Number.isFinite(options.maxOutputBytes) &&
+    options.maxOutputBytes > 0
   );
 }
 

@@ -62,6 +62,7 @@ export interface SerializedConversionOptions {
   trimStart: number;
   trimEnd: number;
   maxFrames: number;
+  maxOutputBytes: number;
   /** Force frame decimation (overrides auto-decimation) */
   forceDecimation?: number | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */

@@ -61,7 +61,7 @@ export async function encodeWebp(
   const startTime = performance.now();
 
   // Streaming encode state — use incremental muxer to avoid O(N) memory accumulation
-  const muxer = new StreamingWebpMuxer(w, h);
+  const muxer = new StreamingWebpMuxer(w, h, opts);
   let totalInputFrames = 0;
   let skippedByDecimation = 0;
   let encodeIdx = 0;
@@ -170,7 +170,7 @@ export async function encodeWebp(
   }
 
   // Mux all encoded frames into animated WebP container
-  const result = await muxer.finish();
+  const result = await muxer.finish(signal);
   const totalElapsed = (performance.now() - startTime) / 1000;
 
   logger.info('encoders', 'WebP encoding complete', {

@@ -15,6 +15,8 @@ describe('buildConversionRequest', () => {
     frameDecimation: undefined,
     smartFrameSkip: 'off' as const,
     hwAccel: 'prefer-hardware' as const,
+    maxFrames: 100,
+    maxOutputBytes: 1024,
   };
 
   it('builds a ConversionRequest with all expected fields', () => {
@@ -25,6 +27,8 @@ describe('buildConversionRequest', () => {
     expect(request.format).toBe('gif');
     expect(request.quality).toBe(0.8);
     expect(request.scale).toBe(1);
+    expect(request.maxFrames).toBe(100);
+    expect(request.maxOutputBytes).toBe(1024);
   });
 
   it('includes inputBlob and fileName when provided', () => {
@@ -68,5 +72,18 @@ describe('buildConversionRequest', () => {
     // forceDecimation should be undefined (use format's automatic target FPS)
     // not normalized to 1
     expect(request.forceDecimation).toBeUndefined();
+  });
+
+  it('does not allow serialized limits above the format hard ceilings', () => {
+    const buffer = new ArrayBuffer(1024);
+    const request = buildConversionRequest(buffer, {
+      ...baseOptions,
+      format: 'webp',
+      maxFrames: Number.MAX_SAFE_INTEGER,
+      maxOutputBytes: Number.MAX_SAFE_INTEGER,
+    });
+
+    expect(request.maxFrames).toBe(9000);
+    expect(request.maxOutputBytes).toBe(536870912);
   });
 });

@@ -71,6 +71,14 @@ const ERROR_RULES: readonly ErrorRule[] = [
 
   // -- Memory -------------------------------------------------------------
   {
+    name: 'output-limit',
+    type: 'memory',
+    code: 'OUT_OF_MEMORY',
+    pattern: /output\s+(?:frame|byte)\s+limit\s+exceeded/i,
+    suggestion:
+      'The encoded output exceeded the browser safety limit. Try a shorter video, reducing quality, or scaling down the resolution.',
+  },
+  {
     name: 'out-of-memory',
     type: 'memory',
     code: 'OUT_OF_MEMORY',

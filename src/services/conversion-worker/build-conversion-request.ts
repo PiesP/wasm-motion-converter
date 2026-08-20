@@ -3,6 +3,7 @@
 
 import type { ConversionRequest } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
+import { resolveOutputLimits } from '../output-limits';
 import type { SerializedConversionOptions } from './types';
 
 /**
@@ -19,6 +20,10 @@ export function buildConversionRequest(
   inputBlob?: Blob,
   fileName = 'input.webm'
 ): ConversionRequest {
+  const outputLimits = resolveOutputLimits(options.format, {
+    maxFrames: options.maxFrames,
+    maxOutputBytes: options.maxOutputBytes,
+  });
   return {
     inputBuffer,
     inputBlob,
@@ -29,6 +34,7 @@ export function buildConversionRequest(
     trimStart: options.trimStart,
     trimEnd: options.trimEnd,
     maxMemoryMB,
+    ...outputLimits,
     forceDecimation: options.forceDecimation,
     smartFrameSkip: options.smartFrameSkip ?? 'off',
   };

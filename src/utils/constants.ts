@@ -60,6 +60,13 @@ export const MAX_TOTAL_PIXEL_COUNT = 500_000_000;
 export const WEBP_MAX_DURATION_MS = 900_000;
 export const WEBP_MAX_FRAMES = 9000;
 
+/** Maximum number of frames that may be emitted into one GIF output. */
+export const GIF_MAX_OUTPUT_FRAMES = 9_000;
+/** Maximum cumulative GIF bytes retained by gifenc. */
+export const GIF_MAX_OUTPUT_BYTES = 256 * BYTES_PER_MB;
+/** Maximum cumulative animated WebP container bytes. */
+export const WEBP_MAX_OUTPUT_BYTES = 512 * BYTES_PER_MB;
+
 // ============================================================================
 // FRAME RATE & TIMING CONSTANTS
 // ============================================================================
@@ -117,8 +124,6 @@ export const MEMORY_PRESSURE_TARGET_FPS = 15;
 
 /** GIF encoder maximum frame delay (centiseconds → 2000ms) */
 export const GIF_MAX_FRAME_DELAY_CS = 200;
-/** Hard ceiling for duplicate continuation frames emitted for a long GIF tail. */
-export const GIF_MAX_TAIL_SPLIT_FRAMES = 9_000;
 
 /** GIF encoder minimum first frame delay in milliseconds.
  *  Set to 20ms — the minimum safe delay for GIF viewers (sub-20ms frames
@@ -135,7 +140,7 @@ export const GIF_MIN_FRAME_DELAY_MS = 20;
 /** GIF LZW compression ratio estimate for buffer sizing */
 export const GIF_LZW_RATIO = 0.1;
 
-/** GIF encoder maximum buffer size (32 MB) */
+/** GIF encoder maximum initial buffer estimate (32 MB) */
 export const GIF_MAX_BUFFER_BYTES = 32 * BYTES_PER_MB;
 
 // ============================================================================

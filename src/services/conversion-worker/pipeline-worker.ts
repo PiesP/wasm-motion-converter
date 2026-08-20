@@ -268,6 +268,8 @@ export async function runWorkerPipeline(
           scale: options.scale,
           frameDecimation: gifDecimation,
           smartFrameSkip: options.smartFrameSkip,
+          maxFrames: request.maxFrames,
+          maxOutputBytes: request.maxOutputBytes,
           onFrameDecoded: decodeProgressCb,
           onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
             profiler?.updatePhase('encoding', frameIdx);
@@ -338,6 +340,8 @@ export async function runWorkerPipeline(
             scale: options.scale,
             frameDecimation: webpDecimation,
             smartFrameSkip: options.smartFrameSkip,
+            maxFrames: request.maxFrames,
+            maxOutputBytes: request.maxOutputBytes,
             onFrameDecoded: decodeProgressCb,
           },
           (p) => {
