@@ -8,8 +8,11 @@ import {
   estimateActiveFrameBytes,
 } from '@services/frame-memory';
 import {
+  CONVERSION_MEMORY_BUDGET_BYTES,
+  DEMUX_MEMORY_BUDGET_BYTES,
   FRAME_PIPELINE_MEMORY_BUDGET_BYTES,
   MAX_FRAME_PIXEL_COUNT,
+  WEBP_MAX_OUTPUT_BYTES,
 } from '@utils/constants';
 
 describe('frame memory reservations', () => {
@@ -21,13 +24,21 @@ describe('frame memory reservations', () => {
     const bytesPerFrame = estimateActiveFrameBytes(3840, 2160);
     const concurrency = calculateFrameConcurrency(3840, 2160, 10);
 
-    expect(concurrency).toBe(2);
+    expect(concurrency).toBe(1);
     expect(bytesPerFrame * concurrency).toBeLessThanOrEqual(
       FRAME_PIPELINE_MEMORY_BUDGET_BYTES
     );
     expect(bytesPerFrame * (concurrency + 1)).toBeGreaterThan(
       FRAME_PIPELINE_MEMORY_BUDGET_BYTES
     );
+  });
+
+  it('partitions demux, live frames, and two output copies within one envelope', () => {
+    expect(
+      DEMUX_MEMORY_BUDGET_BYTES +
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES +
+        WEBP_MAX_OUTPUT_BYTES * 2
+    ).toBe(CONVERSION_MEMORY_BUDGET_BYTES);
   });
 
   it('allows only one near-limit frame task', () => {

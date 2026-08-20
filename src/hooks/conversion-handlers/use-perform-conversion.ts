@@ -37,6 +37,7 @@ import type {
 } from '@t/conversion-types';
 import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
+import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
 import { focusElement, focusRetryButton } from '@utils/dom-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
@@ -364,7 +365,7 @@ async function executePipeline(
       scale: serializedOptions.scale,
       trimStart: serializedOptions.trimStart,
       trimEnd: serializedOptions.trimEnd,
-      maxMemoryMB: 2048,
+      maxMemoryMB: WORKER_MAX_MEMORY_MB,
       maxFrames: serializedOptions.maxFrames,
       maxOutputBytes: serializedOptions.maxOutputBytes,
       forceDecimation: serializedOptions.forceDecimation,

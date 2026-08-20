@@ -71,15 +71,22 @@ export const GIF_MAX_OUTPUT_BYTES = 256 * BYTES_PER_MB;
 /** Aggregate frame-pipeline and WebP-finalization memory envelope. */
 export const CONVERSION_MEMORY_BUDGET_BYTES = 512 * BYTES_PER_MB;
 
-/** Half of the conversion envelope is reserved for live frame processing. */
-export const FRAME_PIPELINE_MEMORY_BUDGET_BYTES = CONVERSION_MEMORY_BUDGET_BYTES / 2;
+/** A quarter of the envelope is reserved for encoded demux packets. */
+export const DEMUX_MEMORY_BUDGET_RATIO = 0.25;
+export const DEMUX_MEMORY_BUDGET_BYTES = CONVERSION_MEMORY_BUDGET_BYTES * DEMUX_MEMORY_BUDGET_RATIO;
+
+/** Three eighths of the envelope are reserved for live frame processing. */
+export const FRAME_PIPELINE_MEMORY_BUDGET_BYTES = CONVERSION_MEMORY_BUDGET_BYTES * 0.375;
 
 /**
  * Maximum animated WebP bytes. Finalization retains the Blob source while
  * materializing the returned ArrayBuffer, so reserve two output-sized copies.
  */
 export const WEBP_MAX_OUTPUT_BYTES =
-  (CONVERSION_MEMORY_BUDGET_BYTES - FRAME_PIPELINE_MEMORY_BUDGET_BYTES) / 2;
+  (CONVERSION_MEMORY_BUDGET_BYTES -
+    DEMUX_MEMORY_BUDGET_BYTES -
+    FRAME_PIPELINE_MEMORY_BUDGET_BYTES) /
+  2;
 
 // ============================================================================
 // FRAME RATE & TIMING CONSTANTS
@@ -211,17 +218,17 @@ export const WORKER_MAX_MEMORY_MB = CONVERSION_MEMORY_BUDGET_BYTES / BYTES_PER_M
 /**
  * Maximum pixels in one decoded frame under the default worker memory budget.
  *
- * A live task retains a power-of-two RGB pool buffer plus RGBA and Canvas
- * storage. Sixteen bytes per pixel conservatively covers that rounded peak,
- * and the separate frame-concurrency gate shares this same budget.
+ * A live task retains a power-of-two RGB pool buffer plus a decoded surface,
+ * RGBA staging, and Canvas storage. Twenty bytes per pixel conservatively
+ * covers that rounded peak, and the frame-concurrency gate shares this budget.
  */
-export const MAX_FRAME_PIXEL_COUNT = Math.floor(FRAME_PIPELINE_MEMORY_BUDGET_BYTES / 16);
+export const MAX_FRAME_PIXEL_COUNT = Math.floor(FRAME_PIPELINE_MEMORY_BUDGET_BYTES / 20);
 
 /** Minimum allowed maxMemoryMB for worker pipeline */
 export const WORKER_MIN_MEMORY_MB = 128;
 
 /** Maximum allowed maxMemoryMB for worker pipeline */
-export const WORKER_MAX_MEMORY_LIMIT_MB = 2048;
+export const WORKER_MAX_MEMORY_LIMIT_MB = WORKER_MAX_MEMORY_MB;
 
 // ============================================================================
 // PROGRESS PHASE CONSTANTS

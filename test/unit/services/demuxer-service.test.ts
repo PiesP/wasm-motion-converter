@@ -3,6 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
+import { DEMUX_MEMORY_BUDGET_BYTES } from '@utils/constants';
 
 const mocks = vi.hoisted(() => {
   const keyPacket = {
@@ -63,6 +64,11 @@ describe('demuxVideo trim start', () => {
   });
 
   it('rejects an individual encoded packet that exceeds the demux budget', async () => {
+    const packetSpy = vi.spyOn(mocks.packets[0]!, 'toEncodedVideoChunk').mockReturnValue({
+      byteLength: DEMUX_MEMORY_BUDGET_BYTES,
+      duration: 1_000_000,
+      timestamp: 4_000_000,
+    });
     const request: ConversionRequest = {
       inputBuffer: new ArrayBuffer(8),
       fileName: 'packet-bomb.mp4',
@@ -86,8 +92,12 @@ describe('demuxVideo trim start', () => {
       }
     };
 
-    await expect(consume()).rejects.toThrow('Demux memory limit exceeded');
-    expect(mocks.dispose).toHaveBeenCalled();
+    try {
+      await expect(consume()).rejects.toThrow('Demux memory limit exceeded');
+      expect(mocks.dispose).toHaveBeenCalled();
+    } finally {
+      packetSpy.mockRestore();
+    }
   });
 
   it('starts decoding at the key packet at or before trimStart', async () => {

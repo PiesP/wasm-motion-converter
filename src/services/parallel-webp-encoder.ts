@@ -105,14 +105,6 @@ export function createStreamingWebpEncoder(
     }
   }
 
-  // Helper: wait for at least one in-flight promise to complete (backpressure).
-  async function waitForSlot(): Promise<void> {
-    while (inFlight.size >= maxInFlight) {
-      await Promise.race([...inFlight]);
-      if (firstEncodeError) throw firstEncodeError;
-    }
-  }
-
   function throwIfFailed(rgbData: Uint8Array): void {
     if (!firstEncodeError) return;
     globalBufferPool.release(rgbData);
@@ -123,7 +115,13 @@ export function createStreamingWebpEncoder(
     throwIfFailed(rgbData);
     // Backpressure: wait if we have too many frames in-flight
     try {
-      await waitForSlot();
+      // Keep the capacity check synchronous while a slot is available. An
+      // unconditional await here lets concurrent callers all observe an empty
+      // set before any of them reserves a task.
+      while (inFlight.size >= maxInFlight) {
+        await Promise.race([...inFlight]);
+        if (firstEncodeError) throw firstEncodeError;
+      }
     } catch (error) {
       globalBufferPool.release(rgbData);
       throw error;
@@ -182,6 +180,8 @@ export function createStreamingWebpEncoder(
       });
 
     inFlight.add(promise);
+    await promise;
+    if (firstEncodeError) throw firstEncodeError;
   };
 
   const finish = async (): Promise<Uint8Array> => {
