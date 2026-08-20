@@ -14,6 +14,26 @@ function createController(): ConversionRuntimeController {
 }
 
 describe('ConversionRuntimeController preparation intent', () => {
+  it('aborts and invalidates active file analysis', () => {
+    const controller = createController();
+    const analysis = controller.startNewRun();
+
+    controller.invalidateActiveConversions();
+
+    expect(analysis.signal.aborted).toBe(true);
+    expect(analysis.isActive()).toBe(false);
+  });
+
+  it('finishes an analysis run without aborting its completed signal', () => {
+    const controller = createController();
+    const analysis = controller.startNewRun();
+
+    controller.finishAnalysisRun(analysis);
+
+    expect(analysis.signal.aborted).toBe(false);
+    expect(analysis.isActive()).toBe(false);
+  });
+
   it('admits only one preparation intent at a time', () => {
     const controller = createController();
 

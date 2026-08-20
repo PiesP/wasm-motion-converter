@@ -24,10 +24,22 @@ export interface ConversionIntent {
   readonly token: symbol;
 }
 
+export interface AnalysisRun {
+  readonly isActive: () => boolean;
+  readonly runId: string;
+  readonly signal: AbortSignal;
+  readonly token: symbol;
+}
+
 export class ConversionRuntimeController {
   private memoryCheckTimer: ReturnType<typeof setInterval> | null = null;
   private activeConversionSeq = 0;
   private activeConversionIntent: {
+    abortController: AbortController;
+    seq: number;
+    token: symbol;
+  } | null = null;
+  private activeAnalysisRun: {
     abortController: AbortController;
     seq: number;
     token: symbol;
@@ -41,6 +53,9 @@ export class ConversionRuntimeController {
   }
 
   invalidateActiveConversions(): void {
+    const activeAnalysis = this.activeAnalysisRun;
+    this.activeAnalysisRun = null;
+    activeAnalysis?.abortController.abort();
     this.activeConversionSeq += 1;
   }
 
@@ -48,16 +63,35 @@ export class ConversionRuntimeController {
     return this.activeConversionSeq;
   }
 
-  startNewRun(): { isActive: () => boolean; runId: string } {
+  startNewRun(): AnalysisRun {
     this.abortConversionIntent();
+    const previousAnalysis = this.activeAnalysisRun;
+    this.activeAnalysisRun = null;
+    previousAnalysis?.abortController.abort();
+
     const seq = (this.activeConversionSeq += 1);
+    const token = Symbol('analysis-run');
+    const abortController = new AbortController();
     const runId = `run-${seq}-${performance.now().toString(36)}`;
+    this.activeAnalysisRun = { abortController, seq, token };
     this.progress.activeRunId = runId;
 
     return {
-      isActive: () => seq === this.activeConversionSeq,
+      isActive: () =>
+        !this.disposed &&
+        !abortController.signal.aborted &&
+        seq === this.activeConversionSeq &&
+        this.activeAnalysisRun?.token === token,
       runId,
+      signal: abortController.signal,
+      token,
     };
+  }
+
+  finishAnalysisRun(run: AnalysisRun): void {
+    if (this.activeAnalysisRun?.token === run.token) {
+      this.activeAnalysisRun = null;
+    }
   }
 
   beginConversionIntent(): ConversionIntent | null {
@@ -110,6 +144,9 @@ export class ConversionRuntimeController {
     this.stopMemoryMonitoring();
     this.disposed = true;
     this.abortConversionIntent();
+    const activeAnalysis = this.activeAnalysisRun;
+    this.activeAnalysisRun = null;
+    activeAnalysis?.abortController.abort();
     this.progress.disposed = true;
   }
 

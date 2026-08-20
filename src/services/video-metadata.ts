@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { withTimeout } from '@piesp/browser-core/async';
+import { throwIfAborted } from '@piesp/browser-core/error';
 import { copyBoundedCodecDescription } from '@services/codec-description';
 import type { MediabunnyVideoDecoderConfig, VideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS, MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
@@ -29,18 +30,28 @@ const COMPUTE_PACKET_STATS_TIMEOUT_MS = 2_000;
  */
 export async function extractVideoMetadata(
   source: ArrayBuffer | Blob,
-  defaultFps: number = DEFAULT_FPS
+  defaultFps: number = DEFAULT_FPS,
+  signal?: AbortSignal
 ): Promise<VideoMetadata> {
   const input = createMediaBunnyInput(source);
+  let disposed = false;
+  const disposeInput = (): void => {
+    if (disposed) return;
+    disposed = true;
+    input.dispose();
+  };
+  const abortHandler = (): void => disposeInput();
+  signal?.addEventListener('abort', abortHandler, { once: true });
 
   try {
-    const videoTracks = await input.getVideoTracks();
+    throwIfAborted(signal);
+    const videoTracks = await awaitWithAbort(input.getVideoTracks(), signal);
     const track = videoTracks[0];
     if (!track) {
       throw new Error('No video track found in input buffer');
     }
 
-    const config = await track.getDecoderConfig();
+    const config = await awaitWithAbort(track.getDecoderConfig(), signal);
     if (!config) {
       throw new Error('Unable to obtain VideoDecoderConfig from video track');
     }
@@ -50,7 +61,7 @@ export async function extractVideoMetadata(
       ...(boundedDescription !== undefined ? { description: boundedDescription } : {}),
     };
 
-    const duration = await track.computeDuration();
+    const duration = await awaitWithAbort(track.computeDuration(), signal);
 
     // ── FPS & Bitrate: compute from first ~50 packets ──────────────────
     // computePacketStats scans packets metadata-only (no actual data reads)
@@ -64,7 +75,9 @@ export async function extractVideoMetadata(
       const packetStats = await withTimeout(
         track.computePacketStats(50),
         COMPUTE_PACKET_STATS_TIMEOUT_MS,
-        `Timeout: computePacketStats exceeded ${COMPUTE_PACKET_STATS_TIMEOUT_MS}ms`
+        `Timeout: computePacketStats exceeded ${COMPUTE_PACKET_STATS_TIMEOUT_MS}ms`,
+        undefined,
+        signal
       );
       if (packetStats.averagePacketRate > 0) {
         computedFps = Math.round(packetStats.averagePacketRate * 100) / 100;
@@ -73,6 +86,7 @@ export async function extractVideoMetadata(
         computedBitrate = Math.round(packetStats.averageBitrate);
       }
     } catch {
+      throwIfAborted(signal);
       // computePacketStats may fail for very short files, exotic containers,
       // or hang due to mediabunny internal state issues (timeout fallback).
       // Fall through to metadata-based or default values below.
@@ -98,10 +112,13 @@ export async function extractVideoMetadata(
         const avgBitrate = await withTimeout(
           track.getAverageBitrate(),
           COMPUTE_PACKET_STATS_TIMEOUT_MS,
-          `Timeout: getAverageBitrate exceeded ${COMPUTE_PACKET_STATS_TIMEOUT_MS}ms`
+          `Timeout: getAverageBitrate exceeded ${COMPUTE_PACKET_STATS_TIMEOUT_MS}ms`,
+          undefined,
+          signal
         );
         if (avgBitrate != null && avgBitrate > 0) bitrate = avgBitrate;
       } catch {
+        throwIfAborted(signal);
         // getAverageBitrate not supported by all formats
       }
     }
@@ -110,10 +127,13 @@ export async function extractVideoMetadata(
         const peakBitrate = await withTimeout(
           track.getBitrate(),
           COMPUTE_PACKET_STATS_TIMEOUT_MS,
-          `Timeout: getBitrate exceeded ${COMPUTE_PACKET_STATS_TIMEOUT_MS}ms`
+          `Timeout: getBitrate exceeded ${COMPUTE_PACKET_STATS_TIMEOUT_MS}ms`,
+          undefined,
+          signal
         );
         if (peakBitrate != null && peakBitrate > 0) bitrate = peakBitrate;
       } catch {
+        throwIfAborted(signal);
         // getBitrate not supported by all formats
       }
     }
@@ -156,6 +176,41 @@ export async function extractVideoMetadata(
       config: boundedConfig,
     };
   } finally {
-    input.dispose();
+    signal?.removeEventListener('abort', abortHandler);
+    disposeInput();
   }
+}
+
+function awaitWithAbort<T>(operation: PromiseLike<T>, signal?: AbortSignal): Promise<T> {
+  const source = Promise.resolve(operation);
+  if (!signal) return source;
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort);
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(signal.reason ?? new DOMException('The metadata analysis was aborted.', 'AbortError'));
+    };
+
+    signal.addEventListener('abort', onAbort, { once: true });
+    void source.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+    );
+
+    if (signal.aborted) onAbort();
+  });
 }
