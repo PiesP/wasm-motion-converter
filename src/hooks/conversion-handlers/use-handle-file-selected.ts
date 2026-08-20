@@ -39,6 +39,7 @@ export async function handleFileSelected(
   t: TFunction
 ): Promise<void> {
   const run = runtime.startNewRun();
+  if (!run) return;
   const isStale = () => !run.isActive();
 
   runtime.resetRuntimeState();

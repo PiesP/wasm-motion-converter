@@ -159,7 +159,14 @@ export async function handleConvert(
     });
     await performConversion(file, settings, runtime, t, intent);
   } finally {
+    const wasCancelled = intent.signal.aborted;
     runtime.finishConversionIntent(intent);
+    if (wasCancelled && appState() === 'cancelling') {
+      batch(() => {
+        runtime.resetRuntimeState();
+        setAppState('idle');
+      });
+    }
   }
 }
 
@@ -545,16 +552,6 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
   setInputBuffer(null);
 
   setAppState('cancelling');
-
-  // Capture current seq so the microtask only resets state if no new conversion
-  // has started between now and when the microtask runs.
-  const cancelledSeq = runtime.getActiveConversionSeq();
-  queueMicrotask(() => {
-    // Only reset if no new conversion has started since cancel was triggered
-    if (runtime.getActiveConversionSeq() !== cancelledSeq) return;
-    runtime.resetRuntimeState();
-    setAppState('idle');
-  });
 }
 
 export function handleCancelAnalysis(runtime: ConversionRuntimeController): void {

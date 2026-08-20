@@ -123,6 +123,11 @@ async function _runPipelineInner(
   const { DECODE_RANGE } = PROGRESS_PHASE_RANGES;
   let demuxSession: Awaited<ReturnType<typeof demuxVideo>> | undefined;
   let workerPool: WebpWorkerPool | null = null;
+  const terminateWorkerPool = (): void => {
+    disposeWorkerPool(workerPool);
+    workerPool = null;
+  };
+  signal?.addEventListener('abort', terminateWorkerPool, { once: true });
 
   try {
     const outputLimits = resolveOutputLimits(request.format, request);
@@ -334,6 +339,10 @@ async function _runPipelineInner(
       const w = Math.max(1, Math.floor(codedWidth * request.scale));
       const h = Math.max(1, Math.floor(codedHeight * request.scale));
       workerPool = createWorkerPool(WebpWorkerPool.getOptimalWorkerCount(w, h));
+      if (signal?.aborted) {
+        terminateWorkerPool();
+        signal.throwIfAborted();
+      }
       const pool = workerPool;
 
       // Verify actual capability, not just typeof — some browsers expose
@@ -617,10 +626,11 @@ async function _runPipelineInner(
 
     return output!;
   } finally {
+    signal?.removeEventListener('abort', terminateWorkerPool);
     demuxSession?.dispose?.();
     throttled.cleanup();
     globalBufferPool.clear();
     clearCanvasCache();
-    disposeWorkerPool(workerPool);
+    terminateWorkerPool();
   }
 }

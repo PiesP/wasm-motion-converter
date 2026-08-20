@@ -63,8 +63,9 @@ export class ConversionRuntimeController {
     return this.activeConversionSeq;
   }
 
-  startNewRun(): AnalysisRun {
+  startNewRun(): AnalysisRun | null {
     this.abortConversionIntent();
+    if (this.activeConversionIntent) return null;
     const previousAnalysis = this.activeAnalysisRun;
     this.activeAnalysisRun = null;
     previousAnalysis?.abortController.abort();
@@ -124,8 +125,7 @@ export class ConversionRuntimeController {
 
   abortConversionIntent(): void {
     const active = this.activeConversionIntent;
-    if (!active) return;
-    this.activeConversionIntent = null;
+    if (!active || active.abortController.signal.aborted) return;
     active.abortController.abort();
     this.activeConversionSeq += 1;
   }
