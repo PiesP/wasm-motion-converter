@@ -37,6 +37,7 @@ const baseOptions: SerializedConversionOptions = {
   trimStart: 0,
   trimEnd: 0,
   maxFrames: 300,
+  maxOutputBytes: 1024,
   smartFrameSkip: 'adaptive',
 };
 
@@ -58,7 +59,11 @@ describe('worker pipeline smart frame skip forwarding', () => {
 
     expect(mocks.encodeGif).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ smartFrameSkip: 'adaptive' }),
+      expect.objectContaining({
+        maxFrames: 300,
+        maxOutputBytes: 1024,
+        smartFrameSkip: 'adaptive',
+      }),
       undefined
     );
     expect(result.profile?.phases.map((phase) => phase.phase)).toEqual([
@@ -83,7 +88,11 @@ describe('worker pipeline smart frame skip forwarding', () => {
 
     expect(mocks.encodeWebp).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ smartFrameSkip: 'adaptive' }),
+      expect.objectContaining({
+        maxFrames: 300,
+        maxOutputBytes: 1024,
+        smartFrameSkip: 'adaptive',
+      }),
       expect.anything(),
       undefined
     );

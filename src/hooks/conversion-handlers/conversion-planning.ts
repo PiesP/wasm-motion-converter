@@ -7,6 +7,7 @@ import type {
   SerializedDecoderConfig,
 } from '@services/conversion-worker/types';
 import { calcMemoryPressureDecimation } from '@services/encoder-common';
+import { resolveOutputLimits } from '@services/output-limits';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS, GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
 
@@ -57,6 +58,7 @@ export function serializeConversionInputs(
   serializedConfig: SerializedDecoderConfig | null;
   serializedOptions: SerializedConversionOptions;
 } {
+  const outputLimits = resolveOutputLimits(settings.format);
   return {
     serializedConfig: serializeDecoderConfig(metadata),
     serializedOptions: {
@@ -66,7 +68,8 @@ export function serializeConversionInputs(
       scale: settings.scale,
       trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
       trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
-      maxFrames: 0,
+      maxFrames: outputLimits.maxFrames,
+      maxOutputBytes: outputLimits.maxOutputBytes,
       forceDecimation: forcedDecimation,
       smartFrameSkip: settings.smartFrameSkip,
     },

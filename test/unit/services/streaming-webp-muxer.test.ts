@@ -17,6 +17,47 @@ function dummyBitstream(size = 100): Uint8Array {
 }
 
 describe('StreamingWebpMuxer', () => {
+  describe('output budgets', () => {
+    it('rejects a cumulative frame overflow before adding the frame', () => {
+      const muxer = new StreamingWebpMuxer(16, 16, {
+        maxFrames: 1,
+        maxOutputBytes: 1024,
+      });
+      muxer.addFrame(dummyBitstream(100), 100);
+
+      expect(() => muxer.addFrame(dummyBitstream(100), 100)).toThrow(
+        'WebP output frame limit exceeded'
+      );
+      expect(muxer.frames).toBe(1);
+    });
+
+    it('rejects cumulative bytes before allocating the overflowing chunk', () => {
+      const oneFrameBytes = 44 + 24 + 8 + 100;
+      const muxer = new StreamingWebpMuxer(16, 16, {
+        maxFrames: 2,
+        maxOutputBytes: oneFrameBytes,
+      });
+      muxer.addFrame(dummyBitstream(100), 100);
+
+      expect(() => muxer.addFrame(dummyBitstream(2), 100)).toThrow(
+        'WebP output byte limit exceeded'
+      );
+      expect(muxer.frames).toBe(1);
+      expect(muxer.frameBytes).toBe(100);
+    });
+
+    it('allows ordinary output within both limits', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16, {
+        maxFrames: 2,
+        maxOutputBytes: 1024,
+      });
+      muxer.addFrame(dummyBitstream(100), 100);
+      muxer.addFrame(dummyBitstream(100), 100);
+
+      await expect(muxer.finish()).resolves.toHaveLength(308);
+    });
+  });
+
   describe('finish()', () => {
     it('produces valid WebP output after adding frames', async () => {
       const muxer = new StreamingWebpMuxer(16, 16);
@@ -33,6 +74,17 @@ describe('StreamingWebpMuxer', () => {
     it('throws when no frames have been added', async () => {
       const muxer = new StreamingWebpMuxer(16, 16);
       await expect(muxer.finish()).rejects.toThrow('No frames added');
+    });
+
+    it('honors cancellation before final allocation', async () => {
+      const controller = new AbortController();
+      const muxer = new StreamingWebpMuxer(16, 16);
+      muxer.addFrame(dummyBitstream(), 100);
+      controller.abort();
+
+      await expect(muxer.finish(controller.signal)).rejects.toMatchObject({
+        name: 'AbortError',
+      });
     });
 
     it('releases chunk references before arrayBuffer completes (peak memory reduction)', async () => {

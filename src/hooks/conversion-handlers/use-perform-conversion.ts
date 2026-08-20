@@ -365,6 +365,8 @@ async function executePipeline(
       trimStart: serializedOptions.trimStart,
       trimEnd: serializedOptions.trimEnd,
       maxMemoryMB: 2048,
+      maxFrames: serializedOptions.maxFrames,
+      maxOutputBytes: serializedOptions.maxOutputBytes,
       forceDecimation: serializedOptions.forceDecimation,
       smartFrameSkip: serializedOptions.smartFrameSkip ?? 'off',
     };

@@ -11,7 +11,12 @@ vi.mock('gifenc', () => ({
   applyPalette: () => new Uint8Array([0]),
   GIFEncoder: () => ({
     bytes: () => new Uint8Array(64),
+    bytesView: () => new Uint8Array(0),
     finish: vi.fn(),
+    stream: {
+      writeByte: vi.fn(),
+      writeBytes: vi.fn(),
+    },
     writeFrame: mocks.writeFrame,
   }),
   quantize: () => [[0, 0, 0]],

@@ -4,6 +4,15 @@
 import { classifyWorkerError } from '@services/conversion-worker/classify-worker-error';
 
 describe('classifyWorkerError', () => {
+  it('classifies output budget failures as memory limits', () => {
+    expect(classifyWorkerError('GIF output byte limit exceeded (268435456)')).toBe(
+      'OUT_OF_MEMORY'
+    );
+    expect(classifyWorkerError('WebP output frame limit exceeded (9000)')).toBe(
+      'OUT_OF_MEMORY'
+    );
+  });
+
   it('recognizes a WebP encoder failure', () => {
     expect(classifyWorkerError('WebP frame encoding failed')).toBe(
       'ENCODER_ERROR'

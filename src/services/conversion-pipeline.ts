@@ -47,6 +47,7 @@ import { calcAutoDecimation } from './encoder-common';
 import { clearCanvasCache, resolveVideoDimensions } from './frame-utils';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
+import { resolveOutputLimits } from './output-limits';
 import { createStreamingWebpEncoder } from './parallel-webp-encoder';
 import { encodeWebp } from './webp-encoder-service';
 import { createWorkerPool, disposeWorkerPool, WebpWorkerPool } from './worker-pool';
@@ -124,6 +125,7 @@ async function _runPipelineInner(
   let workerPool: WebpWorkerPool | null = null;
 
   try {
+    const outputLimits = resolveOutputLimits(request.format, request);
     // ── Throttled memory sampling (PERF-H1) ──
     // getMemoryUsageMB() reads performance.memory which is expensive.
     // Sample at most once per second instead of every progress callback.
@@ -300,6 +302,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: gifDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                ...outputLimits,
                 onFrameDecoded: decodeProgressCb,
                 onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
                   gifEncodeFrames = frameIdx;
@@ -380,7 +383,9 @@ async function _runPipelineInner(
           (p) => {
             const currentFrame = p.currentFrame ?? 0;
             reportEncodingProgress(currentFrame, currentFrame, p.currentFrame ?? null);
-          }
+          },
+          outputLimits,
+          signal
         );
 
         // Accumulate durations from dynamically skipped frames (see offscreen-webp-encoder).
@@ -485,6 +490,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                ...outputLimits,
                 onFrameDecoded: decodeProgressCb,
               },
               onEncodeProgress,
@@ -519,6 +525,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                ...outputLimits,
                 onFrameDecoded: decodeProgressCb,
               },
               onEncodeProgress,

@@ -5,6 +5,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 
 describe('classifyConversionError', () => {
+  it('classifies output budget failures as memory errors', () => {
+    const result = classifyConversionError('GIF output byte limit exceeded (268435456)', null);
+
+    expect(result).toMatchObject({ code: 'OUT_OF_MEMORY', type: 'memory' });
+  });
+
   beforeEach(() => {
     vi.spyOn(performance, 'now').mockReturnValue(1000);
   });

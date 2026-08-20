@@ -22,6 +22,7 @@ describe('isWorkerRequest', () => {
       trimStart: 0,
       trimEnd: 0,
       maxFrames: 500,
+      maxOutputBytes: 1024,
     },
   };
 
@@ -109,6 +110,20 @@ describe('isWorkerRequest', () => {
 
   it('rejects start with negative maxFrames in options', () => {
     expect(isWorkerRequest({ ...validStart, options: { ...validStart.options, maxFrames: -1 } })).toBe(false);
+  });
+
+  it('rejects start with missing maxOutputBytes in options', () => {
+    const { maxOutputBytes: _, ...withoutMaxOutputBytes } = validStart.options;
+    expect(isWorkerRequest({ ...validStart, options: withoutMaxOutputBytes })).toBe(false);
+  });
+
+  it('rejects start with non-positive maxOutputBytes in options', () => {
+    expect(
+      isWorkerRequest({
+        ...validStart,
+        options: { ...validStart.options, maxOutputBytes: 0 },
+      })
+    ).toBe(false);
   });
 
   it('rejects start with NaN duration', () => {

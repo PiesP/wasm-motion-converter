@@ -25,6 +25,7 @@ import { getCanvasWebpQuality } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import type { BaseEncoderOptions } from './encoder-common';
+import type { OutputLimitOverrides } from './output-limits';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
 import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from './worker-pool';
 
@@ -56,7 +57,9 @@ export function createStreamingWebpEncoder(
   height: number,
   quality: BaseEncoderOptions['quality'],
   totalFrames: number,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  limits?: OutputLimitOverrides,
+  signal?: AbortSignal
 ): StreamingWebpEncoder {
   const qualityF = getCanvasWebpQuality(quality);
 
@@ -66,7 +69,7 @@ export function createStreamingWebpEncoder(
     throw new Error('Worker pool has no active workers');
   }
 
-  const muxer = new StreamingWebpMuxer(width, height);
+  const muxer = new StreamingWebpMuxer(width, height, limits);
   const resultBuffer = new Map<number, FrameEncodeResult>();
   let nextExpectedId = 0;
   let submittedCount = 0;
@@ -199,7 +202,7 @@ export function createStreamingWebpEncoder(
       pendingTailMs = 0;
     }
 
-    return await muxer.finish();
+    return await muxer.finish(signal);
   };
 
   const padLastFrame = (extraMs: number): void => {

@@ -19,6 +19,8 @@
  */
 
 import { VP8_FOURCC as SHARED_VP8_FOURCC, VP8L_FOURCC, VP8X_FOURCC } from '@utils/constants';
+import type { OutputLimitOverrides, OutputLimits } from './output-limits';
+import { OutputLimitError, resolveOutputLimits } from './output-limits';
 
 // ---------------------------------------------------------------------------
 // VP8 bitstream extraction
@@ -111,14 +113,16 @@ export class StreamingWebpMuxer {
   private chunks: Uint8Array[] = [];
   private currentOffset = 0;
   private headerWritten = false;
+  private readonly limits: OutputLimits;
 
   /** Pre-computed header size: RIFF(12) + VP8X(18) + ANIM(6+8) = 44 bytes */
   private static readonly HEADER_SIZE =
     12 + StreamingWebpMuxer.VP8X_OVERHEAD + 8 + StreamingWebpMuxer.ANIM_OVERHEAD;
 
-  constructor(width: number, height: number) {
+  constructor(width: number, height: number, limits?: OutputLimitOverrides) {
     this.width = width;
     this.height = height;
+    this.limits = resolveOutputLimits('webp', limits);
   }
 
   /** Total bytes of frame bitstreams added so far (not including overhead). */
@@ -183,8 +187,6 @@ export class StreamingWebpMuxer {
    * can release the source buffer after this call.
    */
   addFrame(bitstream: Uint8Array, durationMs: number): void {
-    this.writeHeader();
-
     // RIFF spec requires all chunks to be even-length. When the VP8
     // bitstream is odd-length, a 0x00 pad byte must follow the data.
     const needsPadding = (bitstream.length & 1) === 1;
@@ -192,6 +194,17 @@ export class StreamingWebpMuxer {
     const frameDataSize = StreamingWebpMuxer.VP8_CHUNK_OVERHEAD + paddedBitstreamLen;
     const anmfChunkData = StreamingWebpMuxer.ANMF_HEADER - 8 + frameDataSize;
     const anmfTotalSize = 8 + anmfChunkData; // ANMF FourCC + size + data
+
+    if (this.frameCount >= this.limits.maxFrames) {
+      throw new OutputLimitError('webp', 'frame', this.limits.maxFrames);
+    }
+    const headerBytes = this.headerWritten ? 0 : StreamingWebpMuxer.HEADER_SIZE;
+    const nextOffset = this.currentOffset + headerBytes + anmfTotalSize;
+    if (!Number.isSafeInteger(nextOffset) || nextOffset > this.limits.maxOutputBytes) {
+      throw new OutputLimitError('webp', 'byte', this.limits.maxOutputBytes);
+    }
+
+    this.writeHeader();
 
     const chunk = new Uint8Array(anmfTotalSize);
     const view = new DataView(chunk.buffer);
@@ -241,10 +254,11 @@ export class StreamingWebpMuxer {
    * Patches the RIFF size in the header, then uses the Blob constructor
    * to concatenate chunks without an extra O(N) copy into a new buffer.
    */
-  async finish(): Promise<Uint8Array> {
+  async finish(signal?: AbortSignal): Promise<Uint8Array> {
     if (this.frameCount === 0) {
       throw new Error('No frames added to muxer');
     }
+    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
     // Calculate total size: RIFF header (8) + payload
     const riffSize = this.currentOffset - 8;
@@ -263,6 +277,7 @@ export class StreamingWebpMuxer {
     // This reduces peak memory during arrayBuffer() from ~2x to ~1x final size.
     this.chunks.length = 0;
     const output = new Uint8Array(await blob.arrayBuffer());
+    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
     return output;
   }

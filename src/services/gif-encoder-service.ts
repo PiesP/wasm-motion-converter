@@ -24,7 +24,6 @@ import {
   GIF_LZW_RATIO,
   GIF_MAX_BUFFER_BYTES,
   GIF_MAX_FRAME_DELAY_CS,
-  GIF_MAX_TAIL_SPLIT_FRAMES,
   GIF_MIN_FRAME_DELAY_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -35,6 +34,7 @@ import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
 import { convertRGBToRGBA } from './frame-utils';
+import { OutputLimitError, resolveOutputLimits } from './output-limits';
 
 const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
   low: 64, // 128 → 64: perceptual studies show banding is visible below ~32 colors,
@@ -163,6 +163,7 @@ export async function encodeGif(
   const maxColors = QUALITY_COLORS[opts.quality];
   const ditherStrength = QUALITY_DITHER_STRENGTH[opts.quality];
   const frameDecimation = opts.frameDecimation ?? 1;
+  const outputLimits = resolveOutputLimits('gif', opts);
 
   logger.info('encoders', '  │  ├─ GIF: codec support check', { codec: demux.config.codec });
 
@@ -171,16 +172,52 @@ export async function encodeGif(
   // Streaming encoder — writes frames one at a time
   const estimatedFrames = Math.max(1, Math.floor(demux.totalFrames / (opts.frameDecimation ?? 1)));
   const estimatedBytes = Math.min(w * h * estimatedFrames * GIF_LZW_RATIO, GIF_MAX_BUFFER_BYTES);
+  let initialCapacity = 1;
+  const requestedInitialCapacity = Math.max(4096, Math.round(estimatedBytes));
+  while (
+    initialCapacity < requestedInitialCapacity &&
+    initialCapacity < outputLimits.maxOutputBytes
+  ) {
+    initialCapacity *= 2;
+  }
   const encoder = GIFEncoder({
     auto: true,
-    initialCapacity: Math.max(4096, Math.round(estimatedBytes)),
+    // A power-of-two starting capacity keeps gifenc's geometric growth from
+    // overshooting the power-of-two production byte ceiling.
+    initialCapacity: Math.min(outputLimits.maxOutputBytes, initialCapacity),
   });
+
+  // gifenc grows its stream automatically. Wrap both supported write methods so
+  // every growth is authorized before gifenc expands or mutates its buffer.
+  let streamBytes = encoder.bytesView().byteLength;
+  const originalWriteByte = encoder.stream.writeByte.bind(encoder.stream);
+  const originalWriteBytes = encoder.stream.writeBytes.bind(encoder.stream);
+  encoder.stream.writeByte = (byte: number): void => {
+    if (streamBytes + 1 > outputLimits.maxOutputBytes) {
+      throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
+    }
+    originalWriteByte(byte);
+    streamBytes++;
+  };
+  encoder.stream.writeBytes = (
+    bytes: Uint8Array,
+    offset = 0,
+    length = bytes.length - offset
+  ): void => {
+    const safeLength = Math.max(0, Math.min(length, bytes.length - offset));
+    if (streamBytes + safeLength > outputLimits.maxOutputBytes) {
+      throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
+    }
+    originalWriteBytes(bytes, offset, safeLength);
+    streamBytes += safeLength;
+  };
 
   let globalPalette: number[][] | null = null;
   let globalPaletteWritten = false;
   let outputTotalDelay = 0;
   const quantizeDelay = createGifDelayQuantizer();
   let encodeIdx = 0;
+  let outputFrames = 0;
   let splitFrames = 0;
   let totalInputFrames = 0;
   /** Estimated total frames from demuxer — used for progress reporting only */
@@ -206,14 +243,22 @@ export async function encodeGif(
   let lastQuantizedData: Uint8Array | null = null;
   let lastIndexedData: Uint8Array | null = null;
 
+  function assertCanWriteOutputFrame(): void {
+    if (outputFrames >= outputLimits.maxFrames) {
+      throw new OutputLimitError('gif', 'frame', outputLimits.maxFrames);
+    }
+  }
+
   function writeIndexedFrame(indexed: Uint8Array, delay: number): void {
     const palette = globalPalette;
     if (!palette) return;
+    assertCanWriteOutputFrame();
     encoder.writeFrame(indexed, w, h, {
       ...(globalPaletteWritten ? {} : { palette }),
       repeat: 0,
       delay,
     });
+    outputFrames++;
     globalPaletteWritten = true;
   }
 
@@ -327,6 +372,9 @@ export async function encodeGif(
           // Apply minimum delays (in ms, will be converted to cs in writeFrameWithDelay)
           const delay = Math.max(GIF_MIN_FRAME_DELAY_MS, totalDelayWithAccumulated);
 
+          // Reject the next emitted frame before allocating RGBA/indexed buffers.
+          assertCanWriteOutputFrame();
+
           // Bayer ordered dithering (applied to RGB buffer in-place)
           if (ditherStrength > 0) {
             bayerDitherRGB(rgbData, w, h, ditherStrength);
@@ -393,12 +441,6 @@ export async function encodeGif(
       let remainingTailMs = totalTailDuration;
       while (remainingTailMs > 0) {
         if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
-        if (splitFrames >= GIF_MAX_TAIL_SPLIT_FRAMES) {
-          logger.warn('encoders', 'GIF tail duration truncated at output frame limit', {
-            maxFrames: GIF_MAX_TAIL_SPLIT_FRAMES,
-          });
-          break;
-        }
         const delay = Math.min(remainingTailMs, GIF_MAX_FRAME_DELAY_CS * 10);
         writeQuantizedFrame(lastIndexedData, delay);
         remainingTailMs -= delay;

@@ -86,7 +86,11 @@ describe('main conversion pipeline encoder options', () => {
 
     expect(mocks.encodeGif).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ smartFrameSkip: 'adaptive' }),
+      expect.objectContaining({
+        maxFrames: 9000,
+        maxOutputBytes: 268435456,
+        smartFrameSkip: 'adaptive',
+      }),
       undefined
     );
   });
@@ -161,7 +165,11 @@ describe('main conversion pipeline encoder options', () => {
 
     expect(mocks.encodeWebp).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ smartFrameSkip: 'adaptive' }),
+      expect.objectContaining({
+        maxFrames: 9000,
+        maxOutputBytes: 536870912,
+        smartFrameSkip: 'adaptive',
+      }),
       expect.anything(),
       undefined
     );
@@ -181,7 +189,11 @@ describe('main conversion pipeline encoder options', () => {
 
     expect(mocks.encodeWebpOffscreen).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ smartFrameSkip: 'adaptive' }),
+      expect.objectContaining({
+        maxFrames: 9000,
+        maxOutputBytes: 536870912,
+        smartFrameSkip: 'adaptive',
+      }),
       expect.anything(),
       undefined
     );

@@ -104,7 +104,7 @@ export async function encodeWebpOffscreen(
   }
 
   // Streaming encode state — use incremental muxer to avoid O(N) memory accumulation
-  const muxer = new StreamingWebpMuxer(w, h);
+  const muxer = new StreamingWebpMuxer(w, h, opts);
   let encodeIdx = 0;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
@@ -227,7 +227,7 @@ export async function encodeWebpOffscreen(
   }
 
   // Mux all encoded frames into animated WebP container
-  const result = await muxer.finish();
+  const result = await muxer.finish(signal);
   const totalElapsed = (performance.now() - startTime) / 1000;
 
   logger.info('encoders', 'OffscreenCanvas WebP encoding complete', {
