@@ -7,12 +7,16 @@ const mocks = vi.hoisted(() => ({
   confirmation: undefined as
     | { onCancel: () => void; onConfirm: () => void }
     | undefined,
+  appState: 'idle' as 'idle' | 'cancelling' | 'error',
   runPipelineWithFallback: vi.fn(),
   runConversionPipeline: vi.fn(),
   setInputBuffer: vi.fn(),
   setInputFile: vi.fn(),
   setConversionResults: vi.fn(),
   setErrorMessage: vi.fn(),
+  setAppState: vi.fn((state: 'idle' | 'cancelling' | 'error') => {
+    mocks.appState = state;
+  }),
   setVideoMetadata: vi.fn(),
   setVideoPreviewUrl: vi.fn(),
   showConfirmation: vi.fn(),
@@ -33,10 +37,10 @@ vi.mock('@stores/conversion-settings-store', () => ({
 }));
 
 vi.mock('@stores/conversion-store', () => ({
-  appState: () => 'idle',
+  appState: () => mocks.appState,
   getInputBuffer: () => new ArrayBuffer(8),
   inputFile: () => new File(['video'], 'video.mp4', { type: 'video/mp4' }),
-  setAppState: vi.fn(),
+  setAppState: mocks.setAppState,
   setConversionElapsedMs: vi.fn(),
   setConversionFps: vi.fn(),
   setConversionProgress: vi.fn(),
@@ -83,7 +87,7 @@ vi.mock('@utils/dom-utils', () => ({
 import * as conversionModule from '@hooks/conversion-handlers/use-perform-conversion';
 import { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
 
-const { handleCancelConversion, handleConvert, handleDismissError } = conversionModule;
+const { handleCancelConversion, handleConvert, handleDismissError, handleRetry } = conversionModule;
 
 function createRuntime(): ConversionRuntimeController {
   return new ConversionRuntimeController({
@@ -96,6 +100,7 @@ function createRuntime(): ConversionRuntimeController {
 
 beforeEach(() => {
   mocks.confirmation = undefined;
+  mocks.appState = 'idle';
   mocks.runPipelineWithFallback.mockReset().mockResolvedValue(
     new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer
   );
@@ -106,6 +111,7 @@ beforeEach(() => {
   mocks.setInputFile.mockClear();
   mocks.setConversionResults.mockClear();
   mocks.setErrorMessage.mockClear();
+  mocks.setAppState.mockClear();
   mocks.setVideoMetadata.mockClear();
   mocks.setVideoPreviewUrl.mockClear();
   mocks.showConfirmation.mockClear();
@@ -176,6 +182,58 @@ describe('handleConvert conversion ownership', () => {
     await conversion;
 
     expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+  });
+
+  it('keeps restart blocked until a cancelled WebP pipeline physically settles', async () => {
+    mocks.settings = { ...mocks.settings, format: 'webp' };
+    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
+    let resolvePipeline: ((output: ArrayBuffer) => void) | undefined;
+    mocks.runConversionPipeline.mockReturnValueOnce(
+      new Promise<ArrayBuffer>((resolve) => {
+        resolvePipeline = resolve;
+      })
+    );
+    const runtime = createRuntime();
+
+    const first = handleConvert(runtime, localizedProgressT);
+    await vi.waitFor(() => expect(mocks.runConversionPipeline).toHaveBeenCalledOnce());
+    handleCancelConversion(runtime);
+    const blockedRestart = handleConvert(runtime, localizedProgressT);
+
+    expect(mocks.appState).toBe('cancelling');
+    expect(mocks.runConversionPipeline).toHaveBeenCalledTimes(1);
+
+    resolvePipeline?.(
+      new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
+    );
+    await Promise.all([first, blockedRestart]);
+    expect(mocks.appState).toBe('idle');
+
+    await handleConvert(runtime, localizedProgressT);
+    expect(mocks.runConversionPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it('restores idle after a cancelled direct retry physically settles', async () => {
+    mocks.appState = 'error';
+    mocks.settings = { ...mocks.settings, format: 'webp' };
+    let resolvePipeline: ((output: ArrayBuffer) => void) | undefined;
+    mocks.runConversionPipeline.mockReturnValueOnce(
+      new Promise<ArrayBuffer>((resolve) => {
+        resolvePipeline = resolve;
+      })
+    );
+    const runtime = createRuntime();
+
+    handleRetry(runtime, localizedProgressT);
+    await vi.waitFor(() => expect(mocks.runConversionPipeline).toHaveBeenCalledOnce());
+    handleCancelConversion(runtime);
+    expect(mocks.appState).toBe('cancelling');
+
+    resolvePipeline?.(
+      new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
+    );
+    await vi.waitFor(() => expect(mocks.appState).toBe('idle'));
+    expect(runtime.beginConversionIntent()).not.toBeNull();
   });
 
   it('does not start a pipeline after disposal during duration validation', async () => {

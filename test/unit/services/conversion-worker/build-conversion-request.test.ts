@@ -84,6 +84,6 @@ describe('buildConversionRequest', () => {
     });
 
     expect(request.maxFrames).toBe(9000);
-    expect(request.maxOutputBytes).toBe(536870912);
+    expect(request.maxOutputBytes).toBe(100663296);
   });
 });

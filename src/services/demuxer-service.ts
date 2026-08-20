@@ -4,7 +4,7 @@
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 import { extractVideoMetadata } from '@services/video-metadata';
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
-import { DEFAULT_FPS } from '@utils/constants';
+import { DEFAULT_FPS, DEMUX_MEMORY_BUDGET_BYTES } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { type EncodedPacket, EncodedPacketSink } from 'mediabunny';
@@ -30,8 +30,6 @@ export interface DemuxResult {
 
 type DemuxPreparedCallback = (estimatedTotalFrames: number) => void;
 
-const BYTES_PER_MIB = 1024 * 1024;
-const DEMUX_MEMORY_BUDGET_RATIO = 0.25;
 const ENCODED_CHUNK_OVERHEAD_BYTES = 1024;
 
 export function getEncodedChunkRetainedBytes(chunk: EncodedVideoChunk): number {
@@ -147,10 +145,7 @@ export async function demuxVideo(
     // an endPacket causes the last frame to be lost. Instead, iterate unbounded
     // and break manually when exceeding trimEnd.
     const trimEnd = request.trimEnd > 0 ? request.trimEnd : undefined;
-    const memoryBudgetBytes = Math.max(
-      1,
-      Math.floor(request.maxMemoryMB * BYTES_PER_MIB * DEMUX_MEMORY_BUDGET_RATIO)
-    );
+    const memoryBudgetBytes = DEMUX_MEMORY_BUDGET_BYTES;
 
     logger.info('demuxer', 'Demux stream prepared', {
       fileName: request.fileName,
@@ -184,7 +179,7 @@ export async function demuxVideo(
           const retainedBytes = getEncodedChunkRetainedBytes(chunk);
           if (retainedBytes > memoryBudgetBytes) {
             throw new Error(
-              `Demux memory limit exceeded by one encoded packet (${request.maxMemoryMB} MB budget)`
+              `Demux memory limit exceeded by one encoded packet (${memoryBudgetBytes} byte budget)`
             );
           }
 

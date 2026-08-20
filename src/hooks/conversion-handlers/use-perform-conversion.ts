@@ -37,6 +37,7 @@ import type {
 } from '@t/conversion-types';
 import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
+import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
 import { focusElement, focusRetryButton } from '@utils/dom-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
@@ -55,6 +56,17 @@ import type {
 import { handleFileSelected } from './use-handle-file-selected';
 
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
+
+function finishConversionRun(runtime: ConversionRuntimeController, intent: ConversionIntent): void {
+  const wasCancelled = intent.signal.aborted;
+  runtime.finishConversionIntent(intent);
+  if (wasCancelled && appState() === 'cancelling') {
+    batch(() => {
+      runtime.resetRuntimeState();
+      setAppState('idle');
+    });
+  }
+}
 
 export async function handleConvert(
   runtime: ConversionRuntimeController,
@@ -158,7 +170,7 @@ export async function handleConvert(
     });
     await performConversion(file, settings, runtime, t, intent);
   } finally {
-    runtime.finishConversionIntent(intent);
+    finishConversionRun(runtime, intent);
   }
 }
 
@@ -364,7 +376,7 @@ async function executePipeline(
       scale: serializedOptions.scale,
       trimStart: serializedOptions.trimStart,
       trimEnd: serializedOptions.trimEnd,
-      maxMemoryMB: 2048,
+      maxMemoryMB: WORKER_MAX_MEMORY_MB,
       maxFrames: serializedOptions.maxFrames,
       maxOutputBytes: serializedOptions.maxOutputBytes,
       forceDecimation: serializedOptions.forceDecimation,
@@ -544,16 +556,6 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
   setInputBuffer(null);
 
   setAppState('cancelling');
-
-  // Capture current seq so the microtask only resets state if no new conversion
-  // has started between now and when the microtask runs.
-  const cancelledSeq = runtime.getActiveConversionSeq();
-  queueMicrotask(() => {
-    // Only reset if no new conversion has started since cancel was triggered
-    if (runtime.getActiveConversionSeq() !== cancelledSeq) return;
-    runtime.resetRuntimeState();
-    setAppState('idle');
-  });
 }
 
 export function handleCancelAnalysis(runtime: ConversionRuntimeController): void {
@@ -621,7 +623,7 @@ export function handleRetry(runtime: ConversionRuntimeController, t: TFunction):
         .catch((error) =>
           logger.error('conversion', 'Retry conversion failed', { error: getErrorMessage(error) })
         )
-        .finally(() => runtime.finishConversionIntent(intent));
+        .finally(() => finishConversionRun(runtime, intent));
     } else {
       void handleFileSelected(file, runtime, t).catch((error) =>
         logger.error('conversion', 'Retry file selection failed', { error: getErrorMessage(error) })

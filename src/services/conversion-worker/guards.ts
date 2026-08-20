@@ -11,6 +11,7 @@
  */
 
 import { isRecord } from '@piesp/browser-core/util';
+import { isBoundedCodecDescription } from '@services/codec-description';
 import type { WorkerRequest, WorkerResponse } from './types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -75,7 +76,8 @@ function isValidDecoderConfig(config: unknown): config is Record<string, unknown
     config.codedWidth > 0 &&
     typeof config.codedHeight === 'number' &&
     Number.isFinite(config.codedHeight) &&
-    config.codedHeight > 0
+    config.codedHeight > 0 &&
+    isBoundedCodecDescription(config.description)
   );
 }
 

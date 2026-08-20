@@ -24,6 +24,9 @@ export const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
 /** Maximum file size allowed for upload (500 MB) */
 export const MAX_FILE_SIZE = 500 * BYTES_PER_MB;
 
+/** Maximum codec-private decoder configuration retained or sent to a Worker. */
+export const MAX_CODEC_DESCRIPTION_BYTES = 1 * BYTES_PER_MB;
+
 export const SUPPORTED_VIDEO_MIMES = [
   'video/mp4',
   'video/quicktime',
@@ -64,8 +67,26 @@ export const WEBP_MAX_FRAMES = 9000;
 export const GIF_MAX_OUTPUT_FRAMES = 9_000;
 /** Maximum cumulative GIF bytes retained by gifenc. */
 export const GIF_MAX_OUTPUT_BYTES = 256 * BYTES_PER_MB;
-/** Maximum cumulative animated WebP container bytes. */
-export const WEBP_MAX_OUTPUT_BYTES = 512 * BYTES_PER_MB;
+
+/** Aggregate frame-pipeline and WebP-finalization memory envelope. */
+export const CONVERSION_MEMORY_BUDGET_BYTES = 512 * BYTES_PER_MB;
+
+/** A quarter of the envelope is reserved for encoded demux packets. */
+export const DEMUX_MEMORY_BUDGET_RATIO = 0.25;
+export const DEMUX_MEMORY_BUDGET_BYTES = CONVERSION_MEMORY_BUDGET_BYTES * DEMUX_MEMORY_BUDGET_RATIO;
+
+/** Three eighths of the envelope are reserved for live frame processing. */
+export const FRAME_PIPELINE_MEMORY_BUDGET_BYTES = CONVERSION_MEMORY_BUDGET_BYTES * 0.375;
+
+/**
+ * Maximum animated WebP bytes. Finalization retains the Blob source while
+ * materializing the returned ArrayBuffer, so reserve two output-sized copies.
+ */
+export const WEBP_MAX_OUTPUT_BYTES =
+  (CONVERSION_MEMORY_BUDGET_BYTES -
+    DEMUX_MEMORY_BUDGET_BYTES -
+    FRAME_PIPELINE_MEMORY_BUDGET_BYTES) /
+  2;
 
 // ============================================================================
 // FRAME RATE & TIMING CONSTANTS
@@ -192,23 +213,22 @@ export const DEVICE_MEMORY_HEAP_RATIO = 0.25;
 export const MEMORY_DEFAULT_AVAILABLE_MB = 1024;
 
 /** Default max memory allocation for worker pipeline (MB) */
-export const WORKER_MAX_MEMORY_MB = 512;
+export const WORKER_MAX_MEMORY_MB = CONVERSION_MEMORY_BUDGET_BYTES / BYTES_PER_MB;
 
 /**
  * Maximum pixels in one decoded frame under the default worker memory budget.
  *
- * A frame can simultaneously retain two power-of-two RGB pool buffers (up to 12 B/px),
- * one RGBA staging buffer (4 B/px), and one Canvas backing store (4 B/px).
- * Keep this budget shared by dimension resolution and the WebP worker protocol
- * so untrusted metadata is rejected before either path allocates native memory.
+ * A live task retains a power-of-two RGB pool buffer plus a decoded surface,
+ * RGBA staging, and Canvas storage. Twenty bytes per pixel conservatively
+ * covers that rounded peak, and the frame-concurrency gate shares this budget.
  */
-export const MAX_FRAME_PIXEL_COUNT = Math.floor((WORKER_MAX_MEMORY_MB * BYTES_PER_MB) / 20);
+export const MAX_FRAME_PIXEL_COUNT = Math.floor(FRAME_PIPELINE_MEMORY_BUDGET_BYTES / 20);
 
 /** Minimum allowed maxMemoryMB for worker pipeline */
 export const WORKER_MIN_MEMORY_MB = 128;
 
 /** Maximum allowed maxMemoryMB for worker pipeline */
-export const WORKER_MAX_MEMORY_LIMIT_MB = 2048;
+export const WORKER_MAX_MEMORY_LIMIT_MB = WORKER_MAX_MEMORY_MB;
 
 // ============================================================================
 // PROGRESS PHASE CONSTANTS

@@ -21,6 +21,8 @@ const CACHE_PREFIX = 'dropconvert';
 const CACHE_VERSION = 'v20260714';
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `${CACHE_PREFIX}-dynamic-${CACHE_VERSION}`;
+const DYNAMIC_CACHE_MAX_ENTRIES = 64;
+const NAVIGATION_CACHE_KEY = new URL('/', self.location.origin).href;
 
 /**
  * Core assets to precache on install.
@@ -47,12 +49,21 @@ function isVideoFile(url) {
   return ext.endsWith('.webm') || ext.endsWith('.mp4');
 }
 
+function getStaticAssetCacheKey(url) {
+  return new URL(url.pathname, self.location.origin).href;
+}
+
 /**
  * Store a response in the dynamic cache.
  */
 async function putInCache(request, response) {
   const cache = await caches.open(DYNAMIC_CACHE);
   await cache.put(request, response);
+  const keys = await cache.keys();
+  const overflow = keys.length - DYNAMIC_CACHE_MAX_ENTRIES;
+  if (overflow > 0) {
+    await Promise.all(keys.slice(0, overflow).map((key) => cache.delete(key)));
+  }
 }
 
 // ── Install ───────────────────────────────────────────────
@@ -101,13 +112,14 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Static assets: cache-first, network fallback, background update
-  if (isStaticAsset(url)) {
+  if (url.origin === self.location.origin && isStaticAsset(url)) {
+    const cacheKey = getStaticAssetCacheKey(url);
     event.respondWith(
-      caches.match(request).then((cached) => {
+      caches.match(cacheKey).then((cached) => {
         const fetchPromise = fetch(request)
           .then((response) => {
             if (response.ok) {
-              event.waitUntil(putInCache(request, response.clone()));
+              event.waitUntil(putInCache(cacheKey, response.clone()));
             }
             return response;
           })
@@ -118,15 +130,24 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const documentCacheKey =
+    request.destination === 'document' && url.origin === self.location.origin
+      ? NAVIGATION_CACHE_KEY
+      : null;
+
   // Everything else (HTML navigations, API calls): network-first, cache fallback
   event.respondWith(
     fetch(request)
       .then((response) => {
-        if (response.ok && request.destination === 'document') {
-          event.waitUntil(putInCache(request, response.clone()));
+        if (response.ok && documentCacheKey) {
+          event.waitUntil(putInCache(documentCacheKey, response.clone()));
         }
         return response;
       })
-      .catch(() => caches.match(request).then((cached) => cached || caches.match('/')))
+      .catch(() =>
+        documentCacheKey
+          ? caches.match(documentCacheKey)
+          : caches.match(request).then((cached) => cached || caches.match('/'))
+      )
   );
 });

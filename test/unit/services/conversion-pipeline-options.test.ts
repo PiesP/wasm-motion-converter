@@ -167,7 +167,7 @@ describe('main conversion pipeline encoder options', () => {
       expect.anything(),
       expect.objectContaining({
         maxFrames: 9000,
-        maxOutputBytes: 536870912,
+        maxOutputBytes: 100663296,
         smartFrameSkip: 'adaptive',
       }),
       expect.anything(),
@@ -191,7 +191,7 @@ describe('main conversion pipeline encoder options', () => {
       expect.anything(),
       expect.objectContaining({
         maxFrames: 9000,
-        maxOutputBytes: 536870912,
+        maxOutputBytes: 100663296,
         smartFrameSkip: 'adaptive',
       }),
       expect.anything(),

@@ -32,7 +32,6 @@ import {
 import { logger } from '@utils/logger';
 import type { ConversionProfileReport } from '../conversion-profiler';
 import { buildConversionRequest } from './build-conversion-request';
-import { hexToArrayBuffer } from './protocol';
 import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
 
 // Aligned progress ranges matching main-thread conversion-pipeline.ts
@@ -111,7 +110,7 @@ export async function runWorkerPipeline(
   // pooled frame buffers, and any known output buffer in a conservative estimate.
   const sampleMemoryMB = (additionalBytes = 0): number => {
     const estimatedBytes =
-      inputBuffer.byteLength + globalBufferPool.totalPooledMemory + additionalBytes;
+      inputBuffer.byteLength + globalBufferPool.totalRetainedMemory + additionalBytes;
     return Math.ceil(estimatedBytes / BYTES_PER_MB);
   };
   const assertMemoryBudget = (additionalBytes = 0): number => {
@@ -152,7 +151,7 @@ export async function runWorkerPipeline(
             ...(config.hardwareAcceleration
               ? { hardwareAcceleration: config.hardwareAcceleration as HardwareAcceleration }
               : {}),
-            ...(config.description ? { description: hexToArrayBuffer(config.description) } : {}),
+            ...(config.description ? { description: config.description } : {}),
           } as VideoDecoderConfig,
         }
       : undefined;

@@ -51,7 +51,7 @@ export interface SerializedDecoderConfig {
   displayAspectWidth?: number | undefined;
   displayAspectHeight?: number | undefined;
   hardwareAcceleration?: string | undefined;
-  description?: string | undefined;
+  description?: ArrayBuffer | undefined;
 }
 
 export interface SerializedConversionOptions {

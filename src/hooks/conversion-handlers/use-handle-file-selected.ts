@@ -39,6 +39,7 @@ export async function handleFileSelected(
   t: TFunction
 ): Promise<void> {
   const run = runtime.startNewRun();
+  if (!run) return;
   const isStale = () => !run.isActive();
 
   runtime.resetRuntimeState();
@@ -46,7 +47,10 @@ export async function handleFileSelected(
   resetAnalysisState();
 
   const validation = await validateVideoFile(file, t);
-  if (isStale()) return;
+  if (isStale()) {
+    runtime.finishAnalysisRun(run);
+    return;
+  }
 
   if (!validation.valid) {
     logger.warn('conversion', 'File validation failed — conversion blocked', {
@@ -60,6 +64,7 @@ export async function handleFileSelected(
       transitionToState('error');
     });
     focusRetryButton();
+    runtime.finishAnalysisRun(run);
     return;
   }
 
@@ -84,7 +89,7 @@ export async function handleFileSelected(
     // BlobSource lets MediaBunny read only the ranges needed for metadata.
     // Keep the file itself as the source of truth and materialize an
     // ArrayBuffer later only when the GIF worker path needs one.
-    const metadata = await extractVideoMetadata(file, DEFAULT_FPS);
+    const metadata = await extractVideoMetadata(file, DEFAULT_FPS, run.signal);
     if (isStale()) return;
 
     setVideoMetadata(metadata);
@@ -105,5 +110,7 @@ export async function handleFileSelected(
       transitionToState('error');
     });
     focusRetryButton();
+  } finally {
+    runtime.finishAnalysisRun(run);
   }
 }

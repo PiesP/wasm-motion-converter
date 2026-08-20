@@ -338,6 +338,7 @@ export class WebpWorkerPool {
     // a synchronous exception (detached buffer, etc.) doesn't leave
     // the task permanently stuck with no cleanup path.
     const { rgbData } = pending.task;
+    const transferredBuffer = rgbData.buffer;
     try {
       worker.postMessage(pending.task, [rgbData.buffer]);
     } catch (err) {
@@ -353,6 +354,10 @@ export class WebpWorkerPool {
       pending.reject(new Error(getErrorMessage(err)));
       this.releaseWorker(worker);
       return;
+    }
+
+    if (transferredBuffer instanceof ArrayBuffer) {
+      globalBufferPool.releaseTransferred(transferredBuffer);
     }
 
     // Only register the task AFTER successful postMessage.

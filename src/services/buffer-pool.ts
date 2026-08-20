@@ -56,6 +56,8 @@ export class BufferPool {
   private maxPerBucket: number;
   private maxTotalMemory: number;
   private totalPooledBytes: number = 0;
+  private activeAllocations = new WeakMap<ArrayBuffer, number>();
+  private totalActiveBytes = 0;
 
   /**
    * @param maxPerBucket - Max buffers to retain per size bucket (default: 4)
@@ -71,14 +73,17 @@ export class BufferPool {
    * Returns a pooled buffer if available, otherwise allocates new.
    */
   acquire(size: number): Uint8Array {
-    const bucket = BufferPool.nextPow2(size);
+    const bucket = getPooledBufferSize(size);
     const pool = this.pools.get(bucket);
     if (pool && pool.length > 0) {
       const buf = pool.pop()!;
       this.totalPooledBytes -= buf.byteLength;
+      this.trackActive(buf);
       return buf;
     }
-    return new Uint8Array(bucket);
+    const buf = new Uint8Array(bucket);
+    this.trackActive(buf);
+    return buf;
   }
 
   /**
@@ -88,6 +93,7 @@ export class BufferPool {
    * it is silently discarded (GC will reclaim it).
    */
   release(buf: Uint8Array): void {
+    this.releaseActive(buf.buffer);
     if (buf.byteLength === 0 || (buf.byteLength & (buf.byteLength - 1)) !== 0) {
       return;
     }
@@ -113,6 +119,8 @@ export class BufferPool {
   clear(): void {
     this.pools.clear();
     this.totalPooledBytes = 0;
+    this.activeAllocations = new WeakMap<ArrayBuffer, number>();
+    this.totalActiveBytes = 0;
   }
 
   /** Current total bytes held in pooled buffers (for diagnostics) */
@@ -120,17 +128,43 @@ export class BufferPool {
     return this.totalPooledBytes;
   }
 
-  /** Round up to next power of 2 for bucket sizing */
-  private static nextPow2(value: number): number {
-    let v = value;
-    v--;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    return v + 1;
+  /** Current bytes checked out by frame processing. */
+  get totalActiveMemory(): number {
+    return this.totalActiveBytes;
   }
+
+  /** Pooled plus checked-out bytes retained by this realm. */
+  get totalRetainedMemory(): number {
+    return this.totalPooledBytes + this.totalActiveBytes;
+  }
+
+  /** Release accounting after a successful zero-copy transfer to another realm. */
+  releaseTransferred(buffer: ArrayBuffer): void {
+    this.releaseActive(buffer);
+  }
+
+  private trackActive(buf: Uint8Array): void {
+    if (!(buf.buffer instanceof ArrayBuffer)) return;
+    this.activeAllocations.set(buf.buffer, buf.byteLength);
+    this.totalActiveBytes += buf.byteLength;
+  }
+
+  private releaseActive(buffer: ArrayBufferLike): void {
+    if (!(buffer instanceof ArrayBuffer)) return;
+    const bytes = this.activeAllocations.get(buffer);
+    if (bytes === undefined) return;
+    this.activeAllocations.delete(buffer);
+    this.totalActiveBytes = Math.max(0, this.totalActiveBytes - bytes);
+  }
+}
+
+/** Round a requested RGB allocation to the pool's power-of-two bucket. */
+export function getPooledBufferSize(size: number): number {
+  if (!Number.isSafeInteger(size) || size < 0) {
+    throw new RangeError('Buffer allocation size must be a non-negative safe integer');
+  }
+  if (size === 0) return 0;
+  return 2 ** Math.ceil(Math.log2(size));
 }
 
 /** Global pool instance shared across frame operations */

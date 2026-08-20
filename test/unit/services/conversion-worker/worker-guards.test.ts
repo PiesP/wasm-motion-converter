@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { isWorkerRequest, isWorkerResponse } from '@services/conversion-worker/guards';
+import { MAX_CODEC_DESCRIPTION_BYTES } from '@utils/constants';
 
 describe('isWorkerRequest', () => {
   const validStart = {
@@ -98,6 +99,26 @@ describe('isWorkerRequest', () => {
 
   it('rejects start with zero codedHeight in config', () => {
     expect(isWorkerRequest({ ...validStart, config: { ...validStart.config, codedHeight: 0 } })).toBe(false);
+  });
+
+  it('accepts a bounded binary codec description', () => {
+    const config = { ...validStart.config, description: new ArrayBuffer(32) };
+    expect(isWorkerRequest({ ...validStart, config })).toBe(true);
+  });
+
+  it('rejects text or oversized codec descriptions', () => {
+    expect(
+      isWorkerRequest({ ...validStart, config: { ...validStart.config, description: '00' } })
+    ).toBe(false);
+    expect(
+      isWorkerRequest({
+        ...validStart,
+        config: {
+          ...validStart.config,
+          description: new ArrayBuffer(MAX_CODEC_DESCRIPTION_BYTES + 1),
+        },
+      })
+    ).toBe(false);
   });
 
   it('rejects start with NaN fps in options', () => {

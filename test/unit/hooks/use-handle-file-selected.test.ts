@@ -67,8 +67,10 @@ describe('handleFileSelected conversion settings', () => {
   });
 
   it('resets file-specific trim when a valid new file is accepted', async () => {
+    const signal = new AbortController().signal;
     const runtime = {
-      startNewRun: () => ({ isActive: () => true }),
+      startNewRun: () => ({ isActive: () => true, signal }),
+      finishAnalysisRun: vi.fn(),
       resetRuntimeState: vi.fn(),
     } as unknown as ConversionRuntimeController;
 
@@ -86,7 +88,7 @@ describe('handleFileSelected conversion settings', () => {
       trimStart: 0,
       trimEnd: 0,
     });
-    expect(mocks.extractVideoMetadata).toHaveBeenCalledWith(file, 30);
+    expect(mocks.extractVideoMetadata).toHaveBeenCalledWith(file, 30, signal);
     expect(arrayBufferSpy).not.toHaveBeenCalled();
   });
 
@@ -103,8 +105,13 @@ describe('handleFileSelected conversion settings', () => {
     const runtime = {
       startNewRun: () => {
         const run = ++activeRun;
-        return { isActive: () => run === activeRun, runId: `run-${run}` };
+        return {
+          isActive: () => run === activeRun,
+          runId: `run-${run}`,
+          signal: new AbortController().signal,
+        };
       },
+      finishAnalysisRun: vi.fn(),
       resetRuntimeState: vi.fn(),
     } as unknown as ConversionRuntimeController;
 
