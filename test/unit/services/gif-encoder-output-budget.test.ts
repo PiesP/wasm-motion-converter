@@ -5,16 +5,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const state = {
+    allocations: [] as number[],
     bytesWrittenPerFrame: 16,
+    capacity: 0,
     cursor: 0,
     frameCount: 2,
   };
   let stream: {
+    readonly buffer: { byteLength: number };
     writeByte: (byte: number) => void;
     writeBytes: (bytes: Uint8Array, offset?: number, length?: number) => void;
+    writeBytesView: (bytes: Uint8Array, offset?: number, length?: number) => void;
   };
   const writeFrame = vi.fn(() => {
-    stream.writeBytes(new Uint8Array(state.bytesWrittenPerFrame));
+    stream.writeBytesView(new Uint8Array(state.bytesWrittenPerFrame));
   });
   return {
     state,
@@ -30,13 +34,33 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('gifenc', () => ({
   applyPalette: () => new Uint8Array([0]),
-  GIFEncoder: () => {
+  GIFEncoder: ({ initialCapacity = 256 } = {}) => {
+    mocks.state.capacity = initialCapacity;
+    mocks.state.allocations.push(initialCapacity);
+    const write = (length: number) => {
+      const requiredCapacity = mocks.state.cursor + length;
+      if (requiredCapacity > mocks.state.capacity) {
+        const growth =
+          mocks.state.capacity < 1024 * 1024
+            ? mocks.state.capacity * 2
+            : Math.floor(mocks.state.capacity * 1.125);
+        mocks.state.capacity = Math.max(requiredCapacity, growth, 256);
+        mocks.state.allocations.push(mocks.state.capacity);
+      }
+      mocks.state.cursor = requiredCapacity;
+    };
     mocks.stream = {
+      get buffer() {
+        return { byteLength: mocks.state.capacity };
+      },
       writeByte: () => {
-        mocks.state.cursor++;
+        write(1);
       },
       writeBytes: (bytes: Uint8Array, _offset?: number, length?: number) => {
-        mocks.state.cursor += length ?? bytes.length;
+        write(length ?? bytes.length);
+      },
+      writeBytesView: (bytes: Uint8Array, _offset?: number, length?: number) => {
+        write(length ?? bytes.byteLength);
       },
     };
     return {
@@ -84,7 +108,9 @@ const demux = {
 };
 
 beforeEach(() => {
+  mocks.state.allocations = [];
   mocks.state.bytesWrittenPerFrame = 16;
+  mocks.state.capacity = 0;
   mocks.state.cursor = 0;
   mocks.state.frameCount = 2;
   mocks.writeFrame.mockClear();
@@ -124,6 +150,25 @@ describe('encodeGif output budgets', () => {
     expect(mocks.state.cursor).toBe(0);
   });
 
+  it('rejects geometric capacity growth before allocating old and new buffers over budget', async () => {
+    mocks.state.frameCount = 1;
+    mocks.state.bytesWrittenPerFrame = 5000;
+
+    await expect(
+      encodeGif(demux, {
+        width: 1,
+        height: 1,
+        quality: 'low',
+        scale: 1,
+        maxFrames: 1,
+        maxOutputBytes: 10_000,
+      })
+    ).rejects.toThrow('GIF output byte limit exceeded');
+
+    expect(mocks.state.allocations).toEqual([4096]);
+    expect(mocks.state.cursor).toBe(0);
+  });
+
   it('allows ordinary output within both limits', async () => {
     mocks.state.frameCount = 1;
 
@@ -133,7 +178,7 @@ describe('encodeGif output budgets', () => {
       quality: 'low',
       scale: 1,
       maxFrames: 1,
-      maxOutputBytes: 32,
+      maxOutputBytes: 8192,
     });
 
     expect(output).toHaveLength(17);

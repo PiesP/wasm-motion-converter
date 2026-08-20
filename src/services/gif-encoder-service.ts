@@ -187,28 +187,65 @@ export async function encodeGif(
     initialCapacity: Math.min(outputLimits.maxOutputBytes, initialCapacity),
   });
 
-  // gifenc grows its stream automatically. Wrap both supported write methods so
-  // every growth is authorized before gifenc expands or mutates its buffer.
+  // gifenc grows its stream automatically. Wrap every supported write method so
+  // each logical write and any geometric capacity growth are authorized before
+  // gifenc allocates or mutates its buffer. During growth, gifenc retains the old
+  // buffer while allocating and copying into the new one, so both capacities must
+  // fit inside the output memory budget simultaneously.
   let streamBytes = encoder.bytesView().byteLength;
   const originalWriteByte = encoder.stream.writeByte.bind(encoder.stream);
   const originalWriteBytes = encoder.stream.writeBytes.bind(encoder.stream);
-  encoder.stream.writeByte = (byte: number): void => {
-    if (streamBytes + 1 > outputLimits.maxOutputBytes) {
+  const originalWriteBytesView = encoder.stream.writeBytesView.bind(encoder.stream);
+
+  function predictStreamCapacity(currentCapacity: number, requiredCapacity: number): number {
+    if (currentCapacity >= requiredCapacity) return currentCapacity;
+    const geometricCapacity = Math.floor(
+      currentCapacity * (currentCapacity < 1024 * 1024 ? 2 : 1.125)
+    );
+    return Math.max(requiredCapacity, geometricCapacity, currentCapacity === 0 ? 0 : 256);
+  }
+
+  function assertCanWriteBytes(byteLength: number): void {
+    const requiredCapacity = streamBytes + byteLength;
+    if (!Number.isSafeInteger(requiredCapacity) || requiredCapacity > outputLimits.maxOutputBytes) {
       throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
     }
+
+    const currentCapacity = encoder.stream.buffer.byteLength;
+    if (requiredCapacity <= currentCapacity) return;
+    const nextCapacity = predictStreamCapacity(currentCapacity, requiredCapacity);
+    if (
+      !Number.isSafeInteger(nextCapacity) ||
+      nextCapacity > outputLimits.maxOutputBytes ||
+      currentCapacity + nextCapacity > outputLimits.maxOutputBytes
+    ) {
+      throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
+    }
+  }
+
+  encoder.stream.writeByte = (byte: number): void => {
+    assertCanWriteBytes(1);
     originalWriteByte(byte);
     streamBytes++;
   };
   encoder.stream.writeBytes = (
-    bytes: Uint8Array,
+    bytes: Uint8Array | number[],
     offset = 0,
     length = bytes.length - offset
   ): void => {
     const safeLength = Math.max(0, Math.min(length, bytes.length - offset));
-    if (streamBytes + safeLength > outputLimits.maxOutputBytes) {
-      throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
-    }
+    assertCanWriteBytes(safeLength);
     originalWriteBytes(bytes, offset, safeLength);
+    streamBytes += safeLength;
+  };
+  encoder.stream.writeBytesView = (
+    bytes: Uint8Array,
+    offset = 0,
+    length = bytes.byteLength - offset
+  ): void => {
+    const safeLength = Math.max(0, Math.min(length, bytes.byteLength - offset));
+    assertCanWriteBytes(safeLength);
+    originalWriteBytesView(bytes, offset, safeLength);
     streamBytes += safeLength;
   };
 
@@ -454,6 +491,14 @@ export async function encodeGif(
     }
 
     encoder.finish();
+    const streamCapacity = encoder.stream.buffer.byteLength;
+    const finalCopyPeakBytes = streamCapacity + streamBytes;
+    if (
+      !Number.isSafeInteger(finalCopyPeakBytes) ||
+      finalCopyPeakBytes > outputLimits.maxOutputBytes
+    ) {
+      throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
+    }
     const rawBytes = encoder.bytes();
     const totalElapsed = (performance.now() - startTime) / 1000;
 

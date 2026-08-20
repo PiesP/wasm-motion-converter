@@ -9,8 +9,10 @@ declare module 'gifenc' {
     bytesView(): Uint8Array;
     readonly buffer: ArrayBuffer;
     readonly stream: {
+      readonly buffer: ArrayBuffer;
       writeByte(b: number): void;
-      writeBytes(bytes: Uint8Array, offset?: number, length?: number): void;
+      writeBytes(bytes: Uint8Array | number[], offset?: number, length?: number): void;
+      writeBytesView(bytes: Uint8Array, offset?: number, length?: number): void;
     };
     writeHeader(): void;
     writeFrame(
