@@ -17,6 +17,7 @@
  */
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+import { isBoundedCodecDescription } from '@services/codec-description';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import type { ConversionProgress } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
@@ -77,6 +78,9 @@ export async function runPipelineViaWorker(
   framerate?: number
 ): Promise<ArrayBuffer> {
   clearLastConversionProfileReport();
+  if (!isBoundedCodecDescription(config.description)) {
+    throw new Error('Invalid worker codec description');
+  }
 
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const requestId = crypto.randomUUID();

@@ -24,6 +24,9 @@ export const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
 /** Maximum file size allowed for upload (500 MB) */
 export const MAX_FILE_SIZE = 500 * BYTES_PER_MB;
 
+/** Maximum codec-private decoder configuration retained or sent to a Worker. */
+export const MAX_CODEC_DESCRIPTION_BYTES = 1 * BYTES_PER_MB;
+
 export const SUPPORTED_VIDEO_MIMES = [
   'video/mp4',
   'video/quicktime',

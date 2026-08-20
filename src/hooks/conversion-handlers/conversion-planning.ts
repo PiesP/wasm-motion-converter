@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { arrayBufferToHex } from '@services/conversion-worker/protocol';
+import { copyBoundedCodecDescription } from '@services/codec-description';
 import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
@@ -60,7 +60,7 @@ export function serializeConversionInputs(
 } {
   const outputLimits = resolveOutputLimits(settings.format);
   return {
-    serializedConfig: serializeDecoderConfig(metadata),
+    serializedConfig: serializeDecoderConfig(metadata, settings.format === 'gif'),
     serializedOptions: {
       format: settings.format,
       quality: settings.quality,
@@ -76,7 +76,10 @@ export function serializeConversionInputs(
   };
 }
 
-function serializeDecoderConfig(metadata: VideoMetadata | null): SerializedDecoderConfig | null {
+function serializeDecoderConfig(
+  metadata: VideoMetadata | null,
+  includeDescription: boolean
+): SerializedDecoderConfig | null {
   const decoderConfig = metadata?.config;
   if (!decoderConfig) return null;
 
@@ -93,8 +96,8 @@ function serializeDecoderConfig(metadata: VideoMetadata | null): SerializedDecod
     ...(decoderConfig.hardwareAcceleration
       ? { hardwareAcceleration: decoderConfig.hardwareAcceleration }
       : {}),
-    ...(decoderConfig.description
-      ? { description: arrayBufferToHex(decoderConfig.description as ArrayBuffer) }
+    ...(includeDescription && decoderConfig.description
+      ? { description: copyBoundedCodecDescription(decoderConfig.description) }
       : {}),
   };
 }

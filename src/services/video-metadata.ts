@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { withTimeout } from '@piesp/browser-core/async';
+import { copyBoundedCodecDescription } from '@services/codec-description';
 import type { MediabunnyVideoDecoderConfig, VideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS, MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -43,6 +44,11 @@ export async function extractVideoMetadata(
     if (!config) {
       throw new Error('Unable to obtain VideoDecoderConfig from video track');
     }
+    const boundedDescription = copyBoundedCodecDescription(config.description);
+    const boundedConfig: VideoDecoderConfig = {
+      ...config,
+      ...(boundedDescription !== undefined ? { description: boundedDescription } : {}),
+    };
 
     const duration = await track.computeDuration();
 
@@ -123,9 +129,9 @@ export async function extractVideoMetadata(
 
     // displayAspectWidth/Height: present when pixel aspect ratio is non-square (mediabunny v1.40.0+).
     // These represent the display dimensions directly.
-    const cfg = config as MediabunnyVideoDecoderConfig;
-    const codedWidth = config.codedWidth ?? 0;
-    const codedHeight = config.codedHeight ?? 0;
+    const cfg = boundedConfig as MediabunnyVideoDecoderConfig;
+    const codedWidth = boundedConfig.codedWidth ?? 0;
+    const codedHeight = boundedConfig.codedHeight ?? 0;
     const displayWidth = cfg.displayAspectWidth ?? cfg.displayWidth;
     const displayHeight = cfg.displayAspectHeight ?? cfg.displayHeight;
     const hasSafeDisplayDimensions =
@@ -138,7 +144,7 @@ export async function extractVideoMetadata(
     const height = hasSafeDisplayDimensions ? displayHeight! : codedHeight;
 
     // Extract codec string (e.g. "avc1.42E01E" → "avc1")
-    const codec = config.codec?.split('.')[0] ?? 'unknown';
+    const codec = boundedConfig.codec?.split('.')[0] ?? 'unknown';
 
     return {
       width,
@@ -147,7 +153,7 @@ export async function extractVideoMetadata(
       codec,
       framerate,
       bitrate: bitrate ?? 0,
-      config,
+      config: boundedConfig,
     };
   } finally {
     input.dispose();

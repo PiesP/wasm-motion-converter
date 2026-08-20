@@ -33,6 +33,7 @@ import {
 } from '@services/conversion-worker/main-thread-proxy';
 import type { SerializedDecoderConfig } from '@services/conversion-worker/types';
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
+import { MAX_CODEC_DESCRIPTION_BYTES } from '@utils/constants';
 
 const validDecoderConfig: SerializedDecoderConfig = {
   codec: 'vp09.00.10.08',
@@ -123,6 +124,19 @@ describe('runPipelineViaWorker lifecycle', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('rejects an oversized codec description before constructing a Worker', async () => {
+    const config = {
+      ...validDecoderConfig,
+      description: new ArrayBuffer(MAX_CODEC_DESCRIPTION_BYTES + 1),
+    };
+
+    await expect(
+      runPipelineViaWorker(new ArrayBuffer(8), config, {} as never, vi.fn())
+    ).rejects.toThrow('Invalid worker codec description');
+
+    expect(ThrowingWorker.constructionCount).toBe(0);
   });
 
   it('retains a validated profile returned from the Worker realm', async () => {

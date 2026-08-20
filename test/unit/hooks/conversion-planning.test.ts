@@ -114,7 +114,7 @@ describe('serializeConversionInputs', () => {
         codec: 'avc1.640028',
         codedHeight: 1080,
         codedWidth: 1920,
-        description: '01abff',
+        description,
         displayAspectHeight: 9,
         displayAspectWidth: 16,
         hardwareAcceleration: 'prefer-hardware',
@@ -132,6 +132,26 @@ describe('serializeConversionInputs', () => {
         trimStart: 0,
       },
     });
+  });
+
+  it('does not clone an unused decoder description for WebP conversion', () => {
+    const description = new Uint8Array([0x01, 0xab, 0xff]).buffer;
+    const metadata: VideoMetadata = {
+      ...defaultMetadata,
+      config: {
+        codec: 'avc1.640028',
+        codedHeight: 1080,
+        codedWidth: 1920,
+        description,
+      },
+    };
+
+    const result = serializeConversionInputs(metadata, undefined, {
+      ...defaultSettings,
+      format: 'webp',
+    });
+
+    expect(result.serializedConfig).not.toHaveProperty('description');
   });
 
   it('uses protocol defaults when metadata and decoder config are unavailable', () => {
