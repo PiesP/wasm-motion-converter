@@ -57,6 +57,17 @@ import { handleFileSelected } from './use-handle-file-selected';
 
 const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
 
+function finishConversionRun(runtime: ConversionRuntimeController, intent: ConversionIntent): void {
+  const wasCancelled = intent.signal.aborted;
+  runtime.finishConversionIntent(intent);
+  if (wasCancelled && appState() === 'cancelling') {
+    batch(() => {
+      runtime.resetRuntimeState();
+      setAppState('idle');
+    });
+  }
+}
+
 export async function handleConvert(
   runtime: ConversionRuntimeController,
   t: TFunction
@@ -159,14 +170,7 @@ export async function handleConvert(
     });
     await performConversion(file, settings, runtime, t, intent);
   } finally {
-    const wasCancelled = intent.signal.aborted;
-    runtime.finishConversionIntent(intent);
-    if (wasCancelled && appState() === 'cancelling') {
-      batch(() => {
-        runtime.resetRuntimeState();
-        setAppState('idle');
-      });
-    }
+    finishConversionRun(runtime, intent);
   }
 }
 
@@ -619,7 +623,7 @@ export function handleRetry(runtime: ConversionRuntimeController, t: TFunction):
         .catch((error) =>
           logger.error('conversion', 'Retry conversion failed', { error: getErrorMessage(error) })
         )
-        .finally(() => runtime.finishConversionIntent(intent));
+        .finally(() => finishConversionRun(runtime, intent));
     } else {
       void handleFileSelected(file, runtime, t).catch((error) =>
         logger.error('conversion', 'Retry file selection failed', { error: getErrorMessage(error) })
