@@ -31,6 +31,7 @@ import {
 } from './adaptive-frame-skip';
 import { globalBufferPool } from './buffer-pool';
 import { type DemuxResult, getEncodedChunkRetainedBytes } from './demuxer-service';
+import { calculateFrameConcurrency } from './frame-memory';
 import {
   compute8x8Grayscale,
   computeMAD,
@@ -195,7 +196,7 @@ export async function decodeFrames(
   let consecutiveSkipMs = 0; // accumulated duration of skipped frames
 
   // ── Backpressure for pendingConversions (RES-H2) ──
-  const MAX_PENDING_CONVERSIONS = 10;
+  const maxPendingConversions = calculateFrameConcurrency(width, height, 10);
 
   let decodeError: Error | null = null;
   let firstConversionError: Error | null = null;
@@ -613,7 +614,7 @@ export async function decodeFrames(
       // frame conversion promises are in flight. This prevents unbounded
       // memory growth when decoded frames accumulate faster than they
       // can be processed (e.g., copyToRGB + encoding).
-      if (pendingConversions.size >= MAX_PENDING_CONVERSIONS) {
+      if (pendingConversions.size >= maxPendingConversions) {
         await Promise.race([...pendingConversions]);
       }
 

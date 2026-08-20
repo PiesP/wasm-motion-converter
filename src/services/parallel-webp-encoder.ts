@@ -13,8 +13,8 @@
  *
  * Falls back to main-thread encoding if Worker pool is unavailable.
  *
- * Backpressure: submit() is async and limits in-flight frames to
- * MAX_IN_FLIGHT (2× pool size). When the limit is reached, the caller
+ * Backpressure: submit() is async and limits in-flight frames by both the
+ * pool size and the shared live-frame byte budget. When the limit is reached, the caller
  * awaits until a slot opens. This prevents unbounded growth of both
  * the pending promise array and the worker queue when the decoder
  * produces frames faster than workers can encode them.
@@ -25,6 +25,7 @@ import { getCanvasWebpQuality } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
 import type { BaseEncoderOptions } from './encoder-common';
+import { calculateFrameConcurrency } from './frame-memory';
 import type { OutputLimitOverrides } from './output-limits';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
 import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from './worker-pool';
@@ -81,7 +82,7 @@ export function createStreamingWebpEncoder(
   // Cap in-flight frames at 2× pool size so that (a) each worker has one
   // frame encoding + one queued frame ready with no gap, and (b) backup
   // never grows unbounded even if encoding is slower than decoding.
-  const MAX_IN_FLIGHT = pool.stats.poolSize * 2;
+  const maxInFlight = calculateFrameConcurrency(width, height, pool.stats.poolSize * 2);
 
   function flushResultsToMuxer(finalFlush = false): void {
     while (resultBuffer.has(nextExpectedId)) {
@@ -106,7 +107,7 @@ export function createStreamingWebpEncoder(
 
   // Helper: wait for at least one in-flight promise to complete (backpressure).
   async function waitForSlot(): Promise<void> {
-    while (inFlight.size >= MAX_IN_FLIGHT) {
+    while (inFlight.size >= maxInFlight) {
       await Promise.race([...inFlight]);
       if (firstEncodeError) throw firstEncodeError;
     }

@@ -110,7 +110,7 @@ export async function runWorkerPipeline(
   // pooled frame buffers, and any known output buffer in a conservative estimate.
   const sampleMemoryMB = (additionalBytes = 0): number => {
     const estimatedBytes =
-      inputBuffer.byteLength + globalBufferPool.totalPooledMemory + additionalBytes;
+      inputBuffer.byteLength + globalBufferPool.totalRetainedMemory + additionalBytes;
     return Math.ceil(estimatedBytes / BYTES_PER_MB);
   };
   const assertMemoryBudget = (additionalBytes = 0): number => {
