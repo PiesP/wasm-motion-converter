@@ -2,8 +2,9 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { decodeFrames, type DecodeResult } from '@services/decoder-service';
 import { globalBufferPool } from '@services/buffer-pool';
+import { decodeFrames, type DecodeResult } from '@services/decoder-service';
+import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 
 const { logger } = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -54,22 +55,22 @@ describe('decoder-service', () => {
       static frameDuration: number | null = 16_667;
       static instances: FakeVideoFrame[] = [];
 
-      readonly codedWidth = 8;
-      readonly codedHeight = 8;
-      readonly displayWidth = 8;
-      readonly displayHeight = 8;
       readonly close = vi.fn();
 
       constructor(
         private readonly intensity: number,
         readonly timestamp = intensity * 1_000,
-        readonly duration: number | null = FakeVideoFrame.frameDuration
+        readonly duration: number | null = FakeVideoFrame.frameDuration,
+        readonly codedWidth = 8,
+        readonly codedHeight = 8,
+        readonly displayWidth = codedWidth,
+        readonly displayHeight = codedHeight
       ) {
         FakeVideoFrame.instances.push(this);
       }
 
       allocationSize(): number {
-        return 8 * 8 * 4;
+        return this.codedWidth * this.codedHeight * 4;
       }
 
       async copyTo(destination: AllowSharedBufferSource): Promise<PlaneLayout[]> {
@@ -82,7 +83,7 @@ describe('decoder-service', () => {
         const bytes = new Uint8Array(
           ArrayBuffer.isView(destination) ? destination.buffer : destination
         );
-        for (let index = 0; index < 8 * 8; index++) {
+        for (let index = 0; index < this.codedWidth * this.codedHeight; index++) {
           const offset = index * 4;
           bytes[offset] = this.intensity;
           bytes[offset + 1] = this.intensity;
@@ -101,6 +102,7 @@ describe('decoder-service', () => {
       }
 
       readonly close = vi.fn();
+      readonly reset = vi.fn();
       decodeQueueSize = 0;
       private readonly output: (frame: VideoFrame) => void;
 
@@ -113,10 +115,21 @@ describe('decoder-service', () => {
       }
 
       decode(chunk: EncodedVideoChunk): void {
-        const intensity =
-          (chunk as EncodedVideoChunk & { intensity?: number }).intensity ??
-          Number(chunk.timestamp / 1_000);
-        this.output(new FakeVideoFrame(intensity, chunk.timestamp) as unknown as VideoFrame);
+        const fixture = chunk as EncodedVideoChunk & {
+          codedHeight?: number;
+          codedWidth?: number;
+          intensity?: number;
+        };
+        const intensity = fixture.intensity ?? Number(chunk.timestamp / 1_000);
+        this.output(
+          new FakeVideoFrame(
+            intensity,
+            chunk.timestamp,
+            FakeVideoFrame.frameDuration,
+            fixture.codedWidth,
+            fixture.codedHeight
+          ) as unknown as VideoFrame
+        );
       }
 
       async flush(): Promise<void> {}
@@ -492,6 +505,44 @@ describe('decoder-service', () => {
       for (const frame of FakeVideoFrame.instances) {
         expect(frame.close).toHaveBeenCalledOnce();
       }
+    });
+
+    it('rejects an oversized decoded frame after accepting a legitimate frame', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const delivered: number[] = [];
+      const oversizedWidth = MAX_FRAME_PIXEL_COUNT + 1;
+      const chunks = [
+        { codedHeight: 8, codedWidth: 8, intensity: 0, timestamp: 0 },
+        { codedHeight: 1, codedWidth: oversizedWidth, intensity: 1, timestamp: 1_000 },
+        { codedHeight: 8, codedWidth: 8, intensity: 2, timestamp: 2_000 },
+      ] as unknown as EncodedVideoChunk[];
+
+      await expect(
+        decodeFrames(
+          {
+            chunks,
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.05,
+            framerate: 60,
+            sourceTotalMs: 50,
+            totalFrames: chunks.length,
+          },
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onFrameAvailable: (rgbData, _durationMs, frameNumber) => {
+              delivered.push(frameNumber);
+              globalBufferPool.release(rgbData);
+            },
+          }
+        )
+      ).rejects.toThrow('Decoded frame dimensions exceed the per-frame memory limit');
+
+      expect(delivered).toEqual([0]);
+      expect(FakeVideoFrame.instances).toHaveLength(2);
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+      expect(FakeVideoFrame.instances[1]?.close).toHaveBeenCalledOnce();
     });
 
     it('rejects cumulative in-flight encoded chunks above the demux budget', async () => {

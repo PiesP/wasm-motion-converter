@@ -18,7 +18,12 @@
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { LruMap } from '@piesp/browser-core/util';
 import type { SmartFrameSkipMode } from '@t/conversion-types';
-import { DEFAULT_FPS, FPS_CLAMP_MAX, MIN_OUTPUT_FPS } from '@utils/constants';
+import {
+  DEFAULT_FPS,
+  FPS_CLAMP_MAX,
+  MAX_FRAME_PIXEL_COUNT,
+  MIN_OUTPUT_FPS,
+} from '@utils/constants';
 import { logger } from '@utils/logger';
 import {
   ADAPTIVE_NOISE_SAMPLE_COUNT,
@@ -293,6 +298,21 @@ export async function decodeFrames(
     if (reservation) releaseEncodedChunk(reservation);
   };
 
+  const hasSafeFrameDimensions = (frame: VideoFrame): boolean => {
+    const dimensions = [
+      [frame.codedWidth, frame.codedHeight],
+      [frame.displayWidth, frame.displayHeight],
+    ] as const;
+    return dimensions.every(
+      ([frameWidth, frameHeight]) =>
+        Number.isSafeInteger(frameWidth) &&
+        Number.isSafeInteger(frameHeight) &&
+        frameWidth > 0 &&
+        frameHeight > 0 &&
+        frameWidth <= MAX_FRAME_PIXEL_COUNT / frameHeight
+    );
+  };
+
   const reserveEncodedChunk = (chunk: EncodedVideoChunk): EncodedChunkReservation => {
     const bytes = getEncodedChunkRetainedBytes(chunk);
     if (
@@ -323,6 +343,11 @@ export async function decodeFrames(
     output(frame: VideoFrame) {
       try {
         releaseEncodedChunkForOutput(frame.timestamp);
+        if (!hasSafeFrameDimensions(frame)) {
+          decodeError ??= new Error('Decoded frame dimensions exceed the per-frame memory limit');
+          frame.close();
+          return;
+        }
         if (hasProcessingFailure()) {
           frame.close();
           return;
@@ -372,12 +397,6 @@ export async function decodeFrames(
         const conversion = (async () => {
           let enteredOrderedProcessing = false;
           try {
-            // Validate frame before attempting copy — frame may be invalid
-            // if the decoder encountered an error or was flushed concurrently.
-            if (!frame.codedWidth || !frame.codedHeight) {
-              return;
-            }
-
             // ── GPU-only path: pass VideoFrame directly to encoder ──
             // Skips copyFrameToRGB (GPU→CPU read) and all grayscale-based processing.
             // Used by VP8 VideoEncoder path for zero-copy GPU encoding.
@@ -641,7 +660,7 @@ export async function decodeFrames(
     // A processing failure makes the output unusable, so discard queued codec
     // work instead of producing more frames. Existing conversion promises are
     // still drained below to guarantee VideoFrame cleanup.
-    if (hasProcessingFailure()) {
+    if (decodeError || hasProcessingFailure()) {
       try {
         decoder.reset();
       } catch {
