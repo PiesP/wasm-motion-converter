@@ -91,9 +91,9 @@
     "knip": "^6.32.2",
     "rollup-plugin-visualizer": "7.1.1",
     "typescript": "^7.0.2",
-    "vite": "8.2.1",
+    "vite": "8.2.2",
     "vite-plugin-solid": "2.11.14",
     "vitest": "^4.1.11",
-    "wrangler": "^4.124.0"
+    "wrangler": "^4.125.0"
   }
 }
