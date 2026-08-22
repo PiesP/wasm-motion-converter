@@ -1,19 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { runConversionPipeline } = vi.hoisted(() => ({
+  runConversionPipeline: vi.fn(),
+}));
+vi.mock('@services/conversion-pipeline', () => ({ runConversionPipeline }));
+
 class ThrowingWorker {
   static constructionCount = 0;
+  static constructionError: Error | null = null;
   static instance: ThrowingWorker | null = null;
   static response: unknown = null;
+  static workerError: ErrorEvent | null = null;
   readonly terminate = vi.fn();
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
 
   constructor() {
     ThrowingWorker.constructionCount++;
+    if (ThrowingWorker.constructionError) throw ThrowingWorker.constructionError;
     ThrowingWorker.instance = this;
   }
 
-  postMessage(): void {
+  postMessage(message: unknown, transfer?: Transferable[]): void {
+    if (ThrowingWorker.workerError) {
+      structuredClone(message, { transfer });
+      queueMicrotask(() => this.onerror?.(ThrowingWorker.workerError!));
+      return;
+    }
     if (ThrowingWorker.response) {
       queueMicrotask(() => this.onmessage?.(new MessageEvent('message', {
         data: ThrowingWorker.response,
@@ -31,7 +44,10 @@ import {
   runPipelineViaWorker,
   runPipelineWithFallback,
 } from '@services/conversion-worker/main-thread-proxy';
-import type { SerializedDecoderConfig } from '@services/conversion-worker/types';
+import type {
+  SerializedConversionOptions,
+  SerializedDecoderConfig,
+} from '@services/conversion-worker/types';
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import { MAX_CODEC_DESCRIPTION_BYTES } from '@utils/constants';
 
@@ -39,6 +55,17 @@ const validDecoderConfig: SerializedDecoderConfig = {
   codec: 'vp09.00.10.08',
   codedWidth: 16,
   codedHeight: 16,
+};
+
+const validOptions: SerializedConversionOptions = {
+  format: 'gif',
+  quality: 'medium',
+  fps: 30,
+  scale: 1,
+  trimStart: 0,
+  trimEnd: 0,
+  maxFrames: 100,
+  maxOutputBytes: 1024,
 };
 
 const invalidPreWorkerConfigs: Array<{
@@ -108,8 +135,11 @@ const invalidPreWorkerConfigs: Array<{
 describe('runPipelineViaWorker lifecycle', () => {
   beforeEach(() => {
     ThrowingWorker.constructionCount = 0;
+    ThrowingWorker.constructionError = null;
     ThrowingWorker.instance = null;
     ThrowingWorker.response = null;
+    ThrowingWorker.workerError = null;
+    runConversionPipeline.mockReset();
   });
 
   it('cleans up the worker when starting the pipeline throws synchronously', async () => {
@@ -205,11 +235,88 @@ describe('runPipelineViaWorker lifecycle', () => {
           displayAspectWidth: 32,
           displayAspectHeight: 16,
         },
-        {} as never,
+        validOptions,
         vi.fn()
       )
     ).resolves.toBe(outputBuffer);
 
     expect(ThrowingWorker.constructionCount).toBe(1);
+  });
+
+  it('falls back from an unavailable Worker without copying a transferred Blob', async () => {
+    const outputBuffer = new ArrayBuffer(4);
+    const inputBlob = new Blob([new Uint8Array([1, 2, 3])]);
+    const arrayBufferSpy = vi.spyOn(inputBlob, 'arrayBuffer');
+    ThrowingWorker.workerError = new ErrorEvent('error', { message: 'module failed to load' });
+    runConversionPipeline.mockResolvedValue(outputBuffer);
+
+    await expect(
+      runPipelineWithFallback(
+        new ArrayBuffer(8),
+        validDecoderConfig,
+        validOptions,
+        vi.fn(),
+        undefined,
+        inputBlob
+      )
+    ).resolves.toBe(outputBuffer);
+
+    expect(arrayBufferSpy).not.toHaveBeenCalled();
+    expect(runConversionPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ inputBlob }),
+      expect.any(Function),
+      undefined
+    );
+    expect(runConversionPipeline.mock.calls[0]?.[0]).not.toHaveProperty('inputBuffer');
+  });
+
+  it('does not retry a media pipeline failure on the main thread', async () => {
+    const inputBlob = new Blob([new Uint8Array([1, 2, 3])]);
+    const arrayBufferSpy = vi.spyOn(inputBlob, 'arrayBuffer');
+    ThrowingWorker.response = {
+      type: 'error',
+      requestId: 'request-1',
+      message: 'Unable to parse media container',
+      code: 'DECODER_ERROR',
+    };
+
+    await expect(
+      runPipelineWithFallback(
+        new ArrayBuffer(8),
+        validDecoderConfig,
+        validOptions,
+        vi.fn(),
+        undefined,
+        inputBlob
+      )
+    ).rejects.toThrow('Worker error: Unable to parse media container');
+
+    expect(arrayBufferSpy).not.toHaveBeenCalled();
+    expect(runConversionPipeline).not.toHaveBeenCalled();
+  });
+
+  it('preserves main-thread fallback when Worker construction is unavailable', async () => {
+    const outputBuffer = new ArrayBuffer(4);
+    const inputBuffer = new ArrayBuffer(8);
+    ThrowingWorker.constructionError = new Error('Worker constructor unavailable');
+    runConversionPipeline.mockResolvedValue(outputBuffer);
+
+    await expect(
+      runPipelineWithFallback(
+        inputBuffer,
+        validDecoderConfig,
+        validOptions,
+        vi.fn(),
+        undefined,
+        new Blob()
+      )
+    ).resolves.toBe(outputBuffer);
+
+    expect(runConversionPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ inputBuffer }),
+      expect.any(Function),
+      undefined
+    );
+    expect(runConversionPipeline.mock.calls[0]?.[0]).not.toHaveProperty('inputBlob');
   });
 });

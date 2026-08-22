@@ -16,7 +16,7 @@
  * - Timeout protection: terminates worker and rejects if conversion hangs
  */
 
-import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+import { getErrorMessage } from '@piesp/browser-core/error';
 import { isBoundedCodecDescription } from '@services/codec-description';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import type { ConversionProgress } from '@t/conversion-types';
@@ -53,6 +53,25 @@ export class WorkerMemoryLimitError extends Error {
   }
 }
 
+/** A Worker could not be constructed, loaded, or reached during bootstrap. */
+export class WorkerUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(`Worker unavailable: ${message}`, options);
+    this.name = 'WorkerUnavailableError';
+  }
+}
+
+/** The Worker started successfully but rejected the conversion itself. */
+export class WorkerPipelineError extends Error {
+  constructor(
+    readonly code: string,
+    message: string
+  ) {
+    super(`Worker error: ${message}`);
+    this.name = 'WorkerPipelineError';
+  }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────
 
 export type MainThreadPipelineCallback = (progress: ConversionProgress) => void;
@@ -85,8 +104,16 @@ export async function runPipelineViaWorker(
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const requestId = crypto.randomUUID();
 
-    // Create the worker
-    const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+    // Create the worker. Construction failures are capability/bootstrap
+    // failures and are the only class eligible for main-thread fallback.
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+    } catch (error) {
+      reject(new WorkerUnavailableError(getErrorMessage(error), { cause: error }));
+      return;
+    }
+    let workerInitialized = false;
 
     // Timeout guard: terminate worker and reject if it hangs
     let timedOut = false;
@@ -190,12 +217,13 @@ export async function runPipelineViaWorker(
           } else if (response.code === 'OUT_OF_MEMORY') {
             reject(new WorkerMemoryLimitError(response.message));
           } else {
-            reject(new Error(`Worker error: ${response.message}`));
+            reject(new WorkerPipelineError(response.code, response.message));
           }
           break;
         }
 
         case 'log': {
+          if (response.requestId === '') workerInitialized = true;
           // Forward worker logs to console (can be customized)
           logger.info('general', 'worker.log-relay', {
             level: response.level,
@@ -218,12 +246,16 @@ export async function runPipelineViaWorker(
       if (timedOut) return;
       cleanup();
       worker.terminate();
-      reject(new Error(`Worker error: ${error.message}`));
+      if (!workerInitialized) {
+        reject(new WorkerUnavailableError(error.message));
+      } else {
+        reject(new WorkerPipelineError('WORKER_RUNTIME_ERROR', error.message));
+      }
     };
 
     // Transfer the input buffer to the worker (zero-copy).
-    // The main thread does NOT retain a copy — the fallback path in
-    // runPipelineWithFallback uses inputBlob to re-read if needed.
+    // The main thread does NOT retain a copy. If startup fails after transfer,
+    // the fallback path consumes inputBlob lazily instead of re-reading it.
     const startMsg: WorkerRequest = {
       type: 'start',
       requestId,
@@ -239,7 +271,7 @@ export async function runPipelineViaWorker(
       settled = true;
       cleanup();
       worker.terminate();
-      reject(new Error(getErrorMessage(error)));
+      reject(new WorkerUnavailableError(getErrorMessage(error), { cause: error }));
     }
   });
 }
@@ -281,28 +313,22 @@ export async function runPipelineWithFallback(
       framerate
     );
   } catch (workerError) {
-    // If the error is a cancellation, don't fall back — propagate it
-    if (isCancellationError(workerError) || workerError instanceof WorkerMemoryLimitError) {
+    // Conversion, timeout, cancellation, and resource failures are input/runtime
+    // failures, not capability failures. Retrying them on the main thread would
+    // process hostile media twice and bypass the Worker's isolation/timeout.
+    if (!(workerError instanceof WorkerUnavailableError)) {
       throw workerError;
     }
 
-    // Fall back to main thread.
-    // Since runPipelineViaWorker now transfers the original inputBuffer
-    // (not a copy), the buffer will be detached.  Re-read from inputBlob
-    // if available; otherwise throw — the fallback cannot proceed without
-    // pixel data.
-    let fallbackBuffer: ArrayBuffer;
-    if (inputBuffer.byteLength === 0) {
-      if (inputBlob) {
-        logger.info('general', 'worker.fallback-re-reading-from-blob');
-        fallbackBuffer = await inputBlob.arrayBuffer();
-      } else {
-        throw new Error(
-          'Cannot fall back to main thread: inputBuffer is detached and no inputBlob available.'
-        );
-      }
-    } else {
-      fallbackBuffer = inputBuffer;
+    // Fall back to the main thread without allocating another full-file copy.
+    // Reuse an attached buffer when Worker startup failed before transfer;
+    // otherwise let MediaBunny consume the original Blob lazily.
+    const fallbackBuffer = inputBuffer.byteLength > 0 ? inputBuffer : undefined;
+    const fallbackBlob = fallbackBuffer === undefined ? inputBlob : undefined;
+    if (fallbackBuffer === undefined && fallbackBlob === undefined) {
+      throw new Error(
+        'Cannot fall back to main thread: inputBuffer is detached and no inputBlob available.'
+      );
     }
     logger.warn('general', 'worker.fallback', { error: getErrorMessage(workerError) });
 
@@ -313,7 +339,7 @@ export async function runPipelineWithFallback(
       fallbackBuffer,
       options,
       options.maxMemoryMB ?? WORKER_MAX_MEMORY_MB,
-      inputBlob
+      fallbackBlob
     );
 
     return runConversionPipeline(request, onProgress, signal);
