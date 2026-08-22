@@ -4,6 +4,16 @@ import { describe, expect, it } from 'vitest';
 
 const root = resolve(import.meta.dirname, '../../..');
 
+function jobBlock(workflow: string, jobId: string): string {
+  const marker = `  ${jobId}:\n`;
+  const start = workflow.indexOf(marker);
+  if (start === -1) throw new Error(`Workflow job not found: ${jobId}`);
+
+  const afterMarker = start + marker.length;
+  const nextJob = workflow.slice(afterMarker).search(/\n  [a-z][a-z0-9-]*:\n/);
+  return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
+}
+
 describe('Release infrastructure', () => {
   it('keeps the Cloudflare Pages build runtime aligned with Volta', () => {
     const packageJson = JSON.parse(
@@ -62,6 +72,64 @@ describe('Release infrastructure', () => {
       'const releaseAssets = [archivePath, metadataPath];'
     );
     expect(prepareScript).not.toContain('cpSync(distDir, releaseDir');
+  });
+
+  it('binds every release gate and publication step to a protected-master tag SHA', () => {
+    const workflow = readFileSync(
+      resolve(root, '.github/workflows/release.yaml'),
+      'utf8'
+    );
+    const prepareScript = readFileSync(
+      resolve(root, 'scripts/release/prepare.ts'),
+      'utf8'
+    );
+    const provenance = jobBlock(workflow, 'provenance');
+
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).not.toMatch(/\n  push:\n\s+tags:/);
+    expect(provenance).toContain("if: ${{ github.ref == 'refs/heads/master' }}");
+    expect(provenance).toContain('ref: ${{ github.sha }}');
+    expect(provenance).toContain('fetch-depth: 0');
+    expect(provenance).toContain('fetch-tags: true');
+    expect(provenance).toContain('persist-credentials: false');
+    expect(provenance).toContain('RELEASE_TAG: ${{ inputs.tag }}');
+    expect(provenance).toContain('git fetch --force origin');
+    expect(provenance).toContain('git rev-parse --verify "${RELEASE_TAG}^{commit}"');
+    expect(provenance).toContain('git merge-base --is-ancestor "$release_sha" "$GITHUB_SHA"');
+
+    const localExecutionMarker = {
+      quality: 'uses: ./.github/actions/setup-release',
+      unit: 'uses: ./.github/actions/setup-release',
+      e2e: 'uses: ./.github/actions/setup-release',
+      duplication: 'run: bash scripts/ci/install-nose.sh',
+      mutation: 'uses: ./.github/actions/setup-release',
+      build: 'uses: ./.github/actions/setup-release',
+    } as const;
+    for (const [jobId, marker] of Object.entries(localExecutionMarker)) {
+      const job = jobBlock(workflow, jobId);
+      expect(job, jobId).toMatch(/needs: (?:provenance|\[provenance, quality\])/);
+      expect(job, jobId).toContain('ref: ${{ github.sha }}');
+      expect(job, jobId).toContain('fetch-depth: 0');
+      expect(job, jobId).toContain('fetch-tags: true');
+      expect(job, jobId).toContain('persist-credentials: false');
+      expect(job, jobId).toContain('RELEASE_SHA: ${{ needs.provenance.outputs.release-sha }}');
+      expect(job, jobId).toContain('git -c advice.detachedHead=false checkout --detach "$RELEASE_SHA"');
+      expect(job.indexOf('Checkout verified release commit'), jobId).toBeLessThan(
+        job.indexOf(marker)
+      );
+    }
+
+    const build = jobBlock(workflow, 'build');
+    const publish = jobBlock(workflow, 'publish');
+    expect(build).toContain('RELEASE_VERSION: ${{ needs.provenance.outputs.version }}');
+    expect(build).toContain('RELEASE_SHA: ${{ needs.provenance.outputs.release-sha }}');
+    expect(build).toContain('name: release-bundle-${{ needs.provenance.outputs.release-sha }}');
+    expect(publish).toContain('needs: [provenance, quality, unit, e2e, duplication, mutation, build]');
+    expect(publish).toContain('name: release-bundle-${{ needs.provenance.outputs.release-sha }}');
+    expect(publish).toContain('tag_name: ${{ inputs.tag }}');
+    expect(prepareScript).toContain(
+      "const commit = process.env.RELEASE_SHA ?? process.env.GITHUB_SHA ?? 'unknown';"
+    );
   });
 
   it('runs release E2E against its development server without a redundant build', () => {

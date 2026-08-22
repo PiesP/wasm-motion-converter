@@ -100,9 +100,18 @@ describe('central project setup action', () => {
     }
   });
 
-  it('runs releases only from version tag pushes', () => {
+  it('runs releases only by protected-master manual dispatch', () => {
     expect(topLevelBlock(releaseWorkflow, 'on')).toBe(
-      'on:\n  push:\n    tags:\n      - "v*"'
+      'on:\n' +
+        '  workflow_dispatch:\n' +
+        '    inputs:\n' +
+        '      tag:\n' +
+        '        description: Existing release tag (vX.Y.Z) contained in protected master\n' +
+        '        required: true\n' +
+        '        type: string'
+    );
+    expect(jobBlock(releaseWorkflow, 'provenance')).toContain(
+      "if: ${{ github.ref == 'refs/heads/master' }}"
     );
   });
 });

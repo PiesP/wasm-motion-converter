@@ -67,7 +67,7 @@ execFileSync(
 );
 
 const buildDate = new Date().toISOString();
-const commit = process.env.GITHUB_SHA ?? 'unknown';
+const commit = process.env.RELEASE_SHA ?? process.env.GITHUB_SHA ?? 'unknown';
 const nodeVersion = process.env.NODE_VERSION ?? process.versions.node;
 const runnerOs = process.env.RUNNER_OS ?? process.platform;
 const runnerArch = process.env.RUNNER_ARCH ?? process.arch;
