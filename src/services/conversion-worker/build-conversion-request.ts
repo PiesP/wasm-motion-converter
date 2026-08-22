@@ -14,7 +14,7 @@ import type { SerializedConversionOptions } from './types';
  * override and can be unsafe for high-resolution conversions.
  */
 export function buildConversionRequest(
-  inputBuffer: ArrayBuffer,
+  inputBuffer: ArrayBuffer | undefined,
   options: SerializedConversionOptions,
   maxMemoryMB = WORKER_MAX_MEMORY_MB,
   inputBlob?: Blob,
@@ -25,8 +25,8 @@ export function buildConversionRequest(
     maxOutputBytes: options.maxOutputBytes,
   });
   return {
-    inputBuffer,
-    inputBlob,
+    ...(inputBuffer !== undefined ? { inputBuffer } : {}),
+    ...(inputBlob !== undefined ? { inputBlob } : {}),
     fileName,
     format: options.format,
     quality: options.quality,
