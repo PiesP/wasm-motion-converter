@@ -71,13 +71,13 @@
   "dependencies": {
     "@piesp/browser-core": "file:packages/core",
     "gifenc": "^1.0.3",
-    "mediabunny": "^1.55.1",
+    "mediabunny": "^1.55.2",
     "solid-js": "1.9.15",
     "wasm-webp": "^0.1.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
-    "@biomejs/biome": "^2.5.9",
+    "@biomejs/biome": "^2.5.10",
     "@playwright/test": "^1.62.1",
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",
