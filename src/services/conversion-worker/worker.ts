@@ -35,9 +35,18 @@ self.onmessage = async (event: MessageEvent) => {
   }
 
   // Runtime guard: validate message shape before casting to WorkerRequest.
-  // Malformed messages (null, arrays, primitives, missing fields, NaN values)
-  // are silently ignored.
+  // A recognizable start request receives an immediate protocol error so the
+  // caller does not wait for the proxy timeout when numeric fields are invalid.
   if (!isWorkerRequest(event.data)) {
+    const requestId = getInvalidStartRequestId(event.data);
+    if (requestId !== null) {
+      self.postMessage({
+        type: 'error',
+        requestId,
+        message: 'Invalid conversion worker request',
+        code: 'INVALID_REQUEST',
+      } satisfies WorkerResponse);
+    }
     return;
   }
 
@@ -119,3 +128,13 @@ self.onmessage = async (event: MessageEvent) => {
 
 // Ready signal for the main thread
 self.postMessage({ type: 'log', requestId: '', level: 'info', message: 'Worker initialized' });
+
+function getInvalidStartRequestId(value: unknown): string | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  return candidate.type === 'start' &&
+    typeof candidate.requestId === 'string' &&
+    candidate.requestId.length > 0
+    ? candidate.requestId
+    : null;
+}

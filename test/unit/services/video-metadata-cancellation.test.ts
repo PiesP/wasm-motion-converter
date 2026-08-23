@@ -84,4 +84,29 @@ describe('extractVideoMetadata cancellation', () => {
     });
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
+
+  it('falls back instead of forwarding non-finite packet metadata', async () => {
+    const track = {
+      computeDuration: vi.fn().mockResolvedValue(Number.POSITIVE_INFINITY),
+      computePacketStats: vi.fn().mockResolvedValue({
+        averageBitrate: Number.POSITIVE_INFINITY,
+        averagePacketRate: Number.POSITIVE_INFINITY,
+      }),
+      getAverageBitrate: vi.fn().mockResolvedValue(Number.POSITIVE_INFINITY),
+      getBitrate: vi.fn().mockResolvedValue(Number.NaN),
+      getDecoderConfig: vi.fn().mockResolvedValue({
+        codec: 'vp09.00.10.08',
+        codedHeight: 16,
+        codedWidth: 16,
+      }),
+    };
+    mocks.getVideoTracks.mockResolvedValue([track]);
+
+    await expect(extractVideoMetadata(new Blob(['video']), 24)).resolves.toMatchObject({
+      bitrate: 0,
+      duration: 0,
+      framerate: 24,
+    });
+    expect(mocks.dispose).toHaveBeenCalledOnce();
+  });
 });

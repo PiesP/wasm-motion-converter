@@ -169,6 +169,29 @@ describe('encodeGif output budgets', () => {
     expect(mocks.state.cursor).toBe(0);
   });
 
+  it('reports the GIF growth peak to the aggregate worker memory guard', async () => {
+    mocks.state.frameCount = 1;
+    mocks.state.bytesWrittenPerFrame = 5000;
+    const assertAdditionalMemoryBytes = vi.fn((additionalBytes: number) => {
+      if (additionalBytes > 10_000) throw new Error('aggregate memory limit exceeded');
+    });
+
+    await expect(
+      encodeGif(demux, {
+        width: 1,
+        height: 1,
+        quality: 'low',
+        scale: 1,
+        maxFrames: 1,
+        maxOutputBytes: 20_000,
+        assertAdditionalMemoryBytes,
+      })
+    ).rejects.toThrow('aggregate memory limit exceeded');
+
+    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(12_288);
+    expect(mocks.state.cursor).toBe(0);
+  });
+
   it('allows ordinary output within both limits', async () => {
     mocks.state.frameCount = 1;
 

@@ -83,7 +83,7 @@ export async function demuxVideo(
     framerate = preComputedMetadata.framerate;
   } else {
     // Extract metadata (also validates the video track exists and config is obtainable).
-    const metadata = await extractVideoMetadata(inputSource);
+    const metadata = await extractVideoMetadata(inputSource, DEFAULT_FPS, signal);
     if (!metadata.config) {
       throw new Error('Unable to obtain VideoDecoderConfig from video track');
     }
@@ -103,14 +103,19 @@ export async function demuxVideo(
   // (full in-memory BufferSource) to reduce memory usage for large files.
   const input = createMediaBunnyInput(inputSource);
   let disposed = false;
+  let abortHandler: (() => void) | undefined;
   const dispose = (): void => {
     if (disposed) return;
     disposed = true;
+    if (abortHandler) signal?.removeEventListener('abort', abortHandler);
     input.dispose();
   };
+  abortHandler = dispose;
+  signal?.addEventListener('abort', abortHandler, { once: true });
 
   try {
-    const videoTracks = await input.getVideoTracks();
+    signal?.throwIfAborted();
+    const videoTracks = await awaitWithAbort(input.getVideoTracks(), signal);
     const videoTrack = videoTracks[0];
     if (!videoTrack) {
       logger.warn('demuxer', 'no-video-track', {
@@ -126,9 +131,12 @@ export async function demuxVideo(
     // decoder-service filters those frames from encoder output.
     let startPacket: EncodedPacket | null;
     if (request.trimStart > 0) {
-      startPacket = await sink.getKeyPacket(request.trimStart, { verifyKeyPackets: true });
+      startPacket = await awaitWithAbort(
+        sink.getKeyPacket(request.trimStart, { verifyKeyPackets: true }),
+        signal
+      );
     } else {
-      startPacket = await sink.getFirstPacket();
+      startPacket = await awaitWithAbort(sink.getFirstPacket(), signal);
     }
     if (!startPacket) {
       logger.warn('demuxer', 'no-decodable-packets', {
@@ -165,13 +173,21 @@ export async function demuxVideo(
       let sourceDurationUs = 0;
       let peakChunkBytes = 0;
       let completed = false;
+      let packetIteratorDone = false;
+      const packetIterator = sink.packets(startPacket)[Symbol.asyncIterator]();
 
       try {
         // Iterate all packets from startPacket — no end boundary since
         // MediaBunny's packets() excludes the boundary packet. The consumer's
         // next() calls provide backpressure, so only one encoded chunk is held
         // between this generator and VideoDecoder.
-        for await (const packet of sink.packets(startPacket)) {
+        while (true) {
+          const nextPacket = await awaitWithAbort(packetIterator.next(), signal);
+          if (nextPacket.done) {
+            packetIteratorDone = true;
+            break;
+          }
+          const packet = nextPacket.value;
           if (trimEnd !== undefined && packet.timestamp > trimEnd) break;
           signal?.throwIfAborted();
 
@@ -193,6 +209,9 @@ export async function demuxVideo(
         }
         completed = true;
       } finally {
+        if (!packetIteratorDone && packetIterator.return) {
+          void Promise.resolve(packetIterator.return()).catch(() => undefined);
+        }
         result.totalFrames = totalFrames;
         result.sourceTotalMs = sourceDurationUs / 1000;
         dispose();
@@ -224,4 +243,38 @@ export async function demuxVideo(
     dispose();
     throw error;
   }
+}
+
+function awaitWithAbort<T>(operation: PromiseLike<T>, signal?: AbortSignal): Promise<T> {
+  const source = Promise.resolve(operation);
+  if (!signal) return source;
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => signal.removeEventListener('abort', onAbort);
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(signal.reason ?? new DOMException('Demuxing was aborted.', 'AbortError'));
+    };
+
+    signal.addEventListener('abort', onAbort, { once: true });
+    void source.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+    );
+
+    if (signal.aborted) onAbort();
+  });
 }

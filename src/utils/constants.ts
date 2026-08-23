@@ -254,6 +254,9 @@ export const PROGRESS_PHASE_RANGES = {
 /** Maximum FPS clamp for decimation calculation guard */
 export const FPS_CLAMP_MAX = 120;
 
+/** Maximum encoded packets decoded for one conversion, including skipped frames. */
+export const MAX_DECODE_INPUT_CHUNKS = (WEBP_MAX_DURATION_MS / 1000) * FPS_CLAMP_MAX;
+
 // ============================================================================
 // ETA & THROTTLING CONSTANTS
 // ============================================================================

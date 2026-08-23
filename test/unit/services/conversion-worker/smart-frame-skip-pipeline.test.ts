@@ -60,6 +60,7 @@ describe('worker pipeline smart frame skip forwarding', () => {
     expect(mocks.encodeGif).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
+        assertAdditionalMemoryBytes: expect.any(Function),
         maxFrames: 300,
         maxOutputBytes: 1024,
         smartFrameSkip: 'adaptive',
@@ -76,6 +77,18 @@ describe('worker pipeline smart frame skip forwarding', () => {
       framesProcessed: 10,
       outputBytes: 3,
     });
+  });
+
+  it('combines GIF stream peaks with the worker aggregate memory budget', async () => {
+    await runWorkerPipeline(new ArrayBuffer(8), baseOptions, vi.fn(), 'request-1');
+    const encoderOptions = mocks.encodeGif.mock.calls[0]?.[1] as
+      | { assertAdditionalMemoryBytes?: (bytes: number) => void }
+      | undefined;
+
+    expect(() => encoderOptions?.assertAdditionalMemoryBytes?.(1024)).not.toThrow();
+    expect(() => encoderOptions?.assertAdditionalMemoryBytes?.(461 * 1024 * 1024)).toThrow(
+      'Worker memory estimate reached'
+    );
   });
 
   it('forwards smartFrameSkip to the WebP encoder', async () => {

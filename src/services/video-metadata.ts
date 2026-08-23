@@ -61,7 +61,8 @@ export async function extractVideoMetadata(
       ...(boundedDescription !== undefined ? { description: boundedDescription } : {}),
     };
 
-    const duration = await awaitWithAbort(track.computeDuration(), signal);
+    const rawDuration = await awaitWithAbort(track.computeDuration(), signal);
+    const duration = Number.isFinite(rawDuration) && rawDuration >= 0 ? rawDuration : 0;
 
     // ── FPS & Bitrate: compute from first ~50 packets ──────────────────
     // computePacketStats scans packets metadata-only (no actual data reads)
@@ -79,10 +80,10 @@ export async function extractVideoMetadata(
         undefined,
         signal
       );
-      if (packetStats.averagePacketRate > 0) {
+      if (Number.isFinite(packetStats.averagePacketRate) && packetStats.averagePacketRate > 0) {
         computedFps = Math.round(packetStats.averagePacketRate * 100) / 100;
       }
-      if (packetStats.averageBitrate > 0) {
+      if (Number.isFinite(packetStats.averageBitrate) && packetStats.averageBitrate > 0) {
         computedBitrate = Math.round(packetStats.averageBitrate);
       }
     } catch {
@@ -116,7 +117,9 @@ export async function extractVideoMetadata(
           undefined,
           signal
         );
-        if (avgBitrate != null && avgBitrate > 0) bitrate = avgBitrate;
+        if (avgBitrate != null && Number.isFinite(avgBitrate) && avgBitrate > 0) {
+          bitrate = avgBitrate;
+        }
       } catch {
         throwIfAborted(signal);
         // getAverageBitrate not supported by all formats
@@ -131,14 +134,16 @@ export async function extractVideoMetadata(
           undefined,
           signal
         );
-        if (peakBitrate != null && peakBitrate > 0) bitrate = peakBitrate;
+        if (peakBitrate != null && Number.isFinite(peakBitrate) && peakBitrate > 0) {
+          bitrate = peakBitrate;
+        }
       } catch {
         throwIfAborted(signal);
         // getBitrate not supported by all formats
       }
     }
 
-    if (bitrate != null && bitrate > 0) {
+    if (bitrate != null && Number.isFinite(bitrate) && bitrate > 0) {
       logger.info('general', 'Extracted video metadata', {
         codec: config.codec?.split('.')[0] ?? 'unknown',
         duration: `${duration.toFixed(2)}s`,

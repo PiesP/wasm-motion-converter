@@ -11,6 +11,9 @@ describe('classifyWorkerError', () => {
     expect(classifyWorkerError('WebP output frame limit exceeded (9000)')).toBe(
       'OUT_OF_MEMORY'
     );
+    expect(classifyWorkerError('Decoder input packet limit exceeded (36000 packet limit)')).toBe(
+      'OUT_OF_MEMORY'
+    );
   });
 
   it('recognizes a WebP encoder failure', () => {

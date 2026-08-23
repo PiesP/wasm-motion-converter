@@ -53,6 +53,11 @@ const QUALITY_DITHER_STRENGTH: Record<BaseEncoderOptions['quality'], number> = {
   // smooth gradients with full 256-color palette; 4 was too subtle
 };
 
+interface GifEncoderOptions extends BaseEncoderOptions {
+  /** Assert the aggregate Worker budget using the GIF stream's live peak bytes. */
+  assertAdditionalMemoryBytes?: ((additionalBytes: number) => void) | undefined;
+}
+
 // ─── Bayer Ordered Dithering ────────────────────────────────────────
 
 // Bayer ordered dithering 8x8 pattern (pre-normalized to 0-63 range)
@@ -153,7 +158,7 @@ export function createGifDelayQuantizer(): (delayMs: number) => number {
  */
 export async function encodeGif(
   demux: DemuxResult,
-  opts: BaseEncoderOptions,
+  opts: GifEncoderOptions,
   signal?: AbortSignal
 ): Promise<Uint8Array> {
   const srcW = opts.width;
@@ -164,6 +169,7 @@ export async function encodeGif(
   const ditherStrength = QUALITY_DITHER_STRENGTH[opts.quality];
   const frameDecimation = opts.frameDecimation ?? 1;
   const outputLimits = resolveOutputLimits('gif', opts);
+  const inputChunkLimit = outputLimits.maxFrames * Math.max(1, Math.floor(frameDecimation));
 
   logger.info('encoders', '  │  ├─ GIF: codec support check', { codec: demux.config.codec });
 
@@ -180,11 +186,13 @@ export async function encodeGif(
   ) {
     initialCapacity *= 2;
   }
+  const initialStreamCapacity = Math.min(outputLimits.maxOutputBytes, initialCapacity);
+  opts.assertAdditionalMemoryBytes?.(initialStreamCapacity);
   const encoder = GIFEncoder({
     auto: true,
     // A power-of-two starting capacity keeps gifenc's geometric growth from
     // overshooting the power-of-two production byte ceiling.
-    initialCapacity: Math.min(outputLimits.maxOutputBytes, initialCapacity),
+    initialCapacity: initialStreamCapacity,
   });
 
   // gifenc grows its stream automatically. Wrap every supported write method so
@@ -212,7 +220,10 @@ export async function encodeGif(
     }
 
     const currentCapacity = encoder.stream.buffer.byteLength;
-    if (requiredCapacity <= currentCapacity) return;
+    if (requiredCapacity <= currentCapacity) {
+      opts.assertAdditionalMemoryBytes?.(currentCapacity);
+      return;
+    }
     const nextCapacity = predictStreamCapacity(currentCapacity, requiredCapacity);
     if (
       !Number.isSafeInteger(nextCapacity) ||
@@ -221,6 +232,7 @@ export async function encodeGif(
     ) {
       throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
     }
+    opts.assertAdditionalMemoryBytes?.(currentCapacity + nextCapacity);
   }
 
   encoder.stream.writeByte = (byte: number): void => {
@@ -362,6 +374,7 @@ export async function encodeGif(
         width: w,
         height: h,
         frameDecimation,
+        maxInputChunks: inputChunkLimit,
         hwAccel: 'prefer-hardware',
         smartFrameSkip: opts.smartFrameSkip,
         onFrameDecoded: (_frameNum, total) => {
@@ -499,6 +512,7 @@ export async function encodeGif(
     ) {
       throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
     }
+    opts.assertAdditionalMemoryBytes?.(finalCopyPeakBytes);
     const rawBytes = encoder.bytes();
     const totalElapsed = (performance.now() - startTime) / 1000;
 

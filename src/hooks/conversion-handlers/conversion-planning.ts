@@ -59,12 +59,17 @@ export function serializeConversionInputs(
   serializedOptions: SerializedConversionOptions;
 } {
   const outputLimits = resolveOutputLimits(settings.format);
+  const metadataFps = metadata?.framerate;
+  const fps =
+    metadataFps !== undefined && Number.isFinite(metadataFps) && metadataFps > 0
+      ? metadataFps
+      : DEFAULT_FPS;
   return {
     serializedConfig: serializeDecoderConfig(metadata, settings.format === 'gif'),
     serializedOptions: {
       format: settings.format,
       quality: settings.quality,
-      fps: metadata?.framerate ?? DEFAULT_FPS,
+      fps,
       scale: settings.scale,
       trimStart: settings.trimStart > 0 ? settings.trimStart : 0,
       trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
