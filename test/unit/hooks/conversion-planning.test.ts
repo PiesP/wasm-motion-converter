@@ -166,6 +166,19 @@ describe('serializeConversionInputs', () => {
     });
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 0, -1])(
+    'replaces an invalid metadata frame rate (%s) with the protocol default',
+    (framerate) => {
+      const result = serializeConversionInputs(
+        { ...defaultMetadata, framerate },
+        undefined,
+        defaultSettings
+      );
+
+      expect(result.serializedOptions.fps).toBe(30);
+    }
+  );
+
   it('preserves malformed display aspect fields so the worker allocation boundary can reject them', () => {
     const metadata: VideoMetadata = {
       ...defaultMetadata,
