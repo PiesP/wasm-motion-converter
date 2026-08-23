@@ -715,6 +715,47 @@ describe('decoder-service', () => {
       expect(delivered).toEqual([0]);
     });
 
+    it('bounds cumulative input packet work even when no output frames are produced', async () => {
+      let decodeCalls = 0;
+      class NoOutputVideoDecoder {
+        static async isConfigSupported(
+          config: VideoDecoderConfig
+        ): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly decodeQueueSize = 0;
+        configure(): void {}
+        decode(): void {
+          decodeCalls++;
+        }
+        async flush(): Promise<void> {}
+        reset(): void {}
+        close(): void {}
+      }
+      vi.stubGlobal('VideoDecoder', NoOutputVideoDecoder);
+
+      await expect(
+        decodeFrames(
+          {
+            chunks: [
+              { timestamp: 0 },
+              { timestamp: 1_000 },
+              { timestamp: 2_000 },
+            ] as EncodedVideoChunk[],
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 1,
+            framerate: 120,
+            sourceTotalMs: 3,
+            totalFrames: 3,
+          },
+          { width: 8, height: 8, maxInputChunks: 2 }
+        )
+      ).rejects.toThrow('Decoder input packet limit exceeded');
+
+      expect(decodeCalls).toBe(2);
+    });
+
     it('configures the decoder exactly once per decode operation', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
 

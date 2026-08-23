@@ -21,6 +21,7 @@ import type { SmartFrameSkipMode } from '@t/conversion-types';
 import {
   DEFAULT_FPS,
   FPS_CLAMP_MAX,
+  MAX_DECODE_INPUT_CHUNKS,
   MAX_FRAME_PIXEL_COUNT,
   MIN_OUTPUT_FPS,
 } from '@utils/constants';
@@ -94,6 +95,8 @@ export interface DecodeOptions {
    * The signal reason should be the original Error.
    */
   processingFailureSignal?: AbortSignal | undefined;
+  /** Testable lower ceiling; production callers cannot raise the hard packet-work limit. */
+  maxInputChunks?: number | undefined;
 }
 
 export interface DecodedFrame {
@@ -153,7 +156,15 @@ export async function decodeFrames(
     mode,
     smartFrameSkip: effectiveSmartSkip = 'off',
     processingFailureSignal,
+    maxInputChunks,
   } = opts;
+  const requestedInputChunkLimit = maxInputChunks;
+  const inputChunkLimit =
+    typeof requestedInputChunkLimit === 'number' &&
+    Number.isSafeInteger(requestedInputChunkLimit) &&
+    requestedInputChunkLimit > 0
+      ? Math.min(requestedInputChunkLimit, MAX_DECODE_INPUT_CHUNKS)
+      : MAX_DECODE_INPUT_CHUNKS;
 
   // ── Smart frame skip state (must be before parallel decode block) ──
   const skipThreshold = getSkipThreshold(effectiveSmartSkip);
@@ -210,6 +221,7 @@ export async function decodeFrames(
   const encodedChunkBudgetBytes = demux.encodedChunkBudgetBytes;
   let retainedEncodedChunkBytes = 0;
   let inputFrameCount = 0;
+  let inputChunkCount = 0;
   let keptFrameCount = 0;
   let accumulatedDuration = 0;
   let skippedByDecimation = 0;
@@ -644,6 +656,10 @@ export async function decodeFrames(
 
       const nextChunk = await chunkStream.next();
       if (nextChunk.done) break;
+      if (inputChunkCount >= inputChunkLimit) {
+        throw new Error(`Decoder input packet limit exceeded (${inputChunkLimit} packet limit)`);
+      }
+      inputChunkCount++;
       if (hasProcessingFailure()) break;
 
       streamedSourceDurationUs += Math.max(0, nextChunk.value.duration ?? 0);

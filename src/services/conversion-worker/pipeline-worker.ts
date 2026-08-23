@@ -269,6 +269,7 @@ export async function runWorkerPipeline(
           smartFrameSkip: options.smartFrameSkip,
           maxFrames: request.maxFrames,
           maxOutputBytes: request.maxOutputBytes,
+          assertAdditionalMemoryBytes: assertMemoryBudget,
           onFrameDecoded: decodeProgressCb,
           onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
             profiler?.updatePhase('encoding', frameIdx);

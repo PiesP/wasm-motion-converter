@@ -26,6 +26,7 @@ import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
 import { convertRGBToRGBA } from './frame-utils';
+import { resolveOutputLimits } from './output-limits';
 import { withPooledBuffer } from './pooled-buffer';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
 import { extractAndNormalizeCanvasVp8 } from './webp-bitstream';
@@ -80,6 +81,8 @@ export async function encodeWebpOffscreen(
   const h = Math.max(1, Math.floor(srcH * opts.scale));
   const quality = getCanvasWebpQuality(opts.quality);
   const frameDecimation = opts.frameDecimation ?? 1;
+  const outputLimits = resolveOutputLimits('webp', opts);
+  const inputChunkLimit = outputLimits.maxFrames * Math.max(1, Math.floor(frameDecimation));
 
   if (!isOffscreenCanvasAvailable()) {
     throw new Error(
@@ -128,6 +131,7 @@ export async function encodeWebpOffscreen(
       width: w,
       height: h,
       frameDecimation,
+      maxInputChunks: inputChunkLimit,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
       onFrameDecoded: (_frameNum: number, total: number) => {
