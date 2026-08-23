@@ -23,12 +23,17 @@ import type {
   ProgressCallback,
 } from '@t/conversion-types';
 import {
+  BYTES_PER_MB,
   DEFAULT_FPS,
   GIF_TARGET_FPS,
+  MEMORY_CRITICAL_RATIO,
   PROGRESS_PHASE,
   PROGRESS_PHASE_RANGES,
   PROGRESS_THROTTLE_MS,
   WEBP_TARGET_FPS,
+  WORKER_MAX_MEMORY_LIMIT_MB,
+  WORKER_MAX_MEMORY_MB,
+  WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
 import { scheduleTask } from '@utils/dom-utils';
 import { logger } from '@utils/logger';
@@ -143,6 +148,24 @@ async function _runPipelineInner(
         lastMemMB = getMemoryUsageMB() ?? 0;
       }
       return lastMemMB;
+    };
+    const configuredMaxMemoryMB = Number.isFinite(request.maxMemoryMB)
+      ? request.maxMemoryMB
+      : WORKER_MAX_MEMORY_MB;
+    const maxMemoryMB = Math.min(
+      WORKER_MAX_MEMORY_LIMIT_MB,
+      Math.max(WORKER_MIN_MEMORY_MB, configuredMaxMemoryMB)
+    );
+    const retainedInputBytes = request.inputBuffer?.byteLength ?? 0;
+    const assertMemoryBudget = (additionalBytes = 0): void => {
+      const estimatedBytes =
+        retainedInputBytes + globalBufferPool.totalRetainedMemory + additionalBytes;
+      const estimatedMB = Math.ceil(estimatedBytes / BYTES_PER_MB);
+      if (estimatedMB >= maxMemoryMB * MEMORY_CRITICAL_RATIO) {
+        throw new Error(
+          `Main-thread memory estimate reached ${estimatedMB}MB of ${maxMemoryMB}MB limit`
+        );
+      }
     };
 
     profiler?.startPhase('demuxing');
@@ -308,6 +331,7 @@ async function _runPipelineInner(
                 frameDecimation: gifDecimation,
                 smartFrameSkip: request.smartFrameSkip,
                 ...outputLimits,
+                assertAdditionalMemoryBytes: assertMemoryBudget,
                 onFrameDecoded: decodeProgressCb,
                 onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
                   gifEncodeFrames = frameIdx;

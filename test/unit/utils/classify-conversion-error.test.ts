@@ -9,6 +9,9 @@ describe('classifyConversionError', () => {
     const result = classifyConversionError('GIF output byte limit exceeded (268435456)', null);
 
     expect(result).toMatchObject({ code: 'OUT_OF_MEMORY', type: 'memory' });
+    expect(
+      classifyConversionError('Decoder input packet limit exceeded (36000 packet limit)', null)
+    ).toMatchObject({ code: 'OUT_OF_MEMORY', type: 'memory' });
   });
 
   beforeEach(() => {

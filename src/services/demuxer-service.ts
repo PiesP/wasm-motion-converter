@@ -173,6 +173,7 @@ export async function demuxVideo(
       let sourceDurationUs = 0;
       let peakChunkBytes = 0;
       let completed = false;
+      let packetIteratorDone = false;
       const packetIterator = sink.packets(startPacket)[Symbol.asyncIterator]();
 
       try {
@@ -182,7 +183,10 @@ export async function demuxVideo(
         // between this generator and VideoDecoder.
         while (true) {
           const nextPacket = await awaitWithAbort(packetIterator.next(), signal);
-          if (nextPacket.done) break;
+          if (nextPacket.done) {
+            packetIteratorDone = true;
+            break;
+          }
           const packet = nextPacket.value;
           if (trimEnd !== undefined && packet.timestamp > trimEnd) break;
           signal?.throwIfAborted();
@@ -205,7 +209,7 @@ export async function demuxVideo(
         }
         completed = true;
       } finally {
-        if (!completed && packetIterator.return) {
+        if (!packetIteratorDone && packetIterator.return) {
           void Promise.resolve(packetIterator.return()).catch(() => undefined);
         }
         result.totalFrames = totalFrames;

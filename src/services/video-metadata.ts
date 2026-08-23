@@ -61,7 +61,8 @@ export async function extractVideoMetadata(
       ...(boundedDescription !== undefined ? { description: boundedDescription } : {}),
     };
 
-    const duration = await awaitWithAbort(track.computeDuration(), signal);
+    const rawDuration = await awaitWithAbort(track.computeDuration(), signal);
+    const duration = Number.isFinite(rawDuration) && rawDuration >= 0 ? rawDuration : 0;
 
     // ── FPS & Bitrate: compute from first ~50 packets ──────────────────
     // computePacketStats scans packets metadata-only (no actual data reads)

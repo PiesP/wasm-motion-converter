@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     }),
     packets,
     dispose: vi.fn(),
+    iteratorClosed: vi.fn(),
     startPacket: undefined as unknown,
   };
 });
@@ -50,7 +51,11 @@ vi.mock('mediabunny', () => ({
 
     async *packets(startPacket: unknown) {
       mocks.startPacket = startPacket;
-      yield* mocks.packets;
+      try {
+        yield* mocks.packets;
+      } finally {
+        mocks.iteratorClosed();
+      }
     }
   },
 }));
@@ -133,6 +138,32 @@ describe('demuxVideo trim start', () => {
       })
     );
     expect(chunks).toHaveLength(2);
+    expect(mocks.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('closes the packet iterator when trimEnd stops consumption early', async () => {
+    const request: ConversionRequest = {
+      inputBuffer: new ArrayBuffer(8),
+      fileName: 'trimmed.mp4',
+      format: 'webp',
+      quality: 'medium',
+      scale: 1,
+      trimStart: 0,
+      trimEnd: 4,
+      maxMemoryMB: 512,
+    };
+    const metadata = {
+      config: { codec: 'avc1.640028', codedWidth: 16, codedHeight: 16 },
+      duration: 10,
+      framerate: 30,
+    } as VideoMetadata;
+
+    const result = await demuxVideo(request, metadata);
+    const chunks: EncodedVideoChunk[] = [];
+    for await (const chunk of result.chunks) chunks.push(chunk);
+    await vi.waitFor(() => expect(mocks.iteratorClosed).toHaveBeenCalledOnce());
+
+    expect(chunks).toHaveLength(1);
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 });

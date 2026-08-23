@@ -87,7 +87,7 @@ describe('extractVideoMetadata cancellation', () => {
 
   it('falls back instead of forwarding non-finite packet metadata', async () => {
     const track = {
-      computeDuration: vi.fn().mockResolvedValue(2),
+      computeDuration: vi.fn().mockResolvedValue(Number.POSITIVE_INFINITY),
       computePacketStats: vi.fn().mockResolvedValue({
         averageBitrate: Number.POSITIVE_INFINITY,
         averagePacketRate: Number.POSITIVE_INFINITY,
@@ -104,6 +104,7 @@ describe('extractVideoMetadata cancellation', () => {
 
     await expect(extractVideoMetadata(new Blob(['video']), 24)).resolves.toMatchObject({
       bitrate: 0,
+      duration: 0,
       framerate: 24,
     });
     expect(mocks.dispose).toHaveBeenCalledOnce();

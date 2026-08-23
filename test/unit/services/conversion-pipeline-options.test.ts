@@ -87,12 +87,25 @@ describe('main conversion pipeline encoder options', () => {
     expect(mocks.encodeGif).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
+        assertAdditionalMemoryBytes: expect.any(Function),
         maxFrames: 9000,
         maxOutputBytes: 268435456,
         smartFrameSkip: 'adaptive',
       }),
       undefined
     );
+  });
+
+  it('enforces the aggregate GIF memory budget on the main-thread fallback', async () => {
+    mocks.encodeGif.mockImplementationOnce(async (_demux, options) => {
+      options.assertAdditionalMemoryBytes(461 * 1024 * 1024);
+      return new Uint8Array([1, 2, 3]);
+    });
+
+    await expect(runConversionPipeline(baseRequest, vi.fn())).rejects.toThrow(
+      'Main-thread memory estimate reached'
+    );
+    expect(demuxResult.dispose).toHaveBeenCalledOnce();
   });
 
   it('forwards cancellation to demuxing', async () => {
