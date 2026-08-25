@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-> Auto-generated on 2026-08-15 by `scripts/build/generate-licenses.ts`.
+> Auto-generated on 2026-08-25 by `scripts/build/generate-licenses.ts`.
 > Do not edit manually — run `pnpm build` to regenerate.
 
 This project uses the following open-source libraries.
@@ -23,14 +23,14 @@ This project uses the following open-source libraries.
 
 ### mediabunny
 
-- **Version:** 1.53.1
+- **Version:** 1.55.2
 - **License:** MPL-2.0
 - **Repository:** https://mediabunny.dev/
 - **Purpose:** Video demuxing (Input, BufferSource, EncodedPacketSink)
 
 ### solid-js
 
-- **Version:** 1.9.14
+- **Version:** 1.9.15
 - **License:** MIT
 - **Repository:** https://solidjs.com
 - **Purpose:** UI framework (reactive signals, components)
