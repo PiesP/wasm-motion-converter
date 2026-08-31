@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 /**
- * Service Worker — dropconvert-wasm
+ * Service Worker — DropConvert
  *
  * Caching strategy:
  * - Static assets (/assets/*): cache-first, network fallback with background cache update
