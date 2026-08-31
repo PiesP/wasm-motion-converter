@@ -124,6 +124,14 @@ describe('Workflow change routing', () => {
       semgrep_full: 'true',
       security_tools: 'true',
     });
+    expect(classify(['scripts/security/codex-security/package-lock.json'])).toMatchObject({
+      unit: 'true',
+      dependency: 'true',
+      codeql: 'true',
+      semgrep_full: 'true',
+      security_tools: 'true',
+      codex_security: 'true',
+    });
   });
 
   it('does not run code scanners for binary visual baselines', () => {

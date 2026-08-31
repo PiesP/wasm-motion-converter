@@ -154,6 +154,15 @@ classify_path() {
       security_tools=true
       codex_security=true
       ;;
+    scripts/security/codex-security/*)
+      unit=true
+      dependency=true
+      codeql=true
+      semgrep=true
+      semgrep_full=true
+      security_tools=true
+      codex_security=true
+      ;;
     scripts/security/*)
       quality=true
       unit=true

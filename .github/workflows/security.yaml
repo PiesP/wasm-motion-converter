@@ -159,14 +159,21 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$BASE_SHA^{commit}"
           git switch --force --detach "$BASE_SHA"
+          [[ "$(git rev-parse HEAD)" == "$BASE_SHA" ]]
           git submodule update --init --recursive
 
-      - name: 📁 Prepare isolated OSV result directory
+      - name: 📁 Materialize trusted OSV policy from PR base
         if: ${{ needs.changes.outputs.dependency == 'true' }}
         run: |
           set -euo pipefail
+          umask 077
           install -d -m 0700 "$RUNNER_TEMP/osv-results"
+          install -m 0600 .github/codex-security/osv-scanner.toml \
+            "$RUNNER_TEMP/osv-results/osv-scanner.toml"
+          test -s "$RUNNER_TEMP/osv-results/osv-scanner.toml"
 
       - name: 🛡️ Scan dependencies before the PR
         if: ${{ needs.changes.outputs.dependency == 'true' }}
@@ -178,6 +185,7 @@ jobs:
             --volume "$RUNNER_TEMP/osv-results:/results" \
             --workdir /src \
             "$OSV_SCANNER_IMAGE" \
+            --config=/results/osv-scanner.toml \
             --format=json \
             --output-file=/results/old-results.json \
             -r \
@@ -201,6 +209,7 @@ jobs:
             --volume "$RUNNER_TEMP/osv-results:/results" \
             --workdir /src \
             "$OSV_SCANNER_IMAGE" \
+            --config=/results/osv-scanner.toml \
             --format=json \
             --output-file=/results/new-results.json \
             -r \
@@ -242,21 +251,54 @@ jobs:
         if: ${{ needs.changes.outputs.dependency == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           submodules: true
           persist-credentials: false
+
+      - name: 📁 Materialize trusted OSV policy
+        if: ${{ needs.changes.outputs.dependency == 'true' }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TRUSTED_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          EXPECTED_HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          install -d -m 0700 "$RUNNER_TEMP/osv-results"
+          case "$EVENT_NAME" in
+            merge_group)
+              [[ "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+              [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+              git cat-file -e "$TRUSTED_BASE_SHA^{commit}"
+              git cat-file -e "$EXPECTED_HEAD_SHA^{commit}"
+              [[ "$(git rev-parse HEAD)" == "$EXPECTED_HEAD_SHA" ]]
+              git merge-base --is-ancestor "$TRUSTED_BASE_SHA" "$EXPECTED_HEAD_SHA"
+              git show "$TRUSTED_BASE_SHA:.github/codex-security/osv-scanner.toml" > \
+                "$RUNNER_TEMP/osv-results/osv-scanner.toml"
+              ;;
+            push | schedule | workflow_dispatch)
+              install -m 0600 .github/codex-security/osv-scanner.toml \
+                "$RUNNER_TEMP/osv-results/osv-scanner.toml"
+              ;;
+            *)
+              printf 'Unsupported OSV full-scan event: %s\n' "$EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+          test -s "$RUNNER_TEMP/osv-results/osv-scanner.toml"
 
       - name: 🛡️ Run OSV scan
         if: ${{ needs.changes.outputs.dependency == 'true' }}
         continue-on-error: true
         run: |
           set -euo pipefail
-          install -d -m 0700 "$RUNNER_TEMP/osv-results"
           docker run --rm \
             --env GOTOOLCHAIN=auto \
             --volume "$GITHUB_WORKSPACE:/src" \
             --volume "$RUNNER_TEMP/osv-results:/results" \
             --workdir /src \
             "$OSV_SCANNER_IMAGE" \
+            --config=/results/osv-scanner.toml \
             --format=json \
             --output-file=/results/osv-results.json \
             -r \
