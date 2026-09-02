@@ -5,6 +5,7 @@ import { FRAME_PIPELINE_MEMORY_BUDGET_BYTES } from '@utils/constants';
 import { getPooledBufferSize } from './buffer-pool';
 
 const RGB_BYTES_PER_PIXEL = 3;
+const DECODED_RGBA_BYTES_PER_PIXEL = 4;
 const DECODED_RGBA_AND_CANVAS_BYTES_PER_PIXEL = 12;
 
 /** Estimate the cross-realm memory retained by one active RGB encode task. */
@@ -23,16 +24,60 @@ export function estimateActiveFrameBytes(width: number, height: number): number 
   return getPooledBufferSize(rgbBytes) + decodedRgbaAndCanvasBytes;
 }
 
+/** Estimate source-frame ownership plus target conversion working memory. */
+export function estimateFrameOutputBytes(
+  sourceWidth: number,
+  sourceHeight: number,
+  targetWidth: number,
+  targetHeight: number
+): number {
+  if (sourceWidth === targetWidth && sourceHeight === targetHeight) {
+    return estimateActiveFrameBytes(sourceWidth, sourceHeight);
+  }
+
+  const sourcePixels = sourceWidth * sourceHeight;
+  if (!Number.isSafeInteger(sourcePixels) || sourcePixels <= 0) {
+    throw new RangeError('Source frame dimensions must produce a positive safe pixel count');
+  }
+  const sourceBytes = sourcePixels * DECODED_RGBA_BYTES_PER_PIXEL;
+  if (!Number.isSafeInteger(sourceBytes)) {
+    throw new RangeError('Source frame allocation exceeds the safe integer range');
+  }
+
+  const targetBytes = estimateActiveFrameBytes(targetWidth, targetHeight);
+  const totalBytes = sourceBytes + targetBytes;
+  if (!Number.isSafeInteger(totalBytes)) {
+    throw new RangeError('Frame output allocation exceeds the safe integer range');
+  }
+  return totalBytes;
+}
+
+/** Derive concurrency while retaining decoded source and converted target frames. */
+export function calculateFrameOutputConcurrency(
+  sourceWidth: number,
+  sourceHeight: number,
+  targetWidth: number,
+  targetHeight: number,
+  requestedMaximum: number
+): number {
+  const requested = Math.max(1, Math.floor(requestedMaximum));
+  const bytesPerFrame = estimateFrameOutputBytes(
+    sourceWidth,
+    sourceHeight,
+    targetWidth,
+    targetHeight
+  );
+  return Math.min(requested, Math.floor(FRAME_PIPELINE_MEMORY_BUDGET_BYTES / bytesPerFrame));
+}
+
 /** Derive bounded concurrency from the shared live-frame memory reservation. */
 export function calculateFrameConcurrency(
   width: number,
   height: number,
   requestedMaximum: number
 ): number {
-  const requested = Math.max(1, Math.floor(requestedMaximum));
-  const bytesPerFrame = estimateActiveFrameBytes(width, height);
   return Math.max(
     1,
-    Math.min(requested, Math.floor(FRAME_PIPELINE_MEMORY_BUDGET_BYTES / bytesPerFrame))
+    calculateFrameOutputConcurrency(width, height, width, height, requestedMaximum)
   );
 }

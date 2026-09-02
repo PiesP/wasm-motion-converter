@@ -37,7 +37,7 @@ import {
 } from './adaptive-frame-skip';
 import { globalBufferPool } from './buffer-pool';
 import { type DemuxResult, getEncodedChunkRetainedBytes } from './demuxer-service';
-import { calculateFrameConcurrency } from './frame-memory';
+import { calculateFrameOutputConcurrency } from './frame-memory';
 import {
   compute8x8Grayscale,
   computeMAD,
@@ -212,7 +212,35 @@ export async function decodeFrames(
   let consecutiveSkipMs = 0; // accumulated duration of skipped frames
 
   // ── Backpressure for pendingConversions (RES-H2) ──
-  const maxPendingConversions = calculateFrameConcurrency(width, height, 10);
+  const hasConfiguredSourceDimensions =
+    Number.isSafeInteger(demux.config.codedWidth) &&
+    Number.isSafeInteger(demux.config.codedHeight) &&
+    (demux.config.codedWidth ?? 0) > 0 &&
+    (demux.config.codedHeight ?? 0) > 0;
+  const configuredSourceWidth = hasConfiguredSourceDimensions
+    ? (demux.config.codedWidth ?? width)
+    : width;
+  const configuredSourceHeight = hasConfiguredSourceDimensions
+    ? (demux.config.codedHeight ?? height)
+    : height;
+  const maxPendingConversions = calculateFrameOutputConcurrency(
+    configuredSourceWidth,
+    configuredSourceHeight,
+    width,
+    height,
+    10
+  );
+  if (maxPendingConversions === 0) {
+    throw new Error(
+      'Decoded frame output memory limit exceeded (single frame exceeds byte budget)'
+    );
+  }
+  const outputOwnershipRequestedMaximum = Number.MAX_SAFE_INTEGER;
+  let activeOutputSlots = 0;
+
+  const releaseOutputSlot = (): void => {
+    activeOutputSlots = Math.max(0, activeOutputSlots - 1);
+  };
 
   let decodeError: Error | null = null;
   let firstConversionError: Error | null = null;
@@ -360,7 +388,7 @@ export async function decodeFrames(
           frame.close();
           return;
         }
-        if (hasProcessingFailure()) {
+        if (decodeError || hasProcessingFailure()) {
           frame.close();
           return;
         }
@@ -389,6 +417,31 @@ export async function decodeFrames(
           skippedByDecimation++;
           return;
         }
+
+        const maxOutputSlots = Math.min(
+          calculateFrameOutputConcurrency(
+            frame.codedWidth,
+            frame.codedHeight,
+            width,
+            height,
+            outputOwnershipRequestedMaximum
+          ),
+          calculateFrameOutputConcurrency(
+            frame.displayWidth,
+            frame.displayHeight,
+            width,
+            height,
+            outputOwnershipRequestedMaximum
+          )
+        );
+        if (activeOutputSlots >= maxOutputSlots) {
+          decodeError ??= new Error(
+            `Decoded frame output memory limit exceeded (${maxOutputSlots} frame slot limit)`
+          );
+          frame.close();
+          return;
+        }
+        activeOutputSlots++;
 
         const totalDuration = frameDuration + accumulatedDuration;
         accumulatedDuration = 0;
@@ -426,10 +479,11 @@ export async function decodeFrames(
               return;
             }
 
+            if (signal?.aborted || hasProcessingFailure()) return;
             const rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
             await previousProcessing;
             enteredOrderedProcessing = true;
-            if (hasProcessingFailure()) {
+            if (signal?.aborted || hasProcessingFailure()) {
               globalBufferPool.release(rgbData);
               return;
             }
@@ -573,6 +627,7 @@ export async function decodeFrames(
               await previousProcessing;
             }
             releaseProcessing();
+            releaseOutputSlot();
             frame.close();
           }
         })();
@@ -707,6 +762,7 @@ export async function decodeFrames(
       });
     }
 
+    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
     if (decodeError) throw decodeError;
 
     // Add any remaining accumulated duration to the last frame (batch mode only)
