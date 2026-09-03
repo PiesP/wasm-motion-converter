@@ -83,7 +83,7 @@
     "@stryker-mutator/vitest-runner": "^10.0.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/dom-webcodecs": "^0.1.19",
-    "@types/node": "26.4.0",
+    "@types/node": "26.4.1",
     "@vitest/coverage-v8": "^4.1.11",
     "dpdm": "4.3.0",
     "jsdom": "^30.0.1",
