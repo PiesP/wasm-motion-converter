@@ -89,11 +89,27 @@ describe('Codex Security CLI supply-chain controls', () => {
     const cliPackage = JSON.parse(readFileSync(cliPackagePath, 'utf8')) as CliPackage;
     const cliLock = JSON.parse(readFileSync(cliLockPath, 'utf8')) as CliLock;
 
-    expect(cliPackage.overrides).toBeUndefined();
+    expect(cliPackage.overrides).not.toHaveProperty('pdfjs-dist');
     expect(cliLock.packages['node_modules/pdfjs-dist']?.version).toBe('6.2.108');
     expect(workflow).not.toContain('patch-codex-security.mjs');
     expect(helper).not.toContain('patch-codex-security.mjs');
     expect(existsSync(patcherPath)).toBe(false);
+  });
+
+  it('forces the patched fast-uri closure while the upstream CLI pins a vulnerable release', () => {
+    const cliPackage = JSON.parse(readFileSync(cliPackagePath, 'utf8')) as CliPackage;
+    const cliLock = JSON.parse(readFileSync(cliLockPath, 'utf8')) as CliLock;
+    const fastUriPackages = Object.entries(cliLock.packages).filter(
+      ([packagePath]) =>
+        packagePath === 'node_modules/fast-uri' ||
+        packagePath.endsWith('/node_modules/fast-uri')
+    );
+
+    expect(cliPackage.overrides).toMatchObject({ 'fast-uri': '3.1.6' });
+    expect(fastUriPackages.length).toBeGreaterThan(0);
+    for (const [packagePath, metadata] of fastUriPackages) {
+      expect(metadata.version, `${packagePath} must use the patched release`).toBe('3.1.6');
+    }
   });
 
   it('scopes the unpatched extract-zip advisory exception to the CLI lock', () => {
