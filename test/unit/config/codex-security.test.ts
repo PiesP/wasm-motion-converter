@@ -96,7 +96,7 @@ describe('Codex Security CLI supply-chain controls', () => {
     expect(existsSync(patcherPath)).toBe(false);
   });
 
-  it('forces the patched fast-uri closure while the upstream CLI pins a vulnerable release', () => {
+  it('forces patched CLI closures while upstream pins vulnerable releases', () => {
     const cliPackage = JSON.parse(readFileSync(cliPackagePath, 'utf8')) as CliPackage;
     const cliLock = JSON.parse(readFileSync(cliLockPath, 'utf8')) as CliLock;
     const fastUriPackages = Object.entries(cliLock.packages).filter(
@@ -105,7 +105,8 @@ describe('Codex Security CLI supply-chain controls', () => {
         packagePath.endsWith('/node_modules/fast-uri')
     );
 
-    expect(cliPackage.overrides).toMatchObject({ 'fast-uri': '3.1.6' });
+    expect(cliPackage.overrides).toMatchObject({ 'fast-uri': '3.1.6', fflate: '0.8.3' });
+    expect(cliLock.packages['node_modules/fflate']?.version).toBe('0.8.3');
     expect(fastUriPackages.length).toBeGreaterThan(0);
     for (const [packagePath, metadata] of fastUriPackages) {
       expect(metadata.version, `${packagePath} must use the patched release`).toBe('3.1.6');
