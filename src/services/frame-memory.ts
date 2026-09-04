@@ -127,9 +127,9 @@ export function calculateFrameOutputConcurrency(
 }
 
 /**
- * Derive the number of decoded source frames that may wait for one serialized
- * target conversion. The target working set is held aside for the lifetime of
- * the queue, so source reservations can never consume its headroom.
+ * Derive the number of decoded source frames that may wait while reserving the
+ * requested number of target working sets. Target memory is held aside for the
+ * lifetime of the queue, so source reservations cannot consume its headroom.
  */
 export function calculateStagedFrameSourceCapacity(
   codedWidth: number,
