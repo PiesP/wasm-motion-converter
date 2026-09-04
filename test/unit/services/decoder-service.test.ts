@@ -1455,6 +1455,81 @@ describe('decoder-service', () => {
       expect(globalBufferPool.totalActiveMemory).toBe(0);
     });
 
+    it('does not pre-drain a default staged callback that completes during decoder flush', async () => {
+      let flushStarted = false;
+      let releaseDelivery!: () => void;
+      const delivery = new Promise<void>((resolve) => {
+        releaseDelivery = resolve;
+      });
+      class FlushCompletesDeliveryVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly decodeQueueSize = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          this.output = init.output;
+        }
+
+        configure(): void {}
+
+        decode(): void {
+          this.output(new FakeVideoFrame(0) as unknown as VideoFrame);
+        }
+
+        async flush(): Promise<void> {
+          flushStarted = true;
+          releaseDelivery();
+        }
+      }
+
+      vi.stubGlobal('VideoDecoder', FlushCompletesDeliveryVideoDecoder);
+      const delivered: number[] = [];
+      const decoding = decodeFrames(
+        {
+          chunks: [{ timestamp: 0 } as EncodedVideoChunk],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.017,
+          framerate: 60,
+          sourceTotalMs: 17,
+          totalFrames: 1,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            try {
+              await delivery;
+            } finally {
+              globalBufferPool.release(rgbData);
+            }
+          },
+        }
+      );
+
+      let assertionError: unknown;
+      try {
+        await vi.waitFor(() => expect(delivered).toEqual([0]));
+        await vi.waitFor(() => expect(flushStarted).toBe(true));
+        await decoding;
+      } catch (error) {
+        assertionError = error;
+      } finally {
+        releaseDelivery();
+        await decoding.catch(() => undefined);
+      }
+
+      if (assertionError) throw assertionError;
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
     it('admits a bounded two-frame 4K-to-360p flush burst', async () => {
       const { Decoder, stats } = createFlushBurstVideoDecoder(2);
       const canvas = stubScalingCanvas(640, 360);

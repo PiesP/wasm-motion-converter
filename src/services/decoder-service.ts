@@ -1094,8 +1094,9 @@ export async function decodeFrames(
 
     // Finish already-emitted lookahead work before entering the decoder flush.
     // Frames emitted by flush capture the serial target limit below.
+    const shouldDrainLookahead = usesStagedCpuStreaming && stagedLookaheadEnabled;
     stagedLookaheadEnabled = false;
-    if (!decodeError && !cancellationObserved && !hasProcessingFailure()) {
+    if (shouldDrainLookahead && !decodeError && !cancellationObserved && !hasProcessingFailure()) {
       await Promise.allSettled([...pendingConversions]);
     }
 
