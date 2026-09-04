@@ -290,41 +290,46 @@ export async function decodeFrames(
         2
       )
     : 0;
-  const stagedLookaheadEnabled =
+  let stagedLookaheadEnabled =
     stagedCopyLookahead && twoTargetSourceCapacity >= queuedSourceHeadroomCount;
   let retainedSourceFrameBytes = 0;
   let activeStagedTargetSlots = 0;
   let stagedTargetGateClosed = false;
-  const stagedTargetWaiters: Array<(acquired: boolean) => void> = [];
+  const stagedTargetWaiters: Array<{
+    slotLimit: 1 | 2;
+    resolve: (acquired: boolean) => void;
+  }> = [];
   let activeOutputSlots = 0;
 
-  const canAcquireStagedTarget = (): boolean =>
+  const canAcquireStagedTarget = (slotLimit: 1 | 2): boolean =>
     usesStagedCpuStreaming &&
     !stagedTargetGateClosed &&
-    activeStagedTargetSlots < (stagedLookaheadEnabled ? 2 : 1) &&
+    activeStagedTargetSlots < slotLimit &&
     Math.max(
       retainedSourceFrameBytes,
-      activeStagedTargetSlots === 1 ? queuedSourceHeadroomBytes : 0
+      slotLimit === 2 && activeStagedTargetSlots === 1 ? queuedSourceHeadroomBytes : 0
     ) +
       (activeStagedTargetSlots + 1) * targetWorkingBytes <=
       FRAME_PIPELINE_MEMORY_BUDGET_BYTES;
 
   const drainStagedTargetWaiters = (): void => {
-    while (stagedTargetWaiters.length > 0 && canAcquireStagedTarget()) {
-      const resolve = stagedTargetWaiters.shift();
+    while (stagedTargetWaiters.length > 0) {
+      const waiter = stagedTargetWaiters[0];
+      if (!waiter || !canAcquireStagedTarget(waiter.slotLimit)) return;
+      stagedTargetWaiters.shift();
       activeStagedTargetSlots++;
-      resolve?.(true);
+      waiter.resolve(true);
     }
   };
 
-  const acquireStagedTarget = async (): Promise<boolean> => {
+  const acquireStagedTarget = async (slotLimit: 1 | 2): Promise<boolean> => {
     if (!usesStagedCpuStreaming || stagedTargetGateClosed) return false;
-    if (canAcquireStagedTarget()) {
+    if (canAcquireStagedTarget(slotLimit)) {
       activeStagedTargetSlots++;
       return true;
     }
     return await new Promise<boolean>((resolve) => {
-      stagedTargetWaiters.push(resolve);
+      stagedTargetWaiters.push({ resolve, slotLimit });
     });
   };
 
@@ -335,7 +340,7 @@ export async function decodeFrames(
 
   const closeStagedTargetGate = (): void => {
     stagedTargetGateClosed = true;
-    for (const resolve of stagedTargetWaiters.splice(0)) resolve(false);
+    for (const waiter of stagedTargetWaiters.splice(0)) waiter.resolve(false);
   };
 
   const releaseOutputSlot = (): void => {
@@ -741,6 +746,7 @@ export async function decodeFrames(
           releaseProcessing = resolve;
         });
         const previousStagedCopy = stagedCopyTail;
+        const stagedTargetSlotLimit: 1 | 2 = stagedLookaheadEnabled ? 2 : 1;
         let resolveStagedCopy!: () => void;
         if (usesStagedCpuStreaming) {
           stagedCopyTail = new Promise<void>((resolve) => {
@@ -795,7 +801,7 @@ export async function decodeFrames(
             if (usesStagedCpuStreaming) {
               await previousStagedCopy;
               if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) return;
-              stagedTargetActive = await acquireStagedTarget();
+              stagedTargetActive = await acquireStagedTarget(stagedTargetSlotLimit);
               if (
                 !stagedTargetActive ||
                 signal?.aborted ||
@@ -1096,6 +1102,8 @@ export async function decodeFrames(
       }
     } else {
       try {
+        stagedLookaheadEnabled = false;
+        await Promise.allSettled([...pendingConversions]);
         await activeDecoder.flush();
       } catch (e) {
         recordDecoderError(e);

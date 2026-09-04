@@ -1255,10 +1255,9 @@ describe('decoder-service', () => {
         expect(sourceCapacity).toBe(23);
         expect(stats.maxOutstandingFrames).toBe(outputCount);
         expect(stats.maxOutstandingFrames).toBeLessThanOrEqual(sourceCapacity);
-        expect(canvas.copies()).toBe(2);
+        expect(canvas.copies()).toBe(1);
         expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
-        expect(FakeVideoFrame.instances[1]?.close).toHaveBeenCalledOnce();
-        for (const frame of FakeVideoFrame.instances.slice(2)) {
+        for (const frame of FakeVideoFrame.instances.slice(1)) {
           expect(frame.close).not.toHaveBeenCalled();
         }
       } catch (error) {
@@ -1517,36 +1516,16 @@ describe('decoder-service', () => {
     });
 
     it('closes a lookahead frame without delivery when cancellation wins during its copy', async () => {
-      class FlushOutputVideoDecoder {
-        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
-          return { config, supported: true };
-        }
-
-        readonly close = vi.fn();
-        readonly reset = vi.fn();
-        readonly decodeQueueSize = 0;
-        private readonly output: (frame: VideoFrame) => void;
-
-        constructor(init: VideoDecoderInit) {
-          this.output = init.output;
-        }
-
-        configure(): void {}
-        decode(): void {}
-
-        async flush(): Promise<void> {
-          this.output(new FakeVideoFrame(0) as unknown as VideoFrame);
-          this.output(new FakeVideoFrame(1, 1_000) as unknown as VideoFrame);
-        }
-      }
-
-      vi.stubGlobal('VideoDecoder', FlushOutputVideoDecoder);
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       FakeVideoFrame.controlledCopies = true;
       const controller = new AbortController();
       const delivered: number[] = [];
       const decoding = decodeFrames(
         {
-          chunks: [],
+          chunks: [
+            { intensity: 0, timestamp: 0 },
+            { intensity: 1, timestamp: 1_000 },
+          ] as EncodedVideoChunk[],
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 0.034,
           framerate: 60,
