@@ -49,6 +49,21 @@ describe('frame memory reservations', () => {
     );
   });
 
+  it('calculates source capacity while reserving two target working sets', () => {
+    expect(
+      calculateStagedFrameSourceCapacity(
+        1920,
+        1080,
+        1920,
+        1080,
+        960,
+        540,
+        Number.MAX_SAFE_INTEGER,
+        2
+      )
+    ).toBe(22);
+  });
+
   it('uses a larger runtime allocation for high-bit-depth decoded frames', () => {
     expect(estimateRuntimeDecodedSourceFrameBytes(1920, 1080, 1920, 1080, 24_883_200)).toBe(
       24_883_200

@@ -134,6 +134,7 @@ export async function encodeWebpOffscreen(
       maxInputChunks: inputChunkLimit,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
+      stagedCopyLookahead: true,
       onFrameDecoded: (_frameNum: number, total: number) => {
         if (!onProgress) return;
         const encCount = encodeIdx;

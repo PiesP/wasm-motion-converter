@@ -1000,6 +1000,210 @@ describe('decoder-service', () => {
       expect(delivered).toEqual([0, 1, 2]);
     });
 
+    it('overlaps exactly one staged RGB copy with a backpressured delivery', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      FakeVideoFrame.controlledCopies = true;
+      const delivered: number[] = [];
+      let releaseFirstDelivery!: () => void;
+      const firstDelivery = new Promise<void>((resolve) => {
+        releaseFirstDelivery = resolve;
+      });
+
+      const decoding = decodeFrames(
+        {
+          chunks: [
+            { intensity: 0, timestamp: 0 },
+            { intensity: 10, timestamp: 1_000 },
+            { intensity: 20, timestamp: 2_000 },
+          ] as EncodedVideoChunk[],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.05,
+          framerate: 60,
+          sourceTotalMs: 50,
+          totalFrames: 3,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          stagedCopyLookahead: true,
+          onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            try {
+              if (frameNumber === 0) await firstDelivery;
+            } finally {
+              globalBufferPool.release(rgbData);
+            }
+          },
+        }
+      );
+
+      let assertionError: unknown;
+      try {
+        await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0]));
+        FakeVideoFrame.copyResolvers.get(0)?.();
+        await vi.waitFor(() => expect(delivered).toEqual([0]));
+        await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000]));
+        FakeVideoFrame.copyResolvers.get(1_000)?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(delivered).toEqual([0]);
+        expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000]);
+
+        releaseFirstDelivery();
+        await vi.waitFor(() => expect(delivered).toEqual([0, 1]));
+        await vi.waitFor(() =>
+          expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000, 2_000])
+        );
+        FakeVideoFrame.copyResolvers.get(2_000)?.();
+        await decoding;
+      } catch (error) {
+        assertionError = error;
+      } finally {
+        releaseFirstDelivery();
+        for (const resolve of FakeVideoFrame.copyResolvers.values()) resolve();
+        await decoding.catch(() => undefined);
+      }
+
+      if (assertionError) throw assertionError;
+      expect(delivered).toEqual([0, 1, 2]);
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
+    it('falls back to serial delivery when a second target working set would exceed budget', async () => {
+      const sourceWidth = 3000;
+      const sourceHeight = 2000;
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      FakeVideoFrame.controlledCopies = true;
+      const delivered: number[] = [];
+      let releaseFirstDelivery!: () => void;
+      const firstDelivery = new Promise<void>((resolve) => {
+        releaseFirstDelivery = resolve;
+      });
+
+      const decoding = decodeFrames(
+        {
+          chunks: [
+            { codedHeight: sourceHeight, codedWidth: sourceWidth, intensity: 0, timestamp: 0 },
+            {
+              codedHeight: sourceHeight,
+              codedWidth: sourceWidth,
+              intensity: 1,
+              timestamp: 1_000,
+            },
+          ] as EncodedVideoChunk[],
+          config: { codec: 'vp09.00.10.08', codedWidth: sourceWidth, codedHeight: sourceHeight },
+          duration: 0.034,
+          framerate: 60,
+          sourceTotalMs: 34,
+          totalFrames: 2,
+        },
+        {
+          width: sourceWidth,
+          height: sourceHeight,
+          mode: 'stream',
+          stagedCopyLookahead: true,
+          onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            try {
+              if (frameNumber === 0) await firstDelivery;
+            } finally {
+              globalBufferPool.release(rgbData);
+            }
+          },
+        }
+      );
+
+      let assertionError: unknown;
+      try {
+        await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0]));
+        FakeVideoFrame.copyResolvers.get(0)?.();
+        await vi.waitFor(() => expect(delivered).toEqual([0]));
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        expect(FakeVideoFrame.copyStarts).toEqual([0]);
+
+        releaseFirstDelivery();
+        await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000]));
+        FakeVideoFrame.copyResolvers.get(1_000)?.();
+        await decoding;
+      } catch (error) {
+        assertionError = error;
+      } finally {
+        releaseFirstDelivery();
+        for (let attempt = 0; attempt < 3; attempt++) {
+          for (const resolve of FakeVideoFrame.copyResolvers.values()) resolve();
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+        await decoding.catch(() => undefined);
+      }
+
+      if (assertionError) throw assertionError;
+      expect(delivered).toEqual([0, 1]);
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
+    it('releases a ready lookahead frame when the active delivery rejects', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      FakeVideoFrame.controlledCopies = true;
+      const delivered: number[] = [];
+      let rejectFirstDelivery!: (error: Error) => void;
+      const firstDelivery = new Promise<void>((_resolve, reject) => {
+        rejectFirstDelivery = reject;
+      });
+
+      const decoding = decodeFrames(
+        {
+          chunks: [
+            { intensity: 0, timestamp: 0 },
+            { intensity: 10, timestamp: 1_000 },
+            { intensity: 20, timestamp: 2_000 },
+          ] as EncodedVideoChunk[],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.05,
+          framerate: 60,
+          sourceTotalMs: 50,
+          totalFrames: 3,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          stagedCopyLookahead: true,
+          onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            try {
+              if (frameNumber === 0) await firstDelivery;
+            } finally {
+              globalBufferPool.release(rgbData);
+            }
+          },
+        }
+      );
+
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0]));
+      FakeVideoFrame.copyResolvers.get(0)?.();
+      await vi.waitFor(() => expect(delivered).toEqual([0]));
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000]));
+      FakeVideoFrame.copyResolvers.get(1_000)?.();
+      rejectFirstDelivery(new Error('fixture delivery failure'));
+
+      await expect(decoding).rejects.toThrow(
+        'Frame processing failed: fixture delivery failure'
+      );
+      expect(delivered).toEqual([0]);
+      expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000]);
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
     it('stages a 1080p final flush burst while the first 960x540 delivery is slow', async () => {
       const outputCount = 13;
       const sourceCapacity = calculateStagedFrameSourceCapacity(
@@ -1033,6 +1237,7 @@ describe('decoder-service', () => {
           width: 960,
           height: 540,
           mode: 'stream',
+          stagedCopyLookahead: true,
           onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
             delivered.push(frameNumber);
             try {
@@ -1068,6 +1273,261 @@ describe('decoder-service', () => {
       for (const frame of FakeVideoFrame.instances) {
         expect(frame.close).toHaveBeenCalledOnce();
       }
+    });
+
+    it('drains active lookahead before a serial-fit flush burst', async () => {
+      const sourceWidth = 1800;
+      const sourceHeight = 1000;
+      const targetWidth = 900;
+      const targetHeight = 500;
+      const flushFrames = 13;
+      const sourceBytes = estimateRuntimeDecodedSourceFrameBytes(
+        sourceWidth,
+        sourceHeight,
+        sourceWidth,
+        sourceHeight,
+        sourceWidth * sourceHeight * 8
+      );
+      const targetBytes = estimateActiveFrameBytes(targetWidth, targetHeight);
+      expect(sourceBytes * flushFrames + targetBytes).toBeLessThanOrEqual(
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+      );
+      expect(sourceBytes * flushFrames + targetBytes * 2).toBeGreaterThan(
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+      );
+
+      let flushStarted = false;
+      class DecodeThenFlushBurstVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly decodeQueueSize = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          this.output = init.output;
+        }
+
+        configure(): void {}
+
+        decode(): void {
+          this.output(
+            new FakeVideoFrame(0, 0, 16_667, sourceWidth, sourceHeight) as unknown as VideoFrame
+          );
+        }
+
+        async flush(): Promise<void> {
+          flushStarted = true;
+          for (let index = 1; index <= flushFrames; index++) {
+            this.output(
+              new FakeVideoFrame(
+                index,
+                index * 1_000,
+                16_667,
+                sourceWidth,
+                sourceHeight
+              ) as unknown as VideoFrame
+            );
+          }
+        }
+      }
+
+      vi.stubGlobal('VideoDecoder', DecodeThenFlushBurstVideoDecoder);
+      FakeVideoFrame.allocationBytesPerPixel = 8;
+      const canvas = stubScalingCanvas(targetWidth, targetHeight);
+      const delivered: number[] = [];
+      let releaseFirstDelivery!: () => void;
+      const firstDelivery = new Promise<void>((resolve) => {
+        releaseFirstDelivery = resolve;
+      });
+      const decoding = decodeFrames(
+        {
+          chunks: [{ timestamp: 0 } as EncodedVideoChunk],
+          config: { codec: 'vp09.00.10.08', codedWidth: sourceWidth, codedHeight: sourceHeight },
+          duration: 0.234,
+          framerate: 60,
+          sourceTotalMs: 234,
+          totalFrames: flushFrames + 1,
+        },
+        {
+          width: targetWidth,
+          height: targetHeight,
+          mode: 'stream',
+          stagedCopyLookahead: true,
+          onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            try {
+              if (frameNumber === 0) await firstDelivery;
+            } finally {
+              globalBufferPool.release(rgbData);
+            }
+          },
+        }
+      );
+
+      await vi.waitFor(() => expect(delivered).toEqual([0]));
+      expect(flushStarted).toBe(false);
+      expect(canvas.copies()).toBe(1);
+      releaseFirstDelivery();
+
+      const result = await decoding;
+      expect(flushStarted).toBe(true);
+      expect(result.totalInputFrames).toBe(flushFrames + 1);
+      expect(delivered).toEqual(Array.from({ length: flushFrames + 1 }, (_, index) => index));
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
+    it('resets instead of flushing when processing fails during the pre-flush drain', async () => {
+      const processingFailure = new AbortController();
+      let decoderInstance: DrainFailureVideoDecoder | undefined;
+      class DrainFailureVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly flush = vi.fn(async () => undefined);
+        readonly decodeQueueSize = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          this.output = init.output;
+          decoderInstance = this;
+        }
+
+        configure(): void {}
+
+        decode(): void {
+          this.output(new FakeVideoFrame(0) as unknown as VideoFrame);
+        }
+      }
+
+      vi.stubGlobal('VideoDecoder', DrainFailureVideoDecoder);
+      const delivered: number[] = [];
+      const decoding = decodeFrames(
+        {
+          chunks: [{ timestamp: 0 } as EncodedVideoChunk],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.017,
+          framerate: 60,
+          sourceTotalMs: 17,
+          totalFrames: 1,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          processingFailureSignal: processingFailure.signal,
+          stagedCopyLookahead: true,
+          onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            try {
+              await new Promise<void>((_resolve, reject) => {
+                processingFailure.signal.addEventListener(
+                  'abort',
+                  () => reject(processingFailure.signal.reason),
+                  { once: true }
+                );
+              });
+            } finally {
+              globalBufferPool.release(rgbData);
+            }
+          },
+        }
+      );
+
+      await vi.waitFor(() => expect(delivered).toEqual([0]));
+      processingFailure.abort(new Error('fixture pre-flush failure'));
+
+      await expect(decoding).rejects.toThrow(
+        'Frame processing failed: fixture pre-flush failure'
+      );
+      expect(decoderInstance?.reset).toHaveBeenCalledOnce();
+      expect(decoderInstance?.flush).not.toHaveBeenCalled();
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
+    it('does not pre-drain a default staged callback that completes during decoder flush', async () => {
+      let flushStarted = false;
+      let releaseDelivery!: () => void;
+      const delivery = new Promise<void>((resolve) => {
+        releaseDelivery = resolve;
+      });
+      class FlushCompletesDeliveryVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly decodeQueueSize = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          this.output = init.output;
+        }
+
+        configure(): void {}
+
+        decode(): void {
+          this.output(new FakeVideoFrame(0) as unknown as VideoFrame);
+        }
+
+        async flush(): Promise<void> {
+          flushStarted = true;
+          releaseDelivery();
+        }
+      }
+
+      vi.stubGlobal('VideoDecoder', FlushCompletesDeliveryVideoDecoder);
+      const delivered: number[] = [];
+      const decoding = decodeFrames(
+        {
+          chunks: [{ timestamp: 0 } as EncodedVideoChunk],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.017,
+          framerate: 60,
+          sourceTotalMs: 17,
+          totalFrames: 1,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            try {
+              await delivery;
+            } finally {
+              globalBufferPool.release(rgbData);
+            }
+          },
+        }
+      );
+
+      let assertionError: unknown;
+      try {
+        await vi.waitFor(() => expect(delivered).toEqual([0]));
+        await vi.waitFor(() => expect(flushStarted).toBe(true));
+        await decoding;
+      } catch (error) {
+        assertionError = error;
+      } finally {
+        releaseDelivery();
+        await decoding.catch(() => undefined);
+      }
+
+      if (assertionError) throw assertionError;
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
     });
 
     it('admits a bounded two-frame 4K-to-360p flush burst', async () => {
@@ -1310,46 +1770,28 @@ describe('decoder-service', () => {
       }
     });
 
-    it('closes an output frame without delivery when cancellation wins during its copy', async () => {
-      class FlushOutputVideoDecoder {
-        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
-          return { config, supported: true };
-        }
-
-        readonly close = vi.fn();
-        readonly reset = vi.fn();
-        readonly decodeQueueSize = 0;
-        private readonly output: (frame: VideoFrame) => void;
-
-        constructor(init: VideoDecoderInit) {
-          this.output = init.output;
-        }
-
-        configure(): void {}
-        decode(): void {}
-
-        async flush(): Promise<void> {
-          this.output(new FakeVideoFrame(0) as unknown as VideoFrame);
-        }
-      }
-
-      vi.stubGlobal('VideoDecoder', FlushOutputVideoDecoder);
+    it('closes a lookahead frame without delivery when cancellation wins during its copy', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       FakeVideoFrame.controlledCopies = true;
       const controller = new AbortController();
       const delivered: number[] = [];
       const decoding = decodeFrames(
         {
-          chunks: [],
+          chunks: [
+            { intensity: 0, timestamp: 0 },
+            { intensity: 1, timestamp: 1_000 },
+          ] as EncodedVideoChunk[],
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
-          duration: 0.017,
+          duration: 0.034,
           framerate: 60,
-          sourceTotalMs: 17,
-          totalFrames: 1,
+          sourceTotalMs: 34,
+          totalFrames: 2,
         },
         {
           width: 8,
           height: 8,
           mode: 'stream',
+          stagedCopyLookahead: true,
           onFrameAvailable: (rgbData, _durationMs, frameNumber) => {
             delivered.push(frameNumber);
             globalBufferPool.release(rgbData);
@@ -1359,12 +1801,17 @@ describe('decoder-service', () => {
       );
 
       await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0]));
-      controller.abort();
       FakeVideoFrame.copyResolvers.get(0)?.();
+      await vi.waitFor(() => expect(delivered).toEqual([0]));
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000]));
+      controller.abort();
+      FakeVideoFrame.copyResolvers.get(1_000)?.();
 
       await expect(decoding).rejects.toMatchObject({ name: 'AbortError' });
-      expect(delivered).toEqual([]);
-      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+      expect(delivered).toEqual([0]);
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
       expect(globalBufferPool.totalActiveMemory).toBe(0);
     });
 

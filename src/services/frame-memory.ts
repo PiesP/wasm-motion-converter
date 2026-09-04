@@ -127,9 +127,9 @@ export function calculateFrameOutputConcurrency(
 }
 
 /**
- * Derive the number of decoded source frames that may wait for one serialized
- * target conversion. The target working set is held aside for the lifetime of
- * the queue, so source reservations can never consume its headroom.
+ * Derive the number of decoded source frames that may wait while reserving the
+ * requested number of target working sets. Target memory is held aside for the
+ * lifetime of the queue, so source reservations cannot consume its headroom.
  */
 export function calculateStagedFrameSourceCapacity(
   codedWidth: number,
@@ -138,16 +138,21 @@ export function calculateStagedFrameSourceCapacity(
   displayHeight: number,
   targetWidth: number,
   targetHeight: number,
-  requestedMaximum: number
+  requestedMaximum: number,
+  targetWorkingSetCount = 1
 ): number {
   const requested = Math.max(1, Math.floor(requestedMaximum));
+  const targetCount = Math.max(1, Math.floor(targetWorkingSetCount));
   const sourceBytes = estimateDecodedSourceFrameBytes(
     codedWidth,
     codedHeight,
     displayWidth,
     displayHeight
   );
-  const targetWorkingBytes = estimateActiveFrameBytes(targetWidth, targetHeight);
+  const targetWorkingBytes = estimateActiveFrameBytes(targetWidth, targetHeight) * targetCount;
+  if (!Number.isSafeInteger(targetWorkingBytes)) {
+    throw new RangeError('Target working-set reservation exceeds the safe integer range');
+  }
   const sourceBudgetBytes = FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingBytes;
   if (sourceBudgetBytes < sourceBytes) return 0;
   return Math.min(requested, Math.floor(sourceBudgetBytes / sourceBytes));
