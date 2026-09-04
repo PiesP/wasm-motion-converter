@@ -481,37 +481,63 @@ describe('localized conversion progress status', () => {
       setConversionPhase: reactive.setPhase,
     });
     const run = handleConvert(runtime, localizedProgressT);
-    await vi.waitFor(() => expect(progressCallback).toBeTypeOf('function'));
-    reactive.snapshots.length = 0;
+    let primaryFailure: unknown;
+    const cleanupFailures: unknown[] = [];
+    try {
+      await vi.waitFor(() => expect(progressCallback).toBeTypeOf('function'));
+      reactive.snapshots.length = 0;
 
-    progressCallback?.({
-      phase: 'decoding',
-      progress: 25,
-      fps: 30,
-      etaSeconds: 3,
-      memoryMB: 42,
-      currentFrame: 4,
-      totalFrames: 20,
-      outputFrames: 3,
-      elapsedMs: 1_250,
-    });
-
-    expect(reactive.snapshots).toEqual([
-      {
-        progress: 25,
+      progressCallback?.({
         phase: 'decoding',
-        memoryUsage: '42 MB',
+        progress: 25,
         fps: 30,
-        elapsedMs: 1_250,
+        etaSeconds: 3,
+        memoryMB: 42,
         currentFrame: 4,
         totalFrames: 20,
         outputFrames: 3,
-        status: '프레임 4/20 — 디코딩 중 @ 초당 30프레임',
-      },
-    ]);
+        elapsedMs: 1_250,
+      });
 
-    resolvePipeline?.(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer);
-    await run;
-    reactive.dispose();
+      expect(reactive.snapshots).toEqual([
+        {
+          progress: 25,
+          phase: 'decoding',
+          memoryUsage: '42 MB',
+          fps: 30,
+          elapsedMs: 1_250,
+          currentFrame: 4,
+          totalFrames: 20,
+          outputFrames: 3,
+          status: '프레임 4/20 — 디코딩 중 @ 초당 30프레임',
+        },
+      ]);
+    } catch (error) {
+      primaryFailure = error;
+    } finally {
+      try {
+        resolvePipeline?.(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer);
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+      try {
+        await run;
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+      try {
+        runtime.dispose();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+      try {
+        reactive.dispose();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+    }
+
+    if (primaryFailure) throw primaryFailure;
+    if (cleanupFailures.length > 0) throw cleanupFailures[0];
   });
 });
