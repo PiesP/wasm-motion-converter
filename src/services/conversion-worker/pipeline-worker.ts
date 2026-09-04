@@ -240,6 +240,14 @@ export async function runWorkerPipeline(
     };
 
     const transcodeSpan = profiler?.begin('transcoding');
+    const recordCompletedFrameCounts = (counts: {
+      decodedFrames: number;
+      encodedFrames: number;
+    }): void => {
+      observedDecodedFrames = counts.decodedFrames;
+      observedEncodedFrames = counts.encodedFrames;
+      transcodeSpan?.update(counts);
+    };
 
     if (options.format === 'gif') {
       const gifDecimation = calcAutoDecimation(
@@ -342,13 +350,12 @@ export async function runWorkerPipeline(
             scale: options.scale,
             frameDecimation: webpDecimation,
             smartFrameSkip: options.smartFrameSkip,
+            onEncodingComplete: recordCompletedFrameCounts,
             maxFrames: request.maxFrames,
             maxOutputBytes: request.maxOutputBytes,
             onFrameDecoded: decodeProgressCb,
           },
           (p) => {
-            observedDecodedFrames = Math.max(observedDecodedFrames, p.totalFrames ?? 0);
-            transcodeSpan?.update({ decodedFrames: observedDecodedFrames });
             observedEncodedFrames = Math.max(observedEncodedFrames, p.currentFrame ?? 0);
             transcodeSpan?.update({ encodedFrames: p.currentFrame ?? 0 });
             const now = performance.now();

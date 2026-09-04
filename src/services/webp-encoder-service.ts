@@ -186,6 +186,10 @@ export async function encodeWebp(
     currentFrame: muxer.frames,
     totalFrames: Math.max(muxer.frames, totalInputFrames),
   });
+  opts.onEncodingComplete?.({
+    decodedFrames: totalInputFrames,
+    encodedFrames: muxer.frames,
+  });
 
   logger.info('encoders', 'WebP encoding complete', {
     decodedFrames: totalInputFrames,

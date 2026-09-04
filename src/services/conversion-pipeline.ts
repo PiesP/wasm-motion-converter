@@ -291,12 +291,19 @@ async function _runPipelineInner(
       let encodedFrames = 0;
       return (p) => {
         encodedFrames = p.currentFrame ?? encodedFrames;
-        observedDecodedFrames = Math.max(observedDecodedFrames, p.totalFrames ?? 0);
         reportEncodingProgress(encodedFrames, p.currentFrame ?? 0, p.currentFrame ?? null);
       };
     };
 
     const transcodeSpan = profiler?.begin('transcoding');
+    const recordCompletedFrameCounts = (counts: {
+      decodedFrames: number;
+      encodedFrames: number;
+    }): void => {
+      observedDecodedFrames = counts.decodedFrames;
+      observedEncodedFrames = counts.encodedFrames;
+      transcodeSpan?.update(counts);
+    };
 
     const sourceFps =
       Number.isFinite(demuxResult.framerate) && demuxResult.framerate > 0
@@ -530,6 +537,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                onEncodingComplete: recordCompletedFrameCounts,
                 ...outputLimits,
                 onFrameDecoded: decodeProgressCb,
               },
@@ -565,6 +573,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                onEncodingComplete: recordCompletedFrameCounts,
                 ...outputLimits,
                 onFrameDecoded: decodeProgressCb,
               },

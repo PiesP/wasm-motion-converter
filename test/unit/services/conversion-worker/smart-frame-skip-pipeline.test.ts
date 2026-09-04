@@ -64,10 +64,16 @@ beforeEach(() => {
     .mockImplementation(
       async (
         _demux: unknown,
-        _options: unknown,
+        options: {
+          onEncodingComplete?: (counts: {
+            decodedFrames: number;
+            encodedFrames: number;
+          }) => void;
+        },
         onProgress?: (progress: { currentFrame?: number; totalFrames?: number }) => void
       ) => {
-        onProgress?.({ currentFrame: 1, totalFrames: 2 });
+        onProgress?.({ currentFrame: 10, totalFrames: 30 });
+        options.onEncodingComplete?.({ decodedFrames: 2, encodedFrames: 1 });
         return new Uint8Array([1, 2, 3]);
       }
     );

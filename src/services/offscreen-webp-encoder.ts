@@ -243,6 +243,10 @@ export async function encodeWebpOffscreen(
     currentFrame: muxer.frames,
     totalFrames: Math.max(muxer.frames, totalDecoded),
   });
+  opts.onEncodingComplete?.({
+    decodedFrames: totalDecoded,
+    encodedFrames: muxer.frames,
+  });
 
   logger.info('encoders', 'OffscreenCanvas WebP encoding complete', {
     decodedFrames: totalDecoded,
