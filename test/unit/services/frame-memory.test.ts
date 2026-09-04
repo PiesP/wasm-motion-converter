@@ -10,6 +10,7 @@ import {
   estimateDecodedSourceFrameBytes,
   estimateActiveFrameBytes,
   estimateFrameOutputBytes,
+  estimateRuntimeDecodedSourceFrameBytes,
 } from '@services/frame-memory';
 import {
   CONVERSION_MEMORY_BUDGET_BYTES,
@@ -45,6 +46,18 @@ describe('frame memory reservations', () => {
     );
     expect(targetWorkingBytes + sourceBytes * (capacity + 1)).toBeGreaterThan(
       FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    );
+  });
+
+  it('uses a larger runtime allocation for high-bit-depth decoded frames', () => {
+    expect(estimateRuntimeDecodedSourceFrameBytes(1920, 1080, 1920, 1080, 24_883_200)).toBe(
+      24_883_200
+    );
+  });
+
+  it('falls back to eight bytes per pixel when runtime layout is uncertain', () => {
+    expect(estimateRuntimeDecodedSourceFrameBytes(1920, 1080, 1920, 1080, null)).toBe(
+      1920 * 1080 * 8
     );
   });
 

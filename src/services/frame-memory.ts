@@ -6,6 +6,7 @@ import { getPooledBufferSize } from './buffer-pool';
 
 const RGB_BYTES_PER_PIXEL = 3;
 const DECODED_RGBA_BYTES_PER_PIXEL = 4;
+const UNCERTAIN_DECODED_BYTES_PER_PIXEL = 8;
 const DECODED_RGBA_AND_CANVAS_BYTES_PER_PIXEL = 12;
 
 /** Conservatively estimate a retained VideoFrame from its maximum visible extent. */
@@ -27,6 +28,40 @@ export function estimateDecodedSourceFrameBytes(
     throw new RangeError('Source frame allocation exceeds the safe integer range');
   }
   return bytes;
+}
+
+/**
+ * Reserve a decoded frame from its runtime plane allocation when trustworthy.
+ * Unknown layouts use an 8-Bpp extent so high-bit-depth, alpha, and 4:4:4
+ * surfaces cannot silently fall back to the 4-Bpp admission floor.
+ */
+export function estimateRuntimeDecodedSourceFrameBytes(
+  codedWidth: number,
+  codedHeight: number,
+  displayWidth: number,
+  displayHeight: number,
+  runtimeAllocationBytes: number | null
+): number {
+  const extentFloorBytes = estimateDecodedSourceFrameBytes(
+    codedWidth,
+    codedHeight,
+    displayWidth,
+    displayHeight
+  );
+  if (
+    runtimeAllocationBytes !== null &&
+    Number.isSafeInteger(runtimeAllocationBytes) &&
+    runtimeAllocationBytes > 0
+  ) {
+    return Math.max(extentFloorBytes, runtimeAllocationBytes);
+  }
+
+  const uncertainBytes =
+    (extentFloorBytes / DECODED_RGBA_BYTES_PER_PIXEL) * UNCERTAIN_DECODED_BYTES_PER_PIXEL;
+  if (!Number.isSafeInteger(uncertainBytes)) {
+    throw new RangeError('Source frame fallback allocation exceeds the safe integer range');
+  }
+  return uncertainBytes;
 }
 
 /** Estimate the cross-realm memory retained by one active RGB encode task. */

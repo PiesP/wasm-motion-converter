@@ -7,6 +7,8 @@ import { decodeFrames, type DecodeResult } from '@services/decoder-service';
 import {
   calculateFrameOutputConcurrency,
   calculateStagedFrameSourceCapacity,
+  estimateActiveFrameBytes,
+  estimateRuntimeDecodedSourceFrameBytes,
 } from '@services/frame-memory';
 import { clearCanvasCache } from '@services/frame-utils';
 import { FRAME_PIPELINE_MEMORY_BUDGET_BYTES, MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
@@ -54,14 +56,18 @@ describe('decoder-service', () => {
 
   describe('adaptive frame skip', () => {
     class FakeVideoFrame {
+      static allocationBytesPerPixel = 4;
+      static allocationSizeThrows = false;
       static controlledCopies = false;
       static copyResolvers = new Map<number, () => void>();
       static copyStarts: number[] = [];
       static failCopies = false;
       static frameDuration: number | null = 16_667;
+      static frameFormat: VideoPixelFormat | null = 'RGBA';
       static instances: FakeVideoFrame[] = [];
 
       readonly close = vi.fn();
+      readonly format = FakeVideoFrame.frameFormat;
 
       constructor(
         private readonly intensity: number,
@@ -76,7 +82,14 @@ describe('decoder-service', () => {
       }
 
       allocationSize(): number {
-        return this.codedWidth * this.codedHeight * 4;
+        if (FakeVideoFrame.allocationSizeThrows) {
+          throw new Error('fixture allocation size failure');
+        }
+        return (
+          Math.max(this.codedWidth, this.displayWidth) *
+          Math.max(this.codedHeight, this.displayHeight) *
+          FakeVideoFrame.allocationBytesPerPixel
+        );
       }
 
       async copyTo(destination: AllowSharedBufferSource): Promise<PlaneLayout[]> {
@@ -216,9 +229,12 @@ describe('decoder-service', () => {
       vi.clearAllMocks();
       globalBufferPool.clear();
       FakeVideoDecoder.configureCalls = 0;
+      FakeVideoFrame.allocationBytesPerPixel = 4;
+      FakeVideoFrame.allocationSizeThrows = false;
       FakeVideoFrame.controlledCopies = false;
       FakeVideoFrame.failCopies = false;
       FakeVideoFrame.frameDuration = 16_667;
+      FakeVideoFrame.frameFormat = 'RGBA';
       FakeVideoFrame.instances.length = 0;
       FakeVideoFrame.copyResolvers.clear();
       FakeVideoFrame.copyStarts.length = 0;
@@ -399,6 +415,95 @@ describe('decoder-service', () => {
         'Decoding complete',
         expect.objectContaining({ outputFrames: 2 })
       );
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+    });
+
+    it('does not close a GPU frame again when its owner closes before throwing', async () => {
+      const { Decoder } = createFlushBurstVideoDecoder(1, 8, 8);
+      vi.stubGlobal('VideoDecoder', Decoder);
+
+      await expect(
+        decodeFrames(
+          {
+            chunks: [],
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.017,
+            framerate: 60,
+            sourceTotalMs: 17,
+            totalFrames: 1,
+          },
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onVideoFrameAvailable: async (frame) => {
+              try {
+                throw new Error('fixture GPU encoder failure');
+              } finally {
+                frame.close();
+              }
+            },
+          }
+        )
+      ).rejects.toThrow('Frame processing failed: fixture GPU encoder failure');
+
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+    });
+
+    it('closes a GPU frame in the decoder when cancellation wins before transfer', async () => {
+      const controller = new AbortController();
+      class CancellingFlushVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly decodeQueueSize = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          this.output = init.output;
+        }
+
+        configure(): void {}
+        decode(): void {}
+
+        async flush(): Promise<void> {
+          this.output(new FakeVideoFrame(0) as unknown as VideoFrame);
+          controller.abort();
+        }
+      }
+      vi.stubGlobal('VideoDecoder', CancellingFlushVideoDecoder);
+      const delivered: number[] = [];
+
+      await expect(
+        decodeFrames(
+          {
+            chunks: [],
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.017,
+            framerate: 60,
+            sourceTotalMs: 17,
+            totalFrames: 1,
+          },
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onVideoFrameAvailable: (frame, _durationMs, frameNumber) => {
+              delivered.push(frameNumber);
+              frame.close();
+            },
+          },
+          controller.signal
+        )
+      ).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(delivered).toEqual([]);
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
     });
 
     it('caps adaptive decimation at the minimum output fps', async () => {
@@ -641,6 +746,113 @@ describe('decoder-service', () => {
       }
     });
 
+    it('uses high-bit-depth allocationSize for staged source-frame admission', async () => {
+      FakeVideoFrame.allocationBytesPerPixel = 12;
+      FakeVideoFrame.frameFormat = 'I444';
+      const runtimeSourceBytes = estimateRuntimeDecodedSourceFrameBytes(
+        1920,
+        1080,
+        1920,
+        1080,
+        1920 * 1080 * 12
+      );
+      const targetWorkingBytes = estimateActiveFrameBytes(960, 540);
+      const runtimeCapacity = Math.floor(
+        (FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingBytes) / runtimeSourceBytes
+      );
+      const { Decoder, stats } = createFlushBurstVideoDecoder(
+        runtimeCapacity + 1,
+        1920,
+        1080
+      );
+      const canvas = stubScalingCanvas(960, 540);
+      vi.stubGlobal('VideoDecoder', Decoder);
+      const delivered: number[] = [];
+
+      await expect(
+        decodeFrames(
+          {
+            chunks: [],
+            config: { codec: 'vp09.00.10.08', codedWidth: 1920, codedHeight: 1080 },
+            duration: 0.2,
+            framerate: 60,
+            sourceTotalMs: 200,
+            totalFrames: runtimeCapacity + 1,
+          },
+          {
+            width: 960,
+            height: 540,
+            mode: 'stream',
+            onFrameAvailable: (rgbData, _durationMs, frameNumber) => {
+              delivered.push(frameNumber);
+              globalBufferPool.release(rgbData);
+            },
+          }
+        )
+      ).rejects.toThrow('Decoded frame output memory limit exceeded');
+
+      expect(runtimeCapacity).toBe(7);
+      expect(targetWorkingBytes + runtimeSourceBytes * runtimeCapacity).toBeLessThanOrEqual(
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+      );
+      expect(targetWorkingBytes + runtimeSourceBytes * (runtimeCapacity + 1)).toBeGreaterThan(
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+      );
+      expect(stats.maxOutstandingFrames).toBe(runtimeCapacity);
+      expect(canvas.copies()).toBe(0);
+      expect(delivered).toEqual([]);
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+    });
+
+    it('uses an eight-byte source fallback when allocationSize throws', async () => {
+      FakeVideoFrame.allocationSizeThrows = true;
+      FakeVideoFrame.frameFormat = 'I444';
+      const fallbackSourceBytes = estimateRuntimeDecodedSourceFrameBytes(
+        1920,
+        1080,
+        1920,
+        1080,
+        null
+      );
+      const targetWorkingBytes = estimateActiveFrameBytes(960, 540);
+      const fallbackCapacity = Math.floor(
+        (FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingBytes) / fallbackSourceBytes
+      );
+      const { Decoder, stats } = createFlushBurstVideoDecoder(
+        fallbackCapacity + 1,
+        1920,
+        1080
+      );
+      vi.stubGlobal('VideoDecoder', Decoder);
+
+      await expect(
+        decodeFrames(
+          {
+            chunks: [],
+            config: { codec: 'vp09.00.10.08', codedWidth: 1920, codedHeight: 1080 },
+            duration: 0.2,
+            framerate: 60,
+            sourceTotalMs: 200,
+            totalFrames: fallbackCapacity + 1,
+          },
+          {
+            width: 960,
+            height: 540,
+            mode: 'stream',
+            onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+          }
+        )
+      ).rejects.toThrow('Decoded frame output memory limit exceeded');
+
+      expect(fallbackCapacity).toBe(11);
+      expect(stats.maxOutstandingFrames).toBe(fallbackCapacity);
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+    });
+
     it('admits more than ten small flush outputs within the ownership byte budget', async () => {
       const outputCount = 12;
       const ownershipCapacity = calculateFrameOutputConcurrency(
@@ -741,15 +953,15 @@ describe('decoder-service', () => {
       expect(globalBufferPool.totalActiveMemory).toBe(0);
     });
 
-    it('closes and releases a source frame when RGB copy fails', async () => {
+    it('closes and releases a source frame when VideoFrame.copyTo fails', async () => {
       const { Decoder } = createFlushBurstVideoDecoder(1, 8, 8);
       vi.stubGlobal('VideoDecoder', Decoder);
       FakeVideoFrame.failCopies = true;
       vi.stubGlobal(
         'OffscreenCanvas',
         class {
-          getContext(): null {
-            return null;
+          constructor() {
+            throw new Error('fixture copy failure');
           }
         }
       );
@@ -771,8 +983,9 @@ describe('decoder-service', () => {
             onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
           }
         )
-      ).rejects.toThrow('Frame processing failed: Failed to get 2d context');
+      ).rejects.toThrow('Frame processing failed: fixture copy failure');
 
+      expect(FakeVideoFrame.copyStarts.length).toBeGreaterThan(0);
       expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
       expect(globalBufferPool.totalActiveMemory).toBe(0);
     });
@@ -829,11 +1042,111 @@ describe('decoder-service', () => {
         )
       ).rejects.toThrow('fixture decoder failure');
 
-      expect(delivered).toEqual([0, 1]);
+      expect(delivered).toEqual([]);
       for (const frame of FakeVideoFrame.instances) {
         expect(frame.close).toHaveBeenCalledOnce();
       }
       expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
+    it('preserves a decoder failure that precedes a callback failure', async () => {
+      class DecoderFailureFirstVideoDecoder {
+        static emitError: ((error: DOMException) => void) | undefined;
+
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly decodeQueueSize = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          DecoderFailureFirstVideoDecoder.emitError = init.error;
+          this.output = init.output;
+        }
+
+        configure(): void {}
+        decode(): void {}
+
+        async flush(): Promise<void> {
+          this.output(new FakeVideoFrame(0) as unknown as VideoFrame);
+        }
+      }
+
+      vi.stubGlobal('VideoDecoder', DecoderFailureFirstVideoDecoder);
+
+      await expect(
+        decodeFrames(
+          {
+            chunks: [],
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.017,
+            framerate: 60,
+            sourceTotalMs: 17,
+            totalFrames: 1,
+          },
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onFrameAvailable: (rgbData) => {
+              globalBufferPool.release(rgbData);
+              DecoderFailureFirstVideoDecoder.emitError?.(
+                new DOMException('fixture decoder first', 'EncodingError')
+              );
+              throw new Error('fixture callback later');
+            },
+          }
+        )
+      ).rejects.toThrow('fixture decoder first');
+
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
+    it('preserves a processing failure that precedes a flush rejection', async () => {
+      const processingFailure = new AbortController();
+      class ProcessingFailureFirstVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly decodeQueueSize = 0;
+
+        configure(): void {}
+        decode(): void {}
+
+        async flush(): Promise<void> {
+          processingFailure.abort(new Error('fixture processing first'));
+          throw new Error('fixture flush later');
+        }
+      }
+
+      vi.stubGlobal('VideoDecoder', ProcessingFailureFirstVideoDecoder);
+
+      await expect(
+        decodeFrames(
+          {
+            chunks: [],
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0,
+            framerate: 60,
+            sourceTotalMs: 0,
+            totalFrames: 0,
+          },
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            processingFailureSignal: processingFailure.signal,
+            onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+          }
+        )
+      ).rejects.toThrow('Frame processing failed: fixture processing first');
     });
 
     it('applies output backpressure before pulling more demuxed chunks', async () => {
@@ -974,7 +1287,7 @@ describe('decoder-service', () => {
         )
       ).rejects.toThrow('Decoded frame dimensions exceed the per-frame memory limit');
 
-      expect(delivered).toEqual([0]);
+      expect(delivered).toEqual([]);
       expect(FakeVideoFrame.instances).toHaveLength(2);
       expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
       expect(FakeVideoFrame.instances[1]?.close).toHaveBeenCalledOnce();
