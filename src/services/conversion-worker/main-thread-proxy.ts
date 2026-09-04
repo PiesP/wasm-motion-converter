@@ -178,6 +178,13 @@ export async function runPipelineViaWorker(
       if (!isWorkerResponse(event.data)) return;
 
       const response = event.data;
+      const isBootstrapLog =
+        response.type === 'log' &&
+        response.requestId === '' &&
+        response.level === 'info' &&
+        response.category === 'general' &&
+        response.message === 'Worker initialized';
+      if (response.requestId !== requestId && !isBootstrapLog) return;
 
       switch (response.type) {
         case 'progress': {
@@ -223,11 +230,10 @@ export async function runPipelineViaWorker(
         }
 
         case 'log': {
-          if (response.requestId === '') workerInitialized = true;
-          // Forward worker logs to console (can be customized)
-          logger.info('general', 'worker.log-relay', {
-            level: response.level,
-            message: response.message,
+          if (isBootstrapLog) workerInitialized = true;
+          logger[response.level](response.category, response.message, {
+            source: 'worker',
+            requestId: response.requestId || null,
           });
           break;
         }

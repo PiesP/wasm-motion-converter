@@ -50,10 +50,11 @@ beforeEach(() => {
 
 describe('worker pipeline smart frame skip forwarding', () => {
   it('forwards smartFrameSkip to the GIF encoder', async () => {
+    const postMessage = vi.fn();
     const result = await runWorkerPipeline(
       new ArrayBuffer(8),
       baseOptions,
-      vi.fn(),
+      postMessage,
       'request-1'
     );
 
@@ -75,6 +76,20 @@ describe('worker pipeline smart frame skip forwarding', () => {
     expect(result.profile?.stages.find((stage) => stage.stage === 'transcoding')).toMatchObject({
       encodedFrames: 10,
       outputBytes: 3,
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'log',
+      requestId: 'request-1',
+      level: 'info',
+      category: 'conversion',
+      message: 'Worker pipeline started: gif medium 1x',
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'log',
+      requestId: 'request-1',
+      level: 'info',
+      category: 'encoders',
+      message: 'GIF encoder (streaming decode→encode)',
     });
   });
 

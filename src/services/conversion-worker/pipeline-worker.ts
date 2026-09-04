@@ -29,10 +29,10 @@ import {
   WORKER_MAX_MEMORY_MB,
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
-import { logger } from '@utils/logger';
 import type { ConversionProfileReport } from '../conversion-profiler';
 import { buildConversionRequest } from './build-conversion-request';
 import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
+import { createWorkerLogRelay } from './worker-log-relay';
 
 // Aligned progress ranges matching main-thread conversion-pipeline.ts
 // demux: 0~3%   decode: 3~73%   encode: 73~93%   assembly: 93~100%
@@ -93,14 +93,13 @@ export async function runWorkerPipeline(
   const request = buildConversionRequest(inputBuffer, options, maxMemoryMB);
 
   const progressState = createWorkerProgressTracker();
+  const relayLog = createWorkerLogRelay(postMessage, requestId);
 
-  // Post initial log
-  postMessage({
-    type: 'log',
-    requestId,
-    level: 'info',
-    message: `Worker pipeline started: ${options.format} ${options.quality} ${options.scale}x`,
-  });
+  relayLog(
+    'info',
+    'conversion',
+    `Worker pipeline started: ${options.format} ${options.quality} ${options.scale}x`
+  );
 
   let output: ArrayBuffer | undefined;
 
@@ -247,7 +246,7 @@ export async function runWorkerPipeline(
       );
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
 
-      logger.info('encoders', 'GIF encoder (streaming decode→encode)', {
+      relayLog('info', 'encoders', 'GIF encoder (streaming decode→encode)', {
         codec: demuxResult.config.codec,
         codedWidth,
         codedHeight,
@@ -320,7 +319,7 @@ export async function runWorkerPipeline(
       // as fallback but disabled by default due to VP8 coded-size vs
       // ANMF canvas mismatch on certain quality settings.
       if (!output) {
-        logger.info('encoders', 'WebP encoder (wasm-webp encodeRGB + mux)', {
+        relayLog('info', 'encoders', 'WebP encoder (wasm-webp encodeRGB + mux)', {
           codec: demuxResult.config.codec,
           codedWidth,
           codedHeight,

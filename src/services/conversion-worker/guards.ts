@@ -13,6 +13,7 @@
 import { isRecord } from '@piesp/browser-core/util';
 import { isBoundedCodecDescription } from '@services/codec-description';
 import type { WorkerRequest, WorkerResponse } from './types';
+import { WORKER_LOG_MAX_MESSAGE_CHARS, WORKER_LOG_MAX_REQUEST_ID_CHARS } from './types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -29,9 +30,19 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 const PROFILE_STAGES = ['demuxing', 'transcoding', 'assembling'] as const;
+const WORKER_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+const WORKER_LOG_CATEGORIES = ['conversion', 'general', 'demuxer', 'encoders', 'decoders'] as const;
 
 function isProfileStage(value: unknown): value is (typeof PROFILE_STAGES)[number] {
   return typeof value === 'string' && PROFILE_STAGES.some((stage) => stage === value);
+}
+
+function isWorkerLogLevel(value: unknown): boolean {
+  return typeof value === 'string' && WORKER_LOG_LEVELS.some((level) => level === value);
+}
+
+function isWorkerLogCategory(value: unknown): boolean {
+  return typeof value === 'string' && WORKER_LOG_CATEGORIES.some((category) => category === value);
 }
 
 function isValidStageMetrics(value: unknown): boolean {
@@ -193,9 +204,17 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
     }
     case 'log': {
       // requestId can be empty string for worker init log
-      if (typeof value.requestId !== 'string') return false;
-      if (!isNonEmptyString(value.level)) return false;
-      if (!isNonEmptyString(value.message)) return false;
+      if (
+        typeof value.requestId !== 'string' ||
+        value.requestId.length > WORKER_LOG_MAX_REQUEST_ID_CHARS
+      ) {
+        return false;
+      }
+      if (!isWorkerLogLevel(value.level)) return false;
+      if (!isWorkerLogCategory(value.category)) return false;
+      if (!isNonEmptyString(value.message) || value.message.length > WORKER_LOG_MAX_MESSAGE_CHARS) {
+        return false;
+      }
       return true;
     }
     default:

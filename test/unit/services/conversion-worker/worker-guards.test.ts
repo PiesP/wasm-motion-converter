@@ -209,6 +209,7 @@ describe('isWorkerResponse', () => {
     type: 'log',
     requestId: '',
     level: 'info',
+    category: 'general',
     message: 'Worker initialized',
   };
 
@@ -230,6 +231,14 @@ describe('isWorkerResponse', () => {
 
   it('accepts valid log message', () => {
     expect(isWorkerResponse(validLog)).toBe(true);
+  });
+
+  it('rejects unbounded or unknown worker log fields', () => {
+    expect(isWorkerResponse({ ...validLog, level: 'INFO' })).toBe(false);
+    expect(isWorkerResponse({ ...validLog, category: 'network' })).toBe(false);
+    expect(isWorkerResponse({ ...validLog, requestId: 'x'.repeat(65) })).toBe(false);
+    expect(isWorkerResponse({ ...validLog, message: '' })).toBe(false);
+    expect(isWorkerResponse({ ...validLog, message: 'x'.repeat(513) })).toBe(false);
   });
 
   it('rejects null', () => {
