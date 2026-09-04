@@ -349,15 +349,48 @@ export async function decodeFrames(
   const handleCancellation = (): void => {
     recordCancellation();
   };
-  if (processingFailureSignal?.aborted && !firstConversionError) {
+  const removeFailureListeners = (): void => {
+    processingFailureSignal?.removeEventListener('abort', handleProcessingFailure);
+    signal?.removeEventListener('abort', handleCancellation);
+  };
+  const getLatchedFailureError = (): Error | null => {
+    const pipelineFailure = firstPipelineFailure as {
+      error: Error;
+      origin: 'cancellation' | 'decoder' | 'processing';
+    } | null;
+    if (pipelineFailure?.origin === 'processing') {
+      logger.error('decoders', 'Frame conversion errors detected', {
+        errorCount: conversionErrorCount,
+        firstError: pipelineFailure.error.message,
+      });
+      return new Error(`Frame processing failed: ${pipelineFailure.error.message}`, {
+        cause: pipelineFailure.error,
+      });
+    }
+    return pipelineFailure?.error ?? null;
+  };
+
+  if (processingFailureSignal?.aborted) {
     handleProcessingFailure();
+  } else {
+    processingFailureSignal?.addEventListener('abort', handleProcessingFailure, { once: true });
   }
-  if (signal?.aborted && !cancellationObserved) {
+  if (signal?.aborted) {
     handleCancellation();
+  } else {
+    signal?.addEventListener('abort', handleCancellation, { once: true });
   }
 
   // Check codec support (cached per codec+hw combo)
-  const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
+  let activeConfig: VideoDecoderConfig;
+  try {
+    activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
+  } catch (error) {
+    recordDecoderError(error);
+    removeFailureListeners();
+    demux.dispose?.();
+    throw getLatchedFailureError() ?? normalizeFailure(error);
+  }
 
   // Create per-conversion frame processing context (duration carry + copy path cache)
   const frameCtx: FrameProcessingContext = createFrameProcessingContext();
@@ -823,16 +856,6 @@ export async function decodeFrames(
   const chunkStream = (async function* iterateChunks(): AsyncGenerator<EncodedVideoChunk> {
     yield* demux.chunks;
   })();
-  if (processingFailureSignal?.aborted) {
-    if (!firstConversionError) handleProcessingFailure();
-  } else {
-    processingFailureSignal?.addEventListener('abort', handleProcessingFailure, { once: true });
-  }
-  if (signal?.aborted) {
-    if (!cancellationObserved) handleCancellation();
-  } else {
-    signal?.addEventListener('abort', handleCancellation, { once: true });
-  }
 
   try {
     // Pull and feed chunks with backpressure — prevent both MediaBunny and the
@@ -920,22 +943,8 @@ export async function decodeFrames(
 
     // Any frame or downstream encoding failure makes the output incomplete.
     // Preserve the first cause after every already-created frame is closed.
-    const pipelineFailure = firstPipelineFailure as {
-      error: Error;
-      origin: 'cancellation' | 'decoder' | 'processing';
-    } | null;
-    if (pipelineFailure?.origin === 'processing') {
-      logger.error('decoders', 'Frame conversion errors detected', {
-        errorCount: conversionErrorCount,
-        firstError: pipelineFailure.error.message,
-      });
-      throw new Error(`Frame processing failed: ${pipelineFailure.error.message}`, {
-        cause: pipelineFailure.error,
-      });
-    }
-
-    if (pipelineFailure?.origin === 'cancellation') throw pipelineFailure.error;
-    if (pipelineFailure) throw pipelineFailure.error;
+    const pipelineFailure = getLatchedFailureError();
+    if (pipelineFailure) throw pipelineFailure;
 
     // Add any remaining accumulated duration to the last frame (batch mode only)
     if (!streaming && accumulatedDuration > 0 && rgbFrames.length > 0) {
@@ -972,8 +981,7 @@ export async function decodeFrames(
       tailAccumulatedMs: streaming ? accumulatedDuration + consecutiveSkipMs : 0,
     };
   } finally {
-    processingFailureSignal?.removeEventListener('abort', handleProcessingFailure);
-    signal?.removeEventListener('abort', handleCancellation);
+    removeFailureListeners();
     await chunkStream.return(undefined);
     demux.dispose?.();
     // Close decoder only after all pending frame conversions have settled.

@@ -223,6 +223,36 @@ describe('decoder-service', () => {
       return { copies: () => canvasCopies };
     }
 
+    function createConfigFailureVideoDecoder(
+      onSupportCheck: () => void,
+      failureMessage = 'fixture support rejection'
+    ) {
+      const constructorCalls = vi.fn();
+      class ConfigFailureVideoDecoder {
+        static async isConfigSupported(): Promise<VideoDecoderSupport> {
+          onSupportCheck();
+          throw new Error(failureMessage);
+        }
+
+        constructor() {
+          constructorCalls();
+        }
+      }
+      return { constructorCalls, Decoder: ConfigFailureVideoDecoder };
+    }
+
+    function createConfigFailureDemux(codec: string, dispose: () => void) {
+      return {
+        chunks: [],
+        config: { codec, codedWidth: 8, codedHeight: 8 },
+        dispose,
+        duration: 0,
+        framerate: 60,
+        sourceTotalMs: 0,
+        totalFrames: 0,
+      };
+    }
+
     afterEach(() => {
       clearCanvasCache();
       vi.unstubAllGlobals();
@@ -238,6 +268,141 @@ describe('decoder-service', () => {
       FakeVideoFrame.instances.length = 0;
       FakeVideoFrame.copyResolvers.clear();
       FakeVideoFrame.copyStarts.length = 0;
+    });
+
+    it('preserves cancellation that occurs during decoder support resolution', async () => {
+      const cancellation = new AbortController();
+      const dispose = vi.fn();
+      const { constructorCalls, Decoder } = createConfigFailureVideoDecoder(() => {
+        cancellation.abort();
+      });
+      vi.stubGlobal('VideoDecoder', Decoder);
+
+      await expect(
+        decodeFrames(
+          createConfigFailureDemux('vp09.config-cancel-first', dispose),
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+          },
+          cancellation.signal
+        )
+      ).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(constructorCalls).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('preserves processing failure that occurs during decoder support resolution', async () => {
+      const processing = new AbortController();
+      const dispose = vi.fn();
+      const { constructorCalls, Decoder } = createConfigFailureVideoDecoder(() => {
+        processing.abort(new Error('fixture processing during support'));
+      });
+      vi.stubGlobal('VideoDecoder', Decoder);
+
+      await expect(
+        decodeFrames(createConfigFailureDemux('vp09.config-processing-first', dispose), {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          processingFailureSignal: processing.signal,
+          onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+        })
+      ).rejects.toThrow('Frame processing failed: fixture processing during support');
+
+      expect(constructorCalls).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('preserves support rejection when cancellation happens later', async () => {
+      const cancellation = new AbortController();
+      const dispose = vi.fn();
+      const { constructorCalls, Decoder } = createConfigFailureVideoDecoder(() => undefined);
+      vi.stubGlobal('VideoDecoder', Decoder);
+
+      const decoding = decodeFrames(
+        createConfigFailureDemux('vp09.config-support-first', dispose),
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+        },
+        cancellation.signal
+      );
+
+      await expect(decoding).rejects.toThrow('fixture support rejection');
+      cancellation.abort();
+      expect(constructorCalls).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('preserves an already-aborted cancellation over unsupported configuration', async () => {
+      const cancellation = new AbortController();
+      cancellation.abort();
+      const dispose = vi.fn();
+      const constructorCalls = vi.fn();
+      class UnsupportedVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: false };
+        }
+
+        constructor() {
+          constructorCalls();
+        }
+      }
+      vi.stubGlobal('VideoDecoder', UnsupportedVideoDecoder);
+
+      await expect(
+        decodeFrames(
+          createConfigFailureDemux('vp09.config-pre-aborted', dispose),
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+          },
+          cancellation.signal
+        )
+      ).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(constructorCalls).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('removes pre-config listeners when decoder support resolution fails', async () => {
+      const cancellation = new AbortController();
+      const processing = new AbortController();
+      const cancelAdd = vi.spyOn(cancellation.signal, 'addEventListener');
+      const cancelRemove = vi.spyOn(cancellation.signal, 'removeEventListener');
+      const processingAdd = vi.spyOn(processing.signal, 'addEventListener');
+      const processingRemove = vi.spyOn(processing.signal, 'removeEventListener');
+      const dispose = vi.fn();
+      const { Decoder } = createConfigFailureVideoDecoder(() => undefined);
+      vi.stubGlobal('VideoDecoder', Decoder);
+
+      await expect(
+        decodeFrames(
+          createConfigFailureDemux('vp09.config-listener-cleanup', dispose),
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            processingFailureSignal: processing.signal,
+            onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+          },
+          cancellation.signal
+        )
+      ).rejects.toThrow('fixture support rejection');
+
+      expect(cancelAdd).toHaveBeenCalledOnce();
+      expect(cancelRemove).toHaveBeenCalledOnce();
+      expect(processingAdd).toHaveBeenCalledOnce();
+      expect(processingRemove).toHaveBeenCalledOnce();
+      expect(dispose).toHaveBeenCalledOnce();
     });
 
     async function decodeAdaptive(
