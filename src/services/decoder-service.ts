@@ -276,7 +276,11 @@ export async function decodeFrames(
   let decodeError: Error | null = null;
   let discardStagedOutputs = false;
   let firstConversionError: Error | null = null;
-  let firstPipelineFailure: { error: Error; origin: 'decoder' | 'processing' } | null = null;
+  let firstPipelineFailure: {
+    error: Error;
+    origin: 'cancellation' | 'decoder' | 'processing';
+  } | null = null;
+  let cancellationObserved = false;
   let conversionErrorCount = 0;
   const encodedChunkReservations = new Map<number, EncodedChunkReservation[]>();
   const encodedChunkBudgetBytes = demux.encodedChunkBudgetBytes;
@@ -305,13 +309,24 @@ export async function decodeFrames(
   let adaptLastMotionClass: AdaptiveMotionClass = 'normal';
 
   const normalizeFailure = (error: unknown): Error =>
-    error instanceof Error ? error : new Error(getErrorMessage(error));
+    error instanceof Error || error instanceof DOMException
+      ? error
+      : new Error(getErrorMessage(error));
 
   const recordDecoderError = (error: unknown): void => {
     const normalized = normalizeFailure(error);
     decodeError ??= normalized;
     discardStagedOutputs = true;
     firstPipelineFailure ??= { error: normalized, origin: 'decoder' };
+  };
+
+  const recordCancellation = (): void => {
+    cancellationObserved = true;
+    discardStagedOutputs = true;
+    firstPipelineFailure ??= {
+      error: new DOMException('Cancelled', 'AbortError'),
+      origin: 'cancellation',
+    };
   };
 
   const recordConversionError = (error: unknown): void => {
@@ -328,11 +343,21 @@ export async function decodeFrames(
     return firstConversionError !== null;
   };
 
-  // Check codec support (cached per codec+hw combo)
-  const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
   const handleProcessingFailure = (): void => {
     recordConversionError(processingFailureSignal?.reason);
   };
+  const handleCancellation = (): void => {
+    recordCancellation();
+  };
+  if (processingFailureSignal?.aborted && !firstConversionError) {
+    handleProcessingFailure();
+  }
+  if (signal?.aborted && !cancellationObserved) {
+    handleCancellation();
+  }
+
+  // Check codec support (cached per codec+hw combo)
+  const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
 
   // Create per-conversion frame processing context (duration carry + copy path cache)
   const frameCtx: FrameProcessingContext = createFrameProcessingContext();
@@ -799,9 +824,14 @@ export async function decodeFrames(
     yield* demux.chunks;
   })();
   if (processingFailureSignal?.aborted) {
-    handleProcessingFailure();
+    if (!firstConversionError) handleProcessingFailure();
   } else {
     processingFailureSignal?.addEventListener('abort', handleProcessingFailure, { once: true });
+  }
+  if (signal?.aborted) {
+    if (!cancellationObserved) handleCancellation();
+  } else {
+    signal?.addEventListener('abort', handleCancellation, { once: true });
   }
 
   try {
@@ -814,7 +844,8 @@ export async function decodeFrames(
     const MAX_DECODE_QUEUE = 8;
     while (true) {
       if (signal?.aborted) {
-        throw new DOMException('Cancelled', 'AbortError');
+        recordCancellation();
+        break;
       }
       if (decodeError || hasProcessingFailure()) break;
 
@@ -842,7 +873,8 @@ export async function decodeFrames(
       }
 
       if (signal?.aborted) {
-        throw new DOMException('Cancelled', 'AbortError');
+        recordCancellation();
+        break;
       }
       if (decodeError || hasProcessingFailure()) break;
 
@@ -866,14 +898,13 @@ export async function decodeFrames(
       }
     }
 
-    // A processing failure makes the output unusable, so discard queued codec
-    // work instead of producing more frames. Existing conversion promises are
-    // still drained below to guarantee VideoFrame cleanup.
-    if (decodeError || hasProcessingFailure()) {
+    // A fatal pipeline outcome makes queued codec work unusable. Reset it while
+    // still draining every conversion promise below for VideoFrame cleanup.
+    if (decodeError || cancellationObserved || hasProcessingFailure()) {
       try {
         decoder.reset();
       } catch {
-        // Preserve the original processing error.
+        // Preserve the failure already recorded by the shared latch.
       }
     } else {
       try {
@@ -891,7 +922,7 @@ export async function decodeFrames(
     // Preserve the first cause after every already-created frame is closed.
     const pipelineFailure = firstPipelineFailure as {
       error: Error;
-      origin: 'decoder' | 'processing';
+      origin: 'cancellation' | 'decoder' | 'processing';
     } | null;
     if (pipelineFailure?.origin === 'processing') {
       logger.error('decoders', 'Frame conversion errors detected', {
@@ -903,7 +934,7 @@ export async function decodeFrames(
       });
     }
 
-    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+    if (pipelineFailure?.origin === 'cancellation') throw pipelineFailure.error;
     if (pipelineFailure) throw pipelineFailure.error;
 
     // Add any remaining accumulated duration to the last frame (batch mode only)
@@ -942,6 +973,7 @@ export async function decodeFrames(
     };
   } finally {
     processingFailureSignal?.removeEventListener('abort', handleProcessingFailure);
+    signal?.removeEventListener('abort', handleCancellation);
     await chunkStream.return(undefined);
     demux.dispose?.();
     // Close decoder only after all pending frame conversions have settled.
@@ -949,7 +981,7 @@ export async function decodeFrames(
     // is closed, preventing \"close() called while a flush is in progress\"
     // and other VideoDecoder close races.
     await Promise.allSettled([...pendingConversions]);
-    decoder.close();
+    if (decoder.state !== 'closed') decoder.close();
   }
 }
 
