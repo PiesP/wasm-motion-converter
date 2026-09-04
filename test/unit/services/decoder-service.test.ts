@@ -402,7 +402,257 @@ describe('decoder-service', () => {
       expect(cancelRemove).toHaveBeenCalledOnce();
       expect(processingAdd).toHaveBeenCalledOnce();
       expect(processingRemove).toHaveBeenCalledOnce();
+      expect(cancelRemove.mock.calls[0]?.[1]).toBe(cancelAdd.mock.calls[0]?.[1]);
+      expect(processingRemove.mock.calls[0]?.[1]).toBe(processingAdd.mock.calls[0]?.[1]);
       expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('cleans listeners and demux when the VideoDecoder constructor throws', async () => {
+      const cancellation = new AbortController();
+      const processing = new AbortController();
+      const cancelAdd = vi.spyOn(cancellation.signal, 'addEventListener');
+      const cancelRemove = vi.spyOn(cancellation.signal, 'removeEventListener');
+      const processingAdd = vi.spyOn(processing.signal, 'addEventListener');
+      const processingRemove = vi.spyOn(processing.signal, 'removeEventListener');
+      const dispose = vi.fn();
+      class ConstructorFailureVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        constructor() {
+          throw new Error('fixture constructor failure');
+        }
+      }
+      vi.stubGlobal('VideoDecoder', ConstructorFailureVideoDecoder);
+
+      await expect(
+        decodeFrames(
+          createConfigFailureDemux('vp09.config-constructor-failure', dispose),
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            processingFailureSignal: processing.signal,
+            onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+          },
+          cancellation.signal
+        )
+      ).rejects.toThrow('fixture constructor failure');
+
+      expect(cancelRemove).toHaveBeenCalledOnce();
+      expect(processingRemove).toHaveBeenCalledOnce();
+      expect(cancelRemove.mock.calls[0]?.[1]).toBe(cancelAdd.mock.calls[0]?.[1]);
+      expect(processingRemove.mock.calls[0]?.[1]).toBe(processingAdd.mock.calls[0]?.[1]);
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('closes a constructed decoder when configure throws', async () => {
+      const dispose = vi.fn();
+      class ConfigureFailureVideoDecoder {
+        static instance: ConfigureFailureVideoDecoder | undefined;
+
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly state = 'unconfigured';
+
+        constructor() {
+          ConfigureFailureVideoDecoder.instance = this;
+        }
+
+        configure(): void {
+          throw new Error('fixture configure failure');
+        }
+      }
+      vi.stubGlobal('VideoDecoder', ConfigureFailureVideoDecoder);
+
+      await expect(
+        decodeFrames(createConfigFailureDemux('vp09.config-configure-failure', dispose), {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+        })
+      ).rejects.toThrow('fixture configure failure');
+
+      expect(ConfigureFailureVideoDecoder.instance?.close).toHaveBeenCalledOnce();
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('preserves prior cancellation over a constructor failure', async () => {
+      const cancellation = new AbortController();
+      cancellation.abort();
+      const dispose = vi.fn();
+      class ConstructorFailureVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        constructor() {
+          throw new Error('fixture constructor later');
+        }
+      }
+      vi.stubGlobal('VideoDecoder', ConstructorFailureVideoDecoder);
+
+      await expect(
+        decodeFrames(
+          createConfigFailureDemux('vp09.config-cancel-constructor', dispose),
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+          },
+          cancellation.signal
+        )
+      ).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('preserves prior processing failure over a configure failure', async () => {
+      const processing = new AbortController();
+      processing.abort(new Error('fixture processing before configure'));
+      const dispose = vi.fn();
+      class ConfigureFailureVideoDecoder {
+        static instance: ConfigureFailureVideoDecoder | undefined;
+
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly state = 'unconfigured';
+
+        constructor() {
+          ConfigureFailureVideoDecoder.instance = this;
+        }
+
+        configure(): void {
+          throw new Error('fixture configure later');
+        }
+      }
+      vi.stubGlobal('VideoDecoder', ConfigureFailureVideoDecoder);
+
+      await expect(
+        decodeFrames(createConfigFailureDemux('vp09.config-processing-configure', dispose), {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          processingFailureSignal: processing.signal,
+          onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+        })
+      ).rejects.toThrow('Frame processing failed: fixture processing before configure');
+
+      expect(ConfigureFailureVideoDecoder.instance?.close).toHaveBeenCalledOnce();
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('preserves support rejection when demux disposal also throws', async () => {
+      const dispose = vi.fn(() => {
+        throw new Error('fixture dispose later');
+      });
+      const { Decoder } = createConfigFailureVideoDecoder(() => undefined);
+      vi.stubGlobal('VideoDecoder', Decoder);
+
+      await expect(
+        decodeFrames(createConfigFailureDemux('vp09.config-dispose-failure', dispose), {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+        })
+      ).rejects.toThrow('fixture support rejection');
+
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('preserves runtime decoder failure when demux disposal also throws', async () => {
+      const dispose = vi.fn(() => {
+        throw new Error('fixture runtime dispose later');
+      });
+      class RuntimeAndDisposeFailureVideoDecoder {
+        static instance: RuntimeAndDisposeFailureVideoDecoder | undefined;
+
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly decodeQueueSize = 0;
+        readonly reset = vi.fn();
+        state: 'unconfigured' | 'configured' | 'closed' = 'unconfigured';
+        private readonly error: (error: DOMException) => void;
+
+        constructor(init: VideoDecoderInit) {
+          RuntimeAndDisposeFailureVideoDecoder.instance = this;
+          this.error = init.error;
+        }
+
+        configure(): void {
+          this.state = 'configured';
+        }
+        decode(): void {}
+
+        async flush(): Promise<void> {
+          this.error(new DOMException('fixture runtime fatal', 'EncodingError'));
+        }
+      }
+      vi.stubGlobal('VideoDecoder', RuntimeAndDisposeFailureVideoDecoder);
+
+      await expect(
+        decodeFrames(createConfigFailureDemux('vp09.runtime-dispose-failure', dispose), {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+        })
+      ).rejects.toMatchObject({ message: 'fixture runtime fatal', name: 'EncodingError' });
+
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(RuntimeAndDisposeFailureVideoDecoder.instance?.close).toHaveBeenCalledOnce();
+    });
+
+    it('surfaces demux disposal failure after successful decoding', async () => {
+      const dispose = vi.fn(() => {
+        throw new Error('fixture successful dispose failure');
+      });
+      class SuccessfulVideoDecoder {
+        static instance: SuccessfulVideoDecoder | undefined;
+
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly decodeQueueSize = 0;
+        readonly reset = vi.fn();
+        readonly state = 'configured';
+
+        constructor() {
+          SuccessfulVideoDecoder.instance = this;
+        }
+
+        configure(): void {}
+        decode(): void {}
+        async flush(): Promise<void> {}
+      }
+      vi.stubGlobal('VideoDecoder', SuccessfulVideoDecoder);
+
+      await expect(
+        decodeFrames(createConfigFailureDemux('vp09.runtime-success-dispose', dispose), {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData) => globalBufferPool.release(rgbData),
+        })
+      ).rejects.toThrow('fixture successful dispose failure');
+
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(SuccessfulVideoDecoder.instance?.close).toHaveBeenCalledOnce();
     });
 
     async function decodeAdaptive(
