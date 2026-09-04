@@ -307,13 +307,15 @@ function createProgressCallback(
 ): ProgressCallback {
   return (progress) => {
     if (!isActive()) return;
-    runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
-    runtime.updateMemoryUsage(progress.memoryMB);
-    setConversionFps(progress.fps ?? undefined);
-    setConversionElapsedMs(progress.elapsedMs ?? undefined);
-    if (progress.currentFrame != null) setCurrentFrame(progress.currentFrame);
-    if (progress.totalFrames != null) setTotalFrames(progress.totalFrames);
-    runtime.updateStatus(formatConversionProgressStatus(progress, t));
+    batch(() => {
+      runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
+      runtime.updateMemoryUsage(progress.memoryMB);
+      setConversionFps(progress.fps ?? undefined);
+      setConversionElapsedMs(progress.elapsedMs ?? undefined);
+      if (progress.currentFrame != null) setCurrentFrame(progress.currentFrame);
+      if (progress.totalFrames != null) setTotalFrames(progress.totalFrames);
+      runtime.updateStatus(formatConversionProgressStatus(progress, t));
+    });
   };
 }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { createComputed, createRoot, createSignal } from 'solid-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -10,10 +11,17 @@ const mocks = vi.hoisted(() => ({
   appState: 'idle' as 'idle' | 'cancelling' | 'error',
   runPipelineWithFallback: vi.fn(),
   runConversionPipeline: vi.fn(),
+  setConversionElapsedMs: vi.fn(),
+  setConversionFps: vi.fn(),
+  setConversionProgress: vi.fn(),
   setInputBuffer: vi.fn(),
   setInputFile: vi.fn(),
   setConversionResults: vi.fn(),
+  setConversionStatusMessage: vi.fn(),
+  setCurrentFrame: vi.fn(),
   setErrorMessage: vi.fn(),
+  setOutputFrames: vi.fn(),
+  setTotalFrames: vi.fn(),
   setAppState: vi.fn((state: 'idle' | 'cancelling' | 'error') => {
     mocks.appState = state;
   }),
@@ -41,18 +49,18 @@ vi.mock('@stores/conversion-store', () => ({
   getInputBuffer: () => new ArrayBuffer(8),
   inputFile: () => new File(['video'], 'video.mp4', { type: 'video/mp4' }),
   setAppState: mocks.setAppState,
-  setConversionElapsedMs: vi.fn(),
-  setConversionFps: vi.fn(),
-  setConversionProgress: vi.fn(),
+  setConversionElapsedMs: mocks.setConversionElapsedMs,
+  setConversionFps: mocks.setConversionFps,
+  setConversionProgress: mocks.setConversionProgress,
   setConversionResults: mocks.setConversionResults,
-  setConversionStatusMessage: vi.fn(),
-  setCurrentFrame: vi.fn(),
+  setConversionStatusMessage: mocks.setConversionStatusMessage,
+  setCurrentFrame: mocks.setCurrentFrame,
   setErrorContext: vi.fn(),
   setErrorMessage: mocks.setErrorMessage,
   setInputBuffer: mocks.setInputBuffer,
   setInputFile: mocks.setInputFile,
-  setOutputFrames: vi.fn(),
-  setTotalFrames: vi.fn(),
+  setOutputFrames: mocks.setOutputFrames,
+  setTotalFrames: mocks.setTotalFrames,
   setVideoMetadata: mocks.setVideoMetadata,
   setVideoPreviewUrl: mocks.setVideoPreviewUrl,
   transitionToState: mocks.transitionToState,
@@ -107,10 +115,17 @@ beforeEach(() => {
   mocks.runConversionPipeline.mockReset().mockResolvedValue(
     new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
   );
+  mocks.setConversionElapsedMs.mockReset();
+  mocks.setConversionFps.mockReset();
+  mocks.setConversionProgress.mockReset();
   mocks.setInputBuffer.mockClear();
   mocks.setInputFile.mockClear();
   mocks.setConversionResults.mockClear();
+  mocks.setConversionStatusMessage.mockReset();
+  mocks.setCurrentFrame.mockReset();
   mocks.setErrorMessage.mockClear();
+  mocks.setOutputFrames.mockReset();
+  mocks.setTotalFrames.mockReset();
   mocks.setAppState.mockClear();
   mocks.setVideoMetadata.mockClear();
   mocks.setVideoPreviewUrl.mockClear();
@@ -395,5 +410,134 @@ describe('localized conversion progress status', () => {
         localizedProgressT
       )
     ).toBe('마무리 중');
+  });
+
+  it('publishes each active progress callback as one reactive snapshot', async () => {
+    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
+    let progressCallback:
+      | ((progress: {
+          phase: 'decoding';
+          progress: number;
+          fps: number;
+          etaSeconds: number | null;
+          memoryMB: number;
+          currentFrame: number;
+          totalFrames: number;
+          outputFrames: number;
+          elapsedMs: number;
+        }) => void)
+      | undefined;
+    let resolvePipeline: ((output: ArrayBuffer) => void) | undefined;
+    mocks.runPipelineWithFallback.mockImplementationOnce(
+      (_buffer, _config, _options, onProgress) => {
+        progressCallback = onProgress;
+        return new Promise<ArrayBuffer>((resolve) => {
+          resolvePipeline = resolve;
+        });
+      }
+    );
+
+    const reactive = createRoot((dispose) => {
+      const [progress, setProgress] = createSignal(0);
+      const [phase, setPhase] = createSignal('demuxing');
+      const [memoryUsage, setMemoryUsage] = createSignal<string | null>(null);
+      const [fps, setFps] = createSignal<number | undefined>();
+      const [elapsedMs, setElapsedMs] = createSignal<number | undefined>();
+      const [currentFrame, setCurrentFrame] = createSignal<number | undefined>();
+      const [totalFrames, setTotalFrames] = createSignal<number | undefined>();
+      const [outputFrames, setOutputFrames] = createSignal<number | undefined>();
+      const [status, setStatus] = createSignal('');
+      mocks.setConversionProgress.mockImplementation(setProgress);
+      mocks.setConversionFps.mockImplementation(setFps);
+      mocks.setConversionElapsedMs.mockImplementation(setElapsedMs);
+      mocks.setCurrentFrame.mockImplementation(setCurrentFrame);
+      mocks.setTotalFrames.mockImplementation(setTotalFrames);
+      mocks.setOutputFrames.mockImplementation(setOutputFrames);
+      mocks.setConversionStatusMessage.mockImplementation(setStatus);
+
+      const snapshots: unknown[] = [];
+      createComputed(() => {
+        snapshots.push({
+          progress: progress(),
+          phase: phase(),
+          memoryUsage: memoryUsage(),
+          fps: fps(),
+          elapsedMs: elapsedMs(),
+          currentFrame: currentFrame(),
+          totalFrames: totalFrames(),
+          outputFrames: outputFrames(),
+          status: status(),
+        });
+      });
+
+      return { dispose, setMemoryUsage, setPhase, snapshots };
+    });
+
+    const runtime = new ConversionRuntimeController({
+      setConversionStartTime: vi.fn(),
+      setEstimatedSecondsRemaining: vi.fn(),
+      setMemoryWarning: vi.fn(),
+      setMemoryUsageText: reactive.setMemoryUsage,
+      setConversionPhase: reactive.setPhase,
+    });
+    const run = handleConvert(runtime, localizedProgressT);
+    let primaryFailure: unknown;
+    const cleanupFailures: unknown[] = [];
+    try {
+      await vi.waitFor(() => expect(progressCallback).toBeTypeOf('function'));
+      reactive.snapshots.length = 0;
+
+      progressCallback?.({
+        phase: 'decoding',
+        progress: 25,
+        fps: 30,
+        etaSeconds: 3,
+        memoryMB: 42,
+        currentFrame: 4,
+        totalFrames: 20,
+        outputFrames: 3,
+        elapsedMs: 1_250,
+      });
+
+      expect(reactive.snapshots).toEqual([
+        {
+          progress: 25,
+          phase: 'decoding',
+          memoryUsage: '42 MB',
+          fps: 30,
+          elapsedMs: 1_250,
+          currentFrame: 4,
+          totalFrames: 20,
+          outputFrames: 3,
+          status: '프레임 4/20 — 디코딩 중 @ 초당 30프레임',
+        },
+      ]);
+    } catch (error) {
+      primaryFailure = error;
+    } finally {
+      try {
+        resolvePipeline?.(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer);
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+      try {
+        await run;
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+      try {
+        runtime.dispose();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+      try {
+        reactive.dispose();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+    }
+
+    if (primaryFailure) throw primaryFailure;
+    if (cleanupFailures.length > 0) throw cleanupFailures[0];
   });
 });
