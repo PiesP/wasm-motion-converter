@@ -5,7 +5,7 @@
  * Structured logging utility with environment-aware filtering.
  *
  * Standard: development → all levels, production → warn + error
- * Extensions: performance INFO always visible, route-tracking (▶◀├└│) auto-upgraded to WARN
+ * Extensions: performance and route-tracking (▶◀├└│) INFO remain visible in production
  * Format: [HH:MM:SS] [category] message [context]
  */
 
@@ -124,9 +124,6 @@ class Logger {
     ) {
       return;
     }
-    // In production, downgrade route logs to WARN so they pass the filter
-    const effectiveLevel: LogLevel = !this.isDev && isRouteLog ? 'WARN' : level;
-
     const now = new Date();
     const ts = now.toTimeString().slice(0, 8);
     const progress = this.getProgressForPrefix(category);
@@ -149,7 +146,7 @@ class Logger {
       timestampMs: now.getTime(),
       timestampIso: now.toISOString(),
       time: ts,
-      level: effectiveLevel,
+      level,
       category,
       message,
       conversionProgress: progress,
@@ -158,13 +155,7 @@ class Logger {
     };
 
     const method =
-      effectiveLevel === 'ERROR'
-        ? 'error'
-        : effectiveLevel === 'WARN'
-          ? 'warn'
-          : effectiveLevel === 'INFO'
-            ? 'info'
-            : 'log';
+      level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : level === 'INFO' ? 'info' : 'log';
     console[method](line);
 
     this.recentLines.push(line);

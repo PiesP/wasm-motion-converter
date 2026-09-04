@@ -30,6 +30,7 @@
   "env.showDetails": "Mostrar detalles",
   "env.unavailable": "No disponible",
   "error.codec": "Este códec de vídeo no se puede procesar. Prueba con un archivo diferente.",
+  "error.codecSuggestion": "Convierte el vídeo a H.264/MP4 con otra herramienta y vuelve a intentarlo.",
   "error.conversionFailed": "La conversión falló",
   "error.dismiss": "Descartar mensaje de error",
   "error.format": "Este formato de vídeo no es compatible. Prueba con un archivo diferente.",

@@ -44,16 +44,53 @@ const baseOptions: SerializedConversionOptions = {
 beforeEach(() => {
   demuxResult.dispose.mockClear();
   mocks.demuxVideo.mockReset().mockResolvedValue(demuxResult);
-  mocks.encodeGif.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
-  mocks.encodeWebp.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
+  mocks.encodeGif
+    .mockReset()
+    .mockImplementation(
+      async (
+        _demux: unknown,
+        options: {
+          onFrameDecoded?: (frameCount: number, totalFrames: number) => void;
+          onFrameEncoded?: (frameCount: number, totalFrames: number) => void;
+          onEncodingComplete?: (counts: {
+            decodedFrames: number;
+            encodedFrames: number;
+          }) => void;
+        }
+      ) => {
+        options.onFrameDecoded?.(10, 30);
+        options.onFrameEncoded?.(10, 10);
+        options.onEncodingComplete?.({ decodedFrames: 30, encodedFrames: 10 });
+        return new Uint8Array([1, 2, 3]);
+      }
+    );
+  mocks.encodeWebp
+    .mockReset()
+    .mockImplementation(
+      async (
+        _demux: unknown,
+        options: {
+          onEncodingComplete?: (counts: {
+            decodedFrames: number;
+            encodedFrames: number;
+          }) => void;
+        },
+        onProgress?: (progress: { currentFrame?: number; totalFrames?: number }) => void
+      ) => {
+        onProgress?.({ currentFrame: 10, totalFrames: 30 });
+        options.onEncodingComplete?.({ decodedFrames: 2, encodedFrames: 1 });
+        return new Uint8Array([1, 2, 3]);
+      }
+    );
 });
 
 describe('worker pipeline smart frame skip forwarding', () => {
   it('forwards smartFrameSkip to the GIF encoder', async () => {
+    const postMessage = vi.fn();
     const result = await runWorkerPipeline(
       new ArrayBuffer(8),
       baseOptions,
-      vi.fn(),
+      postMessage,
       'request-1'
     );
 
@@ -67,15 +104,29 @@ describe('worker pipeline smart frame skip forwarding', () => {
       }),
       undefined
     );
-    expect(result.profile?.phases.map((phase) => phase.phase)).toEqual([
+    expect(result.profile?.stages.map((stage) => stage.stage)).toEqual([
       'demuxing',
-      'decoding',
-      'encoding',
-      'assembling',
+      'transcoding',
+      'finalizing',
     ]);
-    expect(result.profile?.phases.find((phase) => phase.phase === 'encoding')).toMatchObject({
-      framesProcessed: 10,
+    expect(result.profile?.stages.find((stage) => stage.stage === 'transcoding')).toMatchObject({
+      decodedFrames: 30,
+      encodedFrames: 10,
       outputBytes: 3,
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'log',
+      requestId: 'request-1',
+      level: 'info',
+      category: 'conversion',
+      message: '▶ Worker pipeline started: gif medium 1x',
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'log',
+      requestId: 'request-1',
+      level: 'info',
+      category: 'encoders',
+      message: '├─ GIF encoder (streaming decode→encode)',
     });
   });
 
@@ -92,7 +143,7 @@ describe('worker pipeline smart frame skip forwarding', () => {
   });
 
   it('forwards smartFrameSkip to the WebP encoder', async () => {
-    await runWorkerPipeline(
+    const result = await runWorkerPipeline(
       new ArrayBuffer(8),
       { ...baseOptions, format: 'webp' },
       vi.fn(),
@@ -109,6 +160,10 @@ describe('worker pipeline smart frame skip forwarding', () => {
       expect.anything(),
       undefined
     );
+    expect(result.profile?.stages.find((stage) => stage.stage === 'transcoding')).toMatchObject({
+      decodedFrames: 2,
+      encodedFrames: 1,
+    });
   });
 
   it('rejects hostile decoded dimensions before encoding and disposes the demux session', async () => {

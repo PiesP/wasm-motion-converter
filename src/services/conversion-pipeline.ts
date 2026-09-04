@@ -104,7 +104,6 @@ export async function runConversionPipeline(
   const profiler: import('./conversion-profiler').ConversionProfiler | null = profilerClass
     ? new profilerClass()
     : null;
-  profiler?.start();
 
   return _runPipelineInner(request, onProgress, signal, pipelineStart, profiler);
 }
@@ -119,11 +118,9 @@ async function _runPipelineInner(
 ): Promise<ArrayBuffer> {
   const throttled = createThrottledProgress(onProgress, PROGRESS_THROTTLE_MS);
 
-  // Phase-weighted progress ranges (empirical from ConversionProfiler measurements):
-  //   demux:   0 ~ 3%   (typically <1% of total time)
-  //   decode:  3 ~ 73%  (typically ~70% of total time — dominant bottleneck)
-  //   encode: 73 ~ 93%  (typically ~20% of total time)
-  //   finish: 93 ~ 100% (file finalization)
+  // UI progress ranges. Decode and encode overlap in the streaming transcode
+  // stage, so these weights are presentation estimates rather than profiler
+  // attribution of exclusive wall-clock time.
   const { DEMUX_MAX, ENCODE_MAX } = PROGRESS_PHASE;
   const { DECODE_RANGE } = PROGRESS_PHASE_RANGES;
   let demuxSession: Awaited<ReturnType<typeof demuxVideo>> | undefined;
@@ -168,7 +165,7 @@ async function _runPipelineInner(
       }
     };
 
-    profiler?.startPhase('demuxing');
+    const demuxSpan = profiler?.begin('demuxing');
     const demuxProgressThrottled = throttled.callback;
     const demuxResult = await scheduleTask(
       () =>
@@ -177,7 +174,7 @@ async function _runPipelineInner(
           videoMetadata() ?? undefined,
           (estimatedTotalFrames) => {
             if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-            profiler?.updatePhase('demuxing', estimatedTotalFrames);
+            demuxSpan?.update({ frames: estimatedTotalFrames });
             const memMB = sampleMemory();
             const elapsedMs = Math.round(performance.now() - pipelineStart);
             demuxProgressThrottled({
@@ -207,7 +204,7 @@ async function _runPipelineInner(
     if (!dims) throw new Error('Unable to determine video dimensions');
     const { width: codedWidth, height: codedHeight } = dims;
 
-    profiler?.endPhase('demuxing', { frames: demuxResult.totalFrames });
+    demuxSpan?.end({ frames: demuxResult.totalFrames });
 
     const demuxElapsedMs = performance.now() - pipelineStart;
     const demuxMemMB = sampleMemory();
@@ -233,8 +230,12 @@ async function _runPipelineInner(
 
     // estimatedOutputFrames is computed after decimationRatio is determined
     let estimatedOutputFrames = 1;
+    let observedDecodedFrames = 0;
+    let observedEncodedFrames = 0;
 
     const decodeProgressCb = (frameIdx: number, _totalFrames: number) => {
+      observedDecodedFrames = Math.max(observedDecodedFrames, frameIdx);
+      transcodeSpan?.update({ decodedFrames: frameIdx });
       const now = performance.now();
       const deltaMs = now - fpsTracker.lastTime;
       const framesDelta = frameIdx - fpsTracker.lastFrame;
@@ -271,6 +272,8 @@ async function _runPipelineInner(
       currentFrame: number,
       etaFrame: number | null
     ): void => {
+      observedEncodedFrames = Math.max(observedEncodedFrames, currentFrame);
+      transcodeSpan?.update({ encodedFrames: currentFrame });
       throttled.callback(
         buildEncodingProgress({
           progressFrame,
@@ -292,8 +295,15 @@ async function _runPipelineInner(
       };
     };
 
-    profiler?.startPhase('decoding');
-    profiler?.startPhase('encoding');
+    const transcodeSpan = profiler?.begin('transcoding');
+    const recordCompletedFrameCounts = (counts: {
+      decodedFrames: number;
+      encodedFrames: number;
+    }): void => {
+      observedDecodedFrames = counts.decodedFrames;
+      observedEncodedFrames = counts.encodedFrames;
+      transcodeSpan?.update(counts);
+    };
 
     const sourceFps =
       Number.isFinite(demuxResult.framerate) && demuxResult.framerate > 0
@@ -330,12 +340,13 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: gifDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                onEncodingComplete: recordCompletedFrameCounts,
                 ...outputLimits,
                 assertAdditionalMemoryBytes: assertMemoryBudget,
                 onFrameDecoded: decodeProgressCb,
-                onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
-                  gifEncodeFrames = frameIdx;
-                  reportEncodingProgress(frameIdx, frameIdx, frameIdx);
+                onFrameEncoded: (encodedFrameCount: number, _totalFrames: number) => {
+                  gifEncodeFrames = encodedFrameCount;
+                  reportEncodingProgress(encodedFrameCount, encodedFrameCount, encodedFrameCount);
                 },
               },
               signal
@@ -437,6 +448,8 @@ async function _runPipelineInner(
                 smartFrameSkip: request.smartFrameSkip,
                 processingFailureSignal: streamingEncoder.failureSignal,
                 onFrameDecoded: (frameIdx, _total) => {
+                  observedDecodedFrames = Math.max(observedDecodedFrames, frameIdx);
+                  transcodeSpan?.update({ decodedFrames: frameIdx });
                   const decodePct =
                     estimatedOutputFrames > 0
                       ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)
@@ -478,6 +491,8 @@ async function _runPipelineInner(
               },
               signal
             ).then((result) => {
+              observedDecodedFrames = Math.max(observedDecodedFrames, result.totalInputFrames);
+              transcodeSpan?.update({ decodedFrames: observedDecodedFrames });
               tailAccumulatedMs = result.tailAccumulatedMs;
             }),
           { priority: 'user-blocking' }
@@ -523,6 +538,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                onEncodingComplete: recordCompletedFrameCounts,
                 ...outputLimits,
                 onFrameDecoded: decodeProgressCb,
               },
@@ -558,6 +574,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                onEncodingComplete: recordCompletedFrameCounts,
                 ...outputLimits,
                 onFrameDecoded: decodeProgressCb,
               },
@@ -576,11 +593,14 @@ async function _runPipelineInner(
 
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
-    profiler?.endPhase('decoding');
-    profiler?.endPhase('encoding', encodeResult);
+    transcodeSpan?.end({
+      decodedFrames: Math.max(observedDecodedFrames, observedEncodedFrames),
+      encodedFrames: observedEncodedFrames,
+      outputBytes: encodeResult?.outputBytes ?? 0,
+    });
 
-    // ── Assembly Phase (93~100%) ──
-    profiler?.startPhase('assembling');
+    // ── Finalization bookkeeping (UI progress remains "assembling") ──
+    const finalizationSpan = profiler?.begin('finalizing');
 
     // Clear buffer pool after conversion
     globalBufferPool.clear();
@@ -613,7 +633,7 @@ async function _runPipelineInner(
     // Deliver the terminal state before cleanup cancels any trailing throttle timer.
     throttled.flush();
 
-    profiler?.endPhase('assembling');
+    finalizationSpan?.end();
 
     // ── Profile Report ──
     if (profiler) {
@@ -631,8 +651,8 @@ async function _runPipelineInner(
             outputBytes: output!.byteLength,
             duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
             peakMemoryMB: report.heapPeakMB,
-            bottleneck: report.bottleneck,
-            phaseTimePct: report.phaseTimePct,
+            dominantStage: report.dominantStage,
+            stageWallTimePct: report.stageWallTimePct,
           });
         },
         { priority: 'background' }

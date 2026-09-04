@@ -30,6 +30,7 @@
   "env.showDetails": "詳細を表示",
   "env.unavailable": "利用不可",
   "error.codec": "この動画コデックは処理できません。別のファイルをお試しください。",
+  "error.codecSuggestion": "別のツールで動画をH.264/MP4に変換してから、もう一度お試しください。",
   "error.conversionFailed": "変換に失敗しました",
   "error.dismiss": "エラーメッセージを閉じる",
   "error.format": "この動画形式はサポートされていません。別のファイルをお試しください。",

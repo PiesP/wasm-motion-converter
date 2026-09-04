@@ -3,7 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { runConversionPipeline } = vi.hoisted(() => ({
   runConversionPipeline: vi.fn(),
 }));
+const logger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
 vi.mock('@services/conversion-pipeline', () => ({ runConversionPipeline }));
+vi.mock('@utils/logger', () => ({ logger }));
 
 class ThrowingWorker {
   static constructionCount = 0;
@@ -28,9 +35,14 @@ class ThrowingWorker {
       return;
     }
     if (ThrowingWorker.response) {
-      queueMicrotask(() => this.onmessage?.(new MessageEvent('message', {
-        data: ThrowingWorker.response,
-      })));
+      const responses = Array.isArray(ThrowingWorker.response)
+        ? ThrowingWorker.response
+        : [ThrowingWorker.response];
+      queueMicrotask(() => {
+        for (const response of responses) {
+          this.onmessage?.(new MessageEvent('message', { data: response }));
+        }
+      });
       return;
     }
     throw new Error('structured clone failed');
@@ -140,6 +152,7 @@ describe('runPipelineViaWorker lifecycle', () => {
     ThrowingWorker.response = null;
     ThrowingWorker.workerError = null;
     runConversionPipeline.mockReset();
+    for (const method of Object.values(logger)) method.mockReset();
   });
 
   it('cleans up the worker when starting the pipeline throws synchronously', async () => {
@@ -172,13 +185,14 @@ describe('runPipelineViaWorker lifecycle', () => {
   it('retains a validated profile returned from the Worker realm', async () => {
     const outputBuffer = new ArrayBuffer(4);
     const profile = {
+      schemaVersion: 2 as const,
       totalDurationMs: 100,
       heapStartMB: 0,
       heapEndMB: 0,
       heapPeakMB: 0,
-      phases: [],
-      phaseTimePct: { demuxing: 0, decoding: 0, encoding: 0, assembling: 0 },
-      bottleneck: 'demuxing',
+      stages: [],
+      stageWallTimePct: { demuxing: 0, transcoding: 0, finalizing: 0 },
+      dominantStage: null,
       summary: '[100ms total]',
     };
     ThrowingWorker.response = {
@@ -199,6 +213,81 @@ describe('runPipelineViaWorker lifecycle', () => {
       ThrowingWorker.response = null;
     }
   });
+
+  it('ignores worker diagnostics that do not belong to the current request', async () => {
+    const outputBuffer = new ArrayBuffer(4);
+    ThrowingWorker.response = [
+      {
+        type: 'log',
+        requestId: '',
+        level: 'warn',
+        category: 'general',
+        message: 'not a valid bootstrap message',
+      },
+      {
+        type: 'log',
+        requestId: 'another-request',
+        level: 'error',
+        category: 'conversion',
+        message: 'foreign request',
+      },
+      {
+        type: 'log',
+        requestId: 'request-1',
+        level: 'warn',
+        category: 'encoders',
+        message: 'request checkpoint',
+      },
+      {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer,
+        durationMs: 10,
+      },
+    ];
+
+    await expect(
+      runPipelineViaWorker(new ArrayBuffer(8), validDecoderConfig, validOptions, vi.fn())
+    ).resolves.toBe(outputBuffer);
+
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith('encoders', 'request checkpoint', {
+      source: 'worker',
+      requestId: 'request-1',
+    });
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it.each(['debug', 'info', 'warn', 'error'] as const)(
+    'preserves worker %s severity in the main logger',
+    async (level) => {
+      const outputBuffer = new ArrayBuffer(4);
+      ThrowingWorker.response = [
+        {
+          type: 'log',
+          requestId: 'request-1',
+          level,
+          category: 'conversion',
+          message: `${level} checkpoint`,
+        },
+        {
+          type: 'complete',
+          requestId: 'request-1',
+          outputBuffer,
+          durationMs: 10,
+        },
+      ];
+
+      await expect(
+        runPipelineViaWorker(new ArrayBuffer(8), validDecoderConfig, validOptions, vi.fn())
+      ).resolves.toBe(outputBuffer);
+
+      expect(logger[level]).toHaveBeenCalledWith('conversion', `${level} checkpoint`, {
+        source: 'worker',
+        requestId: 'request-1',
+      });
+    }
+  );
 
   it.each(invalidPreWorkerConfigs)(
     'rejects $name before constructing a Worker or transferring input',

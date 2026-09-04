@@ -127,7 +127,13 @@ self.onmessage = async (event: MessageEvent) => {
 };
 
 // Ready signal for the main thread
-self.postMessage({ type: 'log', requestId: '', level: 'info', message: 'Worker initialized' });
+self.postMessage({
+  type: 'log',
+  requestId: '',
+  level: 'info',
+  category: 'general',
+  message: 'Worker initialized',
+} satisfies WorkerResponse);
 
 function getInvalidStartRequestId(value: unknown): string | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;

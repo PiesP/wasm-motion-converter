@@ -177,6 +177,20 @@ export async function encodeWebp(
   const result = await muxer.finish(signal);
   const totalElapsed = (performance.now() - startTime) / 1000;
 
+  onProgress?.({
+    phase: 'encoding',
+    progress: 90,
+    fps: 0,
+    etaSeconds: 0,
+    memoryMB: 0,
+    currentFrame: muxer.frames,
+    totalFrames: Math.max(muxer.frames, totalInputFrames),
+  });
+  opts.onEncodingComplete?.({
+    decodedFrames: totalInputFrames,
+    encodedFrames: muxer.frames,
+  });
+
   logger.info('encoders', 'WebP encoding complete', {
     decodedFrames: totalInputFrames,
     keptFrames: muxer.frames,

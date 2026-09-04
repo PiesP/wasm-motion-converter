@@ -38,7 +38,7 @@ import type {
 import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
-import { focusElement, focusRetryButton } from '@utils/dom-utils';
+import { focusElement, focusPrimaryErrorAction } from '@utils/dom-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
@@ -148,7 +148,7 @@ export async function handleConvert(
                   setErrorContext(context);
                   transitionToState('error');
                 });
-                focusRetryButton();
+                focusPrimaryErrorAction();
               })
               .finally(settle);
           },
@@ -542,7 +542,7 @@ async function handleConversionError(
     transitionToState('error');
   });
 
-  focusRetryButton();
+  focusPrimaryErrorAction();
 }
 
 export function handleCancelConversion(runtime: ConversionRuntimeController): void {

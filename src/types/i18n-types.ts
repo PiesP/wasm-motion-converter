@@ -204,6 +204,7 @@ export interface TranslationKeys {
   // Errors
   'error.format': string;
   'error.codec': string;
+  'error.codecSuggestion': string;
   'error.timeout': string;
   'error.memory': string;
   'error.unknown': string;

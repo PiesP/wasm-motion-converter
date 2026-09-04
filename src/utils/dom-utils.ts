@@ -67,7 +67,9 @@ export function focusElement(selector: string): void {
   });
 }
 
-/** Focus the retry button after an error — used by both file-selection and conversion error paths. */
-export function focusRetryButton(): void {
-  focusElement('[data-testid="error-retry-button"]');
+/** Focus the primary action exposed by the current error type. */
+export function focusPrimaryErrorAction(): void {
+  focusElement(
+    '[data-testid="error-retry-button"], [data-testid="error-select-different-fallback-button"]'
+  );
 }

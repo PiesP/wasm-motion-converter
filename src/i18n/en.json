@@ -30,6 +30,7 @@
   "env.showDetails": "Show details",
   "env.unavailable": "Unavailable",
   "error.codec": "This video codec cannot be processed. Please try a different file.",
+  "error.codecSuggestion": "Convert the video to H.264/MP4 with another tool, then try again.",
   "error.conversionFailed": "Conversion failed",
   "error.dismiss": "Dismiss error message",
   "error.format": "This video format is not supported. Please try a different file.",

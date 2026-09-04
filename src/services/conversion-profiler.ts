@@ -5,234 +5,267 @@ import { BYTES_PER_MB } from '../utils/constants.js';
 import { getMemoryUsageMB } from '../utils/memory-monitor.js';
 
 /**
- * Conversion Profiler — per-phase timing, memory, and throughput measurement.
- *
- * Tracks each pipeline phase (demux, decode, encode, assemble) independently
- * with high-resolution timestamps, JS heap snapshots, and derived metrics
- * (fps, throughput MB/s, time distribution).
- *
- * Usage:
- *   const profiler = new ConversionProfiler();
- *   profiler.startPhase('demuxing');
- *   // ... demux work ...
- *   profiler.endPhase('demuxing', { frames: 150 });
- *   // ... decode/encode ...
- *   profiler.endPhase('encoding', { frames: 75, outputBytes: 1024000 });
- *   const report = profiler.finish();
- *   logger.performance('Pipeline profile', report);
+ * Conversion profiler for the pipeline's real, non-overlapping wall-clock
+ * stages. Decode and encode are intentionally one transcoding stage because
+ * the streaming pipeline overlaps them and cannot attribute their elapsed
+ * time independently.
  */
 
-import type { ProgressPhase } from '@t/conversion-types';
+export type ProfileStage = 'demuxing' | 'transcoding' | 'finalizing';
 
-export interface PhaseMetrics {
-  phase: ProgressPhase;
+interface CommonStageMetrics {
+  stage: ProfileStage;
   startMs: number;
   endMs: number;
   durationMs: number;
-  /** JS heap at phase start (MB) */
   heapStartMB: number;
-  /** JS heap at phase end (MB) */
   heapEndMB: number;
-  /** Peak JS heap during phase (MB) */
   heapPeakMB: number;
-  /** Frames processed in this phase */
+}
+
+export interface DemuxStageMetrics extends CommonStageMetrics {
+  stage: 'demuxing';
   framesProcessed: number;
-  /** Frames per second (decode/encode only) */
   fps: number;
-  /** Output bytes (encode phase only) */
+}
+
+export interface TranscodingStageMetrics extends CommonStageMetrics {
+  stage: 'transcoding';
+  mode: 'streaming-decode-encode';
+  attribution: 'combined';
+  decodedFrames: number;
+  encodedFrames: number;
+  decodeFps: number;
+  encodeFps: number;
   outputBytes: number;
-  /** Throughput in MB/s (encode phase only) */
   throughputMBps: number;
 }
 
+export interface FinalizationStageMetrics extends CommonStageMetrics {
+  stage: 'finalizing';
+}
+
+export type StageMetrics = DemuxStageMetrics | TranscodingStageMetrics | FinalizationStageMetrics;
+
+interface StageObservations {
+  demuxing: { frames: number };
+  transcoding: { decodedFrames: number; encodedFrames: number; outputBytes: number };
+  finalizing: Record<string, never>;
+}
+
+export interface ProfileSpan<S extends ProfileStage> {
+  update(observations: Partial<StageObservations[S]>): void;
+  end(observations?: Partial<StageObservations[S]>): void;
+}
+
 export interface ConversionProfileReport {
-  /** Total pipeline duration (ms) */
+  schemaVersion: 2;
   totalDurationMs: number;
-  /** JS heap at pipeline start (MB) */
   heapStartMB: number;
-  /** JS heap at pipeline end (MB) */
   heapEndMB: number;
-  /** Peak JS heap across all phases (MB) */
   heapPeakMB: number;
-  /** Phase breakdown */
-  phases: PhaseMetrics[];
-  /** Percentage of total time per phase */
-  phaseTimePct: Record<ProgressPhase, number>;
-  /** Bottleneck phase (longest duration) */
-  bottleneck: ProgressPhase;
-  /** Summary string for quick inspection */
+  stages: readonly StageMetrics[];
+  stageWallTimePct: Readonly<Record<ProfileStage, number>>;
+  /** Longest observed wall-clock stage; this is not a causal bottleneck claim. */
+  dominantStage: ProfileStage | null;
   summary: string;
 }
 
-interface PhaseState {
+interface ActiveStage {
+  stage: ProfileStage;
   startMs: number;
   heapStartMB: number;
   heapPeakMB: number;
-  framesProcessed: number;
-  outputBytes: number;
+  observations: Record<string, number>;
+}
+
+const STAGE_ORDER: readonly ProfileStage[] = ['demuxing', 'transcoding', 'finalizing'];
+
+function roundRate(count: number, durationMs: number): number {
+  return durationMs > 0 ? Math.round((count / durationMs) * 1000) : 0;
+}
+
+function roundThroughput(outputBytes: number, durationMs: number): number {
+  return durationMs > 0 && outputBytes > 0
+    ? Math.round((outputBytes / BYTES_PER_MB / (durationMs / 1000)) * 100) / 100
+    : 0;
 }
 
 export class ConversionProfiler {
-  private phases: Map<ProgressPhase, PhaseMetrics> = new Map();
-  private active: Map<ProgressPhase, PhaseState> = new Map();
-  private pipelineStartMs: number = 0;
-  private heapStartMB: number = 0;
-  private heapPeakMB: number = 0;
-  private finished = false;
+  private readonly pipelineStartMs = performance.now();
+  private readonly heapStartMB = ConversionProfiler.getHeapMB();
+  private heapPeakMB = this.heapStartMB;
+  private readonly stages = new Map<ProfileStage, StageMetrics>();
+  private active: ActiveStage | null = null;
+  private finishedReport: ConversionProfileReport | null = null;
 
-  /** Start profiling a pipeline. Call once before any phase. */
-  start(): void {
-    this.pipelineStartMs = performance.now();
-    this.heapStartMB = ConversionProfiler.getHeapMB();
-    this.heapPeakMB = this.heapStartMB;
-    this.phases.clear();
-    this.active.clear();
-    this.finished = false;
-  }
-
-  /** Mark the beginning of a phase. */
-  startPhase(phase: ProgressPhase): void {
-    if (this.active.has(phase)) {
-      // Phase already started (shouldn't happen in normal flow)
-      return;
+  begin<S extends ProfileStage>(stage: S): ProfileSpan<S> {
+    if (this.finishedReport || this.active || this.stages.has(stage)) {
+      return { update: () => undefined, end: () => undefined };
     }
-    const heapMB = ConversionProfiler.getHeapMB();
-    if (heapMB > this.heapPeakMB) this.heapPeakMB = heapMB;
-    this.active.set(phase, {
+
+    const heapStartMB = ConversionProfiler.getHeapMB();
+    this.heapPeakMB = Math.max(this.heapPeakMB, heapStartMB);
+    const state: ActiveStage = {
+      stage,
       startMs: performance.now(),
-      heapStartMB: heapMB,
-      heapPeakMB: heapMB,
-      framesProcessed: 0,
-      outputBytes: 0,
-    });
-  }
+      heapStartMB,
+      heapPeakMB: heapStartMB,
+      observations: {},
+    };
+    this.active = state;
 
-  /**
-   * Update mid-phase metrics (for long-running phases).
-   * Call periodically to track frame progress and heap peaks.
-   */
-  updatePhase(phase: ProgressPhase, framesProcessed: number): void {
-    const state = this.active.get(phase);
-    if (!state) return;
-    state.framesProcessed = framesProcessed;
-    const heapMB = ConversionProfiler.getHeapMB();
-    if (heapMB > state.heapPeakMB) state.heapPeakMB = heapMB;
-    if (heapMB > this.heapPeakMB) this.heapPeakMB = heapMB;
-  }
-
-  /**
-   * Mark the end of a phase with final metrics.
-   */
-  endPhase(phase: ProgressPhase, opts?: { frames?: number; outputBytes?: number }): void {
-    const state = this.active.get(phase);
-    if (!state) return;
-
-    const endMs = performance.now();
-    const heapEndMB = ConversionProfiler.getHeapMB();
-    const frames = opts?.frames ?? state.framesProcessed;
-    const outputBytes = opts?.outputBytes ?? state.outputBytes;
-    const durationMs = Math.round(endMs - state.startMs);
-
-    if (heapEndMB > state.heapPeakMB) state.heapPeakMB = heapEndMB;
-    if (state.heapPeakMB > this.heapPeakMB) this.heapPeakMB = state.heapPeakMB;
-
-    const fps = durationMs > 0 ? Math.round((frames / durationMs) * 1000) : 0;
-    const throughputMBps =
-      durationMs > 0 && outputBytes > 0
-        ? Math.round((outputBytes / BYTES_PER_MB / (durationMs / 1000)) * 100) / 100
-        : 0;
-
-    this.phases.set(phase, {
-      phase,
-      startMs: Math.round(state.startMs - this.pipelineStartMs),
-      endMs: Math.round(endMs - this.pipelineStartMs),
-      durationMs,
-      heapStartMB: state.heapStartMB,
-      heapEndMB,
-      heapPeakMB: state.heapPeakMB,
-      framesProcessed: frames,
-      fps,
-      outputBytes,
-      throughputMBps,
-    });
-
-    this.active.delete(phase);
-  }
-
-  /**
-   * Get the report without marking as finished.
-   * Safe to call multiple times after all phases are ended.
-   */
-  getReport(): ConversionProfileReport {
-    return this.buildReport();
-  }
-
-  /**
-   * Finish profiling and generate a structured report.
-   * Stores the report for later retrieval via getLastReport().
-   */
-  finish(): ConversionProfileReport {
-    if (!this.finished) {
-      this.finished = true;
-      this.lastReport = this.buildReport();
-    }
-    return this.lastReport!;
-  }
-
-  /** Get the last finished report, or null if finish() was never called. */
-  getLastReport(): ConversionProfileReport | null {
-    return this.lastReport;
-  }
-
-  private lastReport: ConversionProfileReport | null = null;
-
-  private buildReport(): ConversionProfileReport {
-    const totalDurationMs = Math.round(performance.now() - this.pipelineStartMs);
-    const heapEndMB = ConversionProfiler.getHeapMB();
-
-    const phaseList = Array.from(this.phases.values());
-    const phaseTimePct: Record<ProgressPhase, number> = {
-      demuxing: 0,
-      decoding: 0,
-      encoding: 0,
-      assembling: 0,
+    let ended = false;
+    const update = (observations: Partial<StageObservations[S]>): void => {
+      if (ended || this.active !== state || this.finishedReport) return;
+      this.mergeObservations(state, observations);
+      this.sampleHeap(state);
     };
 
-    let bottleneck: ProgressPhase = 'demuxing';
-    let maxDuration = 0;
+    return {
+      update,
+      end: (observations = {}) => {
+        if (ended) return;
+        update(observations);
+        ended = true;
+        this.endStage(state);
+      },
+    };
+  }
 
-    for (const p of phaseList) {
-      phaseTimePct[p.phase] =
-        totalDurationMs > 0 ? Math.round((p.durationMs / totalDurationMs) * 1000) / 10 : 0;
-      if (p.durationMs > maxDuration) {
-        maxDuration = p.durationMs;
-        bottleneck = p.phase;
+  finish(): ConversionProfileReport {
+    if (this.finishedReport) return this.finishedReport;
+    if (this.active) this.endStage(this.active);
+
+    const totalDurationMs = Math.max(0, Math.round(performance.now() - this.pipelineStartMs));
+    const heapEndMB = ConversionProfiler.getHeapMB();
+    this.heapPeakMB = Math.max(this.heapPeakMB, heapEndMB);
+    const stages = STAGE_ORDER.flatMap((stage) => {
+      const metrics = this.stages.get(stage);
+      return metrics ? [metrics] : [];
+    });
+    const stageWallTimePct: Record<ProfileStage, number> = {
+      demuxing: 0,
+      transcoding: 0,
+      finalizing: 0,
+    };
+    let dominantStage: ProfileStage | null = null;
+    let dominantDurationMs = -1;
+
+    for (const stage of stages) {
+      stageWallTimePct[stage.stage] =
+        totalDurationMs > 0 ? Math.round((stage.durationMs / totalDurationMs) * 1000) / 10 : 0;
+      if (stage.durationMs > dominantDurationMs) {
+        dominantDurationMs = stage.durationMs;
+        dominantStage = stage.stage;
       }
     }
 
-    const summary = phaseList
-      .map((p) => {
-        const extra = p.fps > 0 ? ` @ ${p.fps}fps` : '';
-        const mem = p.heapPeakMB > 0 ? ` (peak ${p.heapPeakMB}MB)` : '';
-        return `${p.phase}: ${p.durationMs}ms (${phaseTimePct[p.phase]}%)${extra}${mem}`;
-      })
-      .join(' | ');
+    const stageSummary = stages.map((stage) => this.summarizeStage(stage, stageWallTimePct));
+    const summary = [
+      `[${totalDurationMs}ms total]`,
+      ...stageSummary,
+      `dominant stage: ${dominantStage ?? 'unavailable'}`,
+    ].join(' | ');
 
-    return {
+    const frozenStages = Object.freeze(stages.map((stage) => Object.freeze({ ...stage })));
+    this.finishedReport = Object.freeze({
+      schemaVersion: 2 as const,
       totalDurationMs,
       heapStartMB: this.heapStartMB,
       heapEndMB,
       heapPeakMB: this.heapPeakMB,
-      phases: phaseList,
-      phaseTimePct,
-      bottleneck,
-      summary: `[${totalDurationMs}ms total] ${summary} | bottleneck: ${bottleneck}`,
-    };
+      stages: frozenStages,
+      stageWallTimePct: Object.freeze({ ...stageWallTimePct }),
+      dominantStage,
+      summary,
+    });
+    return this.finishedReport;
   }
 
-  /** Get current JS heap usage in MB (best-effort, returns 0 if unavailable) */
+  private mergeObservations<S extends ProfileStage>(
+    state: ActiveStage,
+    observations: Partial<StageObservations[S]>
+  ): void {
+    for (const [key, value] of Object.entries(observations)) {
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+        state.observations[key] = value;
+      }
+    }
+  }
+
+  private sampleHeap(state: ActiveStage): void {
+    const heapMB = ConversionProfiler.getHeapMB();
+    state.heapPeakMB = Math.max(state.heapPeakMB, heapMB);
+    this.heapPeakMB = Math.max(this.heapPeakMB, heapMB);
+  }
+
+  private endStage(state: ActiveStage): void {
+    if (this.active !== state || this.finishedReport) return;
+    const heapEndMB = ConversionProfiler.getHeapMB();
+    state.heapPeakMB = Math.max(state.heapPeakMB, heapEndMB);
+    this.heapPeakMB = Math.max(this.heapPeakMB, heapEndMB);
+    const endMs = performance.now();
+    const durationMs = Math.max(0, Math.round(endMs - state.startMs));
+    const common = {
+      startMs: Math.max(0, Math.round(state.startMs - this.pipelineStartMs)),
+      endMs: Math.max(0, Math.round(endMs - this.pipelineStartMs)),
+      durationMs,
+      heapStartMB: state.heapStartMB,
+      heapEndMB,
+      heapPeakMB: state.heapPeakMB,
+    };
+
+    if (state.stage === 'demuxing') {
+      const framesProcessed = state.observations.frames ?? 0;
+      this.stages.set('demuxing', {
+        ...common,
+        stage: 'demuxing',
+        framesProcessed,
+        fps: roundRate(framesProcessed, durationMs),
+      });
+    } else if (state.stage === 'transcoding') {
+      const decodedFrames = state.observations.decodedFrames ?? 0;
+      const encodedFrames = state.observations.encodedFrames ?? 0;
+      const outputBytes = state.observations.outputBytes ?? 0;
+      this.stages.set('transcoding', {
+        ...common,
+        stage: 'transcoding',
+        mode: 'streaming-decode-encode',
+        attribution: 'combined',
+        decodedFrames,
+        encodedFrames,
+        decodeFps: roundRate(decodedFrames, durationMs),
+        encodeFps: roundRate(encodedFrames, durationMs),
+        outputBytes,
+        throughputMBps: roundThroughput(outputBytes, durationMs),
+      });
+    } else {
+      this.stages.set('finalizing', { ...common, stage: 'finalizing' });
+    }
+    this.active = null;
+  }
+
+  private summarizeStage(
+    stage: StageMetrics,
+    percentages: Readonly<Record<ProfileStage, number>>
+  ): string {
+    const base = `${stage.stage}: ${stage.durationMs}ms (${percentages[stage.stage]}%)`;
+    const memory = stage.heapPeakMB > 0 ? ` (peak ${stage.heapPeakMB}MB)` : '';
+    if (stage.stage === 'demuxing') {
+      return `${base} @ ${stage.fps}fps${memory}`;
+    }
+    if (stage.stage === 'transcoding') {
+      return (
+        `${base} (streaming decode+encode; attribution unavailable; ` +
+        `${stage.decodedFrames} decoded/${stage.encodedFrames} encoded) ` +
+        `@ ${stage.encodeFps}fps, ${stage.throughputMBps}MB/s${memory}`
+      );
+    }
+    return `${base}${memory}`;
+  }
+
   private static getHeapMB(): number {
-    const heapMB = getMemoryUsageMB();
-    return heapMB ?? 0;
+    return getMemoryUsageMB() ?? 0;
   }
 }

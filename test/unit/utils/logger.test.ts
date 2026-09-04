@@ -35,10 +35,10 @@ describe('logger', () => {
     logger.info('general', '▶ route started');
 
     const entries = logger.getRecentEntries();
-    expect(entries.map((entry) => entry.level)).toEqual(['INFO', 'WARN']);
+    expect(entries.map((entry) => entry.level)).toEqual(['INFO', 'INFO']);
     expect(entries[1]?.line).toContain('▶ route started');
-    expect(console.info).toHaveBeenCalledTimes(1);
-    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(console.info).toHaveBeenCalledTimes(2);
+    expect(console.warn).not.toHaveBeenCalled();
   });
 
   it('serializes rich context, circular values, and truncates only the inline line', () => {

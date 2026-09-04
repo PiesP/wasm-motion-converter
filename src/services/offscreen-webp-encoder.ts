@@ -234,6 +234,20 @@ export async function encodeWebpOffscreen(
   const result = await muxer.finish(signal);
   const totalElapsed = (performance.now() - startTime) / 1000;
 
+  onProgress?.({
+    phase: 'encoding',
+    progress: 90,
+    fps: 0,
+    etaSeconds: 0,
+    memoryMB: 0,
+    currentFrame: muxer.frames,
+    totalFrames: Math.max(muxer.frames, totalDecoded),
+  });
+  opts.onEncodingComplete?.({
+    decodedFrames: totalDecoded,
+    encodedFrames: muxer.frames,
+  });
+
   logger.info('encoders', 'OffscreenCanvas WebP encoding complete', {
     decodedFrames: totalDecoded,
     keptFrames: muxer.frames,

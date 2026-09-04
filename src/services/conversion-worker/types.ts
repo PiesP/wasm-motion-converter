@@ -6,6 +6,12 @@
 import type { ConversionProfileReport } from '@services/conversion-profiler';
 import type { ConversionFormat, ConversionQuality, SmartFrameSkipMode } from '@t/conversion-types';
 
+export const WORKER_LOG_MAX_EVENTS = 16;
+export const WORKER_LOG_MAX_MESSAGE_CHARS = 512;
+export const WORKER_LOG_MAX_REQUEST_ID_CHARS = 64;
+export type WorkerLogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type WorkerLogCategory = 'conversion' | 'general' | 'demuxer' | 'encoders' | 'decoders';
+
 export type WorkerRequest =
   | {
       type: 'start';
@@ -42,7 +48,13 @@ export type WorkerResponse =
       profile?: ConversionProfileReport;
     }
   | { type: 'error'; requestId: string; message: string; code: string }
-  | { type: 'log'; requestId: string; level: string; message: string };
+  | {
+      type: 'log';
+      requestId: string;
+      level: WorkerLogLevel;
+      category: WorkerLogCategory;
+      message: string;
+    };
 
 export interface SerializedDecoderConfig {
   codec: string;
