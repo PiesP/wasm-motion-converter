@@ -91,13 +91,21 @@ describe('encoder final playback duration', () => {
   });
 
   it('preserves decoder and dynamic-decimation tails in the WebP container', async () => {
-    const output = await encodeWebp(demux, {
-      height: 1,
-      quality: 'medium',
-      scale: 1,
-      width: 1,
-    });
+    const onProgress = vi.fn();
+    const output = await encodeWebp(
+      demux,
+      {
+        height: 1,
+        quality: 'medium',
+        scale: 1,
+        width: 1,
+      },
+      onProgress
+    );
 
     expect(readWebpDurationMs(output)).toBe(200);
+    expect(onProgress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: 'encoding', currentFrame: 1 })
+    );
   });
 });

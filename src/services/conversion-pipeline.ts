@@ -439,6 +439,8 @@ async function _runPipelineInner(
                 smartFrameSkip: request.smartFrameSkip,
                 processingFailureSignal: streamingEncoder.failureSignal,
                 onFrameDecoded: (frameIdx, _total) => {
+                  observedDecodedFrames = Math.max(observedDecodedFrames, frameIdx);
+                  transcodeSpan?.update({ decodedFrames: frameIdx });
                   const decodePct =
                     estimatedOutputFrames > 0
                       ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)

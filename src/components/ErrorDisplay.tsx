@@ -33,11 +33,11 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     'onSelectNewFile',
     'onDismiss',
   ]);
-  let retryButtonRef: HTMLButtonElement | undefined;
+  let primaryActionRef: HTMLButtonElement | undefined;
 
   onMount(() => {
     queueMicrotask(() => {
-      retryButtonRef?.focus();
+      primaryActionRef?.focus();
     });
   });
 
@@ -142,6 +142,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               when={canRetry()}
               fallback={
                 <button
+                  ref={primaryActionRef}
                   type="button"
                   data-testid="error-select-different-fallback-button"
                   class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
@@ -153,7 +154,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               }
             >
               <button
-                ref={retryButtonRef}
+                ref={primaryActionRef}
                 type="button"
                 data-testid="error-retry-button"
                 class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
