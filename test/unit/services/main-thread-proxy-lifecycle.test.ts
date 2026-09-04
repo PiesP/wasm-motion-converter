@@ -191,7 +191,7 @@ describe('runPipelineViaWorker lifecycle', () => {
       heapEndMB: 0,
       heapPeakMB: 0,
       stages: [],
-      stageWallTimePct: { demuxing: 0, transcoding: 0, assembling: 0 },
+      stageWallTimePct: { demuxing: 0, transcoding: 0, finalizing: 0 },
       dominantStage: null,
       summary: '[100ms total]',
     };

@@ -17,7 +17,7 @@ describe('ConversionProfiler', () => {
     expect(report).toMatchObject({
       schemaVersion: 2,
       stages: [],
-      stageWallTimePct: { demuxing: 0, transcoding: 0, assembling: 0 },
+      stageWallTimePct: { demuxing: 0, transcoding: 0, finalizing: 0 },
       dominantStage: null,
     });
   });
@@ -38,13 +38,13 @@ describe('ConversionProfiler', () => {
     profiler
       .begin('transcoding')
       .end({ decodedFrames: 30, encodedFrames: 20, outputBytes: 1024 * 1024 });
-    profiler.begin('assembling').end();
+    profiler.begin('finalizing').end();
 
     const report = profiler.finish();
     expect(report.stageWallTimePct).toEqual({
       demuxing: 28.6,
       transcoding: 57.1,
-      assembling: 14.3,
+      finalizing: 14.3,
     });
     expect(report.dominantStage).toBe('transcoding');
     expect(report.summary).toContain('streaming decode+encode; attribution unavailable');

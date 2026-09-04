@@ -11,7 +11,7 @@ import { getMemoryUsageMB } from '../utils/memory-monitor.js';
  * time independently.
  */
 
-export type ProfileStage = 'demuxing' | 'transcoding' | 'assembling';
+export type ProfileStage = 'demuxing' | 'transcoding' | 'finalizing';
 
 interface CommonStageMetrics {
   stage: ProfileStage;
@@ -41,16 +41,16 @@ export interface TranscodingStageMetrics extends CommonStageMetrics {
   throughputMBps: number;
 }
 
-export interface AssemblyStageMetrics extends CommonStageMetrics {
-  stage: 'assembling';
+export interface FinalizationStageMetrics extends CommonStageMetrics {
+  stage: 'finalizing';
 }
 
-export type StageMetrics = DemuxStageMetrics | TranscodingStageMetrics | AssemblyStageMetrics;
+export type StageMetrics = DemuxStageMetrics | TranscodingStageMetrics | FinalizationStageMetrics;
 
 interface StageObservations {
   demuxing: { frames: number };
   transcoding: { decodedFrames: number; encodedFrames: number; outputBytes: number };
-  assembling: Record<string, never>;
+  finalizing: Record<string, never>;
 }
 
 export interface ProfileSpan<S extends ProfileStage> {
@@ -79,7 +79,7 @@ interface ActiveStage {
   observations: Record<string, number>;
 }
 
-const STAGE_ORDER: readonly ProfileStage[] = ['demuxing', 'transcoding', 'assembling'];
+const STAGE_ORDER: readonly ProfileStage[] = ['demuxing', 'transcoding', 'finalizing'];
 
 function roundRate(count: number, durationMs: number): number {
   return durationMs > 0 ? Math.round((count / durationMs) * 1000) : 0;
@@ -147,7 +147,7 @@ export class ConversionProfiler {
     const stageWallTimePct: Record<ProfileStage, number> = {
       demuxing: 0,
       transcoding: 0,
-      assembling: 0,
+      finalizing: 0,
     };
     let dominantStage: ProfileStage | null = null;
     let dominantDurationMs = -1;
@@ -241,7 +241,7 @@ export class ConversionProfiler {
         throughputMBps: roundThroughput(outputBytes, durationMs),
       });
     } else {
-      this.stages.set('assembling', { ...common, stage: 'assembling' });
+      this.stages.set('finalizing', { ...common, stage: 'finalizing' });
     }
     this.active = null;
   }

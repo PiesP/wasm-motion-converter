@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { focusElement, focusRetryButton, scheduleTask } from '@utils/dom-utils';
+import { focusElement, focusPrimaryErrorAction, scheduleTask } from '@utils/dom-utils';
 
 describe('dom utilities', () => {
   beforeEach(() => vi.useFakeTimers());
@@ -36,8 +36,20 @@ describe('dom utilities', () => {
     expect(focus).toHaveBeenCalled();
 
     focus.mockClear();
-    focusRetryButton();
+    focusPrimaryErrorAction();
     await Promise.resolve();
+    expect(focus).toHaveBeenCalled();
+  });
+
+  it('focuses the select-different action when an error cannot be retried', async () => {
+    const element = document.createElement('button');
+    element.dataset.testid = 'error-select-different-fallback-button';
+    const focus = vi.spyOn(element, 'focus');
+    document.body.append(element);
+
+    focusPrimaryErrorAction();
+    await Promise.resolve();
+
     expect(focus).toHaveBeenCalled();
   });
 });

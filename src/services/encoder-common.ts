@@ -31,7 +31,7 @@ export interface BaseEncoderOptions {
    * Callback fired after each frame is encoded.
    * @note Currently only used by the GIF encoder; WebP does not invoke this.
    */
-  onFrameEncoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
+  onFrameEncoded?: ((encodedFrameCount: number, totalFrames: number) => void) | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
 }

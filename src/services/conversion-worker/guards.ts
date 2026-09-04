@@ -29,7 +29,7 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-const PROFILE_STAGES = ['demuxing', 'transcoding', 'assembling'] as const;
+const PROFILE_STAGES = ['demuxing', 'transcoding', 'finalizing'] as const;
 const WORKER_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const WORKER_LOG_CATEGORIES = ['conversion', 'general', 'demuxer', 'encoders', 'decoders'] as const;
 

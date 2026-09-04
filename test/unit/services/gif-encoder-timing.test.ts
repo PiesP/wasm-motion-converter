@@ -53,6 +53,7 @@ beforeEach(() => {
 
 describe('encodeGif timing', () => {
   it('combines decoder and dynamic-decimation trailing duration', async () => {
+    const onFrameEncoded = vi.fn();
     await encodeGif(
       {
         chunks: [],
@@ -62,7 +63,7 @@ describe('encodeGif timing', () => {
         sourceTotalMs: 200,
         totalFrames: 2,
       },
-      { width: 1, height: 1, quality: 'low', scale: 1 }
+      { width: 1, height: 1, quality: 'low', scale: 1, onFrameEncoded }
     );
 
     expect(mocks.writeFrame).toHaveBeenLastCalledWith(
@@ -77,5 +78,6 @@ describe('encodeGif timing', () => {
     for (const call of mocks.writeFrame.mock.calls.slice(1)) {
       expect(call[3]).not.toHaveProperty('palette');
     }
+    expect(onFrameEncoded).toHaveBeenCalledWith(1, expect.any(Number));
   });
 });

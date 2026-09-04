@@ -193,7 +193,7 @@ describe('isWorkerResponse', () => {
         fps: 3000,
       },
     ],
-    stageWallTimePct: { demuxing: 0.2, transcoding: 0, assembling: 0 },
+    stageWallTimePct: { demuxing: 0.2, transcoding: 0, finalizing: 0 },
     dominantStage: 'demuxing',
     summary: '[5000ms total]',
   };

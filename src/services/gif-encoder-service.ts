@@ -462,7 +462,7 @@ export async function encodeGif(
 
           // Report encoding progress (50~90% range in pipeline)
           if (opts.onFrameEncoded) {
-            opts.onFrameEncoded(encodeIdx, estimatedTotalFrames);
+            opts.onFrameEncoded(encodeIdx + 1, estimatedTotalFrames);
           }
 
           encodeIdx++;

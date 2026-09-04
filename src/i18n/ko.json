@@ -30,6 +30,7 @@
   "env.showDetails": "세부 정보 보기",
   "env.unavailable": "사용 불가",
   "error.codec": "이 비디오 코덱은 처리할 수 없습니다. 다른 파일을 시도해 주세요.",
+  "error.codecSuggestion": "다른 도구에서 비디오를 H.264/MP4로 변환한 후 다시 시도하세요.",
   "error.conversionFailed": "변환 실패",
   "error.dismiss": "오류 메시지 닫기",
   "error.format": "이 비디오 형식은 지원되지 않습니다. 다른 파일을 시도해 주세요.",

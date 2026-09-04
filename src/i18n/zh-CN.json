@@ -30,6 +30,7 @@
   "env.showDetails": "显示详情",
   "env.unavailable": "不可用",
   "error.codec": "无法处理此视频编解码器。请尝试其他文件。",
+  "error.codecSuggestion": "请先使用其他工具将视频转换为 H.264/MP4，然后重试。",
   "error.conversionFailed": "转换失败",
   "error.dismiss": "关闭错误消息",
   "error.format": "不支持此视频格式。请尝试其他文件。",

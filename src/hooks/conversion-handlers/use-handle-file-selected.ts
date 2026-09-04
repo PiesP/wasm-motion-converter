@@ -18,7 +18,7 @@ import {
 import type { TFunction } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { DEFAULT_FPS } from '@utils/constants';
-import { focusRetryButton } from '@utils/dom-utils';
+import { focusPrimaryErrorAction } from '@utils/dom-utils';
 import { validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
 import { batch } from 'solid-js';
@@ -65,7 +65,7 @@ export async function handleFileSelected(
       setErrorMessage(getErrorMessage(validation.error));
       transitionToState('error');
     });
-    focusRetryButton();
+    focusPrimaryErrorAction();
     runtime.finishAnalysisRun(run);
     return;
   }
@@ -100,7 +100,10 @@ export async function handleFileSelected(
       if (isStale()) return;
       if (decoderSupported === false) {
         const message = `Unsupported codec configuration: ${decoderConfig.codec}`;
-        const context = classifyConversionError(message, metadata, conversionSettings(), t);
+        const context = {
+          ...classifyConversionError(message, metadata, conversionSettings(), t),
+          suggestion: t('error.codecSuggestion'),
+        };
         logger.warn('conversion', 'Decoder support preflight failed — conversion blocked', {
           fileName: file.name,
           codec: decoderConfig.codec,
@@ -110,7 +113,7 @@ export async function handleFileSelected(
           setErrorContext(context);
           transitionToState('error');
         });
-        focusRetryButton();
+        focusPrimaryErrorAction();
         return;
       }
     }
@@ -132,7 +135,7 @@ export async function handleFileSelected(
       setErrorMessage(getErrorMessage(error));
       transitionToState('error');
     });
-    focusRetryButton();
+    focusPrimaryErrorAction();
   } finally {
     runtime.finishAnalysisRun(run);
   }

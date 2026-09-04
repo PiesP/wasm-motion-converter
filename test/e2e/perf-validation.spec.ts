@@ -31,7 +31,7 @@ import { validateFileMagic } from './fixtures/verify';
 
 // ─── Helper: get conversion profile from browser ───
 
-type ProfileStage = 'demuxing' | 'transcoding' | 'assembling';
+type ProfileStage = 'demuxing' | 'transcoding' | 'finalizing';
 
 interface StageMetrics {
   stage: ProfileStage;
@@ -350,7 +350,7 @@ test.describe('Perf: Wall-clock stage profiling', () => {
     const stageNames = profile!.stages.map((stage) => stage.stage);
     console.log(`  Stages: ${stageNames.join(', ')}`);
     console.log(`  Summary: ${profile!.summary}`);
-    expect(stageNames).toEqual(['demuxing', 'transcoding', 'assembling']);
+    expect(stageNames).toEqual(['demuxing', 'transcoding', 'finalizing']);
 
     // Total duration should be reasonable (under 2 minutes for a small test video)
     console.log(`  Total: ${profile!.totalDurationMs}ms`);
@@ -368,7 +368,7 @@ test.describe('Perf: Wall-clock stage profiling', () => {
     );
     expect(totalStagePct).toBeLessThanOrEqual(100.1);
     expect(profile!.stageWallTimePct.demuxing).toBeLessThan(20);
-    expect(profile!.stageWallTimePct.assembling).toBeLessThan(5);
+    expect(profile!.stageWallTimePct.finalizing).toBeLessThan(5);
 
     const transcodeStage = profile!.stages.find((stage) => stage.stage === 'transcoding');
     expect(transcodeStage?.encodedFrames).toBeGreaterThan(0);
@@ -435,7 +435,7 @@ test.describe('Perf: Wall-clock stage profiling', () => {
     console.log(
       `  Transcode: ${transcodeStage!.durationMs}ms (${profile!.stageWallTimePct.transcoding}%)`
     );
-    console.log(`  Assemble: ${profile!.stageWallTimePct.assembling}%`);
+    console.log(`  Finalize: ${profile!.stageWallTimePct.finalizing}%`);
     console.log(`  Dominant stage: ${profile!.dominantStage}`);
 
     // Demux should be relatively fast (< 20% of total)

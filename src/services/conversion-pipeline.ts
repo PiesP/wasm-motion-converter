@@ -230,8 +230,11 @@ async function _runPipelineInner(
 
     // estimatedOutputFrames is computed after decimationRatio is determined
     let estimatedOutputFrames = 1;
+    let observedDecodedFrames = 0;
+    let observedEncodedFrames = 0;
 
     const decodeProgressCb = (frameIdx: number, _totalFrames: number) => {
+      observedDecodedFrames = Math.max(observedDecodedFrames, frameIdx);
       transcodeSpan?.update({ decodedFrames: frameIdx });
       const now = performance.now();
       const deltaMs = now - fpsTracker.lastTime;
@@ -269,6 +272,7 @@ async function _runPipelineInner(
       currentFrame: number,
       etaFrame: number | null
     ): void => {
+      observedEncodedFrames = Math.max(observedEncodedFrames, currentFrame);
       transcodeSpan?.update({ encodedFrames: currentFrame });
       throttled.callback(
         buildEncodingProgress({
@@ -331,9 +335,9 @@ async function _runPipelineInner(
                 ...outputLimits,
                 assertAdditionalMemoryBytes: assertMemoryBudget,
                 onFrameDecoded: decodeProgressCb,
-                onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
-                  gifEncodeFrames = frameIdx;
-                  reportEncodingProgress(frameIdx, frameIdx, frameIdx);
+                onFrameEncoded: (encodedFrameCount: number, _totalFrames: number) => {
+                  gifEncodeFrames = encodedFrameCount;
+                  reportEncodingProgress(encodedFrameCount, encodedFrameCount, encodedFrameCount);
                 },
               },
               signal
@@ -575,13 +579,13 @@ async function _runPipelineInner(
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
     transcodeSpan?.end({
-      decodedFrames: Math.max(fpsTracker.lastFrame, encodeResult?.frames ?? 0),
-      encodedFrames: encodeResult?.frames ?? 0,
+      decodedFrames: Math.max(observedDecodedFrames, observedEncodedFrames),
+      encodedFrames: observedEncodedFrames,
       outputBytes: encodeResult?.outputBytes ?? 0,
     });
 
-    // ── Assembly Phase (93~100%) ──
-    const assemblySpan = profiler?.begin('assembling');
+    // ── Finalization bookkeeping (UI progress remains "assembling") ──
+    const finalizationSpan = profiler?.begin('finalizing');
 
     // Clear buffer pool after conversion
     globalBufferPool.clear();
@@ -614,7 +618,7 @@ async function _runPipelineInner(
     // Deliver the terminal state before cleanup cancels any trailing throttle timer.
     throttled.flush();
 
-    assemblySpan?.end();
+    finalizationSpan?.end();
 
     // ── Profile Report ──
     if (profiler) {

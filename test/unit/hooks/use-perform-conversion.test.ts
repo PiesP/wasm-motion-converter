@@ -89,7 +89,7 @@ vi.mock('@utils/file-validation', () => ({
 }));
 vi.mock('@utils/dom-utils', () => ({
   focusElement: vi.fn(),
-  focusRetryButton: vi.fn(),
+  focusPrimaryErrorAction: vi.fn(),
 }));
 
 import * as conversionModule from '@hooks/conversion-handlers/use-perform-conversion';

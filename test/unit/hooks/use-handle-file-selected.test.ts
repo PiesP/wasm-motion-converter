@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   checkVideoDecoderSupport: vi.fn(),
   extractVideoMetadata: vi.fn(),
-  focusRetryButton: vi.fn(),
+  focusPrimaryErrorAction: vi.fn(),
   setErrorContext: vi.fn(),
   setErrorMessage: vi.fn(),
   setVideoMetadata: vi.fn(),
@@ -47,7 +47,7 @@ vi.mock('@utils/file-validation', () => ({
   validateVideoFile: mocks.validateVideoFile,
 }));
 vi.mock('@utils/dom-utils', () => ({
-  focusRetryButton: mocks.focusRetryButton,
+  focusPrimaryErrorAction: mocks.focusPrimaryErrorAction,
 }));
 vi.mock('@utils/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -59,7 +59,7 @@ import type { ConversionRuntimeController } from '@hooks/conversion-handlers/use
 describe('handleFileSelected conversion settings', () => {
   beforeEach(() => {
     mocks.checkVideoDecoderSupport.mockReset().mockResolvedValue(true);
-    mocks.focusRetryButton.mockReset();
+    mocks.focusPrimaryErrorAction.mockReset();
     mocks.setErrorContext.mockReset();
     mocks.setErrorMessage.mockReset();
     mocks.setVideoMetadata.mockReset();
@@ -131,7 +131,10 @@ describe('handleFileSelected conversion settings', () => {
       })
     );
     expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
-    expect(mocks.focusRetryButton).toHaveBeenCalledOnce();
+    expect(mocks.focusPrimaryErrorAction).toHaveBeenCalledOnce();
+    expect(mocks.setErrorContext).toHaveBeenCalledWith(
+      expect.objectContaining({ suggestion: 'error.codecSuggestion' })
+    );
   });
 
   it('ignores a stale invalid result after a newer file is accepted', async () => {
@@ -170,13 +173,13 @@ describe('handleFileSelected conversion settings', () => {
 
     mocks.setErrorMessage.mockClear();
     mocks.transitionToState.mockClear();
-    mocks.focusRetryButton.mockClear();
+    mocks.focusPrimaryErrorAction.mockClear();
     resolveStaleValidation?.({ valid: false, error: new Error('stale validation failed') });
     await staleSelection;
 
     expect(mocks.setErrorMessage).not.toHaveBeenCalled();
     expect(mocks.transitionToState).not.toHaveBeenCalled();
-    expect(mocks.focusRetryButton).not.toHaveBeenCalled();
+    expect(mocks.focusPrimaryErrorAction).not.toHaveBeenCalled();
   });
 
   it('ignores a stale unsupported-codec result after a newer file is accepted', async () => {
@@ -218,13 +221,13 @@ describe('handleFileSelected conversion settings', () => {
     mocks.setErrorContext.mockClear();
     mocks.setErrorMessage.mockClear();
     mocks.transitionToState.mockClear();
-    mocks.focusRetryButton.mockClear();
+    mocks.focusPrimaryErrorAction.mockClear();
     resolveStaleSupport?.(false);
     await staleSelection;
 
     expect(mocks.setErrorContext).not.toHaveBeenCalled();
     expect(mocks.setErrorMessage).not.toHaveBeenCalled();
     expect(mocks.transitionToState).not.toHaveBeenCalled();
-    expect(mocks.focusRetryButton).not.toHaveBeenCalled();
+    expect(mocks.focusPrimaryErrorAction).not.toHaveBeenCalled();
   });
 });

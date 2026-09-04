@@ -44,7 +44,21 @@ const baseOptions: SerializedConversionOptions = {
 beforeEach(() => {
   demuxResult.dispose.mockClear();
   mocks.demuxVideo.mockReset().mockResolvedValue(demuxResult);
-  mocks.encodeGif.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
+  mocks.encodeGif
+    .mockReset()
+    .mockImplementation(
+      async (
+        _demux: unknown,
+        options: {
+          onFrameDecoded?: (frameCount: number, totalFrames: number) => void;
+          onFrameEncoded?: (frameCount: number, totalFrames: number) => void;
+        }
+      ) => {
+        options.onFrameDecoded?.(10, 30);
+        options.onFrameEncoded?.(10, 10);
+        return new Uint8Array([1, 2, 3]);
+      }
+    );
   mocks.encodeWebp.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
 });
 
@@ -71,7 +85,7 @@ describe('worker pipeline smart frame skip forwarding', () => {
     expect(result.profile?.stages.map((stage) => stage.stage)).toEqual([
       'demuxing',
       'transcoding',
-      'assembling',
+      'finalizing',
     ]);
     expect(result.profile?.stages.find((stage) => stage.stage === 'transcoding')).toMatchObject({
       encodedFrames: 10,
@@ -82,14 +96,14 @@ describe('worker pipeline smart frame skip forwarding', () => {
       requestId: 'request-1',
       level: 'info',
       category: 'conversion',
-      message: 'Worker pipeline started: gif medium 1x',
+      message: '▶ Worker pipeline started: gif medium 1x',
     });
     expect(postMessage).toHaveBeenCalledWith({
       type: 'log',
       requestId: 'request-1',
       level: 'info',
       category: 'encoders',
-      message: 'GIF encoder (streaming decode→encode)',
+      message: '├─ GIF encoder (streaming decode→encode)',
     });
   });
 
