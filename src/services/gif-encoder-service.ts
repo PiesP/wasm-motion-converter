@@ -515,6 +515,10 @@ export async function encodeGif(
     opts.assertAdditionalMemoryBytes?.(finalCopyPeakBytes);
     const rawBytes = encoder.bytes();
     const totalElapsed = (performance.now() - startTime) / 1000;
+    opts.onEncodingComplete?.({
+      decodedFrames: totalInputFrames,
+      encodedFrames: encodeIdx,
+    });
 
     logger.info('encoders', 'GIF encoding complete', {
       decodedFrames: totalInputFrames,

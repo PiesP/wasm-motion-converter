@@ -52,10 +52,15 @@ beforeEach(() => {
         options: {
           onFrameDecoded?: (frameCount: number, totalFrames: number) => void;
           onFrameEncoded?: (frameCount: number, totalFrames: number) => void;
+          onEncodingComplete?: (counts: {
+            decodedFrames: number;
+            encodedFrames: number;
+          }) => void;
         }
       ) => {
         options.onFrameDecoded?.(10, 30);
         options.onFrameEncoded?.(10, 10);
+        options.onEncodingComplete?.({ decodedFrames: 30, encodedFrames: 10 });
         return new Uint8Array([1, 2, 3]);
       }
     );
@@ -105,6 +110,7 @@ describe('worker pipeline smart frame skip forwarding', () => {
       'finalizing',
     ]);
     expect(result.profile?.stages.find((stage) => stage.stage === 'transcoding')).toMatchObject({
+      decodedFrames: 30,
       encodedFrames: 10,
       outputBytes: 3,
     });

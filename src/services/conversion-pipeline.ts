@@ -340,6 +340,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: gifDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                onEncodingComplete: recordCompletedFrameCounts,
                 ...outputLimits,
                 assertAdditionalMemoryBytes: assertMemoryBudget,
                 onFrameDecoded: decodeProgressCb,

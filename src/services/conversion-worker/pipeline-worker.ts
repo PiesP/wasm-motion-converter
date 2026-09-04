@@ -275,6 +275,7 @@ export async function runWorkerPipeline(
           scale: options.scale,
           frameDecimation: gifDecimation,
           smartFrameSkip: options.smartFrameSkip,
+          onEncodingComplete: recordCompletedFrameCounts,
           maxFrames: request.maxFrames,
           maxOutputBytes: request.maxOutputBytes,
           assertAdditionalMemoryBytes: assertMemoryBudget,
