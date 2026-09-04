@@ -138,16 +138,21 @@ export function calculateStagedFrameSourceCapacity(
   displayHeight: number,
   targetWidth: number,
   targetHeight: number,
-  requestedMaximum: number
+  requestedMaximum: number,
+  targetWorkingSetCount = 1
 ): number {
   const requested = Math.max(1, Math.floor(requestedMaximum));
+  const targetCount = Math.max(1, Math.floor(targetWorkingSetCount));
   const sourceBytes = estimateDecodedSourceFrameBytes(
     codedWidth,
     codedHeight,
     displayWidth,
     displayHeight
   );
-  const targetWorkingBytes = estimateActiveFrameBytes(targetWidth, targetHeight);
+  const targetWorkingBytes = estimateActiveFrameBytes(targetWidth, targetHeight) * targetCount;
+  if (!Number.isSafeInteger(targetWorkingBytes)) {
+    throw new RangeError('Target working-set reservation exceeds the safe integer range');
+  }
   const sourceBudgetBytes = FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingBytes;
   if (sourceBudgetBytes < sourceBytes) return 0;
   return Math.min(requested, Math.floor(sourceBudgetBytes / sourceBytes));

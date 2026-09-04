@@ -1076,8 +1076,7 @@ describe('decoder-service', () => {
     it('falls back to serial delivery when a second target working set would exceed budget', async () => {
       const sourceWidth = 3000;
       const sourceHeight = 2000;
-      const { Decoder } = createFlushBurstVideoDecoder(2, sourceWidth, sourceHeight);
-      vi.stubGlobal('VideoDecoder', Decoder);
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       FakeVideoFrame.controlledCopies = true;
       const delivered: number[] = [];
       let releaseFirstDelivery!: () => void;
@@ -1087,7 +1086,15 @@ describe('decoder-service', () => {
 
       const decoding = decodeFrames(
         {
-          chunks: [],
+          chunks: [
+            { codedHeight: sourceHeight, codedWidth: sourceWidth, intensity: 0, timestamp: 0 },
+            {
+              codedHeight: sourceHeight,
+              codedWidth: sourceWidth,
+              intensity: 1,
+              timestamp: 1_000,
+            },
+          ] as EncodedVideoChunk[],
           config: { codec: 'vp09.00.10.08', codedWidth: sourceWidth, codedHeight: sourceHeight },
           duration: 0.034,
           framerate: 60,

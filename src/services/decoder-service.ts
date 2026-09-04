@@ -243,6 +243,8 @@ export async function decodeFrames(
       ? (demux.config.displayAspectHeight ?? configuredSourceHeight)
       : configuredSourceHeight;
   const usesStagedCpuStreaming = streaming && typeof onVideoFrameAvailable !== 'function';
+  const MAX_DECODE_QUEUE = 8;
+  const queuedSourceHeadroomCount = MAX_DECODE_QUEUE + 1;
   const maxPendingConversions = usesStagedCpuStreaming
     ? calculateStagedFrameSourceCapacity(
         configuredSourceWidth,
@@ -267,7 +269,29 @@ export async function decodeFrames(
   }
   const outputOwnershipRequestedMaximum = Number.MAX_SAFE_INTEGER;
   const targetWorkingBytes = usesStagedCpuStreaming ? estimateActiveFrameBytes(width, height) : 0;
-  const maxStagedTargetSlots = stagedCopyLookahead ? 2 : 1;
+  const queuedSourceHeadroomBytes = usesStagedCpuStreaming
+    ? estimateRuntimeDecodedSourceFrameBytes(
+        configuredSourceWidth,
+        configuredSourceHeight,
+        configuredDisplayWidth,
+        configuredDisplayHeight,
+        null
+      ) * queuedSourceHeadroomCount
+    : 0;
+  const twoTargetSourceCapacity = usesStagedCpuStreaming
+    ? calculateStagedFrameSourceCapacity(
+        configuredSourceWidth,
+        configuredSourceHeight,
+        configuredDisplayWidth,
+        configuredDisplayHeight,
+        width,
+        height,
+        Number.MAX_SAFE_INTEGER,
+        2
+      )
+    : 0;
+  const stagedLookaheadEnabled =
+    stagedCopyLookahead && twoTargetSourceCapacity >= queuedSourceHeadroomCount;
   let retainedSourceFrameBytes = 0;
   let activeStagedTargetSlots = 0;
   let stagedTargetGateClosed = false;
@@ -277,8 +301,12 @@ export async function decodeFrames(
   const canAcquireStagedTarget = (): boolean =>
     usesStagedCpuStreaming &&
     !stagedTargetGateClosed &&
-    activeStagedTargetSlots < maxStagedTargetSlots &&
-    retainedSourceFrameBytes + (activeStagedTargetSlots + 1) * targetWorkingBytes <=
+    activeStagedTargetSlots < (stagedLookaheadEnabled ? 2 : 1) &&
+    Math.max(
+      retainedSourceFrameBytes,
+      activeStagedTargetSlots === 1 ? queuedSourceHeadroomBytes : 0
+    ) +
+      (activeStagedTargetSlots + 1) * targetWorkingBytes <=
       FRAME_PIPELINE_MEMORY_BUDGET_BYTES;
 
   const drainStagedTargetWaiters = (): void => {
@@ -1002,7 +1030,6 @@ export async function decodeFrames(
     // VideoDecoder internally queues decoded frames; if we feed chunks faster than
     // they can be decoded, memory grows and GC pressure increases.
     // We pause when queue size exceeds a threshold and resume when it drains.
-    const MAX_DECODE_QUEUE = 8;
     while (true) {
       if (signal?.aborted) {
         recordCancellation();
