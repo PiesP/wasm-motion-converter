@@ -59,7 +59,18 @@ beforeEach(() => {
         return new Uint8Array([1, 2, 3]);
       }
     );
-  mocks.encodeWebp.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
+  mocks.encodeWebp
+    .mockReset()
+    .mockImplementation(
+      async (
+        _demux: unknown,
+        _options: unknown,
+        onProgress?: (progress: { currentFrame?: number; totalFrames?: number }) => void
+      ) => {
+        onProgress?.({ currentFrame: 1, totalFrames: 2 });
+        return new Uint8Array([1, 2, 3]);
+      }
+    );
 });
 
 describe('worker pipeline smart frame skip forwarding', () => {
@@ -120,7 +131,7 @@ describe('worker pipeline smart frame skip forwarding', () => {
   });
 
   it('forwards smartFrameSkip to the WebP encoder', async () => {
-    await runWorkerPipeline(
+    const result = await runWorkerPipeline(
       new ArrayBuffer(8),
       { ...baseOptions, format: 'webp' },
       vi.fn(),
@@ -137,6 +148,10 @@ describe('worker pipeline smart frame skip forwarding', () => {
       expect.anything(),
       undefined
     );
+    expect(result.profile?.stages.find((stage) => stage.stage === 'transcoding')).toMatchObject({
+      decodedFrames: 2,
+      encodedFrames: 1,
+    });
   });
 
   it('rejects hostile decoded dimensions before encoding and disposes the demux session', async () => {

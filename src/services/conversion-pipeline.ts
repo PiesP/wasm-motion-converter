@@ -291,6 +291,7 @@ async function _runPipelineInner(
       let encodedFrames = 0;
       return (p) => {
         encodedFrames = p.currentFrame ?? encodedFrames;
+        observedDecodedFrames = Math.max(observedDecodedFrames, p.totalFrames ?? 0);
         reportEncodingProgress(encodedFrames, p.currentFrame ?? 0, p.currentFrame ?? null);
       };
     };
@@ -482,6 +483,8 @@ async function _runPipelineInner(
               },
               signal
             ).then((result) => {
+              observedDecodedFrames = Math.max(observedDecodedFrames, result.totalInputFrames);
+              transcodeSpan?.update({ decodedFrames: observedDecodedFrames });
               tailAccumulatedMs = result.tailAccumulatedMs;
             }),
           { priority: 'user-blocking' }

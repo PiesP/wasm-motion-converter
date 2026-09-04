@@ -347,6 +347,8 @@ export async function runWorkerPipeline(
             onFrameDecoded: decodeProgressCb,
           },
           (p) => {
+            observedDecodedFrames = Math.max(observedDecodedFrames, p.totalFrames ?? 0);
+            transcodeSpan?.update({ decodedFrames: observedDecodedFrames });
             observedEncodedFrames = Math.max(observedEncodedFrames, p.currentFrame ?? 0);
             transcodeSpan?.update({ encodedFrames: p.currentFrame ?? 0 });
             const now = performance.now();
