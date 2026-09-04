@@ -81,7 +81,6 @@ export async function runWorkerPipeline(
     ? (await import('../conversion-profiler')).ConversionProfiler
     : undefined;
   const profiler = profilerClass ? new profilerClass() : null;
-  profiler?.start();
 
   // Build a ConversionRequest for the existing pipeline code.
   // Use maxMemoryMB from options (if provided) so the worker can receive
@@ -157,12 +156,12 @@ export async function runWorkerPipeline(
       : undefined;
 
     // ── Demux Phase ────────────────────────────────────────────
-    profiler?.startPhase('demuxing');
+    const demuxSpan = profiler?.begin('demuxing');
     const demuxResult = await demuxVideo(
       request,
       preComputedMetadata,
       (estimatedTotalFrames) => {
-        profiler?.updatePhase('demuxing', estimatedTotalFrames);
+        demuxSpan?.update({ frames: estimatedTotalFrames });
         const now = performance.now();
         if (now - progressState.lastPostTime >= 100) {
           progressState.lastPostTime = now;
@@ -183,7 +182,7 @@ export async function runWorkerPipeline(
       signal
     );
     demuxSession = demuxResult;
-    profiler?.endPhase('demuxing', { frames: demuxResult.totalFrames });
+    demuxSpan?.end({ frames: demuxResult.totalFrames });
 
     const cfg = demuxResult.config;
     const dims = resolveVideoDimensions(cfg);
@@ -203,7 +202,7 @@ export async function runWorkerPipeline(
     let estimatedOutputFrames = 1;
 
     const decodeProgressCb = (frameIdx: number, _totalFrames: number) => {
-      profiler?.updatePhase('decoding', frameIdx);
+      transcodeSpan?.update({ decodedFrames: frameIdx });
       const now = performance.now();
       const deltaMs = now - progressState.fpsTracker.lastTime;
       const framesDelta = frameIdx - progressState.fpsTracker.lastFrame;
@@ -238,8 +237,7 @@ export async function runWorkerPipeline(
       }
     };
 
-    profiler?.startPhase('decoding');
-    profiler?.startPhase('encoding');
+    const transcodeSpan = profiler?.begin('transcoding');
 
     if (options.format === 'gif') {
       const gifDecimation = calcAutoDecimation(
@@ -272,7 +270,7 @@ export async function runWorkerPipeline(
           assertAdditionalMemoryBytes: assertMemoryBudget,
           onFrameDecoded: decodeProgressCb,
           onFrameEncoded: (frameIdx: number, _totalFrames: number) => {
-            profiler?.updatePhase('encoding', frameIdx);
+            transcodeSpan?.update({ encodedFrames: frameIdx });
             const now = performance.now();
             if (now - progressState.lastPostTime >= 100) {
               progressState.lastPostTime = now;
@@ -345,7 +343,7 @@ export async function runWorkerPipeline(
             onFrameDecoded: decodeProgressCb,
           },
           (p) => {
-            profiler?.updatePhase('encoding', p.currentFrame ?? 0);
+            transcodeSpan?.update({ encodedFrames: p.currentFrame ?? 0 });
             const now = performance.now();
             if (now - progressState.lastPostTime >= 100) {
               progressState.lastPostTime = now;
@@ -379,14 +377,14 @@ export async function runWorkerPipeline(
       }
     }
 
-    profiler?.endPhase('decoding', { frames: estimatedOutputFrames });
-    profiler?.endPhase('encoding', {
-      frames: estimatedOutputFrames,
+    transcodeSpan?.end({
+      decodedFrames: estimatedOutputFrames,
+      encodedFrames: estimatedOutputFrames,
       outputBytes: output?.byteLength ?? 0,
     });
 
     // ── Assembly Phase ─────────────────────────────────────────────
-    profiler?.startPhase('assembling');
+    const assemblySpan = profiler?.begin('assembling');
     globalBufferPool.clear();
 
     // Guard: ensure output was produced (M10 fix).
@@ -410,7 +408,7 @@ export async function runWorkerPipeline(
       elapsedMs: totalElapsedMs,
     });
 
-    profiler?.endPhase('assembling');
+    assemblySpan?.end();
     const profile = profiler?.finish();
 
     return { outputBuffer: output, ...(profile ? { profile } : {}) };

@@ -175,13 +175,14 @@ describe('isWorkerResponse', () => {
   };
 
   const validProfile = {
+    schemaVersion: 2,
     totalDurationMs: 5000,
     heapStartMB: 0,
     heapEndMB: 0,
     heapPeakMB: 0,
-    phases: [
+    stages: [
       {
-        phase: 'demuxing',
+        stage: 'demuxing',
         startMs: 0,
         endMs: 10,
         durationMs: 10,
@@ -190,12 +191,10 @@ describe('isWorkerResponse', () => {
         heapPeakMB: 0,
         framesProcessed: 30,
         fps: 3000,
-        outputBytes: 0,
-        throughputMBps: 0,
       },
     ],
-    phaseTimePct: { demuxing: 0.2, decoding: 70, encoding: 25, assembling: 4.8 },
-    bottleneck: 'decoding',
+    stageWallTimePct: { demuxing: 0.2, transcoding: 0, assembling: 0 },
+    dominantStage: 'demuxing',
     summary: '[5000ms total]',
   };
 
@@ -281,7 +280,19 @@ describe('isWorkerResponse', () => {
     expect(
       isWorkerResponse({
         ...validComplete,
-        profile: { ...validProfile, phases: [{ phase: 'unknown' }] },
+        profile: { ...validProfile, stages: [{ stage: 'unknown' }] },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: { ...validProfile, schemaVersion: 1 },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: { ...validProfile, dominantStage: 'decoding' },
       })
     ).toBe(false);
   });

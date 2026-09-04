@@ -172,13 +172,14 @@ describe('runPipelineViaWorker lifecycle', () => {
   it('retains a validated profile returned from the Worker realm', async () => {
     const outputBuffer = new ArrayBuffer(4);
     const profile = {
+      schemaVersion: 2 as const,
       totalDurationMs: 100,
       heapStartMB: 0,
       heapEndMB: 0,
       heapPeakMB: 0,
-      phases: [],
-      phaseTimePct: { demuxing: 0, decoding: 0, encoding: 0, assembling: 0 },
-      bottleneck: 'demuxing',
+      stages: [],
+      stageWallTimePct: { demuxing: 0, transcoding: 0, assembling: 0 },
+      dominantStage: null,
       summary: '[100ms total]',
     };
     ThrowingWorker.response = {

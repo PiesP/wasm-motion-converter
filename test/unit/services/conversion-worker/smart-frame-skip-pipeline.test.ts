@@ -67,14 +67,13 @@ describe('worker pipeline smart frame skip forwarding', () => {
       }),
       undefined
     );
-    expect(result.profile?.phases.map((phase) => phase.phase)).toEqual([
+    expect(result.profile?.stages.map((stage) => stage.stage)).toEqual([
       'demuxing',
-      'decoding',
-      'encoding',
+      'transcoding',
       'assembling',
     ]);
-    expect(result.profile?.phases.find((phase) => phase.phase === 'encoding')).toMatchObject({
-      framesProcessed: 10,
+    expect(result.profile?.stages.find((stage) => stage.stage === 'transcoding')).toMatchObject({
+      encodedFrames: 10,
       outputBytes: 3,
     });
   });

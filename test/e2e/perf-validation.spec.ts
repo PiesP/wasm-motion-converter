@@ -8,7 +8,7 @@
 // 2. Memory stability during conversion (no unbounded growth)
 // 3. Output quality regression (GIF/WebP still produce valid files)
 // 4. Buffer pool effectiveness (repeated conversions don't leak)
-// 5. Per-phase profiling — bottleneck identification and timing breakdown
+// 5. Non-overlapping stage profiling and timing breakdown
 
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
@@ -31,28 +31,30 @@ import { validateFileMagic } from './fixtures/verify';
 
 // ─── Helper: get conversion profile from browser ───
 
-type ProfilePhase = 'demuxing' | 'decoding' | 'encoding' | 'assembling';
+type ProfileStage = 'demuxing' | 'transcoding' | 'assembling';
 
-interface PhaseMetrics {
-  phase: ProfilePhase;
+interface StageMetrics {
+  stage: ProfileStage;
   durationMs: number;
   heapStartMB: number;
   heapEndMB: number;
   heapPeakMB: number;
-  framesProcessed: number;
-  fps: number;
-  outputBytes: number;
-  throughputMBps: number;
+  framesProcessed?: number;
+  decodedFrames?: number;
+  encodedFrames?: number;
+  outputBytes?: number;
+  throughputMBps?: number;
 }
 
 interface ConversionProfile {
+  schemaVersion: 2;
   totalDurationMs: number;
   heapStartMB: number;
   heapEndMB: number;
   heapPeakMB: number;
-  phases: PhaseMetrics[];
-  phaseTimePct: Record<ProfilePhase, number>;
-  bottleneck: ProfilePhase;
+  stages: StageMetrics[];
+  stageWallTimePct: Record<ProfileStage, number>;
+  dominantStage: ProfileStage | null;
   summary: string;
 }
 
@@ -324,15 +326,15 @@ test.describe('Perf: Output quality regression', () => {
   });
 });
 
-// ─── Test: Per-phase profiling ────────────────────────────────────
+// ─── Test: Wall-clock stage profiling ─────────────────────────────
 
-test.describe('Perf: Per-phase profiling', () => {
+test.describe('Perf: Wall-clock stage profiling', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await page.waitForTimeout(3000);
   });
 
-  test('GIF conversion produces valid profile with all phases', async ({ page }) => {
+  test('GIF conversion produces a truthful non-overlapping stage profile', async ({ page }) => {
     const { state } = await runConversion(page, {
       file: 'test-video-h264-baseline.mp4',
       format: 'gif',
@@ -345,37 +347,31 @@ test.describe('Perf: Per-phase profiling', () => {
     const profile = await getConversionProfile(page);
     expect(profile).not.toBeNull();
 
-    // All 4 phases should be present
-    // Note: GIF streaming combines decode+encode, so we check for demux + decode + encode + assemble
-    const phaseNames = profile!.phases.map((p) => p.phase);
-    console.log(`  Phases: ${phaseNames.join(', ')}`);
+    const stageNames = profile!.stages.map((stage) => stage.stage);
+    console.log(`  Stages: ${stageNames.join(', ')}`);
     console.log(`  Summary: ${profile!.summary}`);
-    expect(phaseNames).toContain('demuxing');
-    expect(phaseNames).toContain('decoding');
-    expect(phaseNames).toContain('encoding');
-    expect(phaseNames).toContain('assembling');
+    expect(stageNames).toEqual(['demuxing', 'transcoding', 'assembling']);
 
     // Total duration should be reasonable (under 2 minutes for a small test video)
     console.log(`  Total: ${profile!.totalDurationMs}ms`);
     expect(profile!.totalDurationMs).toBeGreaterThan(0);
     expect(profile!.totalDurationMs).toBeLessThan(120_000);
 
-    // Phase time percentages: each phase reports its own duration / total.
-    // Since decode and encode run concurrently (streaming), their percentages
-    // can sum to > 100%. We just verify each phase has a reasonable percentage.
-    console.log(`  Phase %:`, profile!.phaseTimePct);
-    for (const [phase, pct] of Object.entries(profile!.phaseTimePct)) {
+    console.log(`  Stage wall time %:`, profile!.stageWallTimePct);
+    for (const pct of Object.values(profile!.stageWallTimePct)) {
       expect(pct).toBeGreaterThanOrEqual(0);
       expect(pct).toBeLessThanOrEqual(100);
     }
-    // Demux and assemble should be small (< 20% each)
-    expect(profile!.phaseTimePct.demuxing).toBeLessThan(20);
-    expect(profile!.phaseTimePct.assembling).toBeLessThan(5);
+    const totalStagePct = Object.values(profile!.stageWallTimePct).reduce(
+      (total, pct) => total + pct,
+      0
+    );
+    expect(totalStagePct).toBeLessThanOrEqual(100.1);
+    expect(profile!.stageWallTimePct.demuxing).toBeLessThan(20);
+    expect(profile!.stageWallTimePct.assembling).toBeLessThan(5);
 
-    // Encode should have the most frames (decimation may reduce count)
-    const encodePhase = profile!.phases.find((p) => p.phase === 'encoding');
-    expect(encodePhase).toBeDefined();
-    expect(encodePhase!.framesProcessed).toBeGreaterThan(0);
+    const transcodeStage = profile!.stages.find((stage) => stage.stage === 'transcoding');
+    expect(transcodeStage?.encodedFrames).toBeGreaterThan(0);
 
     // Memory tracking should be present (Chrome provides performance.memory)
     console.log(`  Heap: start=${profile!.heapStartMB}MB, end=${profile!.heapEndMB}MB, peak=${profile!.heapPeakMB}MB`);
@@ -384,9 +380,8 @@ test.describe('Perf: Per-phase profiling', () => {
     // so we only assert it's non-negative
     expect(profile!.heapPeakMB).toBeGreaterThanOrEqual(0);
 
-    // Bottleneck should be one of the phases
-    expect(phaseNames).toContain(profile!.bottleneck);
-    console.log(`  Bottleneck: ${profile!.bottleneck}`);
+    expect(stageNames).toContain(profile!.dominantStage);
+    console.log(`  Dominant stage: ${profile!.dominantStage}`);
   });
 
   test('WebP conversion profile shows encode throughput', async ({ page }) => {
@@ -402,22 +397,20 @@ test.describe('Perf: Per-phase profiling', () => {
     const profile = await getConversionProfile(page);
     expect(profile).not.toBeNull();
 
-    // WebP encode should report throughput
-    const encodePhase = profile!.phases.find((p) => p.phase === 'encoding');
-    expect(encodePhase).toBeDefined();
-    expect(encodePhase!.outputBytes).toBeGreaterThan(0);
-    console.log(`  WebP encode: ${encodePhase!.framesProcessed}f, ${encodePhase!.throughputMBps} MB/s`);
+    const transcodeStage = profile!.stages.find((stage) => stage.stage === 'transcoding');
+    expect(transcodeStage?.outputBytes).toBeGreaterThan(0);
+    console.log(
+      `  WebP transcode: ${transcodeStage!.encodedFrames}f, ${transcodeStage!.throughputMBps} MB/s`
+    );
 
     // Summary should be a non-empty string
     expect(profile!.summary.length).toBeGreaterThan(0);
     console.log(`  ${profile!.summary}`);
   });
 
-  test('GIF 50% scale — profile shows realistic phase distribution', async ({ page }) => {
-    // With streaming architecture, decode+encode run concurrently.
-    // The decode phase tracks VideoDecoder output, encode tracks gifenc processing.
-    // In practice, decode (VideoDecoder) is often the bottleneck for GIF since
-    // it must decode every frame before encoding can proceed.
+  test('GIF 50% scale — profile reports the combined streaming transcode stage', async ({
+    page,
+  }) => {
     const { state } = await runConversion(page, {
       file: 'test-video-h264-baseline.mp4',
       format: 'gif',
@@ -430,28 +423,25 @@ test.describe('Perf: Per-phase profiling', () => {
     const profile = await getConversionProfile(page);
     expect(profile).not.toBeNull();
 
-    const decodePhase = profile!.phases.find((p) => p.phase === 'decoding');
-    const encodePhase = profile!.phases.find((p) => p.phase === 'encoding');
-    const demuxPhase = profile!.phases.find((p) => p.phase === 'demuxing');
+    const transcodeStage = profile!.stages.find((stage) => stage.stage === 'transcoding');
+    const demuxStage = profile!.stages.find((stage) => stage.stage === 'demuxing');
 
-    expect(decodePhase).toBeDefined();
-    expect(encodePhase).toBeDefined();
-    expect(demuxPhase).toBeDefined();
+    expect(transcodeStage).toBeDefined();
+    expect(demuxStage).toBeDefined();
 
-    console.log(`  Demux: ${demuxPhase!.durationMs}ms (${profile!.phaseTimePct.demuxing}%)`);
-    console.log(`  Decode: ${decodePhase!.durationMs}ms (${profile!.phaseTimePct.decoding}%)`);
-    console.log(`  Encode: ${encodePhase!.durationMs}ms (${profile!.phaseTimePct.encoding}%)`);
-    console.log(`  Assemble: ${profile!.phaseTimePct.assembling}%`);
-    console.log(`  Bottleneck: ${profile!.bottleneck}`);
+    console.log(
+      `  Demux: ${demuxStage!.durationMs}ms (${profile!.stageWallTimePct.demuxing}%)`
+    );
+    console.log(
+      `  Transcode: ${transcodeStage!.durationMs}ms (${profile!.stageWallTimePct.transcoding}%)`
+    );
+    console.log(`  Assemble: ${profile!.stageWallTimePct.assembling}%`);
+    console.log(`  Dominant stage: ${profile!.dominantStage}`);
 
     // Demux should be relatively fast (< 20% of total)
-    expect(demuxPhase!.durationMs).toBeLessThan(profile!.totalDurationMs * 0.2);
-
-    // Decode + Encode should account for the majority of time
-    const decodeEncodePct = profile!.phaseTimePct.decoding + profile!.phaseTimePct.encoding;
-    expect(decodeEncodePct).toBeGreaterThan(50);
-
-    // The bottleneck should be either decode or encode (not demux or assemble)
-    expect(['decoding', 'encoding']).toContain(profile!.bottleneck);
+    expect(demuxStage!.durationMs).toBeLessThan(profile!.totalDurationMs * 0.2);
+    expect(profile!.stageWallTimePct.transcoding).toBeGreaterThan(50);
+    expect(profile!.dominantStage).toBe('transcoding');
+    expect(profile!.summary).toContain('attribution unavailable');
   });
 });

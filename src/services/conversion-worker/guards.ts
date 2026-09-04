@@ -28,42 +28,69 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-const PROGRESS_PHASES = ['demuxing', 'decoding', 'encoding', 'assembling'] as const;
+const PROFILE_STAGES = ['demuxing', 'transcoding', 'assembling'] as const;
 
-function isProgressPhase(value: unknown): value is (typeof PROGRESS_PHASES)[number] {
-  return typeof value === 'string' && PROGRESS_PHASES.some((phase) => phase === value);
+function isProfileStage(value: unknown): value is (typeof PROFILE_STAGES)[number] {
+  return typeof value === 'string' && PROFILE_STAGES.some((stage) => stage === value);
 }
 
-function isValidPhaseMetrics(value: unknown): boolean {
-  if (!isRecord(value) || !isProgressPhase(value.phase)) return false;
-  return [
+function isValidStageMetrics(value: unknown): boolean {
+  if (!isRecord(value) || !isProfileStage(value.stage)) return false;
+  const commonValid = [
     value.startMs,
     value.endMs,
     value.durationMs,
     value.heapStartMB,
     value.heapEndMB,
     value.heapPeakMB,
-    value.framesProcessed,
-    value.fps,
-    value.outputBytes,
-    value.throughputMBps,
   ].every(isFiniteNonNegative);
+  if (!commonValid) return false;
+  if (value.stage === 'demuxing') {
+    return [value.framesProcessed, value.fps].every(isFiniteNonNegative);
+  }
+  if (value.stage === 'transcoding') {
+    return (
+      value.mode === 'streaming-decode-encode' &&
+      value.attribution === 'combined' &&
+      [
+        value.decodedFrames,
+        value.encodedFrames,
+        value.decodeFps,
+        value.encodeFps,
+        value.outputBytes,
+        value.throughputMBps,
+      ].every(isFiniteNonNegative)
+    );
+  }
+  return true;
 }
 
 /** Validate a profiler report crossing the Worker boundary. */
 function isValidProfileReport(value: unknown): boolean {
   if (!isRecord(value)) return false;
+  if (value.schemaVersion !== 2) return false;
   if (!isFiniteNonNegative(value.totalDurationMs)) return false;
   if (!isFiniteNonNegative(value.heapStartMB)) return false;
   if (!isFiniteNonNegative(value.heapEndMB)) return false;
   if (!isFiniteNonNegative(value.heapPeakMB)) return false;
-  if (!Array.isArray(value.phases) || !value.phases.every(isValidPhaseMetrics)) return false;
-  if (!isRecord(value.phaseTimePct)) return false;
-  const phaseTimePct = value.phaseTimePct;
-  if (!PROGRESS_PHASES.every((phase) => isFiniteNonNegative(phaseTimePct[phase]))) {
+  if (
+    !Array.isArray(value.stages) ||
+    value.stages.length > PROFILE_STAGES.length ||
+    !value.stages.every(isValidStageMetrics)
+  ) {
     return false;
   }
-  return isProgressPhase(value.bottleneck) && typeof value.summary === 'string';
+  const stageNames = value.stages.map((stage) => (stage as Record<string, unknown>).stage);
+  if (new Set(stageNames).size !== stageNames.length) return false;
+  const stageWallTimePct = value.stageWallTimePct;
+  if (!isRecord(stageWallTimePct)) return false;
+  if (!PROFILE_STAGES.every((stage) => isFiniteNonNegative(stageWallTimePct[stage]))) {
+    return false;
+  }
+  return (
+    (value.dominantStage === null || isProfileStage(value.dominantStage)) &&
+    typeof value.summary === 'string'
+  );
 }
 
 /** Validate SerializedDecoderConfig fields from unknown record */
