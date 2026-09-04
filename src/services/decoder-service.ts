@@ -21,6 +21,7 @@ import type { SmartFrameSkipMode } from '@t/conversion-types';
 import {
   DEFAULT_FPS,
   FPS_CLAMP_MAX,
+  FRAME_PIPELINE_MEMORY_BUDGET_BYTES,
   MAX_DECODE_INPUT_CHUNKS,
   MAX_FRAME_PIXEL_COUNT,
   MIN_OUTPUT_FPS,
@@ -37,7 +38,12 @@ import {
 } from './adaptive-frame-skip';
 import { globalBufferPool } from './buffer-pool';
 import { type DemuxResult, getEncodedChunkRetainedBytes } from './demuxer-service';
-import { calculateFrameOutputConcurrency } from './frame-memory';
+import {
+  calculateFrameOutputConcurrency,
+  calculateStagedFrameSourceCapacity,
+  estimateActiveFrameBytes,
+  estimateRuntimeDecodedSourceFrameBytes,
+} from './frame-memory';
 import {
   compute8x8Grayscale,
   computeMAD,
@@ -223,19 +229,44 @@ export async function decodeFrames(
   const configuredSourceHeight = hasConfiguredSourceDimensions
     ? (demux.config.codedHeight ?? height)
     : height;
-  const maxPendingConversions = calculateFrameOutputConcurrency(
-    configuredSourceWidth,
-    configuredSourceHeight,
-    width,
-    height,
-    10
-  );
+  const configuredDisplayWidth =
+    Number.isSafeInteger(demux.config.displayAspectWidth) &&
+    (demux.config.displayAspectWidth ?? 0) > 0
+      ? (demux.config.displayAspectWidth ?? configuredSourceWidth)
+      : configuredSourceWidth;
+  const configuredDisplayHeight =
+    Number.isSafeInteger(demux.config.displayAspectHeight) &&
+    (demux.config.displayAspectHeight ?? 0) > 0
+      ? (demux.config.displayAspectHeight ?? configuredSourceHeight)
+      : configuredSourceHeight;
+  const usesStagedCpuStreaming = streaming && typeof onVideoFrameAvailable !== 'function';
+  const maxPendingConversions = usesStagedCpuStreaming
+    ? calculateStagedFrameSourceCapacity(
+        configuredSourceWidth,
+        configuredSourceHeight,
+        configuredDisplayWidth,
+        configuredDisplayHeight,
+        width,
+        height,
+        10
+      )
+    : calculateFrameOutputConcurrency(
+        configuredSourceWidth,
+        configuredSourceHeight,
+        width,
+        height,
+        10
+      );
   if (maxPendingConversions === 0) {
     throw new Error(
       'Decoded frame output memory limit exceeded (single frame exceeds byte budget)'
     );
   }
   const outputOwnershipRequestedMaximum = Number.MAX_SAFE_INTEGER;
+  const targetWorkingHeadroomBytes = usesStagedCpuStreaming
+    ? estimateActiveFrameBytes(width, height)
+    : 0;
+  let retainedSourceFrameBytes = 0;
   let activeOutputSlots = 0;
 
   const releaseOutputSlot = (): void => {
@@ -243,7 +274,13 @@ export async function decodeFrames(
   };
 
   let decodeError: Error | null = null;
+  let discardStagedOutputs = false;
   let firstConversionError: Error | null = null;
+  let firstPipelineFailure: {
+    error: Error;
+    origin: 'cancellation' | 'decoder' | 'processing';
+  } | null = null;
+  let cancellationObserved = false;
   let conversionErrorCount = 0;
   const encodedChunkReservations = new Map<number, EncodedChunkReservation[]>();
   const encodedChunkBudgetBytes = demux.encodedChunkBudgetBytes;
@@ -271,9 +308,32 @@ export async function decodeFrames(
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
   let adaptLastMotionClass: AdaptiveMotionClass = 'normal';
 
+  const normalizeFailure = (error: unknown): Error =>
+    error instanceof Error || error instanceof DOMException
+      ? error
+      : new Error(getErrorMessage(error));
+
+  const recordDecoderError = (error: unknown): void => {
+    const normalized = normalizeFailure(error);
+    decodeError ??= normalized;
+    discardStagedOutputs = true;
+    firstPipelineFailure ??= { error: normalized, origin: 'decoder' };
+  };
+
+  const recordCancellation = (): void => {
+    cancellationObserved = true;
+    discardStagedOutputs = true;
+    firstPipelineFailure ??= {
+      error: new DOMException('Cancelled', 'AbortError'),
+      origin: 'cancellation',
+    };
+  };
+
   const recordConversionError = (error: unknown): void => {
     conversionErrorCount++;
-    firstConversionError ??= error instanceof Error ? error : new Error(getErrorMessage(error));
+    const normalized = normalizeFailure(error);
+    firstConversionError ??= normalized;
+    firstPipelineFailure ??= { error: normalized, origin: 'processing' };
   };
 
   const hasProcessingFailure = (): boolean => {
@@ -283,8 +343,106 @@ export async function decodeFrames(
     return firstConversionError !== null;
   };
 
+  const handleProcessingFailure = (): void => {
+    recordConversionError(processingFailureSignal?.reason);
+  };
+  const handleCancellation = (): void => {
+    recordCancellation();
+  };
+  let decoder: VideoDecoder | null = null;
+  let chunkStream: AsyncGenerator<EncodedVideoChunk> | null = null;
+  let demuxDisposed = false;
+  let failureListenersRemoved = false;
+  const getLatchedFailureError = (): Error | null => {
+    const pipelineFailure = firstPipelineFailure as {
+      error: Error;
+      origin: 'cancellation' | 'decoder' | 'processing';
+    } | null;
+    if (pipelineFailure?.origin === 'processing') {
+      logger.error('decoders', 'Frame conversion errors detected', {
+        errorCount: conversionErrorCount,
+        firstError: pipelineFailure.error.message,
+      });
+      return new Error(`Frame processing failed: ${pipelineFailure.error.message}`, {
+        cause: pipelineFailure.error,
+      });
+    }
+    return pipelineFailure?.error ?? null;
+  };
+  const cleanupDecoderLifecycle = async (primaryFailure: Error | null): Promise<Error | null> => {
+    let cleanupFailure: Error | null = null;
+    const captureCleanupFailure = (error: unknown): void => {
+      cleanupFailure ??= normalizeFailure(error);
+    };
+
+    if (!failureListenersRemoved) {
+      failureListenersRemoved = true;
+      try {
+        processingFailureSignal?.removeEventListener('abort', handleProcessingFailure);
+      } catch (error) {
+        captureCleanupFailure(error);
+      }
+      try {
+        signal?.removeEventListener('abort', handleCancellation);
+      } catch (error) {
+        captureCleanupFailure(error);
+      }
+    }
+
+    const activeChunkStream = chunkStream;
+    chunkStream = null;
+    if (activeChunkStream) {
+      try {
+        await activeChunkStream.return(undefined);
+      } catch (error) {
+        captureCleanupFailure(error);
+      }
+    }
+
+    if (!demuxDisposed) {
+      demuxDisposed = true;
+      try {
+        demux.dispose?.();
+      } catch (error) {
+        captureCleanupFailure(error);
+      }
+    }
+
+    await Promise.allSettled([...pendingConversions]);
+
+    const activeDecoder = decoder;
+    decoder = null;
+    if (activeDecoder) {
+      try {
+        if (activeDecoder.state !== 'closed') activeDecoder.close();
+      } catch (error) {
+        captureCleanupFailure(error);
+      }
+    }
+
+    return primaryFailure ?? cleanupFailure;
+  };
+
+  if (processingFailureSignal?.aborted) {
+    handleProcessingFailure();
+  } else {
+    processingFailureSignal?.addEventListener('abort', handleProcessingFailure, { once: true });
+  }
+  if (signal?.aborted) {
+    handleCancellation();
+  } else {
+    signal?.addEventListener('abort', handleCancellation, { once: true });
+  }
+
   // Check codec support (cached per codec+hw combo)
-  const activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
+  let activeConfig: VideoDecoderConfig;
+  try {
+    activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
+  } catch (error) {
+    recordDecoderError(error);
+    const primaryFailure = getLatchedFailureError() ?? normalizeFailure(error);
+    throw (await cleanupDecoderLifecycle(primaryFailure)) ?? primaryFailure;
+  }
 
   // Create per-conversion frame processing context (duration carry + copy path cache)
   const frameCtx: FrameProcessingContext = createFrameProcessingContext();
@@ -379,12 +537,14 @@ export async function decodeFrames(
     return reservation;
   };
 
-  const decoder = new VideoDecoder({
+  const decoderInit: VideoDecoderInit = {
     output(frame: VideoFrame) {
       try {
         releaseEncodedChunkForOutput(frame.timestamp);
         if (!hasSafeFrameDimensions(frame)) {
-          decodeError ??= new Error('Decoded frame dimensions exceed the per-frame memory limit');
+          recordDecoderError(
+            new Error('Decoded frame dimensions exceed the per-frame memory limit')
+          );
           frame.close();
           return;
         }
@@ -418,30 +578,78 @@ export async function decodeFrames(
           return;
         }
 
-        const maxOutputSlots = Math.min(
-          calculateFrameOutputConcurrency(
-            frame.codedWidth,
-            frame.codedHeight,
-            width,
-            height,
-            outputOwnershipRequestedMaximum
-          ),
-          calculateFrameOutputConcurrency(
-            frame.displayWidth,
-            frame.displayHeight,
-            width,
-            height,
-            outputOwnershipRequestedMaximum
-          )
-        );
-        if (activeOutputSlots >= maxOutputSlots) {
-          decodeError ??= new Error(
-            `Decoded frame output memory limit exceeded (${maxOutputSlots} frame slot limit)`
+        let sourceReservationBytes = 0;
+        let sourceReservationActive = false;
+        let outputSlotActive = false;
+        if (usesStagedCpuStreaming) {
+          try {
+            let runtimeAllocationBytes: number | null = null;
+            if (frame.format != null && typeof frame.allocationSize === 'function') {
+              try {
+                runtimeAllocationBytes = frame.allocationSize();
+              } catch {
+                // Unknown runtime layout uses the conservative 8-Bpp fallback below.
+              }
+            }
+            sourceReservationBytes = estimateRuntimeDecodedSourceFrameBytes(
+              frame.codedWidth,
+              frame.codedHeight,
+              frame.displayWidth,
+              frame.displayHeight,
+              runtimeAllocationBytes
+            );
+          } catch (error) {
+            recordDecoderError(error);
+            frame.close();
+            return;
+          }
+          if (
+            retainedSourceFrameBytes + sourceReservationBytes + targetWorkingHeadroomBytes >
+            FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+          ) {
+            const maxSourceFrames = Math.floor(
+              (FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingHeadroomBytes) /
+                sourceReservationBytes
+            );
+            recordDecoderError(
+              new Error(
+                `Decoded frame output memory limit exceeded (${maxSourceFrames} source frame limit)`
+              )
+            );
+            frame.close();
+            return;
+          }
+          retainedSourceFrameBytes += sourceReservationBytes;
+          sourceReservationActive = true;
+        } else {
+          const maxOutputSlots = Math.min(
+            calculateFrameOutputConcurrency(
+              frame.codedWidth,
+              frame.codedHeight,
+              width,
+              height,
+              outputOwnershipRequestedMaximum
+            ),
+            calculateFrameOutputConcurrency(
+              frame.displayWidth,
+              frame.displayHeight,
+              width,
+              height,
+              outputOwnershipRequestedMaximum
+            )
           );
-          frame.close();
-          return;
+          if (activeOutputSlots >= maxOutputSlots) {
+            recordDecoderError(
+              new Error(
+                `Decoded frame output memory limit exceeded (${maxOutputSlots} frame slot limit)`
+              )
+            );
+            frame.close();
+            return;
+          }
+          activeOutputSlots++;
+          outputSlotActive = true;
         }
-        activeOutputSlots++;
 
         const totalDuration = frameDuration + accumulatedDuration;
         accumulatedDuration = 0;
@@ -461,6 +669,21 @@ export async function decodeFrames(
 
         const conversion = (async () => {
           let enteredOrderedProcessing = false;
+          let sourceFrameClosed = false;
+          let sourceFrameTransferred = false;
+          const releaseSourceReservation = (): void => {
+            if (!sourceReservationActive) return;
+            sourceReservationActive = false;
+            retainedSourceFrameBytes = Math.max(
+              0,
+              retainedSourceFrameBytes - sourceReservationBytes
+            );
+          };
+          const closeSourceFrame = (): void => {
+            if (sourceFrameClosed) return;
+            sourceFrameClosed = true;
+            frame.close();
+          };
           try {
             // ── GPU-only path: pass VideoFrame directly to encoder ──
             // Skips copyFrameToRGB (GPU→CPU read) and all grayscale-based processing.
@@ -469,21 +692,39 @@ export async function decodeFrames(
             if (typeof onVideoFrameAvailable === 'function') {
               await previousProcessing;
               enteredOrderedProcessing = true;
-              if (hasProcessingFailure()) return;
+              if (signal?.aborted || decodeError || hasProcessingFailure()) return;
               // Transfer accumulated frame durations (decimation + smart skip carryover)
               const totalDur = totalDuration + smartCarryoverMs;
               smartCarryoverMs = 0;
               keptFrameCount++;
+              sourceFrameTransferred = true;
               await onVideoFrameAvailable(frame, totalDur, frameNum);
               // Caller owns frame and MUST call frame.close()
               return;
             }
 
-            if (signal?.aborted || hasProcessingFailure()) return;
-            const rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
-            await previousProcessing;
-            enteredOrderedProcessing = true;
-            if (signal?.aborted || hasProcessingFailure()) {
+            if (usesStagedCpuStreaming) {
+              await previousProcessing;
+              enteredOrderedProcessing = true;
+              if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) return;
+            } else if (signal?.aborted || hasProcessingFailure()) {
+              return;
+            }
+
+            let rgbData: Uint8Array;
+            try {
+              rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
+            } finally {
+              if (usesStagedCpuStreaming) {
+                closeSourceFrame();
+                releaseSourceReservation();
+              }
+            }
+            if (!usesStagedCpuStreaming) {
+              await previousProcessing;
+              enteredOrderedProcessing = true;
+            }
+            if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) {
               globalBufferPool.release(rgbData);
               return;
             }
@@ -627,8 +868,9 @@ export async function decodeFrames(
               await previousProcessing;
             }
             releaseProcessing();
-            releaseOutputSlot();
-            frame.close();
+            releaseSourceReservation();
+            if (outputSlotActive) releaseOutputSlot();
+            if (!sourceFrameTransferred) closeSourceFrame();
           }
         })();
 
@@ -656,16 +898,27 @@ export async function decodeFrames(
         codec: demux.config.codec,
         error: e.message,
       });
-      decodeError = e;
+      recordDecoderError(e);
     },
-  });
+  };
 
-  decoder.configure(activeConfig);
+  try {
+    decoder = new VideoDecoder(decoderInit);
+    decoder.configure(activeConfig);
+  } catch (error) {
+    recordDecoderError(error);
+    const primaryFailure = getLatchedFailureError() ?? normalizeFailure(error);
+    throw (await cleanupDecoderLifecycle(primaryFailure)) ?? primaryFailure;
+  }
+  const activeDecoder = decoder;
 
   let streamedSourceDurationUs = 0;
-  const chunkStream = (async function* iterateChunks(): AsyncGenerator<EncodedVideoChunk> {
+  chunkStream = (async function* iterateChunks(): AsyncGenerator<EncodedVideoChunk> {
     yield* demux.chunks;
   })();
+  const activeChunkStream = chunkStream;
+  let primaryFailure: Error | null = null;
+  let decodeResult: DecodeResult | null = null;
 
   try {
     // Pull and feed chunks with backpressure — prevent both MediaBunny and the
@@ -677,7 +930,8 @@ export async function decodeFrames(
     const MAX_DECODE_QUEUE = 8;
     while (true) {
       if (signal?.aborted) {
-        throw new DOMException('Cancelled', 'AbortError');
+        recordCancellation();
+        break;
       }
       if (decodeError || hasProcessingFailure()) break;
 
@@ -686,7 +940,7 @@ export async function decodeFrames(
       // requestAnimationFrame pauses in background tabs, causing deadlock
       // when the decoder still queues frames but rAF never fires.
       while (
-        decoder.decodeQueueSize > MAX_DECODE_QUEUE &&
+        activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE &&
         !signal?.aborted &&
         !decodeError &&
         !hasProcessingFailure()
@@ -705,11 +959,12 @@ export async function decodeFrames(
       }
 
       if (signal?.aborted) {
-        throw new DOMException('Cancelled', 'AbortError');
+        recordCancellation();
+        break;
       }
       if (decodeError || hasProcessingFailure()) break;
 
-      const nextChunk = await chunkStream.next();
+      const nextChunk = await activeChunkStream.next();
       if (nextChunk.done) break;
       if (inputChunkCount >= inputChunkLimit) {
         throw new Error(`Decoder input packet limit exceeded (${inputChunkLimit} packet limit)`);
@@ -721,27 +976,27 @@ export async function decodeFrames(
 
       const reservation = reserveEncodedChunk(nextChunk.value);
       try {
-        decoder.decode(nextChunk.value);
+        activeDecoder.decode(nextChunk.value);
       } catch (error) {
         releaseEncodedChunk(reservation);
-        throw error;
+        recordDecoderError(error);
+        break;
       }
     }
 
-    // A processing failure makes the output unusable, so discard queued codec
-    // work instead of producing more frames. Existing conversion promises are
-    // still drained below to guarantee VideoFrame cleanup.
-    if (decodeError || hasProcessingFailure()) {
+    // A fatal pipeline outcome makes queued codec work unusable. Reset it while
+    // still draining every conversion promise below for VideoFrame cleanup.
+    if (decodeError || cancellationObserved || hasProcessingFailure()) {
       try {
-        decoder.reset();
+        activeDecoder.reset();
       } catch {
-        // Preserve the original processing error.
+        // Preserve the failure already recorded by the shared latch.
       }
     } else {
       try {
-        await decoder.flush();
+        await activeDecoder.flush();
       } catch (e) {
-        if (!decodeError) decodeError = new Error(getErrorMessage(e));
+        recordDecoderError(e);
       }
     }
     // Always await pending conversions before closing decoder to avoid VideoFrame leak.
@@ -751,19 +1006,8 @@ export async function decodeFrames(
 
     // Any frame or downstream encoding failure makes the output incomplete.
     // Preserve the first cause after every already-created frame is closed.
-    const processingError = firstConversionError as Error | null;
-    if (processingError) {
-      logger.error('decoders', 'Frame conversion errors detected', {
-        errorCount: conversionErrorCount,
-        firstError: processingError.message,
-      });
-      throw new Error(`Frame processing failed: ${processingError.message}`, {
-        cause: processingError,
-      });
-    }
-
-    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-    if (decodeError) throw decodeError;
+    const pipelineFailure = getLatchedFailureError();
+    if (pipelineFailure) throw pipelineFailure;
 
     // Add any remaining accumulated duration to the last frame (batch mode only)
     if (!streaming && accumulatedDuration > 0 && rgbFrames.length > 0) {
@@ -790,7 +1034,7 @@ export async function decodeFrames(
       streaming,
     });
 
-    return {
+    decodeResult = {
       frames: rgbFrames,
       totalInputFrames: inputFrameCount,
       skippedByDecimation,
@@ -799,16 +1043,12 @@ export async function decodeFrames(
       outputTotalMs,
       tailAccumulatedMs: streaming ? accumulatedDuration + consecutiveSkipMs : 0,
     };
-  } finally {
-    await chunkStream.return(undefined);
-    demux.dispose?.();
-    // Close decoder only after all pending frame conversions have settled.
-    // This guarantees no VideoFrame is still being processed when the decoder
-    // is closed, preventing \"close() called while a flush is in progress\"
-    // and other VideoDecoder close races.
-    await Promise.allSettled([...pendingConversions]);
-    decoder.close();
+  } catch (error) {
+    primaryFailure = normalizeFailure(error);
   }
+  const cleanupFailure = await cleanupDecoderLifecycle(primaryFailure);
+  if (cleanupFailure) throw cleanupFailure;
+  return decodeResult as DecodeResult;
 }
 
 // ─── Codec support cache ──────────────────────────────────────────
