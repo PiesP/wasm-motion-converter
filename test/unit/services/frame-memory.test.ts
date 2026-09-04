@@ -4,8 +4,10 @@
 import { describe, expect, it } from 'vitest';
 import { getPooledBufferSize } from '@services/buffer-pool';
 import {
+  calculateStagedFrameSourceCapacity,
   calculateFrameConcurrency,
   calculateFrameOutputConcurrency,
+  estimateDecodedSourceFrameBytes,
   estimateActiveFrameBytes,
   estimateFrameOutputBytes,
 } from '@services/frame-memory';
@@ -18,6 +20,34 @@ import {
 } from '@utils/constants';
 
 describe('frame memory reservations', () => {
+  it('reserves the maximum coded and display dimensions for a decoded source frame', () => {
+    expect(estimateDecodedSourceFrameBytes(1920, 1080, 2048, 1152)).toBe(
+      2048 * 1152 * 4
+    );
+  });
+
+  it('keeps one target working set outside the queued 1080p source-frame capacity', () => {
+    const targetWorkingBytes = estimateActiveFrameBytes(960, 540);
+    const sourceBytes = estimateDecodedSourceFrameBytes(1920, 1080, 1920, 1080);
+    const capacity = calculateStagedFrameSourceCapacity(
+      1920,
+      1080,
+      1920,
+      1080,
+      960,
+      540,
+      Number.MAX_SAFE_INTEGER
+    );
+
+    expect(capacity).toBe(23);
+    expect(targetWorkingBytes + sourceBytes * capacity).toBeLessThanOrEqual(
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    );
+    expect(targetWorkingBytes + sourceBytes * (capacity + 1)).toBeGreaterThan(
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    );
+  });
+
   it('keeps the existing small-frame parallelism', () => {
     expect(calculateFrameConcurrency(8, 8, 10)).toBe(10);
   });

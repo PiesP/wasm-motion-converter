@@ -21,6 +21,7 @@ import type { SmartFrameSkipMode } from '@t/conversion-types';
 import {
   DEFAULT_FPS,
   FPS_CLAMP_MAX,
+  FRAME_PIPELINE_MEMORY_BUDGET_BYTES,
   MAX_DECODE_INPUT_CHUNKS,
   MAX_FRAME_PIXEL_COUNT,
   MIN_OUTPUT_FPS,
@@ -37,7 +38,12 @@ import {
 } from './adaptive-frame-skip';
 import { globalBufferPool } from './buffer-pool';
 import { type DemuxResult, getEncodedChunkRetainedBytes } from './demuxer-service';
-import { calculateFrameOutputConcurrency } from './frame-memory';
+import {
+  calculateFrameOutputConcurrency,
+  calculateStagedFrameSourceCapacity,
+  estimateActiveFrameBytes,
+  estimateDecodedSourceFrameBytes,
+} from './frame-memory';
 import {
   compute8x8Grayscale,
   computeMAD,
@@ -223,19 +229,44 @@ export async function decodeFrames(
   const configuredSourceHeight = hasConfiguredSourceDimensions
     ? (demux.config.codedHeight ?? height)
     : height;
-  const maxPendingConversions = calculateFrameOutputConcurrency(
-    configuredSourceWidth,
-    configuredSourceHeight,
-    width,
-    height,
-    10
-  );
+  const configuredDisplayWidth =
+    Number.isSafeInteger(demux.config.displayAspectWidth) &&
+    (demux.config.displayAspectWidth ?? 0) > 0
+      ? (demux.config.displayAspectWidth ?? configuredSourceWidth)
+      : configuredSourceWidth;
+  const configuredDisplayHeight =
+    Number.isSafeInteger(demux.config.displayAspectHeight) &&
+    (demux.config.displayAspectHeight ?? 0) > 0
+      ? (demux.config.displayAspectHeight ?? configuredSourceHeight)
+      : configuredSourceHeight;
+  const usesStagedCpuStreaming = streaming && typeof onVideoFrameAvailable !== 'function';
+  const maxPendingConversions = usesStagedCpuStreaming
+    ? calculateStagedFrameSourceCapacity(
+        configuredSourceWidth,
+        configuredSourceHeight,
+        configuredDisplayWidth,
+        configuredDisplayHeight,
+        width,
+        height,
+        10
+      )
+    : calculateFrameOutputConcurrency(
+        configuredSourceWidth,
+        configuredSourceHeight,
+        width,
+        height,
+        10
+      );
   if (maxPendingConversions === 0) {
     throw new Error(
       'Decoded frame output memory limit exceeded (single frame exceeds byte budget)'
     );
   }
   const outputOwnershipRequestedMaximum = Number.MAX_SAFE_INTEGER;
+  const targetWorkingHeadroomBytes = usesStagedCpuStreaming
+    ? estimateActiveFrameBytes(width, height)
+    : 0;
+  let retainedSourceFrameBytes = 0;
   let activeOutputSlots = 0;
 
   const releaseOutputSlot = (): void => {
@@ -243,6 +274,7 @@ export async function decodeFrames(
   };
 
   let decodeError: Error | null = null;
+  let discardStagedOutputs = false;
   let firstConversionError: Error | null = null;
   let conversionErrorCount = 0;
   const encodedChunkReservations = new Map<number, EncodedChunkReservation[]>();
@@ -418,30 +450,69 @@ export async function decodeFrames(
           return;
         }
 
-        const maxOutputSlots = Math.min(
-          calculateFrameOutputConcurrency(
-            frame.codedWidth,
-            frame.codedHeight,
-            width,
-            height,
-            outputOwnershipRequestedMaximum
-          ),
-          calculateFrameOutputConcurrency(
-            frame.displayWidth,
-            frame.displayHeight,
-            width,
-            height,
-            outputOwnershipRequestedMaximum
-          )
-        );
-        if (activeOutputSlots >= maxOutputSlots) {
-          decodeError ??= new Error(
-            `Decoded frame output memory limit exceeded (${maxOutputSlots} frame slot limit)`
+        let sourceReservationBytes = 0;
+        let sourceReservationActive = false;
+        let outputSlotActive = false;
+        if (usesStagedCpuStreaming) {
+          try {
+            sourceReservationBytes = estimateDecodedSourceFrameBytes(
+              frame.codedWidth,
+              frame.codedHeight,
+              frame.displayWidth,
+              frame.displayHeight
+            );
+          } catch (error) {
+            decodeError ??=
+              error instanceof Error
+                ? error
+                : new Error('Decoded frame dimensions exceed the per-frame memory limit');
+            frame.close();
+            return;
+          }
+          if (
+            retainedSourceFrameBytes + sourceReservationBytes + targetWorkingHeadroomBytes >
+            FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+          ) {
+            const maxSourceFrames = Math.floor(
+              (FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingHeadroomBytes) /
+                sourceReservationBytes
+            );
+            decodeError ??= new Error(
+              `Decoded frame output memory limit exceeded (${maxSourceFrames} source frame limit)`
+            );
+            discardStagedOutputs = true;
+            frame.close();
+            return;
+          }
+          retainedSourceFrameBytes += sourceReservationBytes;
+          sourceReservationActive = true;
+        } else {
+          const maxOutputSlots = Math.min(
+            calculateFrameOutputConcurrency(
+              frame.codedWidth,
+              frame.codedHeight,
+              width,
+              height,
+              outputOwnershipRequestedMaximum
+            ),
+            calculateFrameOutputConcurrency(
+              frame.displayWidth,
+              frame.displayHeight,
+              width,
+              height,
+              outputOwnershipRequestedMaximum
+            )
           );
-          frame.close();
-          return;
+          if (activeOutputSlots >= maxOutputSlots) {
+            decodeError ??= new Error(
+              `Decoded frame output memory limit exceeded (${maxOutputSlots} frame slot limit)`
+            );
+            frame.close();
+            return;
+          }
+          activeOutputSlots++;
+          outputSlotActive = true;
         }
-        activeOutputSlots++;
 
         const totalDuration = frameDuration + accumulatedDuration;
         accumulatedDuration = 0;
@@ -461,6 +532,20 @@ export async function decodeFrames(
 
         const conversion = (async () => {
           let enteredOrderedProcessing = false;
+          let sourceFrameClosed = false;
+          const releaseSourceReservation = (): void => {
+            if (!sourceReservationActive) return;
+            sourceReservationActive = false;
+            retainedSourceFrameBytes = Math.max(
+              0,
+              retainedSourceFrameBytes - sourceReservationBytes
+            );
+          };
+          const closeSourceFrame = (): void => {
+            if (sourceFrameClosed) return;
+            sourceFrameClosed = true;
+            frame.close();
+          };
           try {
             // ── GPU-only path: pass VideoFrame directly to encoder ──
             // Skips copyFrameToRGB (GPU→CPU read) and all grayscale-based processing.
@@ -479,11 +564,28 @@ export async function decodeFrames(
               return;
             }
 
-            if (signal?.aborted || hasProcessingFailure()) return;
-            const rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
-            await previousProcessing;
-            enteredOrderedProcessing = true;
-            if (signal?.aborted || hasProcessingFailure()) {
+            if (usesStagedCpuStreaming) {
+              await previousProcessing;
+              enteredOrderedProcessing = true;
+              if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) return;
+            } else if (signal?.aborted || hasProcessingFailure()) {
+              return;
+            }
+
+            let rgbData: Uint8Array;
+            try {
+              rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
+            } finally {
+              if (usesStagedCpuStreaming) {
+                closeSourceFrame();
+                releaseSourceReservation();
+              }
+            }
+            if (!usesStagedCpuStreaming) {
+              await previousProcessing;
+              enteredOrderedProcessing = true;
+            }
+            if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) {
               globalBufferPool.release(rgbData);
               return;
             }
@@ -627,8 +729,9 @@ export async function decodeFrames(
               await previousProcessing;
             }
             releaseProcessing();
-            releaseOutputSlot();
-            frame.close();
+            releaseSourceReservation();
+            if (outputSlotActive) releaseOutputSlot();
+            closeSourceFrame();
           }
         })();
 
