@@ -17,4 +17,12 @@ describe('Content Security Policy', () => {
       expect(policySource).not.toMatch(/(?:^|\s)'unsafe-eval'(?:\s|;|$)/m);
     }
   });
+
+  it('keeps preview style policy aligned with deployed reactive inline styles', () => {
+    const viteConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
+    const deployedHeaders = readFileSync(resolve(root, 'public/_headers'), 'utf8');
+
+    expect(viteConfig).toContain(`const styleSrc = "'self' 'unsafe-inline'";`);
+    expect(deployedHeaders).toContain("style-src 'self' 'unsafe-inline'");
+  });
 });

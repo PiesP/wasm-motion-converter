@@ -7,13 +7,12 @@ import browserAppPreset from './tooling/vite/presets/browser-app.ts';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const isDev = mode === 'development';
 
-  // CSP: 'unsafe-inline' for styles is only needed in dev mode where Vite HMR
-  // injects <style> tags. In production all CSS is bundled into a single file
-  // served from 'self', so a strict hash/self policy suffices.
+  // Solid applies reactive width and position style attributes at runtime, and
+  // Vite HMR injects styles in development. Keep preview aligned with the
+  // deployed Cloudflare policy in public/_headers.
   // Allow WebAssembly compilation without enabling JavaScript eval()/Function().
-  const styleSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
+  const styleSrc = "'self' 'unsafe-inline'";
   const scriptSrc = "'self' 'wasm-unsafe-eval'";
 
   const cspHeader = [
