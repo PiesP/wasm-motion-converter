@@ -1092,8 +1092,15 @@ export async function decodeFrames(
       }
     }
 
-    // A fatal pipeline outcome makes queued codec work unusable. Reset it while
-    // still draining every conversion promise below for VideoFrame cleanup.
+    // Finish already-emitted lookahead work before entering the decoder flush.
+    // Frames emitted by flush capture the serial target limit below.
+    stagedLookaheadEnabled = false;
+    if (!decodeError && !cancellationObserved && !hasProcessingFailure()) {
+      await Promise.allSettled([...pendingConversions]);
+    }
+
+    // A failure can surface while pre-flush work drains. Re-check the shared
+    // latch so cancelled or failed codec work is reset instead of flushed.
     if (decodeError || cancellationObserved || hasProcessingFailure()) {
       try {
         activeDecoder.reset();
@@ -1102,8 +1109,6 @@ export async function decodeFrames(
       }
     } else {
       try {
-        stagedLookaheadEnabled = false;
-        await Promise.allSettled([...pendingConversions]);
         await activeDecoder.flush();
       } catch (e) {
         recordDecoderError(e);

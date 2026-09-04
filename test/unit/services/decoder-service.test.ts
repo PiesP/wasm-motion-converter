@@ -1275,6 +1275,186 @@ describe('decoder-service', () => {
       }
     });
 
+    it('drains active lookahead before a serial-fit flush burst', async () => {
+      const sourceWidth = 1800;
+      const sourceHeight = 1000;
+      const targetWidth = 900;
+      const targetHeight = 500;
+      const flushFrames = 13;
+      const sourceBytes = estimateRuntimeDecodedSourceFrameBytes(
+        sourceWidth,
+        sourceHeight,
+        sourceWidth,
+        sourceHeight,
+        sourceWidth * sourceHeight * 8
+      );
+      const targetBytes = estimateActiveFrameBytes(targetWidth, targetHeight);
+      expect(sourceBytes * flushFrames + targetBytes).toBeLessThanOrEqual(
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+      );
+      expect(sourceBytes * flushFrames + targetBytes * 2).toBeGreaterThan(
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+      );
+
+      let flushStarted = false;
+      class DecodeThenFlushBurstVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly decodeQueueSize = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          this.output = init.output;
+        }
+
+        configure(): void {}
+
+        decode(): void {
+          this.output(
+            new FakeVideoFrame(0, 0, 16_667, sourceWidth, sourceHeight) as unknown as VideoFrame
+          );
+        }
+
+        async flush(): Promise<void> {
+          flushStarted = true;
+          for (let index = 1; index <= flushFrames; index++) {
+            this.output(
+              new FakeVideoFrame(
+                index,
+                index * 1_000,
+                16_667,
+                sourceWidth,
+                sourceHeight
+              ) as unknown as VideoFrame
+            );
+          }
+        }
+      }
+
+      vi.stubGlobal('VideoDecoder', DecodeThenFlushBurstVideoDecoder);
+      FakeVideoFrame.allocationBytesPerPixel = 8;
+      const canvas = stubScalingCanvas(targetWidth, targetHeight);
+      const delivered: number[] = [];
+      let releaseFirstDelivery!: () => void;
+      const firstDelivery = new Promise<void>((resolve) => {
+        releaseFirstDelivery = resolve;
+      });
+      const decoding = decodeFrames(
+        {
+          chunks: [{ timestamp: 0 } as EncodedVideoChunk],
+          config: { codec: 'vp09.00.10.08', codedWidth: sourceWidth, codedHeight: sourceHeight },
+          duration: 0.234,
+          framerate: 60,
+          sourceTotalMs: 234,
+          totalFrames: flushFrames + 1,
+        },
+        {
+          width: targetWidth,
+          height: targetHeight,
+          mode: 'stream',
+          stagedCopyLookahead: true,
+          onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            try {
+              if (frameNumber === 0) await firstDelivery;
+            } finally {
+              globalBufferPool.release(rgbData);
+            }
+          },
+        }
+      );
+
+      await vi.waitFor(() => expect(delivered).toEqual([0]));
+      expect(flushStarted).toBe(false);
+      expect(canvas.copies()).toBe(1);
+      releaseFirstDelivery();
+
+      const result = await decoding;
+      expect(flushStarted).toBe(true);
+      expect(result.totalInputFrames).toBe(flushFrames + 1);
+      expect(delivered).toEqual(Array.from({ length: flushFrames + 1 }, (_, index) => index));
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
+    it('resets instead of flushing when processing fails during the pre-flush drain', async () => {
+      const processingFailure = new AbortController();
+      let decoderInstance: DrainFailureVideoDecoder | undefined;
+      class DrainFailureVideoDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly flush = vi.fn(async () => undefined);
+        readonly decodeQueueSize = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          this.output = init.output;
+          decoderInstance = this;
+        }
+
+        configure(): void {}
+
+        decode(): void {
+          this.output(new FakeVideoFrame(0) as unknown as VideoFrame);
+        }
+      }
+
+      vi.stubGlobal('VideoDecoder', DrainFailureVideoDecoder);
+      const delivered: number[] = [];
+      const decoding = decodeFrames(
+        {
+          chunks: [{ timestamp: 0 } as EncodedVideoChunk],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.017,
+          framerate: 60,
+          sourceTotalMs: 17,
+          totalFrames: 1,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          processingFailureSignal: processingFailure.signal,
+          stagedCopyLookahead: true,
+          onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
+            delivered.push(frameNumber);
+            try {
+              await new Promise<void>((_resolve, reject) => {
+                processingFailure.signal.addEventListener(
+                  'abort',
+                  () => reject(processingFailure.signal.reason),
+                  { once: true }
+                );
+              });
+            } finally {
+              globalBufferPool.release(rgbData);
+            }
+          },
+        }
+      );
+
+      await vi.waitFor(() => expect(delivered).toEqual([0]));
+      processingFailure.abort(new Error('fixture pre-flush failure'));
+
+      await expect(decoding).rejects.toThrow(
+        'Frame processing failed: fixture pre-flush failure'
+      );
+      expect(decoderInstance?.reset).toHaveBeenCalledOnce();
+      expect(decoderInstance?.flush).not.toHaveBeenCalled();
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+      expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
     it('admits a bounded two-frame 4K-to-360p flush burst', async () => {
       const { Decoder, stats } = createFlushBurstVideoDecoder(2);
       const canvas = stubScalingCanvas(640, 360);
