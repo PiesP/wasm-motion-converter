@@ -446,6 +446,7 @@ async function _runPipelineInner(
                 frameDecimation: webpDecimation,
                 hwAccel: 'prefer-hardware',
                 smartFrameSkip: request.smartFrameSkip,
+                stagedCopyLookahead: true,
                 processingFailureSignal: streamingEncoder.failureSignal,
                 onFrameDecoded: (frameIdx, _total) => {
                   observedDecodedFrames = Math.max(observedDecodedFrames, frameIdx);

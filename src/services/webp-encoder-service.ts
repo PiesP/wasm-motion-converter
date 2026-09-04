@@ -88,6 +88,7 @@ export async function encodeWebp(
       maxInputChunks: inputChunkLimit,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
+      stagedCopyLookahead: true,
       onFrameDecoded: (_frameNum, total) => {
         totalInputFrames = total;
         // Report encoding progress during streaming (onFrameDecoded is already

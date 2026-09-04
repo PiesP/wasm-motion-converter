@@ -101,6 +101,8 @@ export interface DecodeOptions {
    * The signal reason should be the original Error.
    */
   processingFailureSignal?: AbortSignal | undefined;
+  /** Allow one ordered RGB copy to overlap a slow downstream delivery. */
+  stagedCopyLookahead?: boolean | undefined;
   /** Testable lower ceiling; production callers cannot raise the hard packet-work limit. */
   maxInputChunks?: number | undefined;
 }
@@ -162,6 +164,7 @@ export async function decodeFrames(
     mode,
     smartFrameSkip: effectiveSmartSkip = 'off',
     processingFailureSignal,
+    stagedCopyLookahead = false,
     maxInputChunks,
   } = opts;
   const requestedInputChunkLimit = maxInputChunks;
@@ -263,11 +266,49 @@ export async function decodeFrames(
     );
   }
   const outputOwnershipRequestedMaximum = Number.MAX_SAFE_INTEGER;
-  const targetWorkingHeadroomBytes = usesStagedCpuStreaming
-    ? estimateActiveFrameBytes(width, height)
-    : 0;
+  const targetWorkingBytes = usesStagedCpuStreaming ? estimateActiveFrameBytes(width, height) : 0;
+  const maxStagedTargetSlots = stagedCopyLookahead ? 2 : 1;
   let retainedSourceFrameBytes = 0;
+  let activeStagedTargetSlots = 0;
+  let stagedTargetGateClosed = false;
+  const stagedTargetWaiters: Array<(acquired: boolean) => void> = [];
   let activeOutputSlots = 0;
+
+  const canAcquireStagedTarget = (): boolean =>
+    usesStagedCpuStreaming &&
+    !stagedTargetGateClosed &&
+    activeStagedTargetSlots < maxStagedTargetSlots &&
+    retainedSourceFrameBytes + (activeStagedTargetSlots + 1) * targetWorkingBytes <=
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES;
+
+  const drainStagedTargetWaiters = (): void => {
+    while (stagedTargetWaiters.length > 0 && canAcquireStagedTarget()) {
+      const resolve = stagedTargetWaiters.shift();
+      activeStagedTargetSlots++;
+      resolve?.(true);
+    }
+  };
+
+  const acquireStagedTarget = async (): Promise<boolean> => {
+    if (!usesStagedCpuStreaming || stagedTargetGateClosed) return false;
+    if (canAcquireStagedTarget()) {
+      activeStagedTargetSlots++;
+      return true;
+    }
+    return await new Promise<boolean>((resolve) => {
+      stagedTargetWaiters.push(resolve);
+    });
+  };
+
+  const releaseStagedTarget = (): void => {
+    activeStagedTargetSlots = Math.max(0, activeStagedTargetSlots - 1);
+    drainStagedTargetWaiters();
+  };
+
+  const closeStagedTargetGate = (): void => {
+    stagedTargetGateClosed = true;
+    for (const resolve of stagedTargetWaiters.splice(0)) resolve(false);
+  };
 
   const releaseOutputSlot = (): void => {
     activeOutputSlots = Math.max(0, activeOutputSlots - 1);
@@ -317,12 +358,14 @@ export async function decodeFrames(
     const normalized = normalizeFailure(error);
     decodeError ??= normalized;
     discardStagedOutputs = true;
+    closeStagedTargetGate();
     firstPipelineFailure ??= { error: normalized, origin: 'decoder' };
   };
 
   const recordCancellation = (): void => {
     cancellationObserved = true;
     discardStagedOutputs = true;
+    closeStagedTargetGate();
     firstPipelineFailure ??= {
       error: new DOMException('Cancelled', 'AbortError'),
       origin: 'cancellation',
@@ -333,6 +376,7 @@ export async function decodeFrames(
     conversionErrorCount++;
     const normalized = normalizeFailure(error);
     firstConversionError ??= normalized;
+    closeStagedTargetGate();
     firstPipelineFailure ??= { error: normalized, origin: 'processing' };
   };
 
@@ -447,11 +491,10 @@ export async function decodeFrames(
   // Create per-conversion frame processing context (duration carry + copy path cache)
   const frameCtx: FrameProcessingContext = createFrameProcessingContext();
 
-  // Reserve presentation-ordered turns before asynchronous pixel copies begin.
-  // copyFrameToRGB() may complete out of order, so all stateful motion decisions
-  // and encoder delivery wait for the previous frame's turn while the copies
-  // themselves remain concurrent.
+  // Presentation decisions and encoder delivery remain ordered. WebP callers
+  // may opt into one staged copy lookahead, bounded separately below.
   let orderedProcessingTail: Promise<void> = Promise.resolve();
+  let stagedCopyTail: Promise<void> = Promise.resolve();
 
   logger.info('decoders', 'VideoDecoder configured', {
     codec: demux.config.codec,
@@ -604,11 +647,14 @@ export async function decodeFrames(
             return;
           }
           if (
-            retainedSourceFrameBytes + sourceReservationBytes + targetWorkingHeadroomBytes >
+            retainedSourceFrameBytes +
+              sourceReservationBytes +
+              Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes >
             FRAME_PIPELINE_MEMORY_BUDGET_BYTES
           ) {
             const maxSourceFrames = Math.floor(
-              (FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingHeadroomBytes) /
+              (FRAME_PIPELINE_MEMORY_BUDGET_BYTES -
+                Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes) /
                 sourceReservationBytes
             );
             recordDecoderError(
@@ -666,11 +712,25 @@ export async function decodeFrames(
         orderedProcessingTail = new Promise<void>((resolve) => {
           releaseProcessing = resolve;
         });
+        const previousStagedCopy = stagedCopyTail;
+        let resolveStagedCopy!: () => void;
+        if (usesStagedCpuStreaming) {
+          stagedCopyTail = new Promise<void>((resolve) => {
+            resolveStagedCopy = resolve;
+          });
+        }
 
         const conversion = (async () => {
           let enteredOrderedProcessing = false;
           let sourceFrameClosed = false;
           let sourceFrameTransferred = false;
+          let stagedTargetActive = false;
+          let stagedCopyReleased = false;
+          const releaseStagedCopy = (): void => {
+            if (!usesStagedCpuStreaming || stagedCopyReleased) return;
+            stagedCopyReleased = true;
+            resolveStagedCopy();
+          };
           const releaseSourceReservation = (): void => {
             if (!sourceReservationActive) return;
             sourceReservationActive = false;
@@ -678,6 +738,7 @@ export async function decodeFrames(
               0,
               retainedSourceFrameBytes - sourceReservationBytes
             );
+            drainStagedTargetWaiters();
           };
           const closeSourceFrame = (): void => {
             if (sourceFrameClosed) return;
@@ -704,9 +765,17 @@ export async function decodeFrames(
             }
 
             if (usesStagedCpuStreaming) {
-              await previousProcessing;
-              enteredOrderedProcessing = true;
+              await previousStagedCopy;
               if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) return;
+              stagedTargetActive = await acquireStagedTarget();
+              if (
+                !stagedTargetActive ||
+                signal?.aborted ||
+                discardStagedOutputs ||
+                hasProcessingFailure()
+              ) {
+                return;
+              }
             } else if (signal?.aborted || hasProcessingFailure()) {
               return;
             }
@@ -720,10 +789,8 @@ export async function decodeFrames(
                 releaseSourceReservation();
               }
             }
-            if (!usesStagedCpuStreaming) {
-              await previousProcessing;
-              enteredOrderedProcessing = true;
-            }
+            await previousProcessing;
+            enteredOrderedProcessing = true;
             if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) {
               globalBufferPool.release(rgbData);
               return;
@@ -839,7 +906,13 @@ export async function decodeFrames(
               if (!frameAvailable) {
                 throw new Error('Streaming decode requires an onFrameAvailable callback');
               }
-              await frameAvailable(rgbData, totalDuration + smartCarryoverMs, frameNum);
+              let delivery: Promise<void> | void;
+              try {
+                delivery = frameAvailable(rgbData, totalDuration + smartCarryoverMs, frameNum);
+              } finally {
+                releaseStagedCopy();
+              }
+              await delivery;
               smartCarryoverMs = 0;
               // Note: onFrameAvailable is responsible for releasing rgbData
             } else {
@@ -867,6 +940,8 @@ export async function decodeFrames(
             if (!enteredOrderedProcessing) {
               await previousProcessing;
             }
+            releaseStagedCopy();
+            if (stagedTargetActive) releaseStagedTarget();
             releaseProcessing();
             releaseSourceReservation();
             if (outputSlotActive) releaseOutputSlot();
