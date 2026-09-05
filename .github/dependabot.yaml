@@ -32,6 +32,21 @@ updates:
 
     # Group updates by category to reduce PR noise
     groups:
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+      stryker:
+        patterns:
+          - "@stryker-mutator/*"
+        update-types:
+          - "minor"
+          - "patch"
+
       solid:
         patterns:
           - "solid-js"
@@ -51,7 +66,7 @@ updates:
       tailwind:
         patterns:
           - "tailwindcss"
-          - "postcss"
+          - "@tailwindcss/*"
         update-types:
           - "minor"
           - "patch"
@@ -69,6 +84,7 @@ updates:
       quality:
         patterns:
           - "@biomejs/*"
+          - "knip"
         update-types:
           - "minor"
           - "patch"
