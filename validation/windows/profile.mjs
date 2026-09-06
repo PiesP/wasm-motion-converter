@@ -145,6 +145,13 @@ async function startStaticServer(bundleRoot) {
         return;
       }
 
+      // Headed stable browsers request this optional icon even without an HTML link.
+      // The production app has no favicon; keep the fixture host's response quiet.
+      if (request.url === '/favicon.ico') {
+        response.writeHead(204);
+        response.end();
+        return;
+      }
       const file = await resolveStaticFile(distRoot, request.url);
       const bytes = await readFile(file);
       for (const [name, value] of catchAllHeaders) response.setHeader(name, value);
@@ -519,6 +526,7 @@ export async function run({ browser, root, output }) {
     checks.push(await convertSmallFixture(page, started.url, smallFixture, 'webp', outputRoot, artifacts));
     checks.push(await exerciseCancellation(page, started.url, cancellationFixture, outputRoot, artifacts));
 
+    await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);
     assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(' | ')}`);
     assert.deepEqual(failedRequests, [], `Failed requests: ${JSON.stringify(failedRequests)}`);
