@@ -73,6 +73,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const isBusy = createMemo(() => !!local.status);
   const isInteractive = createMemo(() => !local.disabled && !isBusy());
   const hasFile = createMemo(() => !!local.previewUrl);
+  const hasSelectionPreview = createMemo(() => (local.duration ?? 0) > 0 && !!local.onTrimChange);
   const ariaLabel = createMemo(() => {
     if (local.disabled) return t('dropzone.selectFile');
     if (hasFile() && !isBusy()) return t('dropzone.changeFile');
@@ -348,23 +349,72 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
 
               {/* Video preview */}
               <Show when={local.previewUrl}>
-                <video
-                  ref={(element) => {
-                    previewVideoElement = element;
-                  }}
-                  src={local.previewUrl!}
-                  class="w-full rounded-lg shadow-md bg-black aspect-video"
-                  muted
-                  playsinline
-                  preload="metadata"
-                  aria-label={t('dropzone.preview')}
-                  onTimeUpdate={handlePreviewTimeUpdate}
-                  onEnded={() => setIsSelectionPreviewing(false)}
-                  onPause={() => setIsSelectionPreviewing(false)}
-                />
+                <div
+                  class="relative overflow-hidden rounded-lg bg-black shadow-md"
+                  data-testid="selection-preview-player"
+                >
+                  <video
+                    ref={(element) => {
+                      previewVideoElement = element;
+                    }}
+                    id="selection-preview-video"
+                    src={local.previewUrl!}
+                    class="block w-full aspect-video bg-black"
+                    muted
+                    playsinline
+                    preload="metadata"
+                    aria-label={t('dropzone.preview')}
+                    onTimeUpdate={handlePreviewTimeUpdate}
+                    onEnded={() => setIsSelectionPreviewing(false)}
+                    onPause={() => setIsSelectionPreviewing(false)}
+                  />
+                  <Show when={hasSelectionPreview()}>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleSelectionPreview();
+                      }}
+                      disabled={local.disabled}
+                      aria-controls="selection-preview-video"
+                      aria-pressed={isSelectionPreviewing()}
+                      data-testid="trim-preview-button"
+                      class="absolute bottom-3 left-3 z-10 inline-flex min-h-target-minimum max-w-[calc(100%_-_1.5rem)] items-center justify-center gap-2 rounded-button border border-border-standard bg-bg-panel px-4 py-2 text-sm font-medium text-text-primary shadow-lg transition-colors hover:bg-bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
+                    >
+                      <Show
+                        when={isSelectionPreviewing()}
+                        fallback={
+                          <svg
+                            class="h-4 w-4 shrink-0"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            aria-hidden="true"
+                          >
+                            <path d="M5.5 3.8a1 1 0 0 1 1.5-.86l8.5 5.2a1 1 0 0 1 0 1.72L7 15.06a1 1 0 0 1-1.5-.86V3.8Z" />
+                          </svg>
+                        }
+                      >
+                        <svg
+                          class="h-4 w-4 shrink-0"
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                          aria-hidden="true"
+                        >
+                          <rect x="5" y="4" width="4" height="12" rx="1" />
+                          <rect x="11" y="4" width="4" height="12" rx="1" />
+                        </svg>
+                      </Show>
+                      <span class="truncate">
+                        {isSelectionPreviewing()
+                          ? t('trim.stopPreview')
+                          : t('trim.previewSelection')}
+                      </span>
+                    </button>
+                  </Show>
+                </div>
               </Show>
 
-              <Show when={(local.duration ?? 0) > 0 && local.onTrimChange}>
+              <Show when={hasSelectionPreview()}>
                 <div class="border-t border-border-standard pt-4" data-testid="input-range-editor">
                   <TrimSelector
                     duration={local.duration!}
@@ -372,9 +422,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     trimEnd={local.trimEnd ?? 0}
                     estimatedFps={local.estimatedFps}
                     disabled={local.disabled}
-                    isPreviewing={isSelectionPreviewing()}
                     onChange={handleTrimChange}
-                    onPreviewSelection={toggleSelectionPreview}
                     onSeek={seekPreview}
                   />
                 </div>

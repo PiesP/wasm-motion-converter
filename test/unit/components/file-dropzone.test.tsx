@@ -23,12 +23,13 @@ function selectFile(input: HTMLInputElement, name: string): void {
   input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-describe('FileDropzone selection feedback timer', () => {
+describe('FileDropzone', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
     document.body.innerHTML = '';
   });
@@ -62,5 +63,74 @@ describe('FileDropzone selection feedback timer', () => {
     dispose();
 
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps selected-range playback control with the video and preserves focus', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const dispose = render(
+      () => (
+        <FileDropzone
+          onFileSelected={() => {}}
+          previewUrl="blob:selection-preview"
+          duration={10}
+          trimStart={2}
+          trimEnd={4}
+          onTrimChange={() => {}}
+        />
+      ),
+      container
+    );
+    const player = container.querySelector<HTMLElement>(
+      '[data-testid="selection-preview-player"]'
+    );
+    const video = player?.querySelector<HTMLVideoElement>('video');
+    const button = player?.querySelector<HTMLButtonElement>(
+      '[data-testid="trim-preview-button"]'
+    );
+
+    expect(player).not.toBeNull();
+    expect(video).not.toBeNull();
+    expect(button).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="trim-selector"] [data-testid="trim-preview-button"]'
+      )
+    ).toBeNull();
+
+    Object.defineProperties(video!, {
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_METADATA },
+      duration: { configurable: true, value: 10 },
+      currentTime: { configurable: true, writable: true, value: 0 },
+    });
+    const play = vi.fn().mockResolvedValue(undefined);
+    const pause = vi.fn(() => video!.dispatchEvent(new Event('pause')));
+    Object.defineProperties(video!, {
+      play: { configurable: true, value: play },
+      pause: { configurable: true, value: pause },
+    });
+
+    button!.focus();
+    button!.click();
+    await Promise.resolve();
+
+    expect(video!.currentTime).toBe(2);
+    expect(play).toHaveBeenCalledOnce();
+    expect(button!.getAttribute('aria-pressed')).toBe('true');
+    expect(document.activeElement).toBe(button);
+
+    video!.currentTime = 4;
+    video!.dispatchEvent(new Event('timeupdate'));
+
+    expect(pause).toHaveBeenCalledOnce();
+    expect(video!.currentTime).toBe(2);
+    expect(button!.getAttribute('aria-pressed')).toBe('false');
+    expect(document.activeElement).toBe(button);
+    expect(
+      player?.querySelector<HTMLButtonElement>('[data-testid="trim-preview-button"]')
+    ).toBe(button);
+
+    dispose();
   });
 });

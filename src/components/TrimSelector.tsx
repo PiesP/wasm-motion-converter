@@ -26,9 +26,7 @@ interface TrimSelectorProps {
   trimEnd: number;
   estimatedFps?: number | undefined;
   disabled?: boolean | undefined;
-  isPreviewing?: boolean | undefined;
   onChange: (start: number, end: number) => void;
-  onPreviewSelection?: (() => void) | undefined;
   onSeek?: ((seconds: number) => void) | undefined;
 }
 
@@ -622,32 +620,6 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           </Show>
         </div>
       </div>
-
-      <Show when={props.onPreviewSelection}>
-        <button
-          type="button"
-          onClick={() => props.onPreviewSelection?.()}
-          disabled={props.disabled}
-          aria-pressed={!!props.isPreviewing}
-          data-testid="trim-preview-button"
-          class={`${controlClass} inline-flex w-full items-center justify-center gap-2 text-text-primary sm:w-auto`}
-        >
-          <Show
-            when={props.isPreviewing}
-            fallback={
-              <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                <path d="M5.5 3.8a1 1 0 0 1 1.5-.86l8.5 5.2a1 1 0 0 1 0 1.72L7 15.06a1 1 0 0 1-1.5-.86V3.8Z" />
-              </svg>
-            }
-          >
-            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <rect x="5" y="4" width="4" height="12" rx="1" />
-              <rect x="11" y="4" width="4" height="12" rx="1" />
-            </svg>
-          </Show>
-          {props.isPreviewing ? t('trim.stopPreview') : t('trim.previewSelection')}
-        </button>
-      </Show>
     </section>
   );
 };

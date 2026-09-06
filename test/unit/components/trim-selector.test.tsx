@@ -252,20 +252,13 @@ describe('TrimSelector localized summary', () => {
     expect(select.value).toBe('second-half');
   });
 
-  it('keeps common presets visible and delegates selection preview', () => {
+  it('keeps common presets visible', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const onChange = vi.fn();
-    const onPreviewSelection = vi.fn();
     render(
       () => (
-        <TrimSelector
-          duration={40}
-          trimStart={0}
-          trimEnd={0}
-          onChange={onChange}
-          onPreviewSelection={onPreviewSelection}
-        />
+        <TrimSelector duration={40} trimStart={0} trimEnd={0} onChange={onChange} />
       ),
       container
     );
@@ -275,7 +268,6 @@ describe('TrimSelector localized summary', () => {
       container.querySelectorAll<HTMLSelectElement>('[data-testid="trim-more-presets"] option')
     ).toHaveLength(7);
 
-    container.querySelector<HTMLButtonElement>('[data-testid="trim-preview-button"]')?.click();
-    expect(onPreviewSelection).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-testid="trim-preview-button"]')).toBeNull();
   });
 });
