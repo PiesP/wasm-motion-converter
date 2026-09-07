@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { globalBufferPool } from '@services/buffer-pool';
+import { WebpFrameMemoryBudget } from '@services/frame-memory';
+import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
 
 class FakeWorker {
   static instances: FakeWorker[] = [];
@@ -27,6 +29,41 @@ afterEach(() => {
 });
 
 describe('WebpWorkerPool buffer ownership', () => {
+  it('queues the next frame for one worker when decoder source headroom fits', async () => {
+    const pool = new WebpWorkerPool(1, 5000);
+    const budget = new WebpFrameMemoryBudget({
+      codedWidth: 16, codedHeight: 16, displayWidth: 16, displayHeight: 16,
+      targetWidth: 16, targetHeight: 16, workerCount: 1,
+    });
+    const encoder = createStreamingWebpEncoder(
+      pool, 16, 16, 'medium', 2, undefined, undefined, undefined, budget
+    );
+    let next: Promise<void> | undefined;
+    try {
+      await encoder.submit(new Uint8Array(16 * 16 * 4), 100);
+      next = encoder.submit(new Uint8Array(16 * 16 * 4), 100);
+      await vi.waitFor(() => expect(pool.stats).toMatchObject({ active: 1, queued: 1 }));
+      await next;
+      const worker = FakeWorker.instances[0]!;
+      expect(worker.postMessage).toHaveBeenCalledTimes(1);
+
+      worker.onmessage?.(new MessageEvent('message', {
+        data: { id: 0, bitstream: new Uint8Array(8) },
+      }));
+      expect(worker.postMessage).toHaveBeenCalledTimes(2);
+      worker.onmessage?.(new MessageEvent('message', {
+        data: { id: 1, bitstream: new Uint8Array(8) },
+      }));
+      await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
+    } finally {
+      pool.terminate();
+      encoder.dispose();
+      budget.dispose();
+      await Promise.allSettled(next ? [next] : []);
+    }
+    expect(budget.usage.totalBytes).toBe(0);
+  });
+
   it('releases queued frame buffers when the pool is terminated', async () => {
     const release = vi.spyOn(globalBufferPool, 'release');
     const pool = new WebpWorkerPool(1, 1000);

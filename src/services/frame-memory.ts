@@ -181,8 +181,9 @@ export class WebpFrameMemoryBudget {
           this.targetTaskBytes
       )
     );
-    this.maxOutstandingTasks =
-      requestedWorkers >= 2 ? Math.max(1, Math.min(requestedWorkers * 2, headroomTaskCapacity)) : 1;
+    // One worker can encode while the decoder prepares its next frame, provided
+    // both tasks fit alongside the same conservative source headroom.
+    this.maxOutstandingTasks = Math.max(1, Math.min(requestedWorkers * 2, headroomTaskCapacity));
     this.useSourceHeadroom = this.maxOutstandingTasks >= 2;
     this.allowsTargetLookahead = this.maxOutstandingTasks >= 2;
   }
