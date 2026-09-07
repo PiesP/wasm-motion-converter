@@ -7,10 +7,13 @@ import {
   calculateStagedFrameSourceCapacity,
   calculateFrameConcurrency,
   calculateFrameOutputConcurrency,
+  calculateWebpWorkerCountForBudget,
   estimateDecodedSourceFrameBytes,
   estimateActiveFrameBytes,
   estimateFrameOutputBytes,
+  estimateFrameTaskBytes,
   estimateRuntimeDecodedSourceFrameBytes,
+  WebpFrameMemoryBudget,
 } from '@services/frame-memory';
 import {
   CONVERSION_MEMORY_BUDGET_BYTES,
@@ -78,6 +81,19 @@ describe('frame memory reservations', () => {
 
   it('keeps the existing small-frame parallelism', () => {
     expect(calculateFrameConcurrency(8, 8, 10)).toBe(10);
+  });
+
+  it('accounts only the remaining RGBA task transient beside its pooled pixels', () => {
+    const pixels = 1920 * 1080;
+    expect(estimateFrameTaskBytes(1920, 1080, 'rgb')).toBe(
+      getPooledBufferSize(pixels * 3) + pixels * 8
+    );
+    expect(estimateFrameTaskBytes(1920, 1080, 'rgba')).toBe(
+      getPooledBufferSize(pixels * 4) + pixels * 4
+    );
+    expect(estimateFrameTaskBytes(1920, 1080, 'rgba')).toBeLessThan(
+      estimateFrameTaskBytes(1920, 1080, 'rgb')
+    );
   });
 
   it('reduces 4K live-frame concurrency to the shared byte budget', () => {
@@ -161,5 +177,63 @@ describe('frame memory reservations', () => {
 
   it('uses the same power-of-two RGB bucket as the buffer pool', () => {
     expect(getPooledBufferSize(3840 * 2160 * 3)).toBe(32 * 1024 * 1024);
+  });
+
+  it('keeps serial progress for a 4K source when nine conservative slots do not fit', async () => {
+    const budget = new WebpFrameMemoryBudget({
+      codedWidth: 3840,
+      codedHeight: 2160,
+      displayWidth: 3840,
+      displayHeight: 2160,
+      targetWidth: 640,
+      targetHeight: 360,
+      workerCount: 2,
+    });
+    const source = budget.tryReserveSource(3840 * 2160 * 8);
+
+    expect(source).not.toBeNull();
+    expect(budget.sourceHeadroomBytes).toBeGreaterThan(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
+    expect(budget.maxOutstandingTasks).toBe(1);
+    const firstTarget = await budget.acquireTarget();
+    let secondAcquired = false;
+    const secondTarget = budget.acquireTarget().then((reservation) => {
+      secondAcquired = true;
+      return reservation;
+    });
+    await Promise.resolve();
+    expect(secondAcquired).toBe(false);
+
+    firstTarget.release();
+    (await secondTarget).release();
+
+    budget.dispose();
+    expect(budget.usage.totalBytes).toBe(0);
+  });
+
+  it('admits one RGBA Worker for full-resolution 4K within the shared budget', () => {
+    const width = 3840;
+    const height = 2160;
+    expect(
+      calculateWebpWorkerCountForBudget({
+        codedWidth: width,
+        codedHeight: height,
+        displayWidth: width,
+        displayHeight: height,
+        targetWidth: width,
+        targetHeight: height,
+        requestedWorkers: 2,
+      })
+    ).toBe(1);
+    expect(
+      calculateWebpWorkerCountForBudget({
+        codedWidth: width,
+        codedHeight: height,
+        displayWidth: width,
+        displayHeight: height,
+        targetWidth: 640,
+        targetHeight: 360,
+        requestedWorkers: 2,
+      })
+    ).toBe(1);
   });
 });

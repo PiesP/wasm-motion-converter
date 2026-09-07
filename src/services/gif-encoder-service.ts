@@ -5,17 +5,15 @@
  * GIF Encoder Service — Streaming Architecture
  *
  * Interleaves decoding and encoding: frames are encoded immediately after
- * decoding, so only 1 RGB + 1 RGBA buffer exists in memory at any time.
+ * decoding, so only one RGBA frame and one exact gifenc scratch exist at a time.
  *
  * Previous architecture held ALL decoded frames in an array, causing:
  *   - 1080p @ 30fps × 5s = 146 frames × 6MB = ~900MB peak
  *   - GC thrashing from per-frame allocations
  *
- * New architecture peak: ~12MB (1 RGB + 1 RGBA + encoder internal buffer)
- *
  * Pipeline:
  *   1. decodeFrames streams frames via callback (no array accumulation)
- *   2. Per frame: dither → RGB→RGBA (pooled) → quantize/applyPalette → writeFrame
+ *   2. Per frame: exact RGBA scratch → dither → quantize/applyPalette → writeFrame
  *   3. Encoder writes GIF incrementally
  */
 
@@ -33,7 +31,6 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
-import { convertRGBToRGBA } from './frame-utils';
 import { OutputLimitError, resolveOutputLimits } from './output-limits';
 
 const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
@@ -100,33 +97,33 @@ function getDitherLUT(strength: number): Int8Array {
 }
 
 /**
- * Apply Bayer ordered dithering to RGB buffer in-place.
+ * Apply Bayer ordered dithering to the RGB channels of an RGBA buffer in-place.
  * Uses pre-computed LUT for thresholds — avoids per-pixel multiply.
  * Skips pixels where threshold === 0 (1/64 of pixels at strength=8).
  */
-function bayerDitherRGB(rgb: Uint8Array, width: number, height: number, strength: number): void {
+function bayerDitherRgba(rgba: Uint8Array, width: number, height: number, strength: number): void {
   if (strength <= 0) return;
 
   const lut = getDitherLUT(strength);
 
   for (let y = 0; y < height; y++) {
-    const rowOffset = y * width * 3;
+    const rowOffset = y * width * 4;
     const lutRow = y & 7;
     for (let x = 0; x < width; x++) {
       const threshold = lut[lutRow * 8 + (x & 7)]!;
       if (threshold === 0) continue;
 
-      const idx = rowOffset + x * 3;
-      const r = rgb[idx]!;
-      const g = rgb[idx + 1]!;
-      const b = rgb[idx + 2]!;
+      const idx = rowOffset + x * 4;
+      const r = rgba[idx]!;
+      const g = rgba[idx + 1]!;
+      const b = rgba[idx + 2]!;
 
       const rt = r + threshold;
       const gt = g + threshold;
       const bt = b + threshold;
-      rgb[idx] = rt < 0 ? 0 : rt > 255 ? 255 : rt;
-      rgb[idx + 1] = gt < 0 ? 0 : gt > 255 ? 255 : gt;
-      rgb[idx + 2] = bt < 0 ? 0 : bt > 255 ? 255 : bt;
+      rgba[idx] = rt < 0 ? 0 : rt > 255 ? 255 : rt;
+      rgba[idx + 1] = gt < 0 ? 0 : gt > 255 ? 255 : gt;
+      rgba[idx + 2] = bt < 0 ? 0 : bt > 255 ? 255 : bt;
     }
   }
 }
@@ -194,6 +191,23 @@ export async function encodeGif(
     // overshooting the power-of-two production byte ceiling.
     initialCapacity: initialStreamCapacity,
   });
+  const pixelCount = w * h;
+  const exactRgbaBytes = pixelCount * 4;
+  let exactRgbaScratch: Uint8Array | null = null;
+  let lastIndexedData: Uint8Array | null = null;
+  let liveIndexedBytes = 0;
+
+  const assertGifWorkingMemory = (
+    streamPeakBytes: number,
+    scratchBytes = exactRgbaScratch?.byteLength ?? 0,
+    indexedBytes = liveIndexedBytes
+  ): void => {
+    const additionalBytes = streamPeakBytes + scratchBytes + indexedBytes;
+    if (!Number.isSafeInteger(additionalBytes)) {
+      throw new RangeError('GIF working memory estimate exceeds the safe integer range');
+    }
+    opts.assertAdditionalMemoryBytes?.(additionalBytes);
+  };
 
   // gifenc grows its stream automatically. Wrap every supported write method so
   // each logical write and any geometric capacity growth are authorized before
@@ -221,7 +235,7 @@ export async function encodeGif(
 
     const currentCapacity = encoder.stream.buffer.byteLength;
     if (requiredCapacity <= currentCapacity) {
-      opts.assertAdditionalMemoryBytes?.(currentCapacity);
+      assertGifWorkingMemory(currentCapacity);
       return;
     }
     const nextCapacity = predictStreamCapacity(currentCapacity, requiredCapacity);
@@ -232,7 +246,7 @@ export async function encodeGif(
     ) {
       throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
     }
-    opts.assertAdditionalMemoryBytes?.(currentCapacity + nextCapacity);
+    assertGifWorkingMemory(currentCapacity + nextCapacity);
   }
 
   encoder.stream.writeByte = (byte: number): void => {
@@ -275,22 +289,10 @@ export async function encodeGif(
   let smartSkipped = 0;
   let sourceTotalMs = demux.sourceTotalMs;
 
-  // Reusable indexed pixel buffer — avoids per-frame ~2MB allocation.
-  // applyPalette() returns a new Uint8Array each call; we reuse this buffer
-  // by copying the indexed data into it and passing the same reference to
-  // encoder.writeFrame(). gifenc only reads the data synchronously, so reuse is safe.
-  let indexedBuffer: Uint8Array | null = null;
-
   let accumulatedDuration = 0;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController();
-
-  // Cache for applyPalette reuse: store reference to the last RGBA data quantized.
-  // If the same data is passed again (e.g., re-quantization after a pool release/reacquire),
-  // we can skip re-quantization. This also avoids redundant work for split frames.
-  let lastQuantizedData: Uint8Array | null = null;
-  let lastIndexedData: Uint8Array | null = null;
 
   function assertCanWriteOutputFrame(): void {
     if (outputFrames >= outputLimits.maxFrames) {
@@ -319,34 +321,30 @@ export async function encodeGif(
     return true;
   }
 
-  function writeFrameWithDelay(rgbData: Uint8Array, delayMs: number): void {
+  function writeFrameWithDelay(rgbaData: Uint8Array, delayMs: number): void {
     const pal = globalPalette;
     if (!pal) return;
-    // Quantize once — applyPalette allocates ~2MB per call at 1080p.
-    // Reuse the cached indexed data if the source data hasn't changed.
-    let indexed: Uint8Array;
-    if (lastQuantizedData === rgbData && lastIndexedData) {
-      indexed = lastIndexedData;
-    } else {
-      indexed = applyPalette(rgbData, pal, 'rgb565');
-      if (lastIndexedData && lastIndexedData !== indexed) {
-        globalBufferPool.release(lastIndexedData);
-      }
-      lastQuantizedData = rgbData;
-      lastIndexedData = indexed;
+    // The previous index is needed only for a possible tail. Drop the reference
+    // before allocating its replacement so only one external index is retained.
+    lastIndexedData = null;
+    liveIndexedBytes = 0;
+    assertGifWorkingMemory(encoder.stream.buffer.byteLength, exactRgbaBytes, pixelCount);
+    const indexed = applyPalette(rgbaData, pal, 'rgb565');
+    if (indexed.byteLength !== pixelCount) {
+      throw new RangeError(
+        `gifenc returned ${indexed.byteLength} indices for ${pixelCount} pixels`
+      );
     }
-    const requiredSize = indexed.length;
-    if (!indexedBuffer || indexedBuffer.length < requiredSize) {
-      if (indexedBuffer) globalBufferPool.release(indexedBuffer);
-      indexedBuffer = globalBufferPool.acquire(requiredSize);
-    }
-    indexedBuffer.set(indexed);
+    lastIndexedData = indexed;
+    liveIndexedBytes =
+      indexed.buffer instanceof ArrayBuffer ? indexed.buffer.byteLength : indexed.byteLength;
+    assertGifWorkingMemory(encoder.stream.buffer.byteLength);
 
     // gifenc's writeFrame expects delay in MILLISECONDS and converts
     // internally to centiseconds via Math.round(delay/10).
     // Do NOT pre-convert to cs — that would double-divide by 10.
     if (delayMs <= GIF_MAX_FRAME_DELAY_CS * 10) {
-      writeQuantizedFrame(indexedBuffer, delayMs);
+      writeQuantizedFrame(indexed, delayMs);
       return;
     }
     // Split long-delay frames into multiple writes with the same indexed data.
@@ -354,7 +352,7 @@ export async function encodeGif(
     let remainingMs = delayMs;
     while (remainingMs > 0) {
       const chunk = Math.min(remainingMs, GIF_MAX_FRAME_DELAY_CS * 10);
-      writeQuantizedFrame(indexedBuffer, chunk);
+      writeQuantizedFrame(indexed, chunk);
       remainingMs -= chunk;
       if (remainingMs > 0) splitFrames++;
     }
@@ -377,6 +375,7 @@ export async function encodeGif(
         maxInputChunks: inputChunkLimit,
         hwAccel: 'prefer-hardware',
         smartFrameSkip: opts.smartFrameSkip,
+        pixelFormat: 'rgba',
         onFrameDecoded: (_frameNum, total) => {
           estimatedTotalFrames = total;
           // Report decoding progress — throttle to every 10 frames
@@ -386,12 +385,12 @@ export async function encodeGif(
         },
         // Streaming callback: encode each frame immediately upon decoding
         onFrameAvailable: async (
-          rgbData: Uint8Array,
+          rgbaData: Uint8Array,
           frameDurationMs: number,
           frameNum: number
         ) => {
           if (signal?.aborted) {
-            globalBufferPool.release(rgbData);
+            globalBufferPool.release(rgbaData);
             throw new DOMException('Cancelled', 'AbortError');
           }
 
@@ -411,7 +410,7 @@ export async function encodeGif(
           if (shouldSkip) {
             // Skip this frame: accumulate its duration and release buffer
             accumulatedDuration += frameDurationMs;
-            globalBufferPool.release(rgbData);
+            globalBufferPool.release(rgbaData);
             return;
           }
 
@@ -425,39 +424,37 @@ export async function encodeGif(
           // Reject the next emitted frame before allocating RGBA/indexed buffers.
           assertCanWriteOutputFrame();
 
-          // Bayer ordered dithering (applied to RGB buffer in-place)
-          if (ditherStrength > 0) {
-            bayerDitherRGB(rgbData, w, h, ditherStrength);
-          }
-
-          let rgbReleased = false;
-          let rgba: Uint8Array | null = null;
+          let rgbaReleased = false;
           try {
-            // Convert RGB → RGBA for gifenc compatibility (pooled).
-            rgba = convertRGBToRGBA(rgbData, w, h);
-            // The encoder now owns the RGBA buffer; the source RGB buffer is no
-            // longer needed after conversion.
-            globalBufferPool.release(rgbData);
-            rgbReleased = true;
+            if (rgbaData.byteLength < exactRgbaBytes) {
+              throw new RangeError(
+                `Decoded RGBA buffer is too small: expected ${exactRgbaBytes} bytes, got ${rgbaData.byteLength}`
+              );
+            }
+            assertGifWorkingMemory(
+              encoder.stream.buffer.byteLength,
+              exactRgbaBytes,
+              liveIndexedBytes
+            );
+            if (!exactRgbaScratch) {
+              exactRgbaScratch = new Uint8Array(exactRgbaBytes);
+            }
+            exactRgbaScratch.set(rgbaData.subarray(0, exactRgbaBytes));
+            globalBufferPool.release(rgbaData);
+            rgbaReleased = true;
+
+            if (ditherStrength > 0) {
+              bayerDitherRgba(exactRgbaScratch, w, h, ditherStrength);
+            }
 
             // Quantize: compute global palette from first frame, reuse for subsequent
             if (encodeIdx === 0) {
-              globalPalette = quantize(rgba, maxColors, { format: 'rgb565' });
+              globalPalette = quantize(exactRgbaScratch, maxColors, { format: 'rgb565' });
             }
 
-            writeFrameWithDelay(rgba, delay);
+            writeFrameWithDelay(exactRgbaScratch, delay);
           } finally {
-            if (!rgbReleased) {
-              globalBufferPool.release(rgbData);
-            }
-            // Invalidate the quantize cache: lastQuantizedData points to the
-            // RGBA buffer being returned to the pool, so it is no longer valid.
-            if (lastQuantizedData === rgba) {
-              lastQuantizedData = null;
-            }
-            if (rgba) {
-              globalBufferPool.release(rgba);
-            }
+            if (!rgbaReleased) globalBufferPool.release(rgbaData);
           }
 
           // Report encoding progress (50~90% range in pipeline)
@@ -503,6 +500,11 @@ export async function encodeGif(
       });
     }
 
+    // Pixel scratch and the tail index are no longer needed during GIF stream
+    // finalization, which may allocate a second output-sized buffer.
+    exactRgbaScratch = null;
+    lastIndexedData = null;
+    liveIndexedBytes = 0;
     encoder.finish();
     const streamCapacity = encoder.stream.buffer.byteLength;
     const finalCopyPeakBytes = streamCapacity + streamBytes;
@@ -549,14 +551,8 @@ export async function encodeGif(
 
     return rawBytes;
   } finally {
-    // Release indexed buffer back to pool if it was allocated
-    if (indexedBuffer) {
-      globalBufferPool.release(indexedBuffer);
-      indexedBuffer = null;
-    }
-    if (lastIndexedData) {
-      globalBufferPool.release(lastIndexedData);
-      lastIndexedData = null;
-    }
+    exactRgbaScratch = null;
+    lastIndexedData = null;
+    liveIndexedBytes = 0;
   }
 }

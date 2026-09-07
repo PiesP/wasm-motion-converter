@@ -8,16 +8,16 @@
  * - VideoFrame.copyTo() for standard 4-channel formats (RGBA/BGRA/RGBX/BGRX)
  * - createImageBitmap fallback only for unsupported formats
  *
- * H3: Optimized to avoid unnecessary RGBA→RGB intermediate buffer.
- *     Uses standard 4-channel copyTo formats (RGBA tried first) with
- *     fast Uint32Array RGBA→RGB conversion.
+ * Modern encoders retain opaque RGBA. The legacy WASM WebP path can still
+ * request packed RGB from the same exact native/canvas strategy.
  *
  * BufferPool: Reuses Uint8Array allocations across frames to reduce GC.
  */
 
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 import type { BufferPool } from './buffer-pool';
-import { globalBufferPool } from './buffer-pool';
+import { getPooledBufferSize, globalBufferPool } from './buffer-pool';
+import type { CpuPixelFormat } from './frame-memory';
 
 // ─── Video Dimension Resolution ────────────────────────────────────
 
@@ -66,152 +66,128 @@ export function resolveVideoDimensions(
 // try/catch fallback attempts on every frame.
 // Now stored in per-conversion context to prevent cross-conversion bleed.
 
-/**
- * Copy VideoFrame pixels directly to RGB Uint8Array.
- *
- * Strategy:
- * 1. Try 4-channel formats (RGBA/BGRA/RGBX/BGRX) + fast Uint32Array RGBA→RGB.
- *    'RGBA' is tried first as it is the most widely supported.
- * 2. Last resort: OffscreenCanvas for exotic YUV/NV12 formats.
- *
- * The detected path is cached in the per-conversion context after the first
- * frame to avoid repeated try/catch overhead on subsequent frames.
- *
- * @param frame - The VideoFrame to copy
- * @param width - Target width
- * @param height - Target height
- * @param ctx - Per-conversion context for caching the detected path
- */
+export type FrameCopyStrategy = 'RGBX' | 'RGBA' | 'BGRA' | 'BGRX' | 'canvas';
+
+const NATIVE_COPY_STRATEGIES: readonly Exclude<FrameCopyStrategy, 'canvas'>[] = [
+  'RGBX',
+  'RGBA',
+  'BGRA',
+  'BGRX',
+];
+
 export async function copyFrameToRGB(
   frame: VideoFrame,
   width: number,
   height: number,
   ctx: FrameProcessingContext
 ): Promise<Uint8Array> {
-  // ── Scaling detection ──
-  // VideoFrame.copyTo() with rect={width,height} CROPS the source frame
-  // to those dimensions rather than scaling. When target dimensions differ
-  // from the source, we must route through the canvas path which properly
-  // scales via drawImage().
+  return copyFrameToPixels(frame, width, height, ctx, 'rgb');
+}
+
+/** Copy one frame to opaque RGBA while retaining the exact successful strategy. */
+export async function copyFrameToRGBA(
+  frame: VideoFrame,
+  width: number,
+  height: number,
+  ctx: FrameProcessingContext
+): Promise<Uint8Array> {
+  return copyFrameToPixels(frame, width, height, ctx, 'rgba');
+}
+
+export async function copyFrameToPixels(
+  frame: VideoFrame,
+  width: number,
+  height: number,
+  ctx: FrameProcessingContext,
+  pixelFormat: CpuPixelFormat
+): Promise<Uint8Array> {
   const srcW = frame.codedWidth ?? frame.displayWidth;
   const srcH = frame.codedHeight ?? frame.displayHeight;
   const needsScaling = srcW !== width || srcH !== height;
 
-  if (needsScaling) {
+  if (ctx.copyPath === 'canvas' || needsScaling) {
     ctx.copyPath = 'canvas';
-    return copyFrameCanvas(frame, width, height);
+    return copyFrameCanvas(frame, width, height, pixelFormat);
   }
 
-  // Use cached path from first frame detection
-  if (ctx.copyPath === 'four-channel') {
-    return copyFrameFourChannel(frame, width, height);
+  const cachedStrategy = ctx.copyPath;
+  if (cachedStrategy) {
+    try {
+      return await copyFrameNative(frame, width, height, cachedStrategy, pixelFormat);
+    } catch {
+      ctx.copyPath = null;
+    }
   }
 
-  // ── Strategy 1: 4-channel formats + fast Uint32Array RGBA→RGB ──
-  // RGBA is tried first (most widely supported), then BGRA, RGBX, BGRX.
-  try {
-    const result = await copyFrameFourChannel(frame, width, height);
-    ctx.copyPath = 'four-channel';
-    return result;
-  } catch {
-    // Fall through to canvas fallback
+  for (const strategy of NATIVE_COPY_STRATEGIES) {
+    if (strategy === cachedStrategy) continue;
+    try {
+      const result = await copyFrameNative(frame, width, height, strategy, pixelFormat);
+      ctx.copyPath = strategy;
+      return result;
+    } catch {
+      // Probe the next native layout only during first-frame strategy discovery.
+    }
   }
 
-  // ── Strategy 2: Canvas fallback (cached for subsequent frames) ──
   ctx.copyPath = 'canvas';
-  return copyFrameCanvas(frame, width, height);
+  return copyFrameCanvas(frame, width, height, pixelFormat);
 }
 
-/**
- * Strategy 0 (new): Try copyTo with RGBX format for zero-JS-conversion copy.
- * The browser's native C++ implementation handles YUV→RGB conversion during copy,
- * eliminating the need for manual convertRGBAToRGB() on the hot path.
- *
- * VideoFrame.copyTo() supports format conversion:
- *   I420, I422, I444, NV12, NV21 → RGBA, RGBX, BGRA, BGRX
- *
- * @returns Pooled RGB buffer. The CALLER OWNS this buffer and MUST release it
- *          via globalBufferPool.release() when done.
- */
-async function copyFrameRGBX(
+async function copyFrameNative(
   frame: VideoFrame,
   width: number,
-  height: number
+  height: number,
+  strategy: Exclude<FrameCopyStrategy, 'canvas'>,
+  pixelFormat: CpuPixelFormat
 ): Promise<Uint8Array> {
+  const validBytes = width * height * 4;
   const size = frame.allocationSize({
     rect: { x: 0, y: 0, width, height },
     layout: [{ offset: 0, stride: width * 4 }],
-    format: 'RGBX',
+    format: strategy,
   });
+  const maxPooledBytes = getPooledBufferSize(validBytes);
+  if (!Number.isSafeInteger(size) || size < validBytes || size > maxPooledBytes) {
+    throw new RangeError(`Invalid ${strategy} allocation size: ${size}`);
+  }
   const buffer = globalBufferPool.acquire(size);
   try {
     await frame.copyTo(buffer, {
       rect: { x: 0, y: 0, width, height },
       layout: [{ offset: 0, stride: width * 4 }],
-      format: 'RGBX',
+      format: strategy,
     });
-    // RGBX data: every 4th byte is padding. Convert to tight RGB in-place.
-    // We can't avoid this copy since the encoder expects packed RGB.
-    const pixelCount = width * height;
-    const rgb = globalBufferPool.acquire(pixelCount * 3);
-    const buf32 = new Uint32Array(buffer.buffer, buffer.byteOffset, pixelCount);
-    for (let i = 0; i < pixelCount; i++) {
-      const v = buf32[i]!;
-      const dstIdx = i * 3;
-      rgb[dstIdx] = v & 0xff; // R
-      rgb[dstIdx + 1] = (v >> 8) & 0xff; // G
-      rgb[dstIdx + 2] = (v >> 16) & 0xff; // B
+    if (pixelFormat === 'rgba') {
+      normalizeOpaqueRgba(buffer, width, height, strategy);
+      return buffer;
     }
-    return rgb;
-  } finally {
+    const rgb = convertRGBAToRGB(buffer, width, height, strategy);
     globalBufferPool.release(buffer);
+    return rgb;
+  } catch (error) {
+    globalBufferPool.release(buffer);
+    throw error;
   }
 }
 
-/** Strategy 1: 4-channel copyTo + fast RGBA→RGB */
-async function copyFrameFourChannel(
-  frame: VideoFrame,
+function normalizeOpaqueRgba(
+  buffer: Uint8Array,
   width: number,
-  height: number
-): Promise<Uint8Array> {
-  // Try RGBX first (native YUV→RGB conversion in browser)
-  try {
-    return await copyFrameRGBX(frame, width, height);
-  } catch {
-    // RGBX not supported, fall through to RGBA/BGRA path
-  }
-
-  const fourChannelFormats: Array<'RGBA' | 'BGRA' | 'RGBX' | 'BGRX'> = [
-    'RGBA',
-    'BGRA',
-    'RGBX',
-    'BGRX',
-  ];
-
-  for (const fmt of fourChannelFormats) {
-    try {
-      const size = frame.allocationSize({
-        rect: { x: 0, y: 0, width, height },
-        layout: [{ offset: 0, stride: width * 4 }],
-      });
-      const buffer = globalBufferPool.acquire(size);
-      try {
-        await frame.copyTo(buffer, {
-          rect: { x: 0, y: 0, width, height },
-          layout: [{ offset: 0, stride: width * 4 }],
-          format: fmt,
-        });
-
-        const rgb = convertRGBAToRGB(buffer, width, height, fmt);
-        return rgb;
-      } finally {
-        globalBufferPool.release(buffer);
-      }
-    } catch {
-      // Format not supported, try next
+  height: number,
+  strategy: Exclude<FrameCopyStrategy, 'canvas'>
+): void {
+  const pixels = width * height;
+  const swapsRedAndBlue = strategy === 'BGRA' || strategy === 'BGRX';
+  for (let index = 0; index < pixels; index++) {
+    const offset = index * 4;
+    if (swapsRedAndBlue) {
+      const blue = buffer[offset]!;
+      buffer[offset] = buffer[offset + 2]!;
+      buffer[offset + 2] = blue;
     }
+    buffer[offset + 3] = 255;
   }
-  throw new Error('No 4-channel format supported');
 }
 
 /** Strategy 2: Canvas fallback for exotic formats + GPU-accelerated scaling */
@@ -253,7 +229,8 @@ export function clearCanvasCache(): void {
 async function copyFrameCanvas(
   frame: VideoFrame,
   width: number,
-  height: number
+  height: number,
+  pixelFormat: CpuPixelFormat
 ): Promise<Uint8Array> {
   const { ctx } = getOrCreateCanvas(width, height);
 
@@ -271,7 +248,7 @@ async function copyFrameCanvas(
     try {
       ctx.drawImage(bitmap, 0, 0);
       const imageData = ctx.getImageData(0, 0, width, height);
-      return convertImageDataToRGB(imageData, width, height);
+      return convertImageData(imageData, width, height, pixelFormat);
     } finally {
       bitmap.close();
     }
@@ -292,17 +269,28 @@ async function copyFrameCanvas(
   );
 
   const imageData = ctx.getImageData(0, 0, width, height);
-  return convertImageDataToRGB(imageData, width, height);
+  return convertImageData(imageData, width, height, pixelFormat);
 }
 
-function convertImageDataToRGB(imageData: ImageData, width: number, height: number): Uint8Array {
-  // Create a view over ImageData's bytes. Constructing Uint8Array(imageData.data)
-  // would copy the entire RGBA frame before the RGB conversion starts.
+function convertImageData(
+  imageData: ImageData,
+  width: number,
+  height: number,
+  pixelFormat: CpuPixelFormat
+): Uint8Array {
+  const validBytes = width * height * 4;
+  if (imageData.data.byteLength < validBytes) {
+    throw new RangeError(
+      `Canvas RGBA buffer is too small: expected ${validBytes} bytes, got ${imageData.data.byteLength}`
+    );
+  }
   const rgba = new Uint8Array(
     imageData.data.buffer as ArrayBuffer,
     imageData.data.byteOffset,
-    imageData.data.byteLength
+    validBytes
   );
+  for (let offset = 3; offset < validBytes; offset += 4) rgba[offset] = 255;
+  if (pixelFormat === 'rgba') return rgba;
   return convertRGBAToRGB(rgba, width, height, 'RGBA');
 }
 
@@ -438,8 +426,8 @@ export function convertRGBToRGBA(
 export interface FrameProcessingContext {
   /** Fractional duration remainder in microseconds */
   durationCarryUs: number;
-  /** Cached copyTo path — detected on first frame, reused for subsequent frames */
-  copyPath: 'four-channel' | 'canvas' | null;
+  /** Exact successful copy strategy, detected once per conversion. */
+  copyPath: FrameCopyStrategy | null;
 }
 
 /**
@@ -496,18 +484,19 @@ export function getFrameDurationMs(
  * Returns 64-byte Uint8Array with grayscale values 0-255.
  */
 export function compute8x8Grayscale(
-  rgbData: Uint8Array,
+  pixelData: Uint8Array,
   width: number,
-  height: number
+  height: number,
+  pixelStride: 3 | 4 = 3
 ): Uint8Array {
   const gray = new Uint8Array(64);
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) {
       const srcX = Math.floor(((x + 0.5) * width) / 8);
       const srcY = Math.floor(((y + 0.5) * height) / 8);
-      const idx = (srcY * width + srcX) * 3;
+      const idx = (srcY * width + srcX) * pixelStride;
       gray[y * 8 + x] =
-        ((rgbData[idx] ?? 0) + (rgbData[idx + 1] ?? 0) + (rgbData[idx + 2] ?? 0)) / 3;
+        ((pixelData[idx] ?? 0) + (pixelData[idx + 1] ?? 0) + (pixelData[idx + 2] ?? 0)) / 3;
     }
   }
   return gray;

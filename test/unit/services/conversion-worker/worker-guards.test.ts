@@ -36,6 +36,18 @@ describe('isWorkerRequest', () => {
     expect(isWorkerRequest(validStart)).toBe(true);
   });
 
+  it('accepts a Blob input without an ArrayBuffer', () => {
+    const { inputBuffer: _, ...request } = validStart;
+    expect(isWorkerRequest({ ...request, inputBlob: new Blob(['video']) })).toBe(true);
+  });
+
+  it('rejects ambiguous or malformed Blob inputs', () => {
+    expect(isWorkerRequest({ ...validStart, inputBlob: new Blob(['video']) })).toBe(false);
+    const { inputBuffer: _, ...request } = validStart;
+    expect(isWorkerRequest({ ...request, inputBlob: { size: 4, type: 'video/mp4' } })).toBe(false);
+    expect(isWorkerRequest({ ...request, inputBlob: null })).toBe(false);
+  });
+
   it('accepts valid abort message', () => {
     expect(isWorkerRequest(validAbort)).toBe(true);
   });

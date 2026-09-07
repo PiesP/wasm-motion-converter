@@ -9,8 +9,11 @@ import {
   calculateStagedFrameSourceCapacity,
   estimateActiveFrameBytes,
   estimateRuntimeDecodedSourceFrameBytes,
+  WebpFrameMemoryBudget,
 } from '@services/frame-memory';
 import { clearCanvasCache } from '@services/frame-utils';
+import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
+import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from '@services/worker-pool';
 import { FRAME_PIPELINE_MEMORY_BUDGET_BYTES, MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 
 const { logger } = vi.hoisted(() => ({
@@ -62,6 +65,7 @@ describe('decoder-service', () => {
       static copyResolvers = new Map<number, () => void>();
       static copyStarts: number[] = [];
       static failCopies = false;
+      static skipPixelWrites = false;
       static frameDuration: number | null = 16_667;
       static frameFormat: VideoPixelFormat | null = 'RGBA';
       static instances: FakeVideoFrame[] = [];
@@ -103,12 +107,14 @@ describe('decoder-service', () => {
         const bytes = new Uint8Array(
           ArrayBuffer.isView(destination) ? destination.buffer : destination
         );
-        for (let index = 0; index < this.codedWidth * this.codedHeight; index++) {
-          const offset = index * 4;
-          bytes[offset] = this.intensity;
-          bytes[offset + 1] = this.intensity;
-          bytes[offset + 2] = this.intensity;
-          bytes[offset + 3] = 255;
+        if (!FakeVideoFrame.skipPixelWrites) {
+          for (let index = 0; index < this.codedWidth * this.codedHeight; index++) {
+            const offset = index * 4;
+            bytes[offset] = this.intensity;
+            bytes[offset + 1] = this.intensity;
+            bytes[offset + 2] = this.intensity;
+            bytes[offset + 3] = 255;
+          }
         }
         return [{ offset: 0, stride: 8 * 4 }];
       }
@@ -265,6 +271,7 @@ describe('decoder-service', () => {
       FakeVideoFrame.failCopies = false;
       FakeVideoFrame.frameDuration = 16_667;
       FakeVideoFrame.frameFormat = 'RGBA';
+      FakeVideoFrame.skipPixelWrites = false;
       FakeVideoFrame.instances.length = 0;
       FakeVideoFrame.copyResolvers.clear();
       FakeVideoFrame.copyStarts.length = 0;
@@ -691,6 +698,42 @@ describe('decoder-service', () => {
       return delivered;
     }
 
+    it('keeps smart-skip selection and timing identical for RGB and RGBA delivery', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const intensities = [0, 0, 12, 12, 40, 40, 80, 80, 120, 120];
+      const chunks = intensities.map(
+        (intensity, index) => ({ intensity, timestamp: index * 1_000 }) as EncodedVideoChunk
+      );
+      const run = async (pixelFormat: 'rgb' | 'rgba') => {
+        const delivered: Array<{ durationMs: number; frameNumber: number }> = [];
+        const result = await decodeFrames(
+          {
+            chunks,
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.167,
+            framerate: 60,
+            sourceTotalMs: 167,
+            totalFrames: chunks.length,
+          },
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            pixelFormat,
+            smartFrameSkip: 'medium',
+            onFrameAvailable: (pixelData, durationMs, frameNumber) => {
+              delivered.push({ durationMs, frameNumber });
+              globalBufferPool.release(pixelData);
+            },
+          }
+        );
+        globalBufferPool.clear();
+        return { delivered, tailAccumulatedMs: result.tailAccumulatedMs };
+      };
+
+      expect(await run('rgba')).toEqual(await run('rgb'));
+    });
+
     it('derives a missing frame duration from source fps', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       FakeVideoFrame.frameDuration = null;
@@ -1026,6 +1069,7 @@ describe('decoder-service', () => {
           width: 8,
           height: 8,
           mode: 'stream',
+          pixelFormat: 'rgba',
           stagedCopyLookahead: true,
           onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
             delivered.push(frameNumber);
@@ -1071,6 +1115,364 @@ describe('decoder-service', () => {
         expect(frame.close).toHaveBeenCalledOnce();
       }
       expect(globalBufferPool.totalActiveMemory).toBe(0);
+    });
+
+    it('submits two encoder tasks concurrently through sequential awaited decoder callbacks', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const pending = new Map<number, (result: EncodeTaskResult) => void>();
+      let activeTasks = 0;
+      let maxActiveTasks = 0;
+      const pool = {
+        activeWorkers: 2,
+        encode: (task: EncodeTask) => {
+          globalBufferPool.releaseTransferred(task.rgbaData.buffer as ArrayBuffer);
+          activeTasks++;
+          maxActiveTasks = Math.max(maxActiveTasks, activeTasks);
+          return new Promise<EncodeTaskResult>((resolve) => {
+            pending.set(task.id, (result) => {
+              activeTasks--;
+              resolve(result);
+            });
+          });
+        },
+        stats: { active: 0, idle: 2, poolSize: 2, queued: 0 },
+      } as unknown as WebpWorkerPool;
+      const budget = new WebpFrameMemoryBudget({
+        codedWidth: 8,
+        codedHeight: 8,
+        displayWidth: 8,
+        displayHeight: 8,
+        targetWidth: 8,
+        targetHeight: 8,
+        workerCount: 2,
+      });
+      const encoder = createStreamingWebpEncoder(
+        pool,
+        8,
+        8,
+        'medium',
+        2,
+        undefined,
+        undefined,
+        undefined,
+        budget
+      );
+
+      const decoding = decodeFrames(
+        {
+          chunks: [
+            { intensity: 0, timestamp: 0 },
+            { intensity: 10, timestamp: 1_000 },
+          ] as EncodedVideoChunk[],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.034,
+          framerate: 60,
+          sourceTotalMs: 34,
+          totalFrames: 2,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          pixelFormat: 'rgba',
+          stagedCopyLookahead: true,
+          frameMemoryBudget: budget,
+          processingFailureSignal: encoder.failureSignal,
+          onFrameAvailable: (rgbData, durationMs, _frameNumber, memoryHandoff) =>
+            encoder.submit(rgbData, durationMs, memoryHandoff),
+        }
+      );
+
+      await vi.waitFor(() => expect(pending.size).toBe(2));
+      expect(maxActiveTasks).toBe(2);
+      expect(budget.usage.targetBytes).toBe(budget.targetTaskBytes * 2);
+
+      pending.get(1)?.({ id: 1, bitstream: new Uint8Array(8) });
+      pending.get(0)?.({ id: 0, bitstream: new Uint8Array(8) });
+      await decoding;
+      await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
+      expect(budget.usage.sourceBytes).toBe(0);
+      expect(budget.usage.targetBytes).toBe(0);
+      expect(budget.usage.resultBytes).toBe(0);
+
+      encoder.dispose();
+      budget.dispose();
+      expect(budget.usage.totalBytes).toBe(0);
+    });
+
+    it('backpressures a third known-layout 4K source against shared persistent canvases', async () => {
+      const width = 3840;
+      const height = 2160;
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      FakeVideoFrame.controlledCopies = true;
+      FakeVideoFrame.skipPixelWrites = true;
+      const budget = new WebpFrameMemoryBudget({
+        codedWidth: width,
+        codedHeight: height,
+        displayWidth: width,
+        displayHeight: height,
+        targetWidth: width,
+        targetHeight: height,
+        workerCount: 1,
+      });
+      expect(
+        budget.calculatePendingSourceCapacity(width * height * 4, Number.MAX_SAFE_INTEGER)
+      ).toBe(2);
+
+      const decoding = decodeFrames(
+        {
+          chunks: [
+            { codedHeight: height, codedWidth: width, intensity: 0, timestamp: 0 },
+            { codedHeight: height, codedWidth: width, intensity: 1, timestamp: 1_000 },
+            { codedHeight: height, codedWidth: width, intensity: 2, timestamp: 2_000 },
+          ] as EncodedVideoChunk[],
+          config: { codec: 'vp09.00.10.08', codedWidth: width, codedHeight: height },
+          duration: 0.05,
+          framerate: 60,
+          sourceTotalMs: 50,
+          totalFrames: 3,
+        },
+        {
+          width,
+          height,
+          mode: 'stream',
+          pixelFormat: 'rgba',
+          stagedCopyLookahead: true,
+          frameMemoryBudget: budget,
+          onFrameAvailable: (rgbaData) => globalBufferPool.release(rgbaData),
+        }
+      );
+
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0]));
+      expect(FakeVideoFrame.instances).toHaveLength(2);
+      FakeVideoFrame.copyResolvers.get(0)?.();
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000]));
+      await vi.waitFor(() => expect(FakeVideoFrame.instances).toHaveLength(3));
+      FakeVideoFrame.copyResolvers.get(1_000)?.();
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000, 2_000]));
+      FakeVideoFrame.copyResolvers.get(2_000)?.();
+
+      await expect(decoding).resolves.toMatchObject({ totalInputFrames: 3 });
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(budget.usage.sourceBytes).toBe(0);
+      expect(budget.usage.targetBytes).toBe(0);
+      budget.dispose();
+      expect(budget.usage.totalBytes).toBe(0);
+    });
+
+    it('reports the shared byte budget when a native 4K flush burst exceeds capacity', async () => {
+      const width = 3840;
+      const height = 2160;
+      const { Decoder } = createFlushBurstVideoDecoder(3, width, height);
+      vi.stubGlobal('VideoDecoder', Decoder);
+      const budget = new WebpFrameMemoryBudget({
+        codedWidth: width,
+        codedHeight: height,
+        displayWidth: width,
+        displayHeight: height,
+        targetWidth: width,
+        targetHeight: height,
+        workerCount: 1,
+      });
+
+      await expect(
+        decodeFrames(
+          {
+            chunks: [],
+            config: { codec: 'vp09.flush.shared-budget', codedWidth: width, codedHeight: height },
+            duration: 0.05,
+            framerate: 60,
+            sourceTotalMs: 50,
+            totalFrames: 3,
+          },
+          {
+            width,
+            height,
+            mode: 'stream',
+            pixelFormat: 'rgba',
+            frameMemoryBudget: budget,
+            onFrameAvailable: (rgbaData) => globalBufferPool.release(rgbaData),
+          }
+        )
+      ).rejects.toThrow(
+        'Decoded frame output memory limit exceeded (shared frame byte budget)'
+      );
+
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(budget.usage.sourceBytes).toBe(0);
+      expect(budget.usage.targetBytes).toBe(0);
+      budget.dispose();
+      expect(budget.usage.totalBytes).toBe(0);
+    });
+
+    it('keeps shared-budget flush output serial while closing the full source burst', async () => {
+      const outputCount = 4;
+      const { Decoder, stats } = createFlushBurstVideoDecoder(outputCount, 1920, 1080);
+      vi.stubGlobal('VideoDecoder', Decoder);
+      stubScalingCanvas(960, 540);
+      const pending = new Map<number, (result: EncodeTaskResult) => void>();
+      let activeTasks = 0;
+      let maxActiveTasks = 0;
+      const pool = {
+        activeWorkers: 2,
+        encode: (task: EncodeTask) => {
+          globalBufferPool.releaseTransferred(task.rgbaData.buffer as ArrayBuffer);
+          activeTasks++;
+          maxActiveTasks = Math.max(maxActiveTasks, activeTasks);
+          return new Promise<EncodeTaskResult>((resolve) =>
+            pending.set(task.id, (result) => {
+              activeTasks--;
+              resolve(result);
+            })
+          );
+        },
+        stats: { active: 0, idle: 2, poolSize: 2, queued: 0 },
+      } as unknown as WebpWorkerPool;
+      const budget = new WebpFrameMemoryBudget({
+        codedWidth: 1920,
+        codedHeight: 1080,
+        displayWidth: 1920,
+        displayHeight: 1080,
+        targetWidth: 960,
+        targetHeight: 540,
+        workerCount: 2,
+      });
+      const encoder = createStreamingWebpEncoder(
+        pool,
+        960,
+        540,
+        'medium',
+        outputCount,
+        undefined,
+        undefined,
+        undefined,
+        budget
+      );
+
+      const decoding = decodeFrames(
+        {
+          chunks: [],
+          config: { codec: 'vp09.00.10.08', codedWidth: 1920, codedHeight: 1080 },
+          duration: 0.067,
+          framerate: 60,
+          sourceTotalMs: 67,
+          totalFrames: outputCount,
+        },
+        {
+          width: 960,
+          height: 540,
+          mode: 'stream',
+          pixelFormat: 'rgba',
+          stagedCopyLookahead: true,
+          frameMemoryBudget: budget,
+          processingFailureSignal: encoder.failureSignal,
+          onFrameAvailable: (rgbData, durationMs, _frameNumber, memoryHandoff) =>
+            encoder.submit(rgbData, durationMs, memoryHandoff),
+        }
+      );
+
+      await vi.waitFor(() => expect(pending.has(0)).toBe(true));
+      expect(stats.maxOutstandingFrames).toBe(outputCount);
+      expect(budget.usage.totalBytes).toBeLessThanOrEqual(
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+      );
+
+      for (let index = 0; index < outputCount; index++) {
+        await vi.waitFor(() => expect(pending.has(index)).toBe(true));
+        pending.get(index)?.({ id: index, bitstream: new Uint8Array(8) });
+      }
+
+      const result = await decoding;
+      expect(result.totalInputFrames).toBe(outputCount);
+      expect(maxActiveTasks).toBe(1);
+      await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
+      expect(budget.usage.sourceBytes).toBe(0);
+      expect(budget.usage.targetBytes).toBe(0);
+      expect(budget.usage.resultBytes).toBe(0);
+
+      encoder.dispose();
+      budget.dispose();
+      expect(budget.usage.totalBytes).toBe(0);
+    });
+
+    it('preserves the first worker failure while draining shared pre-flush ownership', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const pending = new Map<number, { reject: (error: Error) => void }>();
+      const pool = {
+        activeWorkers: 2,
+        encode: (task: EncodeTask) => {
+          globalBufferPool.releaseTransferred(task.rgbaData.buffer as ArrayBuffer);
+          return new Promise<EncodeTaskResult>((_resolve, reject) => {
+            pending.set(task.id, { reject });
+          });
+        },
+        stats: { active: 0, idle: 2, poolSize: 2, queued: 0 },
+      } as unknown as WebpWorkerPool;
+      const budget = new WebpFrameMemoryBudget({
+        codedWidth: 8,
+        codedHeight: 8,
+        displayWidth: 8,
+        displayHeight: 8,
+        targetWidth: 8,
+        targetHeight: 8,
+        workerCount: 2,
+      });
+      const encoder = createStreamingWebpEncoder(
+        pool,
+        8,
+        8,
+        'medium',
+        1,
+        undefined,
+        undefined,
+        undefined,
+        budget
+      );
+      const firstFailure = new Error('connected worker failure');
+
+      const decoding = decodeFrames(
+        {
+          chunks: [{ intensity: 0, timestamp: 0 }] as EncodedVideoChunk[],
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 0.017,
+          framerate: 60,
+          sourceTotalMs: 17,
+          totalFrames: 1,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          pixelFormat: 'rgba',
+          stagedCopyLookahead: true,
+          frameMemoryBudget: budget,
+          processingFailureSignal: encoder.failureSignal,
+          onFrameAvailable: (rgbData, durationMs, _frameNumber, memoryHandoff) =>
+            encoder.submit(rgbData, durationMs, memoryHandoff),
+        }
+      );
+
+      await vi.waitFor(() => expect(pending.has(0)).toBe(true));
+      pending.get(0)?.reject(firstFailure);
+
+      await expect(decoding).rejects.toThrow(
+        'Frame processing failed: connected worker failure'
+      );
+      await expect(encoder.finish()).rejects.toBe(firstFailure);
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(budget.usage.sourceBytes).toBe(0);
+      expect(budget.usage.targetBytes).toBe(0);
+      expect(budget.usage.resultBytes).toBe(0);
+
+      encoder.dispose();
+      budget.dispose();
+      expect(budget.usage.totalBytes).toBe(0);
     });
 
     it('falls back to serial delivery when a second target working set would exceed budget', async () => {

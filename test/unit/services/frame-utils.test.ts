@@ -6,6 +6,8 @@ import { globalBufferPool } from '@services/buffer-pool';
 import {
   clearCanvasCache,
   copyFrameToRGB,
+  copyFrameToRGBA,
+  compute8x8Grayscale,
   convertRGBAToRGB,
   convertRGBToRGBA,
   getFrameDurationMs,
@@ -146,6 +148,161 @@ describe('clearCanvasCache', () => {
     clearCanvasCache();
 
     expect(canvases).toEqual([{ width: 0, height: 0 }]);
+  });
+});
+
+describe('opaque RGBA frame copying', () => {
+  it('uses and caches the successful RGBX strategy while forcing opaque alpha', async () => {
+    const attemptedFormats: VideoPixelFormat[] = [];
+    const frame = {
+      allocationSize: () => 8,
+      codedHeight: 1,
+      codedWidth: 2,
+      copyTo: async (destination: AllowSharedBufferSource, options: VideoFrameCopyToOptions) => {
+        attemptedFormats.push(options.format!);
+        const bytes = new Uint8Array(
+          ArrayBuffer.isView(destination) ? destination.buffer : destination
+        );
+        bytes.set([10, 20, 30, 0, 40, 50, 60, 7]);
+        return [{ offset: 0, stride: 8 }];
+      },
+      displayHeight: 1,
+      displayWidth: 2,
+    } as unknown as VideoFrame;
+    const context = { durationCarryUs: 0, copyPath: null };
+
+    const first = await copyFrameToRGBA(frame, 2, 1, context);
+    const second = await copyFrameToRGBA(frame, 2, 1, context);
+
+    expect([...first.subarray(0, 8)]).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
+    expect([...second.subarray(0, 8)]).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
+    expect(context.copyPath).toBe('RGBX');
+    expect(attemptedFormats).toEqual(['RGBX', 'RGBX']);
+    globalBufferPool.release(first);
+    globalBufferPool.release(second);
+  });
+
+  it('normalizes and caches BGRA after earlier native formats fail', async () => {
+    const attemptedFormats: VideoPixelFormat[] = [];
+    const frame = {
+      allocationSize: () => 4,
+      codedHeight: 1,
+      codedWidth: 1,
+      copyTo: async (destination: AllowSharedBufferSource, options: VideoFrameCopyToOptions) => {
+        attemptedFormats.push(options.format!);
+        if (options.format !== 'BGRA') throw new Error('unsupported format');
+        const bytes = new Uint8Array(
+          ArrayBuffer.isView(destination) ? destination.buffer : destination
+        );
+        bytes.set([30, 20, 10, 4]);
+        return [{ offset: 0, stride: 4 }];
+      },
+      displayHeight: 1,
+      displayWidth: 1,
+    } as unknown as VideoFrame;
+    const context = { durationCarryUs: 0, copyPath: null };
+
+    const first = await copyFrameToRGBA(frame, 1, 1, context);
+    attemptedFormats.length = 0;
+    const second = await copyFrameToRGBA(frame, 1, 1, context);
+
+    expect([...first.subarray(0, 4)]).toEqual([10, 20, 30, 255]);
+    expect([...second.subarray(0, 4)]).toEqual([10, 20, 30, 255]);
+    expect(context.copyPath).toBe('BGRA');
+    expect(attemptedFormats).toEqual(['BGRA']);
+    globalBufferPool.release(first);
+    globalBufferPool.release(second);
+  });
+
+  it('recovers when a later frame no longer supports the cached native strategy', async () => {
+    let frameNumber = 0;
+    const attempts: VideoPixelFormat[] = [];
+    const frame = {
+      allocationSize: () => 4,
+      codedHeight: 1,
+      codedWidth: 1,
+      copyTo: async (destination: AllowSharedBufferSource, options: VideoFrameCopyToOptions) => {
+        attempts.push(options.format!);
+        if (frameNumber === 1 && options.format === 'RGBX') {
+          throw new Error('RGBX disappeared');
+        }
+        if (frameNumber === 1 && options.format !== 'RGBA') {
+          throw new Error('use RGBA');
+        }
+        const bytes = new Uint8Array(
+          ArrayBuffer.isView(destination) ? destination.buffer : destination
+        );
+        bytes.set([10, 20, 30, 0]);
+        return [{ offset: 0, stride: 4 }];
+      },
+      displayHeight: 1,
+      displayWidth: 1,
+    } as unknown as VideoFrame;
+    const context = { durationCarryUs: 0, copyPath: null };
+
+    const first = await copyFrameToRGBA(frame, 1, 1, context);
+    frameNumber = 1;
+    attempts.length = 0;
+    const second = await copyFrameToRGBA(frame, 1, 1, context);
+
+    expect([...first.subarray(0, 4)]).toEqual([10, 20, 30, 255]);
+    expect([...second.subarray(0, 4)]).toEqual([10, 20, 30, 255]);
+    expect(attempts).toEqual(['RGBX', 'RGBA']);
+    expect(context.copyPath).toBe('RGBA');
+    globalBufferPool.release(first);
+    globalBufferPool.release(second);
+  });
+
+  it('returns an exact opaque Canvas view and reuses the Canvas strategy', async () => {
+    const nativeCopy = vi.fn(async () => {
+      throw new Error('native copy must not run');
+    });
+    const imageData = new Uint8ClampedArray([10, 20, 30, 0, 40, 50, 60, 4]);
+    const context2d = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: imageData })),
+    };
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext(): typeof context2d {
+          return context2d;
+        }
+      }
+    );
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ close: vi.fn() })));
+    const frame = {
+      allocationSize: () => 8,
+      codedHeight: 2,
+      codedWidth: 2,
+      copyTo: nativeCopy,
+      displayHeight: 2,
+      displayWidth: 2,
+    } as unknown as VideoFrame;
+    const context = { durationCarryUs: 0, copyPath: null };
+
+    const scaled = await copyFrameToRGBA(frame, 2, 1, context);
+    const cached = await copyFrameToRGBA(frame, 2, 1, context);
+
+    expect(scaled.byteLength).toBe(8);
+    expect([...scaled]).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
+    expect([...cached]).toEqual([...scaled]);
+    expect(context.copyPath).toBe('canvas');
+    expect(nativeCopy).not.toHaveBeenCalled();
+    expect(context2d.getImageData).toHaveBeenCalledTimes(2);
+  });
+
+  it('samples identical RGB values from packed RGB and opaque RGBA', () => {
+    const rgb = new Uint8Array(8 * 8 * 3);
+    const rgba = new Uint8Array(8 * 8 * 4);
+    for (let index = 0; index < 64; index++) {
+      const value = index * 3;
+      rgb.set([value, value + 1, value + 2], index * 3);
+      rgba.set([value, value + 1, value + 2, 255], index * 4);
+    }
+
+    expect(compute8x8Grayscale(rgba, 8, 8, 4)).toEqual(compute8x8Grayscale(rgb, 8, 8, 3));
   });
 });
 

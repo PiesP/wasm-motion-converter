@@ -4,12 +4,12 @@
 /**
  * WebP Encoder Worker
  *
- * Each worker receives RGB frame data + dimensions + quality, uses
+ * Each worker receives opaque RGBA frame data + dimensions + quality, uses
  * OffscreenCanvas.convertToBlob() for fast WebP encoding, then extracts
  * and returns the VP8 bitstream.
  *
  * Protocol:
- *   Main → Worker: { id, rgbData, width, height, quality, durationMs }
+ *   Main → Worker: { id, rgbaData, width, height, quality, durationMs }
  *   Worker → Main: { id, bitstream } or { id, error }
  */
 
@@ -22,14 +22,14 @@ import { extractAndNormalizeCanvasVp8 } from './webp-bitstream';
 
 interface EncodeRequest {
   id: number;
-  rgbData: Uint8Array;
+  rgbaData: Uint8Array;
   width: number;
   height: number;
   quality: number;
   durationMs: number;
 }
 
-const RGB_BYTES_PER_PIXEL = 3;
+const RGBA_BYTES_PER_PIXEL = 4;
 
 function isEncodeTaskId(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -42,7 +42,7 @@ function isPositiveSafeInteger(value: unknown): value is number {
 function isEncodeRequest(value: unknown): value is EncodeRequest {
   if (!isRecord(value)) return false;
   if (!isEncodeTaskId(value.id)) return false;
-  if (!(value.rgbData instanceof Uint8Array)) return false;
+  if (!(value.rgbaData instanceof Uint8Array)) return false;
   if (!isPositiveSafeInteger(value.width)) return false;
   if (!isPositiveSafeInteger(value.height)) return false;
   if (
@@ -62,13 +62,16 @@ function isEncodeRequest(value: unknown): value is EncodeRequest {
   }
 
   const pixelCount = value.width * value.height;
-  const expectedRgbBytes = pixelCount * RGB_BYTES_PER_PIXEL;
-  const maxPooledRgbBytes = 2 ** Math.ceil(Math.log2(expectedRgbBytes));
+  const expectedRgbaBytes = pixelCount * RGBA_BYTES_PER_PIXEL;
+  const maxPooledRgbaBytes = 2 ** Math.ceil(Math.log2(expectedRgbaBytes));
   return (
     Number.isSafeInteger(pixelCount) &&
     pixelCount <= MAX_FRAME_PIXEL_COUNT &&
-    value.rgbData.byteLength >= expectedRgbBytes &&
-    value.rgbData.byteLength <= maxPooledRgbBytes
+    value.rgbaData.buffer instanceof ArrayBuffer &&
+    value.rgbaData.byteLength >= expectedRgbaBytes &&
+    value.rgbaData.byteLength <= maxPooledRgbaBytes &&
+    value.rgbaData.buffer.byteLength <= maxPooledRgbaBytes &&
+    value.rgbaData.byteOffset <= value.rgbaData.buffer.byteLength - expectedRgbaBytes
   );
 }
 
@@ -97,23 +100,18 @@ function ensureCanvas(
 async function handleEncode(
   request: EncodeRequest
 ): Promise<{ id: number; bitstream: Uint8Array }> {
-  const { id, rgbData, width, height, quality } = request;
+  const { id, rgbaData, width, height, quality } = request;
 
   // Get or create cached OffscreenCanvas
   const { canvas: offscreen, ctx: offCtx } = ensureCanvas(width, height);
 
-  // Convert RGB → RGBA for putImageData (3 bpp → 4 bpp)
   const pixelCount = width * height;
-  const rgbaData = new Uint8ClampedArray(pixelCount * 4);
-  // Fast conversion: unrolled step-3/step-4
-  for (let i = 0, j = 0; j < rgbaData.length; i += 3, j += 4) {
-    rgbaData[j] = rgbData[i]!;
-    rgbaData[j + 1] = rgbData[i + 1]!;
-    rgbaData[j + 2] = rgbData[i + 2]!;
-    rgbaData[j + 3] = 255;
-  }
-
-  const imageData = new ImageData(rgbaData, width, height);
+  const exactRgba = new Uint8ClampedArray(
+    rgbaData.buffer as ArrayBuffer,
+    rgbaData.byteOffset,
+    pixelCount * RGBA_BYTES_PER_PIXEL
+  );
+  const imageData = new ImageData(exactRgba, width, height);
   offCtx.putImageData(imageData, 0, 0);
 
   // Encode to WebP via convertToBlob

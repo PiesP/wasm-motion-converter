@@ -147,21 +147,27 @@ export async function injectTestFile(page: Page, filename: string): Promise<void
   // Wait for the app to process the file and enable the convert button
   await page.waitForFunction(
     () => window.__TEST_HELPERS__?.isConvertButtonEnabled() === true,
+    undefined,
     { timeout: 15_000 },
   );
 }
 
-/** Check the decoder configuration extracted from the currently selected file. */
-export async function isCurrentVideoCodecSupported(page: Page): Promise<boolean> {
-  return page.evaluate(async () => {
-    const config = window.__TEST_HELPERS__?.getMetadata()?.config;
-    if (!config || typeof VideoDecoder === 'undefined') return false;
-    try {
-      return (await VideoDecoder.isConfigSupported(config)).supported === true;
-    } catch {
-      return false;
-    }
-  });
+/** Probe a fixture before UI selection, which deliberately blocks unsupported codecs. */
+export async function isVideoFixtureCodecSupported(page: Page, filename: string): Promise<boolean> {
+  return page.evaluate(async (file) => {
+    if (typeof VideoDecoder === 'undefined') return false;
+    const fixtureUrl = new URL(location.origin);
+    fixtureUrl.pathname = `/${file.replace(/^\/+/, '')}`;
+    const response = await fetch(fixtureUrl);
+    if (!response.ok) throw new Error(`Unable to load codec fixture: ${response.status}`);
+    const moduleUrl = '/src/services/video-metadata.ts';
+    const { extractVideoMetadata } = await import(moduleUrl);
+    const metadata = await extractVideoMetadata(await response.blob());
+    if (!metadata.config) throw new Error('Codec fixture has no decoder configuration');
+    // Extraction errors and invalid configurations must fail, rather than
+    // being mistaken for a decoder capability skip.
+    return (await VideoDecoder.isConfigSupported(metadata.config)).supported === true;
+  }, filename);
 }
 
 /** Create and inject a synthetic test file (no real video needed). */

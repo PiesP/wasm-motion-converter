@@ -5,8 +5,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
-    await options.onFrameAvailable(new Uint8Array([0x20, 0x40, 0x60]), 100, 0);
-    await options.onFrameAvailable(new Uint8Array([0x30, 0x50, 0x70]), 40, 1);
+    const first =
+      options.pixelFormat === 'rgba'
+        ? new Uint8Array([0x20, 0x40, 0x60, 0xff])
+        : new Uint8Array([0x20, 0x40, 0x60]);
+    const second =
+      options.pixelFormat === 'rgba'
+        ? new Uint8Array([0x30, 0x50, 0x70, 0xff])
+        : new Uint8Array([0x30, 0x50, 0x70]);
+    await options.onFrameAvailable(first, 100, 0);
+    await options.onFrameAvailable(second, 40, 1);
     return {
       frames: [],
       outputTotalMs: 0,

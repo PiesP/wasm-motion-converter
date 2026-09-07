@@ -8,9 +8,6 @@
  * then extracts the VP8 bitstream and assembles frames into an animated WebP
  * container using the existing StreamingWebpMuxer RIFF structure.
  *
- * Performance: OffscreenCanvas.convertToBlob is ~3x faster than wasm-webp's
- * encodeRGB for 1080p frames (90ms vs 287ms).
- *
  * Pipeline:
  *   1. decodeFrames streams frames via onFrameAvailable callback
  *   2. Per frame: putImageData → convertToBlob → extract VP8 bitstream
@@ -25,7 +22,6 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
-import { convertRGBToRGBA } from './frame-utils';
 import { resolveOutputLimits } from './output-limits';
 import { withPooledBuffer } from './pooled-buffer';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
@@ -134,6 +130,7 @@ export async function encodeWebpOffscreen(
       maxInputChunks: inputChunkLimit,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
+      pixelFormat: 'rgba',
       stagedCopyLookahead: true,
       onFrameDecoded: (_frameNum: number, total: number) => {
         if (!onProgress) return;
@@ -151,9 +148,9 @@ export async function encodeWebpOffscreen(
         });
       },
       // Streaming callback: encode each frame immediately upon decoding
-      onFrameAvailable: async (rgbData: Uint8Array, frameDurationMs: number, frameNum: number) => {
+      onFrameAvailable: async (rgbaData: Uint8Array, frameDurationMs: number, frameNum: number) => {
         if (signal?.aborted) {
-          globalBufferPool.release(rgbData);
+          globalBufferPool.release(rgbaData);
           throw new DOMException('Cancelled', 'AbortError');
         }
 
@@ -165,32 +162,21 @@ export async function encodeWebpOffscreen(
           // Without this, WebP output plays faster than source when dynamic
           // decimation kicks in under memory pressure.
           accumulatedDuration += frameDurationMs;
-          globalBufferPool.release(rgbData);
+          globalBufferPool.release(rgbaData);
           return;
         }
 
-        return withPooledBuffer(rgbData, async () => {
+        return withPooledBuffer(rgbaData, async () => {
           const totalDuration = frameDurationMs + accumulatedDuration;
           accumulatedDuration = 0;
 
-          // Create ImageData from RGB data (3 bytes per pixel → 4 bytes RGBA for canvas)
-          // OffscreenCanvas putImageData requires RGBA format
-          // Use buffer pool to avoid per-frame GC pressure (M-05).
-          const rawBuf = convertRGBToRGBA(rgbData, w, h);
-          try {
-            const rgbaData = new Uint8ClampedArray(
-              rawBuf.buffer as ArrayBuffer,
-              rawBuf.byteOffset,
-              w * h * 4
-            ) as unknown as Uint8ClampedArray<ArrayBuffer>;
-
-            const imageData = new ImageData(rgbaData, w, h);
-
-            // Draw to OffscreenCanvas — putImageData copies the data so we can release immediately
-            ctx.putImageData(imageData, 0, 0);
-          } finally {
-            globalBufferPool.release(rawBuf);
-          }
+          const exactRgba = new Uint8ClampedArray(
+            rgbaData.buffer as ArrayBuffer,
+            rgbaData.byteOffset,
+            w * h * 4
+          ) as unknown as Uint8ClampedArray<ArrayBuffer>;
+          const imageData = new ImageData(exactRgba, w, h);
+          ctx.putImageData(imageData, 0, 0);
 
           // Encode to WebP via convertToBlob
           const blob = await canvas.convertToBlob({
