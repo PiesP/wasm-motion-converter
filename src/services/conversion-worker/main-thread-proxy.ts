@@ -6,7 +6,7 @@
  *
  * Wraps Worker lifecycle (create, communicate, terminate) and provides
  * an async function matching the current pipeline signature:
- *   runPipeline(inputBuffer, config, options, callbacks) → Promise<ArrayBuffer>
+ *   runPipeline(input, config, options, callbacks) → Promise<ArrayBuffer>
  *
  * Features:
  * - Clones Blob handles for lazy reads or transfers owned ArrayBuffers

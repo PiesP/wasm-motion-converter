@@ -89,8 +89,6 @@ export async function handleFileSelected(
 
   try {
     // BlobSource lets MediaBunny read only the ranges needed for metadata.
-    // Keep the file itself as the source of truth and materialize an
-    // ArrayBuffer later only when the GIF worker path needs one.
     const metadata = await extractVideoMetadata(file, DEFAULT_FPS, run.signal);
     if (isStale()) return;
 
