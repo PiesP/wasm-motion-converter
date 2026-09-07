@@ -63,7 +63,7 @@
   "frameSkip.off": "Desactivado",
   "frameSkip.offDesc": "Sin omisión adicional por similitud",
   "frameSkip.title": "Omisión inteligente de fotogramas",
-  "frameSkip.tooltip": "Reduce fotogramas similares conservando la duración. El ajuste de calidad fija los FPS máximos.",
+  "frameSkip.tooltip": "Reduce fotogramas similares conservando la duración. El ajuste de calidad fija los FPS objetivo.",
   "header.exportLogs": "Exportar registros",
   "header.exportLogsTooltip": "Exportar registros (formato JSONL)",
   "lang.auto": "Automático",

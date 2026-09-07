@@ -63,7 +63,7 @@
   "frameSkip.off": "Off",
   "frameSkip.offDesc": "No extra similarity skipping",
   "frameSkip.title": "Smart Frame Skip",
-  "frameSkip.tooltip": "Reduces similar frames while preserving playback duration. The quality preset sets the maximum FPS.",
+  "frameSkip.tooltip": "Reduces similar frames while preserving playback duration. The quality preset sets the target FPS.",
   "header.exportLogs": "Export logs",
   "header.exportLogsTooltip": "Export logs (Alt: JSONL format)",
   "lang.auto": "Auto",

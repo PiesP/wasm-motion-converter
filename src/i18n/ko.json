@@ -63,7 +63,7 @@
   "frameSkip.off": "끄기",
   "frameSkip.offDesc": "추가 유사 프레임 스킵 없음",
   "frameSkip.title": "스마트 프레임 스킵",
-  "frameSkip.tooltip": "재생 시간은 유지하면서 비슷한 프레임을 줄입니다. 품질 프리셋이 최대 FPS를 정합니다.",
+  "frameSkip.tooltip": "재생 시간은 유지하면서 비슷한 프레임을 줄입니다. 품질 프리셋이 목표 FPS를 정합니다.",
   "header.exportLogs": "로그 내보내기",
   "header.exportLogsTooltip": "로그 내보내기 (대체: JSONL 형식)",
   "lang.auto": "자동",

@@ -63,7 +63,7 @@
   "frameSkip.off": "オフ",
   "frameSkip.offDesc": "類似フレームの追加スキップなし",
   "frameSkip.title": "スマートフレームスキップ",
-  "frameSkip.tooltip": "再生時間を保ちながら類似フレームを減らします。品質プリセットが最大FPSを決めます。",
+  "frameSkip.tooltip": "再生時間を保ちながら類似フレームを減らします。品質プリセットが目標FPSを決めます。",
   "header.exportLogs": "ログをエクスポート",
   "header.exportLogsTooltip": "ログをエクスポート（代替：JSONL形式）",
   "lang.auto": "自動",

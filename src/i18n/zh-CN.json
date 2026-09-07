@@ -63,7 +63,7 @@
   "frameSkip.off": "关闭",
   "frameSkip.offDesc": "不额外跳过相似帧",
   "frameSkip.title": "智能跳帧",
-  "frameSkip.tooltip": "在保持播放时长的同时减少相似帧。质量预设决定最高FPS。",
+  "frameSkip.tooltip": "在保持播放时长的同时减少相似帧。质量预设决定目标FPS。",
   "header.exportLogs": "导出日志",
   "header.exportLogsTooltip": "导出日志（替代格式：JSONL）",
   "lang.auto": "自动",
