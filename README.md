@@ -24,6 +24,8 @@ single-threaded WASM encoders do not require either capability.
 
 ## Development
 
+This project is developed with assistance from AI tools.
+
 Use the toolchain pinned in `package.json`, or versions that satisfy its
 `engines` fields. Initialize the shared browser-core submodule before installing.
 
