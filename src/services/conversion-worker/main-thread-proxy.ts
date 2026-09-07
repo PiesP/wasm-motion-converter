@@ -6,10 +6,10 @@
  *
  * Wraps Worker lifecycle (create, communicate, terminate) and provides
  * an async function matching the current pipeline signature:
- *   runPipeline(inputBuffer, config, options, callbacks) → Promise<ArrayBuffer>
+ *   runPipeline(input, config, options, callbacks) → Promise<ArrayBuffer>
  *
  * Features:
- * - Transfers inputBuffer (zero-copy to worker)
+ * - Clones Blob handles for lazy reads or transfers owned ArrayBuffers
  * - Throttled progress callbacks to the main thread
  * - Graceful fallback to main-thread pipeline on worker errors
  * - AbortController propagation to the worker
@@ -79,8 +79,7 @@ export type MainThreadPipelineCallback = (progress: ConversionProgress) => void;
 /**
  * Runs the conversion pipeline via a Web Worker.
  *
- * @param inputBuffer - The video file buffer (will be transferred to worker)
- * @param inputBlob - Optional Blob/File for on-demand reading via BlobSource
+ * @param input - Blob/File for on-demand reads, or an ArrayBuffer transferred to the worker
  * @param config - Serialized decoder configuration
  * @param options - Conversion options (format, quality, scale, etc.)
  * @param onProgress - Progress callback (throttled to ~100ms)
@@ -88,7 +87,7 @@ export type MainThreadPipelineCallback = (progress: ConversionProgress) => void;
  * @returns Promise resolving to the output ArrayBuffer (GIF or WebP)
  */
 export async function runPipelineViaWorker(
-  inputBuffer: ArrayBuffer,
+  input: ArrayBuffer | Blob,
   config: SerializedDecoderConfig,
   options: SerializedConversionOptions,
   onProgress: MainThreadPipelineCallback,
@@ -259,20 +258,19 @@ export async function runPipelineViaWorker(
       }
     };
 
-    // Transfer the input buffer to the worker (zero-copy).
-    // The main thread does NOT retain a copy. If startup fails after transfer,
-    // the fallback path consumes inputBlob lazily instead of re-reading it.
+    // Blob handles use structured cloning and remain available for startup
+    // fallback. ArrayBuffer ownership moves to the worker through the transfer list.
     const startMsg: WorkerRequest = {
       type: 'start',
       requestId,
-      inputBuffer,
+      ...(input instanceof Blob ? { inputBlob: input } : { inputBuffer: input }),
       config,
       options,
       ...(duration !== undefined ? { duration } : {}),
       ...(framerate !== undefined ? { framerate } : {}),
     };
     try {
-      worker.postMessage(startMsg, [inputBuffer]);
+      worker.postMessage(startMsg, input instanceof ArrayBuffer ? [input] : []);
     } catch (error) {
       settled = true;
       cleanup();
@@ -292,7 +290,7 @@ export async function runPipelineViaWorker(
  * (e.g., CSP violations, file:// protocol).
  */
 export async function runPipelineWithFallback(
-  inputBuffer: ArrayBuffer,
+  input: ArrayBuffer | Blob,
   config: SerializedDecoderConfig,
   options: SerializedConversionOptions,
   onProgress: MainThreadPipelineCallback,
@@ -310,7 +308,7 @@ export async function runPipelineWithFallback(
 
   try {
     return await runPipelineViaWorker(
-      inputBuffer,
+      input,
       config,
       options,
       onProgress,
@@ -329,8 +327,9 @@ export async function runPipelineWithFallback(
     // Fall back to the main thread without allocating another full-file copy.
     // Reuse an attached buffer when Worker startup failed before transfer;
     // otherwise let MediaBunny consume the original Blob lazily.
-    const fallbackBuffer = inputBuffer.byteLength > 0 ? inputBuffer : undefined;
-    const fallbackBlob = fallbackBuffer === undefined ? inputBlob : undefined;
+    const fallbackBuffer = input instanceof ArrayBuffer && input.byteLength > 0 ? input : undefined;
+    const fallbackBlob =
+      input instanceof Blob ? input : fallbackBuffer === undefined ? inputBlob : undefined;
     if (fallbackBuffer === undefined && fallbackBlob === undefined) {
       throw new Error(
         'Cannot fall back to main thread: inputBuffer is detached and no inputBlob available.'

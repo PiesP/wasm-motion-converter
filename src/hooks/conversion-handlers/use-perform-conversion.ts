@@ -8,7 +8,6 @@ import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
 import {
   appState,
-  getInputBuffer,
   inputFile,
   setAppState,
   setConversionElapsedMs,
@@ -214,9 +213,6 @@ async function performConversion(
     const metadata = videoMetadata();
     const forcedDecimation = runMemoryCheck(metadata, settings);
 
-    // The GIF worker protocol transfers an ArrayBuffer. WebP runs on the main
-    // thread with BlobSource, so avoid retaining a full-file copy for that path.
-    const buffer = settings.format === 'gif' ? await readInputBuffer(file) : undefined;
     if (signal.aborted) {
       throw new DOMException('Cancelled', 'AbortError');
     }
@@ -228,8 +224,10 @@ async function performConversion(
       settings
     );
 
+    // Both pipelines read from the File lazily, so a cached full-file buffer
+    // is no longer needed during conversion.
+    setInputBuffer(null);
     const output = await executePipeline(
-      buffer,
       serializedConfig,
       serializedOptions,
       progressCallback,
@@ -238,10 +236,6 @@ async function performConversion(
       metadata?.duration,
       metadata?.framerate
     );
-
-    // Pipeline has consumed the buffer — release immediately so GC
-    // can reclaim up to 500 MB before handleResult allocates more.
-    setInputBuffer(null);
 
     const blob = validateOutputBlob(output, settings);
     handleResult(blob, file, settings, runtime, startTimeMs, isActive);
@@ -285,19 +279,6 @@ function runMemoryCheck(
   }
 
   return forcedDecimation;
-}
-
-async function readInputBuffer(file: File): Promise<ArrayBuffer> {
-  try {
-    return getInputBuffer() ?? (await file.arrayBuffer());
-  } catch (err) {
-    logger.error('conversion', 'Failed to read input file buffer', {
-      fileName: file.name,
-      fileSizeBytes: file.size,
-      error: getErrorMessage(err),
-    });
-    throw err;
-  }
 }
 
 function createProgressCallback(
@@ -351,7 +332,6 @@ export function formatConversionProgressStatus(
 }
 
 async function executePipeline(
-  buffer: ArrayBuffer | undefined,
   serializedConfig: ReturnType<typeof serializeConversionInputs>['serializedConfig'],
   serializedOptions: ReturnType<typeof serializeConversionInputs>['serializedOptions'],
   progressCallback: ProgressCallback,
@@ -391,17 +371,13 @@ async function executePipeline(
     );
   }
 
-  if (!buffer) {
-    throw new Error('Unable to read the input video for GIF conversion');
-  }
-
   return runPipelineWithFallback(
-    buffer,
+    file,
     serializedConfig as unknown as Parameters<typeof runPipelineWithFallback>[1],
     serializedOptions,
     progressCallback,
     signal,
-    file,
+    undefined,
     duration,
     framerate
   );

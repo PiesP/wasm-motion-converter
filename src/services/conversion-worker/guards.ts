@@ -155,7 +155,9 @@ export function isWorkerRequest(value: unknown): value is WorkerRequest {
   switch (value.type) {
     case 'start': {
       if (!isNonEmptyString(value.requestId)) return false;
-      if (!(value.inputBuffer instanceof ArrayBuffer)) return false;
+      const hasBuffer = value.inputBuffer instanceof ArrayBuffer && value.inputBlob === undefined;
+      const hasBlob = value.inputBlob instanceof Blob && value.inputBuffer === undefined;
+      if (!hasBuffer && !hasBlob) return false;
       if (!isValidDecoderConfig(value.config)) return false;
       if (!isValidConversionOptions(value.options)) return false;
       // Optional pre-computed metadata

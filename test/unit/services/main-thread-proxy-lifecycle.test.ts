@@ -169,6 +169,50 @@ describe('runPipelineViaWorker lifecycle', () => {
     }
   });
 
+  it('sends a Blob handle without a transfer list or a full-file read', async () => {
+    const input = new Blob(['video']);
+    const readWholeFile = vi.fn().mockRejectedValue(new Error('Unexpected full-file read'));
+    Object.defineProperty(input, 'arrayBuffer', { value: readWholeFile });
+    const outputBuffer = new ArrayBuffer(4);
+    ThrowingWorker.response = {
+      type: 'complete', requestId: 'request-1', outputBuffer, durationMs: 10,
+    };
+    const postMessage = vi.spyOn(ThrowingWorker.prototype, 'postMessage');
+    try {
+      await expect(
+        runPipelineViaWorker(input, validDecoderConfig, validOptions, vi.fn())
+      ).resolves.toBe(outputBuffer);
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'start', inputBlob: input }),
+        []
+      );
+      expect(postMessage.mock.calls[0]?.[0]).not.toHaveProperty('inputBuffer');
+      expect(readWholeFile).not.toHaveBeenCalled();
+    } finally {
+      postMessage.mockRestore();
+    }
+  });
+
+  it('keeps the Blob available for lazy fallback after worker bootstrap fails', async () => {
+    const input = new Blob(['video']);
+    const readWholeFile = vi.fn().mockRejectedValue(new Error('Unexpected full-file read'));
+    Object.defineProperty(input, 'arrayBuffer', { value: readWholeFile });
+    ThrowingWorker.workerError = new ErrorEvent('error', { message: 'Worker bootstrap failed' });
+    const output = new ArrayBuffer(4);
+    runConversionPipeline.mockResolvedValue(output);
+
+    await expect(
+      runPipelineWithFallback(input, validDecoderConfig, validOptions, vi.fn())
+    ).resolves.toBe(output);
+
+    expect(runConversionPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ inputBlob: input }), expect.any(Function), undefined
+    );
+    expect(runConversionPipeline.mock.calls[0]?.[0]).not.toHaveProperty('inputBuffer');
+    expect(readWholeFile).not.toHaveBeenCalled();
+    expect(ThrowingWorker.instance?.terminate).toHaveBeenCalledOnce();
+  });
+
   it('rejects an oversized codec description before constructing a Worker', async () => {
     const config = {
       ...validDecoderConfig,

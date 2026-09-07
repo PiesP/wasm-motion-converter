@@ -85,6 +85,24 @@ beforeEach(() => {
 });
 
 describe('worker pipeline smart frame skip forwarding', () => {
+  it('passes Blob input to demux without reading the whole file first', async () => {
+    const input = new Blob(['video']);
+    const readWholeFile = vi.fn().mockRejectedValue(new Error('Unexpected full-file read'));
+    Object.defineProperty(input, 'arrayBuffer', { value: readWholeFile });
+
+    await runWorkerPipeline(input, baseOptions, vi.fn(), 'blob-request');
+
+    expect(mocks.demuxVideo).toHaveBeenCalledWith(
+      expect.objectContaining({ inputBlob: input }),
+      undefined,
+      expect.any(Function),
+      undefined
+    );
+    expect(mocks.demuxVideo.mock.calls[0]?.[0]).not.toHaveProperty('inputBuffer');
+    expect(readWholeFile).not.toHaveBeenCalled();
+    expect(demuxResult.dispose).toHaveBeenCalledOnce();
+  });
+
   it('forwards smartFrameSkip to the GIF encoder', async () => {
     const postMessage = vi.fn();
     const result = await runWorkerPipeline(
