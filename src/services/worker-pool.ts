@@ -12,7 +12,7 @@
  * - Automatic worker count based on navigator.hardwareConcurrency
  * - In-order result collection (frames may complete out-of-order)
  * - Graceful fallback: if Worker is unavailable, encode on main thread
- * - Transferable RGB data (zero-copy transfer to worker)
+ * - Transferable RGBA data (zero-copy transfer to worker)
  * - Timeout-based task retirement for stalled workers
  */
 
@@ -26,7 +26,7 @@ import { globalBufferPool } from './buffer-pool';
 
 export interface EncodeTask {
   id: number;
-  rgbData: Uint8Array;
+  rgbaData: Uint8Array;
   width: number;
   height: number;
   quality: number;
@@ -280,14 +280,14 @@ export class WebpWorkerPool {
    */
   async encode(task: EncodeTask): Promise<EncodeTaskResult> {
     if (this.terminated) {
-      globalBufferPool.release(task.rgbData);
+      globalBufferPool.release(task.rgbaData);
       return Promise.reject(new Error('Worker pool has been terminated'));
     }
 
     // If no workers were created (all init attempts failed), reject immediately
     // rather than queuing tasks that will never complete (M5 fix).
     if (this.workers.length === 0) {
-      globalBufferPool.release(task.rgbData);
+      globalBufferPool.release(task.rgbaData);
       return Promise.reject(new Error('Worker pool has no active workers'));
     }
 
@@ -335,14 +335,14 @@ export class WebpWorkerPool {
 
     this.taskTimeouts.set(worker, timeoutHandle);
 
-    // Transfer the rgbData buffer to the worker (zero-copy).
+    // Transfer the rgbaData buffer to the worker (zero-copy).
     // postMessage is called BEFORE registering in activeTasks so that
     // a synchronous exception (detached buffer, etc.) doesn't leave
     // the task permanently stuck with no cleanup path.
-    const { rgbData } = pending.task;
-    const transferredBuffer = rgbData.buffer;
+    const { rgbaData } = pending.task;
+    const transferredBuffer = rgbaData.buffer;
     try {
-      worker.postMessage(pending.task, [rgbData.buffer]);
+      worker.postMessage(pending.task, [rgbaData.buffer]);
     } catch (err) {
       // postMessage threw synchronously — clean up and reject
       clearTimeout(timeoutHandle);
@@ -350,8 +350,8 @@ export class WebpWorkerPool {
       // The pool owns task buffers once encode() is called. If transfer failed
       // before detaching the buffer, return it so a failed submission cannot
       // strand a frame allocation.
-      if (rgbData.byteLength > 0) {
-        globalBufferPool.release(rgbData);
+      if (rgbaData.byteLength > 0) {
+        globalBufferPool.release(rgbaData);
       }
       pending.reject(new Error(getErrorMessage(err)));
       this.releaseWorker(worker);
@@ -408,7 +408,7 @@ export class WebpWorkerPool {
 
   private rejectQueuedTasks(error: Error): void {
     for (const pending of this.queue) {
-      globalBufferPool.release(pending.task.rgbData);
+      globalBufferPool.release(pending.task.rgbaData);
       pending.reject(error);
     }
     this.queue.length = 0;
@@ -426,7 +426,7 @@ export class WebpWorkerPool {
 
     // Reject all pending tasks
     for (const pending of this.queue) {
-      globalBufferPool.release(pending.task.rgbData);
+      globalBufferPool.release(pending.task.rgbaData);
       pending.reject(new Error('Worker pool terminated'));
     }
     for (const pending of this.activeTasks.values()) {

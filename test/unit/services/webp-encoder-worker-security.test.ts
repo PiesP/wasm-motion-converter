@@ -27,7 +27,7 @@ describe('WebP encoder worker message security', () => {
     await handleMessage({
       data: {
         id: 1,
-        rgbData: new Uint8Array([0, 0, 0]),
+        rgbaData: new Uint8Array([0, 0, 0, 255]),
         width: 1,
         height: 1,
         quality: 0.8,
@@ -56,10 +56,10 @@ describe('WebP encoder worker message security', () => {
 
   it.each([
     {
-      name: 'a truncated RGB plane',
+      name: 'a truncated RGBA plane',
       request: {
         id: 11,
-        rgbData: new Uint8Array([0, 0, 0]),
+        rgbaData: new Uint8Array([0, 0, 0]),
         width: 2,
         height: 2,
         quality: 0.8,
@@ -70,7 +70,7 @@ describe('WebP encoder worker message security', () => {
       name: 'dimensions above the per-frame memory budget',
       request: {
         id: 12,
-        rgbData: new Uint8Array([0, 0, 0]),
+        rgbaData: new Uint8Array([0, 0, 0, 255]),
         width: 100_000,
         height: 100_000,
         quality: 0.8,
@@ -78,10 +78,21 @@ describe('WebP encoder worker message security', () => {
       },
     },
     {
-      name: 'an RGB plane larger than its pooled allocation bucket',
+      name: 'an RGBA plane larger than its pooled allocation bucket',
       request: {
         id: 14,
-        rgbData: new Uint8Array(5),
+        rgbaData: new Uint8Array(5),
+        width: 1,
+        height: 1,
+        quality: 0.8,
+        durationMs: 40,
+      },
+    },
+    {
+      name: 'an exact RGBA view backed by an oversized allocation',
+      request: {
+        id: 15,
+        rgbaData: new Uint8Array(new ArrayBuffer(8), 0, 4),
         width: 1,
         height: 1,
         quality: 0.8,
@@ -92,7 +103,7 @@ describe('WebP encoder worker message security', () => {
       name: 'a non-finite quality value',
       request: {
         id: 13,
-        rgbData: new Uint8Array([0, 0, 0]),
+        rgbaData: new Uint8Array([0, 0, 0, 255]),
         width: 1,
         height: 1,
         quality: Number.NaN,
@@ -125,8 +136,16 @@ describe('WebP encoder worker message security', () => {
     webp.set(bitstream, 20);
 
     const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+    const imageDataInputs: Array<{ data: Uint8ClampedArray; height: number; width: number }> = [];
     vi.stubGlobal('self', workerScope);
-    vi.stubGlobal('ImageData', class {});
+    vi.stubGlobal(
+      'ImageData',
+      class {
+        constructor(data: Uint8ClampedArray, width: number, height: number) {
+          imageDataInputs.push({ data, height, width });
+        }
+      }
+    );
     vi.stubGlobal(
       'OffscreenCanvas',
       class {
@@ -144,8 +163,7 @@ describe('WebP encoder worker message security', () => {
     await workerScope.onmessage?.({
       data: {
         id: 7,
-        // BufferPool rounds the packed 3-byte RGB payload up to a 4-byte bucket.
-        rgbData: new Uint8Array([0, 0, 0, 0]),
+        rgbaData: new Uint8Array([0, 0, 0, 255]),
         width: 1,
         height: 1,
         quality: 0.75,
@@ -161,5 +179,9 @@ describe('WebP encoder worker message security', () => {
     expect(result?.bitstream).toEqual(
       new Uint8Array([0x16, 0, 0, 0x9d, 0x01, 0x2a, 0xa0, 0])
     );
+    expect(imageDataInputs).toHaveLength(1);
+    expect(imageDataInputs[0]).toMatchObject({ height: 1, width: 1 });
+    expect(imageDataInputs[0]?.data).toEqual(new Uint8ClampedArray([0, 0, 0, 255]));
+    expect(imageDataInputs[0]?.data.buffer.byteLength).toBe(4);
   });
 });

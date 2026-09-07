@@ -25,8 +25,8 @@ vi.mock('gifenc', () => ({
 }));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
-    await options.onFrameAvailable(new Uint8Array([1, 1, 1]), 100, 0);
-    await options.onFrameAvailable(new Uint8Array([2, 2, 2]), 40, 1);
+    await options.onFrameAvailable(new Uint8Array([1, 1, 1, 255]), 100, 0);
+    await options.onFrameAvailable(new Uint8Array([2, 2, 2, 255]), 40, 1);
     return {
       frames: [],
       outputTotalMs: 0,

@@ -65,6 +65,7 @@ describe('decoder-service', () => {
       static copyResolvers = new Map<number, () => void>();
       static copyStarts: number[] = [];
       static failCopies = false;
+      static skipPixelWrites = false;
       static frameDuration: number | null = 16_667;
       static frameFormat: VideoPixelFormat | null = 'RGBA';
       static instances: FakeVideoFrame[] = [];
@@ -106,12 +107,14 @@ describe('decoder-service', () => {
         const bytes = new Uint8Array(
           ArrayBuffer.isView(destination) ? destination.buffer : destination
         );
-        for (let index = 0; index < this.codedWidth * this.codedHeight; index++) {
-          const offset = index * 4;
-          bytes[offset] = this.intensity;
-          bytes[offset + 1] = this.intensity;
-          bytes[offset + 2] = this.intensity;
-          bytes[offset + 3] = 255;
+        if (!FakeVideoFrame.skipPixelWrites) {
+          for (let index = 0; index < this.codedWidth * this.codedHeight; index++) {
+            const offset = index * 4;
+            bytes[offset] = this.intensity;
+            bytes[offset + 1] = this.intensity;
+            bytes[offset + 2] = this.intensity;
+            bytes[offset + 3] = 255;
+          }
         }
         return [{ offset: 0, stride: 8 * 4 }];
       }
@@ -268,6 +271,7 @@ describe('decoder-service', () => {
       FakeVideoFrame.failCopies = false;
       FakeVideoFrame.frameDuration = 16_667;
       FakeVideoFrame.frameFormat = 'RGBA';
+      FakeVideoFrame.skipPixelWrites = false;
       FakeVideoFrame.instances.length = 0;
       FakeVideoFrame.copyResolvers.clear();
       FakeVideoFrame.copyStarts.length = 0;
@@ -694,6 +698,42 @@ describe('decoder-service', () => {
       return delivered;
     }
 
+    it('keeps smart-skip selection and timing identical for RGB and RGBA delivery', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const intensities = [0, 0, 12, 12, 40, 40, 80, 80, 120, 120];
+      const chunks = intensities.map(
+        (intensity, index) => ({ intensity, timestamp: index * 1_000 }) as EncodedVideoChunk
+      );
+      const run = async (pixelFormat: 'rgb' | 'rgba') => {
+        const delivered: Array<{ durationMs: number; frameNumber: number }> = [];
+        const result = await decodeFrames(
+          {
+            chunks,
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.167,
+            framerate: 60,
+            sourceTotalMs: 167,
+            totalFrames: chunks.length,
+          },
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            pixelFormat,
+            smartFrameSkip: 'medium',
+            onFrameAvailable: (pixelData, durationMs, frameNumber) => {
+              delivered.push({ durationMs, frameNumber });
+              globalBufferPool.release(pixelData);
+            },
+          }
+        );
+        globalBufferPool.clear();
+        return { delivered, tailAccumulatedMs: result.tailAccumulatedMs };
+      };
+
+      expect(await run('rgba')).toEqual(await run('rgb'));
+    });
+
     it('derives a missing frame duration from source fps', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       FakeVideoFrame.frameDuration = null;
@@ -1029,6 +1069,7 @@ describe('decoder-service', () => {
           width: 8,
           height: 8,
           mode: 'stream',
+          pixelFormat: 'rgba',
           stagedCopyLookahead: true,
           onFrameAvailable: async (rgbData, _durationMs, frameNumber) => {
             delivered.push(frameNumber);
@@ -1084,7 +1125,7 @@ describe('decoder-service', () => {
       const pool = {
         activeWorkers: 2,
         encode: (task: EncodeTask) => {
-          globalBufferPool.releaseTransferred(task.rgbData.buffer as ArrayBuffer);
+          globalBufferPool.releaseTransferred(task.rgbaData.buffer as ArrayBuffer);
           activeTasks++;
           maxActiveTasks = Math.max(maxActiveTasks, activeTasks);
           return new Promise<EncodeTaskResult>((resolve) => {
@@ -1133,6 +1174,7 @@ describe('decoder-service', () => {
           width: 8,
           height: 8,
           mode: 'stream',
+          pixelFormat: 'rgba',
           stagedCopyLookahead: true,
           frameMemoryBudget: budget,
           processingFailureSignal: encoder.failureSignal,
@@ -1158,6 +1200,68 @@ describe('decoder-service', () => {
       expect(budget.usage.totalBytes).toBe(0);
     });
 
+    it('backpressures a third known-layout 4K source against shared persistent canvases', async () => {
+      const width = 3840;
+      const height = 2160;
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      FakeVideoFrame.controlledCopies = true;
+      FakeVideoFrame.skipPixelWrites = true;
+      const budget = new WebpFrameMemoryBudget({
+        codedWidth: width,
+        codedHeight: height,
+        displayWidth: width,
+        displayHeight: height,
+        targetWidth: width,
+        targetHeight: height,
+        workerCount: 1,
+      });
+      expect(
+        budget.calculatePendingSourceCapacity(width * height * 4, Number.MAX_SAFE_INTEGER)
+      ).toBe(2);
+
+      const decoding = decodeFrames(
+        {
+          chunks: [
+            { codedHeight: height, codedWidth: width, intensity: 0, timestamp: 0 },
+            { codedHeight: height, codedWidth: width, intensity: 1, timestamp: 1_000 },
+            { codedHeight: height, codedWidth: width, intensity: 2, timestamp: 2_000 },
+          ] as EncodedVideoChunk[],
+          config: { codec: 'vp09.00.10.08', codedWidth: width, codedHeight: height },
+          duration: 0.05,
+          framerate: 60,
+          sourceTotalMs: 50,
+          totalFrames: 3,
+        },
+        {
+          width,
+          height,
+          mode: 'stream',
+          pixelFormat: 'rgba',
+          stagedCopyLookahead: true,
+          frameMemoryBudget: budget,
+          onFrameAvailable: (rgbaData) => globalBufferPool.release(rgbaData),
+        }
+      );
+
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0]));
+      expect(FakeVideoFrame.instances).toHaveLength(2);
+      FakeVideoFrame.copyResolvers.get(0)?.();
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000]));
+      await vi.waitFor(() => expect(FakeVideoFrame.instances).toHaveLength(3));
+      FakeVideoFrame.copyResolvers.get(1_000)?.();
+      await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000, 2_000]));
+      FakeVideoFrame.copyResolvers.get(2_000)?.();
+
+      await expect(decoding).resolves.toMatchObject({ totalInputFrames: 3 });
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(budget.usage.sourceBytes).toBe(0);
+      expect(budget.usage.targetBytes).toBe(0);
+      budget.dispose();
+      expect(budget.usage.totalBytes).toBe(0);
+    });
+
     it('keeps shared-budget flush output serial while closing the full source burst', async () => {
       const outputCount = 4;
       const { Decoder, stats } = createFlushBurstVideoDecoder(outputCount, 1920, 1080);
@@ -1169,7 +1273,7 @@ describe('decoder-service', () => {
       const pool = {
         activeWorkers: 2,
         encode: (task: EncodeTask) => {
-          globalBufferPool.releaseTransferred(task.rgbData.buffer as ArrayBuffer);
+          globalBufferPool.releaseTransferred(task.rgbaData.buffer as ArrayBuffer);
           activeTasks++;
           maxActiveTasks = Math.max(maxActiveTasks, activeTasks);
           return new Promise<EncodeTaskResult>((resolve) =>
@@ -1215,6 +1319,7 @@ describe('decoder-service', () => {
           width: 960,
           height: 540,
           mode: 'stream',
+          pixelFormat: 'rgba',
           stagedCopyLookahead: true,
           frameMemoryBudget: budget,
           processingFailureSignal: encoder.failureSignal,
@@ -1253,7 +1358,7 @@ describe('decoder-service', () => {
       const pool = {
         activeWorkers: 2,
         encode: (task: EncodeTask) => {
-          globalBufferPool.releaseTransferred(task.rgbData.buffer as ArrayBuffer);
+          globalBufferPool.releaseTransferred(task.rgbaData.buffer as ArrayBuffer);
           return new Promise<EncodeTaskResult>((_resolve, reject) => {
             pending.set(task.id, { reject });
           });
@@ -1295,6 +1400,7 @@ describe('decoder-service', () => {
           width: 8,
           height: 8,
           mode: 'stream',
+          pixelFormat: 'rgba',
           stagedCopyLookahead: true,
           frameMemoryBudget: budget,
           processingFailureSignal: encoder.failureSignal,

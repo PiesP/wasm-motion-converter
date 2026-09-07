@@ -230,7 +230,7 @@ describe('main conversion pipeline encoder options', () => {
     expect(mocks.encodeWebp).toHaveBeenCalledOnce();
   });
 
-  it('routes full-resolution 4K WebP to the serial fallback before creating an unsafe pool', async () => {
+  it('creates only one memory-safe RGBA Worker for full-resolution 4K WebP', async () => {
     class FakeOffscreenCanvas {
       readonly convertToBlob = vi.fn();
       getContext(): object {
@@ -247,7 +247,7 @@ describe('main conversion pipeline encoder options', () => {
 
     await runConversionPipeline({ ...baseRequest, format: 'webp' }, vi.fn());
 
-    expect(mocks.createWorkerPool).not.toHaveBeenCalled();
+    expect(mocks.createWorkerPool).toHaveBeenCalledWith(1);
     expect(mocks.encodeWebpOffscreen).toHaveBeenCalledOnce();
     expect(mocks.encodeWebp).not.toHaveBeenCalled();
   });

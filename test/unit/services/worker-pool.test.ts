@@ -79,7 +79,7 @@ describe('WebpWorkerPool public API', () => {
     await expect(
       pool.encode({
         id: 0,
-        rgbData: buffer,
+        rgbaData: buffer,
         width: 1,
         height: 1,
         quality: 0.8,
@@ -156,7 +156,7 @@ describe('WebpWorkerPool public API', () => {
 
       const olderResult = olderPool!.encode({
         id: 0,
-        rgbData: new Uint8Array(4),
+        rgbaData: new Uint8Array(4),
         width: 1,
         height: 1,
         quality: 0.8,
@@ -169,7 +169,7 @@ describe('WebpWorkerPool public API', () => {
       let newerResolved = false;
       const newerResult = newerPool!.encode({
         id: 0,
-        rgbData: new Uint8Array(4),
+        rgbaData: new Uint8Array(4),
         width: 1,
         height: 1,
         quality: 0.8,

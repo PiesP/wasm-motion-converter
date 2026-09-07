@@ -35,7 +35,7 @@ describe('WebpWorkerPool buffer ownership', () => {
 
     const first = pool.encode({
       id: 1,
-      rgbData: firstBuffer,
+      rgbaData: firstBuffer,
       width: 2,
       height: 2,
       quality: 80,
@@ -43,7 +43,7 @@ describe('WebpWorkerPool buffer ownership', () => {
     });
     const queued = pool.encode({
       id: 2,
-      rgbData: queuedBuffer,
+      rgbaData: queuedBuffer,
       width: 2,
       height: 2,
       quality: 80,
@@ -74,7 +74,7 @@ describe('WebpWorkerPool buffer ownership', () => {
       const pool = new WebpWorkerPool(1, 1000);
       const pending = pool.encode({
         id: 1,
-        rgbData: new Uint8Array(8),
+        rgbaData: new Uint8Array(8),
         width: 2,
         height: 2,
         quality: 80,
@@ -104,7 +104,7 @@ describe('WebpWorkerPool buffer ownership', () => {
 
       const pending = pool.encode({
         id: 7,
-        rgbData: buffer,
+        rgbaData: buffer,
         width: 2,
         height: 2,
         quality: 80,
@@ -139,7 +139,7 @@ describe('WebpWorkerPool buffer ownership', () => {
     const worker = FakeWorker.instances[0];
     const pending = pool.encode({
       id: 21,
-      rgbData: new Uint8Array([0, 0, 0]),
+      rgbaData: new Uint8Array([0, 0, 0, 255]),
       width: 1,
       height: 1,
       quality: 0.8,
@@ -160,7 +160,7 @@ describe('WebpWorkerPool buffer ownership', () => {
     const worker = FakeWorker.instances[0];
     const pending = pool.encode({
       id: 22,
-      rgbData: new Uint8Array([0, 0, 0]),
+      rgbaData: new Uint8Array([0, 0, 0, 255]),
       width: 1,
       height: 1,
       quality: 0.8,
@@ -185,7 +185,7 @@ describe('WebpWorkerPool buffer ownership', () => {
     try {
       const timedOutTask = pool.encode({
         id: 30,
-        rgbData: new Uint8Array(4),
+        rgbaData: new Uint8Array(4),
         width: 1,
         height: 1,
         quality: 0.8,
@@ -208,7 +208,7 @@ describe('WebpWorkerPool buffer ownership', () => {
 
       nextTask = pool.encode({
         id: 31,
-        rgbData: new Uint8Array(4),
+        rgbaData: new Uint8Array(4),
         width: 1,
         height: 1,
         quality: 0.8,

@@ -76,7 +76,7 @@ vi.mock('gifenc', () => ({
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     for (let frame = 0; frame < mocks.state.frameCount; frame++) {
-      await options.onFrameAvailable(new Uint8Array([frame, frame, frame]), 100, frame);
+      await options.onFrameAvailable(new Uint8Array([frame, frame, frame, 255]), 100, frame);
     }
     return {
       frames: [],
@@ -188,7 +188,7 @@ describe('encodeGif output budgets', () => {
       })
     ).rejects.toThrow('aggregate memory limit exceeded');
 
-    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(12_288);
+    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(12_293);
     expect(mocks.state.cursor).toBe(0);
   });
 

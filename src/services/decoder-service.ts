@@ -4,7 +4,7 @@
 /**
  * Common VideoDecoder pipeline for GIF and WebP encoders.
  *
- * Extracts RGB frames from demuxed video chunks using VideoDecoder,
+ * Extracts RGB or opaque RGBA frames from demuxed video chunks using VideoDecoder,
  * with hardware acceleration support, frame decimation, and abort handling.
  *
  * Supports two modes:
@@ -39,9 +39,11 @@ import {
 import { globalBufferPool } from './buffer-pool';
 import { type DemuxResult, getEncodedChunkRetainedBytes } from './demuxer-service';
 import {
+  type CpuPixelFormat,
   calculateFrameOutputConcurrency,
   calculateStagedFrameSourceCapacity,
   estimateActiveFrameBytes,
+  estimateDecodedSourceFrameBytes,
   estimateRuntimeDecodedSourceFrameBytes,
   type FrameMemoryHandoff,
   type FrameMemoryReservation,
@@ -50,7 +52,7 @@ import {
 import {
   compute8x8Grayscale,
   computeMAD,
-  copyFrameToRGB,
+  copyFrameToPixels,
   createFrameProcessingContext,
   type FrameProcessingContext,
   getFrameDurationMs,
@@ -62,19 +64,21 @@ export interface DecodeOptions {
   height: number;
   /** Frame decimation: keep every Nth frame (1 = keep all) */
   frameDecimation?: number | undefined;
+  /** CPU pixel layout delivered to onFrameAvailable. */
+  pixelFormat?: CpuPixelFormat | undefined;
   /** Hardware acceleration policy */
   hwAccel?: ('prefer-hardware' | 'prefer-software') | undefined;
   /** Callback fired after each frame is decoded (for progress tracking) */
   onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /**
-   * Streaming callback: fired for each decoded frame with RGB data.
+   * Streaming callback: fired for each decoded frame with the requested CPU pixels.
    * When provided, frames are NOT accumulated into an array — instead they
    * are passed to this callback for immediate processing (e.g. encoding).
-   * The callback receives ownership of the RGB buffer (must release to pool).
+   * The callback receives ownership of the pixel buffer (must release to pool).
    */
   onFrameAvailable?:
     | ((
-        rgbData: Uint8Array,
+        pixelData: Uint8Array,
         durationMs: number,
         frameNum: number,
         memoryHandoff?: FrameMemoryHandoff
@@ -84,7 +88,7 @@ export interface DecodeOptions {
    * GPU-only callback: passes raw VideoFrame to encoder without reading
    * pixels into JS memory. Used by VP8 VideoEncoder path for zero-copy
    * GPU encoding. When provided, smart frame skip and adaptive mode are
-   * disabled (dHash requires RGB pixel data).
+   * disabled (dHash requires CPU pixel data).
    * The caller OWNS the VideoFrame and MUST call frame.close().
    */
   onVideoFrameAvailable?:
@@ -109,7 +113,7 @@ export interface DecodeOptions {
    * The signal reason should be the original Error.
    */
   processingFailureSignal?: AbortSignal | undefined;
-  /** Allow one ordered RGB copy to overlap a slow downstream delivery. */
+  /** Allow one ordered CPU pixel copy to overlap a slow downstream delivery. */
   stagedCopyLookahead?: boolean | undefined;
   /** Shared WebP source/task/result reservation ledger for the parallel path. */
   frameMemoryBudget?: WebpFrameMemoryBudget | undefined;
@@ -118,7 +122,7 @@ export interface DecodeOptions {
 }
 
 export interface DecodedFrame {
-  /** RGB pixel data, length = width * height * 3 */
+  /** CPU pixel data in the DecodeOptions pixel format. */
   data: Uint8Array;
   /** Frame display duration in milliseconds */
   duration: number;
@@ -149,12 +153,12 @@ export interface DecodeResult {
 }
 
 /**
- * Decode demuxed video chunks to RGB frames.
+ * Decode demuxed video chunks to CPU pixel frames.
  *
  * Pipeline:
  *   1. Configure VideoDecoder (hwAccel with software fallback)
  *   2. Pull chunks from DemuxResult only as decoder/output capacity becomes available
- *   3. Per-frame: copyTo RGB → optional filter → accumulate skipped durations
+ *   3. Per-frame: copy pixels → optional filter → accumulate skipped durations
  *   4a. Batch mode: collect into frames array
  *   4b. Stream mode: call onFrameAvailable callback per frame
  */
@@ -167,6 +171,7 @@ export async function decodeFrames(
     width,
     height,
     frameDecimation = 1,
+    pixelFormat = 'rgb',
     hwAccel = 'prefer-software',
     onFrameDecoded,
     onFrameAvailable,
@@ -214,7 +219,7 @@ export async function decodeFrames(
       }
     );
   }
-  const rgbFrames: DecodedFrame[] = streaming ? [] : []; // Only used in batch mode
+  const batchFrames: DecodedFrame[] = [];
   const pendingConversions = new Set<Promise<void>>();
 
   // ── Parallel decode temporarily disabled (Phase 1: fix infinite loop in pendingConversions) ──
@@ -256,23 +261,36 @@ export async function decodeFrames(
   const usesStagedCpuStreaming = streaming && typeof onVideoFrameAvailable !== 'function';
   const MAX_DECODE_QUEUE = 8;
   const queuedSourceHeadroomCount = MAX_DECODE_QUEUE + 1;
-  const maxPendingConversions = usesStagedCpuStreaming
-    ? calculateStagedFrameSourceCapacity(
-        configuredSourceWidth,
-        configuredSourceHeight,
-        configuredDisplayWidth,
-        configuredDisplayHeight,
-        width,
-        height,
+  const maxPendingConversions = frameMemoryBudget
+    ? frameMemoryBudget.calculatePendingSourceCapacity(
+        estimateDecodedSourceFrameBytes(
+          configuredSourceWidth,
+          configuredSourceHeight,
+          configuredDisplayWidth,
+          configuredDisplayHeight
+        ),
         10
       )
-    : calculateFrameOutputConcurrency(
-        configuredSourceWidth,
-        configuredSourceHeight,
-        width,
-        height,
-        10
-      );
+    : usesStagedCpuStreaming
+      ? calculateStagedFrameSourceCapacity(
+          configuredSourceWidth,
+          configuredSourceHeight,
+          configuredDisplayWidth,
+          configuredDisplayHeight,
+          width,
+          height,
+          10,
+          1,
+          pixelFormat
+        )
+      : calculateFrameOutputConcurrency(
+          configuredSourceWidth,
+          configuredSourceHeight,
+          width,
+          height,
+          10,
+          pixelFormat
+        );
   if (maxPendingConversions === 0) {
     throw new Error(
       'Decoded frame output memory limit exceeded (single frame exceeds byte budget)'
@@ -280,7 +298,7 @@ export async function decodeFrames(
   }
   const outputOwnershipRequestedMaximum = Number.MAX_SAFE_INTEGER;
   const targetWorkingBytes = usesStagedCpuStreaming
-    ? (frameMemoryBudget?.targetTaskBytes ?? estimateActiveFrameBytes(width, height))
+    ? (frameMemoryBudget?.targetTaskBytes ?? estimateActiveFrameBytes(width, height, pixelFormat))
     : 0;
   const queuedSourceHeadroomBytes = usesStagedCpuStreaming
     ? estimateRuntimeDecodedSourceFrameBytes(
@@ -300,7 +318,8 @@ export async function decodeFrames(
         width,
         height,
         Number.MAX_SAFE_INTEGER,
-        2
+        2,
+        pixelFormat
       )
     : 0;
   let stagedLookaheadEnabled =
@@ -732,14 +751,16 @@ export async function decodeFrames(
               frame.codedHeight,
               width,
               height,
-              outputOwnershipRequestedMaximum
+              outputOwnershipRequestedMaximum,
+              pixelFormat
             ),
             calculateFrameOutputConcurrency(
               frame.displayWidth,
               frame.displayHeight,
               width,
               height,
-              outputOwnershipRequestedMaximum
+              outputOwnershipRequestedMaximum,
+              pixelFormat
             )
           );
           if (activeOutputSlots >= maxOutputSlots) {
@@ -813,9 +834,9 @@ export async function decodeFrames(
           };
           try {
             // ── GPU-only path: pass VideoFrame directly to encoder ──
-            // Skips copyFrameToRGB (GPU→CPU read) and all grayscale-based processing.
+            // Skips the GPU→CPU pixel read and all grayscale-based processing.
             // Used by VP8 VideoEncoder path for zero-copy GPU encoding.
-            // Smart frame skip and adaptive mode are disabled (require RGB data).
+            // Smart frame skip and adaptive mode are disabled (require CPU pixels).
             if (typeof onVideoFrameAvailable === 'function') {
               await previousProcessing;
               enteredOrderedProcessing = true;
@@ -852,9 +873,9 @@ export async function decodeFrames(
               return;
             }
 
-            let rgbData: Uint8Array;
+            let pixelData: Uint8Array;
             try {
-              rgbData = await copyFrameToRGB(frame, width, height, frameCtx);
+              pixelData = await copyFrameToPixels(frame, width, height, frameCtx, pixelFormat);
             } finally {
               if (usesStagedCpuStreaming) {
                 closeSourceFrame();
@@ -864,12 +885,14 @@ export async function decodeFrames(
             await previousProcessing;
             enteredOrderedProcessing = true;
             if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) {
-              globalBufferPool.release(rgbData);
+              globalBufferPool.release(pixelData);
               return;
             }
 
             const shouldMeasureMotion = streaming && (skipThreshold >= 0 || isAdaptive);
-            const gray = shouldMeasureMotion ? compute8x8Grayscale(rgbData, width, height) : null;
+            const gray = shouldMeasureMotion
+              ? compute8x8Grayscale(pixelData, width, height, pixelFormat === 'rgba' ? 4 : 3)
+              : null;
             const frameDistance =
               gray !== null && prevGray !== null ? computeMAD(gray, prevGray) : null;
 
@@ -890,7 +913,7 @@ export async function decodeFrames(
                   // Skip this frame: accumulate duration, release buffer, return
                   consecutiveSkipMs += totalDuration;
                   smartSkippedCount++;
-                  globalBufferPool.release(rgbData);
+                  globalBufferPool.release(pixelData);
                   return;
                 }
               }
@@ -909,7 +932,7 @@ export async function decodeFrames(
             //
             // NOTE: This block is NEVER entered when onVideoFrameAvailable is active
             // (GPU-only path) because that path skips copyFrameToRGB entirely, meaning
-            // no rgbData/grayscale/MAD is available. See the GPU-only early return
+            // no CPU pixel data/grayscale/MAD is available. See the GPU-only early return
             // earlier in this function (onVideoFrameAvailable check).
             //
             // NOTE: The first frame is always classified as adaptLastMotionClass
@@ -961,7 +984,7 @@ export async function decodeFrames(
               if (shouldSkip) {
                 consecutiveSkipMs += totalDuration;
                 smartSkippedCount++;
-                globalBufferPool.release(rgbData);
+                globalBufferPool.release(pixelData);
                 return;
               }
 
@@ -981,7 +1004,7 @@ export async function decodeFrames(
               let delivery: Promise<void> | void;
               try {
                 delivery = frameAvailable(
-                  rgbData,
+                  pixelData,
                   totalDuration + smartCarryoverMs,
                   frameNum,
                   targetMemoryHandoff
@@ -991,10 +1014,10 @@ export async function decodeFrames(
               }
               await delivery;
               smartCarryoverMs = 0;
-              // Note: onFrameAvailable is responsible for releasing rgbData
+              // Note: onFrameAvailable is responsible for releasing pixelData
             } else {
               // Batch mode: collect into array (existing behavior for WebP)
-              rgbFrames.push({ data: rgbData, duration: totalDuration });
+              batchFrames.push({ data: pixelData, duration: totalDuration });
             }
 
             // Report decoding progress — throttle to every 10 frames.
@@ -1007,9 +1030,9 @@ export async function decodeFrames(
               onFrameDecoded &&
               (streaming
                 ? inputFrameCount % 10 === 0
-                : rgbFrames.length % 10 === 0 || rgbFrames.length === 1)
+                : batchFrames.length % 10 === 0 || batchFrames.length === 1)
             ) {
-              onFrameDecoded(streaming ? keptFrameCount : rgbFrames.length, demux.totalFrames);
+              onFrameDecoded(streaming ? keptFrameCount : batchFrames.length, demux.totalFrames);
             }
           } catch (error) {
             recordConversionError(error);
@@ -1108,7 +1131,7 @@ export async function decodeFrames(
       // Backpressure on output processing (RES-H2): wait if too many
       // frame conversion promises are in flight. This prevents unbounded
       // memory growth when decoded frames accumulate faster than they
-      // can be processed (e.g., copyToRGB + encoding).
+      // can be processed (e.g., pixel copy + encoding).
       if (pendingConversions.size >= maxPendingConversions) {
         await Promise.race([...pendingConversions]);
       }
@@ -1187,8 +1210,8 @@ export async function decodeFrames(
     if (pipelineFailure) throw pipelineFailure;
 
     // Add any remaining accumulated duration to the last frame (batch mode only)
-    if (!streaming && accumulatedDuration > 0 && rgbFrames.length > 0) {
-      const last = rgbFrames[rgbFrames.length - 1];
+    if (!streaming && accumulatedDuration > 0 && batchFrames.length > 0) {
+      const last = batchFrames[batchFrames.length - 1];
       if (last) last.duration += accumulatedDuration;
     }
 
@@ -1197,12 +1220,12 @@ export async function decodeFrames(
       streamedSourceDurationUs > 0 ? streamedSourceDurationUs / 1000 : demux.sourceTotalMs;
     // Streaming mode: encoder handles frame timing internally, so outputTotalMs is not
     // tracked here. GIF/WebP encoders compute their own timing from frame durations.
-    // Non-streaming: sum of all RGB frame durations.
-    const outputTotalMs = streaming ? 0 : rgbFrames.reduce((sum, f) => sum + f.duration, 0);
+    // Non-streaming: sum all retained frame durations.
+    const outputTotalMs = streaming ? 0 : batchFrames.reduce((sum, f) => sum + f.duration, 0);
 
     logger.info('decoders', 'Decoding complete', {
       totalInputFrames: inputFrameCount,
-      outputFrames: streaming ? keptFrameCount : rgbFrames.length,
+      outputFrames: streaming ? keptFrameCount : batchFrames.length,
       skippedByDecimation,
       smartSkipped: smartSkippedCount,
       smartSkipMode: effectiveSmartSkip,
@@ -1212,7 +1235,7 @@ export async function decodeFrames(
     });
 
     decodeResult = {
-      frames: rgbFrames,
+      frames: batchFrames,
       totalInputFrames: inputFrameCount,
       skippedByDecimation,
       smartSkipped: smartSkippedCount,

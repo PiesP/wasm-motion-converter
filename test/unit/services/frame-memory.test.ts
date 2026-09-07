@@ -11,6 +11,7 @@ import {
   estimateDecodedSourceFrameBytes,
   estimateActiveFrameBytes,
   estimateFrameOutputBytes,
+  estimateFrameTaskBytes,
   estimateRuntimeDecodedSourceFrameBytes,
   WebpFrameMemoryBudget,
 } from '@services/frame-memory';
@@ -80,6 +81,19 @@ describe('frame memory reservations', () => {
 
   it('keeps the existing small-frame parallelism', () => {
     expect(calculateFrameConcurrency(8, 8, 10)).toBe(10);
+  });
+
+  it('accounts only the remaining RGBA task transient beside its pooled pixels', () => {
+    const pixels = 1920 * 1080;
+    expect(estimateFrameTaskBytes(1920, 1080, 'rgb')).toBe(
+      getPooledBufferSize(pixels * 3) + pixels * 8
+    );
+    expect(estimateFrameTaskBytes(1920, 1080, 'rgba')).toBe(
+      getPooledBufferSize(pixels * 4) + pixels * 4
+    );
+    expect(estimateFrameTaskBytes(1920, 1080, 'rgba')).toBeLessThan(
+      estimateFrameTaskBytes(1920, 1080, 'rgb')
+    );
   });
 
   it('reduces 4K live-frame concurrency to the shared byte budget', () => {
@@ -196,7 +210,7 @@ describe('frame memory reservations', () => {
     expect(budget.usage.totalBytes).toBe(0);
   });
 
-  it('routes a full-resolution 4K source away from an unsafe Worker pool', () => {
+  it('admits one RGBA Worker for full-resolution 4K within the shared budget', () => {
     const width = 3840;
     const height = 2160;
     expect(
@@ -209,7 +223,7 @@ describe('frame memory reservations', () => {
         targetHeight: height,
         requestedWorkers: 2,
       })
-    ).toBe(0);
+    ).toBe(1);
     expect(
       calculateWebpWorkerCountForBudget({
         codedWidth: width,

@@ -468,6 +468,7 @@ async function _runPipelineInner(
                 frameDecimation: webpDecimation,
                 hwAccel: 'prefer-hardware',
                 smartFrameSkip: request.smartFrameSkip,
+                pixelFormat: 'rgba',
                 stagedCopyLookahead: true,
                 frameMemoryBudget,
                 processingFailureSignal: streamingEncoder.failureSignal,
@@ -493,24 +494,24 @@ async function _runPipelineInner(
                   });
                 },
                 onFrameAvailable: async (
-                  rgbData: Uint8Array,
+                  rgbaData: Uint8Array,
                   frameDurationMs: number,
                   frameNum: number,
                   memoryHandoff
                 ) => {
                   if (signal?.aborted) {
-                    globalBufferPool.release(rgbData);
+                    globalBufferPool.release(rgbaData);
                     throw new DOMException('Cancelled', 'AbortError');
                   }
                   const shouldSkip = decimationController.shouldSkip(frameNum);
                   if (shouldSkip) {
                     dynamicAccumulatedMs += frameDurationMs;
-                    globalBufferPool.release(rgbData);
+                    globalBufferPool.release(rgbaData);
                     return;
                   }
                   const totalDuration = frameDurationMs + dynamicAccumulatedMs;
                   dynamicAccumulatedMs = 0;
-                  await streamingEncoder.submit(rgbData, totalDuration, memoryHandoff);
+                  await streamingEncoder.submit(rgbaData, totalDuration, memoryHandoff);
                   // buffer ownership transferred to worker via postMessage — do NOT release
                 },
               },

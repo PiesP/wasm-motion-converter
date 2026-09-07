@@ -4,12 +4,12 @@
 /**
  * Parallel WebP Encoder — encoding only (no decoding).
  *
- * Receives pre-decoded RGB frames and distributes them to a pool of
+ * Receives pre-decoded opaque RGBA frames and distributes them to a pool of
  * Web Workers for parallel OffscreenCanvas WebP encoding. Results are
  * collected in order and muxed into an animated WebP container.
  *
  * The current caller decodes outside this encoding pool and is responsible for
- * feeding RGB frames via submit().
+ * feeding RGBA frames via submit().
  *
  * The pipeline selects a main-thread fallback before calling this function when
  * the Worker pool is unavailable.
@@ -39,7 +39,7 @@ interface FrameEncodeResult {
 
 export interface StreamingWebpEncoder {
   submit: (
-    rgbData: Uint8Array,
+    rgbaData: Uint8Array,
     durationMs: number,
     memoryHandoff?: FrameMemoryHandoff
   ) => Promise<void>;
@@ -206,12 +206,12 @@ export function createStreamingWebpEncoder(
   }
 
   const submit = async (
-    rgbData: Uint8Array,
+    rgbaData: Uint8Array,
     durationMs: number,
     memoryHandoff?: FrameMemoryHandoff
   ): Promise<void> => {
     let reservation: FrameMemoryReservation | null = null;
-    let poolOwnsRgb = false;
+    let poolOwnsPixels = false;
     let admissionAcquired = false;
     try {
       await acquireAdmission();
@@ -234,7 +234,7 @@ export function createStreamingWebpEncoder(
       const id = submittedCount++;
       const task: EncodeTask = {
         id,
-        rgbData,
+        rgbaData,
         width,
         height,
         quality: qualityF,
@@ -291,10 +291,10 @@ export function createStreamingWebpEncoder(
         });
 
       inFlight.add(promise);
-      poolOwnsRgb = true;
+      poolOwnsPixels = true;
     } catch (error) {
       reservation?.release();
-      if (!poolOwnsRgb && rgbData.byteLength > 0) globalBufferPool.release(rgbData);
+      if (!poolOwnsPixels && rgbaData.byteLength > 0) globalBufferPool.release(rgbaData);
       throw error;
     } finally {
       if (admissionAcquired) releaseAdmission();

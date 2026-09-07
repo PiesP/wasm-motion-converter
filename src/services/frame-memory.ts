@@ -5,10 +5,14 @@ import { FRAME_PIPELINE_MEMORY_BUDGET_BYTES } from '@utils/constants';
 import { getPooledBufferSize } from './buffer-pool';
 
 const RGB_BYTES_PER_PIXEL = 3;
+const RGBA_BYTES_PER_PIXEL = 4;
 const DECODED_RGBA_BYTES_PER_PIXEL = 4;
 const UNCERTAIN_DECODED_BYTES_PER_PIXEL = 8;
-const FRAME_TASK_TRANSIENT_BYTES_PER_PIXEL = 8;
+const RGB_FRAME_TASK_TRANSIENT_BYTES_PER_PIXEL = 8;
+const RGBA_FRAME_TASK_TRANSIENT_BYTES_PER_PIXEL = 4;
 const CANVAS_BYTES_PER_PIXEL = 4;
+
+export type CpuPixelFormat = 'rgb' | 'rgba';
 
 export interface FrameMemoryUsage {
   readonly canvasBytes: number;
@@ -90,7 +94,7 @@ export function calculateWebpWorkerCountForBudget(options: WebpWorkerBudgetOptio
     options.displayHeight,
     null
   );
-  const taskBytes = estimateFrameTaskBytes(options.targetWidth, options.targetHeight);
+  const taskBytes = estimateFrameTaskBytes(options.targetWidth, options.targetHeight, 'rgba');
   const canvasBytes = estimateCanvasBytes(options.targetWidth, options.targetHeight);
   const decoderCanvasBytes = canvasBytes;
   const sourceHeadroomBytes = sourceBytes * 9;
@@ -116,7 +120,7 @@ interface TargetDrainWaiter {
 }
 
 /**
- * Shared 192 MiB ledger for decoded sources, RGB/worker tasks, persistent
+ * Shared 192 MiB ledger for decoded sources, pixel/worker tasks, persistent
  * canvases, and completed results waiting for presentation order.
  */
 export class WebpFrameMemoryBudget {
@@ -140,7 +144,11 @@ export class WebpFrameMemoryBudget {
   constructor(options: WebpFrameMemoryBudgetOptions) {
     const requestedWorkers = Math.max(1, Math.floor(options.workerCount));
     const canvasBytes = estimateCanvasBytes(options.targetWidth, options.targetHeight);
-    this.targetTaskBytes = estimateFrameTaskBytes(options.targetWidth, options.targetHeight);
+    this.targetTaskBytes = estimateFrameTaskBytes(
+      options.targetWidth,
+      options.targetHeight,
+      'rgba'
+    );
     const sourceFrameBytes = estimateRuntimeDecodedSourceFrameBytes(
       options.codedWidth,
       options.codedHeight,
@@ -187,6 +195,16 @@ export class WebpFrameMemoryBudget {
       targetBytes: this.targetBytes,
       totalBytes: this.canvasBytes + this.resultBytes + this.sourceBytes + this.targetBytes,
     };
+  }
+
+  /** Decoder output promises may retain this many source floors beside one task. */
+  calculatePendingSourceCapacity(sourceBytes: number, requestedMaximum: number): number {
+    assertReservationBytes(sourceBytes);
+    if (sourceBytes === 0) return 0;
+    const requested = Math.max(1, Math.floor(requestedMaximum));
+    const availableSourceBytes =
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES - this.canvasBytes - this.targetTaskBytes;
+    return Math.min(requested, Math.max(0, Math.floor(availableSourceBytes / sourceBytes)));
   }
 
   tryReserveSource(bytes: number): FrameMemoryReservation | null {
@@ -382,25 +400,37 @@ export function estimateRuntimeDecodedSourceFrameBytes(
   return uncertainBytes;
 }
 
-/** Estimate the cross-realm memory retained by one active RGB encode task. */
-export function estimateActiveFrameBytes(width: number, height: number): number {
-  return estimateFrameTaskBytes(width, height) + estimateCanvasBytes(width, height);
+/** Estimate the cross-realm memory retained by one active pixel encode task. */
+export function estimateActiveFrameBytes(
+  width: number,
+  height: number,
+  pixelFormat: CpuPixelFormat = 'rgb'
+): number {
+  return estimateFrameTaskBytes(width, height, pixelFormat) + estimateCanvasBytes(width, height);
 }
 
-/** RGB ownership plus transient decoder/worker RGBA storage. */
-export function estimateFrameTaskBytes(width: number, height: number): number {
+/** Pixel ownership plus format-specific transient decoder/worker storage. */
+export function estimateFrameTaskBytes(
+  width: number,
+  height: number,
+  pixelFormat: CpuPixelFormat = 'rgb'
+): number {
   const pixels = width * height;
   if (!Number.isSafeInteger(pixels) || pixels <= 0) {
     throw new RangeError('Frame dimensions must produce a positive safe pixel count');
   }
 
-  const rgbBytes = pixels * RGB_BYTES_PER_PIXEL;
-  const transientBytes = pixels * FRAME_TASK_TRANSIENT_BYTES_PER_PIXEL;
-  if (!Number.isSafeInteger(rgbBytes) || !Number.isSafeInteger(transientBytes)) {
+  const pixelBytes = pixels * (pixelFormat === 'rgba' ? RGBA_BYTES_PER_PIXEL : RGB_BYTES_PER_PIXEL);
+  const transientBytes =
+    pixels *
+    (pixelFormat === 'rgba'
+      ? RGBA_FRAME_TASK_TRANSIENT_BYTES_PER_PIXEL
+      : RGB_FRAME_TASK_TRANSIENT_BYTES_PER_PIXEL);
+  if (!Number.isSafeInteger(pixelBytes) || !Number.isSafeInteger(transientBytes)) {
     throw new RangeError('Frame allocation exceeds the safe integer range');
   }
 
-  return getPooledBufferSize(rgbBytes) + transientBytes;
+  return getPooledBufferSize(pixelBytes) + transientBytes;
 }
 
 /** Persistent RGBA Canvas backing retained by an initialized worker/context. */
@@ -418,10 +448,11 @@ export function estimateFrameOutputBytes(
   sourceWidth: number,
   sourceHeight: number,
   targetWidth: number,
-  targetHeight: number
+  targetHeight: number,
+  pixelFormat: CpuPixelFormat = 'rgb'
 ): number {
   if (sourceWidth === targetWidth && sourceHeight === targetHeight) {
-    return estimateActiveFrameBytes(sourceWidth, sourceHeight);
+    return estimateActiveFrameBytes(sourceWidth, sourceHeight, pixelFormat);
   }
 
   const sourcePixels = sourceWidth * sourceHeight;
@@ -433,7 +464,7 @@ export function estimateFrameOutputBytes(
     throw new RangeError('Source frame allocation exceeds the safe integer range');
   }
 
-  const targetBytes = estimateActiveFrameBytes(targetWidth, targetHeight);
+  const targetBytes = estimateActiveFrameBytes(targetWidth, targetHeight, pixelFormat);
   const totalBytes = sourceBytes + targetBytes;
   if (!Number.isSafeInteger(totalBytes)) {
     throw new RangeError('Frame output allocation exceeds the safe integer range');
@@ -447,14 +478,16 @@ export function calculateFrameOutputConcurrency(
   sourceHeight: number,
   targetWidth: number,
   targetHeight: number,
-  requestedMaximum: number
+  requestedMaximum: number,
+  pixelFormat: CpuPixelFormat = 'rgb'
 ): number {
   const requested = Math.max(1, Math.floor(requestedMaximum));
   const bytesPerFrame = estimateFrameOutputBytes(
     sourceWidth,
     sourceHeight,
     targetWidth,
-    targetHeight
+    targetHeight,
+    pixelFormat
   );
   return Math.min(requested, Math.floor(FRAME_PIPELINE_MEMORY_BUDGET_BYTES / bytesPerFrame));
 }
@@ -472,7 +505,8 @@ export function calculateStagedFrameSourceCapacity(
   targetWidth: number,
   targetHeight: number,
   requestedMaximum: number,
-  targetWorkingSetCount = 1
+  targetWorkingSetCount = 1,
+  pixelFormat: CpuPixelFormat = 'rgb'
 ): number {
   const requested = Math.max(1, Math.floor(requestedMaximum));
   const targetCount = Math.max(1, Math.floor(targetWorkingSetCount));
@@ -482,7 +516,8 @@ export function calculateStagedFrameSourceCapacity(
     displayWidth,
     displayHeight
   );
-  const targetWorkingBytes = estimateActiveFrameBytes(targetWidth, targetHeight) * targetCount;
+  const targetWorkingBytes =
+    estimateActiveFrameBytes(targetWidth, targetHeight, pixelFormat) * targetCount;
   if (!Number.isSafeInteger(targetWorkingBytes)) {
     throw new RangeError('Target working-set reservation exceeds the safe integer range');
   }
@@ -495,10 +530,11 @@ export function calculateStagedFrameSourceCapacity(
 export function calculateFrameConcurrency(
   width: number,
   height: number,
-  requestedMaximum: number
+  requestedMaximum: number,
+  pixelFormat: CpuPixelFormat = 'rgb'
 ): number {
   return Math.max(
     1,
-    calculateFrameOutputConcurrency(width, height, width, height, requestedMaximum)
+    calculateFrameOutputConcurrency(width, height, width, height, requestedMaximum, pixelFormat)
   );
 }
