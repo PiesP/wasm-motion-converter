@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversionRequest } from '@t/conversion-types';
 
 const mocks = vi.hoisted(() => ({
+  createWorkerPool: vi.fn(),
   demuxVideo: vi.fn(),
   disposeWorkerPool: vi.fn(),
   encodeGif: vi.fn(),
@@ -41,7 +42,7 @@ vi.mock('@services/offscreen-webp-encoder', () => ({
   encodeWebpOffscreen: mocks.encodeWebpOffscreen,
 }));
 vi.mock('@services/worker-pool', () => ({
-  createWorkerPool: () => null,
+  createWorkerPool: mocks.createWorkerPool,
   disposeWorkerPool: mocks.disposeWorkerPool,
   WebpWorkerPool: { getOptimalWorkerCount: () => 1 },
 }));
@@ -64,6 +65,7 @@ const baseRequest: ConversionRequest = {
 beforeEach(() => {
   demuxResult.dispose.mockClear();
   mocks.demuxVideo.mockReset().mockResolvedValue(demuxResult);
+  mocks.createWorkerPool.mockReset().mockReturnValue(null);
   mocks.encodeGif.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
   mocks.encodeWebp.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
   mocks.encodeWebpOffscreen.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
@@ -226,5 +228,27 @@ describe('main conversion pipeline encoder options', () => {
 
     expect(mocks.encodeWebpOffscreen).not.toHaveBeenCalled();
     expect(mocks.encodeWebp).toHaveBeenCalledOnce();
+  });
+
+  it('routes full-resolution 4K WebP to the serial fallback before creating an unsafe pool', async () => {
+    class FakeOffscreenCanvas {
+      readonly convertToBlob = vi.fn();
+      getContext(): object {
+        return {};
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+    vi.stubGlobal('Worker', class {});
+    mocks.demuxVideo.mockResolvedValueOnce({
+      ...demuxResult,
+      config: { codec: 'avc1.640033', codedWidth: 3840, codedHeight: 2160 },
+      totalFrames: 1,
+    });
+
+    await runConversionPipeline({ ...baseRequest, format: 'webp' }, vi.fn());
+
+    expect(mocks.createWorkerPool).not.toHaveBeenCalled();
+    expect(mocks.encodeWebpOffscreen).toHaveBeenCalledOnce();
+    expect(mocks.encodeWebp).not.toHaveBeenCalled();
   });
 });

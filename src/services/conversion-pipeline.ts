@@ -49,11 +49,12 @@ import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import { calcAutoDecimation } from './encoder-common';
+import { calculateWebpWorkerCountForBudget, WebpFrameMemoryBudget } from './frame-memory';
 import { clearCanvasCache, resolveVideoDimensions } from './frame-utils';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { resolveOutputLimits } from './output-limits';
-import { createStreamingWebpEncoder } from './parallel-webp-encoder';
+import { createStreamingWebpEncoder, type StreamingWebpEncoder } from './parallel-webp-encoder';
 import { encodeWebp } from './webp-encoder-service';
 import { createWorkerPool, disposeWorkerPool, WebpWorkerPool } from './worker-pool';
 
@@ -125,6 +126,8 @@ async function _runPipelineInner(
   const { DECODE_RANGE } = PROGRESS_PHASE_RANGES;
   let demuxSession: Awaited<ReturnType<typeof demuxVideo>> | undefined;
   let workerPool: WebpWorkerPool | null = null;
+  let streamingWebpEncoder: StreamingWebpEncoder | null = null;
+  let webpFrameMemoryBudget: WebpFrameMemoryBudget | null = null;
   const terminateWorkerPool = (): void => {
     disposeWorkerPool(workerPool);
     workerPool = null;
@@ -366,14 +369,23 @@ async function _runPipelineInner(
       );
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
 
-      // Use parallel Worker-based encoder when available (distributes frame
-      // encoding across multiple CPU cores for 2-3x speedup).
+      // Use the parallel Worker-based encoder when its complete resource model fits.
       // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
-      // Pass scaled dimensions to createWorkerPool() so the 4K 2-worker limit
-      // is properly enforced at the gate level (not just inside the encoder).
+      // Size the pool against the shared source/task/canvas budget before any
+      // Worker is created. A zero capacity selects the serial fallback below.
       const w = Math.max(1, Math.floor(codedWidth * request.scale));
       const h = Math.max(1, Math.floor(codedHeight * request.scale));
-      workerPool = createWorkerPool(WebpWorkerPool.getOptimalWorkerCount(w, h));
+      const desiredWorkerCount = WebpWorkerPool.getOptimalWorkerCount(w, h);
+      const memorySafeWorkerCount = calculateWebpWorkerCountForBudget({
+        codedWidth: demuxResult.config.codedWidth ?? codedWidth,
+        codedHeight: demuxResult.config.codedHeight ?? codedHeight,
+        displayWidth: demuxResult.config.displayAspectWidth ?? codedWidth,
+        displayHeight: demuxResult.config.displayAspectHeight ?? codedHeight,
+        targetWidth: w,
+        targetHeight: h,
+        requestedWorkers: desiredWorkerCount,
+      });
+      workerPool = memorySafeWorkerCount > 0 ? createWorkerPool(memorySafeWorkerCount) : null;
       if (signal?.aborted) {
         terminateWorkerPool();
         signal.throwIfAborted();
@@ -413,11 +425,19 @@ async function _runPipelineInner(
           }
         );
 
-        // Decode on main thread, stream frames directly to worker pool.
-        // Uses createStreamingWebpEncoder to avoid accumulating all frames
-        // in an array (reduces peak memory by ~50% for large videos).
+        // Decode outside the encoding pool and stream frames directly to its Workers.
         const decimationController = createDynamicDecimationController();
 
+        const frameMemoryBudget = new WebpFrameMemoryBudget({
+          codedWidth: demuxResult.config.codedWidth ?? codedWidth,
+          codedHeight: demuxResult.config.codedHeight ?? codedHeight,
+          displayWidth: demuxResult.config.displayAspectWidth ?? codedWidth,
+          displayHeight: demuxResult.config.displayAspectHeight ?? codedHeight,
+          targetWidth: w,
+          targetHeight: h,
+          workerCount: pool.activeWorkers,
+        });
+        webpFrameMemoryBudget = frameMemoryBudget;
         const streamingEncoder = createStreamingWebpEncoder(
           pool,
           w,
@@ -429,8 +449,10 @@ async function _runPipelineInner(
             reportEncodingProgress(currentFrame, currentFrame, p.currentFrame ?? null);
           },
           outputLimits,
-          signal
+          signal,
+          frameMemoryBudget
         );
+        streamingWebpEncoder = streamingEncoder;
 
         // Accumulate durations from dynamically skipped frames (see offscreen-webp-encoder).
         let dynamicAccumulatedMs = 0;
@@ -447,6 +469,7 @@ async function _runPipelineInner(
                 hwAccel: 'prefer-hardware',
                 smartFrameSkip: request.smartFrameSkip,
                 stagedCopyLookahead: true,
+                frameMemoryBudget,
                 processingFailureSignal: streamingEncoder.failureSignal,
                 onFrameDecoded: (frameIdx, _total) => {
                   observedDecodedFrames = Math.max(observedDecodedFrames, frameIdx);
@@ -472,7 +495,8 @@ async function _runPipelineInner(
                 onFrameAvailable: async (
                   rgbData: Uint8Array,
                   frameDurationMs: number,
-                  frameNum: number
+                  frameNum: number,
+                  memoryHandoff
                 ) => {
                   if (signal?.aborted) {
                     globalBufferPool.release(rgbData);
@@ -486,7 +510,7 @@ async function _runPipelineInner(
                   }
                   const totalDuration = frameDurationMs + dynamicAccumulatedMs;
                   dynamicAccumulatedMs = 0;
-                  await streamingEncoder.submit(rgbData, totalDuration);
+                  await streamingEncoder.submit(rgbData, totalDuration, memoryHandoff);
                   // buffer ownership transferred to worker via postMessage — do NOT release
                 },
               },
@@ -674,8 +698,10 @@ async function _runPipelineInner(
     signal?.removeEventListener('abort', terminateWorkerPool);
     demuxSession?.dispose?.();
     throttled.cleanup();
-    globalBufferPool.clear();
-    clearCanvasCache();
     terminateWorkerPool();
+    streamingWebpEncoder?.dispose();
+    webpFrameMemoryBudget?.dispose();
+    clearCanvasCache();
+    globalBufferPool.clear();
   }
 }

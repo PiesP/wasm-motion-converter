@@ -280,12 +280,14 @@ export class WebpWorkerPool {
    */
   async encode(task: EncodeTask): Promise<EncodeTaskResult> {
     if (this.terminated) {
+      globalBufferPool.release(task.rgbData);
       return Promise.reject(new Error('Worker pool has been terminated'));
     }
 
     // If no workers were created (all init attempts failed), reject immediately
     // rather than queuing tasks that will never complete (M5 fix).
     if (this.workers.length === 0) {
+      globalBufferPool.release(task.rgbData);
       return Promise.reject(new Error('Worker pool has no active workers'));
     }
 

@@ -69,6 +69,27 @@ describe('WebpWorkerPool public API', () => {
     expect(release).not.toHaveBeenCalled();
   });
 
+  it('releases a task rejected before dispatch by a terminated pool', async () => {
+    const release = vi.spyOn(globalBufferPool, 'release');
+    const pool = new WebpWorkerPool(1, 1000);
+    const buffer = new Uint8Array(8);
+    pool.terminate();
+    release.mockClear();
+
+    await expect(
+      pool.encode({
+        id: 0,
+        rgbData: buffer,
+        width: 1,
+        height: 1,
+        quality: 0.8,
+        durationMs: 40,
+      })
+    ).rejects.toThrow('terminated');
+    expect(release).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledWith(buffer);
+  });
+
   it('creates conversion pools with the calculated resolution concurrency caps', () => {
     vi.stubGlobal('OffscreenCanvas', class {});
     vi.stubGlobal('createImageBitmap', vi.fn());
