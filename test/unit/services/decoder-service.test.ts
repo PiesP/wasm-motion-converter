@@ -1262,6 +1262,53 @@ describe('decoder-service', () => {
       expect(budget.usage.totalBytes).toBe(0);
     });
 
+    it('reports the shared byte budget when a native 4K flush burst exceeds capacity', async () => {
+      const width = 3840;
+      const height = 2160;
+      const { Decoder } = createFlushBurstVideoDecoder(3, width, height);
+      vi.stubGlobal('VideoDecoder', Decoder);
+      const budget = new WebpFrameMemoryBudget({
+        codedWidth: width,
+        codedHeight: height,
+        displayWidth: width,
+        displayHeight: height,
+        targetWidth: width,
+        targetHeight: height,
+        workerCount: 1,
+      });
+
+      await expect(
+        decodeFrames(
+          {
+            chunks: [],
+            config: { codec: 'vp09.flush.shared-budget', codedWidth: width, codedHeight: height },
+            duration: 0.05,
+            framerate: 60,
+            sourceTotalMs: 50,
+            totalFrames: 3,
+          },
+          {
+            width,
+            height,
+            mode: 'stream',
+            pixelFormat: 'rgba',
+            frameMemoryBudget: budget,
+            onFrameAvailable: (rgbaData) => globalBufferPool.release(rgbaData),
+          }
+        )
+      ).rejects.toThrow(
+        'Decoded frame output memory limit exceeded (shared frame byte budget)'
+      );
+
+      for (const frame of FakeVideoFrame.instances) {
+        expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(budget.usage.sourceBytes).toBe(0);
+      expect(budget.usage.targetBytes).toBe(0);
+      budget.dispose();
+      expect(budget.usage.totalBytes).toBe(0);
+    });
+
     it('keeps shared-budget flush output serial while closing the full source burst', async () => {
       const outputCount = 4;
       const { Decoder, stats } = createFlushBurstVideoDecoder(outputCount, 1920, 1080);

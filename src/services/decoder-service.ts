@@ -729,15 +729,15 @@ export async function decodeFrames(
                   Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes >
                 FRAME_PIPELINE_MEMORY_BUDGET_BYTES
           ) {
-            const maxSourceFrames = Math.floor(
-              (FRAME_PIPELINE_MEMORY_BUDGET_BYTES -
-                Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes) /
-                sourceReservationBytes
-            );
+            const memoryLimitDescription = frameMemoryBudget
+              ? 'shared frame byte budget'
+              : `${Math.floor(
+                  (FRAME_PIPELINE_MEMORY_BUDGET_BYTES -
+                    Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes) /
+                    sourceReservationBytes
+                )} source frame limit`;
             recordDecoderError(
-              new Error(
-                `Decoded frame output memory limit exceeded (${maxSourceFrames} source frame limit)`
-              )
+              new Error(`Decoded frame output memory limit exceeded (${memoryLimitDescription})`)
             );
             frame.close();
             return;
