@@ -67,7 +67,7 @@ function clampMaxMemoryMB(value: number): number {
  * This mirrors the main-thread conversion-pipeline.ts but adapted for worker context.
  */
 export async function runWorkerPipeline(
-  inputBuffer: ArrayBuffer,
+  input: ArrayBuffer | Blob,
   options: SerializedConversionOptions,
   postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
   requestId: string,
@@ -90,7 +90,9 @@ export async function runWorkerPipeline(
       ? clampMaxMemoryMB(options.maxMemoryMB)
       : clampMaxMemoryMB(WORKER_MAX_MEMORY_MB);
 
-  const request = buildConversionRequest(inputBuffer, options, maxMemoryMB);
+  const inputBuffer = input instanceof ArrayBuffer ? input : undefined;
+  const inputBlob = input instanceof Blob ? input : undefined;
+  const request = buildConversionRequest(inputBuffer, options, maxMemoryMB, inputBlob);
 
   const progressState = createWorkerProgressTracker();
   const relayLog = createWorkerLogRelay(postMessage, requestId);
@@ -108,7 +110,7 @@ export async function runWorkerPipeline(
   // pooled frame buffers, and any known output buffer in a conservative estimate.
   const sampleMemoryMB = (additionalBytes = 0): number => {
     const estimatedBytes =
-      inputBuffer.byteLength + globalBufferPool.totalRetainedMemory + additionalBytes;
+      (inputBuffer?.byteLength ?? 0) + globalBufferPool.totalRetainedMemory + additionalBytes;
     return Math.ceil(estimatedBytes / BYTES_PER_MB);
   };
   const assertMemoryBudget = (additionalBytes = 0): number => {

@@ -12,17 +12,20 @@ export const WORKER_LOG_MAX_REQUEST_ID_CHARS = 64;
 export type WorkerLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type WorkerLogCategory = 'conversion' | 'general' | 'demuxer' | 'encoders' | 'decoders';
 
+type WorkerInput =
+  | { inputBuffer: ArrayBuffer; inputBlob?: never }
+  | { inputBlob: Blob; inputBuffer?: never };
+
 export type WorkerRequest =
-  | {
+  | ({
       type: 'start';
       requestId: string;
-      inputBuffer: ArrayBuffer;
       config: SerializedDecoderConfig;
       options: SerializedConversionOptions;
       /** Pre-computed metadata to skip redundant extractVideoMetadata in worker */
       duration?: number;
       framerate?: number;
-    }
+    } & WorkerInput)
   | { type: 'abort'; requestId: string };
 
 export type WorkerResponse =

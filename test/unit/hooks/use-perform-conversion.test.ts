@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   showConfirmation: vi.fn(),
   transitionToState: vi.fn(),
   validateVideoDuration: vi.fn(),
+  readWholeFile: vi.fn(),
   settings: {
     format: 'gif' as const,
     quality: 'medium' as const,
@@ -46,8 +47,12 @@ vi.mock('@stores/conversion-settings-store', () => ({
 
 vi.mock('@stores/conversion-store', () => ({
   appState: () => mocks.appState,
-  getInputBuffer: () => new ArrayBuffer(8),
-  inputFile: () => new File(['video'], 'video.mp4', { type: 'video/mp4' }),
+  getInputBuffer: () => null,
+  inputFile: () => {
+    const file = new File(['video'], 'video.mp4', { type: 'video/mp4' });
+    Object.defineProperty(file, 'arrayBuffer', { value: mocks.readWholeFile });
+    return file;
+  },
   setAppState: mocks.setAppState,
   setConversionElapsedMs: mocks.setConversionElapsedMs,
   setConversionFps: mocks.setConversionFps,
@@ -119,6 +124,7 @@ beforeEach(() => {
   mocks.setConversionFps.mockReset();
   mocks.setConversionProgress.mockReset();
   mocks.setInputBuffer.mockClear();
+  mocks.readWholeFile.mockReset().mockRejectedValue(new Error('Full-file reads are forbidden'));
   mocks.setInputFile.mockClear();
   mocks.setConversionResults.mockClear();
   mocks.setConversionStatusMessage.mockReset();
@@ -308,7 +314,7 @@ describe('handleConvert conversion ownership', () => {
     await conversion;
 
     expect(mocks.runPipelineWithFallback).toHaveBeenCalledWith(
-      expect.any(ArrayBuffer),
+      expect.any(File),
       expect.any(Object),
       expect.objectContaining({
         format: 'gif',
@@ -320,10 +326,28 @@ describe('handleConvert conversion ownership', () => {
       }),
       expect.any(Function),
       expect.any(AbortSignal),
-      expect.any(File),
+      undefined,
       expect.anything(),
       expect.anything()
     );
+  });
+
+  it('passes the original File to the GIF worker without a full-file read', async () => {
+    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
+    await handleConvert(createRuntime(), ((key: string) => key) as Parameters<typeof handleConvert>[1]);
+
+    expect(mocks.runPipelineWithFallback).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.any(Object),
+      expect.objectContaining({ format: 'gif' }),
+      expect.any(Function),
+      expect.any(AbortSignal),
+      undefined,
+      1,
+      30
+    );
+    expect(mocks.readWholeFile).not.toHaveBeenCalled();
+    expect(mocks.setInputBuffer).toHaveBeenCalledWith(null);
   });
 
   it('uses the input Blob without creating or retaining an ArrayBuffer for WebP', async () => {
@@ -334,6 +358,7 @@ describe('handleConvert conversion ownership', () => {
     await handleConvert(runtime, ((key: string) => key) as Parameters<typeof handleConvert>[1]);
 
     expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+    expect(mocks.readWholeFile).not.toHaveBeenCalled();
     expect(mocks.runConversionPipeline).toHaveBeenCalledWith(
       expect.not.objectContaining({ inputBuffer: expect.anything() }),
       expect.any(Function),

@@ -54,7 +54,8 @@ self.onmessage = async (event: MessageEvent) => {
 
   switch (request.type) {
     case 'start': {
-      const { requestId, inputBuffer, config, options, duration, framerate } = request;
+      const { requestId, config, options, duration, framerate } = request;
+      const input = request.inputBlob ?? request.inputBuffer;
       const pipelineStart = performance.now();
 
       // Create AbortController for this conversion
@@ -68,7 +69,7 @@ self.onmessage = async (event: MessageEvent) => {
 
       try {
         const { outputBuffer, profile } = await runWorkerPipeline(
-          inputBuffer,
+          input,
           options,
           respond,
           requestId,
