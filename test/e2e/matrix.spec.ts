@@ -8,7 +8,7 @@
 import { test, expect } from '@playwright/test';
 import {
   injectTestFile,
-  isCurrentVideoCodecSupported,
+  isVideoFixtureCodecSupported,
   parseSizeString,
   setFormat,
   setQuality,
@@ -47,11 +47,11 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
 
       // GIF conversion for all codecs
       test(`→ GIF (medium, 50%)`, async ({ page }) => {
-        await injectTestFile(page, video.file);
         test.skip(
-          !(await isCurrentVideoCodecSupported(page)),
+          !(await isVideoFixtureCodecSupported(page, video.file)),
           `${video.codec} decoding is unavailable in this browser runtime`,
         );
+        await injectTestFile(page, video.file);
 
         const startTime = Date.now();
         let success = false;
@@ -123,11 +123,11 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
 
       // WebP conversion for all codecs
       test(`→ WebP (medium, 50%)`, async ({ page }) => {
-        await injectTestFile(page, video.file);
         test.skip(
-          !(await isCurrentVideoCodecSupported(page)),
+          !(await isVideoFixtureCodecSupported(page, video.file)),
           `${video.codec} decoding is unavailable in this browser runtime`,
         );
+        await injectTestFile(page, video.file);
 
         const startTime = Date.now();
         let success = false;
