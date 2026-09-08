@@ -316,6 +316,9 @@ async function recordScreenshot(page, outputRoot, fileName, artifacts) {
 }
 
 async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoot, artifacts) {
+  await page.setViewportSize(
+    format === 'webp' ? { width: 390, height: 844 } : { width: 1280, height: 900 }
+  );
   await loadApplication(page, baseUrl);
   await selectFixture(page, fixturePath);
   await chooseOption(page, 'format', format);
@@ -336,6 +339,13 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
     height: image.naturalHeight,
   }));
   assert.deepEqual(dimensions, { width: 80, height: 45 });
+
+  await page.waitForFunction(() => {
+    const button = document.querySelector('[data-testid="download-result-button"]');
+    if (!(button instanceof HTMLElement) || document.activeElement !== button) return false;
+    const rect = button.getBoundingClientRect();
+    return rect.top >= 0 && rect.bottom <= innerHeight;
+  }, undefined, { timeout: 5_000 });
 
   const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
   await page.locator('[data-testid="download-result-button"]').click();
@@ -360,7 +370,13 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
     id: `h264-to-${format}`,
     status: 'passed',
     preview: dimensions,
-    download: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) },
+    download: {
+      file: outputFile,
+      bytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      focusedAndVisibleBeforeClick: true,
+      viewport: page.viewportSize(),
+    },
   };
 }
 
