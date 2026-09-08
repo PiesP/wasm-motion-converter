@@ -12,6 +12,7 @@
 
 import { isRecord } from '@piesp/browser-core/util';
 import { isBoundedCodecDescription } from '@services/codec-description';
+import type { StageMetrics } from '@services/conversion-profiler';
 import type { WorkerRequest, WorkerResponse } from './types';
 import { WORKER_LOG_MAX_MESSAGE_CHARS, WORKER_LOG_MAX_REQUEST_ID_CHARS } from './types';
 
@@ -45,7 +46,7 @@ function isWorkerLogCategory(value: unknown): boolean {
   return typeof value === 'string' && WORKER_LOG_CATEGORIES.some((category) => category === value);
 }
 
-function isValidStageMetrics(value: unknown): boolean {
+function isValidStageMetrics(value: unknown): value is StageMetrics {
   if (!isRecord(value) || !isProfileStage(value.stage)) return false;
   const commonValid = [
     value.startMs,
@@ -91,7 +92,7 @@ function isValidProfileReport(value: unknown): boolean {
   ) {
     return false;
   }
-  const stageNames = value.stages.map((stage) => (stage as Record<string, unknown>).stage);
+  const stageNames = value.stages.map((stage) => stage.stage);
   if (new Set(stageNames).size !== stageNames.length) return false;
   const stageWallTimePct = value.stageWallTimePct;
   if (!isRecord(stageWallTimePct)) return false;
