@@ -461,7 +461,7 @@ export function getFrameDurationMs(
   ctx: FrameProcessingContext,
   fallbackMs?: number
 ): { durationMs: number; ctx: FrameProcessingContext } {
-  const raw = frame.duration as number | null;
+  const raw = frame.duration;
   if (raw == null || raw <= 0) {
     return { durationMs: fallbackMs ?? 100, ctx };
   }
