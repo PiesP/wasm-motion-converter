@@ -14,7 +14,7 @@ import { createMemo, Show, splitProps } from 'solid-js';
 
 interface SettingsPanelProps {
   isBusy: boolean;
-  isConverting: boolean;
+  isCancelling: boolean;
   isConversionActive: boolean;
   settings: ConversionSettings;
   metadata: VideoMetadata | null;
@@ -26,11 +26,19 @@ interface SettingsPanelProps {
   onSmartFrameSkipChange: (mode: ConversionSettings['smartFrameSkip']) => void;
 }
 
+const FRAME_SKIP_LABEL_KEYS = {
+  off: 'frameSkip.off',
+  low: 'frameSkip.low',
+  medium: 'frameSkip.medium',
+  high: 'frameSkip.high',
+  adaptive: 'frameSkip.adaptive',
+} as const;
+
 const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   const { t } = useLocale();
   const [local] = splitProps(props, [
     'isBusy',
-    'isConverting',
+    'isCancelling',
     'isConversionActive',
     'settings',
     'metadata',
@@ -54,6 +62,10 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     !local.metadata ? t('settings.selectVideo') : t('settings.convert')
   );
 
+  const frameSkipSelection = createMemo(() => {
+    return t(FRAME_SKIP_LABEL_KEYS[local.settings.smartFrameSkip]);
+  });
+
   return (
     <Panel class="p-4">
       <h2 class="mb-4 text-lg font-semibold text-text-primary">{t('settings.heading')}</h2>
@@ -75,15 +87,6 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         value={local.settings.quality}
       />
 
-      <h3 class="text-xs font-medium text-text-tertiary mb-2 mt-2 tracking-wide">
-        {t('settings.section.performance')}
-      </h3>
-      <SmartFrameSkipSelector
-        disabled={local.isConversionActive}
-        onChange={local.onSmartFrameSkipChange}
-        value={local.settings.smartFrameSkip}
-      />
-
       <ScaleSelector
         disabled={local.isConversionActive}
         inputMetadata={local.metadata}
@@ -92,10 +95,24 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         value={local.settings.scale}
       />
 
+      <details class="mb-6 border-t border-border-subtle pt-3" data-testid="advanced-settings">
+        <summary class="min-h-target-minimum cursor-pointer content-center text-xs font-medium tracking-wide text-text-secondary">
+          <span>{t('settings.section.performance')}</span>
+          <span class="ms-2 font-normal text-text-tertiary">· {frameSkipSelection()}</span>
+        </summary>
+        <div class="mt-4 [&>fieldset]:mb-0">
+          <SmartFrameSkipSelector
+            disabled={local.isConversionActive}
+            onChange={local.onSmartFrameSkipChange}
+            value={local.settings.smartFrameSkip}
+          />
+        </div>
+      </details>
+
       <div class="mt-4">
         <div class="flex gap-2">
           <Show
-            when={local.isConverting}
+            when={local.isConversionActive}
             fallback={
               <Button
                 ariaLabel={ariaLabel()}
@@ -110,13 +127,16 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
             }
           >
             <Button
-              ariaLabel={t('settings.stopConversion')}
+              ariaLabel={
+                local.isCancelling ? t('progress.cancelling') : t('settings.stopConversion')
+              }
               class="flex-1"
+              disabled={local.isCancelling}
               onClick={local.onCancel}
-              variant="danger"
+              variant="ghost"
               data-testid="stop-conversion-button"
             >
-              {t('settings.stopConversion')}
+              {local.isCancelling ? t('progress.cancelling') : t('settings.stopConversion')}
             </Button>
           </Show>
         </div>

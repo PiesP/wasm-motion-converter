@@ -40,6 +40,7 @@ import type { AppState } from '@t/app-types';
 import type { ProgressPhase } from '@t/conversion-types';
 import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { assessEnvironmentCapabilities } from '@utils/environment-capabilities';
+import { formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import { isMemoryCritical } from '@utils/memory-monitor';
 import {
@@ -66,7 +67,6 @@ const attachTestHelpersPromise = import.meta.env.DEV
 const SETTINGS_DEBOUNCE_MS = 500;
 const MEMORY_REDUCTION_SCALE = 0.5;
 
-const ConversionProgress = lazy(() => import('@components/ConversionProgress'));
 const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
 
 const APP_STATE_LABEL_KEYS = {
@@ -85,7 +85,7 @@ export function getAppStateAnnouncement(state: AppState, t: TFunction): string {
 const App: Component = () => {
   let disposed = false;
   let appStateLiveRegion: HTMLDivElement | undefined;
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [conversionStartTime, setConversionStartTime] = createSignal(0);
   const [estimatedSecondsRemaining, setEstimatedSecondsRemaining] = createSignal<number | null>(
     null
@@ -128,9 +128,9 @@ const App: Component = () => {
     }
   });
 
-  // Clear conversion-only memory telemetry outside an active conversion.
+  // Keep the last conversion telemetry visible while cancellation tears down.
   createEffect(() => {
-    if (appState() !== 'converting') {
+    if (appState() !== 'converting' && appState() !== 'cancelling') {
       setMemoryUsageText(null);
     }
   });
@@ -178,11 +178,12 @@ const App: Component = () => {
 
   const dropzoneStatus = createMemo(() => {
     const state = appState();
-    if (state === 'converting') {
+    if (state === 'converting' || state === 'cancelling') {
+      const isCancelling = state === 'cancelling';
       return {
-        label: t('progress.converting'),
+        label: t(isCancelling ? 'progress.cancelling' : 'progress.converting'),
         progress: conversionProgress(),
-        message: conversionStatusMessage(),
+        message: isCancelling ? t('progress.cancelling') : conversionStatusMessage(),
         subPhaseLabel: undefined,
         showElapsedTime: true,
         startTime: conversionStartTime(),
@@ -211,7 +212,7 @@ const App: Component = () => {
     () => appState() === 'analyzing' || appState() === 'converting' || appState() === 'cancelling'
   );
 
-  // Metadata summary for dropzone card: "1920×1080 · 0:12 · 30fps"
+  // Metadata summary for dropzone card: "1920×1080 · 0:12 · 30fps · 18.4 MB"
   const metadataSummary = createMemo(() => {
     const meta = videoMetadata();
     const file = inputFile();
@@ -224,6 +225,7 @@ const App: Component = () => {
       parts.push(`${mins}:${secs.toString().padStart(2, '0')}`);
     }
     if (meta.framerate) parts.push(`${meta.framerate}fps`);
+    parts.push(formatBytes(file.size, locale()));
     return parts.join(' · ');
   });
 
@@ -329,6 +331,12 @@ const App: Component = () => {
                 onCancel={
                   appState() === 'analyzing' ? handleCancelAnalysis : handleCancelConversion
                 }
+                cancelDisabled={appState() === 'cancelling'}
+                cancelLabel={
+                  appState() === 'cancelling'
+                    ? t('progress.cancelling')
+                    : t('dropzone.cancelConversion')
+                }
                 onClear={handleReset}
                 onFileSelected={handleFileSelected}
                 previewUrl={videoPreviewUrl()}
@@ -351,12 +359,6 @@ const App: Component = () => {
                 }
               />
 
-              <Show when={appState() === 'cancelling'}>
-                <Suspense fallback={<div class="h-20 animate-pulse rounded-lg bg-bg-elevated" />}>
-                  <ConversionProgress progress={0} status={t('progress.cancelling')} />
-                </Suspense>
-              </Show>
-
               {/* Video metadata: shown below dropzone when file selected but not converting */}
               <Show when={inputFile() && videoMetadata() && !isBusy()}>
                 <VideoMetadataDisplay
@@ -371,8 +373,8 @@ const App: Component = () => {
             <div class="lg:sticky lg:top-8 order-2">
               <SettingsPanel
                 isBusy={isBusy()}
+                isCancelling={appState() === 'cancelling'}
                 isConversionActive={isConversionActive()}
-                isConverting={appState() === 'converting'}
                 metadata={videoMetadata()}
                 onCancel={handleCancelConversion}
                 onConvert={handleConvertWithMemoryCheck}

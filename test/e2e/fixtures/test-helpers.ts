@@ -208,6 +208,10 @@ export async function setSmartFrameSkip(
   page: Page,
   mode: 'off' | 'low' | 'medium' | 'high' | 'adaptive',
 ): Promise<void> {
+  const disclosure = page.locator('[data-testid="advanced-settings"]');
+  if (!(await disclosure.evaluate((element) => (element as HTMLDetailsElement).open))) {
+    await disclosure.locator('summary').click();
+  }
   await page.locator(`[data-testid="option-smart-frame-skip-${mode}"]`).click();
 }
 

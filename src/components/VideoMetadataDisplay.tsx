@@ -21,26 +21,26 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
 
   const codecDisplay = createMemo(() =>
     local.metadata.codec === UNKNOWN_CODEC
-      ? t('metadata.detecting')
+      ? t('metadata.unavailable')
       : local.metadata.codec.toUpperCase()
   );
 
   const bitrateDisplay = createMemo(() => {
     const bps = local.metadata.bitrate;
-    if (!bps || bps <= 0) return t('metadata.detecting');
+    if (!bps || bps <= 0) return t('metadata.unavailable');
     if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;
     return `${(bps / 1_000).toFixed(0)} Kbps`;
   });
 
   return (
-    <div
-      class="bg-bg-elevated border border-white/[0.06] rounded-lg p-4"
+    <details
+      class="rounded-lg border border-border-subtle bg-bg-elevated p-4"
       data-testid="video-metadata"
     >
-      <h3 class="text-xs font-medium text-text-tertiary mb-2 tracking-wide">
+      <summary class="min-h-target-minimum cursor-pointer content-center text-sm font-medium text-text-secondary">
         {t('metadata.title')}
-      </h3>
-      <dl class="space-y-1.5 text-sm">
+      </summary>
+      <dl class="mt-3 space-y-1.5 border-t border-border-subtle pt-3 text-sm">
         <div class="flex justify-between gap-3">
           <dt class="text-text-tertiary shrink-0">{t('metadata.file')}</dt>
           <dd class="text-text-primary truncate text-right">{local.fileName}</dd>
@@ -74,7 +74,7 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
           <dd class="text-text-primary tabular-nums">{formatBytes(local.fileSize, locale())}</dd>
         </div>
       </dl>
-    </div>
+    </details>
   );
 };
 

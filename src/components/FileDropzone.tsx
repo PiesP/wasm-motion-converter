@@ -13,6 +13,8 @@ const SELECTION_FEEDBACK_DURATION_MS = 500;
 interface FileDropzoneProps {
   onFileSelected: (file: File) => void;
   onCancel?: (() => void) | undefined;
+  cancelDisabled?: boolean | undefined;
+  cancelLabel?: string | undefined;
   onClear?: (() => void) | undefined;
   disabled?: boolean | undefined;
   progress?: number | undefined;
@@ -41,6 +43,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [local] = splitProps(props, [
     'onFileSelected',
     'onCancel',
+    'cancelDisabled',
+    'cancelLabel',
     'onClear',
     'disabled',
     'progress',
@@ -192,13 +196,15 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   return (
     <div class="relative">
       {/* Cancel button — fixed top-right during conversion, outside interactive dropzone to avoid nested controls (axe: Interactive controls must not be nested) */}
-      <Show when={isBusy() && local.onCancel}>
+      <Show when={isBusy() && Boolean(local.onCancel)}>
         <button
           type="button"
           onClick={local.onCancel}
-          class="absolute right-3 top-3 z-10 inline-flex min-w-target-minimum min-h-target-minimum items-center justify-center rounded-full bg-status-danger/10 text-status-danger transition-colors hover:bg-status-danger/20 cursor-pointer"
-          aria-label={t('dropzone.cancelConversion')}
-          title={t('dropzone.cancelConversion')}
+          disabled={local.cancelDisabled}
+          class="absolute right-3 top-3 z-10 inline-flex min-w-target-minimum min-h-target-minimum items-center justify-center rounded-full border border-border-standard bg-bg-panel text-text-secondary transition-colors hover:bg-bg-elevated disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+          aria-label={local.cancelLabel ?? t('dropzone.cancelConversion')}
+          title={local.cancelLabel ?? t('dropzone.cancelConversion')}
+          data-testid="dropzone-cancel-button"
         >
           <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <rect x="6" y="6" width="12" height="12" rx="1" />
@@ -225,9 +231,9 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         {/* Busy state: compact progress card (아이디어 1 — 통합 카드) */}
         <Show when={isBusy()}>
           <div class="space-y-3">
-            {/* File header with name + change button */}
+            {/* File header with compact metadata summary */}
             <Show when={hasFile()}>
-              <div class="flex items-center gap-2 text-xs text-text-tertiary">
+              <div class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 text-xs text-text-tertiary">
                 <svg
                   class="h-3.5 w-3.5 shrink-0"
                   fill="none"
@@ -242,18 +248,11 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
                   />
                 </svg>
-                <span class="truncate font-medium">{local.fileName}</span>
+                <span class="min-w-0 truncate font-medium">{local.fileName}</span>
                 <Show when={local.fileSize}>
-                  <span class="shrink-0 text-text-tertiary">· {local.metadataSummary}</span>
-                </Show>
-                <Show when={local.onClear && !isBusy()}>
-                  <button
-                    type="button"
-                    onClick={local.onClear}
-                    class="ml-auto shrink-0 text-brand hover:text-brand-hover cursor-pointer"
-                  >
-                    {t('dropzone.changeFile')}
-                  </button>
+                  <span class="col-start-2 min-w-0 truncate text-text-tertiary">
+                    {local.metadataSummary}
+                  </span>
                 </Show>
               </div>
             </Show>
@@ -316,7 +315,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           <Show when={hasFile() && !isBusy()}>
             <div class="space-y-3 animate-in fade-in duration-300">
               {/* File header */}
-              <div class="flex items-center gap-2 text-xs text-text-tertiary">
+              <div class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 text-xs text-text-tertiary">
                 <svg
                   class="h-3.5 w-3.5 shrink-0"
                   fill="none"
@@ -331,10 +330,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
                   />
                 </svg>
-                <span class="truncate font-medium">{local.fileName}</span>
-                <Show when={local.fileSize}>
-                  <span class="shrink-0 text-text-tertiary">· {local.metadataSummary}</span>
-                </Show>
+                <span class="min-w-0 truncate font-medium">{local.fileName}</span>
                 <button
                   type="button"
                   onClick={(e) => {
@@ -345,6 +341,11 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 >
                   {t('dropzone.changeFile')}
                 </button>
+                <Show when={local.fileSize}>
+                  <span class="col-start-2 col-end-4 min-w-0 truncate text-text-tertiary">
+                    {local.metadataSummary}
+                  </span>
+                </Show>
               </div>
 
               {/* Video preview */}

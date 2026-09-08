@@ -88,7 +88,7 @@ export interface TranslationKeys {
   'metadata.codec': string;
   'metadata.size': string;
   'metadata.bitrate': string;
-  'metadata.detecting': string;
+  'metadata.unavailable': string;
 
   // Settings Panel
   'settings.heading': string;

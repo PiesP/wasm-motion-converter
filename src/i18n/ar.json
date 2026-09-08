@@ -80,7 +80,7 @@
   "memory.titleActive": "تم اكتشاف استخدام مرتفع للذاكرة",
   "metadata.bitrate": "معدل البت",
   "metadata.codec": "الترميز",
-  "metadata.detecting": "جاري الكشف...",
+  "metadata.unavailable": "غير متاح",
   "metadata.duration": "المدة",
   "metadata.file": "الملف",
   "metadata.fps": "معدل الإطارات",

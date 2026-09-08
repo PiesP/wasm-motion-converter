@@ -80,7 +80,7 @@
   "memory.titleActive": "高メモリ使用量検出",
   "metadata.bitrate": "ビットレート",
   "metadata.codec": "コーデック",
-  "metadata.detecting": "検出中...",
+  "metadata.unavailable": "情報なし",
   "metadata.duration": "長さ",
   "metadata.file": "ファイル",
   "metadata.fps": "FPS",

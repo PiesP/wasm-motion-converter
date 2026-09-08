@@ -246,6 +246,15 @@ async function selectFixture(page, filePath) {
 
 async function chooseOption(page, group, value) {
   const option = page.locator(`[data-testid="option-${group}-${value}"]`);
+  if (!(await option.isVisible())) {
+    const advanced = page.locator('[data-testid="advanced-settings"]');
+    assert.equal(
+      await advanced.count(),
+      1,
+      `Hidden ${group}=${value} option has no advanced-settings disclosure`
+    );
+    await advanced.locator('summary').click();
+  }
   await option.click();
   assert.equal(await option.locator('input').isChecked(), true, `${group}=${value} was not selected`);
 }
@@ -355,6 +364,141 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   };
 }
 
+async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, artifacts) {
+  await loadApplication(page, baseUrl);
+  await selectFixture(page, fixturePath);
+
+  const metadata = page.locator('[data-testid="video-metadata"]');
+  const metadataSummary = metadata.locator('summary');
+  assert.equal(await metadata.evaluate((element) => element.tagName), 'DETAILS');
+  assert.equal(await metadata.evaluate((element) => element.open), false);
+  assert(
+    (await metadataSummary.evaluate((element) => element.getBoundingClientRect().height)) >= 44,
+    'Metadata disclosure summary is smaller than the minimum interaction target'
+  );
+  await metadataSummary.focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await metadata.evaluate((element) => element.open), true);
+  assert.equal(await metadataSummary.evaluate((element) => document.activeElement === element), true);
+  assert(
+    (await metadata.textContent())?.includes(basename(fixturePath)),
+    'Metadata disclosure omitted the selected fixture name'
+  );
+
+  const advanced = page.locator('[data-testid="advanced-settings"]');
+  const advancedSummary = advanced.locator('summary');
+  assert.equal(await advanced.evaluate((element) => element.tagName), 'DETAILS');
+  assert.equal(await advanced.evaluate((element) => element.open), false);
+  assert(
+    (await advancedSummary.evaluate((element) => element.getBoundingClientRect().height)) >= 44,
+    'Advanced-settings summary is smaller than the minimum interaction target'
+  );
+  await advancedSummary.focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await advanced.evaluate((element) => element.open), true);
+  assert.equal(await advancedSummary.evaluate((element) => document.activeElement === element), true);
+
+  await chooseOption(page, 'smart-frame-skip', 'off');
+  const offInput = page.locator('[data-testid="option-smart-frame-skip-off"] input');
+  const lowOption = page.locator('[data-testid="option-smart-frame-skip-low"]');
+  const lowInput = lowOption.locator('input');
+  await offInput.focus();
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await lowInput.isChecked(), true, 'Keyboard did not select the next frame-skip mode');
+  const lowLabel = await lowOption.getAttribute('aria-label');
+  assert(lowLabel, 'Frame-skip option has no accessible label');
+  assert(
+    (await advancedSummary.textContent())?.includes(lowLabel),
+    'Advanced-settings summary did not reflect the keyboard selection'
+  );
+
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-disclosures.png`, artifacts);
+  await advancedSummary.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await advanced.evaluate((element) => element.open), false);
+  await metadataSummary.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await metadata.evaluate((element) => element.open), false);
+
+  return {
+    id: 'native-disclosures-keyboard',
+    status: 'passed',
+    metadataDisclosure: true,
+    advancedDisclosure: true,
+    keyboardSelection: 'smart-frame-skip-low',
+  };
+}
+
+async function installCancellationInspector(page) {
+  return page.evaluate(() => {
+    const visible = (element) =>
+      element instanceof HTMLElement && element.getClientRects().length > 0;
+    const progressBars = [...document.querySelectorAll('[role="progressbar"]')].filter(visible);
+    const progressBar = progressBars[0];
+    const progress = Number(progressBar?.getAttribute('data-progress'));
+    if (!(progressBar instanceof HTMLElement) || progressBars.length !== 1 || !(progress > 0)) {
+      throw new Error('Cancellation inspector requires one visible non-zero progress bar');
+    }
+
+    const inspector = {
+      progressBar,
+      progress,
+      observation: null,
+      observer: null,
+    };
+    const capture = () => {
+      if (inspector.observation) return;
+      const stateText = document.querySelector('#app-state')?.textContent?.trim() ?? '';
+      if (!stateText.toLowerCase().startsWith('cancelling')) return;
+      const currentProgressBars = [...document.querySelectorAll('[role="progressbar"]')].filter(
+        visible
+      );
+      const settingsCancel = document.querySelector('[data-testid="stop-conversion-button"]');
+      const dropzoneCancel = document.querySelector('[data-testid="dropzone-cancel-button"]');
+      const dropzone = document.querySelector('[data-testid="dropzone"]');
+      inspector.observation = {
+        stateText,
+        sameProgressElement: currentProgressBars[0] === inspector.progressBar,
+        progressValues: currentProgressBars.map((element) =>
+          Number(element.getAttribute('data-progress'))
+        ),
+        visibleProgressBarCount: currentProgressBars.length,
+        legacyProgressCount: document.querySelectorAll('[data-testid="conversion-progress"]')
+          .length,
+        settingsCancel: {
+          disabled:
+            settingsCancel instanceof HTMLButtonElement ? settingsCancel.disabled : undefined,
+          label: settingsCancel?.getAttribute('aria-label') ?? null,
+        },
+        dropzoneCancel: {
+          disabled:
+            dropzoneCancel instanceof HTMLButtonElement ? dropzoneCancel.disabled : undefined,
+          label: dropzoneCancel?.getAttribute('aria-label') ?? null,
+        },
+        dropzoneBusy: dropzone?.getAttribute('aria-busy') ?? null,
+      };
+    };
+    inspector.observer = new MutationObserver(capture);
+    inspector.observer.observe(document.body, {
+      attributes: true,
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
+    globalThis.__wmcCancellationInspector = inspector;
+    return progress;
+  });
+}
+
+async function readCancellationInspector(page) {
+  return page.evaluate(() => {
+    const inspector = globalThis.__wmcCancellationInspector;
+    inspector?.observer?.disconnect();
+    delete globalThis.__wmcCancellationInspector;
+    return inspector?.observation ?? null;
+  });
+}
+
 async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, artifacts) {
   await loadApplication(page, baseUrl);
   await selectFixture(page, fixturePath);
@@ -387,10 +531,37 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     assert.fail(`High-motion setup failed: ${(await error.textContent())?.trim() ?? 'unknown error'}`);
   }
 
+  const progress = page.locator('[data-testid="dropzone"] [role="progressbar"]');
+  const progressOutcome = await Promise.race([
+    page
+      .waitForFunction(() => {
+        const element = document.querySelector('[data-testid="dropzone"] [role="progressbar"]');
+        return Number(element?.getAttribute('data-progress')) > 0;
+      }, undefined, { timeout: CANCELLATION_TIMEOUT_MS })
+      .then(() => 'progress'),
+    result.waitFor({ state: 'visible', timeout: CANCELLATION_TIMEOUT_MS }).then(() => 'completed'),
+    error.waitFor({ state: 'visible', timeout: CANCELLATION_TIMEOUT_MS }).then(() => 'error'),
+  ]);
+  if (progressOutcome === 'completed') {
+    return {
+      id: 'cancel-high-motion',
+      status: 'observed',
+      attempted: false,
+      effective: false,
+      reason: 'conversion-completed-before-non-zero-progress-was-observable',
+    };
+  }
+  if (progressOutcome === 'error') {
+    assert.fail(`High-motion setup failed: ${(await error.textContent())?.trim() ?? 'unknown error'}`);
+  }
+  const progressBeforeCancel = await installCancellationInspector(page);
+  assert.equal(Number(await progress.getAttribute('data-progress')), progressBeforeCancel);
+
   try {
     await stop.click({ timeout: 5_000 });
   } catch (clickError) {
     if (await result.isVisible()) {
+      await readCancellationInspector(page);
       return {
         id: 'cancel-high-motion',
         status: 'observed',
@@ -415,8 +586,26 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     false,
     `Cancellation produced an error: ${errorText ?? 'unknown error'}`
   );
+  const cancellationUi = await readCancellationInspector(page);
+  assert(cancellationUi, 'Cancellation state was not observable by the UI inspector');
+  assert.equal(cancellationUi.sameProgressElement, true);
+  assert.deepEqual(cancellationUi.progressValues, [progressBeforeCancel]);
+  assert.equal(cancellationUi.visibleProgressBarCount, 1);
+  assert.equal(cancellationUi.legacyProgressCount, 0);
+  assert.equal(cancellationUi.settingsCancel.disabled, true);
+  assert.equal(cancellationUi.dropzoneCancel.disabled, true);
+  assert.equal(cancellationUi.settingsCancel.label, cancellationUi.stateText);
+  assert.equal(cancellationUi.dropzoneCancel.label, cancellationUi.stateText);
+  assert.equal(cancellationUi.dropzoneBusy, 'true');
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-cancelled.png`, artifacts);
-  return { id: 'cancel-high-motion', status: 'passed', attempted: true, effective: true };
+  return {
+    id: 'cancel-high-motion',
+    status: 'passed',
+    attempted: true,
+    effective: true,
+    progressBeforeCancel,
+    cancellationUi,
+  };
 }
 
 async function observeEnvironment(page, browser) {
@@ -525,6 +714,7 @@ export async function run({ browser, root, output }) {
     checks.push(await convertSmallFixture(page, started.url, smallFixture, 'gif', outputRoot, artifacts));
     checks.push(await convertSmallFixture(page, started.url, smallFixture, 'webp', outputRoot, artifacts));
     checks.push(await exerciseCancellation(page, started.url, cancellationFixture, outputRoot, artifacts));
+    checks.push(await exerciseUiDisclosures(page, started.url, smallFixture, outputRoot, artifacts));
 
     await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);

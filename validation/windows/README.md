@@ -55,14 +55,18 @@ record:
 - an 80 x 45 decoded preview for each output;
 - browser download bytes, format magic, size, and SHA-256;
 - headed-browser screenshots for both result states;
-- high-motion GIF cancellation when the stop control is observable before the
-  fixture finishes;
+- native metadata and advanced-settings disclosures, including keyboard toggling
+  and frame-skip selection;
+- high-motion GIF cancellation from a non-zero progress value, including an
+  inspector assertion that the same progress bar and value remain visible while
+  both cancellation controls are disabled and accurately named;
 - stable-browser API and renderer observations for diagnosis.
 
-If the high-motion fixture finishes before the stop control can be used, the
-JSON records that race as an observation rather than claiming cancellation
-coverage. A clicked stop control must return the app to its ready state without
-a result or error.
+If the high-motion fixture finishes before the stop control and non-zero progress
+can be observed, the JSON records that race as an observation rather than
+claiming cancellation coverage. A clicked stop control must expose the continuous
+cancelling state, then return the app to its ready state without a result or
+error.
 
 ## Evidence boundary
 
