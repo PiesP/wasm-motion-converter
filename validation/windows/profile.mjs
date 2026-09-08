@@ -315,6 +315,68 @@ async function recordScreenshot(page, outputRoot, fileName, artifacts) {
   artifacts.push({ kind: 'screenshot', file: fileName, bytes: bytes.byteLength, sha256: sha256(bytes) });
 }
 
+async function readResultDiscoveryState(page, format) {
+  return page.evaluate((expectedFormat) => {
+    const button = document.querySelector('[data-testid="download-result-button"]');
+    const image = document.querySelector('[data-testid="result-image"]');
+    const activeElement = document.activeElement;
+    const serializeRect = (element) => {
+      if (!(element instanceof HTMLElement)) return null;
+      const rect = element.getBoundingClientRect();
+      return {
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      };
+    };
+    const buttonRect = serializeRect(button);
+
+    return {
+      format: expectedFormat,
+      viewport: {
+        width: innerWidth,
+        height: innerHeight,
+        scrollX,
+        scrollY,
+      },
+      activeElement: activeElement
+        ? {
+            tag: activeElement.tagName.toLowerCase(),
+            id: activeElement.id || null,
+            testId: activeElement.getAttribute('data-testid'),
+          }
+        : null,
+      button: {
+        present: button instanceof HTMLElement,
+        focused: button instanceof HTMLElement && activeElement === button,
+        href: button instanceof HTMLAnchorElement ? button.getAttribute('href') : null,
+        clientRectCount: button instanceof HTMLElement ? button.getClientRects().length : 0,
+        rect: buttonRect,
+        withinViewport:
+          buttonRect !== null &&
+          buttonRect.top >= 0 &&
+          buttonRect.right <= innerWidth &&
+          buttonRect.bottom <= innerHeight &&
+          buttonRect.left >= 0,
+      },
+      image: {
+        present: image instanceof HTMLImageElement,
+        complete: image instanceof HTMLImageElement ? image.complete : null,
+        naturalWidth: image instanceof HTMLImageElement ? image.naturalWidth : null,
+        naturalHeight: image instanceof HTMLImageElement ? image.naturalHeight : null,
+        rect: serializeRect(image),
+        skeletonPresent:
+          image instanceof HTMLImageElement
+            ? image.parentElement?.querySelector('.animate-pulse') !== null
+            : null,
+      },
+    };
+  }, format);
+}
+
 async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoot, artifacts) {
   await page.setViewportSize(
     format === 'webp' ? { width: 390, height: 844 } : { width: 1280, height: 900 }
@@ -340,12 +402,31 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   }));
   assert.deepEqual(dimensions, { width: 80, height: 45 });
 
-  await page.waitForFunction(() => {
-    const button = document.querySelector('[data-testid="download-result-button"]');
-    if (!(button instanceof HTMLElement) || document.activeElement !== button) return false;
-    const rect = button.getBoundingClientRect();
-    return rect.top >= 0 && rect.bottom <= innerHeight;
-  }, undefined, { timeout: 5_000 });
+  let discovery;
+  try {
+    await page.waitForFunction(() => {
+      const button = document.querySelector('[data-testid="download-result-button"]');
+      if (!(button instanceof HTMLElement) || document.activeElement !== button) return false;
+      const rect = button.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= innerHeight;
+    }, undefined, { timeout: 5_000 });
+    discovery = await readResultDiscoveryState(page, format);
+  } catch (error) {
+    discovery = await readResultDiscoveryState(page, format);
+    const diagnosticFile = `${PROFILE_ID}-${format}-discovery-failure.json`;
+    const diagnosticBytes = Buffer.from(`${JSON.stringify(discovery, null, 2)}\n`);
+    await writeFile(join(outputRoot, diagnosticFile), diagnosticBytes);
+    artifacts.push({
+      kind: 'diagnostic',
+      file: diagnosticFile,
+      bytes: diagnosticBytes.byteLength,
+      sha256: sha256(diagnosticBytes),
+    });
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Result discovery failed for ${format}: ${JSON.stringify(discovery)}; ${reason}`
+    );
+  }
 
   const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
   await page.locator('[data-testid="download-result-button"]').click();
@@ -375,7 +456,7 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
       bytes: bytes.byteLength,
       sha256: sha256(bytes),
       focusedAndVisibleBeforeClick: true,
-      viewport: page.viewportSize(),
+      discovery,
     },
   };
 }
