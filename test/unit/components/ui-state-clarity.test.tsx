@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import ResultPreview from '@components/ResultPreview';
 import SettingsPanel from '@components/SettingsPanel';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
@@ -35,6 +36,7 @@ const settings: ConversionSettings = {
 describe('UI state clarity', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+    vi.restoreAllMocks();
   });
 
   it('presents finalized metadata as a collapsed disclosure with truthful unknown values', () => {
@@ -96,6 +98,99 @@ describe('UI state clarity', () => {
       'settings.section.performance'
     );
     expect(disclosure?.querySelectorAll('input[name="smart-frame-skip"]')).toHaveLength(5);
+
+    dispose();
+  });
+
+  it('keeps the focused download action visible after the preview replaces its skeleton', async () => {
+    const animationFrames: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    });
+    const cancelAnimationFrameSpy = vi.spyOn(window, 'cancelAnimationFrame');
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:result-preview');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(
+      () => (
+        <ResultPreview
+          originalName="sample.mp4"
+          originalSize={1_000}
+          outputBlob={new Blob(['result'], { type: 'image/gif' })}
+          settings={settings}
+        />
+      ),
+      container
+    );
+    await Promise.resolve();
+
+    const image = container.querySelector<HTMLImageElement>('[data-testid="result-image"]');
+    const download = container.querySelector<HTMLAnchorElement>(
+      '[data-testid="download-result-button"]'
+    );
+    expect(image).toBeInstanceOf(HTMLImageElement);
+    expect(download?.getAttribute('href')).toBe('blob:result-preview');
+    expect(container.querySelector('.animate-pulse')).not.toBeNull();
+
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(download, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    download?.focus();
+    image?.dispatchEvent(new Event('load'));
+
+    expect(container.querySelector('.animate-pulse')).toBeNull();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(animationFrames).toHaveLength(1);
+    animationFrames[0]?.(performance.now());
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
+
+    image?.dispatchEvent(new Event('load'));
+    expect(animationFrames).toHaveLength(2);
+    dispose();
+    expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(2);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:result-preview');
+  });
+
+  it('does not scroll the result after the user moves focus elsewhere', async () => {
+    const animationFrames: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:result-preview');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(
+      () => (
+        <ResultPreview
+          originalName="sample.mp4"
+          originalSize={1_000}
+          outputBlob={new Blob(['result'], { type: 'image/webp' })}
+          settings={{ ...settings, format: 'webp' }}
+        />
+      ),
+      container
+    );
+    await Promise.resolve();
+
+    const image = container.querySelector<HTMLImageElement>('[data-testid="result-image"]');
+    const download = container.querySelector<HTMLAnchorElement>(
+      '[data-testid="download-result-button"]'
+    );
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(download, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    download?.focus();
+    image?.dispatchEvent(new Event('load'));
+
+    const otherControl = document.createElement('button');
+    document.body.appendChild(otherControl);
+    otherControl.focus();
+    animationFrames[0]?.(performance.now());
+    expect(scrollIntoView).not.toHaveBeenCalled();
 
     dispose();
   });
