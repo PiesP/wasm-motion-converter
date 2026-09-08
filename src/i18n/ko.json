@@ -80,7 +80,7 @@
   "memory.titleActive": "높은 메모리 사용량 감지됨",
   "metadata.bitrate": "비트레이트",
   "metadata.codec": "코덱",
-  "metadata.detecting": "감지 중...",
+  "metadata.unavailable": "정보 없음",
   "metadata.duration": "재생 시간",
   "metadata.file": "파일",
   "metadata.fps": "FPS",

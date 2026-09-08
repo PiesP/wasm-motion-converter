@@ -28,6 +28,7 @@ import {
   waitForConversionComplete,
   downloadResult,
   runConversion,
+  setSmartFrameSkip,
   waitForIdle,
   parseSizeString,
 } from './fixtures/test-helpers';
@@ -606,12 +607,12 @@ test.describe('Smart frame skip selector', () => {
   });
 
   test('offers every documented frame-skip mode and selects it', async ({ page }) => {
-    const modes = ['off', 'low', 'medium', 'high', 'adaptive'];
+    const modes = ['off', 'low', 'medium', 'high', 'adaptive'] as const;
 
     for (const mode of modes) {
       const option = page.locator(`[data-testid="option-smart-frame-skip-${mode}"]`);
+      await setSmartFrameSkip(page, mode);
       await expect(option).toBeVisible();
-      await option.click();
 
       const settings = await page.evaluate(() => window.__TEST_HELPERS__?.getSettings());
       expect(settings?.smartFrameSkip).toBe(mode);
@@ -620,8 +621,7 @@ test.describe('Smart frame skip selector', () => {
   });
 
   test('persists the selected mode across reload', async ({ page }) => {
-    const selected = page.locator('[data-testid="option-smart-frame-skip-adaptive"]');
-    await selected.click();
+    await setSmartFrameSkip(page, 'adaptive');
     await page.waitForTimeout(1000);
 
     await page.reload();

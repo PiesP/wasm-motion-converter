@@ -80,7 +80,7 @@
   "memory.titleActive": "High Memory Usage Detected",
   "metadata.bitrate": "Bitrate",
   "metadata.codec": "Codec",
-  "metadata.detecting": "Detecting...",
+  "metadata.unavailable": "Unavailable",
   "metadata.duration": "Duration",
   "metadata.file": "File",
   "metadata.fps": "FPS",

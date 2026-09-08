@@ -3,7 +3,11 @@
 
 import type { AppState } from '@t/app-types';
 import type { TFunction } from '@t/i18n-types';
-import { setAppState } from '@stores/conversion-store';
+import {
+  setAppState,
+  setConversionProgress,
+  setConversionStatusMessage,
+} from '@stores/conversion-store';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,6 +24,7 @@ vi.mock('@hooks/use-locale', () => ({
 }));
 
 vi.mock('@hooks/use-network-state', () => ({
+  networkState: () => ({ online: true, effectiveType: 'unknown', saveData: false }),
   useNetworkState: vi.fn(),
 }));
 
@@ -38,6 +43,8 @@ vi.mock('@hooks/use-conversion-handlers', () => ({
 describe('App state announcement', () => {
   afterEach(() => {
     setAppState('idle');
+    setConversionProgress(0);
+    setConversionStatusMessage('');
     document.body.innerHTML = '';
   });
 
@@ -116,5 +123,61 @@ describe('App state announcement', () => {
       'translated:result.convertedAnimation',
       'translated:error.conversionFailed',
     ]);
+  });
+
+  it('keeps the same progress card and value while cancellation settles', async () => {
+    setConversionProgress(47);
+    setConversionStatusMessage('Encoding frame 47');
+    setAppState('converting');
+    const { default: App } = await import('@/App');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(() => App({}), container);
+
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-testid="dropzone"] [data-progress="47"]')).not.toBeNull();
+    });
+    const progressCard = container.querySelector('[data-testid="dropzone"]');
+    const progressBar = container.querySelector('[data-testid="dropzone"] [role="progressbar"]');
+    const settingsCancelButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="stop-conversion-button"]'
+    );
+    const dropzoneCancelButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="dropzone-cancel-button"]'
+    );
+    expect(settingsCancelButton).not.toBeNull();
+    expect(dropzoneCancelButton).not.toBeNull();
+
+    setAppState('cancelling');
+
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-testid="dropzone"]')).toBe(progressCard);
+      expect(container.querySelector('[data-testid="dropzone"] [role="progressbar"]')).toBe(
+        progressBar
+      );
+      expect(container.querySelector('[data-testid="dropzone"] [data-progress="47"]')).not.toBeNull();
+      expect(progressCard?.textContent).toContain('translated:progress.cancelling');
+      expect(container.querySelector('[data-testid="conversion-progress"]')).toBeNull();
+      expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+      expect(container.querySelector('[data-progress="0"]')).toBeNull();
+      expect(container.querySelector('[data-testid="stop-conversion-button"]')).toBe(
+        settingsCancelButton
+      );
+      expect(settingsCancelButton?.disabled).toBe(true);
+      expect(settingsCancelButton?.getAttribute('aria-label')).toBe(
+        'translated:progress.cancelling'
+      );
+      expect(settingsCancelButton?.textContent).toContain('translated:progress.cancelling');
+      const currentDropzoneCancelButton = container.querySelector<HTMLButtonElement>(
+        '[data-testid="dropzone-cancel-button"]'
+      );
+      expect(currentDropzoneCancelButton?.disabled).toBe(true);
+      expect(currentDropzoneCancelButton?.getAttribute('aria-label')).toBe(
+        'translated:progress.cancelling'
+      );
+      expect(progressCard?.getAttribute('aria-busy')).toBe('true');
+    });
+
+    dispose();
   });
 });

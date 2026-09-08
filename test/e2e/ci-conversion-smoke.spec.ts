@@ -19,6 +19,9 @@ test.describe('CI codec smoke', () => {
 
   for (const format of ['gif', 'webp'] as const) {
     test(`converts a generated H.264 fixture to ${format.toUpperCase()}`, async ({ page }) => {
+      await page.setViewportSize(
+        format === 'webp' ? { width: 390, height: 844 } : { width: 1280, height: 900 }
+      );
       const result = await runConversion(page, {
         file: FIXTURE,
         format,
@@ -40,6 +43,17 @@ test.describe('CI codec smoke', () => {
           }))
         )
         .toEqual({ width: 80, height: 45 });
+
+      const downloadButton = page.locator('[data-testid="download-result-button"]');
+      await expect(downloadButton).toBeFocused();
+      await expect
+        .poll(() =>
+          downloadButton.evaluate((button) => {
+            const rect = button.getBoundingClientRect();
+            return rect.top >= 0 && rect.bottom <= innerHeight;
+          })
+        )
+        .toBe(true);
 
       const output = await downloadResult(page);
       const validation = validateFileMagic(output, format);

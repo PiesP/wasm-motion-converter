@@ -80,7 +80,7 @@
   "memory.titleActive": "检测到高内存使用量",
   "metadata.bitrate": "比特率",
   "metadata.codec": "编解码器",
-  "metadata.detecting": "检测中...",
+  "metadata.unavailable": "无法获取",
   "metadata.duration": "时长",
   "metadata.file": "文件",
   "metadata.fps": "帧率",

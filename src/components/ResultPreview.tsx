@@ -38,6 +38,8 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [downloadUrl, setDownloadUrl] = createSignal<string | null>(null);
   const [previewError, setPreviewError] = createSignal(false);
+  let downloadButtonRef: HTMLAnchorElement | undefined;
+  let pendingResultScrollFrame: number | undefined;
 
   // Track the current blob URL for cleanup without triggering effect re-entry.
   // We use a plain let variable closed over by the effect, so that
@@ -67,6 +69,10 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   // Cleanup on unmount
   onCleanup(() => {
+    if (pendingResultScrollFrame !== undefined) {
+      cancelAnimationFrame(pendingResultScrollFrame);
+      pendingResultScrollFrame = undefined;
+    }
     if (currentUrl) {
       URL.revokeObjectURL(currentUrl);
       currentUrl = null;
@@ -130,10 +136,28 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     return 'text-status-warning';
   });
 
-  const handlePreviewLoad = () => setLoaded(true);
+  const keepFocusedDownloadVisible = (): void => {
+    const downloadButton = downloadButtonRef;
+    if (!downloadButton || document.activeElement !== downloadButton) return;
+
+    if (pendingResultScrollFrame !== undefined) {
+      cancelAnimationFrame(pendingResultScrollFrame);
+    }
+    pendingResultScrollFrame = requestAnimationFrame(() => {
+      pendingResultScrollFrame = undefined;
+      if (!downloadButton.isConnected || document.activeElement !== downloadButton) return;
+      downloadButton.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+  };
+
+  const handlePreviewLoad = () => {
+    setLoaded(true);
+    keepFocusedDownloadVisible();
+  };
   const handlePreviewError = () => {
     setPreviewError(true);
     setLoaded(true);
+    keepFocusedDownloadVisible();
   };
 
   return (
@@ -234,6 +258,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       {/* Download button */}
       <div class="mt-3 flex justify-center">
         <a
+          ref={downloadButtonRef}
           href={downloadUrl() ?? undefined}
           download={downloadFileName()}
           aria-label={t('result.downloadFile', {

@@ -84,4 +84,62 @@ test.describe('Quiet Instruments adapter', () => {
     await expect(skipLink).toHaveCSS('outline-color', 'rgb(143, 134, 255)');
     await expect(skipLink).toHaveCSS('outline-width', '2px');
   });
+
+  test('keeps optional video and performance details keyboard-operable at narrow width', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await page.evaluate(async () => {
+      const { attachTestHelpers } = await import('./src/test-helpers');
+      attachTestHelpers();
+      await window.__TEST_HELPERS__?.injectFile(
+        new File(['synthetic'], 'state-clarity.mp4', { type: 'video/mp4' }),
+        {
+          width: 1920,
+          height: 1080,
+          duration: 12,
+          codec: 'unknown',
+          framerate: 30,
+          bitrate: 0,
+        }
+      );
+    });
+
+    const metadata = page.locator('[data-testid="video-metadata"]');
+    const metadataSummary = metadata.locator('summary');
+    await expect(page.locator('[data-testid="dropzone"]')).toContainText('9 B');
+    await expect(metadata).toBeVisible();
+    await expect(metadata).not.toHaveAttribute('open');
+    expect(await metadataSummary.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    await metadataSummary.focus();
+    await page.keyboard.press('Enter');
+    await expect(metadata).toHaveAttribute('open', '');
+    await expect(metadata).toContainText('state-clarity.mp4');
+    await expect(metadata.getByText('Unavailable')).toHaveCount(2);
+    await expect(metadataSummary).toBeFocused();
+    await page.keyboard.press('Space');
+    await expect(metadata).not.toHaveAttribute('open');
+
+    const advanced = page.locator('[data-testid="advanced-settings"]');
+    const advancedSummary = advanced.locator('summary');
+    await expect(advanced).not.toHaveAttribute('open');
+    expect(await advancedSummary.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    await expect(advancedSummary).toContainText('Off');
+    await advancedSummary.focus();
+    await page.keyboard.press('Enter');
+    await expect(advanced).toHaveAttribute('open', '');
+
+    const off = advanced.locator('input[name="smart-frame-skip"][value="off"]');
+    const low = advanced.locator('input[name="smart-frame-skip"][value="low"]');
+    await off.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(low).toBeChecked();
+    await expect(advancedSummary).toContainText('Low');
+
+    const horizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(horizontalOverflow).toBeLessThanOrEqual(1);
+  });
 });
