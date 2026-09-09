@@ -14,14 +14,14 @@
   "author": "PiesP",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.17.0",
+  "packageManager": "pnpm@11.26.0",
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
-    "pnpm": ">=11.17.0"
+    "pnpm": ">=11.26.0"
   },
   "volta": {
     "node": "26.8.1",
-    "pnpm": "11.17.0"
+    "pnpm": "11.26.0"
   },
   "scripts": {
     "preinstall": "test -f packages/core/package.json || { echo '⚠️  Submodule not initialized. Run: git submodule update --init'; exit 1; }",
@@ -83,7 +83,7 @@
     "@stryker-mutator/vitest-runner": "^10.0.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/dom-webcodecs": "^0.1.19",
-    "@types/node": "26.4.1",
+    "@types/node": "26.5.0",
     "@vitest/coverage-v8": "^4.1.11",
     "dpdm": "4.3.0",
     "jsdom": "^30.0.1",
@@ -93,6 +93,6 @@
     "vite": "8.2.2",
     "vite-plugin-solid": "2.11.14",
     "vitest": "^4.1.11",
-    "wrangler": "^4.129.0"
+    "wrangler": "^4.129.1"
   }
 }
