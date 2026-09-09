@@ -9,6 +9,7 @@ import ProgressBar from './ProgressBar';
 import TrimSelector from './TrimSelector';
 
 const SELECTION_FEEDBACK_DURATION_MS = 500;
+const FIRST_PREVIEW_FRAME_SEEK_SECONDS = 0.001;
 
 interface FileDropzoneProps {
   onFileSelected: (file: File) => void;
@@ -105,6 +106,15 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     if (!video || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
     const duration = Number.isFinite(video.duration) ? video.duration : (local.duration ?? 0);
     video.currentTime = Math.max(0, Math.min(seconds, duration));
+  };
+
+  const revealInitialPreviewFrame = (): void => {
+    const video = previewVideoElement;
+    if (!video || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+    const duration = Number.isFinite(video.duration) ? video.duration : (local.duration ?? 0);
+    const start = local.trimStart ?? 0;
+    const frameTime = start > 0 ? start : Math.min(FIRST_PREVIEW_FRAME_SEEK_SECONDS, duration);
+    video.currentTime = Math.max(0, Math.min(frameTime, duration));
   };
 
   const handleTrimChange = (start: number, end: number): void => {
@@ -365,6 +375,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     playsinline
                     preload="metadata"
                     aria-label={t('dropzone.preview')}
+                    onLoadedMetadata={revealInitialPreviewFrame}
                     onTimeUpdate={handlePreviewTimeUpdate}
                     onEnded={() => setIsSelectionPreviewing(false)}
                     onPause={() => setIsSelectionPreviewing(false)}

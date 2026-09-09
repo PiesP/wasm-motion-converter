@@ -4,6 +4,7 @@
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
 import { validateOutput } from '@services/error-recovery';
+import { resolveVideoDimensions } from '@services/frame-utils';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
 import {
@@ -37,7 +38,7 @@ import type {
 import type { TFunction, TranslationKey } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
-import { focusElement, focusPrimaryErrorAction } from '@utils/dom-utils';
+import { focusElementUnlessUserIsEditing, focusPrimaryErrorAction } from '@utils/dom-utils';
 import { validateVideoDuration } from '@utils/file-validation';
 import { createId, formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
@@ -54,7 +55,8 @@ import type {
 } from './use-conversion-runtime-controller';
 import { handleFileSelected } from './use-handle-file-selected';
 
-const focusDownloadButton = (): void => focusElement('[data-testid="download-result-button"]');
+const focusDownloadButton = (): void =>
+  focusElementUnlessUserIsEditing('[data-testid="download-result-button"]');
 
 function finishConversionRun(runtime: ConversionRuntimeController, intent: ConversionIntent): void {
   const wasCancelled = intent.signal.aborted;
@@ -223,6 +225,14 @@ async function performConversion(
       forcedDecimation,
       settings
     );
+    const sourceDimensions = serializedConfig ? resolveVideoDimensions(serializedConfig) : null;
+    if (!sourceDimensions) {
+      throw new Error('Unable to determine video dimensions');
+    }
+    const outputDimensions = {
+      width: Math.max(1, Math.floor(sourceDimensions.width * serializedOptions.scale)),
+      height: Math.max(1, Math.floor(sourceDimensions.height * serializedOptions.scale)),
+    };
 
     // Both pipelines read from the File lazily, so a cached full-file buffer
     // is no longer needed during conversion.
@@ -238,7 +248,7 @@ async function performConversion(
     );
 
     const blob = validateOutputBlob(output, settings);
-    handleResult(blob, file, settings, runtime, startTimeMs, isActive);
+    handleResult(blob, file, settings, outputDimensions, runtime, startTimeMs, isActive);
     focusDownloadButton();
   } catch (error) {
     await handleConversionError(error, isActive, runtime, t, settings);
@@ -401,6 +411,7 @@ function handleResult(
   blob: Blob,
   file: File,
   settings: ConversionSettings,
+  outputDimensions: { width: number; height: number },
   runtime: ConversionRuntimeController,
   startTimeMs: number,
   isActive: () => boolean
@@ -437,6 +448,8 @@ function handleResult(
     outputBlob: blob,
     originalName: file.name,
     originalSize: file.size,
+    outputWidth: outputDimensions.width,
+    outputHeight: outputDimensions.height,
     createdAt: performance.now(),
     settings,
     conversionDurationSeconds: durationSeconds,

@@ -38,6 +38,109 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+function parseCssColor(value) {
+  const rgbMatch = value.match(/^rgba?\(([^)]+)\)$/);
+  if (rgbMatch) {
+    const components = rgbMatch[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    assert(components.length >= 3 && components.slice(0, 3).every(Number.isFinite));
+    return {
+      channels: components.slice(0, 3),
+      alpha: components.length >= 4 ? components[3] : 1,
+    };
+  }
+
+  const srgbMatch = value.match(/^color\(srgb\s+([^)]*)\)$/);
+  assert(srgbMatch, `Unsupported computed color: ${value}`);
+  const components = srgbMatch[1].split(/[\s/]+/).filter(Boolean).map(Number);
+  assert(components.length >= 3 && components.slice(0, 3).every(Number.isFinite));
+  return {
+    channels: components.slice(0, 3).map((channel) => channel * 255),
+    alpha: components.length >= 4 ? components[3] : 1,
+  };
+}
+
+function compositeCssBackgrounds(values) {
+  let composite = { channels: [0, 0, 0], alpha: 0 };
+  for (const value of values.toReversed()) {
+    const layer = parseCssColor(value);
+    const alpha = layer.alpha + composite.alpha * (1 - layer.alpha);
+    if (alpha === 0) continue;
+    composite = {
+      channels: layer.channels.map(
+        (channel, index) =>
+          (channel * layer.alpha +
+            composite.channels[index] * composite.alpha * (1 - layer.alpha)) /
+          alpha
+      ),
+      alpha,
+    };
+  }
+  assert.equal(composite.alpha, 1, 'Result metadata has no opaque background');
+  return composite.channels;
+}
+
+function contrastRatio(foreground, background) {
+  const luminance = (color) => {
+    const channels = color.map((channel) => {
+      const srgb = channel / 255;
+      return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const lighter = Math.max(luminance(foreground), luminance(background));
+  const darker = Math.min(luminance(foreground), luminance(background));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+async function settleVisualState(page) {
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  );
+}
+
+async function readResultMetadataContrast(page, selector) {
+  const computed = await page.locator(selector).evaluate((element) => {
+    const backgrounds = [];
+    for (let current = element; current; current = current.parentElement) {
+      backgrounds.push(getComputedStyle(current).backgroundColor);
+    }
+    const style = getComputedStyle(element);
+    return {
+      color: style.color,
+      backgrounds,
+      fontSizePx: Number.parseFloat(style.fontSize),
+      opacity: Number.parseFloat(style.opacity),
+    };
+  });
+  const foreground = parseCssColor(computed.color);
+  assert.equal(foreground.alpha, 1, `Computed text color is not opaque: ${computed.color}`);
+  return {
+    ...computed,
+    ratio: contrastRatio(foreground.channels, compositeCssBackgrounds(computed.backgrounds)),
+  };
+}
+
+async function readPreviewPresentation(page) {
+  return page.locator('[data-testid="result-image"]').evaluate((image) => {
+    const element = image;
+    const rect = element.getBoundingClientRect();
+    const scale = Math.min(rect.width / element.naturalWidth, rect.height / element.naturalHeight);
+    const actual = document.querySelector('[data-testid="preview-size-actual"]');
+    const fit = document.querySelector('[data-testid="preview-size-fit"]');
+    const scaleIndicator = document.querySelector('[data-testid="preview-scale"]');
+    return {
+      naturalWidth: element.naturalWidth,
+      naturalHeight: element.naturalHeight,
+      renderedWidth: rect.width,
+      renderedHeight: rect.height,
+      scale,
+      actualPressed: actual?.getAttribute('aria-pressed'),
+      fitPressed: fit?.getAttribute('aria-pressed'),
+      scaleText: scaleIndicator?.getAttribute('data-preview-scale') ?? null,
+    };
+  });
+}
+
 function isWithin(parent, child) {
   const childRelative = relative(parent, child);
   return (
@@ -319,6 +422,7 @@ async function readResultDiscoveryState(page, format) {
   return page.evaluate((expectedFormat) => {
     const button = document.querySelector('[data-testid="download-result-button"]');
     const image = document.querySelector('[data-testid="result-image"]');
+    const summary = document.querySelector('[data-testid="result-summary"]');
     const activeElement = document.activeElement;
     const serializeRect = (element) => {
       if (!(element instanceof HTMLElement)) return null;
@@ -361,6 +465,18 @@ async function readResultDiscoveryState(page, format) {
           buttonRect.right <= innerWidth &&
           buttonRect.bottom <= innerHeight &&
           buttonRect.left >= 0,
+      },
+      summary: {
+        present: summary instanceof HTMLElement,
+        text: summary?.textContent?.trim() ?? null,
+        beforeDownload:
+          summary instanceof HTMLElement && button instanceof HTMLElement
+            ? Boolean(summary.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING)
+            : false,
+        downloadBeforePreview:
+          button instanceof HTMLElement && image instanceof HTMLImageElement
+            ? Boolean(button.compareDocumentPosition(image) & Node.DOCUMENT_POSITION_FOLLOWING)
+            : false,
       },
       image: {
         present: image instanceof HTMLImageElement,
@@ -427,6 +543,92 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
       `Result discovery failed for ${format}: ${JSON.stringify(discovery)}; ${reason}`
     );
   }
+  assert.equal(discovery.summary.present, true, 'Result summary is missing');
+  assert.equal(discovery.summary.beforeDownload, true, 'Result summary does not precede download');
+  assert.equal(
+    discovery.summary.downloadBeforePreview,
+    true,
+    'Primary download does not precede the preview'
+  );
+  assert(
+    discovery.summary.text?.includes('80×45'),
+    'Result summary omitted the encoded resolution'
+  );
+
+  await settleVisualState(page);
+  const actualPresentation = await readPreviewPresentation(page);
+  assert.equal(actualPresentation.actualPressed, 'true');
+  assert.equal(actualPresentation.fitPressed, 'false');
+  assert(
+    actualPresentation.scale > 0 && actualPresentation.scale <= 1.01,
+    `Actual-size preview was enlarged: ${JSON.stringify(actualPresentation)}`
+  );
+  assert.equal(
+    Number.parseInt(actualPresentation.scaleText ?? '', 10),
+    Math.round(actualPresentation.scale * 100),
+    'Actual-size scale indicator does not match rendered geometry'
+  );
+
+  await page.locator('[data-testid="preview-size-fit"]').click();
+  await page.waitForFunction(() => {
+    const image = document.querySelector('[data-testid="result-image"]');
+    if (!(image instanceof HTMLImageElement) || image.naturalWidth <= 0) return false;
+    const rect = image.getBoundingClientRect();
+    return Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight) > 1.1;
+  }, undefined, { timeout: 5_000 });
+  await settleVisualState(page);
+  const fitPresentation = await readPreviewPresentation(page);
+  assert.equal(fitPresentation.actualPressed, 'false');
+  assert.equal(fitPresentation.fitPressed, 'true');
+  assert(
+    fitPresentation.scale > 1.1,
+    `Fit preview did not use the available area: ${JSON.stringify(fitPresentation)}`
+  );
+  assert.equal(
+    Number.parseInt(fitPresentation.scaleText ?? '', 10),
+    Math.round(fitPresentation.scale * 100),
+    'Fit scale indicator does not match rendered geometry'
+  );
+
+  await page.locator('[data-testid="preview-size-actual"]').click();
+  await page.waitForFunction(() => {
+    const image = document.querySelector('[data-testid="result-image"]');
+    if (!(image instanceof HTMLImageElement) || image.naturalWidth <= 0) return false;
+    const rect = image.getBoundingClientRect();
+    return Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight) <= 1.01;
+  }, undefined, { timeout: 5_000 });
+  await settleVisualState(page);
+
+  await page.emulateMedia({ colorScheme: 'light' });
+  await settleVisualState(page);
+  const lightMetadataContrast = {
+    summary: await readResultMetadataContrast(page, '[data-testid="result-summary"]'),
+    details: await readResultMetadataContrast(page, '[data-result-quality]'),
+  };
+  for (const [surface, contrast] of Object.entries(lightMetadataContrast)) {
+    assert(contrast.fontSizePx >= 12, `Light ${surface} metadata is smaller than 12 CSS px`);
+    assert.equal(contrast.opacity, 1, `Light ${surface} metadata is translucent`);
+    assert(
+      contrast.ratio >= 4.5,
+      `Light ${surface} metadata contrast is ${contrast.ratio.toFixed(2)}:1`
+    );
+  }
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await settleVisualState(page);
+  const darkMetadataContrast = {
+    summary: await readResultMetadataContrast(page, '[data-testid="result-summary"]'),
+    details: await readResultMetadataContrast(page, '[data-result-quality]'),
+  };
+  for (const [surface, contrast] of Object.entries(darkMetadataContrast)) {
+    assert(contrast.fontSizePx >= 12, `Dark ${surface} metadata is smaller than 12 CSS px`);
+    assert.equal(contrast.opacity, 1, `Dark ${surface} metadata is translucent`);
+    assert(
+      contrast.ratio >= 4.5,
+      `Dark ${surface} metadata contrast is ${contrast.ratio.toFixed(2)}:1`
+    );
+  }
+  await page.emulateMedia({ colorScheme: 'light' });
+  await settleVisualState(page);
 
   const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
   await page.locator('[data-testid="download-result-button"]').click();
@@ -451,6 +653,14 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
     id: `h264-to-${format}`,
     status: 'passed',
     preview: dimensions,
+    presentation: {
+      actual: actualPresentation,
+      fit: fitPresentation,
+      metadataContrast: {
+        light: lightMetadataContrast,
+        dark: darkMetadataContrast,
+      },
+    },
     download: {
       file: outputFile,
       bytes: bytes.byteLength,
@@ -596,6 +806,102 @@ async function readCancellationInspector(page) {
   });
 }
 
+async function inspectRestoredPreview(page) {
+  const preview = page.locator('#selection-preview-video');
+  await preview.waitFor({ state: 'visible', timeout: 30_000 });
+  await page.waitForFunction(() => {
+    const video = document.querySelector('#selection-preview-video');
+    if (!(video instanceof HTMLVideoElement)) return false;
+    const rect = video.getBoundingClientRect();
+    return (
+      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      video.videoWidth > 0 &&
+      video.videoHeight > 0 &&
+      rect.width > 0 &&
+      rect.height > 0 &&
+      getComputedStyle(video).opacity === '1'
+    );
+  }, undefined, { timeout: 10_000 });
+  await settleVisualState(page);
+
+  const firstFrame = await preview.evaluate((video) => {
+    const element = video;
+    const rect = element.getBoundingClientRect();
+    const canvas = document.createElement('canvas');
+    canvas.width = 8;
+    canvas.height = 8;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    assertContext(context);
+    context.drawImage(element, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let opaquePixels = 0;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] > 0) opaquePixels++;
+    }
+    return {
+      currentTime: element.currentTime,
+      readyState: element.readyState,
+      videoWidth: element.videoWidth,
+      videoHeight: element.videoHeight,
+      renderedWidth: rect.width,
+      renderedHeight: rect.height,
+      opacity: getComputedStyle(element).opacity,
+      opaquePixels,
+    };
+
+    function assertContext(value) {
+      if (!value) throw new Error('Restored preview canvas has no 2D context');
+    }
+  });
+  assert(firstFrame.currentTime < 0.05, 'Restored preview did not return to its first frame');
+  assert.equal(firstFrame.opacity, '1', 'Restored preview transition did not settle');
+  assert.equal(firstFrame.opaquePixels, 64, 'Restored first frame was not drawable');
+  assert(firstFrame.videoWidth > 0 && firstFrame.videoHeight > 0);
+  assert(firstFrame.renderedWidth > 0 && firstFrame.renderedHeight > 0);
+
+  const knownContentPixels = await preview.evaluate(async (video) => {
+    const element = video;
+    const canvas = document.createElement('canvas');
+    canvas.width = 8;
+    canvas.height = 8;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('Restored preview canvas has no 2D context');
+
+    const seek = (time) =>
+      new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Restored preview seek timed out')), 3_000);
+        const onSeeked = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        element.addEventListener('seeked', onSeeked, { once: true });
+        element.currentTime = time;
+      });
+
+    for (let frame = 0; frame < 8; frame++) {
+      await seek(0.26 + frame / 120);
+      context.drawImage(element, 0, 0, canvas.width, canvas.height);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let nonBlackPixels = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index] + pixels[index + 1] + pixels[index + 2] > 24) {
+          nonBlackPixels++;
+        }
+      }
+      // This fixture alternates black and bright frames. Leave the video on
+      // the frame whose pixels were verified so the following capture matches
+      // the observation rather than an unrelated final black frame.
+      if (nonBlackPixels > 0) return nonBlackPixels;
+    }
+    return 0;
+  });
+  assert(knownContentPixels > 0, 'Restored preview did not render known non-black fixture content');
+
+  await settleVisualState(page);
+  const knownContentTime = await preview.evaluate((video) => video.currentTime);
+  return { firstFrame, knownContentPixels, knownContentTime };
+}
+
 async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, artifacts) {
   await loadApplication(page, baseUrl);
   await selectFixture(page, fixturePath);
@@ -694,6 +1000,7 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
   assert.equal(cancellationUi.settingsCancel.label, cancellationUi.stateText);
   assert.equal(cancellationUi.dropzoneCancel.label, cancellationUi.stateText);
   assert.equal(cancellationUi.dropzoneBusy, 'true');
+  const previewRecovery = await inspectRestoredPreview(page);
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-cancelled.png`, artifacts);
   return {
     id: 'cancel-high-motion',
@@ -702,6 +1009,7 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     effective: true,
     progressBeforeCancel,
     cancellationUi,
+    previewRecovery,
   };
 }
 

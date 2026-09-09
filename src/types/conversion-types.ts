@@ -140,6 +140,8 @@ export interface ConversionSettings {
  *   outputBlob: new Blob([...], { type: 'image/gif' }),
  *   originalName: 'video.mp4',
  *   originalSize: 1024000,
+ *   outputWidth: 1920,
+ *   outputHeight: 1080,
  *   createdAt: performance.now(),
  *   settings: { format: 'gif', quality: 'high', scale: 1.0 },
  *   conversionDurationSeconds: 12.5
@@ -154,6 +156,10 @@ export interface ConversionResult {
   originalName: string;
   /** Original file size in bytes */
   originalSize: number;
+  /** Encoded output width in pixels */
+  outputWidth: number;
+  /** Encoded output height in pixels */
+  outputHeight: number;
   /** Timestamp when conversion completed */
   createdAt: number;
   /** Settings used for this conversion */

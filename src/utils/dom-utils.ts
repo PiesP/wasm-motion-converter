@@ -67,6 +67,28 @@ export function focusElement(selector: string): void {
   });
 }
 
+/**
+ * Focus a newly rendered action unless the user currently owns an editable field.
+ *
+ * Completion UI may appear while the user is changing another input. Moving focus
+ * in that case can interrupt typing or a native select interaction.
+ */
+export function focusElementUnlessUserIsEditing(selector: string): void {
+  queueMicrotask(() => {
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLInputElement ||
+      activeElement instanceof HTMLTextAreaElement ||
+      activeElement instanceof HTMLSelectElement ||
+      (activeElement instanceof HTMLElement && activeElement.isContentEditable)
+    ) {
+      return;
+    }
+
+    document.querySelector<HTMLElement>(selector)?.focus();
+  });
+}
+
 /** Focus the primary action exposed by the current error type. */
 export function focusPrimaryErrorAction(): void {
   focusElement(

@@ -2,7 +2,12 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { focusElement, focusPrimaryErrorAction, scheduleTask } from '@utils/dom-utils';
+import {
+  focusElement,
+  focusElementUnlessUserIsEditing,
+  focusPrimaryErrorAction,
+  scheduleTask,
+} from '@utils/dom-utils';
 
 describe('dom utilities', () => {
   beforeEach(() => vi.useFakeTimers());
@@ -51,5 +56,34 @@ describe('dom utilities', () => {
     await Promise.resolve();
 
     expect(focus).toHaveBeenCalled();
+  });
+
+  it('preserves an input the user is editing when a result action appears', async () => {
+    const input = document.createElement('input');
+    const resultAction = document.createElement('a');
+    resultAction.href = '#result';
+    resultAction.dataset.testid = 'download-result-button';
+    const focusResult = vi.spyOn(resultAction, 'focus');
+    document.body.append(input, resultAction);
+    input.focus();
+
+    focusElementUnlessUserIsEditing('[data-testid="download-result-button"]');
+    await Promise.resolve();
+
+    expect(document.activeElement).toBe(input);
+    expect(focusResult).not.toHaveBeenCalled();
+  });
+
+  it('focuses a result action when no editable control owns focus', async () => {
+    const resultAction = document.createElement('a');
+    resultAction.href = '#result';
+    resultAction.dataset.testid = 'download-result-button';
+    const focusResult = vi.spyOn(resultAction, 'focus');
+    document.body.append(resultAction);
+
+    focusElementUnlessUserIsEditing('[data-testid="download-result-button"]');
+    await Promise.resolve();
+
+    expect(focusResult).toHaveBeenCalled();
   });
 });
