@@ -878,7 +878,6 @@ async function inspectRestoredPreview(page) {
         element.currentTime = time;
       });
 
-    let brightestSample = 0;
     for (let frame = 0; frame < 8; frame++) {
       await seek(0.26 + frame / 120);
       context.drawImage(element, 0, 0, canvas.width, canvas.height);
@@ -889,13 +888,18 @@ async function inspectRestoredPreview(page) {
           nonBlackPixels++;
         }
       }
-      brightestSample = Math.max(brightestSample, nonBlackPixels);
+      // This fixture alternates black and bright frames. Leave the video on
+      // the frame whose pixels were verified so the following capture matches
+      // the observation rather than an unrelated final black frame.
+      if (nonBlackPixels > 0) return nonBlackPixels;
     }
-    return brightestSample;
+    return 0;
   });
   assert(knownContentPixels > 0, 'Restored preview did not render known non-black fixture content');
 
-  return { firstFrame, knownContentPixels };
+  await settleVisualState(page);
+  const knownContentTime = await preview.evaluate((video) => video.currentTime);
+  return { firstFrame, knownContentPixels, knownContentTime };
 }
 
 async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, artifacts) {
