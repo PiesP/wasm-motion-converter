@@ -94,6 +94,7 @@ export interface TranslationKeys {
   'settings.heading': string;
   'settings.selectVideo': string;
   'settings.convert': string;
+  'settings.convertAgain': string;
   'settings.stopConversion': string;
   'settings.tooltip.quality': string;
   'settings.tooltip.scale': string;
@@ -188,6 +189,7 @@ export interface TranslationKeys {
   'result.download': string;
   'result.originalSize': string;
   'result.outputSize': string;
+  'result.resolution': string;
   'result.format': string;
   'result.quality': string;
   'result.scale': string;
@@ -197,6 +199,11 @@ export interface TranslationKeys {
   'result.compressionSmaller': string;
   'result.compressionLarger': string;
   'result.previewFailed': string;
+  'result.previewSize': string;
+  'result.actualSize': string;
+  'result.fitToArea': string;
+  'result.previewScale': string;
+  'result.details': string;
   'result.heading': string;
   'result.aria.previewAlt': string;
   'result.aria.sectionLabel': string;

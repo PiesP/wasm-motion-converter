@@ -133,4 +133,34 @@ describe('FileDropzone', () => {
 
     dispose();
   });
+
+  it('requests the first decodable frame when a selected preview is remounted', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const dispose = render(
+      () => (
+        <FileDropzone
+          onFileSelected={() => {}}
+          previewUrl="blob:selection-preview"
+          duration={10}
+          trimStart={0}
+          trimEnd={0}
+          onTrimChange={() => {}}
+        />
+      ),
+      container
+    );
+    const video = container.querySelector<HTMLVideoElement>('#selection-preview-video')!;
+    Object.defineProperties(video, {
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_METADATA },
+      duration: { configurable: true, value: 10 },
+      currentTime: { configurable: true, writable: true, value: 0 },
+    });
+
+    video.dispatchEvent(new Event('loadedmetadata'));
+
+    expect(video.currentTime).toBe(0.001);
+    dispose();
+  });
 });

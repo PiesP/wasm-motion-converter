@@ -44,8 +44,22 @@ test.describe('CI codec smoke', () => {
         )
         .toEqual({ width: 80, height: 45 });
 
+      const resultSummary = page.locator('[data-testid="result-summary"]');
+      await expect(resultSummary.locator('[data-result-resolution]')).toHaveText('80×45');
+      await expect(resultSummary.locator('[data-result-output-size]')).not.toHaveText('');
+
       const downloadButton = page.locator('[data-testid="download-result-button"]');
       await expect(downloadButton).toBeFocused();
+      expect(
+        await downloadButton.evaluate((button, image) => {
+          const previewImage = document.querySelector(image);
+          return previewImage
+            ? Boolean(
+                button.compareDocumentPosition(previewImage) & Node.DOCUMENT_POSITION_FOLLOWING
+              )
+            : false;
+        }, '[data-testid="result-image"]')
+      ).toBe(true);
       await expect
         .poll(() =>
           downloadButton.evaluate((button) => {
@@ -54,6 +68,52 @@ test.describe('CI codec smoke', () => {
           })
         )
         .toBe(true);
+
+      const actualSizeButton = page.locator('[data-testid="preview-size-actual"]');
+      const fitButton = page.locator('[data-testid="preview-size-fit"]');
+      await expect(actualSizeButton).toHaveAttribute('aria-pressed', 'true');
+      await expect(fitButton).toHaveAttribute('aria-pressed', 'false');
+      await expect
+        .poll(() =>
+          preview.evaluate((image) => {
+            const element = image as HTMLImageElement;
+            const rect = element.getBoundingClientRect();
+            return Math.min(rect.width / element.naturalWidth, rect.height / element.naturalHeight);
+          })
+        )
+        .toBeLessThanOrEqual(1.01);
+
+      await fitButton.click();
+      await expect(fitButton).toHaveAttribute('aria-pressed', 'true');
+      await expect
+        .poll(() =>
+          preview.evaluate((image) => {
+            const element = image as HTMLImageElement;
+            const rect = element.getBoundingClientRect();
+            return Math.min(rect.width / element.naturalWidth, rect.height / element.naturalHeight);
+          })
+        )
+        .toBeGreaterThan(1.1);
+      await expect
+        .poll(async () => {
+          const value = await page
+            .locator('[data-testid="preview-scale"]')
+            .getAttribute('data-preview-scale');
+          return Number.parseInt(value ?? '', 10);
+        })
+        .toBeGreaterThan(110);
+
+      await actualSizeButton.click();
+      await expect(actualSizeButton).toHaveAttribute('aria-pressed', 'true');
+      await expect
+        .poll(() =>
+          preview.evaluate((image) => {
+            const element = image as HTMLImageElement;
+            const rect = element.getBoundingClientRect();
+            return Math.min(rect.width / element.naturalWidth, rect.height / element.naturalHeight);
+          })
+        )
+        .toBeLessThanOrEqual(1.01);
 
       const output = await downloadResult(page);
       const validation = validateFileMagic(output, format);

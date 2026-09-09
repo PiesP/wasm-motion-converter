@@ -147,6 +147,8 @@ describe('conversion-store', () => {
         outputBlob: new Blob(['result']),
         originalName: 'input.mp4',
         originalSize: 6,
+        outputHeight: 1080,
+        outputWidth: 1920,
         createdAt: 123,
         settings: {
           format: 'gif' as const,

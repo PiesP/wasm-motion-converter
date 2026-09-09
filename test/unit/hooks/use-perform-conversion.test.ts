@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     | { onCancel: () => void; onConfirm: () => void }
     | undefined,
   appState: 'idle' as 'idle' | 'cancelling' | 'error',
+  focusElementUnlessUserIsEditing: vi.fn(),
   runPipelineWithFallback: vi.fn(),
   runConversionPipeline: vi.fn(),
   setConversionElapsedMs: vi.fn(),
@@ -94,6 +95,7 @@ vi.mock('@utils/file-validation', () => ({
 }));
 vi.mock('@utils/dom-utils', () => ({
   focusElement: vi.fn(),
+  focusElementUnlessUserIsEditing: mocks.focusElementUnlessUserIsEditing,
   focusPrimaryErrorAction: vi.fn(),
 }));
 
@@ -114,6 +116,7 @@ function createRuntime(): ConversionRuntimeController {
 beforeEach(() => {
   mocks.confirmation = undefined;
   mocks.appState = 'idle';
+  mocks.focusElementUnlessUserIsEditing.mockReset();
   mocks.runPipelineWithFallback.mockReset().mockResolvedValue(
     new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer
   );
@@ -389,6 +392,21 @@ describe('handleConvert conversion ownership', () => {
     expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
       expect.objectContaining({ outputBlob: expect.any(Blob) }),
     ]);
+  });
+
+  it('publishes the encoded dimensions and requests guarded download focus', async () => {
+    mocks.settings = { ...mocks.settings, scale: 0.5 };
+    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
+
+    await handleConvert(createRuntime(), ((key: string) => key) as Parameters<typeof handleConvert>[1]);
+    await Promise.resolve();
+
+    expect(mocks.setConversionResults).toHaveBeenLastCalledWith([
+      expect.objectContaining({ outputWidth: 8, outputHeight: 8 }),
+    ]);
+    expect(mocks.focusElementUnlessUserIsEditing).toHaveBeenCalledWith(
+      '[data-testid="download-result-button"]'
+    );
   });
 });
 

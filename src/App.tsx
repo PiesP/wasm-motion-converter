@@ -374,6 +374,7 @@ const App: Component = () => {
               <SettingsPanel
                 isBusy={isBusy()}
                 isCancelling={appState() === 'cancelling'}
+                isComplete={appState() === 'done'}
                 isConversionActive={isConversionActive()}
                 metadata={videoMetadata()}
                 onCancel={handleCancelConversion}

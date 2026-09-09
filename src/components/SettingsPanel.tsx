@@ -15,6 +15,7 @@ import { createMemo, Show, splitProps } from 'solid-js';
 interface SettingsPanelProps {
   isBusy: boolean;
   isCancelling: boolean;
+  isComplete: boolean;
   isConversionActive: boolean;
   settings: ConversionSettings;
   metadata: VideoMetadata | null;
@@ -39,6 +40,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   const [local] = splitProps(props, [
     'isBusy',
     'isCancelling',
+    'isComplete',
     'isConversionActive',
     'settings',
     'metadata',
@@ -51,15 +53,25 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   ]);
 
   const ariaLabel = createMemo(() =>
-    !local.metadata ? t('settings.selectVideo') : t('settings.convert')
+    !local.metadata
+      ? t('settings.selectVideo')
+      : local.isComplete
+        ? t('settings.convertAgain')
+        : t('settings.convert')
   );
 
-  const convertVariant = createMemo(() => (!local.metadata ? 'ghost' : ('primary' as const)));
+  const convertVariant = createMemo(() =>
+    !local.metadata || local.isComplete ? 'ghost' : ('primary' as const)
+  );
 
   const convertDisabled = createMemo(() => !local.metadata || local.isBusy);
 
   const convertText = createMemo(() =>
-    !local.metadata ? t('settings.selectVideo') : t('settings.convert')
+    !local.metadata
+      ? t('settings.selectVideo')
+      : local.isComplete
+        ? t('settings.convertAgain')
+        : t('settings.convert')
   );
 
   const frameSkipSelection = createMemo(() => {

@@ -26,7 +26,9 @@ const ResultSection: Component<ResultSectionProps> = (props) => {
               conversionDurationSeconds={result.conversionDurationSeconds}
               originalName={result.originalName}
               originalSize={result.originalSize}
+              outputHeight={result.outputHeight}
               outputBlob={result.outputBlob}
+              outputWidth={result.outputWidth}
               settings={result.settings}
             />
           )}

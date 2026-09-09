@@ -53,13 +53,18 @@ record:
 - production app load with CSP and cross-origin isolation;
 - the CI H.264 fixture converted to low-quality, 50% GIF and WebP;
 - an 80 x 45 decoded preview for each output;
+- default intrinsic-size preview geometry, explicit fit geometry, and a scale
+  indicator that matches the rendered-to-natural size ratio;
+- result summary, primary-download ordering, and opaque 12px-or-larger metadata
+  contrast of at least 4.5:1 in light and dark themes;
 - browser download bytes, format magic, size, and SHA-256;
 - headed-browser screenshots for both result states;
 - native metadata and advanced-settings disclosures, including keyboard toggling
   and frame-skip selection;
 - high-motion GIF cancellation from a non-zero progress value, including an
   inspector assertion that the same progress bar and value remain visible while
-  both cancellation controls are disabled and accurately named;
+  both cancellation controls are disabled and accurately named, followed by a
+  settled, drawable first-frame preview and known non-black fixture content;
 - stable-browser API and renderer observations for diagnosis.
 
 If the high-motion fixture finishes before the stop control and non-zero progress

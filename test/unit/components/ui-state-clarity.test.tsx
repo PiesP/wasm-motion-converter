@@ -75,6 +75,7 @@ describe('UI state clarity', () => {
         <SettingsPanel
           isBusy={false}
           isCancelling={false}
+          isComplete={false}
           isConversionActive={false}
           metadata={metadata}
           onCancel={() => {}}
@@ -102,6 +103,38 @@ describe('UI state clarity', () => {
     dispose();
   });
 
+  it('presents completed conversion as a secondary convert-again action', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(
+      () => (
+        <SettingsPanel
+          isBusy={false}
+          isCancelling={false}
+          isComplete={true}
+          isConversionActive={false}
+          metadata={metadata}
+          onCancel={() => {}}
+          onConvert={() => {}}
+          onFormatChange={() => {}}
+          onQualityChange={() => {}}
+          onScaleChange={() => {}}
+          onSmartFrameSkipChange={() => {}}
+          settings={settings}
+        />
+      ),
+      container
+    );
+
+    const convert = container.querySelector<HTMLButtonElement>('[data-testid="convert-button"]');
+    expect(convert?.textContent).toContain('settings.convertAgain');
+    expect(convert?.getAttribute('aria-label')).toBe('settings.convertAgain');
+    expect(convert?.className).toContain('border-border-standard');
+    expect(convert?.className).not.toContain('bg-brand ');
+
+    dispose();
+  });
+
   it('keeps the focused download action visible after the preview replaces its skeleton', async () => {
     const animationFrames: FrameRequestCallback[] = [];
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
@@ -119,7 +152,9 @@ describe('UI state clarity', () => {
         <ResultPreview
           originalName="sample.mp4"
           originalSize={1_000}
+          outputHeight={810}
           outputBlob={new Blob(['result'], { type: 'image/gif' })}
+          outputWidth={1440}
           settings={settings}
         />
       ),
@@ -134,6 +169,18 @@ describe('UI state clarity', () => {
     expect(image).toBeInstanceOf(HTMLImageElement);
     expect(download?.getAttribute('href')).toBe('blob:result-preview');
     expect(container.querySelector('.animate-pulse')).not.toBeNull();
+    const summary = container.querySelector<HTMLElement>('[data-testid="result-summary"]');
+    const resolution = container.querySelector<HTMLElement>('[data-result-resolution]');
+    const actualSize = container.querySelector<HTMLButtonElement>(
+      '[data-testid="preview-size-actual"]'
+    );
+    expect(summary?.className).toContain('text-xs');
+    expect(summary?.className).toContain('text-text-secondary');
+    expect(summary?.className).not.toContain('/70');
+    expect(resolution?.textContent).toContain('1440×810');
+    expect(actualSize?.getAttribute('aria-pressed')).toBe('true');
+    expect(image?.className).toContain('w-auto');
+    expect(download?.compareDocumentPosition(image!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
     const scrollIntoView = vi.fn();
     Object.defineProperty(download, 'scrollIntoView', { configurable: true, value: scrollIntoView });
@@ -169,7 +216,9 @@ describe('UI state clarity', () => {
         <ResultPreview
           originalName="sample.mp4"
           originalSize={1_000}
+          outputHeight={45}
           outputBlob={new Blob(['result'], { type: 'image/webp' })}
+          outputWidth={80}
           settings={{ ...settings, format: 'webp' }}
         />
       ),
