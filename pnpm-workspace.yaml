@@ -14,6 +14,9 @@ blockExoticSubdeps: true
 
 engineStrict: true
 
+# Keep paired tooling and plugin peer requirements compatible during installs.
+strictPeerDependencies: true
+
 # Prefer current releases while retaining a short supply-chain observation window.
 minimumReleaseAge: 1440
 minimumReleaseAgeIgnoreMissingTime: false
