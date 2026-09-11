@@ -25,12 +25,16 @@ import {
   GIF_MIN_FRAME_DELAY_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
-import { applyPalette, GIFEncoder, quantize } from 'gifenc';
+import { GIFEncoder, quantize } from 'gifenc';
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
+import {
+  GIF_RGB565_PALETTE_CACHE_BYTES,
+  GifRgb565PaletteIndexer,
+} from './gif-rgb565-palette-indexer';
 import { OutputLimitError, resolveOutputLimits } from './output-limits';
 
 const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
@@ -196,18 +200,23 @@ export async function encodeGif(
   let exactRgbaScratch: Uint8Array | null = null;
   let lastIndexedData: Uint8Array | null = null;
   let liveIndexedBytes = 0;
+  let paletteIndexer: GifRgb565PaletteIndexer | null = null;
 
   const assertGifWorkingMemory = (
     streamPeakBytes: number,
     scratchBytes = exactRgbaScratch?.byteLength ?? 0,
-    indexedBytes = liveIndexedBytes
+    indexedBytes = liveIndexedBytes,
+    paletteCacheBytes = paletteIndexer ? GIF_RGB565_PALETTE_CACHE_BYTES : 0
   ): void => {
-    const additionalBytes = streamPeakBytes + scratchBytes + indexedBytes;
+    const additionalBytes = streamPeakBytes + scratchBytes + indexedBytes + paletteCacheBytes;
     if (!Number.isSafeInteger(additionalBytes)) {
       throw new RangeError('GIF working memory estimate exceeds the safe integer range');
     }
     opts.assertAdditionalMemoryBytes?.(additionalBytes);
   };
+
+  assertGifWorkingMemory(encoder.stream.buffer.byteLength, 0, 0, GIF_RGB565_PALETTE_CACHE_BYTES);
+  paletteIndexer = new GifRgb565PaletteIndexer();
 
   // gifenc grows its stream automatically. Wrap every supported write method so
   // each logical write and any geometric capacity growth are authorized before
@@ -323,13 +332,14 @@ export async function encodeGif(
 
   function writeFrameWithDelay(rgbaData: Uint8Array, delayMs: number): void {
     const pal = globalPalette;
-    if (!pal) return;
+    const indexer = paletteIndexer;
+    if (!pal || !indexer) return;
     // The previous index is needed only for a possible tail. Drop the reference
     // before allocating its replacement so only one external index is retained.
     lastIndexedData = null;
     liveIndexedBytes = 0;
     assertGifWorkingMemory(encoder.stream.buffer.byteLength, exactRgbaBytes, pixelCount);
-    const indexed = applyPalette(rgbaData, pal, 'rgb565');
+    const indexed = indexer.apply(rgbaData, pal);
     if (indexed.byteLength !== pixelCount) {
       throw new RangeError(
         `gifenc returned ${indexed.byteLength} indices for ${pixelCount} pixels`
@@ -505,6 +515,7 @@ export async function encodeGif(
     exactRgbaScratch = null;
     lastIndexedData = null;
     liveIndexedBytes = 0;
+    paletteIndexer = null;
     encoder.finish();
     const streamCapacity = encoder.stream.buffer.byteLength;
     const finalCopyPeakBytes = streamCapacity + streamBytes;
@@ -554,5 +565,6 @@ export async function encodeGif(
     exactRgbaScratch = null;
     lastIndexedData = null;
     liveIndexedBytes = 0;
+    paletteIndexer = null;
   }
 }
