@@ -20,7 +20,7 @@
     "pnpm": ">=11.26.0"
   },
   "volta": {
-    "node": "26.8.1",
+    "node": "26.8.2",
     "pnpm": "11.26.0"
   },
   "scripts": {
@@ -71,7 +71,7 @@
   "dependencies": {
     "@piesp/browser-core": "file:packages/core",
     "gifenc": "^1.0.3",
-    "mediabunny": "^1.55.7",
+    "mediabunny": "^1.56.1",
     "solid-js": "1.9.15",
     "wasm-webp": "^0.1.0"
   },
@@ -83,7 +83,7 @@
     "@stryker-mutator/vitest-runner": "^10.0.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/dom-webcodecs": "^0.1.19",
-    "@types/node": "26.5.0",
+    "@types/node": "26.5.1",
     "@vitest/coverage-v8": "^4.1.11",
     "dpdm": "4.3.0",
     "jsdom": "^30.0.1",
@@ -93,6 +93,6 @@
     "vite": "8.2.2",
     "vite-plugin-solid": "2.11.14",
     "vitest": "^4.1.11",
-    "wrangler": "^4.129.1"
+    "wrangler": "^4.130.0"
   }
 }
