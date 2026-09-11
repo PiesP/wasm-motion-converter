@@ -3,6 +3,7 @@
 
 import { createComputed, createRoot, createSignal } from 'solid-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ConversionSettings, ProgressPhase } from '@t/conversion-types';
 
 const mocks = vi.hoisted(() => ({
   confirmation: undefined as
@@ -12,10 +13,7 @@ const mocks = vi.hoisted(() => ({
   focusElementUnlessUserIsEditing: vi.fn(),
   runPipelineWithFallback: vi.fn(),
   runConversionPipeline: vi.fn(),
-  setConversionElapsedMs: vi.fn(),
-  setConversionFps: vi.fn(),
   setConversionProgress: vi.fn(),
-  setInputBuffer: vi.fn(),
   setInputFile: vi.fn(),
   setConversionResults: vi.fn(),
   setConversionStatusMessage: vi.fn(),
@@ -33,10 +31,10 @@ const mocks = vi.hoisted(() => ({
   validateVideoDuration: vi.fn(),
   readWholeFile: vi.fn(),
   settings: {
-    format: 'gif' as const,
-    quality: 'medium' as const,
-    scale: 1 as const,
-    smartFrameSkip: 'off' as const,
+    format: 'gif' as ConversionSettings['format'],
+    quality: 'medium' as ConversionSettings['quality'],
+    scale: 1 as ConversionSettings['scale'],
+    smartFrameSkip: 'off' as ConversionSettings['smartFrameSkip'],
     trimEnd: 0,
     trimStart: 0,
   },
@@ -48,22 +46,18 @@ vi.mock('@stores/conversion-settings-store', () => ({
 
 vi.mock('@stores/conversion-store', () => ({
   appState: () => mocks.appState,
-  getInputBuffer: () => null,
   inputFile: () => {
     const file = new File(['video'], 'video.mp4', { type: 'video/mp4' });
     Object.defineProperty(file, 'arrayBuffer', { value: mocks.readWholeFile });
     return file;
   },
   setAppState: mocks.setAppState,
-  setConversionElapsedMs: mocks.setConversionElapsedMs,
-  setConversionFps: mocks.setConversionFps,
   setConversionProgress: mocks.setConversionProgress,
   setConversionResults: mocks.setConversionResults,
   setConversionStatusMessage: mocks.setConversionStatusMessage,
   setCurrentFrame: mocks.setCurrentFrame,
   setErrorContext: vi.fn(),
   setErrorMessage: mocks.setErrorMessage,
-  setInputBuffer: mocks.setInputBuffer,
   setInputFile: mocks.setInputFile,
   setOutputFrames: mocks.setOutputFrames,
   setTotalFrames: mocks.setTotalFrames,
@@ -123,10 +117,7 @@ beforeEach(() => {
   mocks.runConversionPipeline.mockReset().mockResolvedValue(
     new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
   );
-  mocks.setConversionElapsedMs.mockReset();
-  mocks.setConversionFps.mockReset();
   mocks.setConversionProgress.mockReset();
-  mocks.setInputBuffer.mockClear();
   mocks.readWholeFile.mockReset().mockRejectedValue(new Error('Full-file reads are forbidden'));
   mocks.setInputFile.mockClear();
   mocks.setConversionResults.mockClear();
@@ -350,7 +341,6 @@ describe('handleConvert conversion ownership', () => {
       30
     );
     expect(mocks.readWholeFile).not.toHaveBeenCalled();
-    expect(mocks.setInputBuffer).toHaveBeenCalledWith(null);
   });
 
   it('uses the input Blob without creating or retaining an ArrayBuffer for WebP', async () => {
@@ -411,10 +401,9 @@ describe('handleConvert conversion ownership', () => {
 });
 
 describe('handleDismissError resource cleanup', () => {
-  it('releases the input buffer and metadata when the error is dismissed', () => {
+  it('releases the file and metadata when the error is dismissed', () => {
     handleDismissError();
 
-    expect(mocks.setInputBuffer).toHaveBeenCalledWith(null);
     expect(mocks.setVideoMetadata).toHaveBeenCalledWith(null);
     expect(mocks.setInputFile).toHaveBeenCalledWith(null);
     expect(mocks.setVideoPreviewUrl).toHaveBeenCalledWith(null);
@@ -482,17 +471,13 @@ describe('localized conversion progress status', () => {
 
     const reactive = createRoot((dispose) => {
       const [progress, setProgress] = createSignal(0);
-      const [phase, setPhase] = createSignal('demuxing');
+      const [phase, setPhase] = createSignal<ProgressPhase>('demuxing');
       const [memoryUsage, setMemoryUsage] = createSignal<string | null>(null);
-      const [fps, setFps] = createSignal<number | undefined>();
-      const [elapsedMs, setElapsedMs] = createSignal<number | undefined>();
       const [currentFrame, setCurrentFrame] = createSignal<number | undefined>();
       const [totalFrames, setTotalFrames] = createSignal<number | undefined>();
       const [outputFrames, setOutputFrames] = createSignal<number | undefined>();
       const [status, setStatus] = createSignal('');
       mocks.setConversionProgress.mockImplementation(setProgress);
-      mocks.setConversionFps.mockImplementation(setFps);
-      mocks.setConversionElapsedMs.mockImplementation(setElapsedMs);
       mocks.setCurrentFrame.mockImplementation(setCurrentFrame);
       mocks.setTotalFrames.mockImplementation(setTotalFrames);
       mocks.setOutputFrames.mockImplementation(setOutputFrames);
@@ -504,8 +489,6 @@ describe('localized conversion progress status', () => {
           progress: progress(),
           phase: phase(),
           memoryUsage: memoryUsage(),
-          fps: fps(),
-          elapsedMs: elapsedMs(),
           currentFrame: currentFrame(),
           totalFrames: totalFrames(),
           outputFrames: outputFrames(),
@@ -547,8 +530,6 @@ describe('localized conversion progress status', () => {
           progress: 25,
           phase: 'decoding',
           memoryUsage: '42 MB',
-          fps: 30,
-          elapsedMs: 1_250,
           currentFrame: 4,
           totalFrames: 20,
           outputFrames: 3,

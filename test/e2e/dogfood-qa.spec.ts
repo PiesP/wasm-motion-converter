@@ -278,7 +278,12 @@ test.describe('Performance', () => {
     const totalSize = await page.evaluate(() => {
       return performance
         .getEntriesByType('resource')
-        .filter((r) => r.name.endsWith('.js') && r.transferSize > 0)
+        .filter(
+          (entry): entry is PerformanceResourceTiming =>
+            entry instanceof PerformanceResourceTiming &&
+            entry.name.endsWith('.js') &&
+            entry.transferSize > 0
+        )
         .reduce((sum, r) => sum + r.transferSize, 0);
     });
 

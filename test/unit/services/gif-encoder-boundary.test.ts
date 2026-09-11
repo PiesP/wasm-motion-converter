@@ -4,11 +4,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  applyInputs: [] as Uint8Array[],
+  applyInputs: [] as Array<Uint8Array | Uint8ClampedArray>,
   applyResults: [] as Uint8Array[],
   frameFactory: (): Uint8Array => new Uint8Array(),
   pixelFormats: [] as Array<string | undefined>,
-  quantizeInputs: [] as Uint8Array[],
+  quantizeInputs: [] as Array<Uint8Array | Uint8ClampedArray>,
   writeInputs: [] as Uint8Array[],
 }));
 

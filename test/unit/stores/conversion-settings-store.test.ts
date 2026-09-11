@@ -363,21 +363,21 @@ describe('conversion-settings-store', () => {
   // ── Malformed input (runtime validation hardening) ────────────────
   describe('malformed input rejection', () => {
     it('rejects NaN scale and falls back to defaults', async () => {
-      const stored = makeTestSettings({ scale: NaN });
+      const stored = { ...makeTestSettings(), scale: NaN };
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
       const { conversionSettings } = await import('@stores/conversion-settings-store');
       expect(conversionSettings().scale).toBe(0.75); // DEFAULT
     });
 
     it('rejects Infinity scale and falls back to defaults', async () => {
-      const stored = makeTestSettings({ scale: Infinity });
+      const stored = { ...makeTestSettings(), scale: Infinity };
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
       const { conversionSettings } = await import('@stores/conversion-settings-store');
       expect(conversionSettings().scale).toBe(0.75);
     });
 
     it('rejects -Infinity scale and falls back to defaults', async () => {
-      const stored = makeTestSettings({ scale: -Infinity });
+      const stored = { ...makeTestSettings(), scale: -Infinity };
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
       const { conversionSettings } = await import('@stores/conversion-settings-store');
       expect(conversionSettings().scale).toBe(0.75);

@@ -58,6 +58,40 @@ describe('decoder-service', () => {
   });
 
   describe('adaptive frame skip', () => {
+    const chunkFixtures = new WeakMap<
+      EncodedVideoChunk,
+      {
+        codedHeight: number | undefined;
+        codedWidth: number | undefined;
+        intensity: number | undefined;
+      }
+    >();
+
+    function fixtureChunk(
+      timestamp: number,
+      intensity?: number,
+      options: {
+        byteLength?: number;
+        codedHeight?: number;
+        codedWidth?: number;
+        duration?: number | null;
+      } = {}
+    ): EncodedVideoChunk {
+      const chunk: EncodedVideoChunk = {
+        byteLength: options.byteLength ?? 0,
+        copyTo: vi.fn(),
+        duration: options.duration ?? null,
+        timestamp,
+        type: 'key',
+      };
+      chunkFixtures.set(chunk, {
+        codedHeight: options.codedHeight,
+        codedWidth: options.codedWidth,
+        intensity,
+      });
+      return chunk;
+    }
+
     class FakeVideoFrame {
       static allocationBytesPerPixel = 4;
       static allocationSizeThrows = false;
@@ -141,10 +175,10 @@ describe('decoder-service', () => {
       }
 
       decode(chunk: EncodedVideoChunk): void {
-        const fixture = chunk as EncodedVideoChunk & {
-          codedHeight?: number;
-          codedWidth?: number;
-          intensity?: number;
+        const fixture = chunkFixtures.get(chunk) ?? {
+          codedHeight: undefined,
+          codedWidth: undefined,
+          intensity: undefined,
         };
         const intensity = fixture.intensity ?? Number(chunk.timestamp / 1_000);
         this.output(
@@ -668,9 +702,7 @@ describe('decoder-service', () => {
       framerate = 60
     ): Promise<number[]> {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
-      const chunks = intensities.map(
-        (intensity, index) => ({ intensity, timestamp: index * 1_000 }) as EncodedVideoChunk
-      );
+      const chunks = intensities.map((intensity, index) => fixtureChunk(index * 1_000, intensity));
       const delivered: number[] = [];
 
       await decodeFrames(
@@ -701,9 +733,7 @@ describe('decoder-service', () => {
     it('keeps smart-skip selection and timing identical for RGB and RGBA delivery', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       const intensities = [0, 0, 12, 12, 40, 40, 80, 80, 120, 120];
-      const chunks = intensities.map(
-        (intensity, index) => ({ intensity, timestamp: index * 1_000 }) as EncodedVideoChunk
-      );
+      const chunks = intensities.map((intensity, index) => fixtureChunk(index * 1_000, intensity));
       const run = async (pixelFormat: 'rgb' | 'rgba') => {
         const delivered: Array<{ durationMs: number; frameNumber: number }> = [];
         const result = await decodeFrames(
@@ -741,7 +771,7 @@ describe('decoder-service', () => {
 
       await decodeFrames(
         {
-          chunks: [{ intensity: 0, timestamp: 0 } as unknown as EncodedVideoChunk],
+          chunks: [fixtureChunk(0, 0)],
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 0.04,
           framerate: 25,
@@ -806,9 +836,8 @@ describe('decoder-service', () => {
 
     it('falls back to preset decimation when batch mode cannot run adaptive analysis', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
-      const chunks = Array.from(
-        { length: 16 },
-        (_, index) => ({ intensity: index, timestamp: index * 1_000 }) as EncodedVideoChunk
+      const chunks = Array.from({ length: 16 }, (_, index) =>
+        fixtureChunk(index * 1_000, index)
       );
 
       const result = await decodeFrames(
@@ -837,9 +866,8 @@ describe('decoder-service', () => {
 
     it('falls back to preset decimation when GPU streaming cannot run adaptive analysis', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
-      const chunks = Array.from(
-        { length: 16 },
-        (_, index) => ({ intensity: index, timestamp: index * 1_000 }) as EncodedVideoChunk
+      const chunks = Array.from({ length: 16 }, (_, index) =>
+        fixtureChunk(index * 1_000, index)
       );
       const delivered: number[] = [];
 
@@ -1009,11 +1037,7 @@ describe('decoder-service', () => {
 
       const decoding = decodeFrames(
         {
-          chunks: [
-            { intensity: 0, timestamp: 0 },
-            { intensity: 10, timestamp: 1_000 },
-            { intensity: 20, timestamp: 2_000 },
-          ] as EncodedVideoChunk[],
+          chunks: [fixtureChunk(0, 0), fixtureChunk(1_000, 10), fixtureChunk(2_000, 20)],
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 0.05,
           framerate: 60,
@@ -1054,11 +1078,7 @@ describe('decoder-service', () => {
 
       const decoding = decodeFrames(
         {
-          chunks: [
-            { intensity: 0, timestamp: 0 },
-            { intensity: 10, timestamp: 1_000 },
-            { intensity: 20, timestamp: 2_000 },
-          ] as EncodedVideoChunk[],
+          chunks: [fixtureChunk(0, 0), fixtureChunk(1_000, 10), fixtureChunk(2_000, 20)],
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 0.05,
           framerate: 60,
@@ -1160,10 +1180,7 @@ describe('decoder-service', () => {
 
       const decoding = decodeFrames(
         {
-          chunks: [
-            { intensity: 0, timestamp: 0 },
-            { intensity: 10, timestamp: 1_000 },
-          ] as EncodedVideoChunk[],
+          chunks: [fixtureChunk(0, 0), fixtureChunk(1_000, 10)],
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 0.034,
           framerate: 60,
@@ -1222,10 +1239,10 @@ describe('decoder-service', () => {
       const decoding = decodeFrames(
         {
           chunks: [
-            { codedHeight: height, codedWidth: width, intensity: 0, timestamp: 0 },
-            { codedHeight: height, codedWidth: width, intensity: 1, timestamp: 1_000 },
-            { codedHeight: height, codedWidth: width, intensity: 2, timestamp: 2_000 },
-          ] as EncodedVideoChunk[],
+            fixtureChunk(0, 0, { codedHeight: height, codedWidth: width }),
+            fixtureChunk(1_000, 1, { codedHeight: height, codedWidth: width }),
+            fixtureChunk(2_000, 2, { codedHeight: height, codedWidth: width }),
+          ],
           config: { codec: 'vp09.00.10.08', codedWidth: width, codedHeight: height },
           duration: 0.05,
           framerate: 60,
@@ -1436,7 +1453,7 @@ describe('decoder-service', () => {
 
       const decoding = decodeFrames(
         {
-          chunks: [{ intensity: 0, timestamp: 0 }] as EncodedVideoChunk[],
+          chunks: [fixtureChunk(0, 0)],
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 0.017,
           framerate: 60,
@@ -1489,14 +1506,12 @@ describe('decoder-service', () => {
       const decoding = decodeFrames(
         {
           chunks: [
-            { codedHeight: sourceHeight, codedWidth: sourceWidth, intensity: 0, timestamp: 0 },
-            {
+            fixtureChunk(0, 0, { codedHeight: sourceHeight, codedWidth: sourceWidth }),
+            fixtureChunk(1_000, 1, {
               codedHeight: sourceHeight,
               codedWidth: sourceWidth,
-              intensity: 1,
-              timestamp: 1_000,
-            },
-          ] as EncodedVideoChunk[],
+            }),
+          ],
           config: { codec: 'vp09.00.10.08', codedWidth: sourceWidth, codedHeight: sourceHeight },
           duration: 0.034,
           framerate: 60,
@@ -1561,11 +1576,7 @@ describe('decoder-service', () => {
 
       const decoding = decodeFrames(
         {
-          chunks: [
-            { intensity: 0, timestamp: 0 },
-            { intensity: 10, timestamp: 1_000 },
-            { intensity: 20, timestamp: 2_000 },
-          ] as EncodedVideoChunk[],
+          chunks: [fixtureChunk(0, 0), fixtureChunk(1_000, 10), fixtureChunk(2_000, 20)],
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 0.05,
           framerate: 60,
@@ -2179,10 +2190,7 @@ describe('decoder-service', () => {
       const delivered: number[] = [];
       const decoding = decodeFrames(
         {
-          chunks: [
-            { intensity: 0, timestamp: 0 },
-            { intensity: 1, timestamp: 1_000 },
-          ] as EncodedVideoChunk[],
+          chunks: [fixtureChunk(0, 0), fixtureChunk(1_000, 1)],
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
           duration: 0.034,
           framerate: 60,
@@ -2695,7 +2703,7 @@ describe('decoder-service', () => {
           for (let index = 0; index < 20; index++) {
             if (submissions > 0) pullsAfterFailure++;
             pulled.push(index);
-            yield { intensity: index, timestamp: index * 1_000 } as EncodedVideoChunk;
+            yield fixtureChunk(index * 1_000, index);
           }
         } finally {
           producerClosed = true;
@@ -2742,10 +2750,10 @@ describe('decoder-service', () => {
       const delivered: number[] = [];
       const oversizedWidth = MAX_FRAME_PIXEL_COUNT + 1;
       const chunks = [
-        { codedHeight: 8, codedWidth: 8, intensity: 0, timestamp: 0 },
-        { codedHeight: 1, codedWidth: oversizedWidth, intensity: 1, timestamp: 1_000 },
-        { codedHeight: 8, codedWidth: 8, intensity: 2, timestamp: 2_000 },
-      ] as unknown as EncodedVideoChunk[];
+        fixtureChunk(0, 0, { codedHeight: 8, codedWidth: 8 }),
+        fixtureChunk(1_000, 1, { codedHeight: 1, codedWidth: oversizedWidth }),
+        fixtureChunk(2_000, 2, { codedHeight: 8, codedWidth: 8 }),
+      ];
 
       await expect(
         decodeFrames(

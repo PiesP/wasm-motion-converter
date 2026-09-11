@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   inspectAnimatedWebp,
-  validateFileMagic,
   validateGifMagic,
   validateWebpMagic,
 } from '../e2e/fixtures/validate-magic';

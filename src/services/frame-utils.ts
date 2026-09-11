@@ -75,25 +75,6 @@ const NATIVE_COPY_STRATEGIES: readonly Exclude<FrameCopyStrategy, 'canvas'>[] = 
   'BGRX',
 ];
 
-export async function copyFrameToRGB(
-  frame: VideoFrame,
-  width: number,
-  height: number,
-  ctx: FrameProcessingContext
-): Promise<Uint8Array> {
-  return copyFrameToPixels(frame, width, height, ctx, 'rgb');
-}
-
-/** Copy one frame to opaque RGBA while retaining the exact successful strategy. */
-export async function copyFrameToRGBA(
-  frame: VideoFrame,
-  width: number,
-  height: number,
-  ctx: FrameProcessingContext
-): Promise<Uint8Array> {
-  return copyFrameToPixels(frame, width, height, ctx, 'rgba');
-}
-
 export async function copyFrameToPixels(
   frame: VideoFrame,
   width: number,
@@ -374,44 +355,6 @@ export function convertRGBAToRGB(
   }
 
   return dst;
-}
-
-/**
- * Fast RGB→RGBA conversion using Uint32Array bitwise operations.
- *
- * Packs RGB bytes (3 bytes/pixel) into RGBA uint32 (4 bytes/pixel) with
- * alpha channel set to 0xFF (fully opaque). Uses the global buffer pool.
- *
- * ~3x faster than per-pixel byte copying by writing 4 bytes at once.
- *
- * @param rgb - Source RGB buffer (3 bytes per pixel)
- * @param width - Frame width in pixels
- * @param height - Frame height in pixels
- * @returns New RGBA buffer (pooled), alpha=0xFF
- */
-export function convertRGBToRGBA(
-  rgb: Uint8Array,
-  width: number,
-  height: number,
-  pool?: BufferPool
-): Uint8Array {
-  const pixelCount = width * height;
-  const rgba = (pool ?? globalBufferPool).acquire(pixelCount * 4);
-
-  // Uint32Array view over the RGBA buffer for 4-byte-at-a-time writes
-  const rgba32 = new Uint32Array(rgba.buffer, rgba.byteOffset, pixelCount);
-
-  // Little-endian: uint32 = 0xAABBGGRR → bytes [RR, GG, BB, AA]
-  // We package [R, G, B, 0xFF] → uint32 = 0xFF << 24 | B << 16 | G << 8 | R
-  for (let i = 0; i < pixelCount; i++) {
-    const srcIdx = i * 3;
-    const r = rgb[srcIdx]!;
-    const g = rgb[srcIdx + 1]!;
-    const b = rgb[srcIdx + 2]!;
-    rgba32[i] = (0xff << 24) | (b << 16) | (g << 8) | r;
-  }
-
-  return rgba;
 }
 
 // ─── Duration accumulation state ──────────────────────────────────

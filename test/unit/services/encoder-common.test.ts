@@ -5,8 +5,6 @@ import {
   calcAutoDecimation,
   calcMemoryPressureDecimation,
 } from '@services/encoder-common';
-import { MIN_OUTPUT_FPS } from '@utils/constants';
-
 describe('calcAutoDecimation', () => {
   // ── Basic FPS-based decimation ─────────────────────────────
 

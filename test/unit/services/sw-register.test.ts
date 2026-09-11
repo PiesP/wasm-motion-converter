@@ -57,7 +57,7 @@ function setupNavigator(withSw: boolean): void {
     });
   } else {
     // Completely remove serviceWorker from navigator so 'in' check fails
-    delete (navigator as Record<string, unknown>).serviceWorker;
+    Reflect.deleteProperty(navigator, 'serviceWorker');
   }
 }
 

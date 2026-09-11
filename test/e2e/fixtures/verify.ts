@@ -63,49 +63,6 @@ export async function decodeFileFully(filePath: string): Promise<void> {
   ]);
 }
 
-/**
- * Extract a specific frame from a GIF/WebP and return raw RGBA pixel data.
- */
-export async function extractFrame(filePath: string, frameIndex = 0): Promise<Buffer> {
-  const outputPath = `/tmp/frame_${frameIndex}.rgba`;
-  await execFileAsync('ffmpeg', [
-    '-i', filePath,
-    '-vf', `select=eq(n\\,${frameIndex})`,
-    '-vframes', '1',
-    '-f', 'rawvideo',
-    '-pix_fmt', 'rgba',
-    outputPath,
-    '-y',
-  ]);
-
-  const fs = await import('node:fs');
-  return fs.readFileSync(outputPath);
-}
-
-/**
- * Get the center pixel color of a GIF frame.
- */
-export async function getFrameCenterColor(filePath: string, frameIndex = 0): Promise<{ r: number; g: number; b: number }> {
-  const probe = await probeFile(filePath);
-  const { width, height } = probe;
-
-  const { stdout } = await execFileAsync('ffmpeg', [
-    '-i', filePath,
-    '-vf', `select=eq(n\\,${frameIndex}),crop=1:1:${Math.floor(width / 2)}:${Math.floor(height / 2)}`,
-    '-vframes', '1',
-    '-f', 'rawvideo',
-    '-pix_fmt', 'rgb24',
-    'pipe:1',
-    '-y',
-  ], { encoding: 'buffer' });
-
-  if (stdout.length < 3) {
-    throw new Error(`Failed to extract frame ${frameIndex} from ${filePath}`);
-  }
-
-  return { r: stdout[0] as number, g: stdout[1] as number, b: stdout[2] as number };
-}
-
 // ─── Magic byte validation (no external tools required) ──
 
 /**
@@ -115,7 +72,14 @@ export async function getFrameCenterColor(filePath: string, frameIndex = 0): Pro
 export function validateGifMagic(bytes: Uint8Array): { valid: boolean; width?: number; height?: number } {
   if (bytes.length < 10) return { valid: false };
 
-  const header = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
+  const header = String.fromCharCode(
+    bytes[0]!,
+    bytes[1]!,
+    bytes[2]!,
+    bytes[3]!,
+    bytes[4]!,
+    bytes[5]!,
+  );
   if (header !== 'GIF89a' && header !== 'GIF87a') return { valid: false };
   if (bytes[bytes.length - 1] !== 0x3b) return { valid: false };
 
@@ -133,13 +97,13 @@ export function validateGifMagic(bytes: Uint8Array): { valid: boolean; width?: n
 export function validateWebpMagic(bytes: Uint8Array): { valid: boolean; width?: number; height?: number } {
   if (bytes.length < 20) return { valid: false };
 
-  const riff = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
-  const webp = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
+  const riff = String.fromCharCode(bytes[0]!, bytes[1]!, bytes[2]!, bytes[3]!);
+  const webp = String.fromCharCode(bytes[8]!, bytes[9]!, bytes[10]!, bytes[11]!);
   if (riff !== 'RIFF' || webp !== 'WEBP') return { valid: false };
 
   // For VP8 (lossy): bytes 12-15 = "VP8 ", then dimensions at offset 26-29
   // For VP8L (lossless): bytes 12-15 = "VP8L", then dimensions at offset 21-24
-  const codec = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
+  const codec = String.fromCharCode(bytes[12]!, bytes[13]!, bytes[14]!, bytes[15]!);
   if (codec === 'VP8 ' && bytes.length >= 30) {
     // VP8: width at offset 26-27, height at offset 28-29 (little-endian, 14-bit each)
     const w = (bytes[26]! | (bytes[27]! << 8)) & 0x3FFF;
@@ -170,7 +134,7 @@ export function validateFileMagic(
       const headerHex = Array.from(bytes.slice(0, 12)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
       return { valid: false, message: `Invalid GIF magic: ${headerHex}` };
     }
-    return { valid: true, width: result.width, height: result.height, message: 'Valid GIF' };
+    return { ...result, message: 'Valid GIF' };
   }
 
   if (expectedFormat === 'webp') {
@@ -179,33 +143,8 @@ export function validateFileMagic(
       const headerHex = Array.from(bytes.slice(0, 12)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
       return { valid: false, message: `Invalid WebP magic: ${headerHex}` };
     }
-    return { valid: true, width: result.width, height: result.height, message: 'Valid WebP' };
+    return { ...result, message: 'Valid WebP' };
   }
 
   return { valid: false, message: `Unknown format: ${expectedFormat}` };
-}
-
-// ─── ffprobe-based validation (requires ffprobe) ──
-
-export async function isValidGif(filePath: string): Promise<boolean> {
-  try {
-    const probe = await probeFile(filePath);
-    return probe.format === 'gif';
-  } catch {
-    return false;
-  }
-}
-
-export async function isValidWebP(filePath: string): Promise<boolean> {
-  try {
-    const probe = await probeFile(filePath);
-    return probe.format === 'webp' || probe.codec === 'webp';
-  } catch {
-    return false;
-  }
-}
-
-export async function getGifFrameCount(filePath: string): Promise<number> {
-  const probe = await probeFile(filePath);
-  return probe.frameCount;
 }

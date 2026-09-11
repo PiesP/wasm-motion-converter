@@ -2,55 +2,8 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { describe, it, expect } from 'vitest';
-import {
-  formatDuration,
-  formatNumber,
-  formatPercent,
-} from '@utils/intl-utils';
+import { formatNumber, formatPercent } from '@utils/intl-utils';
 import { formatBytes } from '@utils/format-utils';
-
-describe('formatDuration', () => {
-  describe('English locale', () => {
-    it('formats milliseconds under 1 second', () => {
-      expect(formatDuration(500, 'en')).toBe('500ms');
-      expect(formatDuration(999, 'en')).toBe('999ms');
-      expect(formatDuration(0, 'en')).toBe('0ms');
-    });
-
-    it('formats seconds under 1 minute', () => {
-      expect(formatDuration(1000, 'en')).toBe('1.0s');
-      expect(formatDuration(5500, 'en')).toBe('5.5s');
-      expect(formatDuration(30000, 'en')).toBe('30.0s');
-      expect(formatDuration(59900, 'en')).toBe('59.9s');
-    });
-
-    it('formats minutes and seconds', () => {
-      expect(formatDuration(60000, 'en')).toBe('1m 0s');
-      expect(formatDuration(90000, 'en')).toBe('1m 30s');
-      expect(formatDuration(125000, 'en')).toBe('2m 5s');
-      expect(formatDuration(3600000, 'en')).toBe('60m 0s');
-    });
-  });
-
-  describe('Korean locale', () => {
-    it('formats milliseconds under 1 second', () => {
-      expect(formatDuration(500, 'ko')).toBe('500ms');
-      expect(formatDuration(999, 'ko')).toBe('999ms');
-    });
-
-    it('formats seconds under 1 minute', () => {
-      expect(formatDuration(1000, 'ko')).toBe('1.0초');
-      expect(formatDuration(5500, 'ko')).toBe('5.5초');
-      expect(formatDuration(30000, 'ko')).toBe('30.0초');
-    });
-
-    it('formats minutes and seconds', () => {
-      expect(formatDuration(60000, 'ko')).toBe('1분 0초');
-      expect(formatDuration(90000, 'ko')).toBe('1분 30초');
-      expect(formatDuration(125000, 'ko')).toBe('2분 5초');
-    });
-  });
-});
 
 describe('formatBytes', () => {
   describe('English locale', () => {

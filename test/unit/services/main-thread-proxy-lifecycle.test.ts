@@ -30,7 +30,7 @@ class ThrowingWorker {
 
   postMessage(message: unknown, transfer?: Transferable[]): void {
     if (ThrowingWorker.workerError) {
-      structuredClone(message, { transfer });
+      transfer ? structuredClone(message, { transfer }) : structuredClone(message);
       queueMicrotask(() => this.onerror?.(ThrowingWorker.workerError!));
       return;
     }

@@ -98,10 +98,10 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
           quality: 'medium',
           scale: '50%',
           success,
-          outputSizeBytes: outputSize,
           conversionTimeMs: elapsed,
-          error: errorMsg,
           path: 'webcodecs',
+          ...(outputSize !== undefined ? { outputSizeBytes: outputSize } : {}),
+          ...(errorMsg !== undefined ? { error: errorMsg } : {}),
         });
 
         // Assertions
@@ -167,8 +167,8 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
           scale: '50%',
           success,
           conversionTimeMs: elapsed,
-          error: errorMsg,
           path: 'webcodecs',
+          ...(errorMsg !== undefined ? { error: errorMsg } : {}),
         });
 
         expect(success, `Conversion failed: ${errorMsg ?? 'unknown'}`).toBe(true);

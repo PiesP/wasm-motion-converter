@@ -5,11 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { globalBufferPool } from '@services/buffer-pool';
 import {
   clearCanvasCache,
-  copyFrameToRGB,
-  copyFrameToRGBA,
+  copyFrameToPixels,
   compute8x8Grayscale,
   convertRGBAToRGB,
-  convertRGBToRGBA,
   getFrameDurationMs,
   resolveVideoDimensions,
 } from '@services/frame-utils';
@@ -133,7 +131,13 @@ describe('clearCanvasCache', () => {
       displayHeight: 4,
     } as VideoFrame;
 
-    const rgb = await copyFrameToRGB(frame, 2, 2, { durationCarryUs: 0, copyPath: null });
+    const rgb = await copyFrameToPixels(
+      frame,
+      2,
+      2,
+      { durationCarryUs: 0, copyPath: null },
+      'rgb'
+    );
 
     expect([...rgb.subarray(0, 12)]).toEqual([
       255, 0, 0,
@@ -171,8 +175,8 @@ describe('opaque RGBA frame copying', () => {
     } as unknown as VideoFrame;
     const context = { durationCarryUs: 0, copyPath: null };
 
-    const first = await copyFrameToRGBA(frame, 2, 1, context);
-    const second = await copyFrameToRGBA(frame, 2, 1, context);
+    const first = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
+    const second = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
 
     expect([...first.subarray(0, 8)]).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
     expect([...second.subarray(0, 8)]).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
@@ -202,9 +206,9 @@ describe('opaque RGBA frame copying', () => {
     } as unknown as VideoFrame;
     const context = { durationCarryUs: 0, copyPath: null };
 
-    const first = await copyFrameToRGBA(frame, 1, 1, context);
+    const first = await copyFrameToPixels(frame, 1, 1, context, 'rgba');
     attemptedFormats.length = 0;
-    const second = await copyFrameToRGBA(frame, 1, 1, context);
+    const second = await copyFrameToPixels(frame, 1, 1, context, 'rgba');
 
     expect([...first.subarray(0, 4)]).toEqual([10, 20, 30, 255]);
     expect([...second.subarray(0, 4)]).toEqual([10, 20, 30, 255]);
@@ -240,10 +244,10 @@ describe('opaque RGBA frame copying', () => {
     } as unknown as VideoFrame;
     const context = { durationCarryUs: 0, copyPath: null };
 
-    const first = await copyFrameToRGBA(frame, 1, 1, context);
+    const first = await copyFrameToPixels(frame, 1, 1, context, 'rgba');
     frameNumber = 1;
     attempts.length = 0;
-    const second = await copyFrameToRGBA(frame, 1, 1, context);
+    const second = await copyFrameToPixels(frame, 1, 1, context, 'rgba');
 
     expect([...first.subarray(0, 4)]).toEqual([10, 20, 30, 255]);
     expect([...second.subarray(0, 4)]).toEqual([10, 20, 30, 255]);
@@ -282,8 +286,8 @@ describe('opaque RGBA frame copying', () => {
     } as unknown as VideoFrame;
     const context = { durationCarryUs: 0, copyPath: null };
 
-    const scaled = await copyFrameToRGBA(frame, 2, 1, context);
-    const cached = await copyFrameToRGBA(frame, 2, 1, context);
+    const scaled = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
+    const cached = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
 
     expect(scaled.byteLength).toBe(8);
     expect([...scaled]).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
@@ -312,7 +316,7 @@ describe('opaque RGBA frame copying', () => {
 
 describe('convertRGBAToRGB', () => {
   it('strips alpha channel from RGBA pixels', () => {
-    const rgba = new Uint8ClampedArray([255, 128, 64, 200]);
+    const rgba = new Uint8Array([255, 128, 64, 200]);
     const rgb = convertRGBAToRGB(rgba, 1, 1, 'RGBA');
     // BufferPool.acquire rounds up to power of 2 — 3 bytes → 4 bytes bucket
     expect(rgb.byteLength).toBeGreaterThanOrEqual(3);
@@ -322,7 +326,7 @@ describe('convertRGBAToRGB', () => {
   });
 
   it('handles multiple pixels correctly (RGBA)', () => {
-    const rgba = new Uint8ClampedArray([
+    const rgba = new Uint8Array([
       255, 0, 0, 255,
       0, 255, 0, 128,
       0, 0, 255, 64,
@@ -342,7 +346,7 @@ describe('convertRGBAToRGB', () => {
   });
 
   it('handles transparent pixel (alpha=0)', () => {
-    const rgba = new Uint8ClampedArray([100, 200, 50, 0]);
+    const rgba = new Uint8Array([100, 200, 50, 0]);
     const rgb = convertRGBAToRGB(rgba, 1, 1, 'RGBA');
     expect(rgb.byteLength).toBeGreaterThanOrEqual(3);
     expect(rgb[0]).toBe(100);
@@ -351,7 +355,7 @@ describe('convertRGBAToRGB', () => {
   });
 
   it('handles full-opacity pixel (alpha=255) unchanged', () => {
-    const rgba = new Uint8ClampedArray([10, 20, 30, 255]);
+    const rgba = new Uint8Array([10, 20, 30, 255]);
     const rgb = convertRGBAToRGB(rgba, 1, 1, 'RGBA');
     expect(rgb.byteLength).toBeGreaterThanOrEqual(3);
     expect(rgb[0]).toBe(10);
@@ -361,7 +365,7 @@ describe('convertRGBAToRGB', () => {
 
   it('handles BGRA format (little-endian byte order)', () => {
     // BGRA: B=byte0, G=byte1, R=byte2, A=byte3
-    const bgra = new Uint8ClampedArray([64, 128, 255, 200]);
+    const bgra = new Uint8Array([64, 128, 255, 200]);
     const rgb = convertRGBAToRGB(bgra, 1, 1, 'BGRA');
     expect(rgb.byteLength).toBeGreaterThanOrEqual(3);
     expect(rgb[0]).toBe(255);
@@ -370,59 +374,17 @@ describe('convertRGBAToRGB', () => {
   });
 
   it('throws when source buffer is too small', () => {
-    const tooSmall = new Uint8ClampedArray([255, 0]); // 2 bytes, needs 4
+    const tooSmall = new Uint8Array([255, 0]); // 2 bytes, needs 4
     expect(() => convertRGBAToRGB(tooSmall, 1, 1, 'RGBA')).toThrow(RangeError);
   });
 
   it('throws on empty input (pixelCount=0)', () => {
-    const rgba = new Uint8ClampedArray([]);
+    const rgba = new Uint8Array([]);
     // pixelCount=0 → acquire(0) → BufferPool returns 1-byte bucket (min size)
-    // The source Uint8ClampedArray(0) has byteLength=0 which is less than needsBytes=0
+    // The source Uint8Array(0) has byteLength=0 which is less than needsBytes=0
     // Actually needsBytes = 0*4 = 0, so the bounds check passes, and acquire(0) returns a 1-byte buffer
     // The function should not throw for zero dimensions
     expect(() => convertRGBAToRGB(rgba, 0, 0, 'RGBA')).not.toThrow();
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════
-// convertRGBToRGBA
-// ═══════════════════════════════════════════════════════════════════
-
-describe('convertRGBToRGBA', () => {
-  it('adds alpha=255 to RGB pixels', () => {
-    const rgb = new Uint8ClampedArray([255, 128, 64]);
-    const rgba = convertRGBToRGBA(rgb, 1, 1);
-    expect(rgba).toHaveLength(4);
-    expect(rgba[0]).toBe(255);
-    expect(rgba[1]).toBe(128);
-    expect(rgba[2]).toBe(64);
-    expect(rgba[3]).toBe(255);
-  });
-
-  it('handles multiple pixels correctly', () => {
-    const rgb = new Uint8ClampedArray([255, 0, 0, 0, 255, 0, 0, 0, 255]);
-    const rgba = convertRGBToRGBA(rgb, 3, 1);
-    // 3 pixels × 4 bytes = 12 bytes, pool rounds to 16
-    expect(rgba.byteLength).toBeGreaterThanOrEqual(12);
-    expect(rgba[0]).toBe(255); expect(rgba[1]).toBe(0); expect(rgba[2]).toBe(0); expect(rgba[3]).toBe(255);
-    expect(rgba[4]).toBe(0); expect(rgba[5]).toBe(255); expect(rgba[6]).toBe(0); expect(rgba[7]).toBe(255);
-    expect(rgba[8]).toBe(0); expect(rgba[9]).toBe(0); expect(rgba[10]).toBe(255); expect(rgba[11]).toBe(255);
-  });
-
-  it('handles zero dimensions', () => {
-    const rgb = new Uint8ClampedArray([]);
-    const rgba = convertRGBToRGBA(rgb, 0, 0);
-    expect(rgba).toHaveLength(0);
-  });
-
-  it('converts RGB pixels correctly with pool reuse', () => {
-    const rgb = new Uint8ClampedArray([255, 128, 64]);
-    const rgba = convertRGBToRGBA(rgb, 1, 1);
-    expect(rgba.byteLength).toBeGreaterThanOrEqual(4);
-    expect(rgba[0]).toBe(255);
-    expect(rgba[1]).toBe(128);
-    expect(rgba[2]).toBe(64);
-    expect(rgba[3]).toBe(255);
   });
 });
 

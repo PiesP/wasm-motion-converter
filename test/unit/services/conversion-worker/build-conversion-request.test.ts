@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
+import type { SerializedConversionOptions } from '@services/conversion-worker/types';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
 
 describe('buildConversionRequest', () => {
-  const baseOptions = {
-    format: 'gif' as const,
-    quality: 0.8,
+  const baseOptions: SerializedConversionOptions = {
+    format: 'gif',
+    quality: 'medium',
+    fps: 30,
     scale: 1,
     trimStart: 0,
     trimEnd: 10,
-    frameDecimation: undefined,
-    smartFrameSkip: 'off' as const,
-    hwAccel: 'prefer-hardware' as const,
+    smartFrameSkip: 'off',
     maxFrames: 100,
     maxOutputBytes: 1024,
   };
@@ -25,7 +25,7 @@ describe('buildConversionRequest', () => {
 
     expect(request.inputBuffer).toBe(buffer);
     expect(request.format).toBe('gif');
-    expect(request.quality).toBe(0.8);
+    expect(request.quality).toBe('medium');
     expect(request.scale).toBe(1);
     expect(request.maxFrames).toBe(100);
     expect(request.maxOutputBytes).toBe(1024);

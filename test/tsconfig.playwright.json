@@ -5,7 +5,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "verbatimModuleSyntax": false,
-    "noEmit": true
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
-  "include": ["../playwright.config.ts", "e2e/**/*"]
+  "include": ["../playwright.config.ts", "e2e/**/*"],
+  "exclude": ["node_modules"]
 }

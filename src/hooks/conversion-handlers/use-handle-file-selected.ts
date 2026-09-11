@@ -8,7 +8,6 @@ import { conversionSettings, setConversionSettings } from '@stores/conversion-se
 import {
   setErrorContext,
   setErrorMessage,
-  setInputBuffer,
   setInputFile,
   setVideoMetadata,
   setVideoPreviewUrl,
@@ -120,9 +119,6 @@ export async function handleFileSelected(
     transitionToState('idle');
   } catch (error) {
     if (isStale()) return;
-
-    // Clear buffer reference so GC can reclaim the file data on error
-    setInputBuffer(null);
 
     logger.warn('conversion', 'Metadata extraction failed', {
       fileName: file.name,

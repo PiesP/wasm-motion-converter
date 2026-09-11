@@ -227,9 +227,6 @@ export const MAX_FRAME_PIXEL_COUNT = Math.floor(FRAME_PIPELINE_MEMORY_BUDGET_BYT
 /** Minimum allowed maxMemoryMB for worker pipeline */
 export const WORKER_MIN_MEMORY_MB = 128;
 
-/** Maximum allowed maxMemoryMB for worker pipeline */
-export const WORKER_MAX_MEMORY_LIMIT_MB = WORKER_MAX_MEMORY_MB;
-
 // ============================================================================
 // PROGRESS PHASE CONSTANTS
 // ============================================================================
@@ -269,19 +266,6 @@ export const ETA_MAX_SAMPLES = 30;
 
 /** Minimum progress throttling interval in milliseconds */
 export const PROGRESS_THROTTLE_MS = 100;
-
-// ============================================================================
-// OUTPUT SIZE ESTIMATION CONSTANTS
-// ============================================================================
-
-/** Conservative bytes-per-pixel estimate for GIF LZW compression */
-export const GIF_BPP_CONSERVATIVE = 0.18;
-
-/** GIF palette overhead per frame in bytes (256 colors × 3 bytes + header) */
-export const GIF_PALETTE_OVERHEAD_PER_FRAME = 800;
-
-/** WebP container overhead per frame in bytes (ANMF chunk header) */
-export const WEBP_OVERHEAD_PER_FRAME = 32;
 
 // ============================================================================
 // LOCALISATION CONSTANTS

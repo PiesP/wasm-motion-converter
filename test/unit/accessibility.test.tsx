@@ -1,66 +1,47 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { describe, it, expect, vi } from 'vitest';
-import { render } from 'solid-js/web';
-import { createRoot } from 'solid-js';
-
-// Source file assertions run in Node context before Vite bundles for browser.
-// SolidJS 1.9 reactive updates don't flush reliably in jsdom (MessageChannel-based
-// scheduler), so we verify source code patterns for components that rely on
-// reactive state changes, and verify static DOM structure for initial render.
-const { appSrc, indexCss, modalSrc, fileDropzoneSrc, optionSelectorSrc } = vi.hoisted(() => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const fs = require('fs');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const path = require('path');
-  const srcDir = path.resolve(__dirname, '../../src');
-  return {
-    appSrc: fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf-8'),
-    indexCss: fs.readFileSync(path.join(srcDir, 'index.css'), 'utf-8'),
-    modalSrc: fs.readFileSync(path.join(srcDir, 'components/ConfirmationModal.tsx'), 'utf-8'),
-    fileDropzoneSrc: fs.readFileSync(path.join(srcDir, 'components/FileDropzone.tsx'), 'utf-8'),
-    optionSelectorSrc: fs.readFileSync(path.join(srcDir, 'components/OptionSelector.tsx'), 'utf-8'),
-  };
-});
-// ── SolidJS Component Imports ──────────────────────────────────
-
-import Tooltip from '@components/Tooltip';
+import ConfirmationModal from '@components/ConfirmationModal';
 import FileDropzone from '@components/FileDropzone';
 import OptionSelector from '@components/OptionSelector';
-import type { OptionSelectorOption } from '@components/OptionSelector';
-import { LocaleProvider } from '@hooks/use-locale';
+import Tooltip from '@components/Tooltip';
+import {
+  dismissConfirmation,
+  getConfirmationState,
+  showConfirmation,
+} from '@stores/confirmation-store';
+import type { JSX } from 'solid-js';
+import { render } from 'solid-js/web';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// ── Helpers ────────────────────────────────────────────────────
+vi.mock('@hooks/use-locale', () => ({
+  useLocale: () => ({
+    locale: () => 'en',
+    t: (key: string) => key,
+  }),
+}));
 
-function queryAllByRole(container: HTMLElement, role: string): HTMLElement[] {
-  return Array.from(container.querySelectorAll(`[role="${role}"]`));
-}
+const disposers: Array<() => void> = [];
 
-function mountComponent(component: () => any): HTMLDivElement {
+function mountComponent(component: () => JSX.Element): HTMLDivElement {
   const container = document.createElement('div');
   document.body.appendChild(container);
-  createRoot(() => {
-    render(component, container);
-    return () => {};
-  });
+  disposers.push(render(component, container));
   return container;
 }
 
-// ── Tests ──────────────────────────────────────────────────────
-
 describe('Accessibility', () => {
   beforeEach(() => {
-    document.body.inert = false;
+    dismissConfirmation();
     document.body.innerHTML = '';
   });
 
   afterEach(() => {
-    document.body.inert = false;
+    dismissConfirmation();
+    for (const dispose of disposers.splice(0).reverse()) dispose();
+    vi.restoreAllMocks();
     document.body.innerHTML = '';
   });
-
-  // ── 1. Tooltip ────────────────────────────────────────────────
 
   describe('Tooltip', () => {
     it('puts aria-describedby on the focusable trigger itself', () => {
@@ -119,183 +100,133 @@ describe('Accessibility', () => {
     });
   });
 
-  // ── 2. FileDropzone ───────────────────────────────────────────
-
   describe('FileDropzone', () => {
-    it('source code includes i18n key for dropzone label', () => {
-      expect(fileDropzoneSrc).toContain('dropzone.dropHere');
-      expect(fileDropzoneSrc).toContain('dropzone.clickSelect');
-      expect(fileDropzoneSrc).toContain('dropzone.selectFile');
+    it('renders translated labels on the interactive controls', () => {
+      const container = mountComponent(() => <FileDropzone onFileSelected={() => {}} />);
+      const dropzone = container.querySelector<HTMLElement>('[data-testid="dropzone"]')!;
+      const chooseButton = container.querySelector<HTMLButtonElement>(
+        '[data-testid="choose-file-button"]'
+      )!;
+      const fileInput = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!;
+
+      expect(dropzone.getAttribute('role')).toBe('group');
+      expect(dropzone.getAttribute('aria-label')).toBe('dropzone.selectFile');
+      expect(chooseButton.textContent).toContain('dropzone.dropHere');
+      expect(fileInput.getAttribute('aria-label')).toBe('dropzone.selectFile');
+      expect(container.textContent).toContain('dropzone.clickSelect');
     });
 
-    it('source code includes i18n key for aria labels', () => {
-      expect(fileDropzoneSrc).toContain('dropzone.cancelConversion');
-      expect(fileDropzoneSrc).toContain('dropzone.preview');
-    });
-
-    it('source code includes useLocale integration', () => {
-      expect(fileDropzoneSrc).toContain('useLocale');
-      expect(fileDropzoneSrc).toContain('const { t } = useLocale()');
-    });
-  });
-
-  // ── 3. OptionSelector ────────────────────────────────────────
-
-  describe('OptionSelector', () => {
-    // Source code verification (component uses useLocale which requires
-    // async rendering context not available in jsdom mountComponent)
-
-    it('uses native radio inputs with same name for keyboard navigation', () => {
-      // Native <input type="radio"> handles role, checked state, and arrow-key
-      // navigation automatically when all inputs share the same name attribute.
-      // No explicit role="radio" or tabIndex is needed on the label.
-      expect(optionSelectorSrc).toContain('type="radio"');
-    });
-
-    it('uses checked attribute on native inputs instead of aria-checked', () => {
-      expect(optionSelectorSrc).toContain('checked={');
-    });
-
-    it('source code includes radiogroup role', () => {
-      expect(optionSelectorSrc).toContain('role="radiogroup"');
-    });
-
-    it('source code includes fieldset aria-label', () => {
-      expect(optionSelectorSrc).toContain('aria-label={local.title}');
-    });
-
-    it('uses native radio name attribute for grouping', () => {
-      // Native radio buttons with the same name attribute form a group.
-      // Browser handles arrow-key navigation within the group automatically.
-      expect(optionSelectorSrc).toContain('name={local.name}');
-    });
-  });
-
-  // ── 4. ConfirmationModal: source-code ARIA patterns ───────────
-
-  describe('ConfirmationModal', () => {
-    // Note: Reactive rendering can't be reliably tested in jsdom
-    // because SolidJS 1.9 uses MessageChannel-based scheduling
-    // that doesn't flush synchronously in jsdom.
-    // We verify the source code patterns instead.
-
-    it('source code includes role="dialog" and aria-modal', () => {
-      expect(modalSrc).toContain('role="dialog"');
-      expect(modalSrc).toContain('aria-modal="true"');
-    });
-
-    it('source code includes aria-labelledby and aria-describedby', () => {
-      expect(modalSrc).toContain('aria-labelledby');
-      expect(modalSrc).toContain('aria-describedby');
-    });
-
-    it('source code includes cancel and confirm buttons', () => {
-      expect(modalSrc).toContain('modal-cancel-button');
-      expect(modalSrc).toContain('modal-confirm-button');
-    });
-
-    it('source code includes focus trap implementation', () => {
-      expect(modalSrc).toContain('handleFocusTrap');
-      expect(modalSrc).toContain('querySelectorAll');
-    });
-
-    it('source code includes Escape key dismiss', () => {
-      expect(modalSrc).toContain('Escape');
-      expect(modalSrc).toContain('cancelDialog');
-    });
-  });
-
-  // ── 5. Skip-to-content link ─────────────────────────────────
-
-  describe('Skip-to-content link', () => {
-    it('renders skip link pattern with correct href and text', () => {
-      const container = document.createElement('div');
-      document.body.appendChild(container);
-
-      createRoot(() => {
-        render(
-          () => (
-            <div>
-              <a
-                class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-[#5e6ad2] focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
-                href="#main-content"
-              >
-                Skip to main content
-              </a>
-              <main id="main-content" class="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 lg:px-8">
-                Content
-              </main>
-            </div>
-          ),
-          container,
-        );
-        return () => {};
-      });
-
-      const skipLink = container.querySelector('a[href="#main-content"]');
-      expect(skipLink).not.toBeNull();
-      expect(skipLink!.textContent).toContain('Skip to main content');
-      expect(skipLink!.classList.contains('sr-only')).toBe(true);
-
-      const mainContent = container.querySelector('#main-content');
-      expect(mainContent).not.toBeNull();
-      expect(mainContent!.tagName).toBe('MAIN');
-    });
-
-    it('App source file contains skip-to-content link pattern', () => {
-      expect(appSrc).toContain('href="#main-content"');
-      expect(appSrc).toContain('app.skipToMain');
-      expect(appSrc).toContain('class="sr-only');
-      expect(appSrc).toContain('id="main-content"');
-    });
-  });
-
-  // ── 6. Focus-visible styles ─────────────────────────────────
-
-  describe('Focus-visible styles', () => {
-    it('interactive elements have focus-visible class in their classList', () => {
+    it('labels the preview and cancel action during conversion', () => {
+      vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
       const container = mountComponent(() => (
-        <button
-          class="px-4 py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2]"
-          type="button"
-        >
-          Test
-        </button>
+        <FileDropzone
+          onFileSelected={() => {}}
+          onCancel={() => {}}
+          previewUrl="blob:preview"
+          status="Converting"
+        />
       ));
 
-      const button = container.querySelector('button')!;
-      expect(button.classList.contains('focus-visible:ring-2')).toBe(true);
+      expect(container.querySelector('video')?.getAttribute('aria-label')).toBe('dropzone.preview');
       expect(
-        button.classList.contains('focus-visible:ring-[#5e6ad2]'),
-      ).toBe(true);
-    });
-
-    it('FileDropzone source includes focus-visible styles', () => {
-      expect(fileDropzoneSrc).toContain('focus-visible:ring-2');
-      expect(fileDropzoneSrc).toContain('focus-visible:outline-none');
+        container
+          .querySelector('[data-testid="dropzone-cancel-button"]')
+          ?.getAttribute('aria-label')
+      ).toBe('dropzone.cancelConversion');
     });
   });
 
-  // ── 7. prefers-reduced-motion ───────────────────────────────
+  describe('OptionSelector', () => {
+    it('renders one named native radio group and reports changes', () => {
+      const onChange = vi.fn();
+      const container = mountComponent(() => (
+        <OptionSelector
+          title="Quality"
+          name="quality"
+          value="medium"
+          options={[
+            { value: 'low', label: 'Low', description: 'Small output' },
+            { value: 'medium', label: 'Medium', description: 'Balanced output' },
+          ]}
+          onChange={onChange}
+        />
+      ));
+      const fieldset = container.querySelector('fieldset')!;
+      const radioGroup = container.querySelector<HTMLElement>('[role="radiogroup"]')!;
+      const radios = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="radio"]'));
 
-  describe('prefers-reduced-motion', () => {
-    it('CSS contains prefers-reduced-motion media query', () => {
-      expect(indexCss).toContain('prefers-reduced-motion');
-      expect(indexCss).toContain('animation-duration: 0.01ms !important');
-      expect(indexCss).toContain('transition-duration: 0.01ms !important');
+      expect(fieldset.getAttribute('aria-label')).toBe('Quality');
+      expect(radioGroup.getAttribute('aria-labelledby')).toBe('quality-legend');
+      expect(radios).toHaveLength(2);
+      expect(radios.map((radio) => radio.name)).toEqual(['quality', 'quality']);
+      expect(radios[0]?.checked).toBe(false);
+      expect(radios[1]?.checked).toBe(true);
+      expect(radios[1]?.getAttribute('aria-describedby')).toBe('quality-medium-desc');
+
+      radios[0]?.click();
+      expect(onChange).toHaveBeenCalledWith('low');
     });
   });
 
-  // ── 8. Scroll lock when modal is open ─────────────────────────
+  describe('ConfirmationModal', () => {
+    it('exposes dialog relationships, traps focus, dismisses with Escape, and restores state', async () => {
+      vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+      const previous = document.createElement('button');
+      document.body.append(previous);
+      previous.focus();
+      const onCancel = vi.fn();
+      const container = mountComponent(() => <ConfirmationModal />);
 
-  describe('Modal scroll lock', () => {
-    it('ConfirmationModal locks body scroll without disabling the modal', () => {
-      // The implementation uses scroll lock (overflow:hidden + position:fixed)
-      // instead of document.body.inert to keep the modal itself interactive.
-      expect(modalSrc).toContain("document.body.style.overflow = 'hidden'");
-      expect(modalSrc).toContain("document.body.style.position = 'fixed'");
-      // Body scroll should be restored when modal closes
-      expect(modalSrc).toContain("document.body.style.overflow = ''");
+      showConfirmation(
+        [
+          {
+            severity: 'warning',
+            message: 'Large file',
+            details: 'Conversion may take longer',
+            requiresConfirmation: true,
+          },
+        ],
+        vi.fn(),
+        onCancel
+      );
+      await Promise.resolve();
+
+      const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
+      const cancelButton = container.querySelector<HTMLButtonElement>(
+        '[data-testid="modal-cancel-button"]'
+      )!;
+      const confirmButton = container.querySelector<HTMLButtonElement>(
+        '[data-testid="modal-confirm-button"]'
+      )!;
+
+      expect(dialog.getAttribute('aria-modal')).toBe('true');
+      expect(dialog.getAttribute('aria-labelledby')).toBe('modal-title');
+      expect(dialog.getAttribute('aria-describedby')).toBe('modal-description');
+      expect(container.querySelector('#modal-title')?.textContent).toBe('modal.title');
+      expect(container.querySelector('#modal-description')?.textContent).toContain('Large file');
+      expect(cancelButton.getAttribute('aria-label')).toBe('modal.cancel');
+      expect(confirmButton.getAttribute('aria-label')).toBe('modal.confirm');
+      expect(document.body.style.overflow).toBe('hidden');
+      expect(document.body.style.position).toBe('fixed');
+      expect(document.activeElement).toBe(cancelButton);
+
+      confirmButton.focus();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      expect(document.activeElement).toBe(cancelButton);
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
+      );
+      expect(document.activeElement).toBe(confirmButton);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await Promise.resolve();
+
+      expect(onCancel).toHaveBeenCalledOnce();
+      expect(getConfirmationState().isVisible).toBe(false);
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.body.style.overflow).toBe('');
+      expect(document.body.style.position).toBe('');
+      expect(document.activeElement).toBe(previous);
     });
   });
 

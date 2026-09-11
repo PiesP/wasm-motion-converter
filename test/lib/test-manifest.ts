@@ -14,14 +14,8 @@ export type TestCodec =
   | 'vp9'
   | 'av1';
 
-/** Output format for conversion tests. */
-export type TestFormat = 'gif' | 'webp';
-
 /** Quality levels for conversion tests. */
 export type TestQuality = 'low' | 'medium' | 'high';
-
-/** Scale options for conversion tests. */
-export type TestScale = '50%' | '75%' | '100%';
 
 /** Defines a single test video with its metadata and test configuration. */
 export interface TestVideoEntry {
@@ -149,35 +143,6 @@ export const TEST_VIDEOS: ReadonlyArray<TestVideoEntry> = [
     maxConversionTimeMs: 300_000,
   },
 ] as const;
-
-/** Look up a test video by its ID. */
-export function getVideoById(id: string): TestVideoEntry | undefined {
-  return TEST_VIDEOS.find((v) => v.id === id);
-}
-
-/** Get all videos for a given codec. */
-export function getVideosByCodec(codec: TestCodec): TestVideoEntry[] {
-  return TEST_VIDEOS.filter((v) => v.codec === codec);
-}
-
-/**
- * Get the file path for a test video.
- * Supports both canonical names (test-video-h264-baseline.mp4) and
- * legacy aliases (sample-h264-test.mp4) for backward compatibility.
- */
-export function getVideoFilePath(idOrAlias: string): string | undefined {
-  // Direct ID match
-  const byId = TEST_VIDEOS.find((v) => v.id === idOrAlias);
-  if (byId) return byId.file;
-
-  // Legacy alias mapping
-  const aliases: Record<string, string> = {
-    'sample-h264-test.mp4': '/test-video-h264-baseline.mp4',
-    'sample-color-test.webm': '/test-video-vp8.webm',
-    'sample-short-test.webm': '/test-video-vp8.webm',
-  };
-  return aliases[idOrAlias];
-}
 
 /** Expected output sizes (approximate, in bytes) from previous test runs. */
 export interface ExpectedOutputRange {

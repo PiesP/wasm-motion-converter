@@ -59,7 +59,6 @@ describe('WebpWorkerPool public API', () => {
   it('rejects queued tasks and releases their buffers on terminate', async () => {
     const release = vi.spyOn(globalBufferPool, 'release');
     const pool = new WebpWorkerPool(1, 1000);
-    const buffer = new Uint8Array(8);
     release.mockClear();
     pool.terminate();
     // Queued tasks' buffers are released on terminate

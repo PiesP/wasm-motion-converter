@@ -19,7 +19,8 @@ test('landing page has no automated WCAG A/AA violations', async ({ page }) => {
 test('loaded trim editor has no automated WCAG A/AA violations', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
-    const { attachTestHelpers } = await import('./src/test-helpers');
+    const modulePath = './src/test-helpers';
+    const { attachTestHelpers } = await import(modulePath);
     attachTestHelpers();
     await window.__TEST_HELPERS__?.injectFile(
       new File(['synthetic'], 'trim-a11y.mp4', { type: 'video/mp4' }),

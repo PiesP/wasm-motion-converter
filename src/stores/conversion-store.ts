@@ -43,10 +43,6 @@ export const [errorContext, setErrorContext] = createSignal<ErrorContext | null>
 
 export const [conversionProgress, setConversionProgress] = createSignal<number>(0);
 export const [conversionStatusMessage, setConversionStatusMessage] = createSignal<string>('');
-export const [conversionFps, setConversionFps] = createSignal<number | undefined>(undefined);
-export const [conversionElapsedMs, setConversionElapsedMs] = createSignal<number | undefined>(
-  undefined
-);
 export const [outputFrames, setOutputFrames] = createSignal<number | undefined>(undefined);
 const [, setCurrentFrame] = createSignal<number | undefined>(undefined);
 const [, setTotalFrames] = createSignal<number | undefined>(undefined);
@@ -64,26 +60,6 @@ export const [conversionResults, setConversionResults] = createSignal<Conversion
 // ---------------------------------------------------------------------------
 
 export const [inputFile, setInputFile] = createSignal<File | null>(null);
-
-/**
- * Module-level mutable buffer reference for the input file.
- *
- * This is intentionally module-level mutable state (rather than a reactive signal)
- * because:
- * 1. ArrayBuffers can be up to 500 MB; storing in a SolidJS signal would create a
- *    reactive dependency that triggers re-renders on every change.
- * 2. The buffer is only needed during conversion — there is no UI that observes it.
- * 3. Module-level state is safe in this SPA because only one conversion runs at a
- *    time. The getter/setter API (getInputBuffer/setInputBuffer) provides controlled
- *    access without exposing the mutable reference for uncontrolled reassignment.
- */
-let inputBufferRef: ArrayBuffer | null = null;
-export function getInputBuffer(): ArrayBuffer | null {
-  return inputBufferRef;
-}
-export function setInputBuffer(buffer: ArrayBuffer | null): void {
-  inputBufferRef = buffer;
-}
 
 export const [videoMetadata, setVideoMetadata] = createSignal<VideoMetadata | null>(null);
 export const [videoPreviewUrl, setVideoPreviewUrl] = createSignal<string | null>(null);

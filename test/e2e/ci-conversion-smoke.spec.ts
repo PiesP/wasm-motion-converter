@@ -154,8 +154,9 @@ test.describe('Selected-range preview', () => {
         .poll(
           () =>
             video.evaluate((element) => ({
-              currentTime: element.currentTime,
-              paused: element.paused,
+              currentTime:
+                element instanceof HTMLVideoElement ? element.currentTime : Number.NaN,
+              paused: element instanceof HTMLVideoElement ? element.paused : true,
             })),
           { timeout: 3_000, intervals: [25, 50, 100] }
         )
@@ -206,7 +207,13 @@ test.describe('Selected-range preview', () => {
 
       await page.keyboard.press('Space');
       await expect(previewButton).toHaveAttribute('aria-pressed', 'false');
-      await expect.poll(() => video.evaluate((element) => element.paused)).toBe(true);
+      await expect
+        .poll(() =>
+          video.evaluate((element) =>
+            element instanceof HTMLVideoElement ? element.paused : true
+          )
+        )
+        .toBe(true);
       await expect(previewButton).toBeFocused();
 
       await page.keyboard.press('Space');
@@ -215,7 +222,10 @@ test.describe('Selected-range preview', () => {
         .poll(
           () =>
             video.evaluate(
-              (element) => element.paused && Math.abs(element.currentTime - 0.2) < 0.08
+              (element) =>
+                element instanceof HTMLVideoElement &&
+                element.paused &&
+                Math.abs(element.currentTime - 0.2) < 0.08
             ),
           { timeout: 5_000, intervals: [25, 50, 100] }
         )

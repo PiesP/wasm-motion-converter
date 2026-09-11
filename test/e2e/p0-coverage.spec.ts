@@ -21,16 +21,11 @@ import {
   setScale,
   clickConvert,
   dismissWarningDialog,
-  isResultVisible,
-  isErrorVisible,
   getAppState,
-  getVisibleResultStats,
-  waitForConversionComplete,
   downloadResult,
   runConversion,
   setSmartFrameSkip,
   waitForIdle,
-  parseSizeString,
 } from './fixtures/test-helpers';
 import { validateFileMagic } from './fixtures/verify';
 
@@ -193,7 +188,8 @@ test.describe('Service Worker (F36)', () => {
 
     // Verify the sw-register module can be imported and its API surface is correct
     const apiSurface = await page.evaluate(async () => {
-      const mod = await import('./src/sw-register');
+      const modulePath = './src/sw-register';
+      const mod = await import(modulePath);
       return {
         hasRegister: typeof mod.registerServiceWorker === 'function',
       };
@@ -217,7 +213,8 @@ test.describe('Error Boundary (F40)', () => {
     // Trigger a render error by corrupting a signal that components read during render.
     // SolidJS ErrorBoundary catches errors thrown during synchronous render of children.
     await page.evaluate(async () => {
-      const { setInputFile } = await import('./src/stores/conversion-store');
+      const modulePath = './src/stores/conversion-store';
+      const { setInputFile } = await import(modulePath);
       // Set inputFile to a number (wrong type) — components accessing .name will throw
       (setInputFile as unknown as (v: unknown) => void)(42);
     });

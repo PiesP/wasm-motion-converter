@@ -18,15 +18,14 @@ import { injectTestFile } from './fixtures/test-helpers';
  */
 async function captureForComparison(
   page: Page,
-  name: string,
   options?: { fullPage?: boolean; selector?: string; mask?: Locator[] }
 ): Promise<Buffer> {
   const screenshotOptions: Parameters<Page['screenshot']>[0] = {
     fullPage: options?.fullPage ?? false,
     animations: 'disabled',
     caret: 'hide',
-    mask: options?.mask,
     maskColor: '#1a1a1a',
+    ...(options?.mask !== undefined ? { mask: options.mask } : {}),
   };
 
   if (options?.selector) {
@@ -56,7 +55,7 @@ test.describe('Visual: Initial State', () => {
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(1000); // Wait for fonts/icons to load
 
-    const screenshot = await captureForComparison(page, 'initial-state');
+    const screenshot = await captureForComparison(page);
     expect(screenshot).toMatchSnapshot('initial-state.png', {
       threshold: 0.2,
       maxDiffPixels: 1000,
@@ -67,7 +66,7 @@ test.describe('Visual: Initial State', () => {
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
-    const screenshot = await captureForComparison(page, 'dropzone', {
+    const screenshot = await captureForComparison(page, {
       selector: '[data-testid="dropzone"]',
     });
 
@@ -91,7 +90,7 @@ test.describe('Visual: File Upload State', () => {
     await page.waitForTimeout(2000);
 
     // Capture the metadata display area
-    const screenshot = await captureForComparison(page, 'file-uploaded', {
+    const screenshot = await captureForComparison(page, {
       selector: '[data-testid="dropzone"]',
     });
 
@@ -196,7 +195,7 @@ test.describe('Visual: Result Section', () => {
     await expect(resultSection).toBeVisible({ timeout: 180_000 });
 
     // Capture result section
-    const screenshot = await captureForComparison(page, 'result-section', {
+    const screenshot = await captureForComparison(page, {
       selector: '[data-testid="result-section"]',
       // Animated GIF frames and conversion duration are intentionally dynamic.
       // Their behavior is asserted below; keep the layout snapshot deterministic.
@@ -246,7 +245,7 @@ test.describe('Visual: Theme', () => {
     await page.goto('/');
     await page.waitForTimeout(500);
 
-    const screenshot = await captureForComparison(page, 'dark-mode');
+    const screenshot = await captureForComparison(page);
 
     expect(screenshot).toMatchSnapshot('dark-mode.png', {
       threshold: 0.2,
@@ -266,7 +265,7 @@ test.describe('Visual: Responsive', () => {
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
-    const screenshot = await captureForComparison(page, 'mobile');
+    const screenshot = await captureForComparison(page);
 
     expect(screenshot).toMatchSnapshot('mobile-viewport.png', {
       threshold: 0.2,
@@ -279,7 +278,7 @@ test.describe('Visual: Responsive', () => {
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
-    const screenshot = await captureForComparison(page, 'tablet');
+    const screenshot = await captureForComparison(page);
 
     expect(screenshot).toMatchSnapshot('tablet-viewport.png', {
       threshold: 0.2,
