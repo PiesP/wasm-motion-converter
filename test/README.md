@@ -55,7 +55,12 @@ GPU remains environment-dependent, and GPU VRAM is not measured. The profile
 warms each encoder before five same-page conversions and also measures
 cancellation latency and recovery. PSS is the primary process-memory signal;
 RSS is retained as a diagnostic because shared mappings are counted in every
-Chromium process's RSS.
+Chromium process's RSS. Every process in a CDP snapshot must have readable PSS
+and RSS before a sample can contribute to a peak or slope. If a process exits
+while `/proc` is read, the sampler replaces the whole CDP snapshot once. A
+second incomplete snapshot fails with PID, process-type, source, and missing
+field evidence. RSS from `/proc/<pid>/status` remains diagnostic data and is
+never substituted for unavailable PSS.
 
 The resource pretest additionally generates a small VP9/WebM fixture with coded
 dimensions of 520×520 and a 100:1 pixel aspect ratio. MediaBunny exposes this as
