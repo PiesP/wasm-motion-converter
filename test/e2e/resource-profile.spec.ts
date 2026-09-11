@@ -9,6 +9,7 @@ import {
   summarizeProcessMemory,
   type ProcessMemorySummary,
 } from './fixtures/process-memory';
+import { captureSamplesDuringOperation } from './fixtures/resource-sampling';
 import {
   clickConvert,
   dismissWarningDialog,
@@ -192,30 +193,11 @@ async function captureFastResourceSamples<T>(
   browserCdp: CDPSession,
   operation: () => Promise<T>,
 ): Promise<{ result: T; samples: ResourceSample[] }> {
-  const samples = [await sampleResources(page, browserCdp)];
-  let sampling = true;
-  let samplingFailure: unknown;
-  const sampler = (async () => {
-    while (sampling) {
-      await page.waitForTimeout(FAST_SAMPLE_INTERVAL_MS);
-      if (sampling) samples.push(await sampleResources(page, browserCdp));
-    }
-  })().catch((error: unknown) => {
-    samplingFailure = error;
-    sampling = false;
+  return captureSamplesDuringOperation({
+    sample: () => sampleResources(page, browserCdp),
+    waitForInterval: () => page.waitForTimeout(FAST_SAMPLE_INTERVAL_MS),
+    operation,
   });
-
-  let result: T;
-  try {
-    result = await operation();
-  } finally {
-    sampling = false;
-    await sampler;
-    if (samplingFailure) throw samplingFailure;
-    samples.push(await sampleResources(page, browserCdp));
-  }
-
-  return { result, samples };
 }
 
 async function runMeasuredConversion(
