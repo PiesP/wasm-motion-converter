@@ -2,9 +2,14 @@
 // Copyright (c) 2026 PiesP
 
 import { expect, test, type CDPSession, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 
+import {
+  readLinuxProcessMemory,
+  summarizeProcessMemory,
+  type ProcessMemorySummary,
+} from './fixtures/process-memory';
+import { captureSamplesDuringOperation } from './fixtures/resource-sampling';
 import {
   clickConvert,
   dismissWarningDialog,
@@ -35,7 +40,11 @@ interface ResourceSample {
   rssMB: number;
   cpuTimeSeconds: number;
   processCount: number;
-  byType: Record<string, { count: number; pssMB: number; rssMB: number }>;
+  pssProcessCount: number;
+  rssProcessCount: number;
+  samplingAttempts: number;
+  memorySources: ProcessMemorySummary['sources'];
+  byType: ProcessMemorySummary['byType'];
 }
 
 interface ConversionMeasurement {
@@ -58,39 +67,55 @@ interface RejectedInputMeasurement {
   postGc: ResourceSample;
 }
 
-function readKilobytes(text: string, field: string): number {
-  const match = text.match(new RegExp(`^${field}:\\s+(\\d+)\\s+kB$`, 'm'));
-  return match ? Number(match[1]) : 0;
-}
-
-async function readProcessMemory(pid: number): Promise<{ pssMB: number; rssMB: number }> {
-  try {
-    const rollup = await readFile(`/proc/${pid}/smaps_rollup`, 'utf8');
-    return {
-      pssMB: readKilobytes(rollup, 'Pss') / 1024,
-      rssMB: readKilobytes(rollup, 'Rss') / 1024,
-    };
-  } catch {
-    try {
-      const status = await readFile(`/proc/${pid}/status`, 'utf8');
-      const rssMB = readKilobytes(status, 'VmRSS') / 1024;
-      return { pssMB: rssMB, rssMB };
-    } catch {
-      return { pssMB: 0, rssMB: 0 };
-    }
-  }
-}
-
-async function sampleResources(page: Page, browserCdp: CDPSession): Promise<ResourceSample> {
+async function readChromiumProcesses(browserCdp: CDPSession) {
   const { processInfo } = (await browserCdp.send('SystemInfo.getProcessInfo')) as {
     processInfo: ChromiumProcessInfo[];
   };
-  const processes = await Promise.all(
+
+  return Promise.all(
     processInfo.map(async (process) => ({
       ...process,
-      ...(await readProcessMemory(process.id)),
+      memory: await readLinuxProcessMemory(process.id),
     })),
   );
+}
+
+function samplingEvidence(summary: ProcessMemorySummary) {
+  return {
+    processCount: summary.processCount,
+    pssProcessCount: summary.pssProcessCount,
+    rssProcessCount: summary.rssProcessCount,
+    sources: summary.sources,
+    byType: summary.byType,
+    missing: summary.missing,
+  };
+}
+
+async function sampleResources(page: Page, browserCdp: CDPSession): Promise<ResourceSample> {
+  let processes = await readChromiumProcesses(browserCdp);
+  const initialSummary = summarizeProcessMemory(processes);
+  let summary = initialSummary;
+  let samplingAttempts = 1;
+
+  if (summary.pssMB === null || summary.rssMB === null) {
+    // A process can exit between the CDP snapshot and /proc reads. Replace the
+    // entire snapshot once so an exited PID is not mixed into a partial aggregate.
+    processes = await readChromiumProcesses(browserCdp);
+    summary = summarizeProcessMemory(processes);
+    samplingAttempts++;
+  }
+
+  if (summary.pssMB === null || summary.rssMB === null) {
+    const evidence = {
+      reason: summary.processCount === 0 ? 'no Chromium processes' : 'incomplete PSS/RSS',
+      samplingAttempts,
+      initial: samplingEvidence(initialSummary),
+      final: samplingEvidence(summary),
+    };
+    console.error('[resource-sampling-failure]', JSON.stringify(evidence));
+    throw new Error(`Chromium process-memory sample unavailable: ${JSON.stringify(evidence)}`);
+  }
+
   const jsHeapMB = await page.evaluate(() => {
     const memory = (performance as Performance & {
       memory?: { usedJSHeapSize?: number };
@@ -98,23 +123,18 @@ async function sampleResources(page: Page, browserCdp: CDPSession): Promise<Reso
     return typeof memory?.usedJSHeapSize === 'number' ? memory.usedJSHeapSize / 1024 / 1024 : null;
   });
 
-  const byType: ResourceSample['byType'] = {};
-  for (const process of processes) {
-    const current = byType[process.type] ?? { count: 0, pssMB: 0, rssMB: 0 };
-    current.count++;
-    current.pssMB += process.pssMB;
-    current.rssMB += process.rssMB;
-    byType[process.type] = current;
-  }
-
   return {
     timestampMs: Date.now(),
     jsHeapMB,
-    pssMB: processes.reduce((total, process) => total + process.pssMB, 0),
-    rssMB: processes.reduce((total, process) => total + process.rssMB, 0),
+    pssMB: summary.pssMB,
+    rssMB: summary.rssMB,
     cpuTimeSeconds: processes.reduce((total, process) => total + process.cpuTime, 0),
-    processCount: processes.length,
-    byType,
+    processCount: summary.processCount,
+    pssProcessCount: summary.pssProcessCount,
+    rssProcessCount: summary.rssProcessCount,
+    samplingAttempts,
+    memorySources: summary.sources,
+    byType: summary.byType,
   };
 }
 
@@ -173,25 +193,11 @@ async function captureFastResourceSamples<T>(
   browserCdp: CDPSession,
   operation: () => Promise<T>,
 ): Promise<{ result: T; samples: ResourceSample[] }> {
-  const samples = [await sampleResources(page, browserCdp)];
-  let sampling = true;
-  const sampler = (async () => {
-    while (sampling) {
-      await page.waitForTimeout(FAST_SAMPLE_INTERVAL_MS);
-      if (sampling) samples.push(await sampleResources(page, browserCdp));
-    }
-  })();
-
-  let result: T;
-  try {
-    result = await operation();
-  } finally {
-    sampling = false;
-    await sampler;
-    samples.push(await sampleResources(page, browserCdp));
-  }
-
-  return { result, samples };
+  return captureSamplesDuringOperation({
+    sample: () => sampleResources(page, browserCdp),
+    waitForInterval: () => page.waitForTimeout(FAST_SAMPLE_INTERVAL_MS),
+    operation,
+  });
 }
 
 async function runMeasuredConversion(
