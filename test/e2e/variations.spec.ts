@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 //
-// Variation tests — quality, scale, and trim parameter combinations.
-// Covers the HIGH priority gaps identified in coverage-gap-analysis.ts.
-//
-// Uses H.264 Baseline as the reference codec for parameter variations
-// since it covers the most common path (FFmpeg direct).
+// H.264 quality, scale, and trim variations through the browser conversion flow.
+// The baseline fixture exercises the product's common WebCodecs path.
 
 import { test, expect } from '@playwright/test';
 import {

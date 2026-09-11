@@ -34,6 +34,29 @@ async function readAccentPair(page: Page): Promise<{ background: string; foregro
   });
 }
 
+async function readAppTransitionDurationMs(page: Page): Promise<number> {
+  return page.locator('[data-testid="app"]').evaluate((element) => {
+    const durations = getComputedStyle(element).transitionDuration.split(',');
+    return Math.max(
+      ...durations.map((duration) => {
+        const value = Number.parseFloat(duration);
+        return duration.trim().endsWith('ms') ? value : value * 1_000;
+      })
+    );
+  });
+}
+
+async function readPulseAnimationName(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.className = 'animate-pulse';
+    document.body.append(probe);
+    const animationName = getComputedStyle(probe).animationName;
+    probe.remove();
+    return animationName;
+  });
+}
+
 test.describe('Quiet Instruments adapter', () => {
   test('binds the WMC product scope and preserves system light behavior', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
@@ -88,22 +111,18 @@ test.describe('Quiet Instruments adapter', () => {
   test('applies the reduced-motion contract to rendered controls and animation utilities', async ({
     page,
   }) => {
-    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.goto('/');
+    const normalTransitionMs = await readAppTransitionDurationMs(page);
+    expect(normalTransitionMs).toBeGreaterThan(1);
+    expect(await readPulseAnimationName(page)).not.toBe('none');
 
-    await expect(page.locator('[data-testid="app"]')).toHaveCSS(
-      'transition-duration',
-      '0.00001s'
-    );
-    const pulseAnimation = await page.evaluate(() => {
-      const probe = document.createElement('span');
-      probe.className = 'animate-pulse';
-      document.body.append(probe);
-      const animationName = getComputedStyle(probe).animationName;
-      probe.remove();
-      return animationName;
-    });
-    expect(pulseAnimation).toBe('none');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const reducedTransitionMs = await readAppTransitionDurationMs(page);
+    expect(reducedTransitionMs).toBeGreaterThan(0);
+    expect(reducedTransitionMs).toBeLessThanOrEqual(0.01);
+    expect(reducedTransitionMs).toBeLessThan(normalTransitionMs);
+    expect(await readPulseAnimationName(page)).toBe('none');
   });
 
   test('keeps optional video and performance details keyboard-operable at narrow width', async ({
