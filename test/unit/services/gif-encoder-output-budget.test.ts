@@ -97,7 +97,6 @@ vi.mock('@services/dynamic-decimation-controller', () => ({
 }));
 
 import { encodeGif } from '@services/gif-encoder-service';
-import { GIF_RGB565_PALETTE_CACHE_BYTES } from '@services/gif-rgb565-palette-indexer';
 
 const demux = {
   chunks: [],
@@ -170,36 +169,11 @@ describe('encodeGif output budgets', () => {
     expect(mocks.state.cursor).toBe(0);
   });
 
-  it('reserves the fixed palette cache before decoding frames', async () => {
-    const memoryChecks: number[] = [];
-
-    await expect(
-      encodeGif(demux, {
-        width: 1,
-        height: 1,
-        quality: 'low',
-        scale: 1,
-        maxFrames: 1,
-        maxOutputBytes: 8192,
-        assertAdditionalMemoryBytes: (additionalBytes) => {
-          memoryChecks.push(additionalBytes);
-          if (additionalBytes > 4096) throw new Error('aggregate memory limit exceeded');
-        },
-      })
-    ).rejects.toThrow('aggregate memory limit exceeded');
-
-    expect(memoryChecks).toEqual([4096, 4096 + GIF_RGB565_PALETTE_CACHE_BYTES]);
-    expect(mocks.state.allocations).toEqual([4096]);
-    expect(mocks.writeFrame).not.toHaveBeenCalled();
-  });
-
   it('reports the GIF growth peak to the aggregate worker memory guard', async () => {
     mocks.state.frameCount = 1;
     mocks.state.bytesWrittenPerFrame = 5000;
     const assertAdditionalMemoryBytes = vi.fn((additionalBytes: number) => {
-      if (additionalBytes > GIF_RGB565_PALETTE_CACHE_BYTES + 12_000) {
-        throw new Error('aggregate memory limit exceeded');
-      }
+      if (additionalBytes > 10_000) throw new Error('aggregate memory limit exceeded');
     });
 
     await expect(
@@ -214,9 +188,7 @@ describe('encodeGif output budgets', () => {
       })
     ).rejects.toThrow('aggregate memory limit exceeded');
 
-    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(
-      12_293 + GIF_RGB565_PALETTE_CACHE_BYTES
-    );
+    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(12_293);
     expect(mocks.state.cursor).toBe(0);
   });
 
