@@ -69,7 +69,7 @@ describe('classifyConversionError', () => {
   describe('codec errors', () => {
     it('classifies AV1+GIF combination', () => {
       const meta = { width: 1920, height: 1080, duration: 5, codec: 'av1', framerate: 30, bitrate: 5000000 };
-      const result = classifyConversionError('AV1 codec not supported for GIF', meta, undefined, ['[gif] encoding']);
+      const result = classifyConversionError('AV1 codec not supported for GIF', meta);
       expect(result.type).toBe('codec');
       expect(result.phase).toBe('av1_gif_conversion_failure');
     });
@@ -156,7 +156,14 @@ describe('classifyConversionError', () => {
     });
 
     it('includes conversion settings when provided', () => {
-      const settings = { format: 'gif' as const, quality: 'high' as const, scale: 1.0 as const, trimStart: 0, trimEnd: 0 };
+      const settings = {
+        format: 'gif' as const,
+        quality: 'high' as const,
+        scale: 1.0 as const,
+        smartFrameSkip: 'off' as const,
+        trimStart: 0,
+        trimEnd: 0,
+      };
       const result = classifyConversionError('timeout error', null, settings);
       expect(result.conversionSettings).toEqual(settings);
     });

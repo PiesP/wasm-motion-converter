@@ -1,7 +1,20 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  "entry": ["index.html"],
-  "project": ["src/**/*.{ts,tsx}"],
+  "entry": [
+    "index.html!",
+    "src/index.tsx!",
+    "src/services/conversion-worker/worker.ts!",
+    "src/services/webp-encoder-worker.ts!",
+    "test/unit/**/*.test.{ts,tsx}",
+    "test/e2e/**/*.spec.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}!",
+    "scripts/**/*.ts",
+    "test/**/*.{ts,tsx}",
+    "tooling/**/*.ts",
+    "*.config.ts"
+  ],
   "paths": {
     "@": ["src"],
     "@components": ["src/components"],
@@ -12,7 +25,7 @@
     "@t": ["src/types"],
     "@i18n": ["src/i18n"]
   },
-  "ignore": ["**/*.d.ts"],
+  "ignore": ["**/*.d.ts", "test/e2e/coverage-gap-analysis.ts"],
   "ignoreBinaries": ["ffmpeg"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [

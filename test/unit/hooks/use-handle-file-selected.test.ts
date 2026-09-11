@@ -36,7 +36,6 @@ vi.mock('@stores/conversion-settings-store', () => ({
 vi.mock('@stores/conversion-store', () => ({
   setErrorContext: mocks.setErrorContext,
   setErrorMessage: mocks.setErrorMessage,
-  setInputBuffer: vi.fn(),
   setInputFile: vi.fn(),
   setVideoMetadata: mocks.setVideoMetadata,
   setVideoPreviewUrl: vi.fn(),

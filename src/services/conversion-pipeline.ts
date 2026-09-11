@@ -31,7 +31,6 @@ import {
   PROGRESS_PHASE_RANGES,
   PROGRESS_THROTTLE_MS,
   WEBP_TARGET_FPS,
-  WORKER_MAX_MEMORY_LIMIT_MB,
   WORKER_MAX_MEMORY_MB,
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
@@ -153,7 +152,7 @@ async function _runPipelineInner(
       ? request.maxMemoryMB
       : WORKER_MAX_MEMORY_MB;
     const maxMemoryMB = Math.min(
-      WORKER_MAX_MEMORY_LIMIT_MB,
+      WORKER_MAX_MEMORY_MB,
       Math.max(WORKER_MIN_MEMORY_MB, configuredMaxMemoryMB)
     );
     const retainedInputBytes = request.inputBuffer?.byteLength ?? 0;

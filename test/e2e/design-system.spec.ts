@@ -85,13 +85,35 @@ test.describe('Quiet Instruments adapter', () => {
     await expect(skipLink).toHaveCSS('outline-width', '2px');
   });
 
+  test('applies the reduced-motion contract to rendered controls and animation utilities', async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/');
+
+    await expect(page.locator('[data-testid="app"]')).toHaveCSS(
+      'transition-duration',
+      '0.00001s'
+    );
+    const pulseAnimation = await page.evaluate(() => {
+      const probe = document.createElement('span');
+      probe.className = 'animate-pulse';
+      document.body.append(probe);
+      const animationName = getComputedStyle(probe).animationName;
+      probe.remove();
+      return animationName;
+    });
+    expect(pulseAnimation).toBe('none');
+  });
+
   test('keeps optional video and performance details keyboard-operable at narrow width', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
     await page.evaluate(async () => {
-      const { attachTestHelpers } = await import('./src/test-helpers');
+      const modulePath = './src/test-helpers';
+      const { attachTestHelpers } = await import(modulePath);
       attachTestHelpers();
       await window.__TEST_HELPERS__?.injectFile(
         new File(['synthetic'], 'state-clarity.mp4', { type: 'video/mp4' }),

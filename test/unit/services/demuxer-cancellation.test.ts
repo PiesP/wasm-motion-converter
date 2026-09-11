@@ -93,6 +93,9 @@ describe('demuxVideo cancellation', () => {
     mocks.nextPacket.mockReturnValue(new Promise(() => {}));
     const controller = new AbortController();
     const result = await demuxVideo(request, metadata, undefined, controller.signal);
+    if (!(Symbol.asyncIterator in result.chunks)) {
+      throw new Error('Expected streaming demux chunks');
+    }
     const iterator = result.chunks[Symbol.asyncIterator]();
     const next = iterator.next();
     await vi.waitFor(() => expect(mocks.nextPacket).toHaveBeenCalledOnce());

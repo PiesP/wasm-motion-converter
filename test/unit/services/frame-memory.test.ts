@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import { getPooledBufferSize } from '@services/buffer-pool';
 import {
   calculateStagedFrameSourceCapacity,
-  calculateFrameConcurrency,
   calculateFrameOutputConcurrency,
   calculateWebpWorkerCountForBudget,
   estimateDecodedSourceFrameBytes,
@@ -79,10 +78,6 @@ describe('frame memory reservations', () => {
     );
   });
 
-  it('keeps the existing small-frame parallelism', () => {
-    expect(calculateFrameConcurrency(8, 8, 10)).toBe(10);
-  });
-
   it('accounts only the remaining RGBA task transient beside its pooled pixels', () => {
     const pixels = 1920 * 1080;
     expect(estimateFrameTaskBytes(1920, 1080, 'rgb')).toBe(
@@ -98,7 +93,7 @@ describe('frame memory reservations', () => {
 
   it('reduces 4K live-frame concurrency to the shared byte budget', () => {
     const bytesPerFrame = estimateActiveFrameBytes(3840, 2160);
-    const concurrency = calculateFrameConcurrency(3840, 2160, 10);
+    const concurrency = calculateFrameOutputConcurrency(3840, 2160, 3840, 2160, 10);
 
     expect(concurrency).toBe(1);
     expect(bytesPerFrame * concurrency).toBeLessThanOrEqual(
@@ -112,7 +107,7 @@ describe('frame memory reservations', () => {
   it('includes a 4K source frame when calculating 360p output concurrency', () => {
     const bytesPerOutput = estimateFrameOutputBytes(3840, 2160, 640, 360);
 
-    expect(calculateFrameConcurrency(640, 360, 10)).toBe(10);
+    expect(calculateFrameOutputConcurrency(640, 360, 640, 360, 10)).toBe(10);
     expect(calculateFrameOutputConcurrency(3840, 2160, 640, 360, 10)).toBe(5);
     expect(bytesPerOutput).toBe(
       3840 * 2160 * 4 + estimateActiveFrameBytes(640, 360)
@@ -172,7 +167,7 @@ describe('frame memory reservations', () => {
     const width = 4096;
     const height = Math.floor(MAX_FRAME_PIXEL_COUNT / width);
 
-    expect(calculateFrameConcurrency(width, height, 10)).toBe(1);
+    expect(calculateFrameOutputConcurrency(width, height, width, height, 10)).toBe(1);
   });
 
   it('uses the same power-of-two RGB bucket as the buffer pool', () => {

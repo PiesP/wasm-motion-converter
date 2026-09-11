@@ -2,13 +2,16 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "types": [
+      "node",
+      "vite/client",
       "vitest/globals"
     ],
-    "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
   "include": [
-    "test"
+    "src/**/*.d.ts",
+    "test/unit"
   ],
   "exclude": [
     "test/e2e",

@@ -95,7 +95,15 @@ async function runBenchmark(
     error = err instanceof Error ? err.message : String(err);
   }
 
-  record({ codec, format, quality, scale, totalTimeMs: Date.now() - start, success, error });
+  record({
+    codec,
+    format,
+    quality,
+    scale,
+    totalTimeMs: Date.now() - start,
+    success,
+    ...(error !== undefined ? { error } : {}),
+  });
   return success;
 }
 

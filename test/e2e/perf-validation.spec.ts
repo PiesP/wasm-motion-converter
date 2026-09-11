@@ -101,9 +101,11 @@ test.describe('Perf: GIF streaming architecture', () => {
 
     // Validate output
     const stats = await getVisibleResultStats(page);
-    expect(stats).not.toBeNull();
-    expect(stats!.format.toLowerCase()).toBe('gif');
-    expect(stats!.outputSize).toBeTruthy();
+    if (!stats?.format || !stats.outputSize) {
+      throw new Error('Expected complete visible conversion result stats');
+    }
+    expect(stats.format.toLowerCase()).toBe('gif');
+    expect(stats.outputSize).toBeTruthy();
 
     // Download and verify magic bytes
     const buffer = await downloadResult(page);

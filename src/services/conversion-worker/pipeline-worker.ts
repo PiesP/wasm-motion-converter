@@ -25,7 +25,6 @@ import {
   PROGRESS_PHASE,
   PROGRESS_PHASE_RANGES,
   WEBP_TARGET_FPS,
-  WORKER_MAX_MEMORY_LIMIT_MB,
   WORKER_MAX_MEMORY_MB,
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
@@ -53,11 +52,11 @@ function createWorkerProgressTracker(): WorkerProgressState {
 
 /**
  * Clamps maxMemoryMB to valid bounds.
- * Ensures the value is within [WORKER_MIN_MEMORY_MB, WORKER_MAX_MEMORY_LIMIT_MB].
+ * Ensures the value is within [WORKER_MIN_MEMORY_MB, WORKER_MAX_MEMORY_MB].
  */
 function clampMaxMemoryMB(value: number): number {
   if (!Number.isFinite(value)) return WORKER_MAX_MEMORY_MB;
-  return Math.min(WORKER_MAX_MEMORY_LIMIT_MB, Math.max(WORKER_MIN_MEMORY_MB, value));
+  return Math.min(WORKER_MAX_MEMORY_MB, Math.max(WORKER_MIN_MEMORY_MB, value));
 }
 
 // ─── Main Worker Pipeline ────────────────────────────────────────────────

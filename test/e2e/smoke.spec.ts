@@ -17,14 +17,12 @@ import {
   isResultVisible,
   isErrorVisible,
   getVisibleResultStats,
-  getErrorMessage,
   getAppState,
-  isConvertButtonEnabled,
   waitForConversionComplete,
   downloadResult,
   runConversion,
 } from './fixtures/test-helpers';
-import { isValidGif, isValidWebP, validateFileMagic } from './fixtures/verify';
+import { validateFileMagic } from './fixtures/verify';
 
 test.describe('Smoke: H.264 → GIF (WebCodecs path)', () => {
   test.beforeEach(async ({ page }) => {
@@ -61,7 +59,7 @@ test.describe('Smoke: H.264 → WebP', () => {
   });
 
   test('converts H.264 MP4 to valid WebP', async ({ page }) => {
-    const { state, error } = await runConversion(page, {
+    const { state } = await runConversion(page, {
       file: 'test-video-h264-baseline.mp4',
       format: 'webp',
       quality: 'medium',
@@ -103,13 +101,16 @@ test.describe('Smoke: Result validation', () => {
 
     // Verify result stats are visible
     const stats = await getVisibleResultStats(page);
-    expect(stats).not.toBeNull();
-    expect(stats!.format.toLowerCase()).toBe('gif');
-    expect(stats!.outputSize).toBeTruthy();
-    expect(stats!.originalSize).toBeTruthy();
+    if (!stats?.format || !stats.outputSize || !stats.originalSize) {
+      throw new Error('Expected complete visible GIF result stats');
+    }
+    expect(stats.format.toLowerCase()).toBe('gif');
+    expect(stats.outputSize).toBeTruthy();
+    expect(stats.originalSize).toBeTruthy();
 
     // Verify output size is reasonable (not empty, not absurdly large)
-    const outputBytes = parseSizeString(stats!.outputSize);
+    const outputBytes = parseSizeString(stats.outputSize);
+    if (outputBytes === undefined) throw new Error(`Invalid output size: ${stats.outputSize}`);
     expect(outputBytes).toBeGreaterThan(1000); // At least 1KB
     expect(outputBytes).toBeLessThan(500 * 1024 * 1024); // Less than 500MB
 
@@ -143,11 +144,14 @@ test.describe('Smoke: Result validation', () => {
     expect(state).toBe('done');
 
     const stats = await getVisibleResultStats(page);
-    expect(stats).not.toBeNull();
-    expect(stats!.format.toLowerCase()).toBe('webp');
+    if (!stats?.format || !stats.outputSize) {
+      throw new Error('Expected complete visible WebP result stats');
+    }
+    expect(stats.format.toLowerCase()).toBe('webp');
 
     // WebP should be significantly smaller than GIF
-    const outputBytes = parseSizeString(stats!.outputSize);
+    const outputBytes = parseSizeString(stats.outputSize);
+    if (outputBytes === undefined) throw new Error(`Invalid output size: ${stats.outputSize}`);
     expect(outputBytes).toBeGreaterThan(1000);
     expect(outputBytes).toBeLessThan(100 * 1024 * 1024); // Less than 100MB
 
@@ -171,7 +175,9 @@ test.describe('Smoke: Result validation', () => {
     });
     expect(gifResult.state).toBe('done');
     const gifStats = await getVisibleResultStats(page);
-    const gifBytes = parseSizeString(gifStats!.outputSize);
+    if (!gifStats?.outputSize) throw new Error('Expected visible GIF result stats');
+    const gifBytes = parseSizeString(gifStats.outputSize);
+    if (gifBytes === undefined) throw new Error(`Invalid GIF output size: ${gifStats.outputSize}`);
 
     // Reset and run WebP conversion
     await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
@@ -186,13 +192,19 @@ test.describe('Smoke: Result validation', () => {
     });
     expect(webpResult.state).toBe('done');
     const webpStats = await getVisibleResultStats(page);
-    const webpBytes = parseSizeString(webpStats!.outputSize);
+    if (!webpStats?.outputSize) throw new Error('Expected visible WebP result stats');
+    const webpBytes = parseSizeString(webpStats.outputSize);
+    if (webpBytes === undefined) {
+      throw new Error(`Invalid WebP output size: ${webpStats.outputSize}`);
+    }
 
     // WebP should be smaller than GIF (inter-frame compression absent in current
     // keyframe-only encoder, so we expect modest savings at medium quality).
-    const savingsPercent = ((1 - webpBytes! / gifBytes!) * 100).toFixed(1);
-    console.log(`  GIF: ${gifStats!.outputSize}, WebP: ${webpStats!.outputSize}, Savings: ${savingsPercent}%`);
-    expect(webpBytes!).toBeLessThan(gifBytes!);
+    const savingsPercent = ((1 - webpBytes / gifBytes) * 100).toFixed(1);
+    console.log(
+      `  GIF: ${gifStats.outputSize}, WebP: ${webpStats.outputSize}, Savings: ${savingsPercent}%`
+    );
+    expect(webpBytes).toBeLessThan(gifBytes);
   });
 });
 

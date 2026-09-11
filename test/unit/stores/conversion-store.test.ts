@@ -123,20 +123,14 @@ describe('conversion-store', () => {
     expect(environmentSupported()).toBe(true);
   });
 
-  it('stores conversion result, progress metadata, and the input buffer', async () => {
+  it('stores conversion results and progress metadata', async () => {
     const {
       conversionResults,
       setConversionResults,
       conversionStatusMessage,
       setConversionStatusMessage,
-      conversionFps,
-      setConversionFps,
-      conversionElapsedMs,
-      setConversionElapsedMs,
       outputFrames,
       setOutputFrames,
-      getInputBuffer,
-      setInputBuffer,
       setCurrentFrame,
       setTotalFrames,
     } = await import('@stores/conversion-store');
@@ -164,20 +158,10 @@ describe('conversion-store', () => {
     setConversionResults(results);
     expect(conversionResults()).toEqual(results);
     setConversionStatusMessage('encoding');
-    setConversionFps(24);
-    setConversionElapsedMs(1234);
     setOutputFrames(12);
     setCurrentFrame(4);
     setTotalFrames(12);
     expect(conversionStatusMessage()).toBe('encoding');
-    expect(conversionFps()).toBe(24);
-    expect(conversionElapsedMs()).toBe(1234);
     expect(outputFrames()).toBe(12);
-
-    const buffer = new ArrayBuffer(8);
-    setInputBuffer(buffer);
-    expect(getInputBuffer()).toBe(buffer);
-    setInputBuffer(null);
-    expect(getInputBuffer()).toBeNull();
   });
 });

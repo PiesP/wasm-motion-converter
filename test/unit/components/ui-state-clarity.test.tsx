@@ -142,7 +142,7 @@ describe('UI state clarity', () => {
       return animationFrames.length;
     });
     const cancelAnimationFrameSpy = vi.spyOn(window, 'cancelAnimationFrame');
-    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:result-preview');
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:result-preview');
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
     const container = document.createElement('div');

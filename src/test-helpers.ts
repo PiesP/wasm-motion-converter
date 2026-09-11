@@ -44,7 +44,6 @@ import {
   setConversionResults,
   setErrorContext,
   setErrorMessage,
-  setInputBuffer,
   setInputFile,
   setVideoMetadata,
   setVideoPreviewUrl,
@@ -182,11 +181,6 @@ const injectFile = async (file: File, metadata?: VideoMetadata): Promise<void> =
   if (prevUrl) URL.revokeObjectURL(prevUrl);
 
   setInputFile(file);
-  // Read file into buffer so conversion can proceed without re-reading
-  try {
-    const buf = await file.arrayBuffer();
-    setInputBuffer(buf);
-  } catch {}
   const previewUrl = URL.createObjectURL(file);
   setVideoPreviewUrl(previewUrl);
 

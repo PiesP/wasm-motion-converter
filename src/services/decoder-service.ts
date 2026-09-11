@@ -931,7 +931,7 @@ export async function decodeFrames(
             // grayscale + MAD for comparison.
             //
             // NOTE: This block is NEVER entered when onVideoFrameAvailable is active
-            // (GPU-only path) because that path skips copyFrameToRGB entirely, meaning
+            // (GPU-only path) because that path skips copyFrameToPixels entirely, meaning
             // no CPU pixel data/grayscale/MAD is available. See the GPU-only early return
             // earlier in this function (onVideoFrameAvailable check).
             //

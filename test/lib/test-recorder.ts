@@ -9,8 +9,8 @@
 //   recordResult({ videoId: 'h264-baseline', format: 'gif', quality: 'medium', ... });
 //   const regressions = detectRegressions();
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -97,16 +97,6 @@ export function loadResults(): ConversionTestResult[] {
     }
   }
   return results;
-}
-
-/** Load results filtered by video ID and format. */
-export function loadResultsForVideo(
-  videoId: string,
-  format?: string,
-): ConversionTestResult[] {
-  return loadResults().filter(
-    (r) => r.videoId === videoId && (!format || r.format === format),
-  );
 }
 
 /** Get the latest result for each video+format+quality combination. */

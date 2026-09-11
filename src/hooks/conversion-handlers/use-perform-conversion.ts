@@ -11,14 +11,11 @@ import {
   appState,
   inputFile,
   setAppState,
-  setConversionElapsedMs,
-  setConversionFps,
   setConversionResults,
   setConversionStatusMessage,
   setCurrentFrame,
   setErrorContext,
   setErrorMessage,
-  setInputBuffer,
   setInputFile,
   setTotalFrames,
   setVideoMetadata,
@@ -234,9 +231,6 @@ async function performConversion(
       height: Math.max(1, Math.floor(sourceDimensions.height * serializedOptions.scale)),
     };
 
-    // Both pipelines read from the File lazily, so a cached full-file buffer
-    // is no longer needed during conversion.
-    setInputBuffer(null);
     const output = await executePipeline(
       serializedConfig,
       serializedOptions,
@@ -301,8 +295,6 @@ function createProgressCallback(
     batch(() => {
       runtime.updateProgress(progress.progress, progress.phase, progress.outputFrames);
       runtime.updateMemoryUsage(progress.memoryMB);
-      setConversionFps(progress.fps ?? undefined);
-      setConversionElapsedMs(progress.elapsedMs ?? undefined);
       if (progress.currentFrame != null) setCurrentFrame(progress.currentFrame);
       if (progress.totalFrames != null) setTotalFrames(progress.totalFrames);
       runtime.updateStatus(formatConversionProgressStatus(progress, t));
@@ -494,11 +486,6 @@ async function handleConversionError(
   const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
 
   if (isCancellationError(error)) {
-    // Always release the input buffer on cancellation — even if this run
-    // was superseded by a later file selection (isActive() === false).
-    // The buffer can be up to 500 MB.
-    setInputBuffer(null);
-
     if (!isActive()) {
       // This run was superseded — abort is already handled by later run.
       // Just clean up and bail out.
@@ -541,11 +528,6 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
   // Abort preparation or the active pipeline and invalidate its ownership token.
   runtime.abortConversionIntent();
 
-  // Always release the input buffer on cancel — even if no pipeline was
-  // in flight (e.g., cancel during duration validation).  The buffer can
-  // be up to 500 MB and must be freed regardless of timing.
-  setInputBuffer(null);
-
   setAppState('cancelling');
 }
 
@@ -580,7 +562,6 @@ export function handleReset(runtime: ConversionRuntimeController): void {
   setErrorContext(null);
 
   setInputFile(null);
-  setInputBuffer(null);
 
   const previousPreviewUrl = videoPreviewUrl();
   if (previousPreviewUrl) {
@@ -639,9 +620,6 @@ export function handleDismissError(): void {
     // Clear inputFile too — revoking the preview URL without clearing the file
     // creates orphaned state where inputFile is set but videoPreviewUrl is null.
     setInputFile(null);
-    // Dismiss abandons retry, so release the potentially large input buffer and
-    // its metadata together with the rest of the file-scoped state.
-    setInputBuffer(null);
     setVideoMetadata(null);
 
     setAppState('idle');

@@ -13,7 +13,14 @@
 export function validateGifMagic(bytes: Uint8Array): { valid: boolean; width?: number; height?: number } {
   if (bytes.length < 10) return { valid: false };
 
-  const header = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
+  const header = String.fromCharCode(
+    bytes[0]!,
+    bytes[1]!,
+    bytes[2]!,
+    bytes[3]!,
+    bytes[4]!,
+    bytes[5]!,
+  );
   if (header !== 'GIF89a' && header !== 'GIF87a') return { valid: false };
   if (bytes[bytes.length - 1] !== 0x3b) return { valid: false };
 
@@ -31,13 +38,13 @@ export function validateGifMagic(bytes: Uint8Array): { valid: boolean; width?: n
 export function validateWebpMagic(bytes: Uint8Array): { valid: boolean; width?: number; height?: number } {
   if (bytes.length < 20) return { valid: false };
 
-  const riff = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
-  const webp = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
+  const riff = String.fromCharCode(bytes[0]!, bytes[1]!, bytes[2]!, bytes[3]!);
+  const webp = String.fromCharCode(bytes[8]!, bytes[9]!, bytes[10]!, bytes[11]!);
   if (riff !== 'RIFF' || webp !== 'WEBP') return { valid: false };
 
   // For VP8 (lossy): bytes 12-15 = "VP8 ", then dimensions at offset 26-29
   // For VP8L (lossless): bytes 12-15 = "VP8L", then dimensions at offset 21-24
-  const codec = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
+  const codec = String.fromCharCode(bytes[12]!, bytes[13]!, bytes[14]!, bytes[15]!);
   if (codec === 'VP8 ' && bytes.length >= 30) {
     // VP8: width at offset 26-27, height at offset 28-29 (little-endian, 14-bit each)
     const w = (bytes[26]! | (bytes[27]! << 8)) & 0x3FFF;
@@ -123,35 +130,4 @@ export function inspectAnimatedWebp(bytes: Uint8Array): AnimatedWebpMetrics {
     frameCount,
     durationMs,
   };
-}
-
-/**
- * Validate a downloaded file's magic bytes against expected format.
- * Works without ffprobe — pure byte inspection.
- */
-export function validateFileMagic(
-  buffer: Uint8Array | ArrayBuffer,
-  expectedFormat: 'gif' | 'webp'
-): { valid: boolean; width?: number; height?: number; message: string } {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-
-  if (expectedFormat === 'gif') {
-    const result = validateGifMagic(bytes);
-    if (!result.valid) {
-      const headerHex = Array.from(bytes.slice(0, 12)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
-      return { valid: false, message: `Invalid GIF magic: ${headerHex}` };
-    }
-    return { valid: true, width: result.width, height: result.height, message: 'Valid GIF' };
-  }
-
-  if (expectedFormat === 'webp') {
-    const result = validateWebpMagic(bytes);
-    if (!result.valid) {
-      const headerHex = Array.from(bytes.slice(0, 12)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
-      return { valid: false, message: `Invalid WebP magic: ${headerHex}` };
-    }
-    return { valid: true, width: result.width, height: result.height, message: 'Valid WebP' };
-  }
-
-  return { valid: false, message: `Unknown format: ${expectedFormat}` };
 }

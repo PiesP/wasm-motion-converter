@@ -526,16 +526,3 @@ export function calculateStagedFrameSourceCapacity(
   if (sourceBudgetBytes < sourceBytes) return 0;
   return Math.min(requested, Math.floor(sourceBudgetBytes / sourceBytes));
 }
-
-/** Derive bounded concurrency from the shared live-frame memory reservation. */
-export function calculateFrameConcurrency(
-  width: number,
-  height: number,
-  requestedMaximum: number,
-  pixelFormat: CpuPixelFormat = 'rgb'
-): number {
-  return Math.max(
-    1,
-    calculateFrameOutputConcurrency(width, height, width, height, requestedMaximum, pixelFormat)
-  );
-}

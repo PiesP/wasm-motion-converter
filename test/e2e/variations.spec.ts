@@ -9,19 +9,9 @@
 
 import { test, expect } from '@playwright/test';
 import {
-  injectTestFile,
-  setFormat,
-  setQuality,
-  setScale,
-  clickConvert,
-  dismissWarningDialog,
   isResultVisible,
-  isErrorVisible,
   getVisibleResultStats,
-  isConvertButtonEnabled,
-  waitForConversionComplete,
   runConversion,
-  getAppState,
 } from './fixtures/test-helpers';
 
 // ── Quality Variations ──────────────────────────────────────────
@@ -88,7 +78,7 @@ test.describe('Scale: H.264 Baseline × all scales', () => {
   });
 
   test('50% scale → baseline reference', async ({ page }) => {
-    const { state, stats: resultStats } = await runConversion(page, {
+    const { state } = await runConversion(page, {
       file: 'test-video-h264-baseline.mp4',
       format: 'gif',
       quality: 'medium',
