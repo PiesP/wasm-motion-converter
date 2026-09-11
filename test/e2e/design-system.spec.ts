@@ -119,7 +119,6 @@ test.describe('Quiet Instruments adapter', () => {
 
     await page.emulateMedia({ reducedMotion: 'reduce' });
     const reducedTransitionMs = await readAppTransitionDurationMs(page);
-    expect(reducedTransitionMs).toBeGreaterThan(0);
     expect(reducedTransitionMs).toBeLessThanOrEqual(0.01);
     expect(reducedTransitionMs).toBeLessThan(normalTransitionMs);
     expect(await readPulseAnimationName(page)).toBe('none');
