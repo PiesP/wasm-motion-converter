@@ -89,14 +89,14 @@ describe('Codex Security CLI supply-chain controls', () => {
     const cliPackage = JSON.parse(readFileSync(cliPackagePath, 'utf8')) as CliPackage;
     const cliLock = JSON.parse(readFileSync(cliLockPath, 'utf8')) as CliLock;
 
-    expect(cliPackage.overrides).not.toHaveProperty('pdfjs-dist');
+    expect(cliPackage.overrides ?? {}).not.toHaveProperty('pdfjs-dist');
     expect(cliLock.packages['node_modules/pdfjs-dist']?.version).toBe('6.2.108');
     expect(workflow).not.toContain('patch-codex-security.mjs');
     expect(helper).not.toContain('patch-codex-security.mjs');
     expect(existsSync(patcherPath)).toBe(false);
   });
 
-  it('forces patched CLI closures while upstream pins vulnerable releases', () => {
+  it('uses patched upstream CLI dependencies without redundant overrides', () => {
     const cliPackage = JSON.parse(readFileSync(cliPackagePath, 'utf8')) as CliPackage;
     const cliLock = JSON.parse(readFileSync(cliLockPath, 'utf8')) as CliLock;
     const fastUriPackages = Object.entries(cliLock.packages).filter(
@@ -105,7 +105,7 @@ describe('Codex Security CLI supply-chain controls', () => {
         packagePath.endsWith('/node_modules/fast-uri')
     );
 
-    expect(cliPackage.overrides).toMatchObject({ 'fast-uri': '3.1.6', fflate: '0.8.3' });
+    expect(cliPackage.overrides).toBeUndefined();
     expect(cliLock.packages['node_modules/fflate']?.version).toBe('0.8.3');
     expect(fastUriPackages.length).toBeGreaterThan(0);
     for (const [packagePath, metadata] of fastUriPackages) {
