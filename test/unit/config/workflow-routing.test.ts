@@ -124,6 +124,10 @@ describe('Workflow change routing', () => {
       semgrep_full: 'true',
       security_tools: 'true',
     });
+    expect(classify(['scripts/security/scope-osv-exceptions.py'])).toMatchObject({
+      unit: 'true',
+      dependency: 'true',
+    });
     expect(classify(['scripts/security/codex-security/package-lock.json'])).toMatchObject({
       unit: 'true',
       dependency: 'true',

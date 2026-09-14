@@ -164,6 +164,9 @@ classify_path() {
       codex_security=true
       ;;
     scripts/security/*)
+      if [[ "$path" == scripts/security/scope-osv-exceptions.py ]]; then
+        dependency=true
+      fi
       quality=true
       unit=true
       codeql=true
