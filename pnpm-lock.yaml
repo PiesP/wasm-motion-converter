@@ -83,8 +83,8 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.5.1)(@vitest/coverage-v8@4.1.11)(jsdom@30.0.1)(vite@8.3.0(@types/node@26.5.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.1))
       wrangler:
-        specifier: ^4.131.1
-        version: 4.131.1(@types/node@26.5.1)
+        specifier: ^4.131.2
+        version: 4.131.2(@types/node@26.5.1)
 
 packages:
 
@@ -2515,8 +2515,8 @@ packages:
     resolution: {integrity: sha512-VP79XUPxV2CigYP3jWwAUFSku2aKqBH7uTAapFWCBqutsbmDo96KY5o8uh6U+/YSIn5OxJnXp73beVkpqMIGhA==}
     engines: {node: '>=18'}
 
-  miniflare@5.20260911.0-alpha:
-    resolution: {integrity: sha512-CRieJmvHx+7rNqnA5SKdsYsER6rfkUIE/jruIUw+fLhsQ4sORfuMtr3+FQzsQ9/y8lhk061V4Fl1DFdHiyBB6g==}
+  miniflare@5.20260911.1-alpha:
+    resolution: {integrity: sha512-7IDj9monoYcCPrS8HfcTt90T3pDwKGvNEAR1Y061KbJhBd5JkStOwOpHMUDFBo9PEbjWVDxPICAnXGNNV2LNfQ==}
     engines: {node: '>=22.0.0'}
 
   minimalistic-assert@1.0.1:
@@ -3090,8 +3090,8 @@ packages:
     engines: {node: '>=16'}
     hasBin: true
 
-  wrangler@4.131.1:
-    resolution: {integrity: sha512-1u5FMdJAn6UOcL02cVsIITcnHrk6mC7N+RF10EkVhPL18R/o9g5BZb4PCjByL+3AsRP5wQpppCIPHhYPRmIJwg==}
+  wrangler@4.131.2:
+    resolution: {integrity: sha512-jmkGE7monbPKyYQr1FPQN+SARVhddqw2fhXOmTKCw4lroqlFGSS6rit/RTvPi/qzNLKrXxkS8DhWXasJnStplg==}
     engines: {node: '>=22.0.0'}
     hasBin: true
     peerDependencies:
@@ -5180,7 +5180,7 @@ snapshots:
 
   mimic-function@5.0.1: {}
 
-  miniflare@5.20260911.0-alpha(@types/node@26.5.1):
+  miniflare@5.20260911.1-alpha(@types/node@26.5.1):
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.35.4(@types/node@26.5.1)
@@ -5757,13 +5757,13 @@ snapshots:
       '@cloudflare/workerd-linux-arm64': 1.20260911.1
       '@cloudflare/workerd-windows-64': 1.20260911.1
 
-  wrangler@4.131.1(@types/node@26.5.1):
+  wrangler@4.131.2(@types/node@26.5.1):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260911.1)
       blake3-wasm: 2.1.5
       esbuild: 0.28.1
-      miniflare: 5.20260911.0-alpha(@types/node@26.5.1)
+      miniflare: 5.20260911.1-alpha(@types/node@26.5.1)
       path-to-regexp: 6.3.0
       unenv: 2.0.0-rc.24
       workerd: 1.20260911.1
