@@ -278,15 +278,6 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                   preload="metadata"
                   aria-label={t('dropzone.preview')}
                 />
-                {/* Progress overlay on video */}
-                <div class="absolute inset-0 flex items-center justify-center">
-                  <div class="text-center">
-                    <div class="text-2xl font-bold text-white drop-shadow-lg">
-                      {progressValue()}%
-                    </div>
-                    <div class="mt-0.5 text-[10px] text-white/80 drop-shadow">{local.status}</div>
-                  </div>
-                </div>
               </div>
             </Show>
 

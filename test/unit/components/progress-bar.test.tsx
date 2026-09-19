@@ -6,7 +6,13 @@ import type { ProgressPhase } from '@t/conversion-types';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@hooks/use-locale', () => ({
+import {
+  mountCompactProgressHarness,
+  mountResultPreviewHarness,
+} from './rendered-design-harness';
+
+vi.mock('@hooks/use-locale', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@hooks/use-locale')>()),
   useLocale: () => ({
     locale: () => 'en',
     t: (key: string) => key,
@@ -18,6 +24,28 @@ const ProgressBar = ProgressBarModule.default;
 describe('ProgressBar pipeline phase segments', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+  });
+
+  it('mounts and disposes the actual compact FileDropzone path used by browser checks', async () => {
+    const app = document.createElement('div');
+    app.dataset.testid = 'app';
+    document.body.appendChild(app);
+
+    const dispose = mountCompactProgressHarness('en');
+    await vi.waitFor(() => {
+      const harness = document.querySelector('[data-testid="compact-progress-harness"]');
+      expect(harness?.querySelector('[role="progressbar"]')?.getAttribute('data-progress')).toBe(
+        '84'
+      );
+      expect(harness?.textContent).toContain('Encoding animation frames');
+      expect(harness?.textContent).toContain('64 MB / 512 MB (13%)');
+    });
+
+    dispose();
+    expect(
+      document.querySelector('[data-testid="compact-progress-harness"]')?.childElementCount
+    ).toBe(0);
+    expect(mountResultPreviewHarness).toBeTypeOf('function');
   });
 
   it.each([
@@ -122,4 +150,65 @@ describe('ProgressBar pipeline phase segments', () => {
       expect(container.querySelector('[role="progressbar"]')).not.toBeNull();
     }
   );
+
+  it('shows ETA only when a positive estimate is available', () => {
+    const withEta = document.createElement('div');
+    const withoutEta = document.createElement('div');
+    document.body.append(withEta, withoutEta);
+    render(
+      () => (
+        <ProgressBar
+          compact
+          estimatedSecondsRemaining={42}
+          progress={42}
+          status="Converting"
+        />
+      ),
+      withEta
+    );
+    render(
+      () => (
+        <ProgressBar compact estimatedSecondsRemaining={null} progress={42} status="Converting" />
+      ),
+      withoutEta
+    );
+
+    expect(withEta.textContent).toContain('progress.eta');
+    expect(withoutEta.textContent).not.toContain('progress.eta');
+  });
+
+  it('suppresses a repeated primary status while preserving distinct progress detail', () => {
+    const repeated = document.createElement('div');
+    const distinct = document.createElement('div');
+    document.body.append(repeated, distinct);
+    render(
+      () => (
+        <ProgressBar
+          compact
+          progress={42}
+          status="Cancelling"
+          statusMessage="Cancelling"
+        />
+      ),
+      repeated
+    );
+    render(
+      () => (
+        <ProgressBar
+          compact
+          progress={42}
+          status="Converting"
+          statusMessage="Encoding frame 42"
+        />
+      ),
+      distinct
+    );
+
+    expect(
+      Array.from(repeated.querySelectorAll('span')).filter(
+        (element) => element.textContent === 'Cancelling'
+      )
+    ).toHaveLength(1);
+    expect(distinct.textContent).toContain('Encoding frame 42');
+  });
 });

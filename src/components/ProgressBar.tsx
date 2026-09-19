@@ -254,7 +254,7 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           <Show
             when={local.estimatedSecondsRemaining != null && local.estimatedSecondsRemaining > 0}
           >
-            <span class="font-mono text-[10px] tabular-nums text-brand/60 shrink-0">
+            <span class="font-mono tabular-nums text-text-secondary shrink-0">
               {t('progress.eta', {
                 time: formatDurationSeconds(local.estimatedSecondsRemaining!, locale()),
               })}
@@ -274,14 +274,17 @@ const ProgressBar: Component<ProgressBarProps> = (props) => {
           <span class="truncate italic">
             {showFrameCounter()
               ? frameCounterLabel()
-              : (local.subPhaseLabel ?? local.statusMessage ?? '')}
+              : (local.subPhaseLabel ??
+                (local.statusMessage === local.status ? '' : local.statusMessage))}
           </span>
           <div class="flex items-center gap-1.5 shrink-0">
             {showFrameCounter() && subPhaseValue() > 0 && (
               <span class="font-mono tabular-nums text-text-secondary">{subPhaseValue()}%</span>
             )}
             {local.memoryUsage && local.memoryUsage !== '0 MB / 0 MB (0%)' && (
-              <span class="font-mono tabular-nums text-brand/70">🧠 {local.memoryUsage}</span>
+              <span class="font-mono text-xs tabular-nums text-text-secondary">
+                🧠 {local.memoryUsage}
+              </span>
             )}
           </div>
         </div>
