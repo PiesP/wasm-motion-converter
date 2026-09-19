@@ -205,7 +205,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   };
 
   return (
-    <Panel class="p-4 bg-bg-panel border border-border-standard rounded-lg result-preview-deferred">
+    <Panel class="p-4 result-preview-deferred">
       <section aria-label={ariaLabel()}>
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <dl
