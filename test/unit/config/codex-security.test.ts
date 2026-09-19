@@ -90,7 +90,7 @@ describe('Codex Security CLI supply-chain controls', () => {
     const cliLock = JSON.parse(readFileSync(cliLockPath, 'utf8')) as CliLock;
 
     expect(cliPackage.overrides ?? {}).not.toHaveProperty('pdfjs-dist');
-    expect(cliLock.packages['node_modules/pdfjs-dist']?.version).toBe('6.2.108');
+    expect(cliLock.packages['node_modules/pdfjs-dist']?.version).toBe('6.3.289');
     expect(workflow).not.toContain('patch-codex-security.mjs');
     expect(helper).not.toContain('patch-codex-security.mjs');
     expect(existsSync(patcherPath)).toBe(false);
@@ -116,7 +116,7 @@ describe('Codex Security CLI supply-chain controls', () => {
   it('scopes the unpatched extract-zip advisory exception to the CLI lock', () => {
     // A CLI upgrade requires revalidating the extraction guard before this exception.
     const cliPackage = JSON.parse(readFileSync(cliPackagePath, 'utf8')) as CliPackage;
-    expect(cliPackage.dependencies['@openai/codex-security']).toBe('0.1.27');
+    expect(cliPackage.dependencies['@openai/codex-security']).toBe('0.1.28');
     expect(osvConfig).toContain('id = "GHSA-jmr9-qjv8-65gv"');
     expect(osvConfig).toContain('id = "GHSA-7pqw-9j4j-h8q3"');
     expect(osvConfig.match(/ignoreUntil = 2026-09-28/g)).toHaveLength(2);
