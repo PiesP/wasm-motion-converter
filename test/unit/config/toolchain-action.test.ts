@@ -7,7 +7,7 @@ const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf
 const deepChecksWorkflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
 const centralSetupAction =
-  'uses: PiesP/browser-core/automation/actions/setup-project@f630a8f0119dd6b4f1aa011f8510489936c7a7b9';
+  'uses: PiesP/browser-core/automation/actions/setup-project@adb7b05ff3781268c3625341951219da778bb40a';
 const releaseSetupActionPath = resolve(root, '.github/actions/setup-release/action.yaml');
 const releaseSetupAction = existsSync(releaseSetupActionPath)
   ? readFileSync(releaseSetupActionPath, 'utf8')
@@ -72,7 +72,7 @@ describe('central project setup action', () => {
 
     expect(existsSync(releaseSetupActionPath)).toBe(true);
     expect(releaseSetupAction).toContain(
-      'uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2'
+      'uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0'
     );
     expect(releaseSetupAction).toContain('package-json-file: package.json');
     expect(releaseSetupAction).toContain('runtime: "node@${{ inputs.node-version }}"');
