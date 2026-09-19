@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   checkVideoDecoderSupport: vi.fn(),
@@ -57,6 +57,8 @@ import type { ConversionRuntimeController } from '@hooks/conversion-handlers/use
 
 describe('handleFileSelected conversion settings', () => {
   beforeEach(() => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test-preview');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     mocks.checkVideoDecoderSupport.mockReset().mockResolvedValue(true);
     mocks.focusPrimaryErrorAction.mockReset();
     mocks.setErrorContext.mockReset();
@@ -72,6 +74,10 @@ describe('handleFileSelected conversion settings', () => {
       width: 16,
       height: 16,
     });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('resets file-specific trim when a valid new file is accepted', async () => {
