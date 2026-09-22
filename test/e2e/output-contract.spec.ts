@@ -102,14 +102,32 @@ test.describe('conversion Worker fallback boundary', () => {
   const webpContract = cases.find((candidate) => candidate.id === 'vfr-par-webp');
   if (!webpContract) throw new Error('Missing vfr-par-webp output contract');
   const bootstrapCases = [
-    { contract, warning: 'worker.fallback' },
-    { contract: webpContract, warning: 'worker-create-failed' },
+    { contract, warning: 'worker.fallback', encoder: 'GIF', disableNativeWebp: false },
+    {
+      contract: webpContract,
+      warning: 'worker-create-failed',
+      encoder: 'serial Canvas WebP',
+      disableNativeWebp: false,
+    },
+    {
+      contract: webpContract,
+      warning: 'worker-create-failed',
+      encoder: 'WASM WebP',
+      disableNativeWebp: true,
+    },
   ];
 
   for (const bootstrapCase of bootstrapCases) {
-    test(`${bootstrapCase.contract.id} falls back when Worker construction fails`, async ({ page }) => {
+    test(`${bootstrapCase.contract.id} preserves output with ${bootstrapCase.encoder} fallback`, async ({ page }) => {
       const fallbackContract = bootstrapCase.contract;
-      await page.addInitScript(() => {
+      await page.addInitScript((disableNativeWebp) => {
+        // Keep Canvas pixel-copy support while forcing the existing WASM encoder branch.
+        if (disableNativeWebp) {
+          Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+            configurable: true,
+            value: undefined,
+          });
+        }
         Object.defineProperty(globalThis, '__wmcWorkerConstructionAttempts', {
           configurable: true,
           value: 0,
@@ -126,7 +144,7 @@ test.describe('conversion Worker fallback boundary', () => {
           value: UnavailableWorker,
           writable: true,
         });
-      });
+      }, bootstrapCase.disableNativeWebp);
       const warnings: string[] = [];
       page.on('console', (message) => {
         if (message.type() === 'warning') warnings.push(message.text());
@@ -138,6 +156,11 @@ test.describe('conversion Worker fallback boundary', () => {
         await page.evaluate(() => globalThis.__wmcWorkerConstructionAttempts)
       ).toBeGreaterThan(0);
       expect(warnings.some((message) => message.includes(bootstrapCase.warning))).toBe(true);
+      if (bootstrapCase.disableNativeWebp) {
+        expect(
+          await page.evaluate(() => typeof OffscreenCanvas.prototype.convertToBlob)
+        ).toBe('undefined');
+      }
       await verifyAnimatedOutput(page, output, fallbackContract, markers);
     });
   }

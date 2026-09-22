@@ -15,7 +15,15 @@ interface VideoFixture {
   extraEncoderArgs?: string[];
   outputArgs?: string[];
   displayRotation?: number;
+  requiresReorderedFrames?: boolean;
 }
+
+const CFR_MARKERS =
+  'color=c=black:size=96x64:rate=4:duration=1,' +
+  "drawbox=c=red:t=fill:enable='eq(n,0)'," +
+  "drawbox=c=lime:t=fill:enable='eq(n,1)'," +
+  "drawbox=c=blue:t=fill:enable='eq(n,2)'," +
+  "drawbox=c=yellow:t=fill:enable='eq(n,3)'";
 
 const fixtures: VideoFixture[] = [
   {
@@ -33,13 +41,21 @@ const fixtures: VideoFixture[] = [
   },
   {
     fileName: 'test-video-contract-cfr.mp4',
-    input:
-      'color=c=black:size=96x64:rate=4:duration=1,' +
-      "drawbox=c=red:t=fill:enable='eq(n,0)'," +
-      "drawbox=c=lime:t=fill:enable='eq(n,1)'," +
-      "drawbox=c=blue:t=fill:enable='eq(n,2)'," +
-      "drawbox=c=yellow:t=fill:enable='eq(n,3)'",
+    input: CFR_MARKERS,
     extraEncoderArgs: ['-g', '1'],
+  },
+  {
+    fileName: 'test-video-contract-bframes.mp4',
+    input: CFR_MARKERS,
+    encoderArgs: ['-c:v', 'libx264', '-profile:v', 'main'],
+    extraEncoderArgs: ['-bf', '2', '-x264-params', 'b-adapt=0:scenecut=0:keyint=4:min-keyint=4'],
+    requiresReorderedFrames: true,
+  },
+  {
+    fileName: 'test-video-contract-vp9.webm',
+    input: CFR_MARKERS,
+    encoderArgs: ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '24', '-g', '1'],
+    outputArgs: [],
   },
   {
     fileName: 'test-video-contract-vfr-par.mp4',
@@ -77,6 +93,52 @@ if (process.env.PREPARE_RESOURCE_FIXTURES === 'true') {
     encoderArgs: ['-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8'],
     outputArgs: [],
   });
+}
+
+function assertReorderedFrames(path: string): void {
+  const probe = spawnSync(
+    'ffprobe',
+    [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=has_b_frames:frame=pict_type:packet=pts,dts',
+      '-of',
+      'json',
+      path,
+    ],
+    { encoding: 'utf8' }
+  );
+  if (probe.error) throw probe.error;
+  if (probe.status !== 0) throw new Error(`ffprobe failed: ${probe.stderr.trim()}`);
+  const observation = JSON.parse(probe.stdout) as {
+    streams?: Array<{ has_b_frames?: number }>;
+    packets_and_frames?: Array<{ type?: string; pict_type?: string; pts?: number; dts?: number }>;
+  };
+  const entries = observation.packets_and_frames ?? [];
+  const packets = entries.filter((entry) => entry.type === 'packet');
+  const reordered = packets.some((packet, index) => {
+    const previous = packets[index - 1];
+    return previous?.pts !== undefined && packet.pts !== undefined && packet.pts < previous.pts;
+  });
+  const decodeOrder = packets.every((packet, index) => {
+    const previous = packets[index - 1];
+    return (
+      Number.isFinite(packet.pts) &&
+      Number.isFinite(packet.dts) &&
+      (index === 0 || (previous?.dts !== undefined && packet.dts! > previous.dts))
+    );
+  });
+  if (
+    !((observation.streams?.[0]?.has_b_frames ?? 0) > 0) ||
+    !entries.some((entry) => entry.type === 'frame' && entry.pict_type === 'B') ||
+    !reordered ||
+    !decodeOrder
+  ) {
+    throw new Error(`Fixture lacks verified B-frame presentation/decode reordering: ${path}`);
+  }
 }
 
 for (const fixture of fixtures) {
@@ -153,6 +215,7 @@ for (const fixture of fixtures) {
     if (size === 0) {
       throw new Error(`Generated an empty E2E codec fixture: ${outputPath}`);
     }
+    if (fixture.requiresReorderedFrames) assertReorderedFrames(outputPath);
 
     console.log(`[e2e-fixture] Generated ${outputPath} (${size} bytes)`);
   } finally {

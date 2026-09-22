@@ -80,14 +80,19 @@ or dependency versions outside the compared run.
 ## Media fixtures
 
 Fresh CI checkouts generate `public/test-video-ci-h264.mp4` before the CI browser
-profile. The same generator creates a compact output-contract corpus: a four-color
-CFR fixture, a four-color VFR fixture with 2:1 pixel aspect ratio, and a four-color
-fixture with 90-degree display rotation. `e2e/output-contract.spec.ts` converts
-the corpus with a non-trivial trim range across GIF and WebP, then uses the
+profile. The same generator creates a compact output-contract corpus: H.264/MP4
+CFR inputs with and without B-frames, a VP9/WebM CFR input, an H.264 VFR input with
+2:1 pixel aspect ratio, and a fixture with 90-degree display rotation and distinct
+corner markers. Fixture generation uses `ffprobe` to reject a B-frame input
+without actual B pictures and reordered presentation/decode timestamps.
+`e2e/output-contract.spec.ts` checks GIF trimming across frame boundaries and
+WebP geometry/timing, then uses the
 browser's `ImageDecoder` to fully decode every downloaded frame and assert display
 geometry, color-marker order, per-frame timing, and total playback duration. It
-also proves that Worker construction failure can use the main-thread fallback,
-while a failure after the Worker initialization message cannot silently retry.
+also checks the serial Canvas WebP and WASM WebP encoders against the same VFR/PAR
+contract when Worker construction is unavailable. The WASM case disables only
+Canvas WebP encoding, keeping Canvas pixel copying available. A failure after
+the GIF Worker initialization message cannot silently retry on the main thread.
 
 The shared contract in `../validation/windows/output-contract.json` is consumed
 by both Playwright and the production-bundle Windows profile. Codec skips are

@@ -7,8 +7,8 @@ replace `pnpm test:e2e:ci` or `pnpm verify:full`.
 
 ## Build inputs
 
-Prepare the production build and the two deterministic media fixtures from the
-repository root. The fixture command requires FFmpeg.
+Prepare the production build and the deterministic media fixtures from the
+repository root. The fixture command requires FFmpeg's `ffmpeg` and `ffprobe`.
 
 ```bash
 source /home/piesp/.config/shell/env.sh
@@ -24,12 +24,14 @@ these repository-relative assets:
 - `public/test-video-ci-h264.mp4`
 - `public/test-video-ci-high-motion-120fps.mp4`
 - `public/test-video-contract-cfr.mp4`
+- `public/test-video-contract-bframes.mp4`
+- `public/test-video-contract-vp9.webm`
 - `public/test-video-contract-vfr-par.mp4`
 - `public/test-video-contract-rotate-90.mp4`
 - `validation/windows/output-contract.json`
 - `validation/windows/output-contract.mjs`
 
-The generated MP4 fixtures and `dist/` are ignored build artifacts. Their
+The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
 
