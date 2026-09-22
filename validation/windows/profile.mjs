@@ -734,8 +734,6 @@ async function convertOutputContract(
   const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
   await page.locator('[data-testid="download-result-button"]').click();
   const bytes = await readDownload(await downloadPromise);
-  validateOutput(bytes, contract.format, contract.expected.width, contract.expected.height);
-  const decoded = await verifyAnimatedOutput(page, bytes, contract, markers);
   const outputFile = `${PROFILE_ID}-${contract.id}.${contract.format}`;
   await writeFile(join(outputRoot, outputFile), bytes);
   artifacts.push({
@@ -744,6 +742,8 @@ async function convertOutputContract(
     bytes: bytes.byteLength,
     sha256: sha256(bytes),
   });
+  validateOutput(bytes, contract.format, contract.expected.width, contract.expected.height);
+  const decoded = await verifyAnimatedOutput(page, bytes, contract, markers);
   return {
     id: `output-contract-${contract.id}`,
     status: 'passed',
@@ -1280,6 +1280,43 @@ export async function run({ browser, root, output }) {
         )
       );
     }
+
+    // Exercise the production WASM bundle under the deployed CSP, preserving
+    // Canvas pixel-copy support while disabling the two preferred encoders.
+    const wasmContract = outputContract.cases.find((contract) => contract.id === 'vfr-par-webp');
+    assert(wasmContract, 'Missing WASM fallback output contract');
+    await page.addInitScript(() => {
+      globalThis.__wmcWorkerConstructionAttempts = 0;
+      Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+        configurable: true,
+        value: undefined,
+      });
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        value: class UnavailableWorker {
+          constructor() {
+            globalThis.__wmcWorkerConstructionAttempts++;
+            throw new DOMException('Forced Worker bootstrap failure', 'NotSupportedError');
+          }
+        },
+      });
+    });
+    const wasmCheck = await convertOutputContract(
+      page,
+      started.url,
+      contractFixtures.get(wasmContract.id),
+      { ...wasmContract, id: 'vfr-par-wasm-webp' },
+      outputContract.markers,
+      outputRoot,
+      artifacts
+    );
+    const fallback = await page.evaluate(() => ({
+      workerAttempts: globalThis.__wmcWorkerConstructionAttempts,
+      nativeWebpAvailable: typeof OffscreenCanvas.prototype.convertToBlob === 'function',
+    }));
+    assert(fallback.workerAttempts > 0, 'WASM fallback did not attempt its preferred Worker path');
+    assert.equal(fallback.nativeWebpAvailable, false);
+    checks.push({ ...wasmCheck, fallback });
 
     await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);

@@ -74,6 +74,9 @@ record:
 - the shared deterministic output corpus decoded in full with `ImageDecoder`,
   checking normal, non-square-pixel, and rotated display geometry plus CFR/VFR
   frame order and timing for downloaded GIF and WebP files;
+- the same VFR/PAR WebP output contract through the production WASM fallback,
+  with Worker construction and native WebP encoding disabled under the deployed
+  CSP; the real WASM binary must initialize without JavaScript string evaluation;
 - high-motion GIF cancellation from a non-zero progress value, including an
   inspector assertion that the same progress bar and value remain visible while
   both cancellation controls are disabled and accurately named, followed by a
