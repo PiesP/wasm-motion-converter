@@ -146,7 +146,11 @@ self.addEventListener('fetch', (event) => {
       })
       .catch(() =>
         documentCacheKey
-          ? caches.match(documentCacheKey)
+          ? caches
+              .match(documentCacheKey, { cacheName: DYNAMIC_CACHE })
+              .then(
+                (cached) => cached || caches.match(documentCacheKey, { cacheName: STATIC_CACHE })
+              )
           : caches.match(request).then((cached) => cached || caches.match('/'))
       )
   );

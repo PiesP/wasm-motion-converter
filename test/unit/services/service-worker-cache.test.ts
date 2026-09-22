@@ -11,27 +11,72 @@ interface FetchEventLike {
   waitUntil: (work: Promise<unknown>) => void;
 }
 
+interface WaitUntilEventLike {
+  waitUntil: (work: Promise<unknown>) => void;
+}
+
+type ServiceWorkerEventLike = FetchEventLike | WaitUntilEventLike;
+
 function loadServiceWorker(): {
   cacheEntries: Map<string, unknown>;
-  dispatchFetch: (url: string, destination?: string) => Promise<void>;
+  staticCacheEntries: Map<string, unknown>;
+  dispatchFetch: (url: string, destination?: string) => Promise<unknown>;
+  dispatchInstall: () => Promise<void>;
+  setNetworkFailure: (error: unknown) => void;
+  setNetworkResponse: (response: unknown) => void;
 } {
-  const listeners = new Map<string, (event: FetchEventLike) => void>();
+  const origin = 'https://drop.test';
+  const staticCacheName = 'dropconvert-static-v20260714';
+  const dynamicCacheName = 'dropconvert-dynamic-v20260714';
+  const listeners = new Map<string, (event: ServiceWorkerEventLike) => void>();
+  const cacheStores = new Map<string, Map<string, unknown>>();
+  const staticCacheEntries = new Map<string, unknown>();
   const cacheEntries = new Map<string, unknown>();
-  const cache = {
-    delete: vi.fn((key: string) => Promise.resolve(cacheEntries.delete(String(key)))),
-    keys: vi.fn(() => Promise.resolve([...cacheEntries.keys()])),
-    put: vi.fn((key: string, response: unknown) => {
-      cacheEntries.set(String(key), response);
-      return Promise.resolve();
-    }),
+  cacheStores.set(staticCacheName, staticCacheEntries);
+  cacheStores.set(dynamicCacheName, cacheEntries);
+
+  const toCacheKey = (key: string): string => new URL(String(key), origin).href;
+  const defaultResponse = { clone: () => defaultResponse, ok: true };
+  let networkResponse: unknown = defaultResponse;
+  let networkFailure: unknown;
+  const fetchMock = vi.fn((_url: string) =>
+    networkFailure === undefined ? Promise.resolve(networkResponse) : Promise.reject(networkFailure)
+  );
+
+  const createCache = (cacheName: string) => {
+    const entries = cacheStores.get(cacheName);
+    if (!entries) throw new Error(`Unknown cache: ${cacheName}`);
+    return {
+      addAll: vi.fn(async (keys: string[]) => {
+        for (const key of keys) {
+          const response = await fetchMock(toCacheKey(key));
+          entries.set(toCacheKey(key), response);
+        }
+      }),
+      delete: vi.fn((key: string) => Promise.resolve(entries.delete(toCacheKey(key)))),
+      keys: vi.fn(() => Promise.resolve([...entries.keys()])),
+      put: vi.fn((key: string, response: unknown) => {
+        entries.set(toCacheKey(key), response);
+        return Promise.resolve();
+      }),
+    };
   };
+
   const caches = {
-    match: vi.fn((key: string) => Promise.resolve(cacheEntries.get(String(key)))),
-    open: vi.fn(() => Promise.resolve(cache)),
+    match: vi.fn((key: string, options?: { cacheName?: string }) => {
+      const cacheNames = options?.cacheName ? [options.cacheName] : [...cacheStores.keys()];
+      const cacheKey = toCacheKey(key);
+      for (const cacheName of cacheNames) {
+        const entries = cacheStores.get(cacheName);
+        const response = entries?.get(cacheKey);
+        if (response !== undefined) return Promise.resolve(response);
+      }
+      return Promise.resolve(undefined);
+    }),
+    open: vi.fn((cacheName: string) => Promise.resolve(createCache(cacheName))),
   };
-  const response = { clone: () => response, ok: true };
   const self = {
-    addEventListener: (type: string, listener: (event: FetchEventLike) => void) => {
+    addEventListener: (type: string, listener: (event: ServiceWorkerEventLike) => void) => {
       listeners.set(type, listener);
     },
     clients: { claim: vi.fn() },
@@ -43,12 +88,13 @@ function loadServiceWorker(): {
     Promise,
     URL,
     caches,
-    fetch: vi.fn(() => Promise.resolve(response)),
+    fetch: fetchMock,
     self,
   });
 
   return {
     cacheEntries,
+    staticCacheEntries,
     dispatchFetch: async (url: string, destination = '') => {
       const waits: Promise<unknown>[] = [];
       let responsePromise: Promise<unknown> | undefined;
@@ -59,8 +105,21 @@ function loadServiceWorker(): {
         },
         waitUntil: (promise) => waits.push(promise),
       });
-      await responsePromise;
+      const response = await responsePromise;
       await Promise.all(waits);
+      return response;
+    },
+    dispatchInstall: async () => {
+      const waits: Promise<unknown>[] = [];
+      listeners.get('install')?.({ waitUntil: (promise) => waits.push(promise) });
+      await Promise.all(waits);
+    },
+    setNetworkFailure: (error) => {
+      networkFailure = error;
+    },
+    setNetworkResponse: (response) => {
+      networkFailure = undefined;
+      networkResponse = response;
     },
   };
 }
@@ -75,6 +134,25 @@ describe('service worker dynamic cache boundaries', () => {
     await worker.dispatchFetch('https://drop.test/?nonce=two', 'document');
 
     expect([...worker.cacheEntries.keys()]).toEqual(['https://drop.test/']);
+  });
+
+  it('prefers the latest dynamic document over the static precache offline', async () => {
+    const worker = loadServiceWorker();
+    const versionA = { body: 'A', clone: () => versionA, ok: true };
+    const versionB = { body: 'B', clone: () => versionB, ok: true };
+
+    worker.setNetworkResponse(versionA);
+    await worker.dispatchInstall();
+    expect(worker.staticCacheEntries.get('https://drop.test/')).toBe(versionA);
+
+    worker.setNetworkResponse(versionB);
+    await worker.dispatchFetch('https://drop.test/?version=B', 'document');
+    expect(worker.cacheEntries.get('https://drop.test/')).toBe(versionB);
+
+    worker.setNetworkFailure(new Error('offline'));
+    await expect(worker.dispatchFetch('https://drop.test/?version=B', 'document')).resolves.toBe(
+      versionB
+    );
   });
 
   it('removes query strings from same-origin static asset cache keys', async () => {
