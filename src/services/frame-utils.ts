@@ -269,17 +269,9 @@ async function copyFrameCanvas(
       ctx.translate(0, height);
       ctx.rotate(-Math.PI / 2);
     }
-    ctx.drawImage(
-      frame,
-      0,
-      0,
-      frame.codedWidth || frame.displayWidth,
-      frame.codedHeight || frame.displayHeight,
-      0,
-      0,
-      drawWidth,
-      drawHeight
-    );
+    // The five-argument overload uses VideoFrame's visible intrinsic image.
+    // Using coded dimensions as a source rectangle can include padded codec rows.
+    ctx.drawImage(frame, 0, 0, drawWidth, drawHeight);
   } finally {
     if (rotation !== 0) ctx.setTransform(1, 0, 0, 1, 0, 0);
   }

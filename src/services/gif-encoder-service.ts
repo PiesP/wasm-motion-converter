@@ -275,8 +275,7 @@ export async function encodeGif(
     streamBytes += safeLength;
   };
 
-  let globalPalette: number[][] | null = null;
-  let globalPaletteWritten = false;
+  let lastPalette: number[][] | null = null;
   let outputTotalDelay = 0;
   const quantizeDelay = createGifDelayQuantizer();
   let encodeIdx = 0;
@@ -300,36 +299,31 @@ export async function encodeGif(
     }
   }
 
-  function writeIndexedFrame(indexed: Uint8Array, delay: number): void {
-    const palette = globalPalette;
-    if (!palette) return;
+  function writeIndexedFrame(indexed: Uint8Array, delay: number, palette: number[][]): void {
     assertCanWriteOutputFrame();
     encoder.writeFrame(indexed, w, h, {
-      ...(globalPaletteWritten ? {} : { palette }),
+      palette,
       repeat: 0,
       delay,
     });
     outputFrames++;
-    globalPaletteWritten = true;
   }
 
-  function writeQuantizedFrame(indexed: Uint8Array, delayMs: number): boolean {
+  function writeQuantizedFrame(indexed: Uint8Array, delayMs: number, palette: number[][]): boolean {
     const delayCs = quantizeDelay(delayMs);
     if (delayCs <= 0) return false;
-    writeIndexedFrame(indexed, delayCs * 10);
+    writeIndexedFrame(indexed, delayCs * 10, palette);
     outputTotalDelay += delayCs;
     return true;
   }
 
-  function writeFrameWithDelay(rgbaData: Uint8Array, delayMs: number): void {
-    const pal = globalPalette;
-    if (!pal) return;
+  function writeFrameWithDelay(rgbaData: Uint8Array, delayMs: number, palette: number[][]): void {
     // The previous index is needed only for a possible tail. Drop the reference
     // before allocating its replacement so only one external index is retained.
     lastIndexedData = null;
     liveIndexedBytes = 0;
     assertGifWorkingMemory(encoder.stream.buffer.byteLength, exactRgbaBytes, pixelCount);
-    const indexed = applyPalette(rgbaData, pal, 'rgb565');
+    const indexed = applyPalette(rgbaData, palette, 'rgb565');
     if (indexed.byteLength !== pixelCount) {
       throw new RangeError(
         `gifenc returned ${indexed.byteLength} indices for ${pixelCount} pixels`
@@ -344,7 +338,7 @@ export async function encodeGif(
     // internally to centiseconds via Math.round(delay/10).
     // Do NOT pre-convert to cs — that would double-divide by 10.
     if (delayMs <= GIF_MAX_FRAME_DELAY_CS * 10) {
-      writeQuantizedFrame(indexed, delayMs);
+      writeQuantizedFrame(indexed, delayMs, palette);
       return;
     }
     // Split long-delay frames into multiple writes with the same indexed data.
@@ -352,7 +346,7 @@ export async function encodeGif(
     let remainingMs = delayMs;
     while (remainingMs > 0) {
       const chunk = Math.min(remainingMs, GIF_MAX_FRAME_DELAY_CS * 10);
-      writeQuantizedFrame(indexed, chunk);
+      writeQuantizedFrame(indexed, chunk, palette);
       remainingMs -= chunk;
       if (remainingMs > 0) splitFrames++;
     }
@@ -447,12 +441,11 @@ export async function encodeGif(
               bayerDitherRgba(exactRgbaScratch, w, h, ditherStrength);
             }
 
-            // Quantize: compute global palette from first frame, reuse for subsequent
-            if (encodeIdx === 0) {
-              globalPalette = quantize(exactRgbaScratch, maxColors, { format: 'rgb565' });
-            }
-
-            writeFrameWithDelay(exactRgbaScratch, delay);
+            // Quantize each frame independently. The first palette becomes the GIF's
+            // global table; subsequent palettes are emitted as local color tables.
+            const framePalette = quantize(exactRgbaScratch, maxColors, { format: 'rgb565' });
+            lastPalette = framePalette;
+            writeFrameWithDelay(exactRgbaScratch, delay, framePalette);
           } finally {
             if (!rgbaReleased) globalBufferPool.release(rgbaData);
           }
@@ -483,13 +476,13 @@ export async function encodeGif(
     // duration as extra delay on the last frame by writing a continuation frame
     // with the same pixel data and only the tail delay.
     const totalTailDuration = tailAccumulatedMs + accumulatedDuration;
-    if (totalTailDuration > 0 && lastIndexedData && globalPalette) {
+    if (totalTailDuration > 0 && lastIndexedData && lastPalette) {
       // Pass ms directly — gifenc converts ms→cs internally via Math.round(delay/10)
       let remainingTailMs = totalTailDuration;
       while (remainingTailMs > 0) {
         if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
         const delay = Math.min(remainingTailMs, GIF_MAX_FRAME_DELAY_CS * 10);
-        writeQuantizedFrame(lastIndexedData, delay);
+        writeQuantizedFrame(lastIndexedData, delay, lastPalette);
         remainingTailMs -= delay;
         if (remainingTailMs > 0) splitFrames++;
         if ((splitFrames & 63) === 0) await yieldToMain();

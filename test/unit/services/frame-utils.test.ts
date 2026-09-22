@@ -172,7 +172,7 @@ describe('opaque RGBA frame copying', () => {
     const context2d = {
       clearRect: vi.fn(),
       drawImage: vi.fn(),
-      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(2 * 3 * 4) })),
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(48 * 80 * 4) })),
       rotate: vi.fn(),
       setTransform: vi.fn(),
       translate: vi.fn(),
@@ -186,25 +186,25 @@ describe('opaque RGBA frame copying', () => {
       }
     );
     const frame = {
-      codedHeight: 2,
-      codedWidth: 3,
-      displayHeight: 2,
-      displayWidth: 3,
+      codedHeight: 64,
+      codedWidth: 80,
+      displayHeight: 48,
+      displayWidth: 80,
     } as VideoFrame;
 
     const rgba = await copyFrameToPixels(
       frame,
-      2,
-      3,
+      48,
+      80,
       { durationCarryUs: 0, copyPath: null },
       'rgba',
       270
     );
 
-    expect(context2d.translate).toHaveBeenCalledWith(0, 3);
+    expect(context2d.translate).toHaveBeenCalledWith(0, 80);
     expect(context2d.rotate).toHaveBeenCalledWith(-Math.PI / 2);
-    expect(context2d.drawImage).toHaveBeenCalledWith(frame, 0, 0, 3, 2, 0, 0, 3, 2);
-    expect(rgba).toHaveLength(24);
+    expect(context2d.drawImage).toHaveBeenCalledWith(frame, 0, 0, 80, 48);
+    expect(rgba).toHaveLength(48 * 80 * 4);
   });
 
   it('uses and caches the successful RGBX strategy while forcing opaque alpha', async () => {
