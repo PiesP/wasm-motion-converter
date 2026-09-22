@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { expect, test } from '@playwright/test';
-import contractData from '../../validation/windows/output-contract.json';
+import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {
   type OutputContractCase,
   verifyAnimatedOutput,
