@@ -58,7 +58,12 @@ async function runContractConversion(
   const state = await waitForConversionComplete(page, 120_000);
   expect(await getErrorMessage(page)).toBeNull();
   expect(state).toBe('done');
-  return downloadResult(page);
+  const output = await downloadResult(page);
+  await test.info().attach(`${contract.id}.${contract.format}`, {
+    body: output,
+    contentType: contract.format === 'gif' ? 'image/gif' : 'image/webp',
+  });
+  return output;
 }
 
 test.describe('deterministic output contracts', () => {
