@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   dispose: vi.fn(),
@@ -24,6 +24,44 @@ describe('extractVideoMetadata cancellation', () => {
   beforeEach(() => {
     mocks.dispose.mockReset();
     mocks.getVideoTracks.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('releases the caller-owned input after a shared timeout and ignores late statistics', async () => {
+    vi.useFakeTimers();
+    const statistics = Promise.withResolvers<{
+      averageBitrate: number;
+      averagePacketRate: number;
+    }>();
+    const track = {
+      computeDuration: vi.fn().mockResolvedValue(2),
+      computePacketStats: vi.fn().mockReturnValue(statistics.promise),
+      getAverageBitrate: vi.fn(),
+      getBitrate: vi.fn(),
+      getDecoderConfig: vi.fn().mockResolvedValue({
+        codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16,
+      }),
+    };
+    mocks.getVideoTracks.mockResolvedValue([track]);
+    const controller = new AbortController();
+    const extraction = extractVideoMetadata(new Blob(['video']), 24, controller.signal);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    const metadata = await extraction;
+    expect(metadata).toMatchObject({ duration: 2, framerate: 24, bitrate: 0 });
+    expect(mocks.dispose).toHaveBeenCalledOnce();
+    expect(track.getAverageBitrate).not.toHaveBeenCalled();
+    expect(track.getBitrate).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+
+    statistics.resolve({ averageBitrate: 1_000_000, averagePacketRate: 60 });
+    await statistics.promise;
+    controller.abort();
+    expect(metadata).toMatchObject({ framerate: 24, bitrate: 0 });
+    expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 
   it('disposes the active MediaBunny input and rejects immediately on abort', async () => {
