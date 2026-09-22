@@ -236,10 +236,8 @@ test.describe('Quiet Instruments adapter', () => {
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
+    await page.waitForFunction(() => window.__TEST_HELPERS__ !== undefined);
     await page.evaluate(async () => {
-      const modulePath = './src/test-helpers';
-      const { attachTestHelpers } = await import(modulePath);
-      attachTestHelpers();
       await window.__TEST_HELPERS__?.injectFile(
         new File(['synthetic'], 'state-clarity.mp4', { type: 'video/mp4' }),
         {
@@ -366,14 +364,10 @@ test.describe('Quiet Instruments adapter', () => {
     for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 720 });
       await page.goto('/');
+      await page.waitForFunction(() => window.__TEST_HELPERS__ !== undefined);
       await page.evaluate(async () => {
-        const helperPath = './src/test-helpers';
         const storePath = '/src/stores/conversion-store.ts';
-        const [{ attachTestHelpers }, store] = await Promise.all([
-          import(helperPath),
-          import(storePath),
-        ]);
-        attachTestHelpers();
+        const store = await import(storePath);
         await window.__TEST_HELPERS__?.injectFile(
           new File(['synthetic'], 'active-conversion.mp4', { type: 'video/mp4' }),
           {
