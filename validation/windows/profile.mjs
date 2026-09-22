@@ -7,10 +7,12 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { verifyAnimatedOutput } from './output-contract.mjs';
 
 const PROFILE_ID = 'wmc-media';
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
 const CANCELLATION_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
+const OUTPUT_CONTRACT = 'validation/windows/output-contract.json';
 const CONVERSION_TIMEOUT_MS = 120_000;
 const CANCELLATION_TIMEOUT_MS = 180_000;
 
@@ -394,7 +396,7 @@ async function readDownload(download) {
   return Buffer.concat(chunks);
 }
 
-function validateOutput(bytes, format) {
+function validateOutput(bytes, format, expectedWidth = 80, expectedHeight = 45) {
   assert(bytes.byteLength > 100, `${format.toUpperCase()} output is unexpectedly small`);
   if (format === 'gif') {
     assert(
@@ -402,8 +404,8 @@ function validateOutput(bytes, format) {
       'GIF output has invalid magic bytes'
     );
     assert.equal(bytes.at(-1), 0x3b, 'GIF output is missing its trailer');
-    assert.equal(bytes.readUInt16LE(6), 80, 'GIF output width is not 80');
-    assert.equal(bytes.readUInt16LE(8), 45, 'GIF output height is not 45');
+    assert.equal(bytes.readUInt16LE(6), expectedWidth, 'GIF output width is unexpected');
+    assert.equal(bytes.readUInt16LE(8), expectedHeight, 'GIF output height is unexpected');
     return;
   }
   assert.equal(bytes.subarray(0, 4).toString('ascii'), 'RIFF', 'WebP output has invalid RIFF magic');
@@ -671,6 +673,87 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   };
 }
 
+function formatTrimTime(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const remaining = (seconds - minutes * 60).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  return `${minutes}:${remaining.padStart(2, '0')}`;
+}
+
+async function applyContractSettings(page, contract) {
+  await chooseOption(page, 'format', contract.format);
+  await chooseOption(page, 'quality', contract.settings.quality);
+  await chooseOption(page, 'scale', contract.settings.scale);
+  await chooseOption(page, 'smart-frame-skip', contract.settings.smartFrameSkip);
+  if (contract.settings.trimStart > 0 || contract.settings.trimEnd > 0) {
+    const start = page.locator('#trim-start-input');
+    const end = page.locator('#trim-end-input');
+    await start.fill(formatTrimTime(contract.settings.trimStart));
+    await start.press('Enter');
+    await end.fill(formatTrimTime(contract.settings.trimEnd));
+    await end.press('Enter');
+  }
+}
+
+async function convertOutputContract(
+  page,
+  baseUrl,
+  fixturePath,
+  contract,
+  markers,
+  outputRoot,
+  artifacts
+) {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await loadApplication(page, baseUrl);
+  assert.equal(
+    await page.evaluate(() => typeof VideoDecoder === 'function'),
+    true,
+    `${contract.id}: stable browser explicitly lacks VideoDecoder`
+  );
+  await selectFixture(page, fixturePath);
+  await applyContractSettings(page, contract);
+  await page.locator('[data-testid="convert-button"]').click();
+  await proceedIfPrompted(page);
+  await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
+
+  const preview = page.locator('[data-testid="result-image"]');
+  await preview.waitFor({ state: 'visible', timeout: 30_000 });
+  await page.waitForFunction(() => {
+    const image = document.querySelector('[data-testid="result-image"]');
+    return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+  }, undefined, { timeout: 30_000 });
+  assert.deepEqual(
+    await preview.evaluate((image) => ({
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+    })),
+    { width: contract.expected.width, height: contract.expected.height },
+    `${contract.id}: preview geometry`
+  );
+
+  const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
+  await page.locator('[data-testid="download-result-button"]').click();
+  const bytes = await readDownload(await downloadPromise);
+  const outputFile = `${PROFILE_ID}-${contract.id}.${contract.format}`;
+  await writeFile(join(outputRoot, outputFile), bytes);
+  artifacts.push({
+    kind: 'output-contract-media',
+    file: outputFile,
+    bytes: bytes.byteLength,
+    sha256: sha256(bytes),
+  });
+  validateOutput(bytes, contract.format, contract.expected.width, contract.expected.height);
+  const decoded = await verifyAnimatedOutput(page, bytes, contract, markers);
+  return {
+    id: `output-contract-${contract.id}`,
+    status: 'passed',
+    fixture: contract.fixture,
+    format: contract.format,
+    decoded,
+    output: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) },
+  };
+}
+
 async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, artifacts) {
   await loadApplication(page, baseUrl);
   await selectFixture(page, fixturePath);
@@ -719,6 +802,54 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
     'Advanced-settings summary did not reflect the keyboard selection'
   );
 
+  await chooseOption(page, 'format', 'webp');
+  await chooseOption(page, 'quality', 'high');
+  await chooseOption(page, 'scale', '1');
+  const startInput = page.locator('#trim-start-input');
+  const endInput = page.locator('#trim-end-input');
+  await startInput.fill('0:00.3');
+  await startInput.press('Enter');
+  await endInput.fill('0:00.7');
+  await endInput.press('Enter');
+  const trimBeforeSharing = {
+    start: await startInput.inputValue(),
+    end: await endInput.inputValue(),
+  };
+  const sharing = page.locator('[data-testid="sharing-settings"]');
+  const sharingSummary = sharing.locator('summary');
+  const sharingButton = sharing.locator('[data-testid="sharing-settings-button"]');
+  const convertButton = page.locator('[data-testid="convert-button"]');
+  assert.equal(await sharing.evaluate((element) => element.tagName), 'DETAILS');
+  assert.equal(await sharing.evaluate((element) => element.open), false);
+  assert.equal(await sharingButton.isVisible(), false, 'Collapsed sharing action is visible');
+  assert.equal(
+    await convertButton.evaluate((convert, sharingSelector) => {
+      const details = document.querySelector(sharingSelector);
+      return details
+        ? Boolean(convert.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING)
+        : false;
+    }, '[data-testid="sharing-settings"]'),
+    true,
+    'Sharing guidance does not follow the primary Convert action'
+  );
+  await sharingSummary.click();
+  assert.equal(await sharingButton.isVisible(), true, 'Sharing action did not expand');
+  await sharingButton.click();
+  assert.equal(await page.locator('[data-testid="option-format-webp"] input').isChecked(), true);
+  assert.equal(await page.locator('[data-testid="option-quality-low"] input').isChecked(), true);
+  assert.equal(await page.locator('[data-testid="option-scale-0.5"] input').isChecked(), true);
+  assert.equal(await lowInput.isChecked(), true, 'Sharing action changed frame skip');
+  assert.deepEqual(
+    { start: await startInput.inputValue(), end: await endInput.inputValue() },
+    trimBeforeSharing,
+    'Sharing action changed the selected trim range'
+  );
+  assert.equal(await sharingButton.isDisabled(), true, 'Applied sharing action remained enabled');
+  assert.equal(await convertButton.isEnabled(), true, 'Sharing action did not leave conversion ready');
+  assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), false);
+  await chooseOption(page, 'quality', 'high');
+  assert.equal(await sharingButton.isEnabled(), true, 'Manual override did not re-enable sharing action');
+
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-disclosures.png`, artifacts);
   await advancedSummary.focus();
   await page.keyboard.press('Space');
@@ -733,6 +864,12 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
     metadataDisclosure: true,
     advancedDisclosure: true,
     keyboardSelection: 'smart-frame-skip-low',
+    sharingSettings: {
+      preserved: ['format-webp', 'trim-range', 'smart-frame-skip-low'],
+      applied: ['quality-low', 'scale-0.5'],
+      manualOverride: 'quality-high',
+      automaticConversion: false,
+    },
   };
 }
 
@@ -1068,6 +1205,16 @@ export async function run({ browser, root, output }) {
   const bundleRoot = await realpath(resolve(root));
   const smallFixture = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
   const cancellationFixture = await validateBundleFile(bundleRoot, CANCELLATION_FIXTURE);
+  const outputContractPath = await validateBundleFile(bundleRoot, OUTPUT_CONTRACT);
+  const outputContract = JSON.parse(await readFile(outputContractPath, 'utf8'));
+  assert.equal(outputContract.schemaVersion, 1, 'Unsupported output contract schema');
+  assert(Array.isArray(outputContract.cases) && outputContract.cases.length > 0);
+  const contractFixtures = new Map();
+  for (const contract of outputContract.cases) {
+    assert.equal(typeof contract.id, 'string');
+    assert(['gif', 'webp'].includes(contract.format));
+    contractFixtures.set(contract.id, await validateBundleFile(bundleRoot, contract.fixture));
+  }
   const outputRoot = resolve(output);
   await mkdir(outputRoot, { recursive: true });
 
@@ -1120,6 +1267,56 @@ export async function run({ browser, root, output }) {
     checks.push(await convertSmallFixture(page, started.url, smallFixture, 'webp', outputRoot, artifacts));
     checks.push(await exerciseCancellation(page, started.url, cancellationFixture, outputRoot, artifacts));
     checks.push(await exerciseUiDisclosures(page, started.url, smallFixture, outputRoot, artifacts));
+    for (const contract of outputContract.cases) {
+      checks.push(
+        await convertOutputContract(
+          page,
+          started.url,
+          contractFixtures.get(contract.id),
+          contract,
+          outputContract.markers,
+          outputRoot,
+          artifacts
+        )
+      );
+    }
+
+    // Exercise the production WASM bundle under the deployed CSP, preserving
+    // Canvas pixel-copy support while disabling the two preferred encoders.
+    const wasmContract = outputContract.cases.find((contract) => contract.id === 'vfr-par-webp');
+    assert(wasmContract, 'Missing WASM fallback output contract');
+    await page.addInitScript(() => {
+      globalThis.__wmcWorkerConstructionAttempts = 0;
+      Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+        configurable: true,
+        value: undefined,
+      });
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        value: class UnavailableWorker {
+          constructor() {
+            globalThis.__wmcWorkerConstructionAttempts++;
+            throw new DOMException('Forced Worker bootstrap failure', 'NotSupportedError');
+          }
+        },
+      });
+    });
+    const wasmCheck = await convertOutputContract(
+      page,
+      started.url,
+      contractFixtures.get(wasmContract.id),
+      { ...wasmContract, id: 'vfr-par-wasm-webp' },
+      outputContract.markers,
+      outputRoot,
+      artifacts
+    );
+    const fallback = await page.evaluate(() => ({
+      workerAttempts: globalThis.__wmcWorkerConstructionAttempts,
+      nativeWebpAvailable: typeof OffscreenCanvas.prototype.convertToBlob === 'function',
+    }));
+    assert(fallback.workerAttempts > 0, 'WASM fallback did not attempt its preferred Worker path');
+    assert.equal(fallback.nativeWebpAvailable, false);
+    checks.push({ ...wasmCheck, fallback });
 
     await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);

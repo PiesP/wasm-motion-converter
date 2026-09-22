@@ -24,7 +24,7 @@
     "@t": ["src/types"],
     "@i18n": ["src/i18n"]
   },
-  "ignoreBinaries": ["ffmpeg"],
+  "ignoreBinaries": ["ffmpeg", "ffprobe"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["@types/dom-webcodecs", "wrangler"]
 }

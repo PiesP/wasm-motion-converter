@@ -8,6 +8,9 @@ overrides:
   qs@>=6.11.1 <6.15.2: ^6.16.0
   sharp@>=0.35.0 <0.35.4: ^0.35.4
 
+patchedDependencies:
+  wasm-webp@0.1.0: bef378941329357206c2b92a9ed683d03a25ca0c9331dd09f664fe0392d0b6f5
+
 importers:
 
   .:
@@ -26,7 +29,7 @@ importers:
         version: 1.9.15
       wasm-webp:
         specifier: ^0.1.0
-        version: 0.1.0
+        version: 0.1.0(patch_hash=bef378941329357206c2b92a9ed683d03a25ca0c9331dd09f664fe0392d0b6f5)
     devDependencies:
       '@axe-core/playwright':
         specifier: ^4.13.0
@@ -5711,7 +5714,7 @@ snapshots:
 
   walk-up-path@4.0.0: {}
 
-  wasm-webp@0.1.0: {}
+  wasm-webp@0.1.0(patch_hash=bef378941329357206c2b92a9ed683d03a25ca0c9331dd09f664fe0392d0b6f5): {}
 
   weapon-regex@2.0.5: {}
 

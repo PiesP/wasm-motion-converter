@@ -24,6 +24,7 @@ interface SettingsPanelProps {
   onFormatChange: (format: ConversionSettings['format']) => void;
   onQualityChange: (quality: ConversionSettings['quality']) => void;
   onScaleChange: (scale: ConversionSettings['scale']) => void;
+  onSharingSettings: () => void;
   onSmartFrameSkipChange: (mode: ConversionSettings['smartFrameSkip']) => void;
 }
 
@@ -49,6 +50,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     'onFormatChange',
     'onQualityChange',
     'onScaleChange',
+    'onSharingSettings',
     'onSmartFrameSkipChange',
   ]);
 
@@ -77,6 +79,10 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   const frameSkipSelection = createMemo(() => {
     return t(FRAME_SKIP_LABEL_KEYS[local.settings.smartFrameSkip]);
   });
+
+  const sharingSettingsApplied = createMemo(
+    () => local.settings.quality === 'low' && local.settings.scale === 0.5
+  );
 
   return (
     <Panel class="p-4">
@@ -153,6 +159,29 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
           </Show>
         </div>
       </div>
+
+      <details class="mt-3 border-t border-border-subtle pt-2" data-testid="sharing-settings">
+        <summary class="min-h-target-minimum cursor-pointer content-center text-xs font-medium text-text-secondary">
+          {t('settings.sharing.title')}
+        </summary>
+        <div class="space-y-2 pt-2">
+          <p class="text-xs leading-relaxed text-text-secondary">
+            {t('settings.sharing.description')}
+          </p>
+          <p class="text-xs leading-relaxed text-text-secondary">
+            {t('settings.sharing.sizeHint')}
+          </p>
+          <Button
+            class="w-full"
+            disabled={local.isBusy || sharingSettingsApplied()}
+            onClick={local.onSharingSettings}
+            variant="ghost"
+            data-testid="sharing-settings-button"
+          >
+            {sharingSettingsApplied() ? t('settings.sharing.applied') : t('settings.sharing.apply')}
+          </Button>
+        </div>
+      </details>
     </Panel>
   );
 };

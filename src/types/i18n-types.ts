@@ -102,6 +102,11 @@ export interface TranslationKeys {
   'settings.section.inputRange': string;
   'settings.section.outputSettings': string;
   'settings.section.performance': string;
+  'settings.sharing.apply': string;
+  'settings.sharing.applied': string;
+  'settings.sharing.description': string;
+  'settings.sharing.sizeHint': string;
+  'settings.sharing.title': string;
 
   // Format Selector
   'format.title': string;

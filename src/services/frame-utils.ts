@@ -14,6 +14,7 @@
  * BufferPool: Reuses Uint8Array allocations across frames to reduce GC.
  */
 
+import type { VideoRotation } from '@t/conversion-types';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 import type { BufferPool } from './buffer-pool';
 import { getPooledBufferSize, globalBufferPool } from './buffer-pool';
@@ -28,6 +29,7 @@ export interface VideoConfigWithDimensions {
   displayAspectHeight?: number | undefined;
   displayWidth?: number | undefined;
   displayHeight?: number | undefined;
+  rotation?: VideoRotation | undefined;
 }
 
 /**
@@ -38,6 +40,15 @@ export interface VideoConfigWithDimensions {
 export function resolveVideoDimensions(
   config: VideoConfigWithDimensions
 ): { width: number; height: number } | null {
+  if (
+    config.rotation !== undefined &&
+    config.rotation !== 0 &&
+    config.rotation !== 90 &&
+    config.rotation !== 180 &&
+    config.rotation !== 270
+  ) {
+    return null;
+  }
   const hasDisplayAspect =
     config.displayAspectWidth !== undefined || config.displayAspectHeight !== undefined;
   const width = hasDisplayAspect
@@ -58,7 +69,9 @@ export function resolveVideoDimensions(
   ) {
     return null;
   }
-  return { width, height };
+  return config.rotation === 90 || config.rotation === 270
+    ? { width: height, height: width }
+    : { width, height };
 }
 
 // ─── Cached copyTo path ───────────────────────────────────────────
@@ -80,15 +93,17 @@ export async function copyFrameToPixels(
   width: number,
   height: number,
   ctx: FrameProcessingContext,
-  pixelFormat: CpuPixelFormat
+  pixelFormat: CpuPixelFormat,
+  rotation: VideoRotation = 0
 ): Promise<Uint8Array> {
   const srcW = frame.codedWidth ?? frame.displayWidth;
   const srcH = frame.codedHeight ?? frame.displayHeight;
   const needsScaling = srcW !== width || srcH !== height;
+  const needsTransform = rotation !== 0;
 
-  if (ctx.copyPath === 'canvas' || needsScaling) {
+  if (ctx.copyPath === 'canvas' || needsScaling || needsTransform) {
     ctx.copyPath = 'canvas';
-    return copyFrameCanvas(frame, width, height, pixelFormat);
+    return copyFrameCanvas(frame, width, height, pixelFormat, rotation);
   }
 
   const cachedStrategy = ctx.copyPath;
@@ -112,7 +127,7 @@ export async function copyFrameToPixels(
   }
 
   ctx.copyPath = 'canvas';
-  return copyFrameCanvas(frame, width, height, pixelFormat);
+  return copyFrameCanvas(frame, width, height, pixelFormat, rotation);
 }
 
 async function copyFrameNative(
@@ -211,43 +226,55 @@ async function copyFrameCanvas(
   frame: VideoFrame,
   width: number,
   height: number,
-  pixelFormat: CpuPixelFormat
+  pixelFormat: CpuPixelFormat,
+  rotation: VideoRotation
 ): Promise<Uint8Array> {
   const { ctx } = getOrCreateCanvas(width, height);
 
   // Clear canvas before drawing (reuses same canvas across frames)
+  if (rotation !== 0) ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
   // Try GPU-accelerated scaling via createImageBitmap first.
   // Falls back to canvas drawImage on failure (e.g., exotic codecs, old browsers).
-  try {
-    const bitmap = await createImageBitmap(frame, {
-      resizeWidth: width,
-      resizeHeight: height,
-      resizeQuality: 'medium',
-    });
+  if (rotation === 0) {
     try {
-      ctx.drawImage(bitmap, 0, 0);
-      const imageData = ctx.getImageData(0, 0, width, height);
-      return convertImageData(imageData, width, height, pixelFormat);
-    } finally {
-      bitmap.close();
+      const bitmap = await createImageBitmap(frame, {
+        resizeWidth: width,
+        resizeHeight: height,
+        resizeQuality: 'medium',
+      });
+      try {
+        ctx.drawImage(bitmap, 0, 0);
+        const imageData = ctx.getImageData(0, 0, width, height);
+        return convertImageData(imageData, width, height, pixelFormat);
+      } finally {
+        bitmap.close();
+      }
+    } catch {
+      // Fallback: canvas drawImage with source→dest rect scaling
     }
-  } catch {
-    // Fallback: canvas drawImage with source→dest rect scaling
   }
 
-  ctx.drawImage(
-    frame,
-    0,
-    0,
-    frame.codedWidth || frame.displayWidth,
-    frame.codedHeight || frame.displayHeight,
-    0,
-    0,
-    width,
-    height
-  );
+  const drawWidth = rotation === 90 || rotation === 270 ? height : width;
+  const drawHeight = rotation === 90 || rotation === 270 ? width : height;
+  try {
+    if (rotation === 90) {
+      ctx.translate(width, 0);
+      ctx.rotate(Math.PI / 2);
+    } else if (rotation === 180) {
+      ctx.translate(width, height);
+      ctx.rotate(Math.PI);
+    } else if (rotation === 270) {
+      ctx.translate(0, height);
+      ctx.rotate(-Math.PI / 2);
+    }
+    // The five-argument overload uses VideoFrame's visible intrinsic image.
+    // Using coded dimensions as a source rectangle can include padded codec rows.
+    ctx.drawImage(frame, 0, 0, drawWidth, drawHeight);
+  } finally {
+    if (rotation !== 0) ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
 
   const imageData = ctx.getImageData(0, 0, width, height);
   return convertImageData(imageData, width, height, pixelFormat);
@@ -402,9 +429,10 @@ export function createFrameProcessingContext(): FrameProcessingContext {
 export function getFrameDurationMs(
   frame: VideoFrame,
   ctx: FrameProcessingContext,
-  fallbackMs?: number
+  fallbackMs?: number,
+  durationUs?: number
 ): { durationMs: number; ctx: FrameProcessingContext } {
-  const raw = frame.duration;
+  const raw = durationUs ?? frame.duration;
   if (raw == null || raw <= 0) {
     return { durationMs: fallbackMs ?? 100, ctx };
   }

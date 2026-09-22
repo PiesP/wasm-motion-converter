@@ -113,6 +113,15 @@ describe('isWorkerRequest', () => {
     expect(isWorkerRequest({ ...validStart, config: { ...validStart.config, codedHeight: 0 } })).toBe(false);
   });
 
+  it('accepts only normalized quarter-turn rotation metadata', () => {
+    expect(
+      isWorkerRequest({ ...validStart, config: { ...validStart.config, rotation: 270 } })
+    ).toBe(true);
+    expect(
+      isWorkerRequest({ ...validStart, config: { ...validStart.config, rotation: 45 } })
+    ).toBe(false);
+  });
+
   it('accepts a bounded binary codec description', () => {
     const config = { ...validStart.config, description: new ArrayBuffer(32) };
     expect(isWorkerRequest({ ...validStart, config })).toBe(true);

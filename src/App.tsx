@@ -386,6 +386,9 @@ const App: Component = () => {
                   setConversionSettings({ ...conversionSettings(), quality })
                 }
                 onScaleChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
+                onSharingSettings={() =>
+                  setConversionSettings({ ...conversionSettings(), quality: 'low', scale: 0.5 })
+                }
                 onSmartFrameSkipChange={(mode) =>
                   setConversionSettings({ ...conversionSettings(), smartFrameSkip: mode })
                 }

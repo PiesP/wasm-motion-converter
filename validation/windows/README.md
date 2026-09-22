@@ -7,8 +7,8 @@ replace `pnpm test:e2e:ci` or `pnpm verify:full`.
 
 ## Build inputs
 
-Prepare the production build and the two deterministic media fixtures from the
-repository root. The fixture command requires FFmpeg.
+Prepare the production build and the deterministic media fixtures from the
+repository root. The fixture command requires FFmpeg's `ffmpeg` and `ffprobe`.
 
 ```bash
 source /home/piesp/.config/shell/env.sh
@@ -23,8 +23,15 @@ these repository-relative assets:
 - `dist/`, including `dist/_headers`
 - `public/test-video-ci-h264.mp4`
 - `public/test-video-ci-high-motion-120fps.mp4`
+- `public/test-video-contract-cfr.mp4`
+- `public/test-video-contract-bframes.mp4`
+- `public/test-video-contract-vp9.webm`
+- `public/test-video-contract-vfr-par.mp4`
+- `public/test-video-contract-rotate-90.mp4`
+- `validation/windows/output-contract.json`
+- `validation/windows/output-contract.mjs`
 
-The generated MP4 fixtures and `dist/` are ignored build artifacts. Their
+The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
 
@@ -61,6 +68,15 @@ record:
 - headed-browser screenshots for both result states;
 - native metadata and advanced-settings disclosures, including keyboard toggling
   and frame-skip selection;
+- the collapsed sharing-settings disclosure after the primary Convert action,
+  including its low-quality/50% application, preservation of format, trim, and
+  frame-skip settings, manual override, and absence of automatic conversion;
+- the shared deterministic output corpus decoded in full with `ImageDecoder`,
+  checking normal, non-square-pixel, and rotated display geometry plus CFR/VFR
+  frame order and timing for downloaded GIF and WebP files;
+- the same VFR/PAR WebP output contract through the production WASM fallback,
+  with Worker construction and native WebP encoding disabled under the deployed
+  CSP; the real WASM binary must initialize without JavaScript string evaluation;
 - high-motion GIF cancellation from a non-zero progress value, including an
   inspector assertion that the same progress bar and value remain visible while
   both cancellation controls are disabled and accurately named, followed by a

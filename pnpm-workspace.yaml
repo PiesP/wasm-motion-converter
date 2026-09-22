@@ -31,3 +31,6 @@ update:
   ignoreDeps:
     - vitest
     - "@vitest/coverage-v8"
+
+patchedDependencies:
+  wasm-webp@0.1.0: patches/wasm-webp@0.1.0.patch

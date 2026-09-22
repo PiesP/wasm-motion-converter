@@ -3,7 +3,7 @@
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 import { extractVideoMetadata } from '@services/video-metadata';
-import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
+import type { ConversionRequest, VideoMetadata, VideoRotation } from '@t/conversion-types';
 import { DEFAULT_FPS, DEMUX_MEMORY_BUDGET_BYTES } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
@@ -24,6 +24,10 @@ export interface DemuxResult {
   framerate: number;
   /** First requested presentation timestamp in microseconds. Preroll packets may precede it. */
   trimStartUs?: number | undefined;
+  /** Exclusive requested presentation end timestamp in microseconds. */
+  trimEndUs?: number | undefined;
+  /** Clockwise container rotation to apply to decoded pixels. */
+  rotation?: VideoRotation | undefined;
   /** Idempotently release the MediaBunny input if the stream is not consumed. */
   dispose?: (() => void) | undefined;
 }
@@ -76,6 +80,7 @@ export async function demuxVideo(
   let config: VideoDecoderConfig;
   let duration: number;
   let framerate: number;
+  let rotation: VideoRotation | undefined = preComputedMetadata?.rotation;
 
   if (preComputedMetadata?.config) {
     config = preComputedMetadata.config;
@@ -90,6 +95,7 @@ export async function demuxVideo(
     config = metadata.config;
     duration = metadata.duration;
     framerate = metadata.framerate;
+    rotation = metadata.rotation;
   }
 
   // Estimate total frames from duration and frame rate for progress reporting.
@@ -124,6 +130,10 @@ export async function demuxVideo(
       });
       throw new Error('No video track found in input');
     }
+    if (rotation === undefined) {
+      const rawRotation = await awaitWithAbort(videoTrack.getRotation(), signal);
+      rotation = rawRotation === 90 || rawRotation === 180 || rawRotation === 270 ? rawRotation : 0;
+    }
     const sink = new EncodedPacketSink(videoTrack);
 
     // Decode from the key packet at or before trimStart. Frames before the requested
@@ -148,11 +158,6 @@ export async function demuxVideo(
       throw new Error('No decodable packets found in input buffer');
     }
 
-    // trimEnd == 0 means "until the end" — iterate all packets without a boundary.
-    // MediaBunny's packets(start, end) excludes `end` from iteration, so using
-    // an endPacket causes the last frame to be lost. Instead, iterate unbounded
-    // and break manually when exceeding trimEnd.
-    const trimEnd = request.trimEnd > 0 ? request.trimEnd : undefined;
     const memoryBudgetBytes = DEMUX_MEMORY_BUDGET_BYTES;
 
     logger.info('demuxer', 'Demux stream prepared', {
@@ -177,10 +182,9 @@ export async function demuxVideo(
       const packetIterator = sink.packets(startPacket)[Symbol.asyncIterator]();
 
       try {
-        // Iterate all packets from startPacket — no end boundary since
-        // MediaBunny's packets() excludes the boundary packet. The consumer's
-        // next() calls provide backpressure, so only one encoded chunk is held
-        // between this generator and VideoDecoder.
+        // Iterate in decode order. The decoder stops this lazy stream only after
+        // presentation-order output reaches trimEnd, so future-reference packets
+        // required by an earlier B-frame are never cut off by their timestamps.
         while (true) {
           const nextPacket = await awaitWithAbort(packetIterator.next(), signal);
           if (nextPacket.done) {
@@ -188,7 +192,6 @@ export async function demuxVideo(
             break;
           }
           const packet = nextPacket.value;
-          if (trimEnd !== undefined && packet.timestamp > trimEnd) break;
           signal?.throwIfAborted();
 
           const chunk = packet.toEncodedVideoChunk();
@@ -236,6 +239,8 @@ export async function demuxVideo(
       sourceTotalMs: 0,
       framerate,
       trimStartUs: request.trimStart * 1_000_000,
+      ...(request.trimEnd > 0 ? { trimEndUs: request.trimEnd * 1_000_000 } : {}),
+      rotation,
       dispose,
     };
     return result;

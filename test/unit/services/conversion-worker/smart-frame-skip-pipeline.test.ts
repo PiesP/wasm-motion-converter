@@ -148,6 +148,34 @@ describe('worker pipeline smart frame skip forwarding', () => {
     });
   });
 
+  it('preserves container rotation through worker metadata and output dimensions', async () => {
+    mocks.demuxVideo.mockResolvedValueOnce({
+      ...demuxResult,
+      config: { codec: 'avc1.640028', codedWidth: 80, codedHeight: 48 },
+      rotation: 270,
+    });
+
+    await runWorkerPipeline(
+      new ArrayBuffer(8),
+      baseOptions,
+      vi.fn(),
+      'rotation-request',
+      undefined,
+      { codec: 'avc1.640028', codedWidth: 80, codedHeight: 48, rotation: 270 },
+      1,
+      4
+    );
+
+    expect(mocks.demuxVideo.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ rotation: 270 })
+    );
+    expect(mocks.encodeGif).toHaveBeenCalledWith(
+      expect.objectContaining({ rotation: 270 }),
+      expect.objectContaining({ width: 48, height: 80 }),
+      undefined
+    );
+  });
+
   it('combines GIF stream peaks with the worker aggregate memory budget', async () => {
     await runWorkerPipeline(new ArrayBuffer(8), baseOptions, vi.fn(), 'request-1');
     const encoderOptions = mocks.encodeGif.mock.calls[0]?.[1] as

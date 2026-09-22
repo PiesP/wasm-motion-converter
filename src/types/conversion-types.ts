@@ -37,6 +37,9 @@ export interface MediabunnyVideoDecoderConfig extends VideoDecoderConfig {
   displayHeight?: number;
 }
 
+/** Clockwise container rotation applied when presenting decoded video frames. */
+export type VideoRotation = 0 | 90 | 180 | 270;
+
 /**
  * Conversion quality levels
  *
@@ -247,6 +250,8 @@ export interface VideoMetadata {
   bitrate: number;
   /** VideoDecoderConfig for WebCodecs (set after successful extraction) */
   config?: VideoDecoderConfig;
+  /** Clockwise presentation rotation declared by the container. */
+  rotation?: VideoRotation;
 }
 
 // ---------------------------------------------------------------------------

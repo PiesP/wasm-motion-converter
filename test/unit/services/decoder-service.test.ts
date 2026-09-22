@@ -2956,6 +2956,7 @@ describe('decoder-service', () => {
     });
 
     it('decodes preroll packets but does not deliver frames before trimStart', async () => {
+      FakeVideoFrame.frameDuration = 1_000;
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       const delivered: number[] = [];
 
@@ -2984,6 +2985,116 @@ describe('decoder-service', () => {
       );
 
       expect(delivered).toEqual([0]);
+    });
+
+    it('clips frame durations to the requested half-open trim interval', async () => {
+      FakeVideoFrame.frameDuration = 250_000;
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const delivered: Array<{ durationMs: number; frameNumber: number }> = [];
+
+      await decodeFrames(
+        {
+          chunks: [
+            { timestamp: 250_000 } as EncodedVideoChunk,
+            { timestamp: 500_000 } as EncodedVideoChunk,
+            { timestamp: 750_000 } as EncodedVideoChunk,
+          ],
+          config: { codec: 'avc1.640028', codedWidth: 8, codedHeight: 8 },
+          duration: 1,
+          framerate: 4,
+          sourceTotalMs: 750,
+          totalFrames: 3,
+          trimStartUs: 300_000,
+          trimEndUs: 700_000,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData, durationMs, frameNumber) => {
+            delivered.push({ durationMs, frameNumber });
+            globalBufferPool.release(rgbData);
+          },
+        }
+      );
+
+      expect(delivered).toEqual([
+        { durationMs: 200, frameNumber: 0 },
+        { durationMs: 200, frameNumber: 1 },
+      ]);
+    });
+
+    it('feeds future-reference packets until presentation output reaches trimEnd', async () => {
+      const decodedChunkTimestamps: number[] = [];
+      const iteratorClosed = vi.fn();
+      class ReorderingVideoDecoder {
+        static async isConfigSupported(
+          config: VideoDecoderConfig
+        ): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        readonly close = vi.fn();
+        readonly reset = vi.fn();
+        readonly decodeQueueSize = 0;
+        private readonly output: (frame: VideoFrame) => void;
+
+        constructor(init: VideoDecoderInit) {
+          this.output = init.output;
+        }
+
+        configure(): void {}
+
+        decode(chunk: EncodedVideoChunk): void {
+          decodedChunkTimestamps.push(chunk.timestamp);
+          if (chunk.timestamp === 0) {
+            this.output(new FakeVideoFrame(0, 0, 250_000) as unknown as VideoFrame);
+          } else if (chunk.timestamp === 250_000) {
+            this.output(new FakeVideoFrame(1, 250_000, 250_000) as unknown as VideoFrame);
+          } else if (chunk.timestamp === 750_000) {
+            this.output(new FakeVideoFrame(2, 500_000, 250_000) as unknown as VideoFrame);
+          }
+        }
+
+        async flush(): Promise<void> {}
+      }
+      vi.stubGlobal('VideoDecoder', ReorderingVideoDecoder);
+      const chunks = (async function* (): AsyncGenerator<EncodedVideoChunk> {
+        try {
+          for (const timestamp of [0, 500_000, 250_000, 750_000, 1_000_000]) {
+            yield { byteLength: 1, duration: 250_000, timestamp } as EncodedVideoChunk;
+          }
+        } finally {
+          iteratorClosed();
+        }
+      })();
+      const deliveredDurations: number[] = [];
+
+      await decodeFrames(
+        {
+          chunks,
+          config: { codec: 'avc1.640028', codedWidth: 8, codedHeight: 8 },
+          duration: 1.25,
+          framerate: 4,
+          sourceTotalMs: 1_250,
+          totalFrames: 5,
+          trimStartUs: 300_000,
+          trimEndUs: 700_000,
+        },
+        {
+          width: 8,
+          height: 8,
+          mode: 'stream',
+          onFrameAvailable: (rgbData, durationMs) => {
+            deliveredDurations.push(durationMs);
+            globalBufferPool.release(rgbData);
+          },
+        }
+      );
+
+      expect(deliveredDurations).toEqual([200, 200]);
+      expect(decodedChunkTimestamps).toEqual([0, 500_000, 250_000, 750_000]);
+      expect(iteratorClosed).toHaveBeenCalledOnce();
     });
 
     it('bounds cumulative input packet work even when no output frames are produced', async () => {

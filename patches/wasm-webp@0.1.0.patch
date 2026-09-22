@@ -1,0 +1,121 @@
+diff --git a/dist/esm/webp-wasm.js b/dist/esm/webp-wasm.js
+index 8f5ca62e185f43779c2287d32a8c9f0d37015b60..3c286e1a9ace4ffc3bdf237bc75a4b67b49f7989 100644
+--- a/dist/esm/webp-wasm.js
++++ b/dist/esm/webp-wasm.js
+@@ -2370,23 +2370,33 @@ function dbg(...args) {
+   
+       var returns = (argTypes[0].name !== "void");
+   
+-    // Builld the arguments that will be passed into the closure around the invoker
+-    // function.
+-    var closureArgs = [humanName, throwBindingError, cppInvokerFunc, cppTargetFunc, runDestructors, argTypes[0], argTypes[1]];
+-    for (var i = 0; i < argCount - 2; ++i) {
+-      closureArgs.push(argTypes[i+2]);
+-    }
+-    if (!needsDestructorStack) {
+-      for (var i = isClassMethodFunc?1:2; i < argTypes.length; ++i) { // Skip return value at index 0 - it's not deleted here. Also skip class type if not a method.
+-        if (argTypes[i].destructorFunction !== null) {
+-          closureArgs.push(argTypes[i].destructorFunction);
++      // Use closures instead of Function-generated JavaScript under strict CSP.
++      // Keep argument storage per call so nested bindings cannot overwrite it.
++      var invokerFn = function(...args) {
++        if (args.length !== argCount - 2) {
++          throwBindingError(`function ${humanName} called with ${args.length} arguments, expected ${argCount - 2}`);
+         }
+-      }
+-    }
+-  
+-    let [args, invokerFnBody] = createJsInvoker(argTypes, isClassMethodFunc, returns, isAsync);
+-    args.push(invokerFnBody);
+-    var invokerFn = newFunc(Function, args)(...closureArgs);
++        var destructors = needsDestructorStack ? [] : null;
++        var wired = [cppTargetFunc];
++        var firstType = isClassMethodFunc ? 1 : 2;
++        var rv;
++        try {
++          for (var i = firstType; i < argCount; i++) {
++            wired.push(argTypes[i]['toWireType'](destructors, i === 1 ? this : args[i - 2]));
++          }
++          rv = cppInvokerFunc(...wired);
++        } finally {
++          if (destructors) {
++            runDestructors(destructors);
++          } else {
++            for (var i = 1; i < wired.length; i++) {
++              var destructor = argTypes[firstType + i - 1].destructorFunction;
++              if (destructor !== null) destructor(wired[i]);
++            }
++          }
++        }
++        if (returns) return argTypes[0]['fromWireType'](rv);
++      };
+       return createNamedFunction(humanName, invokerFn);
+     }
+   var __embind_register_class_constructor = (
+@@ -3274,14 +3284,7 @@ function dbg(...args) {
+       return symbol;
+     };
+   
+-  var emval_get_global = () => {
+-      if (typeof globalThis == 'object') {
+-        return globalThis;
+-      }
+-      return (function(){
+-        return Function;
+-      })()('return this')();
+-    };
++  var emval_get_global = () => globalThis;
+   var __emval_get_global = (name) => {
+       if (name===0) {
+         return Emval.toHandle(emval_get_global());
+@@ -3333,38 +3336,18 @@ function dbg(...args) {
+       var retType = types.shift();
+       argCount--; // remove the shifted off return type
+   
+-      var functionBody =
+-        `return function (obj, func, destructorsRef, args) {\n`;
+-  
+-      var offset = 0;
+-      var argsList = []; // 'obj?, arg0, arg1, arg2, ... , argN'
+-      if (kind === /* FUNCTION */ 0) {
+-        argsList.push("obj");
+-      }
+-      var params = ["retType"];
+-      var args = [retType];
+-      for (var i = 0; i < argCount; ++i) {
+-        argsList.push("arg" + i);
+-        params.push("argType" + i);
+-        args.push(types[i]);
+-        functionBody +=
+-          `  var arg${i} = argType${i}.readValueFromPointer(args${offset ? "+" + offset : ""});\n`;
+-        offset += types[i]['argPackAdvance'];
+-      }
+-      var invoker = kind === /* CONSTRUCTOR */ 1 ? 'new func' : 'func.call';
+-      functionBody +=
+-        `  var rv = ${invoker}(${argsList.join(", ")});\n`;
+-      if (!retType.isVoid) {
+-        params.push("emval_returnValue");
+-        args.push(emval_returnValue);
+-        functionBody +=
+-          "  return emval_returnValue(retType, destructorsRef, rv);\n";
+-      }
+-      functionBody +=
+-        "};\n";
+-  
+-      params.push(functionBody);
+-      var invokerFunction = newFunc(Function, params)(...args);
++      var invokerFunction = (obj, func, destructorsRef, args) => {
++        var values = [];
++        var offset = 0;
++        for (var i = 0; i < argCount; i++) {
++          values.push(types[i]['readValueFromPointer'](args + offset));
++          offset += types[i]['argPackAdvance'];
++        }
++        var rv = kind === /* CONSTRUCTOR */ 1
++          ? reflectConstruct(func, values)
++          : func.apply(obj, values);
++        if (!retType.isVoid) return emval_returnValue(retType, destructorsRef, rv);
++      };
+       var functionName = `methodCaller<(${types.map(t => t.name).join(', ')}) => ${retType.name}>`;
+       return emval_addMethodCaller(createNamedFunction(functionName, invokerFunction));
+     };

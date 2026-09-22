@@ -398,6 +398,7 @@ export async function decodeFrames(
   let inputChunkCount = 0;
   let keptFrameCount = 0;
   let accumulatedDuration = 0;
+  let trimEndReached = false;
   let skippedByDecimation = 0;
   let smartSkippedCount = 0;
   // Noise floor estimation: collect frame diff stdDev from first N frames
@@ -667,14 +668,25 @@ export async function decodeFrames(
           frame.close();
           return;
         }
-        if ((demux.trimStartUs ?? 0) > 0 && frame.timestamp < (demux.trimStartUs ?? 0)) {
+        const fallbackDurationUs = fallbackFrameDurationMs * 1000;
+        const sourceDurationUs =
+          frame.duration != null && frame.duration > 0 ? frame.duration : fallbackDurationUs;
+        const sourceStartUs = frame.timestamp;
+        const sourceEndUs = sourceStartUs + sourceDurationUs;
+        const trimStartUs = Math.max(0, demux.trimStartUs ?? 0);
+        const trimEndUs = demux.trimEndUs;
+        const overlapStartUs = Math.max(sourceStartUs, trimStartUs);
+        const overlapEndUs = Math.min(sourceEndUs, trimEndUs ?? Number.POSITIVE_INFINITY);
+        if (trimEndUs !== undefined && sourceEndUs >= trimEndUs) trimEndReached = true;
+        if (overlapEndUs <= overlapStartUs) {
           frame.close();
           return;
         }
         const { durationMs: frameDuration, ctx: nextFrameCtx } = getFrameDurationMs(
           frame,
           frameCtx,
-          fallbackFrameDurationMs
+          fallbackFrameDurationMs,
+          overlapEndUs - overlapStartUs
         );
         // Mutable update — avoid Object.assign spread allocation per frame
         frameCtx.durationCarryUs = nextFrameCtx.durationCarryUs;
@@ -875,7 +887,14 @@ export async function decodeFrames(
 
             let pixelData: Uint8Array;
             try {
-              pixelData = await copyFrameToPixels(frame, width, height, frameCtx, pixelFormat);
+              pixelData = await copyFrameToPixels(
+                frame,
+                width,
+                height,
+                frameCtx,
+                pixelFormat,
+                demux.rotation ?? 0
+              );
             } finally {
               if (usesStagedCpuStreaming) {
                 closeSourceFrame();
@@ -1111,7 +1130,7 @@ export async function decodeFrames(
         recordCancellation();
         break;
       }
-      if (decodeError || hasProcessingFailure()) break;
+      if (decodeError || hasProcessingFailure() || trimEndReached) break;
 
       // Backpressure: wait if decode queue is full.
       // Use setTimeout(0) as primary yield mechanism because
@@ -1121,6 +1140,7 @@ export async function decodeFrames(
         activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE &&
         !signal?.aborted &&
         !decodeError &&
+        !trimEndReached &&
         !hasProcessingFailure()
       ) {
         await new Promise<void>((resolve) => {
@@ -1140,10 +1160,11 @@ export async function decodeFrames(
         recordCancellation();
         break;
       }
-      if (decodeError || hasProcessingFailure()) break;
+      if (decodeError || hasProcessingFailure() || trimEndReached) break;
 
       const nextChunk = await activeChunkStream.next();
       if (nextChunk.done) break;
+      if (trimEndReached) break;
       if (inputChunkCount >= inputChunkLimit) {
         throw new Error(`Decoder input packet limit exceeded (${inputChunkLimit} packet limit)`);
       }

@@ -5,9 +5,10 @@ import { withTimeout } from '@piesp/browser-core/async';
 import { throwIfAborted } from '@piesp/browser-core/error';
 import { copyBoundedCodecDescription } from '@services/codec-description';
 import type { MediabunnyVideoDecoderConfig, VideoMetadata } from '@t/conversion-types';
-import { DEFAULT_FPS, MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
+import { DEFAULT_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
+import { resolveVideoDimensions } from './frame-utils';
 
 /** Timeout for computePacketStats to prevent mediabunny internal hangs. */
 const COMPUTE_PACKET_STATS_TIMEOUT_MS = 2_000;
@@ -152,21 +153,25 @@ export async function extractVideoMetadata(
       });
     }
 
-    // displayAspectWidth/Height: present when pixel aspect ratio is non-square (mediabunny v1.40.0+).
-    // These represent the display dimensions directly.
+    const rawRotation = await awaitWithAbort(track.getRotation(), signal);
+    const rotation =
+      rawRotation === 90 || rawRotation === 180 || rawRotation === 270 ? rawRotation : 0;
+
+    // displayAspectWidth/Height represent square-pixel dimensions before rotation.
     const cfg = boundedConfig as MediabunnyVideoDecoderConfig;
     const codedWidth = boundedConfig.codedWidth ?? 0;
     const codedHeight = boundedConfig.codedHeight ?? 0;
     const displayWidth = cfg.displayAspectWidth ?? cfg.displayWidth;
     const displayHeight = cfg.displayAspectHeight ?? cfg.displayHeight;
-    const hasSafeDisplayDimensions =
-      Number.isSafeInteger(displayWidth) &&
-      Number.isSafeInteger(displayHeight) &&
-      displayWidth! > 0 &&
-      displayHeight! > 0 &&
-      displayWidth! <= MAX_TOTAL_PIXEL_COUNT / displayHeight!;
-    const width = hasSafeDisplayDimensions ? displayWidth! : codedWidth;
-    const height = hasSafeDisplayDimensions ? displayHeight! : codedHeight;
+    const dimensions = resolveVideoDimensions({
+      codedWidth,
+      codedHeight,
+      displayAspectWidth: displayWidth,
+      displayAspectHeight: displayHeight,
+      rotation,
+    });
+    const width = dimensions?.width ?? codedWidth;
+    const height = dimensions?.height ?? codedHeight;
 
     // Extract codec string (e.g. "avc1.42E01E" → "avc1")
     const codec = boundedConfig.codec?.split('.')[0] ?? 'unknown';
@@ -179,6 +184,7 @@ export async function extractVideoMetadata(
       framerate,
       bitrate: bitrate ?? 0,
       config: boundedConfig,
+      rotation,
     };
   } finally {
     signal?.removeEventListener('abort', abortHandler);
