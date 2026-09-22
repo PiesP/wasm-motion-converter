@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   dispose: vi.fn(),
   getFirstPacket: vi.fn(),
+  getRotation: vi.fn(),
   getVideoTracks: vi.fn(),
   nextPacket: vi.fn(),
   returnPackets: vi.fn(),
@@ -61,7 +62,8 @@ const firstPacket = {
 describe('demuxVideo cancellation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getVideoTracks.mockResolvedValue([{}]);
+    mocks.getRotation.mockResolvedValue(0);
+    mocks.getVideoTracks.mockResolvedValue([{ getRotation: mocks.getRotation }]);
     mocks.getFirstPacket.mockResolvedValue(firstPacket);
     mocks.returnPackets.mockResolvedValue({ done: true, value: undefined });
   });
@@ -86,6 +88,19 @@ describe('demuxVideo cancellation', () => {
     controller.abort();
 
     await expect(result).rejects.toMatchObject({ name: 'AbortError' });
+    expect(mocks.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a pending rotation lookup and disposes the input', async () => {
+    mocks.getRotation.mockReturnValue(new Promise(() => {}));
+    const controller = new AbortController();
+    const result = demuxVideo(request, metadata, undefined, controller.signal);
+    await vi.waitFor(() => expect(mocks.getRotation).toHaveBeenCalledOnce());
+
+    controller.abort();
+
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' });
+    expect(mocks.getFirstPacket).not.toHaveBeenCalled();
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 
