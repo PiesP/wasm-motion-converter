@@ -155,6 +155,24 @@ describe('service worker dynamic cache boundaries', () => {
     );
   });
 
+  it('keeps the latest navigation document while evicting runtime assets', async () => {
+    const worker = loadServiceWorker();
+    const versionA = { body: 'A', clone: () => versionA, ok: true };
+    const versionB = { body: 'B', clone: () => versionB, ok: true };
+
+    worker.setNetworkResponse(versionA);
+    await worker.dispatchInstall();
+    worker.setNetworkResponse(versionB);
+    await worker.dispatchFetch('https://drop.test/?version=B', 'document');
+
+    for (let index = 0; index < 64; index += 1) {
+      await worker.dispatchFetch(`https://drop.test/assets/${index}.js`);
+    }
+
+    expect(worker.cacheEntries.size).toBe(65);
+    expect(worker.cacheEntries.get('https://drop.test/')).toBe(versionB);
+  });
+
   it('removes query strings from same-origin static asset cache keys', async () => {
     const worker = loadServiceWorker();
 

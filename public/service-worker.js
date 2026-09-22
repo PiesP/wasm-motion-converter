@@ -60,9 +60,15 @@ async function putInCache(request, response) {
   const cache = await caches.open(DYNAMIC_CACHE);
   await cache.put(request, response);
   const keys = await cache.keys();
-  const overflow = keys.length - DYNAMIC_CACHE_MAX_ENTRIES;
+  // The navigation document is a recovery anchor and must not be evicted by
+  // the asset FIFO. It is budgeted separately from runtime asset entries.
+  const evictableKeys = keys.filter((key) => {
+    const cacheKey = typeof key === 'string' ? key : key.url;
+    return cacheKey !== NAVIGATION_CACHE_KEY;
+  });
+  const overflow = evictableKeys.length - DYNAMIC_CACHE_MAX_ENTRIES;
   if (overflow > 0) {
-    await Promise.all(keys.slice(0, overflow).map((key) => cache.delete(key)));
+    await Promise.all(evictableKeys.slice(0, overflow).map((key) => cache.delete(key)));
   }
 }
 
