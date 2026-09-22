@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+
+Disallow: /_headers
+Disallow: /cdn-integrity.json
+
+Sitemap: https://wasm-motion-converter.pages.dev/sitemap.xml
