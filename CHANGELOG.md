@@ -8,6 +8,21 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-22
+
+### Fixed
+
+- **Conversion lifecycle** — Preserve decoder output and frame ownership through flush, cancellation, fallback, and Worker replacement, and reject stale results from previous conversions.
+- **Resource limits** — Bound encoded input, decoded frames, codec configuration, and animated output across concurrent conversion work; reject invalid media dimensions and non-finite metadata.
+- **Progress and preview** — Keep cancellation progress visible, restore a drawable preview after cancellation, preserve download focus, and report final frame counts and conversion timings consistently.
+- **Offline navigation** — Prefer the latest cached navigation document when offline and preserve it while evicting older cached assets.
+
+### Changed
+
+- **Encoding pipeline** — Stream Blob-backed GIF input and opaque RGBA frames, and overlap bounded WebP frame copying and encoding.
+- **Result presentation** — Clarify quality targets, frame-skip settings, preview scale, conversion status, and download summaries.
+- **Release maintenance** — Refresh runtime dependencies and shared utilities, strengthen security scan validation, and retain the test-runner version supported by mutation testing.
+
 ## [0.2.1] - 2026-08-06
 
 ### Fixed
