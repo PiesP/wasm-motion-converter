@@ -24,6 +24,7 @@ interface SettingsPanelProps {
   onFormatChange: (format: ConversionSettings['format']) => void;
   onQualityChange: (quality: ConversionSettings['quality']) => void;
   onScaleChange: (scale: ConversionSettings['scale']) => void;
+  onSharingSettings: () => void;
   onSmartFrameSkipChange: (mode: ConversionSettings['smartFrameSkip']) => void;
 }
 
@@ -49,6 +50,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     'onFormatChange',
     'onQualityChange',
     'onScaleChange',
+    'onSharingSettings',
     'onSmartFrameSkipChange',
   ]);
 
@@ -78,6 +80,10 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     return t(FRAME_SKIP_LABEL_KEYS[local.settings.smartFrameSkip]);
   });
 
+  const sharingSettingsApplied = createMemo(
+    () => local.settings.quality === 'low' && local.settings.scale === 0.5
+  );
+
   return (
     <Panel class="p-4">
       <h2 class="mb-4 text-lg font-semibold text-text-primary">{t('settings.heading')}</h2>
@@ -106,6 +112,22 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         tooltip={t('settings.tooltip.scale')}
         value={local.settings.scale}
       />
+
+      <div class="mb-6 space-y-2" data-testid="sharing-settings">
+        <Button
+          class="w-full"
+          disabled={local.isBusy || sharingSettingsApplied()}
+          onClick={local.onSharingSettings}
+          variant="ghost"
+          data-testid="sharing-settings-button"
+        >
+          {sharingSettingsApplied() ? t('settings.sharing.applied') : t('settings.sharing.apply')}
+        </Button>
+        <p class="text-xs leading-relaxed text-text-secondary">
+          {t('settings.sharing.description')}
+        </p>
+        <p class="text-xs leading-relaxed text-text-secondary">{t('settings.sharing.sizeHint')}</p>
+      </div>
 
       <details class="mb-6 border-t border-border-subtle pt-3" data-testid="advanced-settings">
         <summary class="min-h-target-minimum cursor-pointer content-center text-xs font-medium tracking-wide text-text-secondary">

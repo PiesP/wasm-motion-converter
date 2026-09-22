@@ -2,7 +2,17 @@
 // Copyright (c) 2026 PiesP
 
 import { expect, test } from '@playwright/test';
-import { downloadResult, runConversion } from './fixtures/test-helpers';
+import {
+  clickConvert,
+  downloadResult,
+  injectTestFile,
+  runConversion,
+  setFormat,
+  setQuality,
+  setScale,
+  setSmartFrameSkip,
+  waitForConversionComplete,
+} from './fixtures/test-helpers';
 import { validateFileMagic } from './fixtures/verify';
 
 const FIXTURE = 'test-video-ci-h264.mp4';
@@ -11,6 +21,58 @@ const PREVIEW_VIEWPORTS = [
   { name: 'desktop', width: 1280, height: 800 },
   { name: 'narrow', width: 390, height: 844 },
 ] as const;
+
+test('sharing settings preserve the selected format and clip and allow manual changes', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await injectTestFile(page, FIXTURE);
+  await setFormat(page, 'webp');
+  await setQuality(page, 'high');
+  await setScale(page, '100%');
+  await setSmartFrameSkip(page, 'low');
+
+  const startInput = page.locator('#trim-start-input');
+  const endInput = page.locator('#trim-end-input');
+  await startInput.fill('0:00.2');
+  await startInput.press('Enter');
+  await endInput.fill('0:00.9');
+  await endInput.press('Enter');
+
+  const sharingButton = page.getByTestId('sharing-settings-button');
+  await sharingButton.focus();
+  await page.keyboard.press('Enter');
+  await expect(sharingButton).toBeDisabled();
+  await expect(page.locator('input[name="quality"][value="low"]')).toBeChecked();
+  await expect(page.locator('input[name="scale"][value="0.5"]')).toBeChecked();
+  await expect(page.locator('input[name="format"][value="webp"]')).toBeChecked();
+  await expect(startInput).toHaveValue('0:00.2');
+  await expect(endInput).toHaveValue('0:00.9');
+  await expect(page.getByTestId('result-section')).not.toBeVisible();
+  await expect(page.getByTestId('convert-button')).toBeEnabled();
+
+  const expectedSettings = {
+    format: 'webp', quality: 'low', scale: 0.5,
+    trimStart: 0.2, trimEnd: 0.9, smartFrameSkip: 'low',
+  };
+  await expect.poll(() => page.evaluate(() => window.__TEST_HELPERS__?.getSettings()))
+    .toMatchObject(expectedSettings);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('conversion-settings') ?? '{}')))
+    .toMatchObject(expectedSettings);
+
+  await clickConvert(page);
+  expect(await waitForConversionComplete(page)).toBe('done');
+  await expect(page.locator('[data-result-resolution]')).toHaveText('80×45');
+  expect(validateFileMagic(await downloadResult(page), 'webp')).toMatchObject({ valid: true });
+
+  await setQuality(page, 'high');
+  await expect(sharingButton).toBeEnabled();
+  await expect(page.getByTestId('result-section')).toBeVisible();
+  await page.reload();
+  await expect(page.locator('input[name="quality"][value="high"]')).toBeChecked();
+  await expect(page.locator('input[name="scale"][value="0.5"]')).toBeChecked();
+  await expect(page.locator('input[name="format"][value="webp"]')).toBeChecked();
+});
 
 test.describe('CI codec smoke', () => {
   test.beforeEach(async ({ page }) => {

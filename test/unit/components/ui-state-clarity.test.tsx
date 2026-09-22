@@ -83,6 +83,7 @@ describe('UI state clarity', () => {
           onFormatChange={() => {}}
           onQualityChange={() => {}}
           onScaleChange={() => {}}
+          onSharingSettings={() => {}}
           onSmartFrameSkipChange={() => {}}
           settings={settings}
         />
@@ -119,6 +120,7 @@ describe('UI state clarity', () => {
           onFormatChange={() => {}}
           onQualityChange={() => {}}
           onScaleChange={() => {}}
+          onSharingSettings={() => {}}
           onSmartFrameSkipChange={() => {}}
           settings={settings}
         />
