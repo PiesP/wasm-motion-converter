@@ -1,8 +1,17 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { expect, test, type CDPSession, type Page } from '@playwright/test';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
+import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
+import {
+  assertAnimatedOutput,
+  inspectAnimatedOutput,
+  type OutputContractCase,
+} from '../../validation/windows/output-contract.mjs';
 
 import {
   readLinuxProcessMemory,
@@ -26,6 +35,41 @@ const STRESS_FIXTURE = 'test-video-ci-high-motion-120fps.mp4';
 const HOSTILE_PAR_FIXTURE = 'test-video-resource-hostile-par.webm';
 const MEASURED_CYCLES = 5;
 const FAST_SAMPLE_INTERVAL_MS = 20;
+const CONVERSION_SAMPLE_INTERVAL_MS = 150;
+const paletteContract = (contractData.cases as OutputContractCase[]).find(
+  (contract) => contract.id === 'cfr-trim-gif',
+);
+if (!paletteContract) throw new Error('Missing cfr-trim-gif output contract');
+
+interface ConversionWorkload {
+  id: string;
+  fixture: string;
+  format: 'gif' | 'webp';
+  settings: OutputContractCase['settings'];
+  contract?: OutputContractCase;
+}
+
+const workloads: ConversionWorkload[] = [
+  ...(['gif', 'webp'] as const).map((format) => ({
+    id: `high-motion-${format}`,
+    fixture: STRESS_FIXTURE,
+    format,
+    settings: {
+      quality: 'high' as const,
+      scale: '1' as const,
+      trimStart: 0,
+      trimEnd: 0,
+      smartFrameSkip: 'adaptive' as const,
+    },
+  })),
+  {
+    id: paletteContract.id,
+    fixture: paletteContract.fixture.replace(/^public\//, ''),
+    format: paletteContract.format,
+    settings: paletteContract.settings,
+    contract: paletteContract,
+  },
+];
 
 interface ChromiumProcessInfo {
   type: string;
@@ -39,6 +83,7 @@ interface ResourceSample {
   pssMB: number;
   rssMB: number;
   cpuTimeSeconds: number;
+  cpuProcesses: ChromiumProcessInfo[];
   processCount: number;
   pssProcessCount: number;
   rssProcessCount: number;
@@ -49,7 +94,9 @@ interface ResourceSample {
 
 interface ConversionMeasurement {
   elapsedMs: number;
-  cpuSeconds: number;
+  cpuSeconds: number | null;
+  cpuProcessSetStable: boolean;
+  samples: ResourceSample[];
   outputBytes: number;
   outputSha256: string;
   peakJsDeltaMB: number | null;
@@ -130,6 +177,7 @@ async function sampleResources(page: Page, browserCdp: CDPSession): Promise<Reso
     pssMB: summary.pssMB,
     rssMB: summary.rssMB,
     cpuTimeSeconds: processes.reduce((total, process) => total + process.cpuTime, 0),
+    cpuProcesses: processes.map(({ id, type, cpuTime }) => ({ id, type, cpuTime })),
     processCount: summary.processCount,
     pssProcessCount: summary.pssProcessCount,
     rssProcessCount: summary.rssProcessCount,
@@ -204,13 +252,26 @@ async function captureFastResourceSamples<T>(
 async function runMeasuredConversion(
   page: Page,
   browserCdp: CDPSession,
-  format: 'gif' | 'webp',
-): Promise<ConversionMeasurement> {
-  await injectTestFile(page, STRESS_FIXTURE);
-  await setFormat(page, format);
-  await setQuality(page, 'high');
+  workload: ConversionWorkload,
+): Promise<{ measurement: ConversionMeasurement; encodedOutput: Buffer }> {
+  await injectTestFile(page, workload.fixture);
+  await setFormat(page, workload.format);
+  await setQuality(page, workload.settings.quality);
   await setScale(page, '100%');
-  await setSmartFrameSkip(page, 'adaptive');
+  await setSmartFrameSkip(page, workload.settings.smartFrameSkip);
+  if (workload.settings.trimStart > 0 || workload.settings.trimEnd > 0) {
+    const start = page.locator('#trim-start-input');
+    const end = page.locator('#trim-end-input');
+    await start.fill(String(workload.settings.trimStart));
+    await start.press('Enter');
+    await end.fill(String(workload.settings.trimEnd));
+    await end.press('Enter');
+  }
+  expect(await page.evaluate(() => window.__TEST_HELPERS__?.getSettings())).toMatchObject({
+    format: workload.format,
+    ...workload.settings,
+    scale: Number(workload.settings.scale),
+  });
 
   const samples = [await sampleResources(page, browserCdp)];
   const startedAt = performance.now();
@@ -219,7 +280,7 @@ async function runMeasuredConversion(
 
   let state = await getAppState(page);
   while (state !== 'done' && state !== 'error' && performance.now() - startedAt < 60_000) {
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(CONVERSION_SAMPLE_INTERVAL_MS);
     samples.push(await sampleResources(page, browserCdp));
     state = await getAppState(page);
   }
@@ -228,16 +289,22 @@ async function runMeasuredConversion(
   const elapsedMs = performance.now() - startedAt;
 
   const output = await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null);
-  expect(output?.type).toBe(`image/${format}`);
+  expect(output?.type).toBe(`image/${workload.format}`);
 
-  // Hash outside the measured conversion interval so equal-setting comparisons
-  // can prove output identity without counting verification work as encoding.
-  const outputSha256 = await page.getByTestId('result-image').evaluate(async (element) => {
-    if (!(element instanceof HTMLImageElement)) throw new Error('Output image is unavailable');
-    const bytes = await (await fetch(element.src)).arrayBuffer();
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-    return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
-  });
+  // Retain the exact measured output outside the conversion interval. Decode only
+  // after every cycle so the correctness observer cannot warm later conversions.
+  const encodedOutput = Buffer.from(
+    await page.getByTestId('result-image').evaluate(async (element) => {
+      if (!(element instanceof HTMLImageElement)) throw new Error('Output image is unavailable');
+      return [...new Uint8Array(await (await fetch(element.src)).arrayBuffer())];
+    }),
+  );
+  expect(encodedOutput.byteLength).toBe(output!.size);
+  const outputSha256 = createHash('sha256').update(encodedOutput).digest('hex');
+  const initialProcessIds = samples[0]!.cpuProcesses.map(({ id }) => id).sort().join(',');
+  const cpuProcessSetStable = samples.every(
+    (sample) => sample.cpuProcesses.map(({ id }) => id).sort().join(',') === initialProcessIds,
+  );
 
   await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
   await page.requestGC();
@@ -246,15 +313,22 @@ async function runMeasuredConversion(
   const postGcUaMemoryMB = await measureUaMemoryMB(page);
 
   return {
-    elapsedMs,
-    cpuSeconds: samples.at(-1)!.cpuTimeSeconds - samples[0]!.cpuTimeSeconds,
-    outputBytes: output!.size,
-    outputSha256,
-    peakJsDeltaMB: peakDelta(samples, 'jsHeapMB'),
-    peakPssDeltaMB: peakDelta(samples, 'pssMB')!,
-    peakRssDeltaMB: peakDelta(samples, 'rssMB')!,
-    postGc,
-    postGcUaMemoryMB,
+    encodedOutput,
+    measurement: {
+      elapsedMs,
+      cpuSeconds: cpuProcessSetStable
+        ? samples.at(-1)!.cpuTimeSeconds - samples[0]!.cpuTimeSeconds
+        : null,
+      cpuProcessSetStable,
+      samples,
+      outputBytes: output!.size,
+      outputSha256,
+      peakJsDeltaMB: peakDelta(samples, 'jsHeapMB'),
+      peakPssDeltaMB: peakDelta(samples, 'pssMB')!,
+      peakRssDeltaMB: peakDelta(samples, 'rssMB')!,
+      postGc,
+      postGcUaMemoryMB,
+    },
   };
 }
 
@@ -315,8 +389,8 @@ async function runMeasuredHostileParRejection(
 test.describe('opt-in Chromium resource profile', () => {
   test.skip(process.platform !== 'linux', 'Chromium process PSS/RSS sampling requires Linux /proc');
 
-  for (const format of ['gif', 'webp'] as const) {
-    test(`${format.toUpperCase()} reaches a post-warm-up resource plateau`, async ({
+  for (const workload of workloads) {
+    test(`${workload.id} reaches a post-warm-up resource plateau`, async ({
       browser,
       page,
     }) => {
@@ -339,24 +413,20 @@ test.describe('opt-in Chromium resource profile', () => {
         );
 
         // Exclude one-time worker, Canvas, and WASM initialization from leak slopes.
-        await runMeasuredConversion(page, browserCdp, format);
+        await runMeasuredConversion(page, browserCdp, workload);
 
         const measurements: ConversionMeasurement[] = [];
+        const outputs: Buffer[] = [];
         for (let cycle = 0; cycle < MEASURED_CYCLES; cycle++) {
-          measurements.push(await runMeasuredConversion(page, browserCdp, format));
+          const { measurement, encodedOutput } = await runMeasuredConversion(page, browserCdp, workload);
+          measurements.push(measurement);
+          outputs.push(encodedOutput);
+          await test.info().attach(`${workload.id}-cycle-${cycle + 1}.${workload.format}`, {
+            body: encodedOutput,
+            contentType: `image/${workload.format}`,
+          });
         }
 
-        for (const measurement of measurements) {
-          expect(measurement.elapsedMs).toBeLessThan(30_000);
-          expect(measurement.peakPssDeltaMB).toBeLessThan(384);
-          expect(measurement.peakRssDeltaMB).toBeLessThan(768);
-          if (measurement.peakJsDeltaMB !== null) {
-            expect(measurement.peakJsDeltaMB).toBeLessThan(128);
-          }
-          expect(measurement.postGc.pssMB).toBeGreaterThan(0);
-          expect(measurement.postGc.processCount).toBeGreaterThan(0);
-        }
-        expect(new Set(measurements.map((measurement) => measurement.outputSha256)).size).toBe(1);
 
         const postGcPssSlope = theilSenSlope(
           measurements.map((measurement) => measurement.postGc.pssMB),
@@ -372,11 +442,71 @@ test.describe('opt-in Chromium resource profile', () => {
         const postGcUaSlope =
           uaValues.length === MEASURED_CYCLES ? theilSenSlope(uaValues) : null;
 
+        const observations = [];
+        const correctnessFailures: string[] = [];
+        for (const [cycle, output] of outputs.entries()) {
+          const observation = await inspectAnimatedOutput(
+            page, output, workload.format, contractData.markers,
+          );
+          observations.push(observation);
+          if (workload.contract) {
+            try {
+              assertAnimatedOutput(observation, workload.contract);
+            } catch (error) {
+              correctnessFailures.push(`cycle ${cycle + 1}: ${String(error)}`);
+            }
+          }
+        }
+        const evidence = {
+          id: workload.id,
+          format: workload.format,
+          fixture: workload.fixture,
+          inputSha256: createHash('sha256')
+            .update(readFileSync(resolve('public', workload.fixture))).digest('hex'),
+          settings: workload.settings,
+          measurementScope: {
+            elapsed: 'UI conversion request through observed done, including resource sampling',
+            cpu: 'Chromium process CPU delta; unavailable when a sampled process set changes',
+            memory: 'Observed sampled peak delta, not an absolute peak',
+            sampleIntervalMs: CONVERSION_SAMPLE_INTERVAL_MS,
+            correctness: 'Encoded outputs decoded after all measured cycles and post-GC samples',
+          },
+          measurements, postGcPssSlope, postGcJsSlope, postGcUaSlope,
+          observations,
+          correctness: {
+            status: workload.contract
+              ? correctnessFailures.length === 0 ? 'passed' : 'failed'
+              : 'observed-without-frame-oracle',
+            contract: workload.contract ?? null,
+            failures: correctnessFailures,
+          },
+        };
+        await test.info().attach(`${workload.id}-evidence.json`, {
+          body: JSON.stringify(evidence, null, 2),
+          contentType: 'application/json',
+        });
         console.info(
           '[resource-profile]',
-          JSON.stringify({ format, measurements, postGcPssSlope, postGcJsSlope, postGcUaSlope }),
+          JSON.stringify(evidence),
         );
 
+        for (const measurement of measurements) {
+          expect(measurement.elapsedMs).toBeLessThan(30_000);
+          expect(Number.isFinite(measurement.cpuSeconds)).toBe(true);
+          expect(measurement.cpuSeconds).toBeGreaterThanOrEqual(0);
+          expect(measurement.peakPssDeltaMB).toBeLessThan(384);
+          expect(measurement.peakRssDeltaMB).toBeLessThan(768);
+          if (measurement.peakJsDeltaMB !== null) {
+            expect(measurement.peakJsDeltaMB).toBeLessThan(128);
+          }
+          expect(measurement.postGc.pssMB).toBeGreaterThan(0);
+          expect(measurement.postGc.processCount).toBeGreaterThan(0);
+        }
+        expect(new Set(measurements.map((measurement) => measurement.outputSha256)).size).toBe(1);
+
+
+        expect(correctnessFailures).toEqual([]);
+        expect(measurements.every((measurement) => measurement.cpuProcessSetStable)).toBe(true);
         expect(postGcPssSlope).toBeLessThan(16);
         if (postGcJsSlope !== null) expect(postGcJsSlope).toBeLessThan(8);
         if (postGcUaSlope !== null) expect(postGcUaSlope).toBeLessThan(8);

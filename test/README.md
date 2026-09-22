@@ -70,12 +70,25 @@ the fast rejection path at 20 ms intervals, and checks repeated post-GC PSS/RSS
 slopes. This demonstrates rejection before large Canvas, Worker, or frame-buffer
 allocations; it is not a GPU VRAM measurement.
 
-Each resource-profile conversion computes the downloaded output SHA-256 after
-the measured interval. Repeated conversions with identical settings must retain
-the same digest. Baseline and final performance comparisons must include these
-digests so a speed change cannot be attributed to silently different output;
-the digest check does not claim byte-for-byte stability across browser, codec,
-or dependency versions outside the compared run.
+Each measured conversion retains its encoded output and SHA-256 after the timed
+interval. Playwright attachments bind input digest, settings, wall time, CPU,
+sampled memory, output bytes, and decoded frames in one evidence record. All
+outputs are decoded after the measured cycles and post-GC samples. The
+`cfr-trim-gif` workload applies the shared color, geometry, and timing contract;
+the high-motion workloads retain full frame observations without claiming an
+exact frame oracle. A failed color contract preserves all measured outputs and
+fails the test. An older incorrect output is an error baseline, not a performance
+advantage.
+
+Wall time includes UI completion detection and resource sampling at 150 ms
+intervals, so short conversions cannot establish fine encoder timing. Memory
+peaks are observed sample maxima. CPU covers the Chromium processes reported by
+CDP; a change in sampled process IDs makes its delta unavailable and fails the
+measurement gate. Processes that start and exit between samples are outside that
+CPU observation. Repeated identical settings must retain the same output digest,
+without claiming stability across browser, codec, or dependency versions. Compare
+revisions with the same fixtures, settings, harness, browser, and host, and retain
+the source binding and run order alongside the attachments.
 
 ## Media fixtures
 
