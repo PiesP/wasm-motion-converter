@@ -91,6 +91,7 @@ describe('serializeConversionInputs', () => {
     const description = new Uint8Array([0x01, 0xab, 0xff]).buffer;
     const metadata: VideoMetadata = {
       ...defaultMetadata,
+      rotation: 270,
       config: {
         codec: 'avc1.640028',
         codedHeight: 1080,
@@ -118,6 +119,7 @@ describe('serializeConversionInputs', () => {
         displayAspectHeight: 9,
         displayAspectWidth: 16,
         hardwareAcceleration: 'prefer-hardware',
+        rotation: 270,
       },
       serializedOptions: {
         forceDecimation: 4,

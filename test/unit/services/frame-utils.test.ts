@@ -30,6 +30,18 @@ describe('resolveVideoDimensions', () => {
     ).toEqual({ width: 1024, height: 576 });
   });
 
+  it('swaps square-pixel dimensions for quarter-turn container rotation', () => {
+    expect(
+      resolveVideoDimensions({
+        codedWidth: 80,
+        codedHeight: 48,
+        displayAspectWidth: 80,
+        displayAspectHeight: 48,
+        rotation: 270,
+      })
+    ).toEqual({ width: 48, height: 80 });
+  });
+
   it.each([
     ['zero', 0, 576],
     ['negative', -1, 576],
@@ -156,6 +168,45 @@ describe('clearCanvasCache', () => {
 });
 
 describe('opaque RGBA frame copying', () => {
+  it('applies clockwise container rotation through the canvas path', async () => {
+    const context2d = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(2 * 3 * 4) })),
+      rotate: vi.fn(),
+      setTransform: vi.fn(),
+      translate: vi.fn(),
+    };
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext(): typeof context2d {
+          return context2d;
+        }
+      }
+    );
+    const frame = {
+      codedHeight: 2,
+      codedWidth: 3,
+      displayHeight: 2,
+      displayWidth: 3,
+    } as VideoFrame;
+
+    const rgba = await copyFrameToPixels(
+      frame,
+      2,
+      3,
+      { durationCarryUs: 0, copyPath: null },
+      'rgba',
+      270
+    );
+
+    expect(context2d.translate).toHaveBeenCalledWith(0, 3);
+    expect(context2d.rotate).toHaveBeenCalledWith(-Math.PI / 2);
+    expect(context2d.drawImage).toHaveBeenCalledWith(frame, 0, 0, 3, 2, 0, 0, 3, 2);
+    expect(rgba).toHaveLength(24);
+  });
+
   it('uses and caches the successful RGBX strategy while forcing opaque alpha', async () => {
     const attemptedFormats: VideoPixelFormat[] = [];
     const frame = {

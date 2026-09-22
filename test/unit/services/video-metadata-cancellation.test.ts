@@ -44,6 +44,7 @@ describe('extractVideoMetadata cancellation', () => {
       getDecoderConfig: vi.fn().mockResolvedValue({
         codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16,
       }),
+      getRotation: vi.fn().mockResolvedValue(0),
     };
     mocks.getVideoTracks.mockResolvedValue([track]);
     const controller = new AbortController();
@@ -87,6 +88,7 @@ describe('extractVideoMetadata cancellation', () => {
           codedHeight: 16,
           codedWidth: 16,
         }),
+        getRotation: vi.fn().mockResolvedValue(0),
       },
     ]);
     const controller = new AbortController();
@@ -108,17 +110,19 @@ describe('extractVideoMetadata cancellation', () => {
       }),
       getDecoderConfig: vi.fn().mockResolvedValue({
         codec: 'vp09.00.10.08',
-        codedHeight: 16,
-        codedWidth: 16,
+        codedHeight: 48,
+        codedWidth: 80,
       }),
+      getRotation: vi.fn().mockResolvedValue(270),
     };
     mocks.getVideoTracks.mockResolvedValue([track]);
 
     await expect(extractVideoMetadata(new Blob(['video']))).resolves.toMatchObject({
       codec: 'vp09',
       duration: 2,
-      height: 16,
-      width: 16,
+      height: 80,
+      rotation: 270,
+      width: 48,
     });
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
@@ -137,6 +141,7 @@ describe('extractVideoMetadata cancellation', () => {
         codedHeight: 16,
         codedWidth: 16,
       }),
+      getRotation: vi.fn().mockResolvedValue(0),
     };
     mocks.getVideoTracks.mockResolvedValue([track]);
 

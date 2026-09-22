@@ -98,6 +98,22 @@ describe('main conversion pipeline encoder options', () => {
     );
   });
 
+  it('uses rotated display dimensions on the main-thread pipeline', async () => {
+    mocks.demuxVideo.mockResolvedValueOnce({
+      ...demuxResult,
+      config: { codec: 'avc1.640028', codedWidth: 80, codedHeight: 48 },
+      rotation: 270,
+    });
+
+    await runConversionPipeline(baseRequest, vi.fn());
+
+    expect(mocks.encodeGif).toHaveBeenCalledWith(
+      expect.objectContaining({ rotation: 270 }),
+      expect.objectContaining({ width: 48, height: 80 }),
+      undefined
+    );
+  });
+
   it('enforces the aggregate GIF memory budget on the main-thread fallback', async () => {
     mocks.encodeGif.mockImplementationOnce(async (_demux, options) => {
       options.assertAdditionalMemoryBytes(461 * 1024 * 1024);

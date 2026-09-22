@@ -4,7 +4,12 @@
 // Message protocol types for the conversion worker
 
 import type { ConversionProfileReport } from '@services/conversion-profiler';
-import type { ConversionFormat, ConversionQuality, SmartFrameSkipMode } from '@t/conversion-types';
+import type {
+  ConversionFormat,
+  ConversionQuality,
+  SmartFrameSkipMode,
+  VideoRotation,
+} from '@t/conversion-types';
 
 export const WORKER_LOG_MAX_EVENTS = 16;
 export const WORKER_LOG_MAX_MESSAGE_CHARS = 512;
@@ -67,6 +72,7 @@ export interface SerializedDecoderConfig {
   displayAspectHeight?: number | undefined;
   hardwareAcceleration?: string | undefined;
   description?: ArrayBuffer | undefined;
+  rotation?: VideoRotation | undefined;
 }
 
 export interface SerializedConversionOptions {

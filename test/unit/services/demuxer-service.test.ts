@@ -38,7 +38,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('@utils/mediabunny-utils', () => ({
   createMediaBunnyInput: () => ({
     dispose: mocks.dispose,
-    getVideoTracks: vi.fn().mockResolvedValue([{}]),
+    getVideoTracks: vi.fn().mockResolvedValue([{ getRotation: vi.fn().mockResolvedValue(0) }]),
   }),
 }));
 
@@ -141,7 +141,7 @@ describe('demuxVideo trim start', () => {
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 
-  it('closes the packet iterator when trimEnd stops consumption early', async () => {
+  it('leaves presentation-order trimEnd filtering to the decoder', async () => {
     const request: ConversionRequest = {
       inputBuffer: new ArrayBuffer(8),
       fileName: 'trimmed.mp4',
@@ -163,7 +163,8 @@ describe('demuxVideo trim start', () => {
     for await (const chunk of result.chunks) chunks.push(chunk);
     await vi.waitFor(() => expect(mocks.iteratorClosed).toHaveBeenCalledOnce());
 
-    expect(chunks).toHaveLength(1);
+    expect(chunks).toHaveLength(2);
+    expect(result.trimEndUs).toBe(4_000_000);
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 });

@@ -202,7 +202,7 @@ async function _runPipelineInner(
     }
 
     const cfg = demuxResult.config as MediabunnyVideoDecoderConfig;
-    const dims = resolveVideoDimensions(cfg);
+    const dims = resolveVideoDimensions({ ...cfg, rotation: demuxResult.rotation });
     if (!dims) throw new Error('Unable to determine video dimensions');
     const { width: codedWidth, height: codedHeight } = dims;
 

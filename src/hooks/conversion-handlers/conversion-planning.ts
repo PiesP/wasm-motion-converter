@@ -104,5 +104,6 @@ function serializeDecoderConfig(
     ...(includeDescription && decoderConfig.description
       ? { description: copyBoundedCodecDescription(decoderConfig.description) }
       : {}),
+    ...(metadata.rotation !== undefined ? { rotation: metadata.rotation } : {}),
   };
 }

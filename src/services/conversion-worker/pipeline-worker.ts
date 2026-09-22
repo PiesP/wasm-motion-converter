@@ -13,7 +13,7 @@
 import { globalBufferPool } from '@services/buffer-pool';
 import { demuxVideo } from '@services/demuxer-service';
 import { calcAutoDecimation } from '@services/encoder-common';
-import { resolveVideoDimensions } from '@services/frame-utils';
+import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
 import type { VideoMetadata } from '@t/conversion-types';
@@ -152,6 +152,7 @@ export async function runWorkerPipeline(
               : {}),
             ...(config.description ? { description: config.description } : {}),
           } as VideoDecoderConfig,
+          ...(config.rotation !== undefined ? { rotation: config.rotation } : {}),
         }
       : undefined;
 
@@ -185,7 +186,7 @@ export async function runWorkerPipeline(
     demuxSpan?.end({ frames: demuxResult.totalFrames });
 
     const cfg = demuxResult.config;
-    const dims = resolveVideoDimensions(cfg);
+    const dims = resolveVideoDimensions({ ...cfg, rotation: demuxResult.rotation });
     if (!dims) {
       throw new Error('Unable to determine video dimensions');
     }
@@ -431,6 +432,7 @@ export async function runWorkerPipeline(
   } finally {
     demuxSession?.dispose?.();
     // Ensure buffer pool is cleared on any error path (matching main thread)
+    clearCanvasCache();
     globalBufferPool.clear();
   }
 }

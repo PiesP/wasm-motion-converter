@@ -30,6 +30,10 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function isVideoRotation(value: unknown): boolean {
+  return value === undefined || value === 0 || value === 90 || value === 180 || value === 270;
+}
+
 const PROFILE_STAGES = ['demuxing', 'transcoding', 'finalizing'] as const;
 const WORKER_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const WORKER_LOG_CATEGORIES = ['conversion', 'general', 'demuxer', 'encoders', 'decoders'] as const;
@@ -116,6 +120,7 @@ function isValidDecoderConfig(config: unknown): config is Record<string, unknown
     typeof config.codedHeight === 'number' &&
     Number.isFinite(config.codedHeight) &&
     config.codedHeight > 0 &&
+    isVideoRotation(config.rotation) &&
     isBoundedCodecDescription(config.description)
   );
 }
