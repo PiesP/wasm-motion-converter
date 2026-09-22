@@ -70,10 +70,32 @@ the fast rejection path at 20 ms intervals, and checks repeated post-GC PSS/RSS
 slopes. This demonstrates rejection before large Canvas, Worker, or frame-buffer
 allocations; it is not a GPU VRAM measurement.
 
+Each resource-profile conversion computes the downloaded output SHA-256 after
+the measured interval. Repeated conversions with identical settings must retain
+the same digest. Baseline and final performance comparisons must include these
+digests so a speed change cannot be attributed to silently different output;
+the digest check does not claim byte-for-byte stability across browser, codec,
+or dependency versions outside the compared run.
+
 ## Media fixtures
 
 Fresh CI checkouts generate `public/test-video-ci-h264.mp4` before the CI browser
-profile. The larger codec matrix referenced by `lib/test-manifest.ts` is
+profile. The same generator creates a compact output-contract corpus: a four-color
+CFR fixture, a four-color VFR fixture with 2:1 pixel aspect ratio, and a four-color
+fixture with 90-degree display rotation. `e2e/output-contract.spec.ts` converts
+the corpus with a non-trivial trim range across GIF and WebP, then uses the
+browser's `ImageDecoder` to fully decode every downloaded frame and assert display
+geometry, color-marker order, per-frame timing, and total playback duration. It
+also proves that Worker construction failure can use the main-thread fallback,
+while a failure after the Worker initialization message cannot silently retry.
+
+The shared contract in `../validation/windows/output-contract.json` is consumed
+by both Playwright and the production-bundle Windows profile. Codec skips are
+allowed only when `VideoDecoder.isConfigSupported()` explicitly rejects the input
+configuration; an unexpected extraction, conversion, geometry, ordering, or
+timing result fails the test.
+
+The larger codec matrix referenced by `lib/test-manifest.ts` is
 local-only and intentionally excluded from Git; add compatible files under
 `public/` before running matrix, variation, regression, or performance suites.
 
@@ -92,8 +114,9 @@ static browser or codec allowlist.
 
 ## CI coverage
 
-Fast CI runs the quality gate, unit coverage, the repository-backed E2E profile,
-the production build, and duplication checks. Deep verification adds mutation
+Fast CI runs the quality gate, unit coverage, the repository-backed E2E profile
+(including deterministic output contracts), the production build, and duplication
+checks. Deep verification adds mutation
 testing. The workflow files in `.github/workflows/` are authoritative when this
 summary changes.
 

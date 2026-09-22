@@ -18,6 +18,7 @@ const CI_TEST_MATCH = [
   'e2e/design-system.spec.ts',
   'e2e/i18n.spec.ts',
   'e2e/ci-conversion-smoke.spec.ts',
+  'e2e/output-contract.spec.ts',
   'e2e/adaptive-resource-safety.spec.ts',
   BROWSER_CAPABILITY_TEST,
 ];
