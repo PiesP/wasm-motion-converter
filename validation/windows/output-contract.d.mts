@@ -44,6 +44,18 @@ export interface AnimatedOutputObservation {
   }>;
 }
 
+export function inspectAnimatedOutput(
+  page: import('@playwright/test').Page,
+  bytes: Uint8Array,
+  format: OutputContractCase['format'],
+  markers: Record<string, number[]>
+): Promise<AnimatedOutputObservation>;
+
+export function assertAnimatedOutput(
+  observation: AnimatedOutputObservation,
+  contract: OutputContractCase
+): AnimatedOutputObservation;
+
 export function verifyAnimatedOutput(
   page: import('@playwright/test').Page,
   bytes: Uint8Array,

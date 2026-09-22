@@ -3,9 +3,9 @@
 
 import assert from 'node:assert/strict';
 
-/** Decode every animation frame in the target browser and validate the shared contract. */
-export async function verifyAnimatedOutput(page, bytes, contract, markers) {
-  const observation = await page.evaluate(
+/** Decode every frame without discarding observations when a contract later fails. */
+export async function inspectAnimatedOutput(page, bytes, format, markers) {
+  return page.evaluate(
     async ({ encodedBytes, mimeType, markerColors }) => {
       if (typeof globalThis.ImageDecoder !== 'function') {
         throw new Error('ImageDecoder is unavailable in the contract browser');
@@ -100,11 +100,14 @@ export async function verifyAnimatedOutput(page, bytes, contract, markers) {
     },
     {
       encodedBytes: [...bytes],
-      mimeType: contract.format === 'gif' ? 'image/gif' : 'image/webp',
+      mimeType: format === 'gif' ? 'image/gif' : 'image/webp',
       markerColors: markers,
     }
   );
+}
 
+/** Validate a retained observation independently of the conversion measurement. */
+export function assertAnimatedOutput(observation, contract) {
   assert.equal(observation.frameCount, contract.expected.markers.length, `${contract.id}: frame count`);
   assert.deepEqual(
     observation.frames.map((frame) => frame.marker),
@@ -148,4 +151,12 @@ export async function verifyAnimatedOutput(page, bytes, contract, markers) {
     `${contract.id}: total playback duration`
   );
   return observation;
+}
+
+/** Decode every animation frame in the target browser and validate the shared contract. */
+export async function verifyAnimatedOutput(page, bytes, contract, markers) {
+  return assertAnimatedOutput(
+    await inspectAnimatedOutput(page, bytes, contract.format, markers),
+    contract
+  );
 }
