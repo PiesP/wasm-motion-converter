@@ -153,6 +153,7 @@
   "settings.sharing.applied": "공유용 설정 적용됨",
   "settings.sharing.description": "낮은 품질과 50% 배율로 세부 묘사와 목표 프레임 수를 줄입니다. 선택한 형식과 구간은 유지됩니다.",
   "settings.sharing.sizeHint": "파일 크기는 영상에 따라 달라집니다. 더 줄이려면 선택한 구간을 짧게 조정하세요.",
+  "settings.sharing.title": "파일 크기 줄이기",
   "settings.stopConversion": "비디오 변환 중지",
   "settings.tooltip.format": "GIF는 범용 지원, WebP는 더 작은 파일 크기",
   "settings.tooltip.quality": "품질이 높을수록 파일 크기가 커지고 변환 속도가 느려집니다",

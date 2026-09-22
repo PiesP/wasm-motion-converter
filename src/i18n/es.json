@@ -153,6 +153,7 @@
   "settings.sharing.applied": "Ajustes para compartir aplicados",
   "settings.sharing.description": "La calidad baja y la escala del 50% reducen el detalle y los fotogramas objetivo. Se conservan el formato y el intervalo elegidos.",
   "settings.sharing.sizeHint": "El tamaño del archivo depende del vídeo. Acorta el intervalo seleccionado para reducirlo más.",
+  "settings.sharing.title": "Reducir el tamaño del archivo",
   "settings.stopConversion": "Detener conversión de vídeo",
   "settings.tooltip.format": "Elige GIF para soporte universal o WebP para un archivo más pequeño",
   "settings.tooltip.quality": "Mayor calidad = mayor tamaño de archivo y conversión más lenta",

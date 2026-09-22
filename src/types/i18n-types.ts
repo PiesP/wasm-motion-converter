@@ -106,6 +106,7 @@ export interface TranslationKeys {
   'settings.sharing.applied': string;
   'settings.sharing.description': string;
   'settings.sharing.sizeHint': string;
+  'settings.sharing.title': string;
 
   // Format Selector
   'format.title': string;

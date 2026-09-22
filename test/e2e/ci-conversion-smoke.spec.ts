@@ -25,6 +25,11 @@ const PREVIEW_VIEWPORTS = [
 test('sharing settings preserve the selected format and clip and allow manual changes', async ({
   page,
 }) => {
+  const browserErrors: string[] = [];
+  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') browserErrors.push(message.text());
+  });
   await page.goto('/');
   await injectTestFile(page, FIXTURE);
   await setFormat(page, 'webp');
@@ -40,6 +45,7 @@ test('sharing settings preserve the selected format and clip and allow manual ch
   await endInput.press('Enter');
 
   const sharingButton = page.getByTestId('sharing-settings-button');
+  await page.getByTestId('sharing-settings').locator('summary').click();
   await sharingButton.focus();
   await page.keyboard.press('Enter');
   await expect(sharingButton).toBeDisabled();
@@ -52,13 +58,25 @@ test('sharing settings preserve the selected format and clip and allow manual ch
   await expect(page.getByTestId('convert-button')).toBeEnabled();
 
   const expectedSettings = {
-    format: 'webp', quality: 'low', scale: 0.5,
-    trimStart: 0.2, trimEnd: 0.9, smartFrameSkip: 'low',
+    format: 'webp',
+    quality: 'low',
+    scale: 0.5,
+    trimStart: 0.2,
+    trimEnd: 0.9,
+    smartFrameSkip: 'low',
   };
-  await expect.poll(() => page.evaluate(() => window.__TEST_HELPERS__?.getSettings()))
+  await expect
+    .poll(() => page.evaluate(() => window.__TEST_HELPERS__?.getSettings()))
     .toMatchObject(expectedSettings);
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('conversion-settings') ?? '{}')))
+  await expect
+    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('conversion-settings') ?? '{}')))
     .toMatchObject(expectedSettings);
+  const screenshotPath = test.info().outputPath('sharing-settings.png');
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  await test.info().attach('sharing-settings', {
+    path: screenshotPath,
+    contentType: 'image/png',
+  });
 
   await clickConvert(page);
   expect(await waitForConversionComplete(page)).toBe('done');
@@ -68,10 +86,14 @@ test('sharing settings preserve the selected format and clip and allow manual ch
   await setQuality(page, 'high');
   await expect(sharingButton).toBeEnabled();
   await expect(page.getByTestId('result-section')).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('conversion-settings') ?? '{}').quality))
+    .toBe('high');
   await page.reload();
   await expect(page.locator('input[name="quality"][value="high"]')).toBeChecked();
   await expect(page.locator('input[name="scale"][value="0.5"]')).toBeChecked();
   await expect(page.locator('input[name="format"][value="webp"]')).toBeChecked();
+  expect(browserErrors).toEqual([]);
 });
 
 test.describe('CI codec smoke', () => {

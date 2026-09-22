@@ -113,22 +113,6 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         value={local.settings.scale}
       />
 
-      <div class="mb-6 space-y-2" data-testid="sharing-settings">
-        <Button
-          class="w-full"
-          disabled={local.isBusy || sharingSettingsApplied()}
-          onClick={local.onSharingSettings}
-          variant="ghost"
-          data-testid="sharing-settings-button"
-        >
-          {sharingSettingsApplied() ? t('settings.sharing.applied') : t('settings.sharing.apply')}
-        </Button>
-        <p class="text-xs leading-relaxed text-text-secondary">
-          {t('settings.sharing.description')}
-        </p>
-        <p class="text-xs leading-relaxed text-text-secondary">{t('settings.sharing.sizeHint')}</p>
-      </div>
-
       <details class="mb-6 border-t border-border-subtle pt-3" data-testid="advanced-settings">
         <summary class="min-h-target-minimum cursor-pointer content-center text-xs font-medium tracking-wide text-text-secondary">
           <span>{t('settings.section.performance')}</span>
@@ -175,6 +159,29 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
           </Show>
         </div>
       </div>
+
+      <details class="mt-3 border-t border-border-subtle pt-2" data-testid="sharing-settings">
+        <summary class="min-h-target-minimum cursor-pointer content-center text-xs font-medium text-text-secondary">
+          {t('settings.sharing.title')}
+        </summary>
+        <div class="space-y-2 pt-2">
+          <p class="text-xs leading-relaxed text-text-secondary">
+            {t('settings.sharing.description')}
+          </p>
+          <p class="text-xs leading-relaxed text-text-secondary">
+            {t('settings.sharing.sizeHint')}
+          </p>
+          <Button
+            class="w-full"
+            disabled={local.isBusy || sharingSettingsApplied()}
+            onClick={local.onSharingSettings}
+            variant="ghost"
+            data-testid="sharing-settings-button"
+          >
+            {sharingSettingsApplied() ? t('settings.sharing.applied') : t('settings.sharing.apply')}
+          </Button>
+        </div>
+      </details>
     </Panel>
   );
 };

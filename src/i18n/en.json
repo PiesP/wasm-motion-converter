@@ -153,6 +153,7 @@
   "settings.sharing.applied": "Sharing settings applied",
   "settings.sharing.description": "Low quality and 50% scale reduce detail and target fewer frames. Keeps your chosen format and clip.",
   "settings.sharing.sizeHint": "File size depends on the video. Shorten the selected clip to reduce it further.",
+  "settings.sharing.title": "Reduce file size",
   "settings.stopConversion": "Stop video conversion",
   "settings.tooltip.format": "Choose GIF for universal support or WebP for smaller file size",
   "settings.tooltip.quality": "Higher quality = larger file size and slower conversion",
