@@ -51,6 +51,7 @@ interface ConversionMeasurement {
   elapsedMs: number;
   cpuSeconds: number;
   outputBytes: number;
+  outputSha256: string;
   peakJsDeltaMB: number | null;
   peakPssDeltaMB: number;
   peakRssDeltaMB: number;
@@ -229,6 +230,15 @@ async function runMeasuredConversion(
   const output = await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null);
   expect(output?.type).toBe(`image/${format}`);
 
+  // Hash outside the measured conversion interval so equal-setting comparisons
+  // can prove output identity without counting verification work as encoding.
+  const outputSha256 = await page.getByTestId('result-image').evaluate(async (element) => {
+    if (!(element instanceof HTMLImageElement)) throw new Error('Output image is unavailable');
+    const bytes = await (await fetch(element.src)).arrayBuffer();
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  });
+
   await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
   await page.requestGC();
   await page.waitForTimeout(500);
@@ -239,6 +249,7 @@ async function runMeasuredConversion(
     elapsedMs,
     cpuSeconds: samples.at(-1)!.cpuTimeSeconds - samples[0]!.cpuTimeSeconds,
     outputBytes: output!.size,
+    outputSha256,
     peakJsDeltaMB: peakDelta(samples, 'jsHeapMB'),
     peakPssDeltaMB: peakDelta(samples, 'pssMB')!,
     peakRssDeltaMB: peakDelta(samples, 'rssMB')!,
@@ -345,6 +356,7 @@ test.describe('opt-in Chromium resource profile', () => {
           expect(measurement.postGc.pssMB).toBeGreaterThan(0);
           expect(measurement.postGc.processCount).toBeGreaterThan(0);
         }
+        expect(new Set(measurements.map((measurement) => measurement.outputSha256)).size).toBe(1);
 
         const postGcPssSlope = theilSenSlope(
           measurements.map((measurement) => measurement.postGc.pssMB),
