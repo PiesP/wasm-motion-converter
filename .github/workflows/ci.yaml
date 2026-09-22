@@ -5,7 +5,7 @@ name: 🏗️ CI
 # - Run unit tests with coverage thresholds
 # - Run browser E2E tests
 # - Build the production app
-# - Check source duplication
+# - Report the required duplication status; strict duplication runs in Deep Verification
 #
 # Expensive mutation testing lives in deep-checks.yaml so PR feedback is not
 # blocked by a long-running, resource-heavy analysis.
@@ -128,7 +128,7 @@ jobs:
 
       - name: 📦 Setup project
         if: ${{ needs.changes.outputs.quality == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@adb7b05ff3781268c3625341951219da778bb40a
+        uses: PiesP/browser-core/automation/actions/setup-project@5fd4c8e8d0d84d8d46dd7b71b996d1664365f6d6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -154,7 +154,7 @@ jobs:
 
       - name: 📦 Setup project
         if: ${{ needs.changes.outputs.unit == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@adb7b05ff3781268c3625341951219da778bb40a
+        uses: PiesP/browser-core/automation/actions/setup-project@5fd4c8e8d0d84d8d46dd7b71b996d1664365f6d6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -189,7 +189,7 @@ jobs:
 
       - name: 📦 Setup project
         if: ${{ needs.changes.outputs.e2e == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@adb7b05ff3781268c3625341951219da778bb40a
+        uses: PiesP/browser-core/automation/actions/setup-project@5fd4c8e8d0d84d8d46dd7b71b996d1664365f6d6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -234,7 +234,7 @@ jobs:
 
       - name: 📦 Setup project
         if: ${{ needs.changes.outputs.build == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@adb7b05ff3781268c3625341951219da778bb40a
+        uses: PiesP/browser-core/automation/actions/setup-project@5fd4c8e8d0d84d8d46dd7b71b996d1664365f6d6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -255,26 +255,12 @@ jobs:
   duplication:
     name: pr-gate/duplication
     needs: changes
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: ⏭️ No duplication-relevant changes
-        if: ${{ needs.changes.outputs.duplication != 'true' }}
-        run: echo "Source duplication is not affected by this change set."
-
-      - name: 📥 Checkout code
-        if: ${{ needs.changes.outputs.duplication == 'true' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: true
-
-      - name: 🔧 Install nose
-        if: ${{ needs.changes.outputs.duplication == 'true' }}
-        run: bash scripts/ci/install-nose.sh
-
-      - name: 🔎 Check for new duplication
-        if: ${{ needs.changes.outputs.duplication == 'true' }}
-        run: nose query src --baseline .nose-baseline.json --fail-on new
+      - name: ℹ️ Duplication is checked by Deep Verification
+        run: echo "Duplication is informational for PR CI; the weekly or manual Deep Verification gate owns this check."
 
   report-pr-gate-statuses:
     name: Report PR gate statuses

@@ -2,11 +2,12 @@ name: 🔒 Security Scanning
 
 # Responsibility: Security analysis for Node.js + pnpm project
 # - Default branch/PR/merge queue: CodeQL for Actions and JavaScript/TypeScript
+#   plus Semgrep secrets coverage
 # - PR gate: OSV diff scan
 # - Merge queue/manual gate: OSV full scan
-# - Default branch/scheduled/manual depth: pinned-tool freshness + OSV full scan + Semgrep SARIF
+# - Scheduled/manual depth: pinned-tool freshness + OSV full scan + full Semgrep SARIF
 #
-# Trigger: Push/PR to master + merge queue + daily schedule + manual
+# Trigger: Push/PR to master + merge queue + weekly schedule + manual
 
 on:
   push:
@@ -16,7 +17,7 @@ on:
   merge_group:
     types: [checks_requested]
   schedule:
-    - cron: "0 1 * * *" # Daily at 1 AM UTC
+    - cron: "0 1 * * 0" # Weekly at 1 AM UTC
   workflow_dispatch:
 
 permissions:
@@ -611,7 +612,7 @@ jobs:
     # semgrep/semgrep:1.177.0 — last checked: 2026-09-14
     # Check for updates: https://github.com/semgrep/semgrep/releases
     container:
-      image: semgrep/semgrep:1.177.0@sha256:acaac22ffc7b7cc5926de0751b223bce0b2491c33d18422fa72f632c78d81198
+      image: semgrep/semgrep:1.177.0@sha256:d1825c2c72110b5bfbf0602ff68f7f117322597a7c33037a79dba9f897f5f1f0
     steps:
       - name: ⏭️ No Semgrep-relevant changes
         if: ${{ needs.changes.outputs.semgrep != 'true' }}
@@ -624,8 +625,10 @@ jobs:
           submodules: true
           persist-credentials: false
 
-      - name: 🔍 Run Semgrep scan
-        if: ${{ needs.changes.outputs.semgrep_full == 'true' }}
+      - name: 🔍 Run full Semgrep scan (weekly/manual)
+        if: >-
+          ${{ needs.changes.outputs.semgrep_full == 'true' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         run: |
           set -euo pipefail
           semgrep scan \
@@ -638,8 +641,10 @@ jobs:
             --output=semgrep.sarif \
             .
 
-      - name: 🔐 Scan documentation for secrets
-        if: ${{ needs.changes.outputs.semgrep == 'true' && needs.changes.outputs.semgrep_full != 'true' }}
+      - name: 🔐 Run Semgrep secrets scan on routine events
+        if: >-
+          ${{ needs.changes.outputs.semgrep == 'true' &&
+          github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' }}
         run: |
           set -euo pipefail
           semgrep scan \

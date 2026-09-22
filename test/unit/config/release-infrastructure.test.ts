@@ -38,7 +38,7 @@ describe('Release infrastructure', () => {
     expect(workflow).toContain("needs.changes.outputs.dependency == 'true'");
     expect(workflow).toContain("needs.changes.outputs.codeql == 'true'");
     expect(workflow).toContain("needs.changes.outputs.semgrep_full == 'true'");
-    expect(workflow).toContain('Scan documentation for secrets');
+    expect(workflow).toContain('Run Semgrep secrets scan on routine events');
     expect(workflow).toContain(
       "github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || github.event_name == 'schedule'"
     );
