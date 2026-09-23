@@ -196,7 +196,7 @@ describe('isWorkerResponse', () => {
   };
 
   const validProfile = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     totalDurationMs: 5000,
     heapStartMB: 0,
     heapEndMB: 0,
@@ -214,6 +214,16 @@ describe('isWorkerResponse', () => {
         fps: 3000,
       },
     ],
+    operationTotals: {
+      pixelCopy: { wallMs: 0, samples: 0 },
+      motionFeatures: { wallMs: 0, samples: 0 },
+      motionDecision: { wallMs: 0, samples: 0 },
+      gifPixelPreparation: { wallMs: 0, samples: 0 },
+      gifQuantization: { wallMs: 0, samples: 0 },
+      gifPaletteMapping: { wallMs: 0, samples: 0 },
+      gifFrameWrite: { wallMs: 0, samples: 0 },
+    },
+    copyPathCounts: { RGBX: 0, RGBA: 0, BGRA: 0, BGRX: 0, canvas: 0, unknown: 0 },
     stageWallTimePct: { demuxing: 0.2, transcoding: 0, finalizing: 0 },
     dominantStage: 'demuxing',
     summary: '[5000ms total]',
@@ -323,6 +333,36 @@ describe('isWorkerResponse', () => {
       isWorkerResponse({
         ...validComplete,
         profile: { ...validProfile, dominantStage: 'decoding' },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: {
+          ...validProfile,
+          operationTotals: {
+            ...validProfile.operationTotals,
+            pixelCopy: { wallMs: 1, samples: 0.5 },
+          },
+        },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: {
+          ...validProfile,
+          operationTotals: { pixelCopy: { wallMs: 1, samples: 1 } },
+        },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: {
+          ...validProfile,
+          copyPathCounts: { ...validProfile.copyPathCounts, canvas: -1 },
+        },
       })
     ).toBe(false);
   });

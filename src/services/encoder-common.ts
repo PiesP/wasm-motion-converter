@@ -12,6 +12,7 @@
 
 import type { SmartFrameSkipMode } from '@t/conversion-types';
 import { FPS_CLAMP_MAX, MEMORY_PRESSURE_TARGET_FPS, MIN_OUTPUT_FPS } from '@utils/constants';
+import type { ProfileCopyPathRecorder, ProfileOperationRecorder } from './conversion-profiler';
 
 /** Base options shared by all format encoders */
 export interface BaseEncoderOptions {
@@ -38,6 +39,10 @@ export interface BaseEncoderOptions {
     | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
+  /** Development profiling callback for overlapping per-operation wall time. */
+  profileOperation?: ProfileOperationRecorder | undefined;
+  /** Development profiling callback for the selected frame-copy strategy. */
+  profileCopyPath?: ProfileCopyPathRecorder | undefined;
 }
 
 /**

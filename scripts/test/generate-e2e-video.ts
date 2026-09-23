@@ -25,6 +25,14 @@ const CFR_MARKERS =
   "drawbox=c=blue:t=fill:enable='eq(n,2)'," +
   "drawbox=c=yellow:t=fill:enable='eq(n,3)'";
 
+const PERF_MARKER_COLORS = ['red', 'lime', 'blue', 'yellow'] as const;
+const PERF_MARKER_DRAWS = Array.from({ length: 12 }, (_, block) => {
+  const color = PERF_MARKER_COLORS[block % PERF_MARKER_COLORS.length]!;
+  const firstFrame = block * 12;
+  const lastFrame = firstFrame + 11;
+  return `drawbox=c=${color}:t=fill:enable='between(n,${firstFrame},${lastFrame})'`;
+}).join(',');
+
 const fixtures: VideoFixture[] = [
   {
     fileName: 'test-video-ci-h264.mp4',
@@ -43,6 +51,11 @@ const fixtures: VideoFixture[] = [
     fileName: 'test-video-contract-cfr.mp4',
     input: CFR_MARKERS,
     extraEncoderArgs: ['-g', '1'],
+  },
+  {
+    fileName: 'test-video-contract-motion-120fps.mp4',
+    input: `color=c=black:size=320x180:rate=120:duration=1.2,${PERF_MARKER_DRAWS}`,
+    extraEncoderArgs: ['-preset', 'ultrafast', '-crf', '18', '-g', '1'],
   },
   {
     fileName: 'test-video-contract-bframes.mp4',

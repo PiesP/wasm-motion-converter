@@ -70,6 +70,35 @@
       }
     },
     {
+      "id": "motion-cadence-gif",
+      "fixture": "public/test-video-contract-motion-120fps.mp4",
+      "format": "gif",
+      "settings": {
+        "quality": "high",
+        "scale": "1",
+        "trimStart": 0,
+        "trimEnd": 0,
+        "smartFrameSkip": "off"
+      },
+      "expected": {
+        "width": 320,
+        "height": 180,
+        "markers": [
+          "red", "red", "lime", "lime", "blue", "blue", "yellow", "yellow",
+          "red", "red", "lime", "lime", "blue", "blue", "yellow", "yellow",
+          "red", "red", "lime", "lime", "blue", "blue", "yellow", "yellow", "yellow"
+        ],
+        "durationsMs": [
+          20, 50, 50, 50, 50, 50, 50, 50,
+          50, 50, 50, 50, 50, 50, 50, 50,
+          50, 50, 50, 50, 50, 50, 50, 50,
+          40
+        ],
+        "durationToleranceMs": 20,
+        "maxColorDistance": 96
+      }
+    },
+    {
       "id": "vfr-par-webp",
       "fixture": "public/test-video-contract-vfr-par.mp4",
       "format": "webp",

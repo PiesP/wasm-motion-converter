@@ -80,6 +80,8 @@ export async function runWorkerPipeline(
     ? (await import('../conversion-profiler')).ConversionProfiler
     : undefined;
   const profiler = profilerClass ? new profilerClass() : null;
+  const profileOperation = profiler?.recordOperation;
+  const profileCopyPath = profiler?.recordCopyPath;
 
   // Build a ConversionRequest for the existing pipeline code.
   // Use maxMemoryMB from options (if provided) so the worker can receive
@@ -278,6 +280,8 @@ export async function runWorkerPipeline(
           frameDecimation: gifDecimation,
           smartFrameSkip: options.smartFrameSkip,
           onEncodingComplete: recordCompletedFrameCounts,
+          profileOperation,
+          profileCopyPath,
           maxFrames: request.maxFrames,
           maxOutputBytes: request.maxOutputBytes,
           assertAdditionalMemoryBytes: assertMemoryBudget,
@@ -354,6 +358,8 @@ export async function runWorkerPipeline(
             frameDecimation: webpDecimation,
             smartFrameSkip: options.smartFrameSkip,
             onEncodingComplete: recordCompletedFrameCounts,
+            profileOperation,
+            profileCopyPath,
             maxFrames: request.maxFrames,
             maxOutputBytes: request.maxOutputBytes,
             onFrameDecoded: decodeProgressCb,

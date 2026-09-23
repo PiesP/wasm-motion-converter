@@ -301,11 +301,15 @@ export async function encodeGif(
 
   function writeIndexedFrame(indexed: Uint8Array, delay: number, palette: number[][]): void {
     assertCanWriteOutputFrame();
+    const writeStart = opts.profileOperation ? performance.now() : null;
     encoder.writeFrame(indexed, w, h, {
       palette,
       repeat: 0,
       delay,
     });
+    if (writeStart !== null) {
+      opts.profileOperation?.('gifFrameWrite', Math.max(0, performance.now() - writeStart));
+    }
     outputFrames++;
   }
 
@@ -323,7 +327,14 @@ export async function encodeGif(
     lastIndexedData = null;
     liveIndexedBytes = 0;
     assertGifWorkingMemory(encoder.stream.buffer.byteLength, exactRgbaBytes, pixelCount);
+    const paletteMapStart = opts.profileOperation ? performance.now() : null;
     const indexed = applyPalette(rgbaData, palette, 'rgb565');
+    if (paletteMapStart !== null) {
+      opts.profileOperation?.(
+        'gifPaletteMapping',
+        Math.max(0, performance.now() - paletteMapStart)
+      );
+    }
     if (indexed.byteLength !== pixelCount) {
       throw new RangeError(
         `gifenc returned ${indexed.byteLength} indices for ${pixelCount} pixels`
@@ -370,6 +381,8 @@ export async function encodeGif(
         hwAccel: 'prefer-hardware',
         smartFrameSkip: opts.smartFrameSkip,
         pixelFormat: 'rgba',
+        profileOperation: opts.profileOperation,
+        profileCopyPath: opts.profileCopyPath,
         onFrameDecoded: (_frameNum, total) => {
           estimatedTotalFrames = total;
           // Report decoding progress — throttle to every 10 frames
@@ -433,6 +446,7 @@ export async function encodeGif(
             if (!exactRgbaScratch) {
               exactRgbaScratch = new Uint8Array(exactRgbaBytes);
             }
+            const pixelPreparationStart = opts.profileOperation ? performance.now() : null;
             exactRgbaScratch.set(rgbaData.subarray(0, exactRgbaBytes));
             globalBufferPool.release(rgbaData);
             rgbaReleased = true;
@@ -440,10 +454,23 @@ export async function encodeGif(
             if (ditherStrength > 0) {
               bayerDitherRgba(exactRgbaScratch, w, h, ditherStrength);
             }
+            if (pixelPreparationStart !== null) {
+              opts.profileOperation?.(
+                'gifPixelPreparation',
+                Math.max(0, performance.now() - pixelPreparationStart)
+              );
+            }
 
             // Quantize each frame independently. The first palette becomes the GIF's
             // global table; subsequent palettes are emitted as local color tables.
+            const quantizationStart = opts.profileOperation ? performance.now() : null;
             const framePalette = quantize(exactRgbaScratch, maxColors, { format: 'rgb565' });
+            if (quantizationStart !== null) {
+              opts.profileOperation?.(
+                'gifQuantization',
+                Math.max(0, performance.now() - quantizationStart)
+              );
+            }
             lastPalette = framePalette;
             writeFrameWithDelay(exactRgbaScratch, delay, framePalette);
           } finally {

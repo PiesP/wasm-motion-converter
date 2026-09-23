@@ -15,8 +15,18 @@ describe('ConversionProfiler', () => {
     const report = new ConversionProfiler().finish();
 
     expect(report).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       stages: [],
+      operationTotals: {
+        pixelCopy: { wallMs: 0, samples: 0 },
+        motionFeatures: { wallMs: 0, samples: 0 },
+        motionDecision: { wallMs: 0, samples: 0 },
+        gifPixelPreparation: { wallMs: 0, samples: 0 },
+        gifQuantization: { wallMs: 0, samples: 0 },
+        gifPaletteMapping: { wallMs: 0, samples: 0 },
+        gifFrameWrite: { wallMs: 0, samples: 0 },
+      },
+      copyPathCounts: { RGBX: 0, RGBA: 0, BGRA: 0, BGRX: 0, canvas: 0, unknown: 0 },
       stageWallTimePct: { demuxing: 0, transcoding: 0, finalizing: 0 },
       dominantStage: null,
     });
@@ -77,5 +87,23 @@ describe('ConversionProfiler', () => {
     expect(second).toBe(first);
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.stages)).toBe(true);
+  });
+
+  it('aggregates finite operation wall times separately from overlapping stages', () => {
+    const profiler = new ConversionProfiler();
+    profiler.recordOperation('pixelCopy', 3.25);
+    profiler.recordOperation('pixelCopy', 1.15);
+    profiler.recordOperation('gifQuantization', 8.4);
+    profiler.recordOperation('gifFrameWrite', Number.NaN);
+    profiler.recordCopyPath('RGBX');
+    profiler.recordCopyPath('RGBX');
+    profiler.recordCopyPath('canvas');
+
+    const report = profiler.finish();
+    expect(report.operationTotals.pixelCopy).toEqual({ wallMs: 4.4, samples: 2 });
+    expect(report.operationTotals.gifQuantization).toEqual({ wallMs: 8.4, samples: 1 });
+    expect(report.operationTotals.gifFrameWrite).toEqual({ wallMs: 0, samples: 0 });
+    expect(report.copyPathCounts).toMatchObject({ RGBX: 2, canvas: 1, unknown: 0 });
+    expect(report.summary).toContain('gifQuantization=8.4ms/1');
   });
 });

@@ -130,6 +130,8 @@ export async function encodeWebpOffscreen(
       maxInputChunks: inputChunkLimit,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
+      profileOperation: opts.profileOperation,
+      profileCopyPath: opts.profileCopyPath,
       pixelFormat: 'rgba',
       stagedCopyLookahead: true,
       onFrameDecoded: (_frameNum: number, total: number) => {

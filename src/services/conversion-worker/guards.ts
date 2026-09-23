@@ -26,6 +26,10 @@ function isFiniteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
+function isCount(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -35,6 +39,16 @@ function isVideoRotation(value: unknown): boolean {
 }
 
 const PROFILE_STAGES = ['demuxing', 'transcoding', 'finalizing'] as const;
+const PROFILE_OPERATIONS = [
+  'pixelCopy',
+  'motionFeatures',
+  'motionDecision',
+  'gifPixelPreparation',
+  'gifQuantization',
+  'gifPaletteMapping',
+  'gifFrameWrite',
+] as const;
+const PROFILE_COPY_PATHS = ['RGBX', 'RGBA', 'BGRA', 'BGRX', 'canvas', 'unknown'] as const;
 const WORKER_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const WORKER_LOG_CATEGORIES = ['conversion', 'general', 'demuxer', 'encoders', 'decoders'] as const;
 
@@ -84,7 +98,7 @@ function isValidStageMetrics(value: unknown): value is StageMetrics {
 /** Validate a profiler report crossing the Worker boundary. */
 function isValidProfileReport(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (value.schemaVersion !== 2) return false;
+  if (value.schemaVersion !== 3) return false;
   if (!isFiniteNonNegative(value.totalDurationMs)) return false;
   if (!isFiniteNonNegative(value.heapStartMB)) return false;
   if (!isFiniteNonNegative(value.heapEndMB)) return false;
@@ -98,6 +112,25 @@ function isValidProfileReport(value: unknown): boolean {
   }
   const stageNames = value.stages.map((stage) => stage.stage);
   if (new Set(stageNames).size !== stageNames.length) return false;
+  const operationTotals = value.operationTotals;
+  if (!isRecord(operationTotals)) return false;
+  if (
+    Object.keys(operationTotals).length !== PROFILE_OPERATIONS.length ||
+    !PROFILE_OPERATIONS.every((operation) => {
+      const total = operationTotals[operation];
+      return isRecord(total) && isFiniteNonNegative(total.wallMs) && isCount(total.samples);
+    })
+  ) {
+    return false;
+  }
+  const copyPathCounts = value.copyPathCounts;
+  if (
+    !isRecord(copyPathCounts) ||
+    Object.keys(copyPathCounts).length !== PROFILE_COPY_PATHS.length ||
+    !PROFILE_COPY_PATHS.every((path) => isCount(copyPathCounts[path]))
+  ) {
+    return false;
+  }
   const stageWallTimePct = value.stageWallTimePct;
   if (!isRecord(stageWallTimePct)) return false;
   if (!PROFILE_STAGES.every((stage) => isFiniteNonNegative(stageWallTimePct[stage]))) {

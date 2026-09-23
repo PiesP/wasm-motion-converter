@@ -88,6 +88,8 @@ export async function encodeWebp(
       maxInputChunks: inputChunkLimit,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
+      profileOperation: opts.profileOperation,
+      profileCopyPath: opts.profileCopyPath,
       stagedCopyLookahead: true,
       onFrameDecoded: (_frameNum, total) => {
         totalInputFrames = total;

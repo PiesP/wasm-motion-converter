@@ -117,6 +117,8 @@ async function _runPipelineInner(
   profiler: import('./conversion-profiler').ConversionProfiler | null
 ): Promise<ArrayBuffer> {
   const throttled = createThrottledProgress(onProgress, PROGRESS_THROTTLE_MS);
+  const profileOperation = profiler?.recordOperation;
+  const profileCopyPath = profiler?.recordCopyPath;
 
   // UI progress ranges. Decode and encode overlap in the streaming transcode
   // stage, so these weights are presentation estimates rather than profiler
@@ -343,6 +345,8 @@ async function _runPipelineInner(
                 frameDecimation: gifDecimation,
                 smartFrameSkip: request.smartFrameSkip,
                 onEncodingComplete: recordCompletedFrameCounts,
+                profileOperation,
+                profileCopyPath,
                 ...outputLimits,
                 assertAdditionalMemoryBytes: assertMemoryBudget,
                 onFrameDecoded: decodeProgressCb,
@@ -468,6 +472,8 @@ async function _runPipelineInner(
                 hwAccel: 'prefer-hardware',
                 smartFrameSkip: request.smartFrameSkip,
                 pixelFormat: 'rgba',
+                profileOperation,
+                profileCopyPath,
                 stagedCopyLookahead: true,
                 frameMemoryBudget,
                 processingFailureSignal: streamingEncoder.failureSignal,
@@ -564,6 +570,8 @@ async function _runPipelineInner(
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
                 onEncodingComplete: recordCompletedFrameCounts,
+                profileOperation,
+                profileCopyPath,
                 ...outputLimits,
                 onFrameDecoded: decodeProgressCb,
               },
@@ -600,6 +608,8 @@ async function _runPipelineInner(
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
                 onEncodingComplete: recordCompletedFrameCounts,
+                profileOperation,
+                profileCopyPath,
                 ...outputLimits,
                 onFrameDecoded: decodeProgressCb,
               },
