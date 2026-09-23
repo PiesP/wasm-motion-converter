@@ -24,6 +24,7 @@ these repository-relative assets:
 - `public/test-video-ci-h264.mp4`
 - `public/test-video-ci-high-motion-120fps.mp4`
 - `public/test-video-contract-cfr.mp4`
+- `public/test-video-contract-motion-120fps.mp4`
 - `public/test-video-contract-bframes.mp4`
 - `public/test-video-contract-vp9.webm`
 - `public/test-video-contract-vfr-par.mp4`
