@@ -101,6 +101,91 @@ test.describe('deterministic output contracts', () => {
   }
 });
 
+test.describe('Canvas pixel-copy fallback', () => {
+  test('uses direct VideoFrame drawing for identity-sized frames and preserves output', async ({
+    page,
+  }) => {
+    const contract = cases.find((candidate) => candidate.id === 'cfr-trim-gif');
+    if (!contract) throw new Error('Missing cfr-trim-gif output contract');
+    await page.addInitScript(() => {
+      Object.defineProperty(globalThis, '__wmcWorkerConstructionAttempts', {
+        configurable: true,
+        value: 0,
+        writable: true,
+      });
+      Object.defineProperty(globalThis, '__wmcIdentitySizedVideoFrameDraws', {
+        configurable: true,
+        value: 0,
+        writable: true,
+      });
+      class UnavailableWorker {
+        constructor() {
+          globalThis.__wmcWorkerConstructionAttempts++;
+          throw new DOMException('Force main-thread conversion', 'NotSupportedError');
+        }
+      }
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        value: UnavailableWorker,
+        writable: true,
+      });
+
+      Object.defineProperty(VideoFrame.prototype, 'copyTo', {
+        configurable: true,
+        value: function () {
+          return Promise.reject(new DOMException('Force Canvas pixel copying', 'NotSupportedError'));
+        },
+      });
+
+      const contextPrototype = OffscreenCanvasRenderingContext2D.prototype;
+      const originalDrawImage = contextPrototype.drawImage;
+      Object.defineProperty(contextPrototype, 'drawImage', {
+        configurable: true,
+        value: function (this: OffscreenCanvasRenderingContext2D, ...args: unknown[]) {
+          const [source, ...coordinates] = args;
+          if (
+            source instanceof VideoFrame &&
+            coordinates.length === 2 &&
+            coordinates[0] === 0 &&
+            coordinates[1] === 0 &&
+            source.displayWidth === this.canvas.width &&
+            source.displayHeight === this.canvas.height
+          ) {
+            globalThis.__wmcIdentitySizedVideoFrameDraws++;
+          }
+          return Reflect.apply(originalDrawImage, this, args);
+        },
+      });
+    });
+    await page.goto('/');
+    test.skip(
+      !(await isVideoFixtureCodecSupported(page, contract.fixture.replace(/^public\//, ''))),
+      `Browser explicitly rejected the ${contract.id} input codec configuration`
+    );
+
+    const output = await runContractConversion(page, contract);
+    const pathProbe = await page.evaluate(() => {
+      const helpers = window.__TEST_HELPERS__ as unknown as {
+        getConversionProfile: () => {
+          copyPathCounts: Record<string, number>;
+        } | null;
+      };
+      const profile = helpers.getConversionProfile();
+      return {
+        workerConstructionAttempts: globalThis.__wmcWorkerConstructionAttempts,
+        identitySizedVideoFrameDraws: globalThis.__wmcIdentitySizedVideoFrameDraws,
+        canvasCopyFrames: profile?.copyPathCounts.canvas ?? 0,
+      };
+    });
+    const observation = await verifyAnimatedOutput(page, output, contract, markers);
+
+    expect(observation.frameCount).toBe(contract.expected.markers.length);
+    expect(pathProbe.workerConstructionAttempts).toBeGreaterThan(0);
+    expect(pathProbe.identitySizedVideoFrameDraws).toBeGreaterThan(0);
+    expect(pathProbe.identitySizedVideoFrameDraws).toBe(pathProbe.canvasCopyFrames);
+  });
+});
+
 test.describe('conversion Worker fallback boundary', () => {
   const contract = cases.find((candidate) => candidate.id === 'cfr-trim-gif');
   if (!contract) throw new Error('Missing cfr-trim-gif output contract');
@@ -228,4 +313,5 @@ test.describe('conversion Worker fallback boundary', () => {
 declare global {
   // Test-only probe installed before application startup.
   var __wmcWorkerConstructionAttempts: number;
+  var __wmcIdentitySizedVideoFrameDraws: number;
 }

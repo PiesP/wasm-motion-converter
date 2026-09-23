@@ -74,11 +74,33 @@ Each measured conversion retains its encoded output and SHA-256 after the timed
 interval. Playwright attachments bind input digest, settings, wall time, CPU,
 sampled memory, output bytes, and decoded frames in one evidence record. All
 outputs are decoded after the measured cycles and post-GC samples. The
-`cfr-trim-gif` workload applies the shared color, geometry, and timing contract;
-the high-motion workloads retain full frame observations without claiming an
-exact frame oracle. A failed color contract preserves all measured outputs and
-fails the test. An older incorrect output is an error baseline, not a performance
-advantage.
+resource profile's contract workload is `motion-cadence-gif`: the
+320×180 `test-video-contract-motion-120fps.mp4` fixture is converted to GIF at
+high quality, full duration, 100% scale, with smart frame skipping off. Its
+decoded output is checked against the shared color order, frame count, geometry,
+and cadence contract. `cfr-trim-gif` remains a separate output-contract test; it
+is not the current resource-profile workload. Measurements from the older
+`cfr-trim-gif` profile and the current `motion-cadence-gif` profile are not a
+direct before/after comparison because the input, settings, and measured frame
+work differ. Compare revisions with the same source except for the targeted
+change, fixture, settings, harness, browser, host, and run order.
+
+The profiler's non-overlapping stage durations describe demuxing, combined
+streaming decode/encode, and finalization. Fine-grained operation totals such as
+pixel copy and GIF palette mapping can overlap one another; do not add them or
+interpret them as stage percentages. `transcodingWallMs` is the combined
+decode/encode stage duration. `elapsedMs` spans the UI conversion request
+through observed completion and includes resource sampling and completion
+detection, so it is not encoder-only time. A failed color contract preserves
+all measured outputs and fails the test. An older incorrect output is an error
+baseline, not a performance advantage.
+
+The equal-size, non-rotated Canvas copy shortcut avoids creating an intermediate
+`ImageBitmap` for that path. It still calls `drawImage()`, reads pixels with
+`getImageData()`, and converts those pixels; conversions using native
+`VideoFrame.copyTo()`, scaling, or rotation do not exercise this shortcut. This
+is a path-specific optimization, not a claim that every conversion is faster or
+that pixel copying has been removed.
 
 Wall time includes UI completion detection and resource sampling at 150 ms
 intervals, so short conversions cannot establish fine encoder timing. Memory
