@@ -46,98 +46,35 @@ The Playwright configuration starts a local Vite server unless
 `SKIP_WEB_SERVER` is set. Use `PLAYWRIGHT_TEST_PROFILE=ci` or `deploy` only when
 you need the corresponding restricted profile.
 
-The resource profile is intentionally separate from the regular and CI suites
-because process memory varies by host. On Linux it samples Chromium process PSS,
-RSS, and CPU time through CDP and `/proc`, alongside page JS heap and the optional
-user-agent-specific memory API. It does not pass the deterministic
-`--disable-gpu` setting used by regular tests; the actual hardware or software
-GPU remains environment-dependent, and GPU VRAM is not measured. The profile
-warms each encoder before five same-page conversions and also measures
-cancellation latency and recovery. PSS is the primary process-memory signal;
-RSS is retained as a diagnostic because shared mappings are counted in every
-Chromium process's RSS. Every process in a CDP snapshot must have readable PSS
-and RSS before a sample can contribute to a peak or slope. If a process exits
-while `/proc` is read, the sampler replaces the whole CDP snapshot once. A
-second incomplete snapshot fails with PID, process-type, source, and missing
-field evidence. RSS from `/proc/<pid>/status` remains diagnostic data and is
-never substituted for unavailable PSS.
-
-The resource pretest additionally generates a small VP9/WebM fixture with coded
-dimensions of 520×520 and a 100:1 pixel aspect ratio. MediaBunny exposes this as
-52,000×520 display-aspect dimensions, just beyond the conservative per-frame
-working-memory limit. The profile verifies the real container metadata, samples
-the fast rejection path at 20 ms intervals, and checks repeated post-GC PSS/RSS
-slopes. This demonstrates rejection before large Canvas, Worker, or frame-buffer
-allocations; it is not a GPU VRAM measurement.
-
-Each measured conversion retains its encoded output and SHA-256 after the timed
-interval. Playwright attachments bind input digest, settings, wall time, CPU,
-sampled memory, output bytes, and decoded frames in one evidence record. All
-outputs are decoded after the measured cycles and post-GC samples. The
-resource profile's contract workload is `motion-cadence-gif`: the
-320×180 `test-video-contract-motion-120fps.mp4` fixture is converted to GIF at
-high quality, full duration, 100% scale, with smart frame skipping off. Its
-decoded output is checked against the shared color order, frame count, geometry,
-and cadence contract. `cfr-trim-gif` remains a separate output-contract test; it
-is not the current resource-profile workload. Measurements from the older
-`cfr-trim-gif` profile and the current `motion-cadence-gif` profile are not a
-direct before/after comparison because the input, settings, and measured frame
-work differ. Compare revisions with the same source except for the targeted
-change, fixture, settings, harness, browser, host, and run order.
-
-The profiler's non-overlapping stage durations describe demuxing, combined
-streaming decode/encode, and finalization. Fine-grained operation totals such as
-pixel copy and GIF palette mapping can overlap one another; do not add them or
-interpret them as stage percentages. `transcodingWallMs` is the combined
-decode/encode stage duration. `elapsedMs` spans the UI conversion request
-through observed completion and includes resource sampling and completion
-detection, so it is not encoder-only time. A failed color contract preserves
-all measured outputs and fails the test. An older incorrect output is an error
-baseline, not a performance advantage.
-
-The equal-size, non-rotated Canvas copy shortcut avoids creating an intermediate
-`ImageBitmap` for that path. It still calls `drawImage()`, reads pixels with
-`getImageData()`, and converts those pixels; conversions using native
-`VideoFrame.copyTo()`, scaling, or rotation do not exercise this shortcut. This
-is a path-specific optimization, not a claim that every conversion is faster or
-that pixel copying has been removed.
-
-Wall time includes UI completion detection and resource sampling at 150 ms
-intervals, so short conversions cannot establish fine encoder timing. Memory
-peaks are observed sample maxima. CPU covers the Chromium processes reported by
-CDP; a change in sampled process IDs makes its delta unavailable and fails the
-measurement gate. Processes that start and exit between samples are outside that
-CPU observation. Repeated identical settings must retain the same output digest,
-without claiming stability across browser, codec, or dependency versions. Compare
-revisions with the same fixtures, settings, harness, browser, and host, and retain
-the source binding and run order alongside the attachments.
+See [Resource testing](./RESOURCE-TESTING.md) for the opt-in resource profile's
+workload, signals, limits, and interpretation rules.
 
 ## Media fixtures
 
 Fresh CI checkouts generate `public/test-video-ci-h264.mp4` before the CI browser
 profile. The same generator creates a compact output-contract corpus: H.264/MP4
-CFR inputs with and without B-frames, a VP9/WebM CFR input, an H.264 VFR input with
-2:1 pixel aspect ratio, and a fixture with 90-degree display rotation and distinct
-corner markers. Fixture generation uses `ffprobe` to reject a B-frame input
-without actual B pictures and reordered presentation/decode timestamps.
+CFR inputs with and without B-frames, a VP9/WebM CFR input, an H.264 VFR input
+with 2:1 pixel aspect ratio, and a fixture with 90-degree display rotation and
+distinct corner markers. Fixture generation uses `ffprobe` to reject a B-frame
+input without actual B pictures and reordered presentation/decode timestamps.
 `e2e/output-contract.spec.ts` checks GIF trimming across frame boundaries and
-WebP geometry/timing, then uses the
-browser's `ImageDecoder` to fully decode every downloaded frame and assert display
-geometry, color-marker order, per-frame timing, and total playback duration. It
-also checks the serial Canvas WebP and WASM WebP encoders against the same VFR/PAR
-contract when Worker construction is unavailable. The WASM case disables only
-Canvas WebP encoding, keeping Canvas pixel copying available. A failure after
-the GIF Worker initialization message cannot silently retry on the main thread.
+WebP geometry/timing, then uses the browser's `ImageDecoder` to fully decode
+every downloaded frame and assert display geometry, color-marker order,
+per-frame timing, and total playback duration. It also checks the serial Canvas
+WebP and WASM WebP encoders against the same VFR/PAR contract when Worker
+construction is unavailable. The WASM case disables only Canvas WebP encoding,
+keeping Canvas pixel copying available. A failure after the GIF Worker
+initialization message cannot silently retry on the main thread.
 
 The shared contract in `../validation/windows/output-contract.json` is consumed
 by both Playwright and the production-bundle Windows profile. Codec skips are
-allowed only when `VideoDecoder.isConfigSupported()` explicitly rejects the input
-configuration; an unexpected extraction, conversion, geometry, ordering, or
-timing result fails the test.
+allowed only when `VideoDecoder.isConfigSupported()` explicitly rejects the
+input configuration; an unexpected extraction, conversion, geometry, ordering,
+or timing result fails the test.
 
-The larger codec matrix referenced by `lib/test-manifest.ts` is
-local-only and intentionally excluded from Git; add compatible files under
-`public/` before running matrix, variation, regression, or performance suites.
+The larger codec matrix referenced by `lib/test-manifest.ts` is local-only and
+intentionally excluded from Git; add compatible files under `public/` before
+running matrix, variation, regression, or performance suites.
 
 Browser codec support is detected at runtime with
 `VideoDecoder.isConfigSupported()`. Do not replace capability detection with a
@@ -155,10 +92,9 @@ static browser or codec allowlist.
 ## CI coverage
 
 Fast CI runs the quality gate, unit coverage, the repository-backed E2E profile
-(including deterministic output contracts), the production build, and duplication
-checks. Deep verification adds mutation
-testing. The workflow files in `.github/workflows/` are authoritative when this
-summary changes.
+(including deterministic output contracts), the production build, and
+duplication checks. Deep verification adds mutation testing. The workflow files
+in `.github/workflows/` are authoritative when this summary changes.
 
 ## Common pitfalls
 
