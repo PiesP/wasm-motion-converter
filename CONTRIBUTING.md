@@ -15,21 +15,13 @@ Thanks for improving **dropconvert**.
 
 ### Bug reports: include diagnostics
 
+- The WebCodecs or input-codec error shown by the application
+- Relevant browser console errors
 - Browser + version
 - OS + device type
 - Expected vs. actual behavior
 - Exact repro steps
 - Input video details (format, codec, resolution, file size)
-- DevTools values: `typeof SharedArrayBuffer`, `crossOriginIsolated`
-
-DevTools snippet:
-
-```js
-({
-  sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
-  crossOriginIsolated,
-});
-```
 
 Avoid attaching sensitive or private files.
 
@@ -65,13 +57,18 @@ behavior changes also require the relevant Playwright flow. See the
 ## Project constraints
 
 - Keep media processing in the browser; do not add server uploads.
-- Preserve the COOP/COEP headers required for `SharedArrayBuffer`.
+- Preserve the COOP/COEP security boundary and `SharedArrayBuffer`
+  availability. The current single-threaded encoders do not require either
+  cross-origin isolation or `SharedArrayBuffer`.
 - Bundle runtime code locally; do not add runtime CDN dependencies.
 - Keep progress, cancellation, error, and cleanup behavior explicit.
 
 ## Code style
 
-- Source, comments, documentation, and commit messages are English.
+- English is canonical for source, comments, documentation, and commit
+  messages. The supported translated documentation is limited to the root
+  `README.ko.md` and `README.ja.md`, which must keep the same product, privacy,
+  support, and warning meaning as `README.md`.
 - Keep diffs small and focused; keep loading/progress/error states intact.
 - Provide explicit user feedback for long-running actions.
 - Use alias-based, leaf imports for cross-folder modules.

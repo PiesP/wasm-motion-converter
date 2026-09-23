@@ -7,11 +7,12 @@ replace `pnpm test:e2e:ci` or `pnpm verify:full`.
 
 ## Build inputs
 
-Prepare the production build and the deterministic media fixtures from the
-repository root. The fixture command requires FFmpeg's `ffmpeg` and `ffprobe`.
+In a prepared environment, use the Node.js and pnpm versions pinned by the
+repository to build the production application and deterministic media fixtures
+from the repository root. The fixture command requires FFmpeg's `ffmpeg` and
+`ffprobe` on `PATH`.
 
 ```bash
-source /home/piesp/.config/shell/env.sh
 pnpm install --frozen-lockfile
 pnpm prepare:e2e:fixture
 pnpm build:ci
