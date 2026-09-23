@@ -238,6 +238,12 @@ async function copyFrameCanvas(
   // Try GPU-accelerated scaling via createImageBitmap first.
   // Falls back to canvas drawImage on failure (e.g., exotic codecs, old browsers).
   if (rotation === 0) {
+    if (frame.displayWidth === width && frame.displayHeight === height) {
+      ctx.drawImage(frame, 0, 0);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      return convertImageData(imageData, width, height, pixelFormat);
+    }
+
     try {
       const bitmap = await createImageBitmap(frame, {
         resizeWidth: width,

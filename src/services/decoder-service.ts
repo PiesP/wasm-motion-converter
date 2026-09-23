@@ -37,6 +37,7 @@ import {
   shouldSkipAdaptiveFrame,
 } from './adaptive-frame-skip';
 import { globalBufferPool } from './buffer-pool';
+import type { ProfileCopyPathRecorder, ProfileOperationRecorder } from './conversion-profiler';
 import { type DemuxResult, getEncodedChunkRetainedBytes } from './demuxer-service';
 import {
   type CpuPixelFormat,
@@ -70,6 +71,10 @@ export interface DecodeOptions {
   hwAccel?: ('prefer-hardware' | 'prefer-software') | undefined;
   /** Callback fired after each frame is decoded (for progress tracking) */
   onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
+  /** Development-only observer for operation wall time; operation totals can overlap. */
+  profileOperation?: ProfileOperationRecorder | undefined;
+  /** Development-only observer for the frame-copy strategy chosen for each frame. */
+  profileCopyPath?: ProfileCopyPathRecorder | undefined;
   /**
    * Streaming callback: fired for each decoded frame with the requested CPU pixels.
    * When provided, frames are NOT accumulated into an array — instead they
@@ -174,6 +179,8 @@ export async function decodeFrames(
     pixelFormat = 'rgb',
     hwAccel = 'prefer-software',
     onFrameDecoded,
+    profileOperation,
+    profileCopyPath,
     onFrameAvailable,
     onVideoFrameAvailable,
     mode,
@@ -886,6 +893,7 @@ export async function decodeFrames(
             }
 
             let pixelData: Uint8Array;
+            const pixelCopyStart = profileOperation ? performance.now() : null;
             try {
               pixelData = await copyFrameToPixels(
                 frame,
@@ -896,6 +904,10 @@ export async function decodeFrames(
                 demux.rotation ?? 0
               );
             } finally {
+              if (pixelCopyStart !== null) {
+                profileOperation?.('pixelCopy', Math.max(0, performance.now() - pixelCopyStart));
+              }
+              profileCopyPath?.(frameCtx.copyPath ?? 'unknown');
               if (usesStagedCpuStreaming) {
                 closeSourceFrame();
                 releaseSourceReservation();
@@ -909,11 +921,30 @@ export async function decodeFrames(
             }
 
             const shouldMeasureMotion = streaming && (skipThreshold >= 0 || isAdaptive);
+            const motionFeatureStart =
+              profileOperation && shouldMeasureMotion ? performance.now() : null;
             const gray = shouldMeasureMotion
               ? compute8x8Grayscale(pixelData, width, height, pixelFormat === 'rgba' ? 4 : 3)
               : null;
             const frameDistance =
               gray !== null && prevGray !== null ? computeMAD(gray, prevGray) : null;
+            if (motionFeatureStart !== null) {
+              profileOperation?.(
+                'motionFeatures',
+                Math.max(0, performance.now() - motionFeatureStart)
+              );
+            }
+
+            const motionDecisionStart =
+              profileOperation && shouldMeasureMotion ? performance.now() : null;
+            const recordMotionDecision = (): void => {
+              if (motionDecisionStart !== null) {
+                profileOperation?.(
+                  'motionDecision',
+                  Math.max(0, performance.now() - motionDecisionStart)
+                );
+              }
+            };
 
             if (frameDistance !== null && noiseFloorSamples.length < ADAPTIVE_NOISE_SAMPLE_COUNT) {
               noiseFloorSamples.push(frameDistance);
@@ -933,6 +964,7 @@ export async function decodeFrames(
                   consecutiveSkipMs += totalDuration;
                   smartSkippedCount++;
                   globalBufferPool.release(pixelData);
+                  recordMotionDecision();
                   return;
                 }
               }
@@ -1004,6 +1036,7 @@ export async function decodeFrames(
                 consecutiveSkipMs += totalDuration;
                 smartSkippedCount++;
                 globalBufferPool.release(pixelData);
+                recordMotionDecision();
                 return;
               }
 
@@ -1012,6 +1045,8 @@ export async function decodeFrames(
               smartCarryoverMs = consecutiveSkipMs;
               consecutiveSkipMs = 0;
             }
+
+            recordMotionDecision();
 
             if (streaming) {
               // Streaming mode: pass frame to callback for immediate processing.

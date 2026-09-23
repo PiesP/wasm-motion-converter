@@ -229,12 +229,22 @@ describe('runPipelineViaWorker lifecycle', () => {
   it('retains a validated profile returned from the Worker realm', async () => {
     const outputBuffer = new ArrayBuffer(4);
     const profile = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       totalDurationMs: 100,
       heapStartMB: 0,
       heapEndMB: 0,
       heapPeakMB: 0,
       stages: [],
+      operationTotals: {
+        pixelCopy: { wallMs: 0, samples: 0 },
+        motionFeatures: { wallMs: 0, samples: 0 },
+        motionDecision: { wallMs: 0, samples: 0 },
+        gifPixelPreparation: { wallMs: 0, samples: 0 },
+        gifQuantization: { wallMs: 0, samples: 0 },
+        gifPaletteMapping: { wallMs: 0, samples: 0 },
+        gifFrameWrite: { wallMs: 0, samples: 0 },
+      },
+      copyPathCounts: { RGBX: 0, RGBA: 0, BGRA: 0, BGRX: 0, canvas: 0, unknown: 0 },
       stageWallTimePct: { demuxing: 0, transcoding: 0, finalizing: 0 },
       dominantStage: null,
       summary: '[100ms total]',

@@ -13,6 +13,31 @@ import { getMemoryUsageMB } from '../utils/memory-monitor.js';
 
 export type ProfileStage = 'demuxing' | 'transcoding' | 'finalizing';
 
+export const PROFILE_OPERATIONS = [
+  'pixelCopy',
+  'motionFeatures',
+  'motionDecision',
+  'gifPixelPreparation',
+  'gifQuantization',
+  'gifPaletteMapping',
+  'gifFrameWrite',
+] as const;
+
+export const PROFILE_COPY_PATHS = ['RGBX', 'RGBA', 'BGRA', 'BGRX', 'canvas', 'unknown'] as const;
+
+export type ProfileOperation = (typeof PROFILE_OPERATIONS)[number];
+export type ProfileCopyPath = (typeof PROFILE_COPY_PATHS)[number];
+export type ProfileOperationRecorder = (operation: ProfileOperation, wallMs: number) => void;
+export type ProfileCopyPathRecorder = (path: ProfileCopyPath) => void;
+
+export interface ProfileOperationTotal {
+  /** Accumulated elapsed wall time. These operations may overlap each other. */
+  wallMs: number;
+  samples: number;
+}
+
+export type ProfileOperationTotals = Readonly<Record<ProfileOperation, ProfileOperationTotal>>;
+
 interface CommonStageMetrics {
   stage: ProfileStage;
   startMs: number;
@@ -59,12 +84,16 @@ export interface ProfileSpan<S extends ProfileStage> {
 }
 
 export interface ConversionProfileReport {
-  schemaVersion: 2;
+  schemaVersion: 3;
   totalDurationMs: number;
   heapStartMB: number;
   heapEndMB: number;
   heapPeakMB: number;
   stages: readonly StageMetrics[];
+  /** Fine-grained operation wall time. These totals may overlap and are not stage percentages. */
+  operationTotals: ProfileOperationTotals;
+  /** Count of the pixel-copy strategy chosen by FrameProcessingContext. */
+  copyPathCounts: Readonly<Record<ProfileCopyPath, number>>;
   stageWallTimePct: Readonly<Record<ProfileStage, number>>;
   /** Longest observed wall-clock stage; this is not a causal bottleneck claim. */
   dominantStage: ProfileStage | null;
@@ -96,8 +125,31 @@ export class ConversionProfiler {
   private readonly heapStartMB = ConversionProfiler.getHeapMB();
   private heapPeakMB = this.heapStartMB;
   private readonly stages = new Map<ProfileStage, StageMetrics>();
+  private readonly operationTotals = new Map<ProfileOperation, { wallMs: number; samples: number }>(
+    PROFILE_OPERATIONS.map((operation) => [operation, { wallMs: 0, samples: 0 }])
+  );
+  private readonly copyPathCounts = new Map<ProfileCopyPath, number>(
+    PROFILE_COPY_PATHS.map((path) => [path, 0])
+  );
   private active: ActiveStage | null = null;
   private finishedReport: ConversionProfileReport | null = null;
+
+  readonly recordOperation: ProfileOperationRecorder = (operation, wallMs) => {
+    if (this.finishedReport || !Number.isFinite(wallMs) || wallMs < 0) return;
+    const current = this.operationTotals.get(operation);
+    if (!current) return;
+    this.operationTotals.set(operation, {
+      wallMs: current.wallMs + wallMs,
+      samples: current.samples + 1,
+    });
+  };
+
+  readonly recordCopyPath: ProfileCopyPathRecorder = (path) => {
+    if (this.finishedReport) return;
+    const current = this.copyPathCounts.get(path);
+    if (current === undefined) return;
+    this.copyPathCounts.set(path, current + 1);
+  };
 
   begin<S extends ProfileStage>(stage: S): ProfileSpan<S> {
     if (this.finishedReport || this.active || this.stages.has(stage)) {
@@ -162,20 +214,42 @@ export class ConversionProfiler {
     }
 
     const stageSummary = stages.map((stage) => this.summarizeStage(stage, stageWallTimePct));
+    const operationTotals = Object.fromEntries(
+      PROFILE_OPERATIONS.map((operation) => {
+        const total = this.operationTotals.get(operation)!;
+        return [
+          operation,
+          Object.freeze({ wallMs: Math.round(total.wallMs * 100) / 100, samples: total.samples }),
+        ];
+      })
+    ) as Record<ProfileOperation, ProfileOperationTotal>;
+    const copyPathCounts = Object.fromEntries(
+      PROFILE_COPY_PATHS.map((path) => [path, this.copyPathCounts.get(path)!])
+    ) as Record<ProfileCopyPath, number>;
     const summary = [
       `[${totalDurationMs}ms total]`,
       ...stageSummary,
+      `operation wall time: ${
+        PROFILE_OPERATIONS.filter((operation) => operationTotals[operation].samples > 0)
+          .map(
+            (operation) =>
+              `${operation}=${operationTotals[operation].wallMs}ms/${operationTotals[operation].samples}`
+          )
+          .join(', ') || 'unavailable'
+      }`,
       `dominant stage: ${dominantStage ?? 'unavailable'}`,
     ].join(' | ');
 
     const frozenStages = Object.freeze(stages.map((stage) => Object.freeze({ ...stage })));
     this.finishedReport = Object.freeze({
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       totalDurationMs,
       heapStartMB: this.heapStartMB,
       heapEndMB,
       heapPeakMB: this.heapPeakMB,
       stages: frozenStages,
+      operationTotals: Object.freeze(operationTotals),
+      copyPathCounts: Object.freeze(copyPathCounts),
       stageWallTimePct: Object.freeze({ ...stageWallTimePct }),
       dominantStage,
       summary,

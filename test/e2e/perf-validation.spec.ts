@@ -47,12 +47,14 @@ interface StageMetrics {
 }
 
 interface ConversionProfile {
-  schemaVersion: 2;
+  schemaVersion: 3;
   totalDurationMs: number;
   heapStartMB: number;
   heapEndMB: number;
   heapPeakMB: number;
   stages: StageMetrics[];
+  operationTotals: Record<string, { wallMs: number; samples: number }>;
+  copyPathCounts: Record<string, number>;
   stageWallTimePct: Record<ProfileStage, number>;
   dominantStage: ProfileStage | null;
   summary: string;
@@ -374,6 +376,11 @@ test.describe('Perf: Wall-clock stage profiling', () => {
 
     const transcodeStage = profile!.stages.find((stage) => stage.stage === 'transcoding');
     expect(transcodeStage?.encodedFrames).toBeGreaterThan(0);
+    expect(profile!.operationTotals.pixelCopy?.samples).toBeGreaterThan(0);
+    expect(profile!.operationTotals.gifQuantization?.samples).toBeGreaterThan(0);
+    expect(profile!.operationTotals.gifPaletteMapping?.samples).toBeGreaterThan(0);
+    expect(profile!.operationTotals.gifFrameWrite?.samples).toBeGreaterThan(0);
+    expect(Object.values(profile!.copyPathCounts).reduce((sum, count) => sum + count, 0)).toBeGreaterThan(0);
 
     // Memory tracking should be present (Chrome provides performance.memory)
     console.log(`  Heap: start=${profile!.heapStartMB}MB, end=${profile!.heapEndMB}MB, peak=${profile!.heapPeakMB}MB`);

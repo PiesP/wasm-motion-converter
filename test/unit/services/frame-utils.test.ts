@@ -348,6 +348,48 @@ describe('opaque RGBA frame copying', () => {
     expect(context2d.getImageData).toHaveBeenCalledTimes(2);
   });
 
+  it('copies identity-sized Canvas frames directly without creating a bitmap', async () => {
+    const frame = {
+      allocationSize: () => 4,
+      codedHeight: 1,
+      codedWidth: 1,
+      copyTo: vi.fn(async () => {
+        throw new Error('force the canvas fallback');
+      }),
+      displayHeight: 1,
+      displayWidth: 1,
+    } as unknown as VideoFrame;
+    const imageData = new Uint8ClampedArray([10, 20, 30, 0]);
+    const context2d = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: imageData })),
+    };
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext(): typeof context2d {
+          return context2d;
+        }
+      }
+    );
+    const createBitmap = vi.fn(async () => ({ close: vi.fn() }));
+    vi.stubGlobal('createImageBitmap', createBitmap);
+
+    const copied = await copyFrameToPixels(
+      frame,
+      1,
+      1,
+      { durationCarryUs: 0, copyPath: null },
+      'rgba'
+    );
+
+    expect([...copied]).toEqual([10, 20, 30, 255]);
+    expect(context2d.drawImage).toHaveBeenCalledWith(frame, 0, 0);
+    expect(createBitmap).not.toHaveBeenCalled();
+    globalBufferPool.release(copied);
+  });
+
   it('samples identical RGB values from packed RGB and opaque RGBA', () => {
     const rgb = new Uint8Array(8 * 8 * 3);
     const rgba = new Uint8Array(8 * 8 * 4);

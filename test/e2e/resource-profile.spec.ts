@@ -6,6 +6,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type CDPSession, type Page } from '@playwright/test';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
+import type {
+  ConversionProfileReport,
+  ProfileOperationTotals,
+} from '@services/conversion-profiler';
 import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {
   assertAnimatedOutput,
@@ -36,10 +40,10 @@ const HOSTILE_PAR_FIXTURE = 'test-video-resource-hostile-par.webm';
 const MEASURED_CYCLES = 5;
 const FAST_SAMPLE_INTERVAL_MS = 20;
 const CONVERSION_SAMPLE_INTERVAL_MS = 150;
-const paletteContract = (contractData.cases as OutputContractCase[]).find(
-  (contract) => contract.id === 'cfr-trim-gif',
+const profileContract = (contractData.cases as OutputContractCase[]).find(
+  (contract) => contract.id === 'motion-cadence-gif',
 );
-if (!paletteContract) throw new Error('Missing cfr-trim-gif output contract');
+if (!profileContract) throw new Error('Missing motion-cadence-gif output contract');
 
 interface ConversionWorkload {
   id: string;
@@ -63,11 +67,11 @@ const workloads: ConversionWorkload[] = [
     },
   })),
   {
-    id: paletteContract.id,
-    fixture: paletteContract.fixture.replace(/^public\//, ''),
-    format: paletteContract.format,
-    settings: paletteContract.settings,
-    contract: paletteContract,
+    id: profileContract.id,
+    fixture: profileContract.fixture.replace(/^public\//, ''),
+    format: profileContract.format,
+    settings: profileContract.settings,
+    contract: profileContract,
   },
 ];
 
@@ -94,6 +98,9 @@ interface ResourceSample {
 
 interface ConversionMeasurement {
   elapsedMs: number;
+  transcodingWallMs: number | null;
+  profileOperationTotals: ProfileOperationTotals | null;
+  profileCopyPathCounts: Record<string, number> | null;
   cpuSeconds: number | null;
   cpuProcessSetStable: boolean;
   samples: ResourceSample[];
@@ -287,6 +294,15 @@ async function runMeasuredConversion(
   samples.push(await sampleResources(page, browserCdp));
   expect(state).toBe('done');
   const elapsedMs = performance.now() - startedAt;
+  const profile = (await page.evaluate(
+    () => (window as any).__TEST_HELPERS__?.getConversionProfile() ?? null,
+  )) as ConversionProfileReport | null;
+  expect(profile).not.toBeNull();
+  expect(
+    Object.values(profile!.copyPathCounts).reduce((sum, count) => sum + count, 0),
+  ).toBe(profile!.operationTotals.pixelCopy.samples);
+  const transcodingWallMs =
+    profile?.stages.find((stage) => stage.stage === 'transcoding')?.durationMs ?? null;
 
   const output = await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null);
   expect(output?.type).toBe(`image/${workload.format}`);
@@ -316,6 +332,9 @@ async function runMeasuredConversion(
     encodedOutput,
     measurement: {
       elapsedMs,
+      transcodingWallMs,
+      profileOperationTotals: profile?.operationTotals ?? null,
+      profileCopyPathCounts: profile?.copyPathCounts ?? null,
       cpuSeconds: cpuProcessSetStable
         ? samples.at(-1)!.cpuTimeSeconds - samples[0]!.cpuTimeSeconds
         : null,
