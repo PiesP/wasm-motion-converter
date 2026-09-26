@@ -141,6 +141,30 @@ describe('demuxVideo trim start', () => {
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 
+  it('estimates the selected trim range instead of the full source duration', async () => {
+    const onPrepared = vi.fn();
+    const request: ConversionRequest = {
+      inputBuffer: new ArrayBuffer(8),
+      fileName: 'short-trim.mp4',
+      format: 'gif',
+      quality: 'high',
+      scale: 1,
+      trimStart: 10,
+      trimEnd: 11,
+      maxMemoryMB: 512,
+    };
+    const metadata = {
+      config: { codec: 'avc1.640028', codedWidth: 16, codedHeight: 16 },
+      duration: 600,
+      framerate: 60,
+    } as VideoMetadata;
+
+    const result = await demuxVideo(request, metadata, onPrepared);
+
+    expect(onPrepared).toHaveBeenCalledWith(60);
+    expect(result.totalFrames).toBe(60);
+  });
+
   it('leaves presentation-order trimEnd filtering to the decoder', async () => {
     const request: ConversionRequest = {
       inputBuffer: new ArrayBuffer(8),

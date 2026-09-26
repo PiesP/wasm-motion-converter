@@ -8,6 +8,25 @@ export function isFullDuration(trimEnd: number): boolean {
   return trimEnd === TRIM_END_FULL_DURATION;
 }
 
+export function getTrimmedDurationSeconds(
+  durationSeconds: number,
+  trimStartSeconds: number,
+  trimEndSeconds: number
+): number {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0;
+
+  const endSeconds =
+    !Number.isFinite(trimEndSeconds) || trimEndSeconds <= TRIM_END_FULL_DURATION
+      ? durationSeconds
+      : Math.min(durationSeconds, trimEndSeconds);
+  const startSeconds = Math.min(
+    durationSeconds,
+    Math.max(0, Number.isFinite(trimStartSeconds) ? trimStartSeconds : 0)
+  );
+
+  return Math.max(0, endSeconds - startSeconds);
+}
+
 export function formatTimePrecise(seconds: number): string {
   const safeSeconds = Math.max(0, seconds);
   const hours = Math.floor(safeSeconds / 3600);

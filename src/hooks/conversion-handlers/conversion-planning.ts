@@ -6,10 +6,11 @@ import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
 } from '@services/conversion-worker/types';
-import { calcMemoryPressureDecimation } from '@services/encoder-common';
+import { calcAutoDecimation, calcMemoryPressureDecimation } from '@services/encoder-common';
 import { resolveOutputLimits } from '@services/output-limits';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS, GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
+import { getTrimmedDurationSeconds } from '@utils/trim-time';
 
 export interface ConversionMemoryPlan {
   estimatedFrames: number;
@@ -28,16 +29,32 @@ export function buildConversionMemoryPlan(
 ): ConversionMemoryPlan | null {
   if (!metadata || settings.quality !== 'high' || settings.scale < 1) return null;
 
-  const sourceFps = metadata.framerate ?? DEFAULT_FPS;
+  const sourceFps =
+    Number.isFinite(metadata.framerate) && metadata.framerate > 0
+      ? metadata.framerate
+      : DEFAULT_FPS;
+  const targetFps =
+    settings.format === 'gif'
+      ? GIF_TARGET_FPS[settings.quality]
+      : WEBP_TARGET_FPS[settings.quality];
+  const estimatedFrames =
+    Number.isFinite(metadata.duration) && metadata.duration > 0
+      ? Math.max(
+          1,
+          Math.ceil(
+            (getTrimmedDurationSeconds(metadata.duration, settings.trimStart, settings.trimEnd) *
+              sourceFps) /
+              calcAutoDecimation(sourceFps, targetFps)
+          )
+        )
+      : 300;
+
   return {
-    estimatedFrames: metadata.duration > 0 ? Math.round(metadata.duration * sourceFps) : 300,
+    estimatedFrames,
     format: settings.format,
     height: Math.max(1, Math.floor(metadata.height * settings.scale)),
     sourceFps,
-    targetFps:
-      settings.format === 'gif'
-        ? GIF_TARGET_FPS[settings.quality]
-        : WEBP_TARGET_FPS[settings.quality],
+    targetFps,
     width: Math.max(1, Math.floor(metadata.width * settings.scale)),
   };
 }

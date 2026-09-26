@@ -38,9 +38,9 @@ describe('buildConversionMemoryPlan', () => {
   });
 
   it.each([
-    ['gif', 20],
-    ['webp', 30],
-  ] as const)('plans scaled dimensions and target FPS for %s', (format, targetFps) => {
+    ['gif', 20, 40],
+    ['webp', 30, 60],
+  ] as const)('plans decimated frame count and target FPS for %s', (format, targetFps, frames) => {
     const plan = buildConversionMemoryPlan(defaultMetadata, {
       ...defaultSettings,
       format,
@@ -48,13 +48,46 @@ describe('buildConversionMemoryPlan', () => {
     });
 
     expect(plan).toEqual({
-      estimatedFrames: 120,
+      estimatedFrames: frames,
       format,
       height: 1080,
       sourceFps: 60,
       targetFps,
       width: 1920,
     });
+  });
+
+  it.each([
+    ['gif', 20, 200],
+    ['webp', 30, 300],
+  ] as const)('uses the selected trim range when estimating %s memory', (format, targetFps, frames) => {
+    const plan = buildConversionMemoryPlan(
+      { ...defaultMetadata, duration: 120 },
+      {
+        ...defaultSettings,
+        format,
+        quality: 'high',
+        trimEnd: 20,
+        trimStart: 10,
+      }
+    );
+
+    expect(plan?.estimatedFrames).toBe(frames);
+    expect(plan?.targetFps).toBe(targetFps);
+  });
+
+  it('uses full duration for the full-duration trim sentinel and clamps trim values', () => {
+    const fullDuration = buildConversionMemoryPlan(
+      { ...defaultMetadata, duration: 2 },
+      { ...defaultSettings, quality: 'high', trimEnd: 0, trimStart: 0 }
+    );
+    const clamped = buildConversionMemoryPlan(
+      { ...defaultMetadata, duration: 2 },
+      { ...defaultSettings, quality: 'high', trimEnd: 20, trimStart: -10 }
+    );
+
+    expect(fullDuration?.estimatedFrames).toBe(40);
+    expect(clamped?.estimatedFrames).toBe(40);
   });
 
   it('uses a bounded fallback frame estimate when duration is unavailable', () => {

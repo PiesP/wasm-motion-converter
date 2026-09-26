@@ -7,6 +7,7 @@ import type { ConversionRequest, VideoMetadata, VideoRotation } from '@t/convers
 import { DEFAULT_FPS, DEMUX_MEMORY_BUDGET_BYTES } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
+import { getTrimmedDurationSeconds } from '@utils/trim-time';
 import { type EncodedPacket, EncodedPacketSink } from 'mediabunny';
 
 export interface DemuxResult {
@@ -102,7 +103,8 @@ export async function demuxVideo(
   // This is an estimate — actual packet count may differ due to variable frame rate
   // or container-level vs stream-level duration mismatch.
   const safeFramerate = Number.isFinite(framerate) && framerate > 0 ? framerate : DEFAULT_FPS;
-  const estimatedTotalFrames = Math.max(1, Math.round(duration * safeFramerate));
+  const trimmedDuration = getTrimmedDurationSeconds(duration, request.trimStart, request.trimEnd);
+  const estimatedTotalFrames = Math.max(1, Math.round(trimmedDuration * safeFramerate));
 
   // Set up source/input for demuxing.
   // Prefer inputBlob (on-demand read via BlobSource) over inputBuffer
