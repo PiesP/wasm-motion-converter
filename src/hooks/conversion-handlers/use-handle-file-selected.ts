@@ -47,6 +47,14 @@ export async function handleFileSelected(
   resetErrorState();
   resetAnalysisState();
 
+  // A new selection supersedes the previous file even when validation fails.
+  // Keeping the old input here would make Retry process a different file than
+  // the one named in the current validation error.
+  setInputFile(null);
+  const previousPreviewUrl = videoPreviewUrl();
+  if (previousPreviewUrl) URL.revokeObjectURL(previousPreviewUrl);
+  setVideoPreviewUrl(null);
+
   const validation = await validateVideoFile(file, t);
   if (isStale()) {
     runtime.finishAnalysisRun(run);
@@ -80,10 +88,6 @@ export async function handleFileSelected(
 
   setInputFile(file);
 
-  const previousPreviewUrl = videoPreviewUrl();
-  if (previousPreviewUrl) {
-    URL.revokeObjectURL(previousPreviewUrl);
-  }
   setVideoPreviewUrl(URL.createObjectURL(file));
 
   try {
