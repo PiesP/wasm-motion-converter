@@ -7,10 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   dispose: vi.fn(),
   getFirstPacket: vi.fn(),
+  getNextPacket: vi.fn(),
   getRotation: vi.fn(),
   getVideoTracks: vi.fn(),
-  nextPacket: vi.fn(),
-  returnPackets: vi.fn(),
 }));
 
 vi.mock('@utils/mediabunny-utils', () => ({
@@ -24,16 +23,7 @@ vi.mock('mediabunny', () => ({
   EncodedPacketSink: class {
     getFirstPacket = mocks.getFirstPacket;
     getKeyPacket = mocks.getFirstPacket;
-
-    packets() {
-      return {
-        [Symbol.asyncIterator]() {
-          return this;
-        },
-        next: mocks.nextPacket,
-        return: mocks.returnPackets,
-      };
-    }
+    getNextPacket = mocks.getNextPacket;
   },
 }));
 
@@ -55,8 +45,9 @@ const metadata = {
   framerate: 30,
 } as VideoMetadata;
 const firstPacket = {
+  byteLength: 4,
   timestamp: 0,
-  toEncodedVideoChunk: vi.fn(),
+  toEncodedVideoChunk: vi.fn().mockReturnValue({ byteLength: 4, duration: 1_000_000, timestamp: 0 }),
 };
 
 describe('demuxVideo cancellation', () => {
@@ -65,7 +56,7 @@ describe('demuxVideo cancellation', () => {
     mocks.getRotation.mockResolvedValue(0);
     mocks.getVideoTracks.mockResolvedValue([{ getRotation: mocks.getRotation }]);
     mocks.getFirstPacket.mockResolvedValue(firstPacket);
-    mocks.returnPackets.mockResolvedValue({ done: true, value: undefined });
+    mocks.getNextPacket.mockResolvedValue(null);
   });
 
   it('aborts a pending video-track lookup and disposes the input', async () => {
@@ -105,20 +96,20 @@ describe('demuxVideo cancellation', () => {
   });
 
   it('aborts a pending packet read and closes the lazy stream', async () => {
-    mocks.nextPacket.mockReturnValue(new Promise(() => {}));
+    mocks.getNextPacket.mockReturnValue(new Promise(() => {}));
     const controller = new AbortController();
     const result = await demuxVideo(request, metadata, undefined, controller.signal);
     if (!(Symbol.asyncIterator in result.chunks)) {
       throw new Error('Expected streaming demux chunks');
     }
     const iterator = result.chunks[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ done: false });
     const next = iterator.next();
-    await vi.waitFor(() => expect(mocks.nextPacket).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(mocks.getNextPacket).toHaveBeenCalledOnce());
 
     controller.abort();
 
     await expect(next).rejects.toMatchObject({ name: 'AbortError' });
-    expect(mocks.returnPackets).toHaveBeenCalledOnce();
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 });
