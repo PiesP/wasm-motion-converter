@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     capacity: 0,
     cursor: 0,
     frameCount: 2,
+    inputPacketCount: 2,
   };
   let stream: {
     readonly buffer: { byteLength: number };
@@ -75,6 +76,9 @@ vi.mock('gifenc', () => ({
 }));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
+    if (options.maxInputChunks && mocks.state.inputPacketCount > options.maxInputChunks) {
+      throw new Error(`Decoder input packet limit exceeded (${options.maxInputChunks} packet limit)`);
+    }
     for (let frame = 0; frame < mocks.state.frameCount; frame++) {
       await options.onFrameAvailable(new Uint8Array([frame, frame, frame, 255]), 100, frame);
     }
@@ -113,6 +117,7 @@ beforeEach(() => {
   mocks.state.capacity = 0;
   mocks.state.cursor = 0;
   mocks.state.frameCount = 2;
+  mocks.state.inputPacketCount = 2;
   mocks.writeFrame.mockClear();
 });
 
@@ -205,6 +210,25 @@ describe('encodeGif output budgets', () => {
     });
 
     expect(output).toHaveLength(17);
+    expect(mocks.writeFrame).toHaveBeenCalledOnce();
+  });
+
+  it('allows skipped input packets beyond the output frame limit', async () => {
+    mocks.state.frameCount = 1;
+    mocks.state.inputPacketCount = 2;
+
+    await expect(
+      encodeGif(demux, {
+        width: 1,
+        height: 1,
+        quality: 'low',
+        scale: 1,
+        frameDecimation: 1,
+        maxFrames: 1,
+        maxOutputBytes: 8192,
+      })
+    ).resolves.toHaveLength(17);
+
     expect(mocks.writeFrame).toHaveBeenCalledOnce();
   });
 });
