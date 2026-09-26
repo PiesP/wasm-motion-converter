@@ -51,6 +51,9 @@ Protect these assets:
   releases, and trust downgrades remain subject to the pnpm policy.
 - Release and CI workflows use least privilege, immutable action pins, trusted
   inputs, and do not expose credentials to code from untrusted pull requests.
+- The Codex Security API key is available only as the `CODEX_SECURITY_ENV_API_KEY`
+  secret in the `codex-security` environment. That environment must allow only
+  the protected `master` branch; do not keep a repository-level copy of the key.
 
 ## High-value review surfaces
 
