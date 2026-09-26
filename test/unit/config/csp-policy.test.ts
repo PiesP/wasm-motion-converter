@@ -62,4 +62,16 @@ describe('Content Security Policy', () => {
     expect(viteConfig).toContain(`const styleSrc = "'self' 'unsafe-inline'";`);
     expect(deployedHeaders).toContain("style-src 'self' 'unsafe-inline'");
   });
+
+  it('uses absolute paths for Cloudflare Pages header rules', () => {
+    const deployedHeaders = readFileSync(resolve(root, 'public/_headers'), 'utf8');
+    const routeRules = deployedHeaders
+      .split('\n')
+      .filter((line) => line.length > 0 && !line.startsWith('#') && !line.startsWith('  '));
+
+    expect(routeRules).toContain('/*.webm');
+    expect(routeRules).toContain('/*.mp4');
+    expect(routeRules).toContain('/*.m4v');
+    expect(routeRules.every((route) => route.startsWith('/'))).toBe(true);
+  });
 });

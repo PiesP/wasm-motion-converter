@@ -227,17 +227,48 @@ describe('Codex Security CLI supply-chain controls', () => {
     expect(dispatchJob.match(/--config=\/results\/osv-empty\.toml/g)).toHaveLength(1);
   });
 
-  it('installs the trusted base lock before checking out pull-request source', () => {
+  it('keeps PR scans on the trusted workflow and policy with branch-scoped credentials', () => {
+    const pullRequestTarget = workflow.indexOf('  pull_request_target:');
+    const pullRequest = workflow.indexOf('\n  pull_request:');
     const trustedCheckout = workflow.indexOf('name: Check out trusted CLI lock');
     const lockedInstall = workflow.indexOf('name: Install locked Codex Security');
+    const trustedPolicy = workflow.indexOf('name: Preserve trusted scan policy');
     const sourceCheckout = workflow.indexOf('name: Check out exact source revision');
+    const scanTarget = workflow.indexOf('name: Scan target');
 
+    expect(pullRequestTarget).toBeGreaterThan(-1);
+    expect(pullRequest).toBe(-1);
+    expect(workflow).toContain("github.ref == 'refs/heads/master'");
+    expect(workflow).toContain('github.event_name == \'pull_request_target\'');
+    expect(workflow).toContain('environment:\n      name: codex-security\n      deployment: false');
+    expect(workflow).toContain('secrets.CODEX_SECURITY_ENV_API_KEY');
+    expect(workflow).not.toContain('secrets.CODEX_SECURITY_API_KEY');
     expect(trustedCheckout).toBeGreaterThan(-1);
     expect(lockedInstall).toBeGreaterThan(trustedCheckout);
+    expect(trustedPolicy).toBeGreaterThan(lockedInstall);
     expect(sourceCheckout).toBeGreaterThan(lockedInstall);
+    expect(sourceCheckout).toBeGreaterThan(trustedPolicy);
+    expect(scanTarget).toBeGreaterThan(sourceCheckout);
     expect(workflow).toContain(
-      "ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}"
+      "ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}"
     );
+    expect(workflow).toContain(
+      "ref: ${{ github.event.pull_request.head.sha || github.sha }}"
+    );
+    expect(workflow).toContain(
+      'install -m 0600 \\\n            .github/SECURITY.md \\\n            .github/codex-security/threat-model.md \\\n            .github/codex-security/scan.md'
+    );
+    expect(workflow).toContain(
+      '--knowledge-base "$RUNNER_TEMP/codex-security-policy/threat-model.md"'
+    );
+    expect(workflow).toContain(
+      '--scan-prompt-file "$RUNNER_TEMP/codex-security-policy/scan.md"'
+    );
+    expect(workflow).toContain('GITHUB_EVENT_NAME" == "pull_request_target"');
+    expect(workflow).toContain(
+      "ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/head', github.event.pull_request.number) || github.ref }}"
+    );
+    expect(workflow).not.toContain("github.event_name == 'pull_request'");
     expect(workflow).toContain('npm ci \\\n');
     expect(workflow).toContain('scripts/security/codex-security/package-lock.json');
     expect(workflow).not.toMatch(/\bnpm install\b/);

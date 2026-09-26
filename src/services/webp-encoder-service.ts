@@ -31,7 +31,6 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
-import { resolveOutputLimits } from './output-limits';
 import { withPooledBuffer } from './pooled-buffer';
 import { extractVP8Bitstream, StreamingWebpMuxer } from './streaming-webp-encoder';
 import { encodeRGBReuse } from './wasm-webp-singleton';
@@ -56,8 +55,6 @@ export async function encodeWebp(
   const h = Math.max(1, Math.floor(srcH * opts.scale));
   const quality = WEBP_QUALITY_PERCENT[opts.quality];
   const frameDecimation = opts.frameDecimation ?? 1;
-  const outputLimits = resolveOutputLimits('webp', opts);
-  const inputChunkLimit = outputLimits.maxFrames * Math.max(1, Math.floor(frameDecimation));
 
   logger.info('encoders', '  │  ├─ WebP: codec support check', { codec: demux.config.codec });
 
@@ -85,7 +82,6 @@ export async function encodeWebp(
       width: w,
       height: h,
       frameDecimation,
-      maxInputChunks: inputChunkLimit,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
       profileOperation: opts.profileOperation,

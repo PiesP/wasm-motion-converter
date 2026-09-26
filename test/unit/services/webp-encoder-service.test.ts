@@ -4,12 +4,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  decodeOptions: null as Record<string, unknown> | null,
   encodeRGBReuse: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
   padLastFrameDuration: vi.fn(),
 }));
 
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
+    mocks.decodeOptions = options;
     await options.onFrameAvailable(new Uint8Array(3), 100, 0);
     return {
       frames: [],
@@ -63,5 +65,6 @@ describe('encodeWebp timing', () => {
 
     expect(mocks.padLastFrameDuration).toHaveBeenCalledWith(75);
     expect(mocks.encodeRGBReuse).toHaveBeenCalledWith(expect.any(Uint8Array), 1, 1, 75);
+    expect(mocks.decodeOptions).not.toHaveProperty('maxInputChunks');
   });
 });

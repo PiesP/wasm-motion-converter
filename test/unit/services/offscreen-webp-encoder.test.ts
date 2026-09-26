@@ -4,11 +4,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  decodeOptions: null as Record<string, unknown> | null,
   pixelFormat: null as string | null,
 }));
 
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
+    mocks.decodeOptions = options;
     mocks.pixelFormat = options.pixelFormat;
     const backing = new Uint8Array([10, 20, 30, 255, 0x7f, 0x7f, 0x7f, 0x7f]);
     await options.onFrameAvailable(backing, 100, 0);
@@ -91,5 +93,6 @@ describe('OffscreenCanvas WebP RGBA ownership', () => {
     expect(imageDataInputs[0]?.byteLength).toBe(4);
     expect(imageDataInputs[0]?.buffer.byteLength).toBe(8);
     expect(putImageData).toHaveBeenCalledOnce();
+    expect(mocks.decodeOptions).not.toHaveProperty('maxInputChunks');
   });
 });

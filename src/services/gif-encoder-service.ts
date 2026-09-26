@@ -166,7 +166,6 @@ export async function encodeGif(
   const ditherStrength = QUALITY_DITHER_STRENGTH[opts.quality];
   const frameDecimation = opts.frameDecimation ?? 1;
   const outputLimits = resolveOutputLimits('gif', opts);
-  const inputChunkLimit = outputLimits.maxFrames * Math.max(1, Math.floor(frameDecimation));
 
   logger.info('encoders', '  │  ├─ GIF: codec support check', { codec: demux.config.codec });
 
@@ -377,7 +376,6 @@ export async function encodeGif(
         width: w,
         height: h,
         frameDecimation,
-        maxInputChunks: inputChunkLimit,
         hwAccel: 'prefer-hardware',
         smartFrameSkip: opts.smartFrameSkip,
         pixelFormat: 'rgba',

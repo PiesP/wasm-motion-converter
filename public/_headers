@@ -7,13 +7,13 @@
 # multiple Content-Type values being concatenated.
 
 # MIME type overrides — must be listed before /* catch-all
-*.webm
+/*.webm
   Content-Type: video/webm
 
-*.mp4
+/*.mp4
   Content-Type: video/mp4
 
-*.m4v
+/*.m4v
   Content-Type: video/mp4
 
 /*.wasm

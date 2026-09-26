@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   focusPrimaryErrorAction: vi.fn(),
   setErrorContext: vi.fn(),
   setErrorMessage: vi.fn(),
+  setInputFile: vi.fn(),
+  setVideoPreviewUrl: vi.fn(),
   setVideoMetadata: vi.fn(),
   setConversionSettings: vi.fn(),
   transitionToState: vi.fn(),
@@ -21,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     trimStart: 7,
     trimEnd: 12,
   },
+  previewUrl: null as string | null,
 }));
 
 vi.mock('@services/video-metadata', () => ({
@@ -36,11 +39,11 @@ vi.mock('@stores/conversion-settings-store', () => ({
 vi.mock('@stores/conversion-store', () => ({
   setErrorContext: mocks.setErrorContext,
   setErrorMessage: mocks.setErrorMessage,
-  setInputFile: vi.fn(),
+  setInputFile: mocks.setInputFile,
   setVideoMetadata: mocks.setVideoMetadata,
-  setVideoPreviewUrl: vi.fn(),
+  setVideoPreviewUrl: mocks.setVideoPreviewUrl,
   transitionToState: mocks.transitionToState,
-  videoPreviewUrl: () => null,
+  videoPreviewUrl: () => mocks.previewUrl,
 }));
 vi.mock('@utils/file-validation', () => ({
   validateVideoFile: mocks.validateVideoFile,
@@ -63,9 +66,12 @@ describe('handleFileSelected conversion settings', () => {
     mocks.focusPrimaryErrorAction.mockReset();
     mocks.setErrorContext.mockReset();
     mocks.setErrorMessage.mockReset();
+    mocks.setInputFile.mockReset();
+    mocks.setVideoPreviewUrl.mockReset();
     mocks.setVideoMetadata.mockReset();
     mocks.setConversionSettings.mockReset();
     mocks.transitionToState.mockReset();
+    mocks.previewUrl = null;
     mocks.validateVideoFile.mockReset().mockResolvedValue({ valid: true });
     mocks.extractVideoMetadata.mockReset().mockResolvedValue({
       config: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
@@ -140,6 +146,28 @@ describe('handleFileSelected conversion settings', () => {
     expect(mocks.setErrorContext).toHaveBeenCalledWith(
       expect.objectContaining({ suggestion: 'error.codecSuggestion' })
     );
+  });
+
+  it('clears the previous selection before reporting a new file validation error', async () => {
+    mocks.previewUrl = 'blob:previous-preview';
+    mocks.validateVideoFile.mockResolvedValueOnce({ valid: false, error: new Error('invalid file') });
+    const runtime = {
+      startNewRun: () => ({ isActive: () => true, signal: new AbortController().signal }),
+      finishAnalysisRun: vi.fn(),
+      resetRuntimeState: vi.fn(),
+    } as unknown as ConversionRuntimeController;
+
+    await handleFileSelected(
+      new File(['bad'], 'replacement.bin'),
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+
+    expect(mocks.setInputFile).toHaveBeenCalledWith(null);
+    expect(mocks.setVideoPreviewUrl).toHaveBeenCalledWith(null);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:previous-preview');
+    expect(mocks.extractVideoMetadata).not.toHaveBeenCalled();
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
   });
 
   it('ignores a stale invalid result after a newer file is accepted', async () => {
