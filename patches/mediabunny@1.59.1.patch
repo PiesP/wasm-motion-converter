@@ -1,0 +1,1533 @@
+diff --git a/dist/modules/src/flac/flac-demuxer.js b/dist/modules/src/flac/flac-demuxer.js
+index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982209982cc 100644
+--- a/dist/modules/src/flac/flac-demuxer.js
++++ b/dist/modules/src/flac/flac-demuxer.js
+@@ -14,6 +14,9 @@ import { DEFAULT_TRACK_DISPOSITION } from '../metadata.js';
+ import { calculateCrc8, readBlockSize, getBlockSizeOrUncommon, readCodedNumber, readSampleRate, getSampleRateOrUncommon, } from './flac-misc.js';
+ import { Bitstream } from '../../shared/bitstream.js';
+ import { ID3_V2_HEADER_SIZE, parseId3V2Tag, readId3V2Header } from '../id3.js';
++const MAX_FLAC_METADATA_BLOCKS = 4096;
++const FLAC_TEXT_METADATA_EXPANSION_MULTIPLIER = 12;
++const FLAC_PICTURE_EXPANSION_MULTIPLIER = 4;
+ export class FlacDemuxer extends Demuxer {
+     constructor(input) {
+         super(input);
+@@ -42,6 +45,22 @@ export class FlacDemuxer extends Demuxer {
+     }
+     async readMetadata() {
+         return (this.metadataPromise ??= (async () => {
++            let metadataBlockCount = 0;
++            let retainedMetadataBytes = 0;
++            const countMetadataBlock = () => {
++                metadataBlockCount++;
++                if (Number.isFinite(this.input._maxBufferedPacketBytes)
++                    && metadataBlockCount > MAX_FLAC_METADATA_BLOCKS) {
++                    throw new RangeError('FLAC metadata block count exceeds the configured safety limit.');
++                }
++            };
++            const reserveRetainedMetadata = (sourceBytes, expansionMultiplier) => {
++                const expandedBytes = sourceBytes * expansionMultiplier;
++                if (expandedBytes > this.input._maxBufferedPacketBytes - retainedMetadataBytes) {
++                    throw new RangeError('FLAC metadata exceeds the configured memory limit.');
++                }
++                retainedMetadataBytes += expandedBytes;
++            };
+             // Read all ID3v2 tags at the start of the file
+             let currentPos = 0;
+             while (true) {
+@@ -56,6 +75,8 @@ export class FlacDemuxer extends Demuxer {
+                 if (!id3V2Header) {
+                     break;
+                 }
++                countMetadataBlock();
++                reserveRetainedMetadata(id3V2Header.size, FLAC_TEXT_METADATA_EXPANSION_MULTIPLIER);
+                 let contentSlice = this.reader.requestSlice(headerSlice.filePos, id3V2Header.size);
+                 if (isThenable(contentSlice))
+                     contentSlice = await contentSlice;
+@@ -78,6 +99,7 @@ export class FlacDemuxer extends Demuxer {
+                 const size = readU24Be(sizeSlice);
+                 const isLastMetadata = (byte & 0x80) !== 0;
+                 const metaBlockType = byte & 0x7f;
++                countMetadataBlock();
+                 switch (metaBlockType) {
+                     case FlacBlockType.STREAMINFO: {
+                         // Parse streaminfo block
+@@ -105,6 +127,7 @@ export class FlacDemuxer extends Demuxer {
+                         // 2. A metadata block (called the STREAMINFO block) as described in section 7 of [FLAC]
+                         // 3. Optionally (sic) other metadata blocks, that are not used by the specification
+                         bitstream.skipBits(16 * 8); // md5 hash
++                        reserveRetainedMetadata(42, 1);
+                         const description = new Uint8Array(42);
+                         // 1. "fLaC"
+                         description.set(new Uint8Array([0x66, 0x4c, 0x61, 0x43]), 0);
+@@ -128,6 +151,7 @@ export class FlacDemuxer extends Demuxer {
+                     case FlacBlockType.VORBIS_COMMENT: {
+                         // Parse vorbis comment block
+                         // https://www.rfc-editor.org/rfc/rfc9639.html#name-vorbis-comment
++                        reserveRetainedMetadata(size, FLAC_TEXT_METADATA_EXPANSION_MULTIPLIER);
+                         let vorbisCommentBlock = this.reader.requestSlice(currentPos, size);
+                         if (isThenable(vorbisCommentBlock))
+                             vorbisCommentBlock = await vorbisCommentBlock;
+@@ -138,6 +162,7 @@ export class FlacDemuxer extends Demuxer {
+                     case FlacBlockType.PICTURE: {
+                         // Parse picture block
+                         // https://www.rfc-editor.org/rfc/rfc9639.html#name-picture
++                        reserveRetainedMetadata(size, FLAC_PICTURE_EXPANSION_MULTIPLIER);
+                         let pictureBlock = this.reader.requestSlice(currentPos, size);
+                         if (isThenable(pictureBlock))
+                             pictureBlock = await pictureBlock;
+diff --git a/dist/modules/src/hls/hls-segmented-input.js b/dist/modules/src/hls/hls-segmented-input.js
+index f6ab507e25120f0901c9d5e433583596c50f936b..113137c40e13e45eee5db3898d84ed6cbb5d7a59 100644
+--- a/dist/modules/src/hls/hls-segmented-input.js
++++ b/dist/modules/src/hls/hls-segmented-input.js
+@@ -117,7 +117,7 @@ export class HlsSegmentedInput extends SegmentedInput {
+             const env_1 = { stack: [], error: void 0, hasError: false };
+             try {
+                 const ref = __addDisposableResource(env_1, await this.demuxer.input._getSourceUncached({ path: this.rootPath, isRoot: false }), false);
+-                const reader = new Reader(ref.source);
++                const reader = new Reader(ref.source, this.input._maxContiguousReadBytes);
+                 const slice = await reader.requestEntireFile();
+                 assert(slice);
+                 lines = readAllLines(slice, slice.length, { ignore: canIgnoreLine });
+@@ -589,12 +589,12 @@ export class HlsSegmentedInput extends SegmentedInput {
+                         ciphertextRef.free();
+                         ciphertextRef = sliceRef;
+                     }
+-                    const ciphertextReader = new Reader(ciphertextRef.source);
++                    const ciphertextReader = new Reader(ciphertextRef.source, this.input._maxContiguousReadBytes);
+                     const stream = createAes128CbcDecryptStream(ciphertextReader, async () => {
+                         const env_2 = { stack: [], error: void 0, hasError: false };
+                         try {
+                             const keyRef = __addDisposableResource(env_2, await this.input._getSourceCached({ path: encryption.keyUri, isRoot: false }, ENCRYPTION_KEY_CACHE_GROUP), false);
+-                            const keyReader = new Reader(keyRef.source);
++                            const keyReader = new Reader(keyRef.source, this.input._maxContiguousReadBytes);
+                             const keySlice = await keyReader.requestSlice(0, AES_128_BLOCK_SIZE);
+                             if (!keySlice) {
+                                 throw new Error('Invalid AES-128 key; expected at least 16 bytes of data.');
+@@ -624,6 +624,9 @@ export class HlsSegmentedInput extends SegmentedInput {
+             initInput: initInput ?? undefined,
+             formatOptions,
+         });
++        input._maxContiguousReadBytes = this.input._maxContiguousReadBytes;
++        input._maxEncodedPacketBytes = this.input._maxEncodedPacketBytes;
++        input._maxBufferedPacketBytes = this.input._maxBufferedPacketBytes;
+         input._onFormatDetermined = (format) => {
+             if ((hlsSegment.encryption?.method === 'SAMPLE-AES' || hlsSegment.encryption?.method === 'SAMPLE-AES-CTR')
+                 && !format._isIsobmff) {
+diff --git a/dist/modules/src/input.js b/dist/modules/src/input.js
+index d4bec8fe6718f68a1cefa5409161ee51e8ffdfce..8707b10b74d83f6e27ea92a144b82274fa7ee77e 100644
+--- a/dist/modules/src/input.js
++++ b/dist/modules/src/input.js
+@@ -72,6 +72,9 @@ export class Input extends EventEmitter {
+         this._formats = options.formats;
+         this._initInput = options.initInput ?? null;
+         this._formatOptions = options.formatOptions ?? {};
++        this._maxContiguousReadBytes = Infinity;
++        this._maxEncodedPacketBytes = Infinity;
++        this._maxBufferedPacketBytes = Infinity;
+         if (options.source instanceof Source) {
+             this._rootRef = options.source.ref();
+         }
+@@ -141,7 +144,7 @@ export class Input extends EventEmitter {
+     /** @internal */
+     _getDemuxer() {
+         return this._demuxerPromise ??= (async () => {
+-            this._reader = new Reader(this._rootSource);
++            this._reader = new Reader(this._rootSource, this._maxContiguousReadBytes);
+             this._emit('source', { source: this._rootSource, request: null, isRoot: true });
+             for (const format of this._formats) {
+                 const canRead = await format._canReadInput(this);
+diff --git a/dist/modules/src/isobmff/isobmff-demuxer.js b/dist/modules/src/isobmff/isobmff-demuxer.js
+index 86b79279f0532c79114f73696e1c2530ab90273c..bbd368b7e07e6b8c604f38434283123103e1d20c 100644
+--- a/dist/modules/src/isobmff/isobmff-demuxer.js
++++ b/dist/modules/src/isobmff/isobmff-demuxer.js
+@@ -2642,6 +2642,9 @@ class IsobmffTrackBacking {
+             data = PLACEHOLDER_DATA;
+         }
+         else {
++            if (sampleInfo.sampleSize > this.internalTrack.demuxer.input._maxEncodedPacketBytes) {
++                throw new RangeError('ISOBMFF packet exceeds the configured memory limit.');
++            }
+             let slice = this.internalTrack.demuxer.reader.requestSlice(sampleInfo.sampleOffset, sampleInfo.sampleSize);
+             if (isThenable(slice))
+                 slice = await slice;
+@@ -2682,6 +2685,9 @@ class IsobmffTrackBacking {
+             data = PLACEHOLDER_DATA;
+         }
+         else {
++            if (fragmentSample.byteSize > this.internalTrack.demuxer.input._maxEncodedPacketBytes) {
++                throw new RangeError('ISOBMFF packet exceeds the configured memory limit.');
++            }
+             let slice = this.internalTrack.demuxer.reader.requestSlice(fragmentSample.byteOffset, fragmentSample.byteSize);
+             if (isThenable(slice))
+                 slice = await slice;
+diff --git a/dist/modules/src/matroska/matroska-demuxer.js b/dist/modules/src/matroska/matroska-demuxer.js
+index 5a3579537995b6a3672f130ae67c67d69f081bdc..33023af6a751ec099dd9ccd52cff95be419949d7 100644
+--- a/dist/modules/src/matroska/matroska-demuxer.js
++++ b/dist/modules/src/matroska/matroska-demuxer.js
+@@ -489,7 +489,11 @@ export class MatroskaDemuxer extends Demuxer {
+             }
+             // Decode the block data if it hasn't been decoded yet (needed for lacing expansion)
+             if (!originalBlock.decoded) {
+-                originalBlock.data = this.decodeBlockData(track, originalBlock.data);
++                const sideDataByteLength = originalBlock.mainAdditional?.byteLength ?? 0;
++                if (originalBlock.data.byteLength + sideDataByteLength > this.input._maxEncodedPacketBytes) {
++                    throw new RangeError('Matroska packet and side data exceed the configured memory limit.');
++                }
++                originalBlock.data = this.decodeBlockData(track, originalBlock.data, sideDataByteLength);
+                 originalBlock.decoded = true;
+             }
+             const slice = FileSlice.tempFromBytes(originalBlock.data);
+@@ -1323,7 +1327,11 @@ export class MatroskaDemuxer extends Demuxer {
+                         // https://github.com/Vanilagy/mediabunny/issues/192
+                         isKeyFrame = true;
+                     }
+-                    const blockData = readBytes(slice, size - (slice.filePos - dataStartPos));
++                    const blockSize = size - (slice.filePos - dataStartPos);
++                    if (blockSize > this.input._maxEncodedPacketBytes) {
++                        throw new RangeError('Matroska packet exceeds the configured memory limit.');
++                    }
++                    const blockData = readBytes(slice, blockSize);
+                     const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
+                     trackData.blocks.push({
+                         timestamp: relativeTimestamp, // We'll add the cluster's timestamp to this later
+@@ -1360,7 +1368,11 @@ export class MatroskaDemuxer extends Demuxer {
+                     const relativeTimestamp = readI16Be(slice);
+                     const flags = readU8(slice);
+                     const lacing = (flags >> 1) & 0x3; // If the block is laced, we'll expand it later
+-                    const blockData = readBytes(slice, size - (slice.filePos - dataStartPos));
++                    const blockSize = size - (slice.filePos - dataStartPos);
++                    if (blockSize > this.input._maxEncodedPacketBytes) {
++                        throw new RangeError('Matroska packet exceeds the configured memory limit.');
++                    }
++                    const blockData = readBytes(slice, blockSize);
+                     const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
+                     this.currentBlock = {
+                         timestamp: relativeTimestamp, // We'll add the cluster's timestamp to this later
+@@ -1402,6 +1414,9 @@ export class MatroskaDemuxer extends Demuxer {
+                 {
+                     if (!this.currentBlockAdditional)
+                         break;
++                    if (size > this.input._maxEncodedPacketBytes) {
++                        throw new RangeError('Matroska packet side data exceeds the configured memory limit.');
++                    }
+                     this.currentBlockAdditional.data = readBytes(slice, size);
+                 }
+                 ;
+@@ -1664,7 +1679,7 @@ export class MatroskaDemuxer extends Demuxer {
+         slice.filePos = dataStartPos + size;
+         return true;
+     }
+-    decodeBlockData(track, rawData) {
++    decodeBlockData(track, rawData, sideDataByteLength = 0) {
+         assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
+         let currentData = rawData;
+         for (const instruction of track.decodingInstructions) {
+@@ -1677,6 +1692,9 @@ export class MatroskaDemuxer extends Demuxer {
+                                 {
+                                     if (instruction.data.settings && instruction.data.settings.length > 0) {
+                                         const prefix = instruction.data.settings;
++                                        if (prefix.length + currentData.length + sideDataByteLength > this.input._maxEncodedPacketBytes) {
++                                            throw new RangeError('Matroska packet exceeds the configured memory limit.');
++                                        }
+                                         const newData = new Uint8Array(prefix.length + currentData.length);
+                                         newData.set(prefix, 0);
+                                         newData.set(currentData, prefix.length);
+@@ -2018,9 +2036,13 @@ class MatroskaTrackBacking {
+         const trackData = cluster.trackData.get(this.internalTrack.id);
+         const block = trackData.blocks[blockIndex];
+         assert(block);
++        const sideDataByteLength = block.mainAdditional?.byteLength ?? 0;
++        if (block.data.byteLength + sideDataByteLength > this.internalTrack.demuxer.input._maxEncodedPacketBytes) {
++            throw new RangeError('Matroska packet and side data exceed the configured memory limit.');
++        }
+         // Perform lazy decoding if needed
+         if (!block.decoded) {
+-            block.data = this.internalTrack.demuxer.decodeBlockData(this.internalTrack, block.data);
++            block.data = this.internalTrack.demuxer.decodeBlockData(this.internalTrack, block.data, sideDataByteLength);
+             block.decoded = true;
+         }
+         if (!block.postProcessed) {
+@@ -2034,6 +2056,9 @@ class MatroskaTrackBacking {
+                     && block.data[7] === 102; // 'f'
+                 if (!hasFrameContainer) {
+                     // Wrap the frame in a frame container
++                    if (block.data.length + 8 + sideDataByteLength > this.internalTrack.demuxer.input._maxEncodedPacketBytes) {
++                        throw new RangeError('Matroska packet exceeds the configured memory limit.');
++                    }
+                     const newData = new Uint8Array(block.data.length + 8);
+                     const newDataView = toDataView(newData);
+                     newDataView.setUint32(0, newData.length, false);
+@@ -2050,6 +2075,9 @@ class MatroskaTrackBacking {
+         const data = options.metadataOnly ? PLACEHOLDER_DATA : block.data;
+         const timestamp = block.timestamp / this.internalTrack.segment.timestampFactor;
+         const duration = block.duration / this.internalTrack.segment.timestampFactor;
++        if (block.data.byteLength + sideDataByteLength > this.internalTrack.demuxer.input._maxEncodedPacketBytes) {
++            throw new RangeError('Matroska packet and side data exceed the configured memory limit.');
++        }
+         const sideData = {};
+         if (block.mainAdditional && this.internalTrack.info?.type === 'video' && this.internalTrack.info.alphaMode) {
+             sideData.alpha = options.metadataOnly ? PLACEHOLDER_DATA : block.mainAdditional;
+diff --git a/dist/modules/src/media-sink.js b/dist/modules/src/media-sink.js
+index 9465e3b6cd399cfaab53c1942a3c1e11c75210e7..06a48d20bab928227b90f9077e92953a109b3381 100644
+--- a/dist/modules/src/media-sink.js
++++ b/dist/modules/src/media-sink.js
+@@ -184,7 +184,8 @@ export class EncodedPacketSink {
+     }
+     /**
+      * Creates an async iterator that yields the packets in this track in decode order. To enable fast iteration, this
+-     * method will intelligently preload packets based on the speed of the consumer.
++     * method will intelligently preload packets based on the speed of the consumer unless the input has a byte budget,
++     * in which case packets are retrieved on demand to keep buffering bounded.
+      *
+      * @param startPacket - (optional) The packet from which iteration should begin. This packet will also be yielded.
+      * @param endPacket - (optional) The packet at which iteration should end. This packet will _not_ be yielded.
+@@ -203,6 +204,20 @@ export class EncodedPacketSink {
+         if (this._track.input._disposed) {
+             throw new InputDisposedError();
+         }
++        if (this._track.input._maxBufferedPacketBytes !== Infinity) {
++            const sink = this;
++            const track = this._track;
++            return (async function* () {
++                let packet = startPacket ?? await sink.getFirstPacket(options);
++                while (packet && !track.input._disposed) {
++                    if (endPacket && packet.sequenceNumber >= endPacket.sequenceNumber) {
++                        break;
++                    }
++                    yield packet;
++                    packet = await sink.getNextPacket(packet, options);
++                }
++            })();
++        }
+         const packetQueue = [];
+         let { promise: queueNotEmpty, resolve: onQueueNotEmpty } = promiseWithResolvers();
+         let { promise: queueDequeue, resolve: onQueueDequeue } = promiseWithResolvers();
+diff --git a/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js b/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js
+index 17717c2e71cdf188ea9dc7a5a22ef3281b994f29..b90e66ec98838cf90884ffa7a94a5ab2297d1292 100644
+--- a/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js
++++ b/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js
+@@ -344,7 +344,12 @@ export class MpegTsDemuxer extends Demuxer {
+                         if (!pesPacket) {
+                             throw new Error(`Couldn't read first PES packet for Elementary Stream with PID ${elementaryStream.pid}`);
+                         }
+-                        elementaryStream.firstSection = section;
++                        // Keep only enough bytes for PES timestamp parsing. getFirstPacket rereads the section lazily,
++                        // so large first PES payloads from every PID are not retained after metadata extraction.
++                        elementaryStream.firstSection = {
++                            ...section,
++                            payload: section.payload.subarray(0, 14).slice(),
++                        };
+                         elementaryStream.canBeTrustedWithKeyPackets = section.randomAccessIndicator === 1;
+                         if (this.input._initInput) {
+                             const initDemuxer = (await this.input._initInput._getDemuxer());
+@@ -586,7 +591,8 @@ export class MpegTsDemuxer extends Demuxer {
+         const codecStrings = await Promise.all(this.trackBackingEntries.map(x => x.getDecoderConfig().then(c => c?.codec ?? null)));
+         return buildMpegTsMimeType(codecStrings);
+     }
+-    async readSection(startPos, full, contiguous = false) {
++    async readSection(startPos, full, contiguous = false, maxBytes = this.input._maxBufferedPacketBytes) {
++        maxBytes = Math.min(maxBytes, this.input._maxBufferedPacketBytes);
+         let endPos = startPos;
+         let currentPos = startPos;
+         const chunks = [];
+@@ -631,12 +637,19 @@ export class MpegTsDemuxer extends Demuxer {
+             }
+             if (hasPayload) {
+                 if (adaptationFieldLength === 0) {
++                    if (chunksByteLength + packet.body.byteLength > maxBytes) {
++                        throw new RangeError('Assembled MPEG-TS section exceeds the configured memory limit.');
++                    }
+                     chunks.push(packet.body);
+                     chunksByteLength += packet.body.byteLength;
+                 }
+                 else {
+-                    chunks.push(packet.body.subarray(adaptationFieldLength));
+-                    chunksByteLength += packet.body.byteLength - adaptationFieldLength;
++                    const payload = packet.body.subarray(adaptationFieldLength);
++                    if (chunksByteLength + payload.byteLength > maxBytes) {
++                        throw new RangeError('Assembled MPEG-TS section exceeds the configured memory limit.');
++                    }
++                    chunks.push(payload);
++                    chunksByteLength += payload.byteLength;
+                 }
+             }
+             endPos = currentPos;
+@@ -919,7 +932,9 @@ class MpegTsTrackBacking {
+         return new EncodedPacket(options.metadataOnly ? PLACEHOLDER_DATA : suppliedPacket.data, packetType, suppliedPacket.pts / TIMESCALE, Math.max(duration / TIMESCALE, 0), suppliedPacket.sequenceNumber, suppliedPacket.data.byteLength);
+     }
+     async getFirstPacket(options) {
+-        const section = this.elementaryStream.firstSection;
++        const firstSection = this.elementaryStream.firstSection;
++        assert(firstSection);
++        const section = await this.elementaryStream.demuxer.readSection(firstSection.startPos, true);
+         assert(section);
+         const pesPacket = readPesPacket(this.elementaryStream.demuxer, section, true);
+         assert(pesPacket);
+@@ -1214,7 +1229,13 @@ class MpegTsTrackBacking {
+                         }
+                         else {
+                             assert(pesHeaderSection);
+-                            const pesPacket = readPesPacket(demuxer, pesHeaderSection, true);
++                            // The first section is stored as a compact PES header during metadata
++                            // discovery. Re-read it in full when key detection needs its payload.
++                            const sectionForKeyCheck = isFirstChunk && pesHeader.sectionStartPos === firstPesPacketHeader.sectionStartPos
++                                ? await demuxer.readSection(pesHeader.sectionStartPos, true)
++                                : pesHeaderSection;
++                            assert(sectionForKeyCheck);
++                            const pesPacket = readPesPacket(demuxer, sectionForKeyCheck, true);
+                             assert(pesPacket);
+                             const context = new PacketReadingContext(this.elementaryStream, pesPacket);
+                             await context.markNextPacket();
+@@ -1403,6 +1424,9 @@ class PacketReadingContext {
+         this.pid = elementaryStream.pid;
+         this.demuxer = elementaryStream.demuxer;
+         this.startingPesPacket = startingPesPacket;
++        const input = this.demuxer.input;
++        this.maxAdditionalBufferedBytes = Math.max(0, input._maxBufferedPacketBytes - startingPesPacket.data.buffer.byteLength);
++        this.maxPacketBytes = Math.min(input._maxEncodedPacketBytes, this.maxAdditionalBufferedBytes);
+     }
+     ensureBuffered(length) {
+         const remaining = this.endPos - this.currentPos;
+@@ -1434,13 +1458,19 @@ class PacketReadingContext {
+                         return;
+                     }
+                     if (packetHeader.pid === this.pid) {
+-                        const nextSection = await this.demuxer.readSection(currentPos, true);
++                        const nextSection = await this.demuxer.readSection(currentPos, true, false, this.maxAdditionalBufferedBytes);
+                         if (!nextSection) {
+                             return;
+                         }
++                        const sectionBufferBytes = nextSection.payload.buffer.byteLength;
++                        if (sectionBufferBytes > this.maxAdditionalBufferedBytes) {
++                            throw new RangeError('MPEG-TS packet buffers exceed the configured memory limit.');
++                        }
+                         const nextPesPacket = readPesPacket(this.demuxer, nextSection, false);
+                         if (nextPesPacket) {
+                             pesPacket = nextPesPacket;
++                            this.maxAdditionalBufferedBytes -= sectionBufferBytes;
++                            this.maxPacketBytes -= sectionBufferBytes;
+                             break;
+                         }
+                     }
+@@ -1894,6 +1924,12 @@ class PacketReadingContext {
+         // The sequence number is the starting position of the section the PES packet is in, PLUS the offset within the
+         // PES packet where the packet starts.
+         const sequenceNumber = sectionStartPos + (this.currentPos - this.currentPesPacketPos);
++        const relativeStartOffset = this.currentPos - this.currentPesPacketPos;
++        const needsMergedBuffer = relativeStartOffset + packetLength > currentPesPacket.data.byteLength;
++        if (packetLength > this.elementaryStream.demuxer.input._maxEncodedPacketBytes
++            || (needsMergedBuffer && packetLength > this.maxPacketBytes)) {
++            throw new RangeError('MPEG-TS packet exceeds the configured memory limit.');
++        }
+         const data = this.readBytes(packetLength);
+         let randomAccessIndicator = currentPesPacket.randomAccessIndicator;
+         if (randomAccessIndicator === 0 && !this.elementaryStream.canBeTrustedWithKeyPackets) {
+@@ -1975,6 +2011,33 @@ class PacketBuffer {
+         if (this.reachedEnd) {
+             return false;
+         }
++        const input = this.backing.elementaryStream.demuxer.input;
++        const retainedPackets = new Set([
++            ...this.decodeOrderPackets,
++            ...this.reorderBuffer,
++            ...this.presentationOrderPackets,
++            ...(this.context.suppliedPacket ? [this.context.suppliedPacket] : []),
++        ]);
++        const retainedBuffers = new Set();
++        let retainedBytes = 0;
++        const countBuffer = (data) => {
++            if (!retainedBuffers.has(data.buffer)) {
++                retainedBuffers.add(data.buffer);
++                retainedBytes += data.buffer.byteLength;
++            }
++        };
++        for (const packet of retainedPackets) {
++            countBuffer(packet.data);
++        }
++        countBuffer(this.context.startingPesPacket.data);
++        for (const pesPacket of this.context.pesPackets) {
++            countBuffer(pesPacket.data);
++        }
++        this.context.maxAdditionalBufferedBytes = input._maxBufferedPacketBytes - retainedBytes;
++        this.context.maxPacketBytes = Math.min(input._maxEncodedPacketBytes, this.context.maxAdditionalBufferedBytes);
++        if (this.context.maxAdditionalBufferedBytes < 0) {
++            throw new RangeError('MPEG-TS reorder buffer exceeds the configured memory limit.');
++        }
+         let suppliedPacket;
+         if (this.context.suppliedPacket) {
+             // Small optimization: there was already a supplied packet in the context, so let's first use that one
+diff --git a/dist/modules/src/ogg/ogg-demuxer.js b/dist/modules/src/ogg/ogg-demuxer.js
+index 9bd1aa06dad9509cc9ac9bc5654b4ae74d9c0828..d86ff749decd2fce6d876e7281edb94d3dda0cd5 100644
+--- a/dist/modules/src/ogg/ogg-demuxer.js
++++ b/dist/modules/src/ogg/ogg-demuxer.js
+@@ -14,6 +14,8 @@ import { EncodedPacket, PLACEHOLDER_DATA } from '../packet.js';
+ import { readBytes } from '../reader.js';
+ import { buildOggMimeType, computeOggPageCrc, extractSampleMetadata } from './ogg-misc.js';
+ import { findNextPageHeader, MAX_PAGE_HEADER_SIZE, MAX_PAGE_SIZE, MIN_PAGE_HEADER_SIZE, readPageHeader, } from './ogg-reader.js';
++const MAX_OGG_LOGICAL_BITSTREAMS = 256;
++const OGG_COMMENT_EXPANSION_MULTIPLIER = 12;
+ export class OggDemuxer extends Demuxer {
+     constructor(input) {
+         super(input);
+@@ -21,8 +23,24 @@ export class OggDemuxer extends Demuxer {
+         this.bitstreams = [];
+         this.trackBackings = [];
+         this.metadataTags = {};
++        this.metadataTagBudgetBytes = 0;
+         this.reader = input._reader;
+     }
++    getRetainedMetadataBytes() {
++        const buffers = new Set();
++        let total = this.metadataTagBudgetBytes;
++        const count = (data) => {
++            if (data && !buffers.has(data.buffer)) {
++                buffers.add(data.buffer);
++                total += data.buffer.byteLength;
++            }
++        };
++        for (const bitstream of this.bitstreams) {
++            count(bitstream.description);
++            count(bitstream.lastMetadataPacket?.data ?? null);
++        }
++        return total;
++    }
+     async readMetadata() {
+         return this.metadataPromise ??= (async () => {
+             let currentPos = 0;
+@@ -42,6 +60,10 @@ export class OggDemuxer extends Demuxer {
+                     // we know we've seen all bitstreams (minus chaining)
+                     break;
+                 }
++                if (Number.isFinite(this.input._maxBufferedPacketBytes)
++                    && this.bitstreams.length >= MAX_OGG_LOGICAL_BITSTREAMS) {
++                    throw new RangeError('Ogg logical bitstream count exceeds the configured safety limit.');
++                }
+                 this.bitstreams.push({
+                     serialNumber: page.serialNumber,
+                     bosPage: page,
+@@ -58,7 +80,8 @@ export class OggDemuxer extends Demuxer {
+                 currentPos = page.headerStartPos + page.totalSize;
+             }
+             for (const bitstream of this.bitstreams) {
+-                const firstPacket = await this.readPacket(bitstream.bosPage, 0);
++                const remainingBytes = this.input._maxBufferedPacketBytes - this.getRetainedMetadataBytes();
++                const firstPacket = await this.readPacket(bitstream.bosPage, 0, Math.floor(remainingBytes / 2));
+                 if (!firstPacket) {
+                     continue;
+                 }
+@@ -96,11 +119,14 @@ export class OggDemuxer extends Demuxer {
+         })();
+     }
+     async readVorbisMetadata(firstPacket, bitstream) {
++        const retainedBytes = this.getRetainedMetadataBytes();
++        const remainingBytes = this.input._maxBufferedPacketBytes - retainedBytes;
+         let nextPacketPosition = await this.findNextPacketStart(firstPacket);
+         if (!nextPacketPosition) {
+             return;
+         }
+-        const secondPacket = await this.readPacket(nextPacketPosition.startPage, nextPacketPosition.startSegmentIndex);
++        const maxSecondPacketBytes = Math.floor((remainingBytes - firstPacket.data.buffer.byteLength) / 2);
++        const secondPacket = await this.readPacket(nextPacketPosition.startPage, nextPacketPosition.startSegmentIndex, maxSecondPacketBytes);
+         if (!secondPacket) {
+             return;
+         }
+@@ -108,7 +134,17 @@ export class OggDemuxer extends Demuxer {
+         if (!nextPacketPosition) {
+             return;
+         }
+-        const thirdPacket = await this.readPacket(nextPacketPosition.startPage, nextPacketPosition.startSegmentIndex);
++        const lacingValueCount = (size) => Math.floor(size / 255) + 1;
++        const firstAndSecondBytes = firstPacket.data.buffer.byteLength + secondPacket.data.buffer.byteLength;
++        const descriptionOverhead = 1
++            + lacingValueCount(firstPacket.data.byteLength)
++            + lacingValueCount(secondPacket.data.byteLength);
++        const commentExpansionBytes = Math.max(0, secondPacket.data.byteLength - 7) * OGG_COMMENT_EXPANSION_MULTIPLIER;
++        const maxThirdPacketBytes = Math.floor((remainingBytes
++            - 2 * firstAndSecondBytes
++            - descriptionOverhead
++            - commentExpansionBytes) / 2);
++        const thirdPacket = await this.readPacket(nextPacketPosition.startPage, nextPacketPosition.startSegmentIndex, maxThirdPacketBytes);
+         if (!thirdPacket) {
+             return;
+         }
+@@ -128,8 +164,18 @@ export class OggDemuxer extends Demuxer {
+         addBytesToSegmentTable(firstPacket.data.length);
+         addBytesToSegmentTable(secondPacket.data.length);
+         // We don't add the last packet to the segment table, as it is assumed to be whatever bytes remain
+-        const description = new Uint8Array(1 + lacingValues.length
+-            + firstPacket.data.length + secondPacket.data.length + thirdPacket.data.length);
++        const descriptionBytes = 1 + lacingValues.length
++            + firstPacket.data.length + secondPacket.data.length + thirdPacket.data.length;
++        const aggregateBytes = retainedBytes
++            + firstPacket.data.buffer.byteLength
++            + secondPacket.data.buffer.byteLength
++            + thirdPacket.data.buffer.byteLength
++            + descriptionBytes
++            + commentExpansionBytes;
++        if (aggregateBytes > this.input._maxBufferedPacketBytes) {
++            throw new RangeError('Ogg metadata exceeds the configured memory limit.');
++        }
++        const description = new Uint8Array(descriptionBytes);
+         description[0] = 2; // Num entries in the segment table
+         description.set(lacingValues, 1);
+         description.set(firstPacket.data, 1 + lacingValues.length);
+@@ -149,6 +195,7 @@ export class OggDemuxer extends Demuxer {
+             ],
+             modeBlockflags: parseModesFromVorbisSetupPacket(thirdPacket.data).modeBlockflags,
+         };
++        this.metadataTagBudgetBytes += commentExpansionBytes;
+         readVorbisComments(secondPacket.data.subarray(7), this.metadataTags); // Skip header type and 'vorbis'
+     }
+     async readOpusMetadata(firstPacket, bitstream) {
+@@ -159,10 +206,21 @@ export class OggDemuxer extends Demuxer {
+         if (!nextPacketPosition) {
+             return;
+         }
+-        const secondPacket = await this.readPacket(nextPacketPosition.startPage, nextPacketPosition.startSegmentIndex);
++        const remainingBytes = this.input._maxBufferedPacketBytes - this.getRetainedMetadataBytes();
++        const maxSecondPacketBytes = Math.floor((remainingBytes - firstPacket.data.buffer.byteLength) / 2);
++        const secondPacket = await this.readPacket(nextPacketPosition.startPage, nextPacketPosition.startSegmentIndex, maxSecondPacketBytes);
+         if (!secondPacket) {
+             return;
+         }
++        const commentExpansionBytes = Math.max(0, secondPacket.data.byteLength - 8) * OGG_COMMENT_EXPANSION_MULTIPLIER;
++        const aggregateBytes = this.getRetainedMetadataBytes()
++            + firstPacket.data.buffer.byteLength
++            + secondPacket.data.buffer.byteLength
++            + commentExpansionBytes;
++        if (aggregateBytes > this.input._maxBufferedPacketBytes) {
++            throw new RangeError('Ogg metadata exceeds the configured memory limit.');
++        }
++        this.metadataTagBudgetBytes += commentExpansionBytes;
+         bitstream.codecInfo.codec = 'opus';
+         bitstream.description = firstPacket.data;
+         bitstream.lastMetadataPacket = secondPacket;
+@@ -174,7 +232,7 @@ export class OggDemuxer extends Demuxer {
+         };
+         readVorbisComments(secondPacket.data.subarray(8), this.metadataTags); // Skip 'OpusTags'
+     }
+-    async readPacket(startPage, startSegmentIndex) {
++    async readPacket(startPage, startSegmentIndex, maxPacketBytes = Infinity) {
+         assert(startSegmentIndex < startPage.lacingValues.length);
+         let startDataOffset = 0;
+         for (let i = 0; i < startSegmentIndex; i++) {
+@@ -184,6 +242,19 @@ export class OggDemuxer extends Demuxer {
+         let currentDataOffset = startDataOffset;
+         let currentSegmentIndex = startSegmentIndex;
+         const chunks = [];
++        let totalPacketSize = 0;
++        const packetLimit = Math.min(maxPacketBytes, this.input._maxBufferedPacketBytes, this.input._maxEncodedPacketBytes);
++        if (packetLimit <= 0) {
++            throw new RangeError('Assembled Ogg packet exceeds the configured memory limit.');
++        }
++        const appendChunk = (chunk) => {
++            const nextSize = totalPacketSize + chunk.byteLength;
++            if (nextSize > packetLimit) {
++                throw new RangeError('Assembled Ogg packet exceeds the configured memory limit.');
++            }
++            chunks.push(chunk);
++            totalPacketSize = nextSize;
++        };
+         outer: while (true) {
+             // Load the entire page data
+             let pageSlice = this.reader.requestSlice(currentPage.dataStartPos, currentPage.dataSize);
+@@ -193,13 +264,13 @@ export class OggDemuxer extends Demuxer {
+             const pageData = readBytes(pageSlice, currentPage.dataSize);
+             while (true) {
+                 if (currentSegmentIndex === currentPage.lacingValues.length) {
+-                    chunks.push(pageData.subarray(startDataOffset, currentDataOffset));
++                    appendChunk(pageData.subarray(startDataOffset, currentDataOffset));
+                     break;
+                 }
+                 const lacingValue = currentPage.lacingValues[currentSegmentIndex];
+                 currentDataOffset += lacingValue;
+                 if (lacingValue < 255) {
+-                    chunks.push(pageData.subarray(startDataOffset, currentDataOffset));
++                    appendChunk(pageData.subarray(startDataOffset, currentDataOffset));
+                     break outer;
+                 }
+                 currentSegmentIndex++;
+@@ -227,7 +298,6 @@ export class OggDemuxer extends Demuxer {
+             currentDataOffset = 0;
+             currentSegmentIndex = 0;
+         }
+-        const totalPacketSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+         if (totalPacketSize === 0) {
+             return null; // Invalid packet, treat it as end of stream
+         }
+diff --git a/dist/modules/src/reader.d.ts b/dist/modules/src/reader.d.ts
+index da0db97b8cfe01f9fc8ea552fdc90c9af3276c3e..096acfd6f8b2239121be54f4f3f3a539faed0b0f 100644
+--- a/dist/modules/src/reader.d.ts
++++ b/dist/modules/src/reader.d.ts
+@@ -9,7 +9,8 @@ import { MaybePromise } from './misc.js';
+ import { Source } from './source.js';
+ export declare class Reader {
+     source: Source;
+-    constructor(source: Source);
++    maxReadSize: number;
++    constructor(source: Source, maxReadSize?: number);
+     get fileSize(): number | null;
+     get fileSizeNonStrict(): number | null;
+     requestSlice(start: number, length: number): MaybePromise<FileSlice | null>;
+diff --git a/dist/modules/src/reader.js b/dist/modules/src/reader.js
+index 89a7979eebda756f9912e8e46952251aaafa282f..c9abe13226184793c346b487614b318d853d7e31 100644
+--- a/dist/modules/src/reader.js
++++ b/dist/modules/src/reader.js
+@@ -9,8 +9,15 @@ import { InputDisposedError } from './input.js';
+ import { assert, clamp, getUint24, isThenable, textDecoder, toDataView } from './misc.js';
+ import { DEFAULT_MAX_READ_POSITION, DEFAULT_MIN_READ_POSITION } from './source.js';
+ export class Reader {
+-    constructor(source) {
++    constructor(source, maxReadSize = Infinity) {
+         this.source = source;
++        this.maxReadSize = maxReadSize;
++    }
++    /** @internal */
++    assertMaxReadSize(size) {
++        if (size > this.maxReadSize) {
++            throw new RangeError(`Requested media data exceeds the configured memory limit of ${this.maxReadSize} bytes.`);
++        }
+     }
+     get fileSize() {
+         const size = this.source._getFileSize();
+@@ -36,6 +43,7 @@ export class Reader {
+             const buffer = new Uint8Array(0);
+             return new FileSlice(buffer, toDataView(buffer), 0, start, start);
+         }
++        this.assertMaxReadSize(length);
+         const end = start + length;
+         const result = this.source._read(start, end, DEFAULT_MIN_READ_POSITION, DEFAULT_MAX_READ_POSITION);
+         if (isThenable(result)) {
+@@ -94,12 +102,15 @@ export class Reader {
+                     // It only took one read to get to know the whole file size
+                     return this.requestSlice(0, this.fileSizeNonStrict);
+                 }
+-                let slice = this.requestSliceRange(currentSize, 0, CHUNK_SIZE);
++                const bytesRemaining = this.maxReadSize - currentSize;
++                const maxChunkLength = Math.max(1, Math.min(CHUNK_SIZE, bytesRemaining));
++                let slice = this.requestSliceRange(currentSize, 0, maxChunkLength);
+                 if (isThenable(slice))
+                     slice = await slice;
+                 if (!slice || slice.length === 0) {
+                     break;
+                 }
++                this.assertMaxReadSize(currentSize + slice.length);
+                 const chunk = readBytes(slice, slice.length);
+                 chunks.push(chunk);
+                 currentSize += slice.length;
+diff --git a/src/flac/flac-demuxer.ts b/src/flac/flac-demuxer.ts
+index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a2241777a040b8 100644
+--- a/src/flac/flac-demuxer.ts
++++ b/src/flac/flac-demuxer.ts
+@@ -66,6 +66,10 @@ type NextFlacFrameResult = {
+ 	isLastFrame: boolean;
+ };
+ 
++const MAX_FLAC_METADATA_BLOCKS = 4096;
++const FLAC_TEXT_METADATA_EXPANSION_MULTIPLIER = 12;
++const FLAC_PICTURE_EXPANSION_MULTIPLIER = 4;
++
+ export class FlacDemuxer extends Demuxer {
+ 	reader: Reader;
+ 
+@@ -105,6 +109,25 @@ export class FlacDemuxer extends Demuxer {
+ 
+ 	async readMetadata() {
+ 		return (this.metadataPromise ??= (async () => {
++			let metadataBlockCount = 0;
++			let retainedMetadataBytes = 0;
++			const countMetadataBlock = () => {
++				metadataBlockCount++;
++				if (
++					Number.isFinite(this.input._maxBufferedPacketBytes)
++					&& metadataBlockCount > MAX_FLAC_METADATA_BLOCKS
++				) {
++					throw new RangeError('FLAC metadata block count exceeds the configured safety limit.');
++				}
++			};
++			const reserveRetainedMetadata = (sourceBytes: number, expansionMultiplier: number) => {
++				const expandedBytes = sourceBytes * expansionMultiplier;
++				if (expandedBytes > this.input._maxBufferedPacketBytes - retainedMetadataBytes) {
++					throw new RangeError('FLAC metadata exceeds the configured memory limit.');
++				}
++				retainedMetadataBytes += expandedBytes;
++			};
++
+ 			// Read all ID3v2 tags at the start of the file
+ 			let currentPos = 0;
+ 			while (true) {
+@@ -121,6 +144,11 @@ export class FlacDemuxer extends Demuxer {
+ 					break;
+ 				}
+ 
++				countMetadataBlock();
++				reserveRetainedMetadata(
++					id3V2Header.size,
++					FLAC_TEXT_METADATA_EXPANSION_MULTIPLIER,
++				);
+ 				let contentSlice = this.reader.requestSlice(headerSlice.filePos, id3V2Header.size);
+ 				if (isThenable(contentSlice)) contentSlice = await contentSlice;
+ 				assert(contentSlice);
+@@ -152,6 +180,7 @@ export class FlacDemuxer extends Demuxer {
+ 				const size = readU24Be(sizeSlice);
+ 				const isLastMetadata = (byte & 0x80) !== 0;
+ 				const metaBlockType = byte & 0x7f;
++				countMetadataBlock();
+ 
+ 				switch (metaBlockType) {
+ 					case FlacBlockType.STREAMINFO: {
+@@ -191,6 +220,7 @@ export class FlacDemuxer extends Demuxer {
+ 
+ 						bitstream.skipBits(16 * 8); // md5 hash
+ 
++						reserveRetainedMetadata(42, 1);
+ 						const description = new Uint8Array(42);
+ 						// 1. "fLaC"
+ 						description.set(new Uint8Array([0x66, 0x4c, 0x61, 0x43]), 0);
+@@ -216,6 +246,10 @@ export class FlacDemuxer extends Demuxer {
+ 					case FlacBlockType.VORBIS_COMMENT: {
+ 						// Parse vorbis comment block
+ 						// https://www.rfc-editor.org/rfc/rfc9639.html#name-vorbis-comment
++						reserveRetainedMetadata(
++							size,
++							FLAC_TEXT_METADATA_EXPANSION_MULTIPLIER,
++						);
+ 						let vorbisCommentBlock = this.reader.requestSlice(
+ 							currentPos,
+ 							size,
+@@ -234,6 +268,10 @@ export class FlacDemuxer extends Demuxer {
+ 					case FlacBlockType.PICTURE: {
+ 						// Parse picture block
+ 						// https://www.rfc-editor.org/rfc/rfc9639.html#name-picture
++						reserveRetainedMetadata(
++							size,
++							FLAC_PICTURE_EXPANSION_MULTIPLIER,
++						);
+ 						let pictureBlock = this.reader.requestSlice(
+ 							currentPos,
+ 							size,
+diff --git a/src/hls/hls-segmented-input.ts b/src/hls/hls-segmented-input.ts
+index 3f28cd7ff02167740822da1be5641aad90fcc473..1ab57952aa708d9fa68d66147050509c73fa5469 100644
+--- a/src/hls/hls-segmented-input.ts
++++ b/src/hls/hls-segmented-input.ts
+@@ -129,7 +129,7 @@ export class HlsSegmentedInput extends SegmentedInput {
+ 
+ 		if (!lines) {
+ 			using ref = await this.demuxer.input._getSourceUncached({ path: this.rootPath, isRoot: false });
+-			const reader = new Reader(ref.source);
++			const reader = new Reader(ref.source, this.input._maxContiguousReadBytes);
+ 
+ 			const slice = await reader.requestEntireFile();
+ 			assert(slice);
+@@ -696,14 +696,17 @@ export class HlsSegmentedInput extends SegmentedInput {
+ 							ciphertextRef = sliceRef;
+ 						}
+ 
+-						const ciphertextReader = new Reader(ciphertextRef.source);
++						const ciphertextReader = new Reader(
++							ciphertextRef.source,
++							this.input._maxContiguousReadBytes,
++						);
+ 
+ 						const stream = createAes128CbcDecryptStream(ciphertextReader, async () => {
+ 							using keyRef = await this.input._getSourceCached(
+ 								{ path: encryption.keyUri, isRoot: false },
+ 								ENCRYPTION_KEY_CACHE_GROUP,
+ 							);
+-							const keyReader = new Reader(keyRef.source);
++							const keyReader = new Reader(keyRef.source, this.input._maxContiguousReadBytes);
+ 							const keySlice = await keyReader.requestSlice(0, AES_128_BLOCK_SIZE);
+ 							if (!keySlice) {
+ 								throw new Error('Invalid AES-128 key; expected at least 16 bytes of data.');
+@@ -728,6 +731,9 @@ export class HlsSegmentedInput extends SegmentedInput {
+ 			initInput: initInput ?? undefined,
+ 			formatOptions,
+ 		});
++		input._maxContiguousReadBytes = this.input._maxContiguousReadBytes;
++		input._maxEncodedPacketBytes = this.input._maxEncodedPacketBytes;
++		input._maxBufferedPacketBytes = this.input._maxBufferedPacketBytes;
+ 
+ 		input._onFormatDetermined = (format) => {
+ 			if (
+diff --git a/src/input.ts b/src/input.ts
+index a58fd76e6b0dbe291f620a3148249879a81f31fd..f95862968fac617708a07bce3f2e4709a5c70410 100644
+--- a/src/input.ts
++++ b/src/input.ts
+@@ -136,6 +136,12 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
+ 	/** @internal */
+ 	_formatOptions: InputFormatOptions;
+ 	/** @internal */
++	_maxContiguousReadBytes = Infinity;
++	/** @internal */
++	_maxEncodedPacketBytes = Infinity;
++	/** @internal */
++	_maxBufferedPacketBytes = Infinity;
++	/** @internal */
+ 	_onFormatDetermined: ((format: InputFormat) => void) | null = null;
+ 
+ 	/** True if the input has been disposed. */
+@@ -168,7 +174,6 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
+ 		if (options.formatOptions !== undefined) {
+ 			validateInputFormatOptions(options.formatOptions, 'formatOptions');
+ 		}
+-
+ 		this._formats = options.formats;
+ 		this._initInput = options.initInput ?? null;
+ 		this._formatOptions = options.formatOptions ?? {};
+@@ -270,7 +275,7 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
+ 	/** @internal */
+ 	_getDemuxer() {
+ 		return this._demuxerPromise ??= (async () => {
+-			this._reader = new Reader(this._rootSource);
++			this._reader = new Reader(this._rootSource, this._maxContiguousReadBytes);
+ 			this._emit('source', { source: this._rootSource, request: null, isRoot: true });
+ 
+ 			for (const format of this._formats) {
+diff --git a/src/isobmff/isobmff-demuxer.ts b/src/isobmff/isobmff-demuxer.ts
+index 17d648dc2e66532b0a40d50778de7af3e04de05a..bb3cf9c3a6dad5e9a489cfd90b09e63a5c7ed0f3 100644
+--- a/src/isobmff/isobmff-demuxer.ts
++++ b/src/isobmff/isobmff-demuxer.ts
+@@ -3176,6 +3176,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+ 		if (options.metadataOnly) {
+ 			data = PLACEHOLDER_DATA;
+ 		} else {
++			if (sampleInfo.sampleSize > this.internalTrack.demuxer.input._maxEncodedPacketBytes) {
++				throw new RangeError('ISOBMFF packet exceeds the configured memory limit.');
++			}
+ 			let slice = this.internalTrack.demuxer.reader.requestSlice(
+ 				sampleInfo.sampleOffset,
+ 				sampleInfo.sampleSize,
+@@ -3239,6 +3242,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+ 		if (options.metadataOnly) {
+ 			data = PLACEHOLDER_DATA;
+ 		} else {
++			if (fragmentSample.byteSize > this.internalTrack.demuxer.input._maxEncodedPacketBytes) {
++				throw new RangeError('ISOBMFF packet exceeds the configured memory limit.');
++			}
+ 			let slice = this.internalTrack.demuxer.reader.requestSlice(
+ 				fragmentSample.byteOffset,
+ 				fragmentSample.byteSize,
+diff --git a/src/matroska/matroska-demuxer.ts b/src/matroska/matroska-demuxer.ts
+index 6a0f4225e8f3275012fa7ddd761578cd93a1020f..133a97ae89f7744d7dff9f85afdd49ad2e9b632c 100644
+--- a/src/matroska/matroska-demuxer.ts
++++ b/src/matroska/matroska-demuxer.ts
+@@ -822,7 +822,11 @@ export class MatroskaDemuxer extends Demuxer {
+ 
+ 			// Decode the block data if it hasn't been decoded yet (needed for lacing expansion)
+ 			if (!originalBlock.decoded) {
+-				originalBlock.data = this.decodeBlockData(track, originalBlock.data);
++				const sideDataByteLength = originalBlock.mainAdditional?.byteLength ?? 0;
++				if (originalBlock.data.byteLength + sideDataByteLength > this.input._maxEncodedPacketBytes) {
++					throw new RangeError('Matroska packet and side data exceed the configured memory limit.');
++				}
++				originalBlock.data = this.decodeBlockData(track, originalBlock.data, sideDataByteLength);
+ 				originalBlock.decoded = true;
+ 			}
+ 
+@@ -1591,7 +1595,11 @@ export class MatroskaDemuxer extends Demuxer {
+ 					isKeyFrame = true;
+ 				}
+ 
+-				const blockData = readBytes(slice, size - (slice.filePos - dataStartPos));
++				const blockSize = size - (slice.filePos - dataStartPos);
++				if (blockSize > this.input._maxEncodedPacketBytes) {
++					throw new RangeError('Matroska packet exceeds the configured memory limit.');
++				}
++				const blockData = readBytes(slice, blockSize);
+ 				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
+ 
+ 				trackData.blocks.push({
+@@ -1628,7 +1636,11 @@ export class MatroskaDemuxer extends Demuxer {
+ 				const flags = readU8(slice);
+ 				const lacing = (flags >> 1) & 0x3 as BlockLacing; // If the block is laced, we'll expand it later
+ 
+-				const blockData = readBytes(slice, size - (slice.filePos - dataStartPos));
++				const blockSize = size - (slice.filePos - dataStartPos);
++				if (blockSize > this.input._maxEncodedPacketBytes) {
++					throw new RangeError('Matroska packet exceeds the configured memory limit.');
++				}
++				const blockData = readBytes(slice, blockSize);
+ 				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
+ 
+ 				this.currentBlock = {
+@@ -1667,6 +1679,9 @@ export class MatroskaDemuxer extends Demuxer {
+ 			case EBMLId.BlockAdditional: {
+ 				if (!this.currentBlockAdditional) break;
+ 
++				if (size > this.input._maxEncodedPacketBytes) {
++					throw new RangeError('Matroska packet side data exceeds the configured memory limit.');
++				}
+ 				this.currentBlockAdditional.data = readBytes(slice, size);
+ 			}; break;
+ 
+@@ -1895,7 +1910,7 @@ export class MatroskaDemuxer extends Demuxer {
+ 		return true;
+ 	}
+ 
+-	decodeBlockData(track: InternalTrack, rawData: Uint8Array) {
++	decodeBlockData(track: InternalTrack, rawData: Uint8Array, sideDataByteLength = 0) {
+ 		assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
+ 
+ 		let currentData = rawData;
+@@ -1909,6 +1924,12 @@ export class MatroskaDemuxer extends Demuxer {
+ 						case ContentCompAlgo.HeaderStripping: {
+ 							if (instruction.data.settings && instruction.data.settings.length > 0) {
+ 								const prefix = instruction.data.settings;
++								if (
++									prefix.length + currentData.length + sideDataByteLength
++									> this.input._maxEncodedPacketBytes
++								) {
++									throw new RangeError('Matroska packet exceeds the configured memory limit.');
++								}
+ 								const newData = new Uint8Array(prefix.length + currentData.length);
+ 
+ 								newData.set(prefix, 0);
+@@ -2308,10 +2329,18 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+ 		const trackData = cluster.trackData.get(this.internalTrack.id)!;
+ 		const block = trackData.blocks[blockIndex];
+ 		assert(block);
++		const sideDataByteLength = block.mainAdditional?.byteLength ?? 0;
++		if (block.data.byteLength + sideDataByteLength > this.internalTrack.demuxer.input._maxEncodedPacketBytes) {
++			throw new RangeError('Matroska packet and side data exceed the configured memory limit.');
++		}
+ 
+ 		// Perform lazy decoding if needed
+ 		if (!block.decoded) {
+-			block.data = this.internalTrack.demuxer.decodeBlockData(this.internalTrack, block.data);
++			block.data = this.internalTrack.demuxer.decodeBlockData(
++				this.internalTrack,
++				block.data,
++				sideDataByteLength,
++			);
+ 			block.decoded = true;
+ 		}
+ 
+@@ -2328,6 +2357,12 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+ 
+ 				if (!hasFrameContainer) {
+ 					// Wrap the frame in a frame container
++					if (
++						block.data.length + 8 + sideDataByteLength
++						> this.internalTrack.demuxer.input._maxEncodedPacketBytes
++					) {
++						throw new RangeError('Matroska packet exceeds the configured memory limit.');
++					}
+ 					const newData = new Uint8Array(block.data.length + 8);
+ 					const newDataView = toDataView(newData);
+ 
+@@ -2347,6 +2382,9 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+ 		const data = options.metadataOnly ? PLACEHOLDER_DATA : block.data;
+ 		const timestamp = block.timestamp / this.internalTrack.segment.timestampFactor;
+ 		const duration = block.duration / this.internalTrack.segment.timestampFactor;
++		if (block.data.byteLength + sideDataByteLength > this.internalTrack.demuxer.input._maxEncodedPacketBytes) {
++			throw new RangeError('Matroska packet and side data exceed the configured memory limit.');
++		}
+ 
+ 		const sideData: EncodedPacketSideData = {};
+ 		if (block.mainAdditional && this.internalTrack.info?.type === 'video' && this.internalTrack.info.alphaMode) {
+diff --git a/src/media-sink.ts b/src/media-sink.ts
+index d0c65ca8ae663d8fd7fe8206ee768092b8085c57..0de8e869c07b1423ce9845a1011248e6334484d3 100644
+--- a/src/media-sink.ts
++++ b/src/media-sink.ts
+@@ -303,7 +303,8 @@ export class EncodedPacketSink {
+ 
+ 	/**
+ 	 * Creates an async iterator that yields the packets in this track in decode order. To enable fast iteration, this
+-	 * method will intelligently preload packets based on the speed of the consumer.
++	 * method will intelligently preload packets based on the speed of the consumer unless the input has a byte budget,
++	 * in which case packets are retrieved on demand to keep buffering bounded.
+ 	 *
+ 	 * @param startPacket - (optional) The packet from which iteration should begin. This packet will also be yielded.
+ 	 * @param endPacket - (optional) The packet at which iteration should end. This packet will _not_ be yielded.
+@@ -328,6 +329,23 @@ export class EncodedPacketSink {
+ 			throw new InputDisposedError();
+ 		}
+ 
++		if (this._track.input._maxBufferedPacketBytes !== Infinity) {
++			const sink = this;
++			const track = this._track;
++			return (async function* () {
++				let packet = startPacket ?? await sink.getFirstPacket(options);
++
++				while (packet && !track.input._disposed) {
++					if (endPacket && packet.sequenceNumber >= endPacket.sequenceNumber) {
++						break;
++					}
++
++					yield packet;
++					packet = await sink.getNextPacket(packet, options);
++				}
++			})();
++		}
++
+ 		const packetQueue: EncodedPacket[] = [];
+ 
+ 		let { promise: queueNotEmpty, resolve: onQueueNotEmpty } = promiseWithResolvers();
+diff --git a/src/mpeg-ts/mpeg-ts-demuxer.ts b/src/mpeg-ts/mpeg-ts-demuxer.ts
+index b1943b7167f5fb10d7a01d3d64e789ad7baa463c..36a213bb4e705a48cf8705e975be236e7b884c76 100644
+--- a/src/mpeg-ts/mpeg-ts-demuxer.ts
++++ b/src/mpeg-ts/mpeg-ts-demuxer.ts
+@@ -526,7 +526,12 @@ export class MpegTsDemuxer extends Demuxer {
+ 							);
+ 						}
+ 
+-						elementaryStream.firstSection = section;
++						// Keep only enough bytes for PES timestamp parsing. getFirstPacket rereads the section lazily,
++						// so large first PES payloads from every PID are not retained after metadata extraction.
++						elementaryStream.firstSection = {
++							...section,
++							payload: section.payload.subarray(0, 14).slice(),
++						};
+ 						elementaryStream.canBeTrustedWithKeyPackets = section.randomAccessIndicator === 1;
+ 
+ 						if (this.input._initInput) {
+@@ -854,7 +859,13 @@ export class MpegTsDemuxer extends Demuxer {
+ 		return buildMpegTsMimeType(codecStrings);
+ 	}
+ 
+-	async readSection(startPos: number, full: boolean, contiguous = false): Promise<Section | null> {
++	async readSection(
++		startPos: number,
++		full: boolean,
++		contiguous = false,
++		maxBytes = this.input._maxBufferedPacketBytes,
++	): Promise<Section | null> {
++		maxBytes = Math.min(maxBytes, this.input._maxBufferedPacketBytes);
+ 		let endPos = startPos;
+ 		let currentPos = startPos;
+ 		const chunks: Uint8Array[] = [];
+@@ -906,11 +917,18 @@ export class MpegTsDemuxer extends Demuxer {
+ 
+ 			if (hasPayload) {
+ 				if (adaptationFieldLength === 0) {
++					if (chunksByteLength + packet.body.byteLength > maxBytes) {
++						throw new RangeError('Assembled MPEG-TS section exceeds the configured memory limit.');
++					}
+ 					chunks.push(packet.body);
+ 					chunksByteLength += packet.body.byteLength;
+ 				} else {
+-					chunks.push(packet.body.subarray(adaptationFieldLength));
+-					chunksByteLength += packet.body.byteLength - adaptationFieldLength;
++					const payload = packet.body.subarray(adaptationFieldLength);
++					if (chunksByteLength + payload.byteLength > maxBytes) {
++						throw new RangeError('Assembled MPEG-TS section exceeds the configured memory limit.');
++					}
++					chunks.push(payload);
++					chunksByteLength += payload.byteLength;
+ 				}
+ 			}
+ 
+@@ -1302,7 +1320,9 @@ abstract class MpegTsTrackBacking implements InputTrackBacking {
+ 	}
+ 
+ 	async getFirstPacket(options: PacketRetrievalOptions): Promise<EncodedPacket | null> {
+-		const section = this.elementaryStream.firstSection;
++		const firstSection = this.elementaryStream.firstSection;
++		assert(firstSection);
++		const section = await this.elementaryStream.demuxer.readSection(firstSection.startPos, true);
+ 		assert(section);
+ 
+ 		const pesPacket = readPesPacket(this.elementaryStream.demuxer, section, true);
+@@ -1694,7 +1714,14 @@ abstract class MpegTsTrackBacking implements InputTrackBacking {
+ 							isKeyPacket = pesHeader.randomAccessIndicator === 1;
+ 						} else {
+ 							assert(pesHeaderSection);
+-							const pesPacket = readPesPacket(demuxer, pesHeaderSection, true);
++							// The first section is stored as a compact PES header during metadata
++							// discovery. Re-read it in full when key detection needs its payload.
++							const sectionForKeyCheck = isFirstChunk
++								&& pesHeader.sectionStartPos === firstPesPacketHeader.sectionStartPos
++								? await demuxer.readSection(pesHeader.sectionStartPos, true)
++								: pesHeaderSection;
++							assert(sectionForKeyCheck);
++							const pesPacket = readPesPacket(demuxer, sectionForKeyCheck, true);
+ 							assert(pesPacket);
+ 
+ 							const context = new PacketReadingContext(this.elementaryStream, pesPacket);
+@@ -1961,12 +1988,20 @@ class PacketReadingContext {
+ 	nextPts: number | null = null;
+ 
+ 	suppliedPacket: SuppliedPacket | null = null;
++	maxPacketBytes = Infinity;
++	maxAdditionalBufferedBytes: number;
+ 
+ 	constructor(elementaryStream: ElementaryStream, startingPesPacket: TimestampedPesPacket) {
+ 		this.elementaryStream = elementaryStream;
+ 		this.pid = elementaryStream.pid;
+ 		this.demuxer = elementaryStream.demuxer;
+ 		this.startingPesPacket = startingPesPacket;
++		const input = this.demuxer.input;
++		this.maxAdditionalBufferedBytes = Math.max(
++			0,
++			input._maxBufferedPacketBytes - startingPesPacket.data.buffer.byteLength,
++		);
++		this.maxPacketBytes = Math.min(input._maxEncodedPacketBytes, this.maxAdditionalBufferedBytes);
+ 	}
+ 
+ 	ensureBuffered(length: number) {
+@@ -2005,14 +2040,25 @@ class PacketReadingContext {
+ 					}
+ 
+ 					if (packetHeader.pid === this.pid) {
+-						const nextSection = await this.demuxer.readSection(currentPos, true);
++						const nextSection = await this.demuxer.readSection(
++							currentPos,
++							true,
++							false,
++							this.maxAdditionalBufferedBytes,
++						);
+ 						if (!nextSection) {
+ 							return;
+ 						}
++						const sectionBufferBytes = nextSection.payload.buffer.byteLength;
++						if (sectionBufferBytes > this.maxAdditionalBufferedBytes) {
++							throw new RangeError('MPEG-TS packet buffers exceed the configured memory limit.');
++						}
+ 
+ 						const nextPesPacket = readPesPacket(this.demuxer, nextSection, false);
+ 						if (nextPesPacket) {
+ 							pesPacket = nextPesPacket;
++							this.maxAdditionalBufferedBytes -= sectionBufferBytes;
++							this.maxPacketBytes -= sectionBufferBytes;
+ 							break;
+ 						}
+ 					}
+@@ -2567,6 +2613,14 @@ class PacketReadingContext {
+ 		// The sequence number is the starting position of the section the PES packet is in, PLUS the offset within the
+ 		// PES packet where the packet starts.
+ 		const sequenceNumber = sectionStartPos + (this.currentPos - this.currentPesPacketPos);
++		const relativeStartOffset = this.currentPos - this.currentPesPacketPos;
++		const needsMergedBuffer = relativeStartOffset + packetLength > currentPesPacket.data.byteLength;
++		if (
++			packetLength > this.elementaryStream.demuxer.input._maxEncodedPacketBytes
++			|| (needsMergedBuffer && packetLength > this.maxPacketBytes)
++		) {
++			throw new RangeError('MPEG-TS packet exceeds the configured memory limit.');
++		}
+ 		const data = this.readBytes(packetLength);
+ 
+ 		let randomAccessIndicator = currentPesPacket.randomAccessIndicator;
+@@ -2670,6 +2724,33 @@ class PacketBuffer {
+ 		if (this.reachedEnd) {
+ 			return false;
+ 		}
++		const input = this.backing.elementaryStream.demuxer.input;
++		const retainedPackets = new Set([
++			...this.decodeOrderPackets,
++			...this.reorderBuffer,
++			...this.presentationOrderPackets,
++			...(this.context.suppliedPacket ? [this.context.suppliedPacket] : []),
++		]);
++		const retainedBuffers = new Set<ArrayBufferLike>();
++		let retainedBytes = 0;
++		const countBuffer = (data: Uint8Array) => {
++			if (!retainedBuffers.has(data.buffer)) {
++				retainedBuffers.add(data.buffer);
++				retainedBytes += data.buffer.byteLength;
++			}
++		};
++		for (const packet of retainedPackets) {
++			countBuffer(packet.data);
++		}
++		countBuffer(this.context.startingPesPacket.data);
++		for (const pesPacket of this.context.pesPackets) {
++			countBuffer(pesPacket.data);
++		}
++		this.context.maxAdditionalBufferedBytes = input._maxBufferedPacketBytes - retainedBytes;
++		this.context.maxPacketBytes = Math.min(input._maxEncodedPacketBytes, this.context.maxAdditionalBufferedBytes);
++		if (this.context.maxAdditionalBufferedBytes < 0) {
++			throw new RangeError('MPEG-TS reorder buffer exceeds the configured memory limit.');
++		}
+ 
+ 		let suppliedPacket: SuppliedPacket | null;
+ 		if (this.context.suppliedPacket) {
+diff --git a/src/ogg/ogg-demuxer.ts b/src/ogg/ogg-demuxer.ts
+index 70ab3b8a346e394fd407e8e4e60621ef438e6839..10bf40b2658a1c3e1342ba3cf7284faf2e89a0c4 100644
+--- a/src/ogg/ogg-demuxer.ts
++++ b/src/ogg/ogg-demuxer.ts
+@@ -53,6 +53,9 @@ type Packet = {
+ 	endSegmentIndex: number;
+ };
+ 
++const MAX_OGG_LOGICAL_BITSTREAMS = 256;
++const OGG_COMMENT_EXPANSION_MULTIPLIER = 12;
++
+ export class OggDemuxer extends Demuxer {
+ 	reader: Reader;
+ 
+@@ -60,6 +63,7 @@ export class OggDemuxer extends Demuxer {
+ 	bitstreams: LogicalBitstream[] = [];
+ 	trackBackings: OggAudioTrackBacking[] = [];
+ 	metadataTags: MetadataTags = {};
++	metadataTagBudgetBytes = 0;
+ 
+ 	constructor(input: Input) {
+ 		super(input);
+@@ -67,6 +71,24 @@ export class OggDemuxer extends Demuxer {
+ 		this.reader = input._reader;
+ 	}
+ 
++	getRetainedMetadataBytes() {
++		const buffers = new Set<ArrayBufferLike>();
++		let total = this.metadataTagBudgetBytes;
++		const count = (data: Uint8Array | null) => {
++			if (data && !buffers.has(data.buffer)) {
++				buffers.add(data.buffer);
++				total += data.buffer.byteLength;
++			}
++		};
++
++		for (const bitstream of this.bitstreams) {
++			count(bitstream.description);
++			count(bitstream.lastMetadataPacket?.data ?? null);
++		}
++
++		return total;
++	}
++
+ 	async readMetadata() {
+ 		return this.metadataPromise ??= (async () => {
+ 			let currentPos = 0;
+@@ -88,6 +110,13 @@ export class OggDemuxer extends Demuxer {
+ 					break;
+ 				}
+ 
++				if (
++					Number.isFinite(this.input._maxBufferedPacketBytes)
++					&& this.bitstreams.length >= MAX_OGG_LOGICAL_BITSTREAMS
++				) {
++					throw new RangeError('Ogg logical bitstream count exceeds the configured safety limit.');
++				}
++
+ 				this.bitstreams.push({
+ 					serialNumber: page.serialNumber,
+ 					bosPage: page,
+@@ -106,7 +135,8 @@ export class OggDemuxer extends Demuxer {
+ 			}
+ 
+ 			for (const bitstream of this.bitstreams) {
+-				const firstPacket = await this.readPacket(bitstream.bosPage, 0);
++				const remainingBytes = this.input._maxBufferedPacketBytes - this.getRetainedMetadataBytes();
++				const firstPacket = await this.readPacket(bitstream.bosPage, 0, Math.floor(remainingBytes / 2));
+ 				if (!firstPacket) {
+ 					continue;
+ 				}
+@@ -146,12 +176,19 @@ export class OggDemuxer extends Demuxer {
+ 	}
+ 
+ 	async readVorbisMetadata(firstPacket: Packet, bitstream: LogicalBitstream) {
++		const retainedBytes = this.getRetainedMetadataBytes();
++		const remainingBytes = this.input._maxBufferedPacketBytes - retainedBytes;
+ 		let nextPacketPosition = await this.findNextPacketStart(firstPacket);
+ 		if (!nextPacketPosition) {
+ 			return;
+ 		}
+ 
+-		const secondPacket = await this.readPacket(nextPacketPosition.startPage, nextPacketPosition.startSegmentIndex);
++		const maxSecondPacketBytes = Math.floor((remainingBytes - firstPacket.data.buffer.byteLength) / 2);
++		const secondPacket = await this.readPacket(
++			nextPacketPosition.startPage,
++			nextPacketPosition.startSegmentIndex,
++			maxSecondPacketBytes,
++		);
+ 		if (!secondPacket) {
+ 			return;
+ 		}
+@@ -161,7 +198,26 @@ export class OggDemuxer extends Demuxer {
+ 			return;
+ 		}
+ 
+-		const thirdPacket = await this.readPacket(nextPacketPosition.startPage, nextPacketPosition.startSegmentIndex);
++		const lacingValueCount = (size: number) => Math.floor(size / 255) + 1;
++		const firstAndSecondBytes = firstPacket.data.buffer.byteLength + secondPacket.data.buffer.byteLength;
++		const descriptionOverhead = 1
++			+ lacingValueCount(firstPacket.data.byteLength)
++			+ lacingValueCount(secondPacket.data.byteLength);
++		const commentExpansionBytes = Math.max(0, secondPacket.data.byteLength - 7)
++			* OGG_COMMENT_EXPANSION_MULTIPLIER;
++		const maxThirdPacketBytes = Math.floor(
++			(
++				remainingBytes
++				- 2 * firstAndSecondBytes
++				- descriptionOverhead
++				- commentExpansionBytes
++			) / 2,
++		);
++		const thirdPacket = await this.readPacket(
++			nextPacketPosition.startPage,
++			nextPacketPosition.startSegmentIndex,
++			maxThirdPacketBytes,
++		);
+ 		if (!thirdPacket) {
+ 			return;
+ 		}
+@@ -187,10 +243,19 @@ export class OggDemuxer extends Demuxer {
+ 		addBytesToSegmentTable(secondPacket.data.length);
+ 		// We don't add the last packet to the segment table, as it is assumed to be whatever bytes remain
+ 
+-		const description = new Uint8Array(
+-			1 + lacingValues.length
+-			+ firstPacket.data.length + secondPacket.data.length + thirdPacket.data.length,
+-		);
++		const descriptionBytes = 1 + lacingValues.length
++			+ firstPacket.data.length + secondPacket.data.length + thirdPacket.data.length;
++		const aggregateBytes = retainedBytes
++			+ firstPacket.data.buffer.byteLength
++			+ secondPacket.data.buffer.byteLength
++			+ thirdPacket.data.buffer.byteLength
++			+ descriptionBytes
++			+ commentExpansionBytes;
++		if (aggregateBytes > this.input._maxBufferedPacketBytes) {
++			throw new RangeError('Ogg metadata exceeds the configured memory limit.');
++		}
++
++		const description = new Uint8Array(descriptionBytes);
+ 		description[0] = 2; // Num entries in the segment table
+ 		description.set(
+ 			lacingValues, 1,
+@@ -222,6 +287,7 @@ export class OggDemuxer extends Demuxer {
+ 			modeBlockflags: parseModesFromVorbisSetupPacket(thirdPacket.data).modeBlockflags,
+ 		};
+ 
++		this.metadataTagBudgetBytes += commentExpansionBytes;
+ 		readVorbisComments(secondPacket.data.subarray(7), this.metadataTags); // Skip header type and 'vorbis'
+ 	}
+ 
+@@ -234,13 +300,26 @@ export class OggDemuxer extends Demuxer {
+ 			return;
+ 		}
+ 
++		const remainingBytes = this.input._maxBufferedPacketBytes - this.getRetainedMetadataBytes();
++		const maxSecondPacketBytes = Math.floor((remainingBytes - firstPacket.data.buffer.byteLength) / 2);
+ 		const secondPacket = await this.readPacket(
+ 			nextPacketPosition.startPage,
+ 			nextPacketPosition.startSegmentIndex,
++			maxSecondPacketBytes,
+ 		);
+ 		if (!secondPacket) {
+ 			return;
+ 		}
++		const commentExpansionBytes = Math.max(0, secondPacket.data.byteLength - 8)
++			* OGG_COMMENT_EXPANSION_MULTIPLIER;
++		const aggregateBytes = this.getRetainedMetadataBytes()
++			+ firstPacket.data.buffer.byteLength
++			+ secondPacket.data.buffer.byteLength
++			+ commentExpansionBytes;
++		if (aggregateBytes > this.input._maxBufferedPacketBytes) {
++			throw new RangeError('Ogg metadata exceeds the configured memory limit.');
++		}
++		this.metadataTagBudgetBytes += commentExpansionBytes;
+ 
+ 		bitstream.codecInfo.codec = 'opus';
+ 		bitstream.description = firstPacket.data;
+@@ -257,7 +336,11 @@ export class OggDemuxer extends Demuxer {
+ 		readVorbisComments(secondPacket.data.subarray(8), this.metadataTags); // Skip 'OpusTags'
+ 	}
+ 
+-	async readPacket(startPage: Page, startSegmentIndex: number): Promise<Packet | null> {
++	async readPacket(
++		startPage: Page,
++		startSegmentIndex: number,
++		maxPacketBytes = Infinity,
++	): Promise<Packet | null> {
+ 		assert(startSegmentIndex < startPage.lacingValues.length);
+ 
+ 		let startDataOffset = 0;
+@@ -270,6 +353,23 @@ export class OggDemuxer extends Demuxer {
+ 		let currentSegmentIndex = startSegmentIndex;
+ 
+ 		const chunks: Uint8Array[] = [];
++		let totalPacketSize = 0;
++		const packetLimit = Math.min(
++			maxPacketBytes,
++			this.input._maxBufferedPacketBytes,
++			this.input._maxEncodedPacketBytes,
++		);
++		if (packetLimit <= 0) {
++			throw new RangeError('Assembled Ogg packet exceeds the configured memory limit.');
++		}
++		const appendChunk = (chunk: Uint8Array) => {
++			const nextSize = totalPacketSize + chunk.byteLength;
++			if (nextSize > packetLimit) {
++				throw new RangeError('Assembled Ogg packet exceeds the configured memory limit.');
++			}
++			chunks.push(chunk);
++			totalPacketSize = nextSize;
++		};
+ 
+ 		outer:
+ 		while (true) {
+@@ -281,7 +381,7 @@ export class OggDemuxer extends Demuxer {
+ 
+ 			while (true) {
+ 				if (currentSegmentIndex === currentPage.lacingValues.length) {
+-					chunks.push(pageData.subarray(startDataOffset, currentDataOffset));
++					appendChunk(pageData.subarray(startDataOffset, currentDataOffset));
+ 					break;
+ 				}
+ 
+@@ -289,7 +389,7 @@ export class OggDemuxer extends Demuxer {
+ 				currentDataOffset += lacingValue;
+ 
+ 				if (lacingValue < 255) {
+-					chunks.push(pageData.subarray(startDataOffset, currentDataOffset));
++					appendChunk(pageData.subarray(startDataOffset, currentDataOffset));
+ 					break outer;
+ 				}
+ 
+@@ -322,7 +422,6 @@ export class OggDemuxer extends Demuxer {
+ 			currentSegmentIndex = 0;
+ 		}
+ 
+-		const totalPacketSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+ 		if (totalPacketSize === 0) {
+ 			return null; // Invalid packet, treat it as end of stream
+ 		}
+diff --git a/src/reader.ts b/src/reader.ts
+index 5865295104ba8ea7c751ed0387ed502909d0d6f0..115eaf2e5d6e2870e4c664c34e2248b27cdc63ae 100644
+--- a/src/reader.ts
++++ b/src/reader.ts
+@@ -11,7 +11,16 @@ import { assert, clamp, getUint24, isThenable, MaybePromise, textDecoder, toData
+ import { DEFAULT_MAX_READ_POSITION, DEFAULT_MIN_READ_POSITION, Source } from './source';
+ 
+ export class Reader {
+-	constructor(public source: Source) {}
++	constructor(public source: Source, public maxReadSize = Infinity) {}
++
++	/** @internal */
++	assertMaxReadSize(size: number) {
++		if (size > this.maxReadSize) {
++			throw new RangeError(
++				`Requested media data exceeds the configured memory limit of ${this.maxReadSize} bytes.`,
++			);
++		}
++	}
+ 
+ 	get fileSize(): number | null {
+ 		const size = this.source._getFileSize();
+@@ -43,6 +52,7 @@ export class Reader {
+ 			const buffer = new Uint8Array(0);
+ 			return new FileSlice(buffer, toDataView(buffer), 0, start, start);
+ 		}
++		this.assertMaxReadSize(length);
+ 
+ 		const end = start + length;
+ 		const result = this.source._read(start, end, DEFAULT_MIN_READ_POSITION, DEFAULT_MAX_READ_POSITION);
+@@ -120,12 +130,15 @@ export class Reader {
+ 					return this.requestSlice(0, this.fileSizeNonStrict);
+ 				}
+ 
+-				let slice = this.requestSliceRange(currentSize, 0, CHUNK_SIZE);
++				const bytesRemaining = this.maxReadSize - currentSize;
++				const maxChunkLength = Math.max(1, Math.min(CHUNK_SIZE, bytesRemaining));
++				let slice = this.requestSliceRange(currentSize, 0, maxChunkLength);
+ 				if (isThenable(slice)) slice = await slice;
+ 
+ 				if (!slice || slice.length === 0) {
+ 					break;
+ 				}
++				this.assertMaxReadSize(currentSize + slice.length);
+ 
+ 				const chunk = readBytes(slice, slice.length);
+ 				chunks.push(chunk);

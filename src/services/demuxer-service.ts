@@ -4,7 +4,11 @@
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 import { extractVideoMetadata } from '@services/video-metadata';
 import type { ConversionRequest, VideoMetadata, VideoRotation } from '@t/conversion-types';
-import { DEFAULT_FPS, DEMUX_MEMORY_BUDGET_BYTES } from '@utils/constants';
+import {
+  DEFAULT_FPS,
+  ENCODED_CHUNK_BUDGET_BYTES,
+  ENCODED_PACKET_BUDGET_BYTES,
+} from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { getTrimmedDurationSeconds } from '@utils/trim-time';
@@ -160,14 +164,16 @@ export async function demuxVideo(
       throw new Error('No decodable packets found in input buffer');
     }
 
-    const memoryBudgetBytes = DEMUX_MEMORY_BUDGET_BYTES;
+    const packetBudgetBytes = ENCODED_PACKET_BUDGET_BYTES;
+    const chunkBudgetBytes = ENCODED_CHUNK_BUDGET_BYTES;
 
     logger.info('demuxer', 'Demux stream prepared', {
       fileName: request.fileName,
       fileSizeBytes: inputSizeBytes,
       codec: config.codec,
       duration: `${duration.toFixed(2)}s`,
-      memoryBudgetBytes,
+      packetBudgetBytes,
+      chunkBudgetBytes,
     });
 
     // Check for cancellation before handing ownership of Input to the stream.
@@ -180,27 +186,27 @@ export async function demuxVideo(
       let sourceDurationUs = 0;
       let peakChunkBytes = 0;
       let completed = false;
-      let packetIteratorDone = false;
-      const packetIterator = sink.packets(startPacket)[Symbol.asyncIterator]();
+      let currentPacket: EncodedPacket | null = startPacket;
 
       try {
         // Iterate in decode order. The decoder stops this lazy stream only after
         // presentation-order output reaches trimEnd, so future-reference packets
         // required by an earlier B-frame are never cut off by their timestamps.
-        while (true) {
-          const nextPacket = await awaitWithAbort(packetIterator.next(), signal);
-          if (nextPacket.done) {
-            packetIteratorDone = true;
-            break;
-          }
-          const packet = nextPacket.value;
+        while (currentPacket) {
           signal?.throwIfAborted();
 
-          const chunk = packet.toEncodedVideoChunk();
-          const retainedBytes = getEncodedChunkRetainedBytes(chunk);
-          if (retainedBytes > memoryBudgetBytes) {
+          const packetRetainedBytes = currentPacket.byteLength + ENCODED_CHUNK_OVERHEAD_BYTES;
+          if (packetRetainedBytes > packetBudgetBytes) {
             throw new Error(
-              `Demux memory limit exceeded by one encoded packet (${memoryBudgetBytes} byte budget)`
+              `Demux memory limit exceeded by one encoded packet (${packetBudgetBytes} byte budget)`
+            );
+          }
+
+          const chunk = currentPacket.toEncodedVideoChunk();
+          const retainedBytes = getEncodedChunkRetainedBytes(chunk);
+          if (retainedBytes > chunkBudgetBytes) {
+            throw new Error(
+              `Demux memory limit exceeded by one encoded packet (${chunkBudgetBytes} byte budget)`
             );
           }
 
@@ -209,14 +215,15 @@ export async function demuxVideo(
           sourceDurationUs += Math.max(0, chunk.duration ?? 0);
           yield chunk;
 
+          // Advance only after the consumer asks for another chunk. The sink's
+          // packets() iterator preloads ahead based on the consumer's speed.
+          currentPacket = await awaitWithAbort(sink.getNextPacket(currentPacket), signal);
+
           // Yield periodically even when the decoder accepts packets quickly.
           if (totalFrames % 50 === 0) await yieldToMain();
         }
         completed = true;
       } finally {
-        if (!packetIteratorDone && packetIterator.return) {
-          void Promise.resolve(packetIterator.return()).catch(() => undefined);
-        }
         result.totalFrames = totalFrames;
         result.sourceTotalMs = sourceDurationUs / 1000;
         dispose();
@@ -235,7 +242,7 @@ export async function demuxVideo(
     result = {
       chunks,
       config,
-      encodedChunkBudgetBytes: memoryBudgetBytes,
+      encodedChunkBudgetBytes: chunkBudgetBytes,
       totalFrames: estimatedTotalFrames,
       duration,
       sourceTotalMs: 0,

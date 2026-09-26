@@ -3,10 +3,11 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
-import { DEMUX_MEMORY_BUDGET_BYTES } from '@utils/constants';
+import { DEMUX_MEMORY_BUDGET_BYTES, ENCODED_CHUNK_BUDGET_BYTES } from '@utils/constants';
 
 const mocks = vi.hoisted(() => {
   const keyPacket = {
+    byteLength: 4,
     duration: 1,
     timestamp: 4,
     toEncodedVideoChunk: () => ({ byteLength: 4, duration: 1_000_000, timestamp: 4_000_000 }),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => {
   const packets = [
     keyPacket,
     {
+      byteLength: 4,
       duration: 1,
       timestamp: 5,
       toEncodedVideoChunk: () => ({ byteLength: 4, duration: 1_000_000, timestamp: 5_000_000 }),
@@ -22,6 +24,9 @@ const mocks = vi.hoisted(() => {
   return {
     getKeyPacket: vi.fn().mockResolvedValue(keyPacket),
     getFirstPacket: vi.fn().mockResolvedValue(keyPacket),
+    getNextPacket: vi.fn().mockImplementation(async (packet: unknown) =>
+      packet === keyPacket ? packets[1] : null
+    ),
     getPacket: vi.fn().mockResolvedValue(keyPacket),
     getNextKeyPacket: vi.fn().mockResolvedValue({
       duration: 1,
@@ -30,8 +35,6 @@ const mocks = vi.hoisted(() => {
     }),
     packets,
     dispose: vi.fn(),
-    iteratorClosed: vi.fn(),
-    startPacket: undefined as unknown,
   };
 });
 
@@ -46,17 +49,10 @@ vi.mock('mediabunny', () => ({
   EncodedPacketSink: class {
     getKeyPacket = mocks.getKeyPacket;
     getFirstPacket = mocks.getFirstPacket;
+    getNextPacket = mocks.getNextPacket;
     getPacket = mocks.getPacket;
     getNextKeyPacket = mocks.getNextKeyPacket;
 
-    async *packets(startPacket: unknown) {
-      mocks.startPacket = startPacket;
-      try {
-        yield* mocks.packets;
-      } finally {
-        mocks.iteratorClosed();
-      }
-    }
   },
 }));
 
@@ -65,15 +61,13 @@ import { demuxVideo } from '@services/demuxer-service';
 describe('demuxVideo trim start', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.startPacket = undefined;
+    for (const packet of mocks.packets) packet.byteLength = 4;
   });
 
-  it('rejects an individual encoded packet that exceeds the demux budget', async () => {
-    const packetSpy = vi.spyOn(mocks.packets[0]!, 'toEncodedVideoChunk').mockReturnValue({
-      byteLength: DEMUX_MEMORY_BUDGET_BYTES,
-      duration: 1_000_000,
-      timestamp: 4_000_000,
-    });
+  it('rejects an oversized packet before creating an EncodedVideoChunk', async () => {
+    const packet = mocks.packets[0]!;
+    packet.byteLength = DEMUX_MEMORY_BUDGET_BYTES;
+    const packetSpy = vi.spyOn(packet, 'toEncodedVideoChunk');
     const request: ConversionRequest = {
       inputBuffer: new ArrayBuffer(8),
       fileName: 'packet-bomb.mp4',
@@ -99,6 +93,7 @@ describe('demuxVideo trim start', () => {
 
     try {
       await expect(consume()).rejects.toThrow('Demux memory limit exceeded');
+      expect(packetSpy).not.toHaveBeenCalled();
       expect(mocks.dispose).toHaveBeenCalled();
     } finally {
       packetSpy.mockRestore();
@@ -128,10 +123,9 @@ describe('demuxVideo trim start', () => {
 
     expect(mocks.getKeyPacket).toHaveBeenCalledWith(5, { verifyKeyPackets: true });
     expect(mocks.getNextKeyPacket).not.toHaveBeenCalled();
-    expect(mocks.startPacket).toEqual(expect.objectContaining({ timestamp: 4 }));
     expect(result).toEqual(
       expect.objectContaining({
-        encodedChunkBudgetBytes: 128 * 1024 * 1024,
+        encodedChunkBudgetBytes: ENCODED_CHUNK_BUDGET_BYTES,
         trimStartUs: 5_000_000,
         totalFrames: 2,
         sourceTotalMs: 2_000,
@@ -165,6 +159,37 @@ describe('demuxVideo trim start', () => {
     expect(result.totalFrames).toBe(60);
   });
 
+  it('does not read the next packet until the consumer pulls again', async () => {
+    const request: ConversionRequest = {
+      inputBuffer: new ArrayBuffer(8),
+      fileName: 'serial.mp4',
+      format: 'gif',
+      quality: 'medium',
+      scale: 1,
+      trimStart: 0,
+      trimEnd: 0,
+      maxMemoryMB: 512,
+    };
+    const metadata = {
+      config: { codec: 'avc1.640028', codedWidth: 16, codedHeight: 16 },
+      duration: 10,
+      framerate: 30,
+    } as VideoMetadata;
+    const result = await demuxVideo(request, metadata);
+    if (!(Symbol.asyncIterator in result.chunks)) {
+      throw new Error('Expected streaming demux chunks');
+    }
+    const iterator = result.chunks[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({ done: false });
+    expect(mocks.getNextPacket).not.toHaveBeenCalled();
+
+    await expect(iterator.next()).resolves.toMatchObject({ done: false });
+    expect(mocks.getNextPacket).toHaveBeenCalledOnce();
+    await iterator.return?.();
+    expect(mocks.dispose).toHaveBeenCalledOnce();
+  });
+
   it('leaves presentation-order trimEnd filtering to the decoder', async () => {
     const request: ConversionRequest = {
       inputBuffer: new ArrayBuffer(8),
@@ -185,7 +210,6 @@ describe('demuxVideo trim start', () => {
     const result = await demuxVideo(request, metadata);
     const chunks: EncodedVideoChunk[] = [];
     for await (const chunk of result.chunks) chunks.push(chunk);
-    await vi.waitFor(() => expect(mocks.iteratorClosed).toHaveBeenCalledOnce());
 
     expect(chunks).toHaveLength(2);
     expect(result.trimEndUs).toBe(4_000_000);
