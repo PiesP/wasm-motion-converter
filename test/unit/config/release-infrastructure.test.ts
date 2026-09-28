@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -12,6 +13,31 @@ function jobBlock(workflow: string, jobId: string): string {
   const afterMarker = start + marker.length;
   const nextJob = workflow.slice(afterMarker).search(/\n  [a-z][a-z0-9-]*:\n/);
   return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
+}
+
+function runSecuritySummary(event: string, results: Record<string, string> = {}) {
+  const workflow = readFileSync(resolve(root, '.github/workflows/security.yaml'), 'utf8');
+  const script = jobBlock(workflow, 'security-summary').split('        run: |\n')[1];
+  if (!script) throw new Error('Security summary script not found');
+
+  return spawnSync('bash', ['-c', script.replace(/^ {10}/gm, '')], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GITHUB_STEP_SUMMARY: '/dev/null',
+      EVENT_NAME: event,
+      PINNED_TOOLS_RESULT: ['push', 'schedule', 'workflow_dispatch'].includes(event)
+        ? 'success'
+        : 'skipped',
+      OSV_PR_RESULT: event === 'pull_request' ? 'success' : 'skipped',
+      OSV_FULL_RESULT: event === 'pull_request' ? 'skipped' : 'success',
+      CODEQL_RESULT: 'success',
+      SEMGREP_RESULT: 'success',
+      CODEQL_REQUIRED: 'true',
+      PINNED_TOOLS_REQUIRED: 'true',
+      ...results,
+    },
+  });
 }
 
 describe('Release infrastructure', () => {
@@ -51,6 +77,45 @@ describe('Release infrastructure', () => {
     );
     expect(workflow).toContain('expect_success "Semgrep" "$SEMGREP_RESULT"');
     expect(workflow).toContain('expect_success "OSV full" "$OSV_FULL_RESULT"');
+  });
+
+  it.each(['pull_request', 'merge_group', 'push', 'schedule', 'workflow_dispatch'])(
+    'validates the actual scanner results for %s without manual status publishing',
+    (event) => {
+      const result = runSecuritySummary(event);
+      expect(result.status, result.stderr).toBe(0);
+      const required = [
+        'CODEQL_RESULT',
+        'SEMGREP_RESULT',
+        event === 'pull_request' ? 'OSV_PR_RESULT' : 'OSV_FULL_RESULT',
+      ];
+      if (['push', 'schedule', 'workflow_dispatch'].includes(event)) {
+        required.push('PINNED_TOOLS_RESULT');
+      }
+      for (const check of required) {
+        for (const outcome of ['failure', 'cancelled', 'skipped']) {
+          expect(runSecuritySummary(event, { [check]: outcome }).status, check).toBe(1);
+        }
+      }
+    }
+  );
+
+  it('accepts only the routed CodeQL and freshness skips and rejects unknown events', () => {
+    expect(runSecuritySummary('push', {
+      CODEQL_REQUIRED: 'false',
+      CODEQL_RESULT: 'skipped',
+      PINNED_TOOLS_REQUIRED: 'false',
+      PINNED_TOOLS_RESULT: 'skipped',
+    }).status).toBe(0);
+    expect(runSecuritySummary('push', {
+      CODEQL_REQUIRED: 'false',
+      CODEQL_RESULT: 'failure',
+    }).status).toBe(1);
+    expect(runSecuritySummary('push', {
+      PINNED_TOOLS_REQUIRED: 'false',
+      PINNED_TOOLS_RESULT: 'failure',
+    }).status).toBe(1);
+    expect(runSecuritySummary('unknown').status).toBe(1);
   });
 
   it('publishes a checksum-verifiable archive without flattening the app tree', () => {

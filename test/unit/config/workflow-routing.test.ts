@@ -180,6 +180,8 @@ describe('Workflow change routing', () => {
       expect(`${ci}\n${security}`).toContain(`name: ${name}`);
     }
     for (const workflow of [ci, security]) {
+      expect(workflow).not.toContain('report-pr-gate-statuses:');
+      expect(workflow).not.toContain('statuses: write');
       expect(workflow).toContain('pull_request:\n    branches: [master]');
       expect(workflow).toContain('merge_group:\n    types: [checks_requested]');
     }
