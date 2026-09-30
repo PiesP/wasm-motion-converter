@@ -7,6 +7,7 @@ settings:
 overrides:
   qs@>=6.11.1 <6.15.2: ^6.16.0
   sharp@>=0.35.0 <0.35.4: ^0.35.4
+  undici@>=7.0.0 <7.29.1: 7.29.1
 
 patchedDependencies:
   mediabunny@1.59.1: 095f3d2b2716bdb2dadad0540342dce8f1b7c2ec2d8af2b94251a621ac70603c
@@ -2916,8 +2917,8 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
-  undici@7.29.0:
-    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+  undici@7.29.1:
+    resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
     engines: {node: '>=20.18.1'}
 
   undici@8.10.2:
@@ -5185,7 +5186,7 @@ snapshots:
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.35.4(@types/node@26.6.2)
-      undici: 7.29.0
+      undici: 7.29.1
       workerd: 1.20260923.1
       ws: 8.21.0
       youch: 4.1.0-beta.10
@@ -5628,7 +5629,7 @@ snapshots:
 
   undici-types@8.9.0: {}
 
-  undici@7.29.0: {}
+  undici@7.29.1: {}
 
   undici@8.10.2: {}
 
