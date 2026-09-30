@@ -18,7 +18,6 @@ codeql=false
 semgrep=false
 semgrep_full=false
 security_tools=false
-codex_security=false
 
 set_all() {
   all=true
@@ -33,7 +32,6 @@ set_all() {
   semgrep=true
   semgrep_full=true
   security_tools=true
-  codex_security=true
 }
 
 classify_path() {
@@ -62,7 +60,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .node-version)
       quality=true
@@ -75,7 +72,6 @@ classify_path() {
       semgrep=true
       semgrep_full=true
       security_tools=true
-      codex_security=true
       ;;
     src/*)
       quality=true
@@ -87,7 +83,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     functions/* | tooling/*)
       quality=true
@@ -97,7 +92,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     public/* | index.html)
       quality=true
@@ -107,7 +101,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     test/unit/* | test/setup.ts | vitest.config.ts | tsconfig.test.json)
       quality=true
@@ -116,7 +109,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     test/e2e/* | test/lib/* | test/tsconfig.playwright.json | playwright.config.ts)
       quality=true
@@ -124,7 +116,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     scripts/test/*)
       quality=true
@@ -133,7 +124,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     scripts/build/* | scripts/release/*)
       quality=true
@@ -142,7 +132,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     scripts/ci/*)
       quality=true
@@ -152,19 +141,9 @@ classify_path() {
       semgrep=true
       semgrep_full=true
       security_tools=true
-      codex_security=true
-      ;;
-    scripts/security/codex-security/*)
-      unit=true
-      dependency=true
-      codeql=true
-      semgrep=true
-      semgrep_full=true
-      security_tools=true
-      codex_security=true
       ;;
     scripts/security/*)
-      if [[ "$path" == scripts/security/scope-osv-exceptions.py ]]; then
+      if [[ "$path" == scripts/security/validate-osv-results.py ]]; then
         dependency=true
       fi
       quality=true
@@ -173,7 +152,6 @@ classify_path() {
       semgrep=true
       semgrep_full=true
       security_tools=true
-      codex_security=true
       ;;
     .github/workflows/security.yaml)
       unit=true
@@ -182,7 +160,6 @@ classify_path() {
       semgrep=true
       semgrep_full=true
       security_tools=true
-      codex_security=true
       ;;
     .github/workflows/* | .github/actions/*)
       unit=true
@@ -190,16 +167,14 @@ classify_path() {
       semgrep=true
       semgrep_full=true
       security_tools=true
-      codex_security=true
       ;;
-    .github/codex-security/* | .github/SECURITY.md | .github/dependabot.yaml)
+    .github/threat-model.md | .github/SECURITY.md | .github/dependabot.yaml)
       unit=true
       dependency=true
       codeql=true
       semgrep=true
       semgrep_full=true
       security_tools=true
-      codex_security=true
       ;;
     biome.json | knip.json | tsconfig.json)
       quality=true
@@ -208,7 +183,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     vite.config.ts)
       quality=true
@@ -218,7 +192,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     stryker.conf.json | stryker.conf.fast.json)
       quality=true
@@ -227,7 +200,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     .nose-baseline.json | nose.toml)
       quality=true
@@ -235,14 +207,12 @@ classify_path() {
       duplication=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     wrangler.toml)
       unit=true
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     .gitattributes | .gitignore)
       semgrep=true
@@ -253,7 +223,6 @@ classify_path() {
       codeql=true
       semgrep=true
       semgrep_full=true
-      codex_security=true
       ;;
     *)
       echo "Unknown changed path; enabling all checks: $path" >&2
@@ -357,4 +326,3 @@ emit codeql "$codeql"
 emit semgrep "$semgrep"
 emit semgrep_full "$semgrep_full"
 emit security_tools "$security_tools"
-emit codex_security "$codex_security"

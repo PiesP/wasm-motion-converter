@@ -31,6 +31,9 @@ coordinate disclosure after a fix is available.
   excerpts or vulnerability details and require human validation before
   remediation or severity decisions.
 
+For architectural boundaries and required security properties, see the
+[threat model](threat-model.md).
+
 ## Scope
 
 Report vulnerabilities in this application or its dependencies, including

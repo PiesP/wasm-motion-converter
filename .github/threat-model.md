@@ -51,9 +51,6 @@ Protect these assets:
   releases, and trust downgrades remain subject to the pnpm policy.
 - Release and CI workflows use least privilege, immutable action pins, trusted
   inputs, and do not expose credentials to code from untrusted pull requests.
-- The Codex Security API key is available only as the `CODEX_SECURITY_ENV_API_KEY`
-  secret in the `codex-security` environment. That environment must allow only
-  the protected `master` branch; do not keep a repository-level copy of the key.
 
 ## High-value review surfaces
 
@@ -70,9 +67,9 @@ Protect these assets:
 ## Scope boundaries and coverage limits
 
 `packages/core` is a pinned git submodule and file dependency maintained in the
-separate `PiesP/browser-core` repository. Scan that repository independently.
-This scan should review only WMC's gitlink, imports, integration assumptions,
-and consumer-side use; it must not claim source coverage of browser-core.
+separate `PiesP/browser-core` repository. Review that repository independently.
+WMC reviews cover its gitlink, imports, integration assumptions, and
+consumer-side use, not browser-core source.
 
 Static analysis can trace JavaScript and TypeScript control and data flow, but
 cannot prove browser-codec safety, GPU/VRAM behavior, WebCodecs implementation
@@ -81,7 +78,7 @@ headers, or service-worker behavior in an installed browser. Report these as
 deferred runtime coverage rather than inferring safety or a vulnerability.
 Browser/PSS/RSS tests, deployed-header checks, and dependency scanners remain
 separate evidence. Generated output, coverage data, and historical reports are
-not source-of-truth scan targets.
+not source-of-truth review targets.
 
 Server-side SQL injection, SSRF, CSRF, RBAC bypass, session fixation, and
 multi-tenant isolation are out of scope because no server-side authority exists.
