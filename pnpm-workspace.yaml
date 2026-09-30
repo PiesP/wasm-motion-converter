@@ -3,6 +3,8 @@ overrides:
   qs@>=6.11.1 <6.15.2: "^6.16.0"
   # Miniflare pins a sharp release affected by GHSA-rgj7-g3m4-5g8c.
   sharp@>=0.35.0 <0.35.4: "^0.35.4"
+  # Miniflare pins an Undici version with HTTP and TLS security advisories.
+  undici@>=7.0.0 <7.29.1: "7.29.1"
 
 allowBuilds:
   esbuild: true
