@@ -111,7 +111,7 @@ describe('Codex Security CLI supply-chain controls', () => {
     expect(cliLock.packages['node_modules/fflate']?.version).toBe('0.8.3');
     expect(fastUriPackages.length).toBeGreaterThan(0);
     for (const [packagePath, metadata] of fastUriPackages) {
-      expect(metadata.version, `${packagePath} must use the patched release`).toBe('3.1.6');
+      expect(metadata.version, `${packagePath} must use the patched release`).toBe('3.1.8');
     }
   });
 
