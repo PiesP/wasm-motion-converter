@@ -9,5 +9,5 @@ IgnoredVulns = []
 package = "@openai/codex-security"
 version = "0.1.31"
 integrity = "sha512-XdxIQ+JQH3iysFPW2VdFcKAJJo+M+G4hR9x/KlVimMcbmocDVtQT+trjjfNPqZUdb2ZHrW7HHGepeRhMbMvCHQ=="
-lockfileSha256 = "323457c0d23aa9e307fb6aa0867bfced29d451a4d4be88a679659d36a70d7a5e"
-reviewedOn = 2026-09-26
+lockfileSha256 = "2dd14301f093a3b7b0d39887ca8799b7ce80224c696f335e1d76f284cb1010de"
+reviewedOn = 2026-09-30
