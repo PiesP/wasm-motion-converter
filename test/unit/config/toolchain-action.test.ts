@@ -7,7 +7,7 @@ const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf
 const deepChecksWorkflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
 const centralSetupAction =
-  'uses: PiesP/browser-core/automation/actions/setup-project@5fd4c8e8d0d84d8d46dd7b71b996d1664365f6d6';
+  'uses: PiesP/browser-core/automation/actions/setup-project@b382fa99a8b8ed5570ab6f4e1fd065a1423ea3f2';
 const releaseSetupActionPath = resolve(root, '.github/actions/setup-release/action.yaml');
 const releaseSetupAction = existsSync(releaseSetupActionPath)
   ? readFileSync(releaseSetupActionPath, 'utf8')
@@ -53,7 +53,7 @@ describe('central project setup action', () => {
     for (const [label, workflow, jobId] of expectedJobs) {
       const job = jobBlock(workflow, jobId);
       expect(job, label).toContain(centralSetupAction);
-      expect(job, label).toContain('node-version: ${{ env.NODE_VERSION }}');
+      expect(job, label).not.toContain('node-version:');
     }
 
     for (const workflow of [ciWorkflow, deepChecksWorkflow]) {
@@ -75,7 +75,7 @@ describe('central project setup action', () => {
       'uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0'
     );
     expect(releaseSetupAction).toContain('package-json-file: package.json');
-    expect(releaseSetupAction).toContain('runtime: "node@${{ inputs.node-version }}"');
+    expect(releaseSetupAction).toContain('runtime: "node@${{ steps.runtime.outputs.version }}"');
     expect(releaseSetupAction).toContain('cache: true');
     expect(releaseSetupAction).toContain('install: false');
     expect(releaseSetupAction).toContain('run: pnpm install --frozen-lockfile --no-runtime');
@@ -83,7 +83,7 @@ describe('central project setup action', () => {
     for (const [label, jobId] of expectedJobs) {
       const job = jobBlock(releaseWorkflow, jobId);
       expect(job, label).toContain(localReleaseSetupAction);
-      expect(job, label).toContain('node-version: ${{ env.NODE_VERSION }}');
+      expect(job, label).toContain('node-version: ${{ needs.provenance.outputs.node-version }}');
     }
 
     expect(releaseWorkflow.split(localReleaseSetupAction)).toHaveLength(expectedJobs.length + 1);
