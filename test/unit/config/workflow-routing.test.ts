@@ -163,7 +163,6 @@ describe('Workflow change routing', () => {
       'pr-gate/unit',
       'pr-gate/e2e',
       'pr-gate/build',
-      'pr-gate/duplication',
       'pr-gate/osv / osv-scan',
       'pr-gate/semgrep',
     ];
