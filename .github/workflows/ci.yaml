@@ -113,11 +113,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Verify required-check enforcement (temporary probe)
-        run: |
-          echo 'Intentional validation failure; remove this probe before landing.'
-          exit 1
-
       - name: ⏭️ No quality-relevant changes
         if: ${{ needs.changes.outputs.quality != 'true' }}
         run: echo "Quality gate is not affected by this change set."
