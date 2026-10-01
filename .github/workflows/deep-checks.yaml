@@ -51,6 +51,8 @@ jobs:
       - name: 🔑 Fingerprint duplication inputs
         id: fingerprint
         continue-on-error: true
+        env:
+          DEEP_RUNNER_LABEL: ubuntu-24.04
         run: node scripts/ci/deep-check-reuse.mjs fingerprint duplication
 
       - name: 📥 Restore successful duplication marker
@@ -60,7 +62,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .deep-check-cache/duplication.json
-          key: deep-success-v1-duplication-${{ steps.fingerprint.outputs.fingerprint }}
+          key: deep-success-v2-duplication-${{ steps.fingerprint.outputs.fingerprint }}
 
       - name: 🔎 Validate successful duplication marker
         id: marker
@@ -106,7 +108,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .deep-check-cache/duplication.json
-          key: deep-success-v1-duplication-${{ steps.fingerprint.outputs.fingerprint }}
+          key: deep-success-v2-duplication-${{ steps.fingerprint.outputs.fingerprint }}
 
   mutation:
     name: 🧬 Mutation
@@ -122,6 +124,8 @@ jobs:
       - name: 🔑 Fingerprint mutation inputs
         id: fingerprint
         continue-on-error: true
+        env:
+          DEEP_RUNNER_LABEL: ubuntu-24.04
         run: node scripts/ci/deep-check-reuse.mjs fingerprint mutation
 
       - name: 📥 Restore successful mutation marker
@@ -131,7 +135,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .deep-check-cache/mutation.json
-          key: deep-success-v1-mutation-${{ steps.fingerprint.outputs.fingerprint }}
+          key: deep-success-v2-mutation-${{ steps.fingerprint.outputs.fingerprint }}
 
       - name: 🔎 Validate successful mutation marker
         id: marker
@@ -158,14 +162,25 @@ jobs:
         if: ${{ steps.marker.outputs.reuse != 'true' }}
         run: pnpm mut:fast
 
+      - name: 📊 Upload mutation reports
+        id: upload
+        if: ${{ steps.check.outcome != 'skipped' && !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-report-${{ github.sha }}
+          path: reports/mutation/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+
       - name: ✅ Record fresh mutation pass
-        if: ${{ steps.check.outcome == 'success' }}
+        if: ${{ steps.check.outcome == 'success' && steps.upload.outcome == 'success' }}
         run: |
           echo 'Mutation: passed a fresh analysis.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: 📝 Mark successful mutation
         id: mark
-        if: ${{ steps.check.outcome == 'success' && steps.fingerprint.outputs.cacheable == 'true' && steps.restore.outputs.cache-hit != 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        if: ${{ steps.check.outcome == 'success' && steps.upload.outcome == 'success' && steps.fingerprint.outputs.cacheable == 'true' && steps.restore.outputs.cache-hit != 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
         continue-on-error: true
         env:
           FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
@@ -177,14 +192,4 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .deep-check-cache/mutation.json
-          key: deep-success-v1-mutation-${{ steps.fingerprint.outputs.fingerprint }}
-
-      - name: 📊 Upload mutation reports
-        if: ${{ steps.check.outcome != 'skipped' && !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: mutation-report-${{ github.sha }}
-          path: reports/mutation/
-          if-no-files-found: error
-          retention-days: 14
-          compression-level: 9
+          key: deep-success-v2-mutation-${{ steps.fingerprint.outputs.fingerprint }}

@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA = 1;
+export const SCHEMA = 2;
 export const GATES = ['duplication', 'mutation'];
 
 function assertGate(gate) {
@@ -20,9 +20,12 @@ function assertGate(gate) {
 }
 
 export function runnerIdentity(env = process.env) {
-  const { RUNNER_OS, RUNNER_ARCH, ImageOS, ImageVersion } = env;
-  if (![RUNNER_OS, RUNNER_ARCH, ImageOS, ImageVersion].every(Boolean)) return null;
-  return { os: RUNNER_OS, arch: RUNNER_ARCH, image: ImageOS, imageVersion: ImageVersion };
+  const { RUNNER_OS, RUNNER_ARCH, ImageOS, ImageVersion, DEEP_RUNNER_LABEL } = env;
+  if (![RUNNER_OS, RUNNER_ARCH, ImageOS, ImageVersion, DEEP_RUNNER_LABEL].every(Boolean))
+    return null;
+  // Record ImageVersion in the marker while allowing pinned source-based checks
+  // to reuse success across weekly runner image refreshes.
+  return { os: RUNNER_OS, arch: RUNNER_ARCH, image: ImageOS, label: DEEP_RUNNER_LABEL };
 }
 
 export function fingerprint(gate, cwd = process.cwd(), env = process.env) {
@@ -83,7 +86,9 @@ export function validMarker(markerPath, gate, expectedFingerprint) {
       marker.schema === SCHEMA &&
       marker.gate === gate &&
       marker.fingerprint === expectedFingerprint &&
-      marker.result === 'success'
+      marker.result === 'success' &&
+      typeof marker.imageVersion === 'string' &&
+      marker.imageVersion.length > 0
     );
   } catch {
     return false;
@@ -99,9 +104,10 @@ export function shouldReuse(valid, cacheHit, restoreOutcome, eventName, reuseSuc
   );
 }
 
-export function writeMarker(markerPath, gate, expectedFingerprint) {
+export function writeMarker(markerPath, gate, expectedFingerprint, env = process.env) {
   assertGate(gate);
   if (!/^[0-9a-f]{64}$/.test(expectedFingerprint)) throw new Error('Invalid fingerprint');
+  if (!env.ImageVersion) throw new Error('Runner image version is required');
   mkdirSync(dirname(markerPath), { recursive: true });
   writeFileSync(
     markerPath,
@@ -110,6 +116,7 @@ export function writeMarker(markerPath, gate, expectedFingerprint) {
       gate,
       fingerprint: expectedFingerprint,
       result: 'success',
+      imageVersion: env.ImageVersion,
     })}\n`
   );
 }
