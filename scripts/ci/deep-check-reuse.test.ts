@@ -6,7 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { fingerprint, shouldReuse, validMarker, writeMarker } from './deep-check-reuse.ts';
+import {
+  evaluateReuse,
+  fingerprint,
+  shouldReuse,
+  validMarker,
+  writeMarker,
+} from './deep-check-reuse.ts';
 
 const fixture = mkdtempSync(join(tmpdir(), 'deep-check-reuse-'));
 after(() => rmSync(fixture, { recursive: true, force: true }));
@@ -53,6 +59,9 @@ const runner = {
   ImageOS: 'ubuntu24',
   ImageVersion: '20261001.1',
   DEEP_RUNNER_LABEL: 'ubuntu-24.04',
+  GITHUB_RUN_ID: '100',
+  GITHUB_RUN_ATTEMPT: '1',
+  GITHUB_SHA: 'a'.repeat(40),
 };
 const baseline = fingerprint('duplication', fixture, runner);
 if (!baseline) throw new Error('Fixture runner identity must be complete');
@@ -177,6 +186,7 @@ test('only a valid successful marker can be reused', () => {
   writeMarker(marker, 'duplication', baseline, runner);
   assert.equal(validMarker(marker, 'duplication', baseline), true);
   assert.equal(JSON.parse(readFileSync(marker, 'utf8')).imageVersion, runner.ImageVersion);
+  assert.equal(JSON.parse(readFileSync(marker, 'utf8')).runId, 100);
   assert.equal(
     validMarker(
       marker,
@@ -193,7 +203,7 @@ test('only a valid successful marker can be reused', () => {
   writeFileSync(
     marker,
     JSON.stringify({
-      schema: 2,
+      schema: 3,
       gate: 'duplication',
       fingerprint: baseline,
       result: 'failure',
@@ -223,7 +233,262 @@ test('schedule reuses success; manual defaults to fresh and can opt in', () => {
   assert.equal(decide(true, 'push', 'true'), false);
 });
 
-test('CLI emits a reusable result only after a successful marker is present', () => {
+const analyzedAt = '2026-09-30T01:05:00Z';
+const oldRun: {
+  id: number;
+  run_attempt: number;
+  head_sha: string;
+  status: string;
+  conclusion: string | null;
+  created_at: string;
+  updated_at: string;
+} = {
+  id: 100,
+  run_attempt: 1,
+  head_sha: runner.GITHUB_SHA,
+  status: 'completed',
+  conclusion: 'success',
+  created_at: '2026-09-30T00:50:00Z',
+  updated_at: '2026-09-30T01:07:00Z',
+};
+const laterRun = {
+  ...oldRun,
+  id: 101,
+  head_sha: 'b'.repeat(40),
+  created_at: '2026-09-30T02:00:00Z',
+  updated_at: '2026-09-30T02:20:00Z',
+};
+const oldJob: {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+} = {
+  name: '🔍 Duplication',
+  status: 'completed',
+  conclusion: 'success',
+  started_at: '2026-09-30T01:00:00Z',
+  completed_at: '2026-09-30T01:04:00Z',
+};
+const verifyEnv = {
+  ...runner,
+  CACHE_HIT: 'true',
+  RESTORE_OUTCOME: 'success',
+  GITHUB_EVENT_NAME: 'schedule',
+  GITHUB_REPOSITORY: 'PiesP/wasm-motion-converter',
+  GITHUB_REF: 'refs/heads/master',
+  DEFAULT_BRANCH: 'master',
+  GITHUB_RUN_ID: '103',
+  GH_TOKEN: 'test-token',
+};
+
+function markerWithTime(path: string, time = analyzedAt, source = runner) {
+  writeMarker(path, 'duplication', baseline!, source);
+  const marker = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  marker.analyzedAt = time;
+  writeFileSync(path, JSON.stringify(marker));
+}
+
+function historyApi(
+  runs = [oldRun],
+  jobs: Record<number, (typeof oldJob)[]> = { 100: [oldJob] },
+  override?: (url: URL) => unknown
+) {
+  const requests: string[] = [];
+  const api = async (rawUrl: string) => {
+    const url = new URL(rawUrl);
+    requests.push(url.pathname + url.search);
+    const custom = override?.(url);
+    let body: unknown;
+    if (custom !== undefined) body = custom;
+    else if (url.pathname.endsWith('/runs')) {
+      const page = Number(url.searchParams.get('page'));
+      body = { total_count: runs.length, workflow_runs: runs.slice((page - 1) * 100, page * 100) };
+    } else {
+      const match = /\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs$/.exec(url.pathname);
+      if (!match) throw new Error(`Unexpected API path: ${url.pathname}`);
+      const list = jobs[Number(match[1])] ?? [];
+      const page = Number(url.searchParams.get('page'));
+      body = { total_count: list.length, jobs: list.slice((page - 1) * 100, page * 100) };
+    }
+    return { ok: true, json: async () => body };
+  };
+  return { api, requests };
+}
+
+test('verified origin reuses success and reports the completed job duration', async () => {
+  const marker = join(fixture, 'history-marker.json');
+  markerWithTime(marker);
+  const { api, requests } = historyApi();
+  assert.deepEqual(await evaluateReuse(marker, 'duplication', baseline, verifyEnv, api), {
+    reuse: true,
+    reason: 'validated-history',
+    savedSeconds: 240,
+  });
+  assert.ok(requests.some((request) => request.includes('/attempts/1/jobs')));
+});
+
+test('later failed, cancelled, and ongoing selected gates invalidate a prior success', async () => {
+  const marker = join(fixture, 'history-marker.json');
+  markerWithTime(marker);
+  for (const [status, conclusion] of [
+    ['completed', 'failure'],
+    ['completed', 'cancelled'],
+    ['in_progress', null],
+  ] as const) {
+    const changed = { ...laterRun, status, conclusion };
+    const { api } = historyApi([changed, oldRun], {
+      100: [oldJob],
+      101: [{ ...oldJob, status, conclusion }],
+    });
+    const decision = await evaluateReuse(marker, 'duplication', baseline, verifyEnv, api);
+    assert.equal(decision.reuse, false, `${status}/${conclusion}`);
+  }
+  // A failure that finished while the origin job was marking success must not
+  // hide behind the marker's later local timestamp.
+  const interleaved = {
+    ...oldRun,
+    id: 99,
+    created_at: '2026-09-30T00:30:00Z',
+    updated_at: '2026-09-30T01:04:30Z',
+    conclusion: 'failure',
+  };
+  const history = historyApi([oldRun, interleaved], {
+    100: [oldJob],
+    99: [{ ...oldJob, conclusion: 'failure', completed_at: '2026-09-30T01:04:30Z' }],
+  });
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, history.api)).reason,
+    'newer-gate-invalid'
+  );
+});
+
+test('complete second pages of workflow runs and jobs are required', async () => {
+  const marker = join(fixture, 'history-marker.json');
+  markerWithTime(marker);
+  const older = Array.from({ length: 100 }, (_, index) => ({
+    ...oldRun,
+    id: 1000 + index,
+    created_at: '2026-09-29T00:00:00Z',
+    updated_at: '2026-09-29T00:05:00Z',
+  }));
+  const unrelatedJobs = Array.from({ length: 100 }, (_, index) => ({
+    ...oldJob,
+    name: `Other ${index}`,
+  }));
+  const complete = historyApi([...older, oldRun], { 100: [...unrelatedJobs, oldJob] });
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, complete.api)).reuse,
+    true
+  );
+  assert.ok(
+    complete.requests.some((request) => request.includes('/runs?') && request.includes('page=2'))
+  );
+  assert.ok(
+    complete.requests.some((request) => request.includes('/jobs?') && request.includes('page=2'))
+  );
+  const rerun = {
+    ...oldRun,
+    id: 99,
+    created_at: '2026-09-29T00:00:00Z',
+    updated_at: '2026-09-30T01:04:30Z',
+    conclusion: 'failure',
+  };
+  const invalid = historyApi([...older.slice(0, 99), oldRun, rerun], {
+    100: [oldJob],
+    99: [{ ...oldJob, conclusion: 'failure' }],
+  });
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, invalid.api)).reason,
+    'newer-gate-invalid'
+  );
+});
+
+test('skipped unrelated gate is safe, while missing selected gate and reruns run fresh', async () => {
+  const marker = join(fixture, 'history-marker.json');
+  markerWithTime(marker);
+  const skipped = historyApi([laterRun, oldRun], {
+    100: [oldJob],
+    101: [{ ...oldJob, conclusion: 'skipped' }],
+  });
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, skipped.api)).reuse,
+    true
+  );
+  const missing = historyApi([laterRun, oldRun], { 100: [oldJob], 101: [] });
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, missing.api)).reason,
+    'gate-history-incomplete'
+  );
+  const rerun = historyApi([{ ...oldRun, run_attempt: 2 }, laterRun], { 100: [oldJob] });
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, rerun.api)).reason,
+    'origin-invalid'
+  );
+  const olderRerun = historyApi(
+    [oldRun, { ...oldRun, id: 99, updated_at: '2026-09-30T03:00:00Z', conclusion: 'failure' }],
+    { 100: [oldJob], 99: [{ ...oldJob, conclusion: 'failure' }] }
+  );
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, olderRerun.api)).reason,
+    'newer-gate-invalid'
+  );
+});
+
+test('a newer successful marker restores reuse after the earlier failed run', async () => {
+  const marker = join(fixture, 'recovered-marker.json');
+  const recovered = { ...runner, GITHUB_RUN_ID: '102', GITHUB_SHA: 'c'.repeat(40) };
+  markerWithTime(marker, '2026-09-30T04:05:00Z', recovered);
+  const recoveredRun = {
+    ...laterRun,
+    id: 102,
+    head_sha: recovered.GITHUB_SHA,
+    created_at: '2026-09-30T04:00:00Z',
+    updated_at: '2026-09-30T04:07:00Z',
+  };
+  const recoveredJob = {
+    ...oldJob,
+    started_at: '2026-09-30T04:00:00Z',
+    completed_at: '2026-09-30T04:04:00Z',
+  };
+  const { api } = historyApi([recoveredRun, { ...laterRun, conclusion: 'failure' }, oldRun], {
+    102: [recoveredJob],
+  });
+  assert.equal((await evaluateReuse(marker, 'duplication', baseline, verifyEnv, api)).reuse, true);
+});
+
+test('unavailable, truncated, or forged Actions history always runs fresh', async () => {
+  const marker = join(fixture, 'history-marker.json');
+  markerWithTime(marker);
+  const absent = historyApi([laterRun]);
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, absent.api)).reason,
+    'origin-invalid'
+  );
+  const unavailable = async () => ({ ok: false, json: async () => ({}) });
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, unavailable)).reason,
+    'api-unavailable-or-incomplete'
+  );
+  const truncated = historyApi([oldRun], { 100: [oldJob] }, (url) =>
+    url.pathname.endsWith('/runs') ? { total_count: 101, workflow_runs: [oldRun] } : undefined
+  );
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, truncated.api)).reason,
+    'api-unavailable-or-incomplete'
+  );
+  markerWithTime(marker, '2099-01-01T00:00:00Z');
+  assert.equal(validMarker(marker, 'duplication', baseline), false);
+  markerWithTime(marker, '2026-09-30T00:55:00Z');
+  const validApi = historyApi();
+  assert.equal(
+    (await evaluateReuse(marker, 'duplication', baseline, verifyEnv, validApi.api)).reason,
+    'origin-invalid'
+  );
+});
+
+test('CLI fails closed when Actions history cannot be authenticated', () => {
   const script = fileURLToPath(new URL('./deep-check-reuse.ts', import.meta.url));
   const output = join(fixture, 'output.txt');
   const marker = join(fixture, 'cli-marker.json');
@@ -243,7 +508,12 @@ test('CLI emits a reusable result only after a successful marker is present', ()
   };
   assert.match(run(['verify', 'duplication', baseline, marker], verifyEnv), /reuse=false/);
   run(['mark', 'duplication', baseline, marker]);
-  assert.match(run(['verify', 'duplication', baseline, marker], verifyEnv), /reuse=true/);
+  assert.match(run(['verify', 'duplication', baseline, marker], verifyEnv), /reuse=false/);
+  assert.match(
+    run(['verify', 'duplication', baseline, marker], verifyEnv),
+    /reason=provenance-unavailable/
+  );
+  assert.match(run(['verify', 'duplication', baseline, marker], verifyEnv), /origin_run_id=100/);
   assert.match(
     run(['verify', 'duplication', baseline, marker], {
       ...verifyEnv,

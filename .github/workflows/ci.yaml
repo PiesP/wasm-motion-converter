@@ -153,7 +153,9 @@ jobs:
 
       - name: 🧪 Run unit tests and coverage thresholds
         if: ${{ needs.changes.outputs.unit == 'true' }}
-        run: pnpm test:cov
+        run: |
+          pnpm test:ci
+          pnpm test:cov
 
   e2e:
     name: pr-gate/e2e
