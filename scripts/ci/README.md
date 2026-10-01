@@ -14,4 +14,9 @@ identical execution environment. Force a fresh manual run when investigating
 runner/tool behavior. Security intelligence and external browser compatibility
 checks retain their existing triggers and do not use this marker.
 
-Local regression checks: `node --test scripts/ci/deep-check-reuse.test.mjs`.
+Local regression checks: `pnpm test:ci` and `pnpm check:scripts`.
+
+Knip discovers this Node test from its package command and disables the Node plugin's generic
+`test-*` discovery. The app's `src/test-helpers.ts` is a development runtime
+module, so classifying it as a Node test would remove it from production
+dependency analysis.

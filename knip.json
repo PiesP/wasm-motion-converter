@@ -26,5 +26,6 @@
   },
   "ignoreBinaries": ["ffmpeg", "ffprobe"],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["@types/dom-webcodecs", "wrangler"]
+  "ignoreDependencies": ["@types/dom-webcodecs", "wrangler"],
+  "node": false
 }
