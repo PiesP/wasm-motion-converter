@@ -43,5 +43,14 @@
     "public/service-worker.js",
     "index.html"
   ],
-  "exclude": ["node_modules", "dist", "tmp/**", ".vite-sw-temp/**", ".vscode", "test"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tmp/**",
+    ".vite-sw-temp/**",
+    ".vscode",
+    "test",
+    "scripts/ci/deep-check-reuse.ts",
+    "scripts/ci/deep-check-reuse.test.ts"
+  ]
 }

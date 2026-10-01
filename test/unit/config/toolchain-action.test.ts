@@ -7,7 +7,7 @@ const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf
 const deepChecksWorkflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
 const centralSetupAction =
-  'uses: PiesP/browser-core/automation/actions/setup-project@b382fa99a8b8ed5570ab6f4e1fd065a1423ea3f2';
+  'uses: PiesP/browser-core/automation/actions/setup-project@1e3de928cb6828dc81b19f18a450f8320985720b';
 const releaseSetupActionPath = resolve(root, '.github/actions/setup-release/action.yaml');
 const releaseSetupAction = existsSync(releaseSetupActionPath)
   ? readFileSync(releaseSetupActionPath, 'utf8')
