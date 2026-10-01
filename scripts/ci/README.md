@@ -23,6 +23,12 @@ identical execution environment. Force a fresh manual run when investigating
 runner/tool behavior. Security intelligence and external browser compatibility
 checks retain their existing triggers and do not use this marker.
 
+Reruns (`GITHUB_RUN_ATTEMPT > 1`) always analyze selected gates afresh, including
+scheduled runs and manual reuse opt-ins. Actions run listings expose only the
+latest attempt, so excluding the current attempt can hide its prior failures.
+A successful fresh rerun may still publish its own marker for a later run's
+first-attempt reuse.
+
 Local regression checks: `pnpm test:ci` and `pnpm check:scripts`.
 
 Knip discovers this Node test from its package command and disables the Node plugin's generic
