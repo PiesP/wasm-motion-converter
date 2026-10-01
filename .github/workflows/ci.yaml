@@ -240,13 +240,3 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 9
-
-  duplication:
-    name: pr-gate/duplication
-    needs: changes
-    if: ${{ always() }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: ℹ️ Duplication is checked by Deep Verification
-        run: echo "Duplication is informational for PR CI; the weekly or manual Deep Verification gate owns this check."
