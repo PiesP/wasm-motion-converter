@@ -5,12 +5,16 @@ for unchanged tracked bytes, file modes, gitlinks, configuration, locks, declare
 Node/pnpm versions, pinned tools/actions, gate, OS, architecture, ImageOS and
 runner label. Manual runs default to fresh analysis; `reuse_success=true` opts in.
 Unknown runner identity, missing/corrupt markers and cache failures run fresh.
-Each successful run saves an immutable version 3 marker with its run ID, attempt,
+Each cacheable fresh success can publish an immutable version 3 marker with its run ID, attempt,
 SHA, and analysis time. Before reuse, the workflow checks the origin and every
 later selected gate against bounded, paginated Actions history. A later failed,
 cancelled, or unfinished gate, a rerun, or unavailable history runs fresh. A
 successful fresh pass can replace an invalidated result on the next schedule.
 Mutation success is recorded only after its required report upload succeeds.
+When the originating job exposes a completed analysis step with valid timestamps,
+the reuse summary estimates avoided analysis seconds from that step alone. Missing
+or invalid step timing leaves the estimate unavailable. It excludes restore and
+Actions API overhead and does not measure net runner time or billed minutes.
 
 This is bounded reuse of a code-analysis result. Ubuntu image build revisions
 (`ImageVersion`) are recorded as provenance but excluded from the key, allowing
