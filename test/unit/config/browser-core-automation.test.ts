@@ -34,7 +34,7 @@ describe('browser-core update automation', () => {
     expect(liveHead).toBeGreaterThan(expectedHead);
     expect(handoff).toBeGreaterThan(liveHead);
     expect(workflow).toContain('review the exact head');
-    expect(publish).toContain('Optional manual diagnostics never satisfy the pull-request checks');
+    expect(publish).toContain('Diagnostics follow canonical PR publication and cannot block it');
     expect(workflow).toContain('pull-request CI and security workflows provide the required checks');
     expect(workflow).toContain('GitHub may hold their initial runs for approval');
     expect(workflow).not.toContain('AUTO_MERGE_TOKEN');
@@ -74,6 +74,11 @@ describe('browser-core update automation', () => {
     expect(dryRunExit).toBeLessThan(publish.indexOf('git push --set-upstream'));
     expect(dryRunExit).toBeLessThan(publish.indexOf('gh pr edit'));
     expect(dryRunExit).toBeLessThan(publish.indexOf('gh pr create'));
+    expect(publish.indexOf('if [[ "$PREFLIGHT" == "true" ]]')).toBeGreaterThan(
+      publish.indexOf('PR head changed before handoff')
+    );
+    expect(publish).toContain('|| echo "::warning::Optional CI diagnostic dispatch failed');
+    expect(publish).toContain('|| echo "::warning::Optional security diagnostic dispatch failed');
     expect(publish).toMatch(/if \[\[ "\$PREFLIGHT" == "true" \]\];[\s\S]*gh workflow run "🏗️ CI"[\s\S]*gh workflow run "🔒 Security Scanning"/);
   });
 });

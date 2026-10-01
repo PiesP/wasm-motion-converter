@@ -224,12 +224,6 @@ jobs:
             git push --set-upstream origin "$BRANCH"
           fi
 
-          # Optional manual diagnostics never satisfy the pull-request checks.
-          if [[ "$PREFLIGHT" == "true" ]]; then
-            gh workflow run "🏗️ CI" --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
-            gh workflow run "🔒 Security Scanning" --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
-          fi
-
           PR_TITLE="chore(deps): update browser-core to $SHORT_SHA"
           PR_BODY="$(cat <<EOF
           This PR updates the packages/core git submodule to browser-core commit $CORE_SHA.
@@ -264,3 +258,11 @@ jobs:
             exit 1
           fi
           echo "✅ PR #$PR_NUMBER is open at $EXPECTED_HEAD_SHA. Approve its pull-request workflows to run the required checks, then review the exact head."
+
+          # Diagnostics follow canonical PR publication and cannot block it.
+          if [[ "$PREFLIGHT" == "true" ]]; then
+            gh workflow run "🏗️ CI" --repo "$GITHUB_REPOSITORY" --ref "$BRANCH" \
+              || echo "::warning::Optional CI diagnostic dispatch failed; use canonical PR checks."
+            gh workflow run "🔒 Security Scanning" --repo "$GITHUB_REPOSITORY" --ref "$BRANCH" \
+              || echo "::warning::Optional security diagnostic dispatch failed; use canonical PR checks."
+          fi
