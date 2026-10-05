@@ -54,6 +54,28 @@ Use `pnpm verify:full` for substantive or publication-level changes. Browser
 behavior changes also require the relevant Playwright flow. See the
 [testing guide](./test/README.md) for profiles and fixtures.
 
+## Release publication order
+
+The manual release workflow accepts a verified `vX.Y.Z` tag from protected
+`master`. Its validation and build jobs can run concurrently. The `publish` job
+has one lock shared by all tags; after it obtains the lock, it checks the live
+tag, public releases, Latest, and the `release` branch before either write.
+Ordinary historical publication and deployment rollback are rejected. New
+stable releases explicitly become Latest. A retry of the same version and source
+skips writes already completed; it never replaces existing release assets or
+retargets tags. An intentional rollback needs a separate reviewed procedure.
+
+Each new deployment contains `release-state.json` with the version and verified
+tagged commit. The downloadable `metadata.json` records that same identity.
+If the `release` branch exists without `release-state.json`, publication stops.
+The current legacy branch needs a one-time, separately authorized bootstrap:
+verify its tree against the corresponding published release archive (the Pages
+action adds the empty `.nojekyll` file),
+verify that release's `metadata.json` and tag resolve to the same source commit,
+then add only the matching `release-state.json` to the branch. Keep that
+verification and branch commit as evidence. Never infer branch identity from
+Latest alone or let a routine release dispatch perform the bootstrap.
+
 ## Project constraints
 
 - Keep media processing in the browser; do not add server uploads.

@@ -24,6 +24,10 @@ if (packageJson.version !== version) {
 if (!existsSync(distDir)) {
   throw new Error('dist/ does not exist. Run the production build before preparing a release.');
 }
+const commit = process.env.RELEASE_SHA;
+if (!commit || !/^[0-9a-f]{40}$/.test(commit)) {
+  throw new Error('RELEASE_SHA must be the verified 40-character tagged commit SHA.');
+}
 
 function changelogEntry(markdown: string, releaseVersion: string): string {
   const lines = markdown.split(/\r?\n/);
@@ -45,6 +49,10 @@ function changelogEntry(markdown: string, releaseVersion: string): string {
 
 rmSync(bundleDir, { force: true, recursive: true });
 mkdirSync(releaseDir, { recursive: true });
+writeFileSync(
+  join(distDir, 'release-state.json'),
+  `${JSON.stringify({ version, commit }, null, 2)}\n`
+);
 cpSync(distDir, join(bundleDir, 'dist'), { recursive: true });
 
 const archiveName = `wasm-motion-converter-${version}.tar.gz`;
@@ -67,7 +75,6 @@ execFileSync(
 );
 
 const buildDate = new Date().toISOString();
-const commit = process.env.RELEASE_SHA ?? process.env.GITHUB_SHA ?? 'unknown';
 const nodeVersion = process.env.NODE_VERSION ?? process.versions.node;
 const runnerOs = process.env.RUNNER_OS ?? process.platform;
 const runnerArch = process.env.RUNNER_ARCH ?? process.arch;
