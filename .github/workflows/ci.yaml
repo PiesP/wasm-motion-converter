@@ -125,7 +125,7 @@ jobs:
 
       - name: 📦 Setup project
         if: ${{ needs.changes.outputs.quality == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@1e3de928cb6828dc81b19f18a450f8320985720b
+        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
 
       - name: ✅ Run quality gate
         if: ${{ needs.changes.outputs.quality == 'true' }}
@@ -149,7 +149,7 @@ jobs:
 
       - name: 📦 Setup project
         if: ${{ needs.changes.outputs.unit == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@1e3de928cb6828dc81b19f18a450f8320985720b
+        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
 
       - name: 🧪 Run unit tests and coverage thresholds
         if: ${{ needs.changes.outputs.unit == 'true' }}
@@ -184,7 +184,7 @@ jobs:
 
       - name: 📦 Setup project
         if: ${{ needs.changes.outputs.e2e == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@1e3de928cb6828dc81b19f18a450f8320985720b
+        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
 
       - name: 🎞️ Install fixture encoder
         if: ${{ needs.changes.outputs.e2e == 'true' }}
@@ -227,7 +227,7 @@ jobs:
 
       - name: 📦 Setup project
         if: ${{ needs.changes.outputs.build == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@1e3de928cb6828dc81b19f18a450f8320985720b
+        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
 
       - name: 🏗️ Build app
         if: ${{ needs.changes.outputs.build == 'true' }}
