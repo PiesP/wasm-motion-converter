@@ -331,7 +331,7 @@ jobs:
       - name: 📦 Setup verified Node.js runtime
         uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
         with:
-          package-json-file: package.json
+          working-directory: .
           runtime: "node@${{ needs.provenance.outputs.node-version }}"
           install: false
 

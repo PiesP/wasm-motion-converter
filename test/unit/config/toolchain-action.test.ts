@@ -100,6 +100,24 @@ describe('central project setup action', () => {
     }
   });
 
+  it('selects the protected checkout for the direct publication runtime setup', () => {
+    const publish = jobBlock(releaseWorkflow, 'publish');
+    const setupMarker = '      - name: 📦 Setup verified Node.js runtime\n';
+    const setup = publish.split(setupMarker)[1]?.split('\n      - name:')[0];
+
+    expect(setup).toBeDefined();
+    expect(setup).toContain(
+      'uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0'
+    );
+    expect(setup).toContain('working-directory: .');
+    expect(setup).not.toContain('package-json-file:');
+    expect(setup).toContain('runtime: "node@${{ needs.provenance.outputs.node-version }}"');
+    expect(setup).toContain('install: false');
+    expect(publish.indexOf(setupMarker)).toBeLessThan(
+      publish.indexOf('      - name: 🔐 Check live publication order')
+    );
+  });
+
   it('runs releases only by protected-master manual dispatch', () => {
     expect(topLevelBlock(releaseWorkflow, 'on')).toBe(
       'on:\n' +
