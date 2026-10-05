@@ -62,8 +62,12 @@ has one lock shared by all tags; after it obtains the lock, it checks the live
 tag, public releases, Latest, and the `release` branch before either write.
 Ordinary historical publication and deployment rollback are rejected. New
 stable releases explicitly become Latest. A retry of the same version and source
-skips writes already completed; it never replaces existing release assets or
-retargets tags. An intentional rollback needs a separate reviewed procedure.
+skips writes already completed. A published release is accepted only after
+verifying the uploaded archive, `metadata.json`, and `checksums.txt`, including
+their sizes, digests, and the two checksum entries. Incomplete or unverifiable
+published assets stop the retry and require maintainer review. The workflow
+never replaces existing release assets or retargets tags. An intentional rollback
+needs a separate reviewed procedure.
 
 Each new deployment contains `release-state.json` with the version and verified
 tagged commit. The downloadable `metadata.json` records that same identity.
