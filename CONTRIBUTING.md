@@ -54,6 +54,28 @@ Use `pnpm verify:full` for substantive or publication-level changes. Browser
 behavior changes also require the relevant Playwright flow. See the
 [testing guide](./test/README.md) for profiles and fixtures.
 
+## Release publication order
+
+The manual release workflow accepts a verified `vX.Y.Z` tag from protected
+`master`. Its validation and build jobs can run concurrently. The `publish` job
+has one lock shared by all tags; after it obtains the lock, it checks the live
+tag, public releases, Latest, and the `release` branch before either write.
+Ordinary historical publication and deployment rollback are rejected. New
+stable releases explicitly become Latest. A retry of the same version and source
+skips writes already completed; it never replaces existing release assets or
+retargets tags. An intentional rollback needs a separate reviewed procedure.
+
+Each new deployment contains `release-state.json` with the version and verified
+tagged commit. The downloadable `metadata.json` records that same identity.
+For the existing branch without `release-state.json`, the guard verifies the
+Latest release's metadata and live tag, checks the published archive digest,
+then compares every archived file byte-for-byte with the branch tree. The Pages
+action's empty `.nojekyll` file is the only allowed extra file. A mismatch,
+missing archive, oversized or unsafe archive, or incomplete API response stops
+publication; a separately reviewed bootstrap is then required. Latest alone
+never establishes branch identity. After the first guarded deployment writes a
+marker, that marker becomes the branch identity for subsequent runs.
+
 ## Project constraints
 
 - Keep media processing in the browser; do not add server uploads.

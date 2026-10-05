@@ -1,6 +1,7 @@
-import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(import.meta.dirname, '../../..');
@@ -139,6 +140,30 @@ describe('Release infrastructure', () => {
     expect(prepareScript).not.toContain('cpSync(distDir, releaseDir');
   });
 
+  it('puts the verified version and source in both the deployed tree and archive', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'release-bundle-'));
+    const source = 'a'.repeat(40);
+    try {
+      mkdirSync(join(fixture, 'scripts/release'), { recursive: true });
+      mkdirSync(join(fixture, 'dist'), { recursive: true });
+      cpSync(resolve(root, 'scripts/release/prepare.ts'), join(fixture, 'scripts/release/prepare.ts'));
+      writeFileSync(join(fixture, 'package.json'), JSON.stringify({ type: 'module', version: '0.2.10' }));
+      writeFileSync(join(fixture, 'CHANGELOG.md'), '## [0.2.10]\n\nRelease ordering.\n');
+      writeFileSync(join(fixture, 'dist/index.html'), '<html></html>');
+      execFileSync(process.execPath, ['--experimental-strip-types', join(fixture, 'scripts/release/prepare.ts')], {
+        cwd: fixture,
+        env: { ...process.env, RELEASE_VERSION: '0.2.10', RELEASE_SHA: source },
+      });
+      const marker = { version: '0.2.10', commit: source };
+      expect(JSON.parse(readFileSync(join(fixture, 'release-bundle/dist/release-state.json'), 'utf8'))).toEqual(marker);
+      expect(JSON.parse(readFileSync(join(fixture, 'release-bundle/release/metadata.json'), 'utf8'))).toMatchObject(marker);
+      const archived = execFileSync('tar', ['-xOzf', join(fixture, 'release-bundle/release/wasm-motion-converter-0.2.10.tar.gz'), './release-state.json'], { encoding: 'utf8' });
+      expect(JSON.parse(archived)).toEqual(marker);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('binds every release gate and publication step to a protected-master tag SHA', () => {
     const workflow = readFileSync(
       resolve(root, '.github/workflows/release.yaml'),
@@ -193,8 +218,26 @@ describe('Release infrastructure', () => {
     expect(publish).toContain('name: release-bundle-${{ needs.provenance.outputs.release-sha }}');
     expect(publish).toContain('tag_name: ${{ inputs.tag }}');
     expect(prepareScript).toContain(
-      "const commit = process.env.RELEASE_SHA ?? process.env.GITHUB_SHA ?? 'unknown';"
+      'const commit = process.env.RELEASE_SHA;'
     );
+  });
+
+  it('serializes only publication and checks live state before either writer', () => {
+    const workflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
+    const publish = jobBlock(workflow, 'publish');
+    expect(workflow.slice(0, workflow.indexOf('jobs:'))).not.toContain('concurrency:');
+    expect(publish).toContain('group: release-publication-${{ github.repository }}');
+    expect(publish).toContain('cancel-in-progress: false');
+    expect(publish.indexOf('Check live publication order')).toBeLessThan(
+      publish.indexOf('Publish to release branch')
+    );
+    expect(publish.indexOf('Check live publication order')).toBeLessThan(
+      publish.indexOf('Create GitHub Release')
+    );
+    expect(publish).toContain("if: ${{ steps.publication.outputs.publish-branch == 'true' }}");
+    expect(publish).toContain("if: ${{ steps.publication.outputs.create-release == 'true' }}");
+    expect(publish).toContain('make_latest: true');
+    expect(publish).toContain('overwrite_files: false');
   });
 
   it('runs release E2E against its development server without a redundant build', () => {

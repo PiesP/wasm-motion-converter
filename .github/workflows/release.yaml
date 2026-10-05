@@ -20,10 +20,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-${{ inputs.tag }}
-  cancel-in-progress: false
-
 jobs:
   provenance:
     name: 🔐 Verify protected release source
@@ -314,16 +310,41 @@ jobs:
     needs: [provenance, quality, unit, e2e, duplication, mutation, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    concurrency:
+      group: release-publication-${{ github.repository }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      - name: 📥 Checkout protected publication guard
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: 📥 Download release bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-bundle-${{ needs.provenance.outputs.release-sha }}
           path: release-bundle
 
+      - name: 📦 Setup verified Node.js runtime
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          package-json-file: package.json
+          runtime: "node@${{ needs.provenance.outputs.node-version }}"
+          install: false
+
+      - name: 🔐 Check live publication order
+        id: publication
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.provenance.outputs.version }}
+          RELEASE_SHA: ${{ needs.provenance.outputs.release-sha }}
+        run: node --experimental-strip-types scripts/release/publication-guard.ts
+
       - name: 📤 Publish to release branch
+        if: ${{ steps.publication.outputs.publish-branch == 'true' }}
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -332,6 +353,7 @@ jobs:
           force_orphan: true
 
       - name: 🏷️ Create GitHub Release
+        if: ${{ steps.publication.outputs.create-release == 'true' }}
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ inputs.tag }}
@@ -340,5 +362,7 @@ jobs:
             release-bundle/release/*
           draft: false
           prerelease: false
+          make_latest: true
+          overwrite_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
