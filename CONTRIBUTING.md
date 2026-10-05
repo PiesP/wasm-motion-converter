@@ -67,14 +67,14 @@ retargets tags. An intentional rollback needs a separate reviewed procedure.
 
 Each new deployment contains `release-state.json` with the version and verified
 tagged commit. The downloadable `metadata.json` records that same identity.
-If the `release` branch exists without `release-state.json`, publication stops.
-The current legacy branch needs a one-time, separately authorized bootstrap:
-verify its tree against the corresponding published release archive (the Pages
-action adds the empty `.nojekyll` file),
-verify that release's `metadata.json` and tag resolve to the same source commit,
-then add only the matching `release-state.json` to the branch. Keep that
-verification and branch commit as evidence. Never infer branch identity from
-Latest alone or let a routine release dispatch perform the bootstrap.
+For the existing branch without `release-state.json`, the guard verifies the
+Latest release's metadata and live tag, checks the published archive digest,
+then compares every archived file byte-for-byte with the branch tree. The Pages
+action's empty `.nojekyll` file is the only allowed extra file. A mismatch,
+missing archive, oversized or unsafe archive, or incomplete API response stops
+publication; a separately reviewed bootstrap is then required. Latest alone
+never establishes branch identity. After the first guarded deployment writes a
+marker, that marker becomes the branch identity for subsequent runs.
 
 ## Project constraints
 

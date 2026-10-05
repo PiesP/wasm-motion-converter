@@ -1,10 +1,11 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { downloadAsset, proveLegacyDeployment } from './legacy-state.ts';
 
 type Identity = { version: string; commit: string };
 type Decision = { publishBranch: boolean; createRelease: boolean };
-type Request = (path: string, accept?: string) => Promise<unknown | null>;
+type Request = (path: string, accept?: string, maxBytes?: number) => Promise<unknown | null>;
 
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const shaPattern = /^[0-9a-f]{40}$/;
@@ -80,6 +81,7 @@ export async function decidePublication(
 
   const branchRef = await request('/git/ref/heads/release');
   let deployed: Identity | null = null;
+  let legacyBranchSha: string | null = null;
   if (branchRef !== null) {
     const branchSha = record(
       record(branchRef, 'release branch ref').object,
@@ -88,17 +90,19 @@ export async function decidePublication(
     if (typeof branchSha !== 'string' || !shaPattern.test(branchSha)) {
       throw new Error('Release branch has no valid commit SHA');
     }
-    const file = record(
-      await request(`/contents/release-state.json?ref=${branchSha}`),
-      'release branch marker'
-    );
-    if (file.encoding !== 'base64' || typeof file.content !== 'string') {
-      throw new Error('Release branch marker has no base64 content');
+    const marker = await request(`/contents/release-state.json?ref=${branchSha}`);
+    if (marker === null) {
+      legacyBranchSha = branchSha;
+    } else {
+      const file = record(marker, 'release branch marker');
+      if (file.encoding !== 'base64' || typeof file.content !== 'string') {
+        throw new Error('Release branch marker has no base64 content');
+      }
+      deployed = identity(
+        JSON.parse(Buffer.from(file.content, 'base64').toString('utf8')),
+        'release branch marker'
+      );
     }
-    deployed = identity(
-      JSON.parse(Buffer.from(file.content, 'base64').toString('utf8')),
-      'release branch marker'
-    );
   }
 
   const published: Array<{ identity: Identity; release: Record<string, unknown> }> = [];
@@ -147,6 +151,12 @@ export async function decidePublication(
   if (highest !== null && compareVersions(requested.version, highest) < 0) {
     throw new Error(`Refusing historical release v${requested.version}; latest is v${highest}`);
   }
+  if (legacyBranchSha !== null) {
+    if (latest === null || highest === null) {
+      throw new Error('Unmarked release branch has no public release to verify');
+    }
+    deployed = await proveLegacyDeployment(legacyBranchSha, latest, highest, request);
+  }
   if (deployed === null && published.length > 0) {
     throw new Error('Release branch is absent despite published releases');
   }
@@ -164,25 +174,14 @@ export async function decidePublication(
     if (deployed === null || !sameIdentity(requested, deployed)) {
       throw new Error('Requested version is public but the deployment branch disagrees');
     }
-    const assets = matching[0]!.release.assets;
-    if (!Array.isArray(assets)) throw new Error('Existing release assets are malformed');
-    const metadataAssets = assets.filter(
-      (asset) => record(asset, 'release asset').name === 'metadata.json'
+    const metadataBytes = await downloadAsset(
+      matching[0]!.release,
+      'metadata.json',
+      16 * 1024,
+      request
     );
-    if (metadataAssets.length !== 1)
-      throw new Error('Existing release has no unique metadata asset');
-    const assetUrl = record(metadataAssets[0], 'metadata asset').url;
-    if (
-      typeof assetUrl !== 'string' ||
-      !/^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/releases\/assets\/\d+$/.test(assetUrl)
-    ) {
-      throw new Error('Existing release metadata asset URL is invalid');
-    }
     const metadata = identity(
-      await request(
-        new URL(assetUrl).pathname.replace(/^\/repos\/[^/]+\/[^/]+/, ''),
-        'application/octet-stream'
-      ),
+      JSON.parse(new TextDecoder().decode(metadataBytes)),
       'existing release metadata'
     );
     if (!sameIdentity(requested, metadata)) {
@@ -213,7 +212,7 @@ async function main(): Promise<void> {
     throw new Error('Publication guard needs repository, token, output, version, and source SHA');
   }
   const apiBase = process.env.GITHUB_API_URL ?? 'https://api.github.com';
-  const request: Request = async (path, accept = 'application/vnd.github+json') => {
+  const request: Request = async (path, accept = 'application/vnd.github+json', maxBytes) => {
     const response = await fetch(`${apiBase}/repos/${repository}${path}`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -222,11 +221,42 @@ async function main(): Promise<void> {
       },
     });
     if (response.status === 404) {
-      if (path === '/git/ref/heads/release' || path === '/releases/latest') return null;
+      if (
+        path === '/git/ref/heads/release' ||
+        path === '/releases/latest' ||
+        path.startsWith('/contents/release-state.json?ref=')
+      )
+        return null;
       throw new Error(`Required publication state is missing: ${path}`);
     }
     if (!response.ok) throw new Error(`GitHub API ${path} returned HTTP ${response.status}`);
-    return response.json();
+    const limit = maxBytes ?? 10 * 1024 * 1024;
+    const length = response.headers.get('content-length');
+    if (length && Number(length) > limit) throw new Error('GitHub response exceeds size limit');
+    if (!response.body) throw new Error('GitHub response has no body');
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > limit) throw new Error('GitHub response exceeds size limit');
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return accept === 'application/octet-stream'
+      ? bytes
+      : JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   };
   const bundle = resolve('release-bundle');
   const decision = await decidePublication(
