@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -60,6 +61,78 @@ async function tagCommit(request: Request, tag: string): Promise<string> {
     object = record(tagObject.object, 'annotated tag object');
   }
   throw new Error('Release tag chain is too deep');
+}
+
+async function verifyPublishedRelease(
+  release: Record<string, unknown>,
+  requested: Identity,
+  request: Request
+): Promise<void> {
+  try {
+    const archiveName = `wasm-motion-converter-${requested.version}.tar.gz`;
+    const limits = new Map([
+      [archiveName, 20 * 1024 * 1024],
+      ['metadata.json', 16 * 1024],
+      ['checksums.txt', 16 * 1024],
+    ]);
+    if (!Array.isArray(release.assets)) throw new Error('Published assets are malformed');
+    const assets = release.assets.map((value) => record(value, 'published asset'));
+    const ids = new Set<number>();
+    for (const [name, limit] of limits) {
+      const matches = assets.filter((entry) => entry.name === name);
+      if (matches.length !== 1) throw new Error(`No unique ${name} asset`);
+      const entry = matches[0]!;
+      if (
+        entry.state !== 'uploaded' ||
+        typeof entry.id !== 'number' ||
+        !Number.isSafeInteger(entry.id) ||
+        entry.id < 1 ||
+        ids.has(entry.id) ||
+        typeof entry.url !== 'string' ||
+        !entry.url.endsWith(`/releases/assets/${entry.id}`) ||
+        typeof entry.size !== 'number' ||
+        !Number.isSafeInteger(entry.size) ||
+        entry.size < 1 ||
+        entry.size > limit ||
+        typeof entry.digest !== 'string' ||
+        !/^sha256:[0-9a-f]{64}$/.test(entry.digest)
+      ) {
+        throw new Error(`${name} has invalid upload status, identity, size, or digest`);
+      }
+      ids.add(entry.id);
+    }
+
+    const downloads = new Map<string, Uint8Array>();
+    for (const [name, limit] of limits) {
+      downloads.set(name, await downloadAsset(release, name, limit, request));
+    }
+    const lines = new TextDecoder('utf-8', { fatal: true })
+      .decode(downloads.get('checksums.txt')!)
+      .split('\n');
+    if (lines.at(-1) === '') lines.pop();
+    if (lines.length !== 2) throw new Error('checksums.txt must contain two expected entries');
+    const remaining = new Set([archiveName, 'metadata.json']);
+    for (const line of lines) {
+      const match = /^([0-9a-f]{64}) {2}\.\/(.+)$/.exec(line);
+      if (!match || !remaining.delete(match[2]!)) {
+        throw new Error('checksums.txt has a malformed, duplicate, or unexpected entry');
+      }
+      const digest = createHash('sha256').update(downloads.get(match[2]!)!).digest('hex');
+      if (match[1] !== digest) throw new Error(`checksums.txt disagrees with ${match[2]}`);
+    }
+    const metadata = identity(
+      JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(downloads.get('metadata.json')!)),
+      'existing release metadata'
+    );
+    if (!sameIdentity(requested, metadata)) {
+      throw new Error('Existing release metadata has another source');
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Existing published release is incomplete or unverifiable: ${detail}`, {
+      cause: error,
+    });
+  }
 }
 
 export async function decidePublication(
@@ -174,19 +247,7 @@ export async function decidePublication(
     if (deployed === null || !sameIdentity(requested, deployed)) {
       throw new Error('Requested version is public but the deployment branch disagrees');
     }
-    const metadataBytes = await downloadAsset(
-      matching[0]!.release,
-      'metadata.json',
-      16 * 1024,
-      request
-    );
-    const metadata = identity(
-      JSON.parse(new TextDecoder().decode(metadataBytes)),
-      'existing release metadata'
-    );
-    if (!sameIdentity(requested, metadata)) {
-      throw new Error('Existing release metadata has another source');
-    }
+    await verifyPublishedRelease(matching[0]!.release, requested, request);
     return { publishBranch: false, createRelease: false };
   }
   return {
