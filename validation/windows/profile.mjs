@@ -483,6 +483,32 @@ async function recordScreenshot(page, outputRoot, fileName, artifacts, fullPage 
   artifacts.push({ kind: 'screenshot', file: fileName, bytes: bytes.byteLength, sha256: sha256(bytes) });
 }
 
+async function readForcedColorsControlDiagnostics(page) {
+  return page.evaluate(() => ({
+    viewport: { width: innerWidth, height: innerHeight, scrollY },
+    controls: ['download-result-button', 'result-preview-toggle'].map((testId) => {
+      const element = document.querySelector(`[data-testid="${testId}"]`);
+      if (!(element instanceof HTMLElement)) return { testId, present: false };
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        testId,
+        present: true,
+        textContent: element.textContent?.trim() ?? '',
+        color: style.color,
+        backgroundColor: style.backgroundColor,
+        forcedColorAdjust: style.forcedColorAdjust,
+        visibility: style.visibility,
+        display: style.display,
+        opacity: style.opacity,
+        hasClientRect: element.getClientRects().length > 0,
+        rect: { top: rect.top, right: rect.right, bottom: rect.bottom,
+          left: rect.left, width: rect.width, height: rect.height },
+      };
+    }),
+  }));
+}
+
 async function readResultDiscoveryState(page, format) {
   return page.evaluate((expectedFormat) => {
     const button = document.querySelector('[data-testid="download-result-button"]');
@@ -734,7 +760,15 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   assert(forcedColors.horizontalOverflow <= 1, 'Forced Colors result overflowed horizontally');
   assert.equal(forcedColors.previewToggleVisible, true);
   assert.equal(forcedColors.downloadVisible, true);
+  // DOM styles and geometry are diagnostics, not proof that text pixels are legible.
+  forcedColors.beforeFullPageScreenshot = await readForcedColorsControlDiagnostics(page);
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-forced-colors.png`, artifacts);
+  await page.locator('[data-testid="download-result-button"]').scrollIntoViewIfNeeded();
+  await page.locator('[data-testid="result-preview-toggle"]').scrollIntoViewIfNeeded();
+  await settleVisualState(page);
+  forcedColors.beforeViewportScreenshot = await readForcedColorsControlDiagnostics(page);
+  await recordScreenshot(page, outputRoot,
+    `${PROFILE_ID}-${format}-forced-colors-viewport.png`, artifacts, false);
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce', forcedColors: 'none' });
   await settleVisualState(page);
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-result.png`, artifacts);
