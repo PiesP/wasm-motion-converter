@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   checkVideoDecoderSupport: vi.fn(),
   extractVideoMetadata: vi.fn(),
   focusPrimaryErrorAction: vi.fn(),
+  focusElementUnlessUserIsEditing: vi.fn(),
+  appState: 'idle',
   setErrorContext: vi.fn(),
   setErrorMessage: vi.fn(),
   setInputFile: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock('@stores/conversion-settings-store', () => ({
   setConversionSettings: mocks.setConversionSettings,
 }));
 vi.mock('@stores/conversion-store', () => ({
+  appState: () => mocks.appState,
   setErrorContext: mocks.setErrorContext,
   setErrorMessage: mocks.setErrorMessage,
   setInputFile: mocks.setInputFile,
@@ -49,6 +52,7 @@ vi.mock('@utils/file-validation', () => ({
   validateVideoFile: mocks.validateVideoFile,
 }));
 vi.mock('@utils/dom-utils', () => ({
+  focusElementUnlessUserIsEditing: mocks.focusElementUnlessUserIsEditing,
   focusPrimaryErrorAction: mocks.focusPrimaryErrorAction,
 }));
 vi.mock('@utils/logger', () => ({
@@ -64,6 +68,8 @@ describe('handleFileSelected conversion settings', () => {
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     mocks.checkVideoDecoderSupport.mockReset().mockResolvedValue(true);
     mocks.focusPrimaryErrorAction.mockReset();
+    mocks.focusElementUnlessUserIsEditing.mockReset();
+    mocks.appState = 'idle';
     mocks.setErrorContext.mockReset();
     mocks.setErrorMessage.mockReset();
     mocks.setInputFile.mockReset();
@@ -262,5 +268,38 @@ describe('handleFileSelected conversion settings', () => {
     expect(mocks.setErrorMessage).not.toHaveBeenCalled();
     expect(mocks.transitionToState).not.toHaveBeenCalled();
     expect(mocks.focusPrimaryErrorAction).not.toHaveBeenCalled();
+  });
+
+  it('keeps analysis cancellation busy until metadata cleanup settles', async () => {
+    let finishMetadata: ((value: unknown) => void) | undefined;
+    mocks.extractVideoMetadata.mockReturnValueOnce(new Promise<unknown>((resolve) => {
+      finishMetadata = resolve;
+    }));
+    const abort = new AbortController();
+    const runtime = {
+      startNewRun: () => ({ isActive: () => !abort.signal.aborted, signal: abort.signal }),
+      finishAnalysisRun: vi.fn(),
+      resetRuntimeState: vi.fn(),
+    } as unknown as ConversionRuntimeController;
+
+    const selection = handleFileSelected(
+      new File(['video'], 'cancelled.mp4', { type: 'video/mp4' }),
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await vi.waitFor(() => expect(mocks.extractVideoMetadata).toHaveBeenCalledOnce());
+    mocks.previewUrl = 'blob:test-preview';
+    mocks.appState = 'cancelling';
+    abort.abort();
+
+    expect(mocks.transitionToState).not.toHaveBeenCalledWith('idle');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:test-preview');
+
+    finishMetadata?.({});
+    await selection;
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('idle');
+    expect(mocks.setInputFile).toHaveBeenLastCalledWith(null);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test-preview');
+    expect(runtime.finishAnalysisRun).toHaveBeenCalledOnce();
   });
 });

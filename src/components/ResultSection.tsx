@@ -9,6 +9,8 @@ import { For, Show } from 'solid-js';
 
 interface ResultSectionProps {
   results: ConversionResult[];
+  preferPreviewHidden?: boolean;
+  onPreviewHidden?: () => void;
 }
 
 const ResultSection: Component<ResultSectionProps> = (props) => {
@@ -30,6 +32,8 @@ const ResultSection: Component<ResultSectionProps> = (props) => {
               outputBlob={result.outputBlob}
               outputWidth={result.outputWidth}
               settings={result.settings}
+              preferHidden={props.preferPreviewHidden}
+              onPreviewHidden={props.onPreviewHidden}
             />
           )}
         </For>

@@ -180,4 +180,22 @@ describe('App state announcement', () => {
 
     dispose();
   });
+
+  it('shows unknown analysis without conversion phases and names its cancel action correctly', async () => {
+    setAppState('analyzing');
+    const { default: App } = await import('@/App');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(() => App({}), container);
+    const dropzone = container.querySelector('[data-testid="dropzone"]');
+    const progress = dropzone?.querySelector('[role="progressbar"]');
+    const cancel = container.querySelector<HTMLButtonElement>('[data-testid="dropzone-cancel-button"]');
+    expect(dropzone?.getAttribute('aria-busy')).toBe('true');
+    expect(progress?.hasAttribute('aria-valuenow')).toBe(false);
+    expect(dropzone?.textContent).not.toContain('0%');
+    expect(dropzone?.textContent).not.toContain('translated:progress.demux');
+    expect(cancel?.getAttribute('aria-label')).toBe('translated:dropzone.cancelAnalysis');
+    expect(cancel?.getAttribute('title')).toBe('translated:dropzone.cancelAnalysis');
+    dispose();
+  });
 });

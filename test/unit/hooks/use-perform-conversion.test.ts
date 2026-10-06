@@ -223,6 +223,13 @@ describe('handleConvert conversion ownership', () => {
     );
     await Promise.all([first, blockedRestart]);
     expect(mocks.appState).toBe('idle');
+    expect(mocks.transitionToState).not.toHaveBeenCalledWith('done');
+    expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
+      expect.objectContaining({ outputBlob: expect.any(Blob) }),
+    ]);
+    expect(mocks.focusElementUnlessUserIsEditing).toHaveBeenCalledWith(
+      '[data-testid="convert-button"]'
+    );
 
     await handleConvert(runtime, localizedProgressT);
     expect(mocks.runConversionPipeline).toHaveBeenCalledTimes(2);
@@ -394,6 +401,11 @@ describe('handleConvert conversion ownership', () => {
     expect(mocks.setConversionResults).toHaveBeenLastCalledWith([
       expect.objectContaining({ outputWidth: 8, outputHeight: 8 }),
     ]);
+    const resultCall = mocks.setConversionResults.mock.lastCall;
+    expect(resultCall?.[0]).toHaveLength(1);
+    expect(mocks.setConversionResults.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      mocks.transitionToState.mock.invocationCallOrder.at(-1)!
+    );
     expect(mocks.focusElementUnlessUserIsEditing).toHaveBeenCalledWith(
       '[data-testid="download-result-button"]'
     );

@@ -6,6 +6,7 @@ import { checkVideoDecoderSupport } from '@services/video-decoder-support';
 import { extractVideoMetadata } from '@services/video-metadata';
 import { conversionSettings, setConversionSettings } from '@stores/conversion-settings-store';
 import {
+  appState,
   setErrorContext,
   setErrorMessage,
   setInputFile,
@@ -17,7 +18,7 @@ import {
 import type { TFunction } from '@t/i18n-types';
 import { classifyConversionError } from '@utils/classify-conversion-error';
 import { DEFAULT_FPS } from '@utils/constants';
-import { focusPrimaryErrorAction } from '@utils/dom-utils';
+import { focusElementUnlessUserIsEditing, focusPrimaryErrorAction } from '@utils/dom-utils';
 import { validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
 import { batch } from 'solid-js';
@@ -136,5 +137,16 @@ export async function handleFileSelected(
     focusPrimaryErrorAction();
   } finally {
     runtime.finishAnalysisRun(run);
+    if (run.signal.aborted && appState() === 'cancelling') {
+      const url = videoPreviewUrl();
+      if (url) URL.revokeObjectURL(url);
+      batch(() => {
+        setInputFile(null);
+        setVideoPreviewUrl(null);
+        setVideoMetadata(null);
+        transitionToState('idle');
+      });
+      focusElementUnlessUserIsEditing('[data-testid="choose-file-button"]');
+    }
   }
 }

@@ -45,19 +45,19 @@ export function mountCompactProgressHarness(locale: Locale): () => void {
   );
 }
 
-export function mountResultPreviewHarness(): () => void {
+export function mountResultPreviewHarness(format: 'gif' | 'webp' = 'gif', locale: Locale = 'en'): () => void {
   const host = replaceAppWithHarness('result-preview-harness');
   return render(
     () => (
-      <LocaleProvider initialLocale="en">
+      <LocaleProvider initialLocale={locale}>
         <ResultPreview
           originalName="sample.mp4"
           originalSize={1_000}
-          outputBlob={new Blob(['result'], { type: 'image/gif' })}
+          outputBlob={new Blob(['result'], { type: `image/${format}` })}
           outputWidth={320}
           outputHeight={180}
           settings={{
-            format: 'gif',
+            format,
             quality: 'medium',
             scale: 1,
             trimStart: 0,

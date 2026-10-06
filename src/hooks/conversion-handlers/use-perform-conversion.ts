@@ -63,6 +63,7 @@ function finishConversionRun(runtime: ConversionRuntimeController, intent: Conve
       runtime.resetRuntimeState();
       setAppState('idle');
     });
+    focusElementUnlessUserIsEditing('[data-testid="convert-button"]');
   }
 }
 
@@ -86,8 +87,8 @@ export async function handleConvert(
     return;
   }
   // Also guard during the analyzing → converting transition
-  if (appState() === 'analyzing') {
-    logger.warn('conversion', 'Convert called while analyzing — skipping');
+  if (appState() === 'analyzing' || appState() === 'cancelling') {
+    logger.warn('conversion', 'Convert called while another operation is settling — skipping');
     return;
   }
   const intent = runtime.beginConversionIntent();
@@ -242,8 +243,8 @@ async function performConversion(
     );
 
     const blob = validateOutputBlob(output, settings);
-    handleResult(blob, file, settings, outputDimensions, runtime, startTimeMs, isActive);
-    focusDownloadButton();
+    await handleResult(blob, file, settings, outputDimensions, runtime, startTimeMs, isActive);
+    if (isActive()) focusDownloadButton();
   } catch (error) {
     await handleConversionError(error, isActive, runtime, t, settings);
   }
@@ -399,7 +400,7 @@ function validateOutputBlob(output: ArrayBuffer, settings: ConversionSettings): 
   return new Blob([output], { type: mimeType });
 }
 
-function handleResult(
+async function handleResult(
   blob: Blob,
   file: File,
   settings: ConversionSettings,
@@ -407,7 +408,7 @@ function handleResult(
   runtime: ConversionRuntimeController,
   startTimeMs: number,
   isActive: () => boolean
-): void {
+): Promise<void> {
   // Guard against stale results from superseded conversion runs.
   // If a new file was selected or conversion cancelled while the pipeline
   // was running, the result belongs to an old run and must be discarded.
@@ -447,17 +448,13 @@ function handleResult(
     conversionDurationSeconds: durationSeconds,
   };
 
-  // setConversionResults triggers ResultSection → ResultPreview →
-  // createEffect → URL.createObjectURL → setPreviewUrl → render.
-  // Use queueMicrotask to defer the new result into a separate microtask,
-  // breaking the synchronous signal cascade that could overflow the stack.
-  setConversionResults([]);
-
-  queueMicrotask(() => {
-    setConversionResults([newResult]);
-  });
+  // Separate result rendering from pipeline completion to avoid a synchronous
+  // ResultPreview URL/render cascade. Keep the run owned until this settles.
+  await Promise.resolve();
+  if (!isActive()) return;
 
   batch(() => {
+    setConversionResults([newResult]);
     transitionToState('done');
     setConversionStatusMessage('');
     runtime.resetRuntimeState();
@@ -486,18 +483,8 @@ async function handleConversionError(
   const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
 
   if (isCancellationError(error)) {
-    if (!isActive()) {
-      // This run was superseded — abort is already handled by later run.
-      // Just clean up and bail out.
-      runtime.stopMemoryMonitoring();
-      return;
-    }
-
-    batch(() => {
-      setConversionStatusMessage('');
-      runtime.resetRuntimeState();
-      setAppState('idle');
-    });
+    // The intent's finally owns the terminal transition after teardown settles.
+    runtime.stopMemoryMonitoring();
     return;
   }
 
@@ -540,19 +527,8 @@ export function handleCancelAnalysis(runtime: ConversionRuntimeController): void
     setAppState('cancelling');
   });
 
-  // Revoke blob URL immediately (not deferred) to prevent race condition
-  // where a new file's preview URL could be revoked by a queued microtask.
-  const url = videoPreviewUrl();
-  if (url) URL.revokeObjectURL(url);
-
-  queueMicrotask(() => {
-    batch(() => {
-      setInputFile(null);
-      setVideoPreviewUrl(null);
-      setVideoMetadata(null);
-      setAppState('idle');
-    });
-  });
+  // The analysis run's finally clears its file and returns to idle after
+  // metadata extraction has released its resources.
 }
 
 export function handleReset(runtime: ConversionRuntimeController): void {

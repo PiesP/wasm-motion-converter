@@ -91,6 +91,7 @@ const App: Component = () => {
     null
   );
   const [memoryWarning, setMemoryWarning] = createSignal(false);
+  const [preferResultPreviewHidden, setPreferResultPreviewHidden] = createSignal(false);
 
   const [memoryUsageText, setMemoryUsageText] = createSignal<string | null>(null);
 
@@ -185,9 +186,10 @@ const App: Component = () => {
         progress: conversionProgress(),
         message: isCancelling ? t('progress.cancelling') : conversionStatusMessage(),
         subPhaseLabel: undefined,
+        busy: true,
         showElapsedTime: true,
         startTime: conversionStartTime(),
-        estimatedSecondsRemaining: estimatedSecondsRemaining(),
+        estimatedSecondsRemaining: isCancelling ? null : estimatedSecondsRemaining(),
         phase: conversionPhase(),
         memoryUsage: memoryUsageText(),
         outputFrames: outputFrames(),
@@ -196,9 +198,10 @@ const App: Component = () => {
     if (state === 'analyzing') {
       return {
         label: t('progress.analyzing'),
-        progress: 0,
+        progress: null,
         message: t('progress.readingMetadata'),
         subPhaseLabel: t('progress.readingMetadata'),
+        busy: true,
       };
     }
     return null;
@@ -335,12 +338,17 @@ const App: Component = () => {
                 cancelLabel={
                   appState() === 'cancelling'
                     ? t('progress.cancelling')
-                    : t('dropzone.cancelConversion')
+                    : t(
+                        appState() === 'analyzing'
+                          ? 'dropzone.cancelAnalysis'
+                          : 'dropzone.cancelConversion'
+                      )
                 }
                 onClear={handleReset}
                 onFileSelected={handleFileSelected}
                 previewUrl={videoPreviewUrl()}
                 progress={dropzoneStatus()?.progress}
+                busy={dropzoneStatus()?.busy}
                 showElapsedTime={dropzoneStatus()?.showElapsedTime}
                 startTime={dropzoneStatus()?.startTime}
                 status={dropzoneStatus()?.label}
@@ -397,7 +405,11 @@ const App: Component = () => {
             </div>
           </div>
 
-          <ResultSection results={conversionResults()} />
+          <ResultSection
+            results={conversionResults()}
+            preferPreviewHidden={preferResultPreviewHidden()}
+            onPreviewHidden={() => setPreferResultPreviewHidden(true)}
+          />
         </main>
 
         <LicenseAttribution />
