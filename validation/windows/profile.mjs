@@ -96,19 +96,39 @@ function contrastRatio(foreground, background) {
 
 async function settleVisualState(page) {
   await page.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await Promise.all(document.getAnimations().filter((animation) =>
+        animation instanceof CSSTransition
+      ).map((animation) => animation.finished.catch(() => {})));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
   );
 }
 
 async function readResultMetadataContrast(page, selector) {
   const computed = await page.locator(selector).evaluate((element) => {
+    // The browser converts CSS Color 4 values (including interpolated oklab)
+    // to the same sRGB channels used by this contrast measurement.
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Contrast measurement requires a 2D canvas');
+    const srgb = (value) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+      return `rgba(${r}, ${g}, ${b}, ${a / 255})`;
+    };
     const backgrounds = [];
     for (let current = element; current; current = current.parentElement) {
-      backgrounds.push(getComputedStyle(current).backgroundColor);
+      backgrounds.push(srgb(getComputedStyle(current).backgroundColor));
     }
     const style = getComputedStyle(element);
     return {
-      color: style.color,
+      color: srgb(style.color),
+      computedColor: style.color,
       backgrounds,
       fontSizePx: Number.parseFloat(style.fontSize),
       opacity: Number.parseFloat(style.opacity),
