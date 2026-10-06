@@ -476,9 +476,9 @@ function validateOutput(bytes, format, expectedWidth = 80, expectedHeight = 45) 
   assert.equal(bytes.readUInt32LE(4) + 8, bytes.byteLength, 'WebP RIFF size does not match its download');
 }
 
-async function recordScreenshot(page, outputRoot, fileName, artifacts) {
+async function recordScreenshot(page, outputRoot, fileName, artifacts, fullPage = true) {
   const path = join(outputRoot, fileName);
-  await page.screenshot({ path, fullPage: true, animations: 'disabled', caret: 'hide' });
+  await page.screenshot({ path, fullPage, animations: 'disabled', caret: 'hide' });
   const bytes = await readFile(path);
   artifacts.push({ kind: 'screenshot', file: fileName, bytes: bytes.byteLength, sha256: sha256(bytes) });
 }
@@ -1192,8 +1192,28 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
         'A zoomed result control was clipped horizontally');
       assert(geometry.focused && geometry.fontSize >= 12);
     }
+    await toggle.scrollIntoViewIfNeeded();
+    await download.scrollIntoViewIfNeeded();
     await settleVisualState(zoomPage);
-    await recordScreenshot(zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts);
+    const screenshotControls = await zoomPage.evaluate(() => {
+      const controls = ['result-preview-toggle', 'download-result-button'];
+      return controls.map((testId) => {
+        const element = document.querySelector(`[data-testid="${testId}"]`);
+        const rect = element?.getBoundingClientRect();
+        return { testId, left: rect?.left ?? null, right: rect?.right ?? null,
+          top: rect?.top ?? null, bottom: rect?.bottom ?? null,
+          width: rect?.width ?? null, height: rect?.height ?? null,
+          viewportWidth: innerWidth, viewportHeight: innerHeight };
+      });
+    });
+    for (const control of screenshotControls) {
+      assert(control.width > 0 && control.height > 0 && control.left >= -1 &&
+        control.right <= control.viewportWidth + 1 &&
+        control.top >= -1 && control.bottom <= control.viewportHeight + 1,
+      `${control.testId} is outside the zoom screenshot viewport`);
+    }
+    // Whole-viewport capture avoids full-page clipping coordinates at real Chrome zoom.
+    await recordScreenshot(zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts, false);
 
     stage = 'download-zoomed-gif';
     const downloadPromise = zoomPage.waitForEvent('download', { timeout: 30_000 });
@@ -1209,7 +1229,7 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     assert.deepEqual(pageErrors, [], 'Owned Chrome result page emitted errors');
     result = { id: 'browser-zoom-200', status: 'passed', factor: 2,
       method: 'owned-persistent-chrome-settings-page', baseline, observation,
-      language: 'ar', previewHiddenAfterKeyboard: true,
+      language: 'ar', previewHiddenAfterKeyboard: true, screenshotControls,
       download: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) } };
   } catch (error) {
     primaryError = error;
