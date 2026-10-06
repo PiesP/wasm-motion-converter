@@ -280,6 +280,12 @@ test.describe('Performance', () => {
   });
 
   test('total JS transfer size under 150KB', async ({ page }, testInfo) => {
+    const responseContentEncoding = new Map<string, string | null>();
+    page.on('response', (response) => {
+      if (response.url().endsWith('.js')) {
+        responseContentEncoding.set(response.url(), response.headers()['content-encoding'] ?? null);
+      }
+    });
     await page.goto(DEPLOY_URL);
     await page.waitForLoadState('networkidle');
 
@@ -312,7 +318,10 @@ test.describe('Performance', () => {
         context: 'fresh Playwright context, first navigation, networkidle',
         resourceFilter: 'resource timing name ends with .js; sum positive transferSize only',
         totalTransferSize: totalSize,
-        resources: timing.resources,
+        resources: timing.resources.map((resource) => ({
+          ...resource,
+          responseContentEncoding: responseContentEncoding.get(resource.name) ?? null,
+        })),
       }, null, 2)),
       contentType: 'application/json',
     });
