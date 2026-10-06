@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { runVite } from '../build/run-vite.ts';
 import { prepareResourceFixtures } from '../test/prepare-resource-fixtures.ts';
@@ -52,7 +52,7 @@ test('build:ci preserves license, Vite, and postbuild order and stops on failure
   const success = recordingRunner();
   assert.equal(await runVite('ci', ['--emptyOutDir'], success.run), 0);
   assert.deepEqual(
-    success.calls.map(({ script }) => script.split('/').at(-1)),
+    success.calls.map(({ script }) => basename(script)),
     ['generate-licenses.ts', 'vite.js', 'postbuild.ts']
   );
   assert.deepEqual(success.calls[1]?.args, ['build', '--emptyOutDir']);
@@ -95,7 +95,7 @@ test('Playwright profiles override only their own profile; resource fixture flag
   }
   const fixture = recordingRunner();
   assert.equal(await prepareResourceFixtures(fixture.run), 0);
-  assert.equal(fixture.calls[0]?.script.split('/').at(-1), 'generate-e2e-video.ts');
+  assert.equal(basename(fixture.calls[0]?.script ?? ''), 'generate-e2e-video.ts');
   assert.deepEqual(fixture.calls[0]?.args, []);
   assert.deepEqual(fixture.calls[0]?.env, { PREPARE_RESOURCE_FIXTURES: 'true' });
 });
