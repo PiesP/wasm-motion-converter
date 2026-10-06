@@ -133,6 +133,63 @@ describe('ProgressBar pipeline phase segments', () => {
     expect(progressbar?.dataset.progress).toBe('42');
   });
 
+  it('distinguishes unknown analysis from a real zero percent conversion', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <ProgressBar compact progress={null} busy status="Analyzing" statusMessage="Reading metadata" />,
+      container
+    );
+    const progressbar = container.querySelector('[role="progressbar"]');
+    expect(progressbar?.hasAttribute('aria-valuenow')).toBe(false);
+    expect(progressbar?.hasAttribute('data-progress')).toBe(false);
+    expect(container.textContent).not.toContain('0%');
+    expect(container.textContent).not.toContain('progress.demux');
+    expect(container.querySelector('[data-testid="progress-diagnostics"]')).toBeNull();
+    expect(container.firstElementChild?.getAttribute('aria-busy')).toBe('true');
+    dispose();
+
+    const disposeZero = render(
+      () => <ProgressBar compact progress={0} busy status="Converting" phase="demuxing" />,
+      container
+    );
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('0');
+    expect(container.textContent).toContain('0%');
+    expect(container.firstElementChild?.getAttribute('aria-busy')).toBe('true');
+    disposeZero();
+  });
+
+  it('keeps finalization busy at 100 percent and hides uncertain ETA', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <ProgressBar compact progress={100} busy status="Converting" phase="assembling" estimatedSecondsRemaining={42} />,
+      container
+    );
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100');
+    expect(container.firstElementChild?.getAttribute('aria-busy')).toBe('true');
+    expect(container.textContent).not.toContain('progress.eta');
+    dispose();
+  });
+
+  it('keeps phase, frame and memory diagnostics in a readable native disclosure', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <ProgressBar compact progress={42} busy status="Converting" statusMessage="Frame 4/10" phase="encoding" memoryUsage="64 MB" currentFrame={4} totalFrames={10} />,
+      container
+    );
+    const details = container.querySelector<HTMLDetailsElement>('[data-testid="progress-diagnostics"]');
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector('summary')?.textContent).toContain('progress.details');
+    expect(details?.textContent).toContain('64 MB');
+    expect(container.querySelector('[data-testid="progress-status-message"]')?.textContent).toBe('progress.encoding');
+    expect(details?.className).toContain('text-sm');
+    details?.querySelector('summary')?.click();
+    expect(details?.open).toBe(true);
+    dispose();
+  });
+
   it.each([false, true])(
     'does not expose the frequently changing container as a live status region (compact=%s)',
     (compact) => {

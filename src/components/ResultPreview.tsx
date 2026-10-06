@@ -10,9 +10,12 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  createUniqueId,
   onCleanup,
+  onMount,
   Show,
   splitProps,
+  untrack,
 } from 'solid-js';
 
 const SCALE_PERCENTAGE_MULTIPLIER = 100;
@@ -25,6 +28,8 @@ interface ResultPreviewProps {
   outputHeight: number;
   settings: ConversionSettings;
   conversionDurationSeconds?: number | undefined;
+  preferHidden?: boolean | undefined;
+  onPreviewHidden?: (() => void) | undefined;
 }
 
 type PreviewSizeMode = 'actual' | 'fit';
@@ -39,7 +44,18 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     'outputHeight',
     'settings',
     'conversionDurationSeconds',
+    'preferHidden',
+    'onPreviewHidden',
   ]);
+  const previewRegionId = createUniqueId();
+  const motionPreference =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
+  const [previewChoice, setPreviewChoice] = createSignal<boolean | null>(null);
+  const [previewShown, setPreviewShown] = createSignal(
+    !motionPreference?.matches && !local.preferHidden
+  );
   const [loaded, setLoaded] = createSignal(false);
   const [previewUrl, setPreviewUrl] = createSignal<string | null>(null);
   const [downloadUrl, setDownloadUrl] = createSignal<string | null>(null);
@@ -58,9 +74,44 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   // setPreviewUrl()/setDownloadUrl() do NOT cause the effect to re-run.
   let currentUrl: string | null = null;
 
+  const hidePreview = (): void => {
+    previewResizeObserver?.disconnect();
+    previewResizeObserver = undefined;
+    resultImageRef = undefined;
+    setLoaded(false);
+    setRenderedScalePercent(null);
+    setPreviewShown(false);
+  };
+
+  const togglePreview = (): void => {
+    if (previewShown()) {
+      setPreviewChoice(false);
+      hidePreview();
+      local.onPreviewHidden?.();
+    } else {
+      setPreviewChoice(true);
+      setPreviewError(false);
+      setLoaded(false);
+      setPreviewShown(true);
+    }
+  };
+
+  onMount(() => {
+    if (!motionPreference) return;
+    const handlePreferenceChange = (): void => {
+      if (previewChoice() !== null) return;
+      if (motionPreference.matches || local.preferHidden) hidePreview();
+      else setPreviewShown(true);
+    };
+    motionPreference.addEventListener('change', handlePreferenceChange);
+    onCleanup(() => motionPreference.removeEventListener('change', handlePreferenceChange));
+  });
+
   createEffect(() => {
     // React to outputBlob changes
     const blob = local.outputBlob;
+    setPreviewChoice(null);
+    setPreviewShown(!motionPreference?.matches && !untrack(() => local.preferHidden));
 
     // Reset state
     setLoaded(false);
@@ -184,6 +235,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   const handlePreviewLoad = (event: Event) => {
     const image = event.currentTarget as HTMLImageElement;
+    if (!previewShown() || !image.isConnected) return;
     resultImageRef = image;
     if (image.naturalWidth > 0 && image.naturalHeight > 0) {
       setActualWidth(image.naturalWidth);
@@ -198,7 +250,8 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     }
     keepFocusedDownloadVisible();
   };
-  const handlePreviewError = () => {
+  const handlePreviewError = (event: Event) => {
+    if (!previewShown() || !(event.currentTarget as HTMLImageElement).isConnected) return;
     setPreviewError(true);
     setLoaded(true);
     keepFocusedDownloadVisible();
@@ -240,7 +293,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               format: outputExtension().toUpperCase(),
               fileName: downloadFileName(),
             })}
-            class="inline-flex min-h-target-minimum shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-button bg-brand px-4 py-2 text-sm font-medium text-brand-foreground shadow-lg transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+            class="result-download-action inline-flex min-h-target-minimum shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-button bg-brand px-4 py-2 text-sm font-medium text-brand-foreground shadow-lg transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
             data-testid="download-result-button"
           >
             <svg
@@ -257,109 +310,133 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
                 d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
               />
             </svg>
-            {t('result.downloadButton', {
-              format: outputExtension().toUpperCase(),
-              size: formatBytes(local.outputBlob.size, locale()),
-            })}
+            <span data-testid="download-result-label">
+              {t('result.downloadButton', {
+                format: outputExtension().toUpperCase(),
+                size: formatBytes(local.outputBlob.size, locale()),
+              })}
+            </span>
           </a>
         </div>
       </section>
 
       <div class="mt-4 flex flex-wrap items-center justify-between gap-2">
-        <fieldset class="inline-flex rounded-button border border-border-standard bg-white/[0.02] p-0.5">
-          <legend class="sr-only">{t('result.previewSize')}</legend>
-          <button
-            type="button"
-            class={`min-h-target-minimum rounded-button px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus ${
-              previewSizeMode() === 'actual'
-                ? 'bg-bg-elevated text-text-primary'
-                : 'text-text-secondary hover:bg-white/[0.05]'
-            }`}
-            aria-pressed={previewSizeMode() === 'actual'}
-            onClick={() => selectPreviewSize('actual')}
-            data-testid="preview-size-actual"
-          >
-            {t('result.actualSize')}
-          </button>
-          <button
-            type="button"
-            class={`min-h-target-minimum rounded-button px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus ${
-              previewSizeMode() === 'fit'
-                ? 'bg-bg-elevated text-text-primary'
-                : 'text-text-secondary hover:bg-white/[0.05]'
-            }`}
-            aria-pressed={previewSizeMode() === 'fit'}
-            onClick={() => selectPreviewSize('fit')}
-            data-testid="preview-size-fit"
-          >
-            {t('result.fitToArea')}
-          </button>
-        </fieldset>
-        <Show when={renderedScalePercent()}>
-          {(scale) => (
-            <span
-              class="text-xs tabular-nums text-text-secondary"
-              data-preview-scale={`${scale()}%`}
-              data-testid="preview-scale"
+        <button
+          type="button"
+          class="min-h-target-minimum rounded-button border border-border-standard bg-bg-panel px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          aria-controls={previewRegionId}
+          aria-expanded={previewShown()}
+          onClick={togglePreview}
+          data-testid="result-preview-toggle"
+        >
+          {t(previewShown() ? 'result.hidePreview' : 'result.showPreview')}
+        </button>
+        <Show when={previewShown()}>
+          <fieldset class="inline-flex rounded-button border border-border-standard bg-white/[0.02] p-0.5">
+            <legend class="sr-only">{t('result.previewSize')}</legend>
+            <button
+              type="button"
+              class={`min-h-target-minimum rounded-button px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus ${
+                previewSizeMode() === 'actual'
+                  ? 'bg-bg-elevated text-text-primary'
+                  : 'text-text-secondary hover:bg-white/[0.05]'
+              }`}
+              aria-pressed={previewSizeMode() === 'actual'}
+              onClick={() => selectPreviewSize('actual')}
+              data-testid="preview-size-actual"
             >
-              {t('result.previewScale', { percent: scale() })}
-            </span>
-          )}
+              {t('result.actualSize')}
+            </button>
+            <button
+              type="button"
+              class={`min-h-target-minimum rounded-button px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus ${
+                previewSizeMode() === 'fit'
+                  ? 'bg-bg-elevated text-text-primary'
+                  : 'text-text-secondary hover:bg-white/[0.05]'
+              }`}
+              aria-pressed={previewSizeMode() === 'fit'}
+              onClick={() => selectPreviewSize('fit')}
+              data-testid="preview-size-fit"
+            >
+              {t('result.fitToArea')}
+            </button>
+          </fieldset>
+          <Show when={renderedScalePercent()}>
+            {(scale) => (
+              <span
+                class="text-xs tabular-nums text-text-secondary"
+                data-preview-scale={`${scale()}%`}
+                data-testid="preview-scale"
+              >
+                {t('result.previewScale', { percent: scale() })}
+              </span>
+            )}
+          </Show>
         </Show>
       </div>
 
       {/* Preview area */}
-      <div class="relative mt-2 grid min-h-20 place-items-center overflow-hidden rounded-lg bg-white/[0.02]">
-        {/* Skeleton: removed from DOM when loaded */}
-        <Show when={!loaded()}>
-          <div
-            class="col-start-1 row-start-1 max-h-[70vh] max-w-full animate-pulse rounded bg-white/[0.05]"
-            style={{
-              width: previewSizeMode() === 'fit' ? '100%' : `${actualWidth()}px`,
-              'aspect-ratio': `${actualWidth()} / ${actualHeight()}`,
-            }}
-          />
+      <div
+        id={previewRegionId}
+        class="relative mt-2 grid min-h-20 place-items-center overflow-hidden rounded-lg bg-white/[0.02]"
+      >
+        <Show when={!previewShown()}>
+          <p class="p-4 text-sm text-text-secondary" data-testid="result-preview-hidden">
+            {t('result.previewHidden')}
+          </p>
         </Show>
-        <Show when={previewUrl()}>
-          <img
-            ref={(element) => {
-              resultImageRef = element;
-            }}
-            src={previewUrl()!}
-            alt={t('result.aria.previewAlt', {
-              format: outputExtension().toUpperCase(),
-              name: downloadFileName(),
-            })}
-            aria-label={t('result.aria.previewAlt', {
-              format: outputExtension().toUpperCase(),
-              name: downloadFileName(),
-            })}
-            class={`col-start-1 row-start-1 block h-auto max-h-[70vh] justify-self-center rounded object-contain opacity-100 transition-opacity duration-300 ${
-              previewSizeMode() === 'fit' ? 'w-full' : 'w-auto max-w-full'
-            }`}
-            onLoad={handlePreviewLoad}
-            onError={handlePreviewError}
-            data-testid="result-image"
-          />
-        </Show>
-        <Show when={previewError()}>
-          <div class="flex flex-col items-center justify-center p-8 text-text-tertiary w-full">
-            <svg
-              class="h-10 w-10 mb-2"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.5"
-                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-              />
-            </svg>
-            <span class="text-xs">{t('result.previewFailed')}</span>
-          </div>
+        <Show when={previewShown()}>
+          {/* Skeleton: removed from DOM when loaded */}
+          <Show when={!loaded()}>
+            <div
+              class="col-start-1 row-start-1 max-h-[70vh] max-w-full animate-pulse rounded bg-white/[0.05]"
+              style={{
+                width: previewSizeMode() === 'fit' ? '100%' : `${actualWidth()}px`,
+                'aspect-ratio': `${actualWidth()} / ${actualHeight()}`,
+              }}
+            />
+          </Show>
+          <Show when={previewUrl()}>
+            <img
+              ref={(element) => {
+                resultImageRef = element;
+              }}
+              src={previewUrl()!}
+              alt={t('result.aria.previewAlt', {
+                format: outputExtension().toUpperCase(),
+                name: downloadFileName(),
+              })}
+              aria-label={t('result.aria.previewAlt', {
+                format: outputExtension().toUpperCase(),
+                name: downloadFileName(),
+              })}
+              class={`col-start-1 row-start-1 block h-auto max-h-[70vh] justify-self-center rounded object-contain opacity-100 transition-opacity duration-300 ${
+                previewSizeMode() === 'fit' ? 'w-full' : 'w-auto max-w-full'
+              }`}
+              onLoad={handlePreviewLoad}
+              onError={handlePreviewError}
+              data-testid="result-image"
+            />
+          </Show>
+          <Show when={previewError()}>
+            <div class="flex flex-col items-center justify-center p-8 text-text-tertiary w-full">
+              <svg
+                class="h-10 w-10 mb-2"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.5"
+                  d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                />
+              </svg>
+              <span class="text-xs">{t('result.previewFailed')}</span>
+            </div>
+          </Show>
         </Show>
       </div>
 

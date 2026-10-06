@@ -73,6 +73,7 @@ export interface TranslationKeys {
   'dropzone.clickSelect': string;
   'dropzone.selectFile': string;
   'dropzone.cancelConversion': string;
+  'dropzone.cancelAnalysis': string;
   'dropzone.cancel': string;
   'dropzone.preview': string;
   'dropzone.processing': string;
@@ -178,6 +179,7 @@ export interface TranslationKeys {
   'progress.assembling': string;
   'progress.analyzing': string;
   'progress.readingMetadata': string;
+  'progress.details': string;
   'progress.preparing': string;
   'progress.finalizing': string;
   'progress.converting': string;
@@ -204,6 +206,9 @@ export interface TranslationKeys {
   'result.compressionSmaller': string;
   'result.compressionLarger': string;
   'result.previewFailed': string;
+  'result.showPreview': string;
+  'result.hidePreview': string;
+  'result.previewHidden': string;
   'result.previewSize': string;
   'result.actualSize': string;
   'result.fitToArea': string;

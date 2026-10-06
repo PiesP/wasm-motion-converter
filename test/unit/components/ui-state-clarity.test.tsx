@@ -5,6 +5,7 @@ import ResultPreview from '@components/ResultPreview';
 import SettingsPanel from '@components/SettingsPanel';
 import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
+import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,6 +38,7 @@ describe('UI state clarity', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('presents finalized metadata as a collapsed disclosure with truthful unknown values', () => {
@@ -244,5 +246,96 @@ describe('UI state clarity', () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
 
     dispose();
+  });
+
+  it('opts into reduced-motion previews, detaches the image when hidden, and preserves the download URL', async () => {
+    const motionPreference = Object.assign(new EventTarget(), { matches: true });
+    vi.stubGlobal('matchMedia', () => motionPreference);
+    const createUrl = vi.spyOn(URL, 'createObjectURL')
+      .mockReturnValueOnce('blob:first-result')
+      .mockReturnValueOnce('blob:second-result');
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let replaceBlob: ((blob: Blob) => void) | undefined;
+    let preferHidden: ((hidden: boolean) => void) | undefined;
+    const dispose = render(() => {
+      const [blob, setBlob] = createSignal(new Blob(['gif'], { type: 'image/gif' }));
+      const [hidden, setHidden] = createSignal(false);
+      replaceBlob = setBlob;
+      preferHidden = setHidden;
+      return <ResultPreview originalName="sample.mp4" originalSize={1000} outputBlob={blob()} outputWidth={80} outputHeight={45} settings={settings} preferHidden={hidden()} onPreviewHidden={() => setHidden(true)} />;
+    }, container);
+    await Promise.resolve();
+
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="result-preview-toggle"]')!;
+    const download = container.querySelector<HTMLAnchorElement>('[data-testid="download-result-button"]')!;
+    expect(toggle.textContent).toContain('result.showPreview');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
+    expect(container.querySelector('[data-testid="result-summary"]')).not.toBeNull();
+    expect(download.href).toContain('blob:first-result');
+
+    toggle.focus();
+    toggle.click();
+    expect(toggle.textContent).toContain('result.hidePreview');
+    const firstImage = container.querySelector('[data-testid="result-image"]');
+    expect(firstImage).not.toBeNull();
+    expect(document.activeElement).toBe(toggle);
+    toggle.click();
+    expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
+    expect(container.querySelector('[data-testid="result-preview-hidden"]')).not.toBeNull();
+    expect(download.href).toContain('blob:first-result');
+    expect(createUrl).toHaveBeenCalledTimes(1);
+    expect(revokeUrl).not.toHaveBeenCalled();
+
+    firstImage?.dispatchEvent(new Event('load'));
+    toggle.click();
+    expect(container.querySelector('.animate-pulse')).not.toBeNull();
+    motionPreference.matches = false;
+    motionPreference.dispatchEvent(new Event('change'));
+    expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull();
+    expect(preferHidden).toBeTypeOf('function');
+    replaceBlob?.(new Blob(['webp'], { type: 'image/webp' }));
+    await Promise.resolve();
+    expect(toggle.textContent).toContain('result.showPreview');
+    expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
+    expect(download.getAttribute('href')).toBe('blob:second-result');
+    expect(download.getAttribute('download')).toBe('sample.webp');
+    expect(revokeUrl).toHaveBeenCalledWith('blob:first-result');
+
+    dispose();
+    expect(revokeUrl).toHaveBeenCalledWith('blob:second-result');
+  });
+
+  it('follows motion preference changes until the user makes an explicit preview choice', async () => {
+    const motionPreference = Object.assign(new EventTarget(), { matches: false });
+    vi.stubGlobal('matchMedia', () => motionPreference);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:motion-result');
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(
+      () => <ResultPreview originalName="sample.mp4" originalSize={1000} outputBlob={new Blob(['gif'], { type: 'image/gif' })} outputWidth={80} outputHeight={45} settings={settings} />,
+      container
+    );
+    await Promise.resolve();
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="result-preview-toggle"]')!;
+    expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull();
+    motionPreference.matches = true;
+    motionPreference.dispatchEvent(new Event('change'));
+    expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
+    motionPreference.matches = false;
+    motionPreference.dispatchEvent(new Event('change'));
+    expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull();
+    toggle.click();
+    motionPreference.matches = true;
+    motionPreference.dispatchEvent(new Event('change'));
+    motionPreference.matches = false;
+    motionPreference.dispatchEvent(new Event('change'));
+    expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
+    expect(revokeUrl).not.toHaveBeenCalled();
+    dispose();
+    expect(revokeUrl).toHaveBeenCalledOnce();
   });
 });

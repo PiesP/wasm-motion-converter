@@ -297,6 +297,10 @@ test.describe('Quiet Instruments adapter', () => {
 
       const harness = page.locator('[data-testid="compact-progress-harness"]');
       const eta = harness.getByText(/^ETA /);
+      const disclosure = harness.getByTestId('progress-diagnostics');
+      await disclosure.locator('summary').focus();
+      await page.keyboard.press('Enter');
+      await expect(disclosure).toHaveAttribute('open', '');
       const memory = harness.getByText(/64 MB \/ 512 MB/);
       await expect(eta).toBeVisible();
       await expect(memory).toBeVisible();
@@ -335,6 +339,10 @@ test.describe('Quiet Instruments adapter', () => {
     const harness = page.locator('[data-testid="compact-progress-harness"]');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     await expect(harness.getByText(/الوقت المتبقي/)).toBeVisible();
+    const disclosure = harness.getByTestId('progress-diagnostics');
+    await disclosure.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    await expect(disclosure).toHaveAttribute('open', '');
     await expect(harness.getByText(/64 MB \/ 512 MB/)).toBeVisible();
     await expect(harness.locator('[role="progressbar"]')).toHaveCount(1);
     await expect(harness.getByRole('button')).toBeVisible();
@@ -379,18 +387,49 @@ test.describe('Quiet Instruments adapter', () => {
             bitrate: 0,
           }
         );
-        store.setConversionProgress(42);
-        store.setConversionStatusMessage('Encoding frames');
-        store.setAppState('converting');
+        store.setAppState('analyzing');
       });
 
       const dropzone = page.locator('[data-testid="dropzone"]');
+      const cancel = page.locator('[data-testid="dropzone-cancel-button"]');
+      await expect(dropzone.locator('[role="progressbar"]')).not.toHaveAttribute('aria-valuenow', /.+/);
+      await expect(dropzone).toHaveAttribute('aria-busy', 'true');
+      await expect(cancel).toHaveAttribute('aria-label', 'Cancel analysis');
+      await expect(dropzone.getByText('0%', { exact: true })).toHaveCount(0);
+      await expect(dropzone.getByTestId('progress-diagnostics')).toHaveCount(0);
+      await page.evaluate(async () => {
+        const storePath = '/src/stores/conversion-store.ts';
+        const store = await import(storePath);
+        store.setConversionProgress(0);
+        store.setAppState('converting');
+      });
+      await expect(dropzone.locator('[role="progressbar"]')).toHaveAttribute('aria-valuenow', '0');
+      await expect(dropzone).toHaveAttribute('aria-busy', 'true');
+      await expect(cancel).toHaveAttribute('aria-label', 'Cancel conversion');
+      await page.evaluate(async () => {
+        const storePath = '/src/stores/conversion-store.ts';
+        const store = await import(storePath);
+        store.setConversionProgress(42);
+        store.setConversionStatusMessage('Encoding frames');
+      });
       await expect(dropzone.getByText('Converting...', { exact: true })).toHaveCount(1);
       await expect(dropzone.getByText('42%', { exact: true })).toHaveCount(1);
       await expect(dropzone.locator('[role="progressbar"]')).toHaveCount(1);
-      const cancel = page.locator('[data-testid="dropzone-cancel-button"]');
       await expect(cancel).toBeEnabled();
       await expect(cancel).toHaveAttribute('aria-label', 'Cancel conversion');
+
+      await page.evaluate(async () => {
+        const storePath = '/src/stores/conversion-store.ts';
+        const store = await import(storePath);
+        store.setConversionProgress(100);
+      });
+      await expect(dropzone.locator('[role="progressbar"]')).toHaveAttribute('aria-valuenow', '100');
+      await expect(dropzone).toHaveAttribute('aria-busy', 'true');
+      await page.evaluate(async () => {
+        const storePath = '/src/stores/conversion-store.ts';
+        const store = await import(storePath);
+        store.setConversionProgress(42);
+      });
 
       await page.evaluate(async () => {
         const storePath = '/src/stores/conversion-store.ts';
@@ -441,6 +480,37 @@ test.describe('Quiet Instruments adapter', () => {
       expect(metrics.borderRadius).toBe(metrics.panelRadius);
       expect(metrics.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
       expect(metrics.borderColor).not.toBe('rgba(0, 0, 0, 0)');
+    });
+  }
+
+  for (const format of ['gif', 'webp'] as const) {
+    test(`lets keyboard users opt into a reduced-motion ${format.toUpperCase()} result and download after hiding`, async ({ page }) => {
+      const browserErrors = collectBrowserErrors(page);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.goto('/');
+      await page.evaluate(async (selectedFormat) => {
+        const harnessPath = '/test/unit/components/rendered-design-harness.tsx';
+        const harness = await import(harnessPath);
+        harness.mountResultPreviewHarness(selectedFormat);
+      }, format);
+      const host = page.getByTestId('result-preview-harness');
+      const toggle = host.getByTestId('result-preview-toggle');
+      const download = host.getByTestId('download-result-button');
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await expect(host.getByTestId('result-image')).toHaveCount(0);
+      await expect(download).toHaveAttribute('download', `sample.${format}`);
+      await toggle.focus();
+      await page.keyboard.press('Enter');
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      await expect(host.getByTestId('result-image')).toHaveCount(1);
+      await page.keyboard.press('Enter');
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await expect(host.getByTestId('result-image')).toHaveCount(0);
+      await expect(host.getByTestId('result-summary')).toBeVisible();
+      const downloadEvent = page.waitForEvent('download');
+      await download.click();
+      expect((await downloadEvent).suggestedFilename()).toBe(`sample.${format}`);
+      expect(browserErrors).toEqual([]);
     });
   }
 });

@@ -111,16 +111,20 @@ export class ProgressState {
     const rounded = Math.min(100, Math.max(0, progress));
     const monotonic = Math.max(rounded, this.lastProgressValue);
 
+    // A genuine 0% update can establish its phase even before the weighted
+    // overall value advances. Ignore late reports from an earlier phase.
+    if (rounded >= this.lastProgressValue) {
+      if (phase && this.deps.setConversionPhase) {
+        this.deps.setConversionPhase(phase as ProgressPhase);
+      }
+      if (outputFrames != null) setOutputFrames(outputFrames);
+    }
+
     if (monotonic === this.lastProgressValue) {
       return;
     }
 
     this.lastProgressValue = monotonic;
-
-    // Update phase if provided
-    if (phase && this.deps.setConversionPhase) {
-      this.deps.setConversionPhase(phase as ProgressPhase);
-    }
 
     // Reset stall timer whenever progress advances — but not at 100%,
     // since the stall timer would fire 60s after completion with a spurious warning.
@@ -133,9 +137,6 @@ export class ProgressState {
     const now = performance.now();
     batch(() => {
       setConversionProgress(monotonic);
-      if (outputFrames != null) {
-        setOutputFrames(outputFrames);
-      }
       this.etaCalculator.addSample(monotonic);
 
       if (now - this.lastEtaUpdate >= ETA_UPDATE_INTERVAL) {

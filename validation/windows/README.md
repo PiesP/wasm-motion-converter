@@ -61,13 +61,33 @@ record:
 
 - production app load with CSP and cross-origin isolation;
 - the CI H.264 fixture converted to low-quality, 50% GIF and WebP;
+- observed metadata analysis samples, when its transient state is caught,
+  with indeterminate progress, task-correct cancellation labels, and no
+  conversion diagnostics; an unobserved analysis is recorded as such;
+- reduced-motion GIF and WebP results that start with no animated `<img>`, then
+  show through Enter and hide through Space while the control keeps focus;
+- result summaries and Blob downloads that remain available after hiding,
+  including a hide choice that survives a motion-preference change;
 - an 80 x 45 decoded preview for each output;
 - default intrinsic-size preview geometry, explicit fit geometry, and a scale
   indicator that matches the rendered-to-natural size ratio;
 - result summary, primary-download ordering, and opaque 12px-or-larger metadata
-  contrast of at least 4.5:1 in light and dark themes;
+  contrast of at least 4.5:1 in light and dark themes; Forced Colors emulation
+  checks control visibility and horizontal overflow;
 - browser download bytes, format magic, size, and SHA-256;
 - headed-browser screenshots for both result states;
+- headed-browser screenshots of the reduced-motion default, shown and hidden
+  results, dark appearance, and emulated Forced Colors;
+- supported Spanish and Arabic result flows at an 800px-wide desktop viewport,
+  with product-language selection, translated preview actions, RTL direction,
+  control bounds, text size, no horizontal overflow, unchanged Blob download,
+  and headed-browser screenshots;
+- actual Chrome 200% page zoom through a fresh task-owned persistent Chrome
+  profile's Settings page and a separate real GIF conversion from the same
+  bundled production site and loopback server,
+  confirmed by doubled device-pixel ratio, halved layout viewport, and unchanged
+  visual-viewport scale; keyboard preview controls and the hidden result's Blob
+  download remain available in the Arabic result flow, and prior zoom is restored;
 - native metadata and advanced-settings disclosures, including keyboard toggling
   and frame-skip selection;
 - the collapsed sharing-settings disclosure after the primary Convert action,
@@ -81,7 +101,8 @@ record:
   CSP; the real WASM binary must initialize without JavaScript string evaluation;
 - high-motion GIF cancellation from a non-zero progress value, including an
   inspector assertion that the same progress bar and value remain visible while
-  both cancellation controls are disabled and accurately named, followed by a
+  both cancellation controls are disabled and accurately named, the operation
+  remains busy, and diagnostics stay collapsed and readable, followed by a
   settled, drawable first-frame preview and known non-black fixture content;
 - stable-browser API and renderer observations for diagnosis.
 
@@ -101,4 +122,12 @@ pixel baselines.
 
 The environment report describes the installed browser, exposed Web APIs, and
 WebGL renderer. It does not measure or qualify GPU, codec, or conversion
-performance. VM results must not be used as host-hardware benchmark evidence.
+performance. Forced Colors in this profile is browser emulation; it does not
+prove the VM's native high-contrast setting. The Settings adapter checks Chrome
+page zoom in a separate persistent profile because Chrome Settings cannot open
+in Playwright's ordinary isolated context. That profile is created under the
+supplied bundle root, closed, then removed on successful cleanup; a failed
+launch or cleanup leaves a diagnostic record and preserves any profile whose
+browser close could not be confirmed. Edge records that case as not run. Physical
+DPI and comprehensive screen-reader behavior require separate source-bound
+observations. VM results must not be used as host-hardware benchmark evidence.

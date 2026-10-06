@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { verifyAnimatedOutput } from './output-contract.mjs';
 
 const PROFILE_ID = 'wmc-media';
@@ -15,6 +15,7 @@ const CANCELLATION_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 const OUTPUT_CONTRACT = 'validation/windows/output-contract.json';
 const CONVERSION_TIMEOUT_MS = 120_000;
 const CANCELLATION_TIMEOUT_MS = 180_000;
+const ZOOM_PROFILE_PREFIX = 'wmc-zoom-chrome-';
 
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -96,19 +97,39 @@ function contrastRatio(foreground, background) {
 
 async function settleVisualState(page) {
   await page.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await Promise.all(document.getAnimations().filter((animation) =>
+        animation instanceof CSSTransition
+      ).map((animation) => animation.finished.catch(() => {})));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
   );
 }
 
 async function readResultMetadataContrast(page, selector) {
   const computed = await page.locator(selector).evaluate((element) => {
+    // The browser converts CSS Color 4 values (including interpolated oklab)
+    // to the same sRGB channels used by this contrast measurement.
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Contrast measurement requires a 2D canvas');
+    const srgb = (value) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+      return `rgba(${r}, ${g}, ${b}, ${a / 255})`;
+    };
     const backgrounds = [];
     for (let current = element; current; current = current.parentElement) {
-      backgrounds.push(getComputedStyle(current).backgroundColor);
+      backgrounds.push(srgb(getComputedStyle(current).backgroundColor));
     }
     const style = getComputedStyle(element);
     return {
-      color: style.color,
+      color: srgb(style.color),
+      computedColor: style.color,
       backgrounds,
       fontSizePx: Number.parseFloat(style.fontSize),
       opacity: Number.parseFloat(style.opacity),
@@ -334,7 +355,32 @@ async function loadApplication(page, url) {
   };
 }
 
-async function selectFixture(page, filePath) {
+async function selectFixture(page, filePath, inspectAnalysis = false) {
+  if (inspectAnalysis) {
+    await page.evaluate(() => {
+      const observations = [];
+      const capture = () => {
+        const state = document.querySelector('#app-state')?.textContent?.trim() ?? '';
+        const dropzone = document.querySelector('[data-testid="dropzone"]');
+        const progress = dropzone?.querySelector('[role="progressbar"]');
+        const cancel = document.querySelector('[data-testid="dropzone-cancel-button"]');
+        if (!state.startsWith('Analyzing') || !progress || !cancel) return;
+        observations.push({
+          state,
+          busy: dropzone?.getAttribute('aria-busy'),
+          ariaValueNow: progress.getAttribute('aria-valuenow'),
+          dataProgress: progress.getAttribute('data-progress'),
+          cancelLabel: cancel.getAttribute('aria-label'),
+          cancelTitle: cancel.getAttribute('title'),
+          diagnosticsCount: dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length,
+          visibleZero: dropzone?.textContent?.includes('0%') ?? false,
+        });
+      };
+      const observer = new MutationObserver(capture);
+      observer.observe(document.body, { attributes: true, characterData: true, childList: true, subtree: true });
+      globalThis.__wmcAnalysisInspector = { observer, observations };
+    });
+  }
   const input = page.locator('[data-testid="file-input"]');
   await input.setInputFiles(filePath);
   await page.waitForFunction(() => {
@@ -347,6 +393,23 @@ async function selectFixture(page, filePath) {
     (await metadata.textContent())?.includes(basename(filePath)),
     'Selected fixture name is absent from metadata'
   );
+  if (!inspectAnalysis) return null;
+  const observations = await page.evaluate(() => {
+    const inspector = globalThis.__wmcAnalysisInspector;
+    inspector?.observer.disconnect();
+    delete globalThis.__wmcAnalysisInspector;
+    return inspector?.observations ?? [];
+  });
+  for (const observation of observations) {
+    assert.equal(observation.busy, 'true', 'Analysis was not busy');
+    assert.equal(observation.ariaValueNow, null, 'Unknown analysis exposed a numeric progress value');
+    assert.equal(observation.dataProgress, null, 'Unknown analysis exposed synthetic progress data');
+    assert.equal(observation.cancelLabel, 'Cancel analysis');
+    assert.equal(observation.cancelTitle, 'Cancel analysis');
+    assert.equal(observation.diagnosticsCount, 0, 'Analysis displayed conversion diagnostics');
+    assert.equal(observation.visibleZero, false, 'Analysis displayed synthetic zero percent');
+  }
+  return { status: observations.length > 0 ? 'observed' : 'not-observed', observations };
 }
 
 async function chooseOption(page, group, value) {
@@ -413,11 +476,58 @@ function validateOutput(bytes, format, expectedWidth = 80, expectedHeight = 45) 
   assert.equal(bytes.readUInt32LE(4) + 8, bytes.byteLength, 'WebP RIFF size does not match its download');
 }
 
-async function recordScreenshot(page, outputRoot, fileName, artifacts) {
+async function recordScreenshot(page, outputRoot, fileName, artifacts, fullPage = true) {
   const path = join(outputRoot, fileName);
-  await page.screenshot({ path, fullPage: true, animations: 'disabled', caret: 'hide' });
+  await page.screenshot({ path, fullPage, animations: 'disabled', caret: 'hide' });
   const bytes = await readFile(path);
   artifacts.push({ kind: 'screenshot', file: fileName, bytes: bytes.byteLength, sha256: sha256(bytes) });
+}
+
+async function recordChromeZoomScreenshot(page, outputRoot, fileName, artifacts) {
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send('Page.bringToFront');
+    // An omitted clip follows Chrome's real zoomed surface, not Playwright's pre-zoom viewport.
+    const { data } = await session.send('Page.captureScreenshot', {
+      format: 'png', fromSurface: true, captureBeyondViewport: false,
+    });
+    const bytes = Buffer.from(data, 'base64');
+    assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a',
+      'Chrome zoom capture is not a PNG');
+    await writeFile(join(outputRoot, fileName), bytes);
+    artifacts.push({ kind: 'screenshot', file: fileName,
+      bytes: bytes.byteLength, sha256: sha256(bytes) });
+    return { method: 'cdp-page-capture-screenshot-no-clip',
+      width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  } finally {
+    await session.detach();
+  }
+}
+
+async function readForcedColorsControlDiagnostics(page) {
+  return page.evaluate(() => ({
+    viewport: { width: innerWidth, height: innerHeight, scrollY },
+    controls: ['download-result-button', 'download-result-label', 'result-preview-toggle'].map((testId) => {
+      const element = document.querySelector(`[data-testid="${testId}"]`);
+      if (!(element instanceof HTMLElement)) return { testId, present: false };
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        testId,
+        present: true,
+        textContent: element.textContent?.trim() ?? '',
+        color: style.color,
+        backgroundColor: style.backgroundColor,
+        forcedColorAdjust: style.forcedColorAdjust,
+        visibility: style.visibility,
+        display: style.display,
+        opacity: style.opacity,
+        hasClientRect: element.getClientRects().length > 0,
+        rect: { top: rect.top, right: rect.right, bottom: rect.bottom,
+          left: rect.left, width: rect.width, height: rect.height },
+      };
+    }),
+  }));
 }
 
 async function readResultDiscoveryState(page, format) {
@@ -499,8 +609,9 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   await page.setViewportSize(
     format === 'webp' ? { width: 390, height: 844 } : { width: 1280, height: 900 }
   );
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
   await loadApplication(page, baseUrl);
-  await selectFixture(page, fixturePath);
+  const analysis = await selectFixture(page, fixturePath, true);
   await chooseOption(page, 'format', format);
   await chooseOption(page, 'quality', 'low');
   await chooseOption(page, 'scale', '0.5');
@@ -508,6 +619,56 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   await proceedIfPrompted(page);
   await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
 
+  const previewToggle = page.locator('[data-testid="result-preview-toggle"]');
+  await previewToggle.waitFor({ state: 'visible', timeout: 30_000 });
+  assert.equal(await previewToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal((await previewToggle.textContent())?.trim(), 'Show animated preview');
+  assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
+  assert.equal(await page.locator('[data-testid="result-preview-hidden"]').isVisible(), true);
+  const downloadHref = await page.locator('[data-testid="download-result-button"]').getAttribute('href');
+  assert(downloadHref?.startsWith('blob:'), 'Reduced-motion result has no download URL');
+  assert.equal(
+    await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
+    true,
+    'Reduced-motion emulation was not active in the product page'
+  );
+
+  let initialDiscovery;
+  try {
+    await page.waitForFunction(() => {
+      const button = document.querySelector('[data-testid="download-result-button"]');
+      if (!(button instanceof HTMLElement) || document.activeElement !== button) return false;
+      const rect = button.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= innerHeight;
+    }, undefined, { timeout: 5_000 });
+    initialDiscovery = await readResultDiscoveryState(page, format);
+  } catch (error) {
+    initialDiscovery = await readResultDiscoveryState(page, format);
+    const diagnosticFile = `${PROFILE_ID}-${format}-discovery-failure.json`;
+    const diagnosticBytes = Buffer.from(`${JSON.stringify(initialDiscovery, null, 2)}\n`);
+    await writeFile(join(outputRoot, diagnosticFile), diagnosticBytes);
+    artifacts.push({
+      kind: 'diagnostic',
+      file: diagnosticFile,
+      bytes: diagnosticBytes.byteLength,
+      sha256: sha256(diagnosticBytes),
+    });
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Result discovery failed for ${format}: ${JSON.stringify(initialDiscovery)}; ${reason}`
+    );
+  }
+  assert.equal(initialDiscovery.button.focused, true, 'Download did not receive completion focus');
+  assert.equal(initialDiscovery.summary.present, true, 'Reduced-motion result summary is missing');
+  assert.equal(initialDiscovery.summary.beforeDownload, true);
+  assert.equal(initialDiscovery.image.present, false, 'Reduced-motion result auto-played');
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-reduced-default.png`, artifacts);
+
+  await previewToggle.focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await previewToggle.getAttribute('aria-expanded'), 'true');
+  assert.equal((await previewToggle.textContent())?.trim(), 'Hide animated preview');
+  assert.equal(await previewToggle.evaluate((button) => document.activeElement === button), true);
   const preview = page.locator('[data-testid="result-image"]');
   await preview.waitFor({ state: 'visible', timeout: 30_000 });
   await page.waitForFunction(() => {
@@ -520,31 +681,7 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   }));
   assert.deepEqual(dimensions, { width: 80, height: 45 });
 
-  let discovery;
-  try {
-    await page.waitForFunction(() => {
-      const button = document.querySelector('[data-testid="download-result-button"]');
-      if (!(button instanceof HTMLElement) || document.activeElement !== button) return false;
-      const rect = button.getBoundingClientRect();
-      return rect.top >= 0 && rect.bottom <= innerHeight;
-    }, undefined, { timeout: 5_000 });
-    discovery = await readResultDiscoveryState(page, format);
-  } catch (error) {
-    discovery = await readResultDiscoveryState(page, format);
-    const diagnosticFile = `${PROFILE_ID}-${format}-discovery-failure.json`;
-    const diagnosticBytes = Buffer.from(`${JSON.stringify(discovery, null, 2)}\n`);
-    await writeFile(join(outputRoot, diagnosticFile), diagnosticBytes);
-    artifacts.push({
-      kind: 'diagnostic',
-      file: diagnosticFile,
-      bytes: diagnosticBytes.byteLength,
-      sha256: sha256(diagnosticBytes),
-    });
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Result discovery failed for ${format}: ${JSON.stringify(discovery)}; ${reason}`
-    );
-  }
+  const discovery = await readResultDiscoveryState(page, format);
   assert.equal(discovery.summary.present, true, 'Result summary is missing');
   assert.equal(discovery.summary.beforeDownload, true, 'Result summary does not precede download');
   assert.equal(
@@ -601,7 +738,7 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   }, undefined, { timeout: 5_000 });
   await settleVisualState(page);
 
-  await page.emulateMedia({ colorScheme: 'light' });
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
   await settleVisualState(page);
   const lightMetadataContrast = {
     summary: await readResultMetadataContrast(page, '[data-testid="result-summary"]'),
@@ -615,7 +752,7 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
       `Light ${surface} metadata contrast is ${contrast.ratio.toFixed(2)}:1`
     );
   }
-  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
   await settleVisualState(page);
   const darkMetadataContrast = {
     summary: await readResultMetadataContrast(page, '[data-testid="result-summary"]'),
@@ -629,8 +766,73 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
       `Dark ${surface} metadata contrast is ${contrast.ratio.toFixed(2)}:1`
     );
   }
-  await page.emulateMedia({ colorScheme: 'light' });
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-dark.png`, artifacts);
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce', forcedColors: 'active' });
   await settleVisualState(page);
+  const forcedColors = await page.evaluate(() => ({
+    active: matchMedia('(forced-colors: active)').matches,
+    horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    previewToggleVisible:
+      (document.querySelector('[data-testid="result-preview-toggle"]')?.getClientRects().length ?? 0) > 0,
+    downloadVisible:
+      (document.querySelector('[data-testid="download-result-button"]')?.getClientRects().length ?? 0) > 0,
+  }));
+  assert.equal(forcedColors.active, true, 'Forced Colors emulation was not active');
+  assert(forcedColors.horizontalOverflow <= 1, 'Forced Colors result overflowed horizontally');
+  assert.equal(forcedColors.previewToggleVisible, true);
+  assert.equal(forcedColors.downloadVisible, true);
+  // DOM styles and geometry are diagnostics, not proof that text pixels are legible.
+  forcedColors.beforeFullPageScreenshot = await readForcedColorsControlDiagnostics(page);
+  const downloadControl = forcedColors.beforeFullPageScreenshot.controls.find(
+    (control) => control.testId === 'download-result-button'
+  );
+  const downloadLabel = forcedColors.beforeFullPageScreenshot.controls.find(
+    (control) => control.testId === 'download-result-label'
+  );
+  assert(downloadControl, 'Forced Colors download control diagnostics are missing');
+  assert(downloadLabel, 'Forced Colors download label diagnostics are missing');
+  assert.equal(downloadLabel.present, true, 'Forced Colors download label is missing');
+  assert.equal(downloadControl.forcedColorAdjust, 'none');
+  assert.equal(downloadLabel.forcedColorAdjust, 'none');
+  assert.equal(downloadLabel.color, downloadControl.color);
+  assert.equal(parseCssColor(downloadLabel.backgroundColor).alpha, 0);
+  forcedColors.downloadLabelContrast = await readResultMetadataContrast(
+    page, '[data-testid="download-result-label"]'
+  );
+  assert.equal(forcedColors.downloadLabelContrast.opacity, 1);
+  assert(forcedColors.downloadLabelContrast.fontSizePx >= 12);
+  assert(forcedColors.downloadLabelContrast.ratio >= 4.5,
+    'Forced Colors download label and background have insufficient computed contrast');
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-forced-colors.png`, artifacts);
+  await page.locator('[data-testid="download-result-button"]').scrollIntoViewIfNeeded();
+  await page.locator('[data-testid="result-preview-toggle"]').scrollIntoViewIfNeeded();
+  await settleVisualState(page);
+  forcedColors.beforeViewportScreenshot = await readForcedColorsControlDiagnostics(page);
+  await recordScreenshot(page, outputRoot,
+    `${PROFILE_ID}-${format}-forced-colors-viewport.png`, artifacts, false);
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce', forcedColors: 'none' });
+  await settleVisualState(page);
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-result.png`, artifacts);
+
+  await previewToggle.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await previewToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal((await previewToggle.textContent())?.trim(), 'Show animated preview');
+  assert.equal(await previewToggle.evaluate((button) => document.activeElement === button), true);
+  assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
+  assert.equal(await page.locator('[data-testid="result-preview-hidden"]').isVisible(), true);
+  assert.equal(
+    await page.locator('[data-testid="download-result-button"]').getAttribute('href'),
+    downloadHref,
+    'Hiding the preview revoked or replaced the download URL'
+  );
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  assert.equal(
+    await page.locator('[data-testid="result-image"]').count(),
+    0,
+    'A motion preference change overrode the explicit hide choice'
+  );
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-hidden.png`, artifacts);
 
   const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
   await page.locator('[data-testid="download-result-button"]').click();
@@ -649,12 +851,20 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
     bytes: bytes.byteLength,
     sha256: sha256(bytes),
   });
-  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-result.png`, artifacts);
 
   return {
     id: `h264-to-${format}`,
     status: 'passed',
+    analysis,
     preview: dimensions,
+    previewControl: {
+      reducedMotionDefaultHidden: true,
+      keyboardShowAndHide: true,
+      explicitHideSurvivedPreferenceChange: true,
+      imageDetachedWhenHidden: true,
+      downloadUrlRetainedWhenHidden: true,
+      downloadedWhileHidden: true,
+    },
     presentation: {
       actual: actualPresentation,
       fit: fitPresentation,
@@ -662,13 +872,14 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
         light: lightMetadataContrast,
         dark: darkMetadataContrast,
       },
+      forcedColors,
     },
     download: {
       file: outputFile,
       bytes: bytes.byteLength,
       sha256: sha256(bytes),
-      focusedAndVisibleBeforeClick: true,
-      discovery,
+      focusedAndVisibleOnCompletion: initialDiscovery.button.focused,
+      discovery: { initial: initialDiscovery, shown: discovery },
     },
   };
 }
@@ -873,6 +1084,300 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
   };
 }
 
+async function exerciseLongLocaleResult(page, outputRoot, artifacts) {
+  await page.setViewportSize({ width: 800, height: 800 });
+  const toggle = page.locator('[data-testid="result-preview-toggle"]');
+  const download = page.locator('[data-testid="download-result-button"]');
+  assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), true);
+  if ((await toggle.getAttribute('aria-expanded')) === 'true') await toggle.click();
+  const downloadHref = await download.getAttribute('href');
+  assert(downloadHref?.startsWith('blob:'), 'Localized result has no Blob download');
+
+  const observations = [];
+  for (const { locale, dir, showLabel } of [
+    { locale: 'es', dir: 'ltr', showLabel: 'Mostrar vista previa animada' },
+    { locale: 'ar', dir: 'rtl', showLabel: 'إظهار المعاينة المتحركة' },
+  ]) {
+    await page.locator('[data-testid="language-selector"]').selectOption(locale);
+    await page.waitForFunction(
+      ({ locale, showLabel }) =>
+        document.documentElement.lang === locale &&
+        document.querySelector('[data-testid="result-preview-toggle"]')?.textContent?.trim() ===
+          showLabel,
+      { locale, showLabel }
+    );
+    const layout = await page.evaluate(() => {
+      const controls = [
+        document.querySelector('[data-testid="result-preview-toggle"]'),
+        document.querySelector('[data-testid="download-result-button"]'),
+        document.querySelector('[data-testid="language-selector"]'),
+      ];
+      return {
+        lang: document.documentElement.lang,
+        dir: document.documentElement.dir,
+        viewportWidth: innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        controls: controls.map((control) => {
+          const rect = control?.getBoundingClientRect();
+          return {
+            text: control?.textContent?.trim() ?? null,
+            left: rect?.left ?? null,
+            right: rect?.right ?? null,
+            height: rect?.height ?? null,
+            fontSizePx: control ? Number.parseFloat(getComputedStyle(control).fontSize) : null,
+          };
+        }),
+      };
+    });
+    assert.equal(layout.lang, locale);
+    assert.equal(layout.dir, dir);
+    assert(layout.documentWidth <= layout.viewportWidth + 1, `${locale} result overflows horizontally`);
+    for (const [index, control] of layout.controls.entries()) {
+      assert(control.left !== null && control.left >= -1, `${locale} control is clipped at start`);
+      assert(
+        control.right !== null && control.right <= layout.viewportWidth + 1,
+        `${locale} control is clipped at end`
+      );
+      assert(
+        control.height !== null && control.height >= (index < 2 ? 44 : 28),
+        `${locale} control is too short`
+      );
+      assert(control.fontSizePx !== null && control.fontSizePx >= 12, `${locale} control text is too small`);
+    }
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
+    assert.equal(await download.getAttribute('href'), downloadHref);
+    await settleVisualState(page);
+    await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${locale}-narrow-result.png`, artifacts);
+    observations.push(layout);
+  }
+
+  return { id: 'long-locale-narrow-result', status: 'passed', observations };
+}
+
+async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePath, outputRoot, artifacts) {
+  const userAgent = await page.evaluate(() => navigator.userAgent);
+  if (userAgent.includes('Edg/')) {
+    return { id: 'browser-zoom-200', status: 'not-run', reason: 'Chrome Settings adapter only' };
+  }
+  const { mode } = JSON.parse(await readFile(join(bundleRoot, 'bundle.json'), 'utf8'));
+  assert(['desktop', 'headless-diagnostic'].includes(mode), 'Unsupported Windows bundle mode');
+  const profilePath = await mkdtemp(join(bundleRoot, ZOOM_PROFILE_PREFIX));
+  let zoomContext;
+  let zoomPage;
+  let settingsPage;
+  let previousZoom;
+  let baseline;
+  let result;
+  let primaryError;
+  let stage = 'launch-owned-chrome';
+  let contextClosed = false;
+  let profileRemoved = false;
+  let zoomRestored = false;
+  const cleanupErrors = [];
+  const pageErrors = [];
+  try {
+    zoomContext = await browser.browserType().launchPersistentContext(profilePath, {
+      channel: 'chrome',
+      headless: mode === 'headless-diagnostic',
+      args: ['--mute-audio'],
+      acceptDownloads: true,
+      colorScheme: 'light',
+      locale: 'en-US',
+      reducedMotion: 'reduce',
+      viewport: { width: 1280, height: 900 },
+    });
+    zoomPage = zoomContext.pages()[0] ?? await zoomContext.newPage();
+    zoomPage.on('pageerror', (error) => pageErrors.push(error.message));
+    stage = 'load-same-production-bundle';
+    const appLoad = await loadApplication(zoomPage, baseUrl);
+    assert.equal(appLoad.crossOriginIsolated, true, 'Owned Chrome profile lost COOP/COEP isolation');
+
+    stage = 'convert-owned-gif';
+    await selectFixture(zoomPage, fixturePath);
+    await chooseOption(zoomPage, 'format', 'gif');
+    await chooseOption(zoomPage, 'quality', 'low');
+    await chooseOption(zoomPage, 'scale', '0.5');
+    await zoomPage.locator('[data-testid="convert-button"]').click();
+    await proceedIfPrompted(zoomPage);
+    await waitForConversionOutcome(zoomPage, CONVERSION_TIMEOUT_MS);
+    const toggle = zoomPage.locator('[data-testid="result-preview-toggle"]');
+    const download = zoomPage.locator('[data-testid="download-result-button"]');
+    await toggle.waitFor({ state: 'visible' });
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false',
+      'Reduced-motion GIF started animating in the owned profile');
+    assert.equal(await zoomPage.locator('[data-testid="result-image"]').count(), 0);
+    const href = await download.getAttribute('href');
+    assert(href?.startsWith('blob:'), 'Owned GIF result has no Blob download');
+
+    stage = 'select-arabic-product-locale';
+    await zoomPage.locator('[data-testid="language-selector"]').selectOption('ar');
+    await zoomPage.waitForFunction(() =>
+      document.documentElement.lang === 'ar' &&
+      document.documentElement.dir === 'rtl' &&
+      document.querySelector('[data-testid="result-preview-toggle"]')?.textContent?.trim() ===
+        'إظهار المعاينة المتحركة'
+    );
+
+    stage = 'set-real-browser-zoom';
+    settingsPage = await zoomContext.newPage();
+    await settingsPage.goto('chrome://settings/appearance');
+    const zoom = settingsPage.locator('select#zoomLevel');
+    previousZoom = await zoom.inputValue();
+    assert.equal(Number(previousZoom), 1, 'Owned Chrome profile did not start at 100% zoom');
+    baseline = await zoomPage.evaluate(() => ({
+      devicePixelRatio, width: innerWidth, scale: visualViewport?.scale,
+    }));
+    await zoom.selectOption('2');
+    await zoomPage.bringToFront();
+    await zoomPage.waitForFunction((before) =>
+      Math.abs(devicePixelRatio / before.devicePixelRatio - 2) < 0.02 &&
+      Math.abs(innerWidth / before.width - 0.5) < 0.02 &&
+      Math.abs((visualViewport?.scale ?? 0) - 1) < 0.02,
+    baseline, { timeout: 10_000 });
+
+    stage = 'exercise-zoomed-result';
+    assert.equal(await download.getAttribute('href'), href, 'Browser zoom replaced the Blob URL');
+    await toggle.focus();
+    await zoomPage.keyboard.press('Enter');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    await zoomPage.locator('[data-testid="result-image"]').waitFor({ state: 'visible' });
+    await zoomPage.keyboard.press('Space');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(await zoomPage.locator('[data-testid="result-image"]').count(), 0);
+    assert.equal(await download.getAttribute('href'), href);
+    const observation = await zoomPage.evaluate(() => ({
+      devicePixelRatio, width: innerWidth, height: innerHeight, scale: visualViewport?.scale,
+      language: document.documentElement.lang,
+      direction: document.documentElement.dir,
+      horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }));
+    assert(observation.horizontalOverflow <= 1, '200% browser zoom caused horizontal overflow');
+    assert.equal(observation.language, 'ar');
+    assert.equal(observation.direction, 'rtl');
+    for (const control of [toggle, download]) {
+      await control.focus();
+      const geometry = await control.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: innerWidth,
+          fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
+          focused: document.activeElement === element };
+      });
+      assert(geometry.left >= -1 && geometry.right <= geometry.width + 1,
+        'A zoomed result control was clipped horizontally');
+      assert(geometry.focused && geometry.fontSize >= 12);
+    }
+    await toggle.scrollIntoViewIfNeeded();
+    await download.scrollIntoViewIfNeeded();
+    await settleVisualState(zoomPage);
+    const screenshotControls = await zoomPage.evaluate(() => {
+      const controls = ['result-preview-toggle', 'download-result-button'];
+      return controls.map((testId) => {
+        const element = document.querySelector(`[data-testid="${testId}"]`);
+        const rect = element?.getBoundingClientRect();
+        return { testId, left: rect?.left ?? null, right: rect?.right ?? null,
+          top: rect?.top ?? null, bottom: rect?.bottom ?? null,
+          width: rect?.width ?? null, height: rect?.height ?? null,
+          viewportWidth: innerWidth, viewportHeight: innerHeight };
+      });
+    });
+    for (const control of screenshotControls) {
+      assert(control.width > 0 && control.height > 0 && control.left >= -1 &&
+        control.right <= control.viewportWidth + 1 &&
+        control.top >= -1 && control.bottom <= control.viewportHeight + 1,
+      `${control.testId} is outside the zoom screenshot viewport`);
+    }
+    const zoomScreenshot = await recordChromeZoomScreenshot(
+      zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts
+    );
+    assert.equal(zoomScreenshot.width, Math.round(observation.width * observation.devicePixelRatio));
+    assert.equal(zoomScreenshot.height, Math.round(observation.height * observation.devicePixelRatio));
+
+    stage = 'download-zoomed-gif';
+    const downloadPromise = zoomPage.waitForEvent('download', { timeout: 30_000 });
+    await download.click();
+    const browserDownload = await downloadPromise;
+    assert(browserDownload.suggestedFilename().toLowerCase().endsWith('.gif'));
+    const bytes = await readDownload(browserDownload);
+    validateOutput(bytes, 'gif');
+    const outputFile = `${PROFILE_ID}-browser-zoom-gif.gif`;
+    await writeFile(join(outputRoot, outputFile), bytes);
+    artifacts.push({ kind: 'zoomed-converted-media', file: outputFile,
+      bytes: bytes.byteLength, sha256: sha256(bytes) });
+    assert.deepEqual(pageErrors, [], 'Owned Chrome result page emitted errors');
+    result = { id: 'browser-zoom-200', status: 'passed', factor: 2,
+      method: 'owned-persistent-chrome-settings-page', baseline, observation,
+      language: 'ar', previewHiddenAfterKeyboard: true, screenshotControls, zoomScreenshot,
+      download: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) } };
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    if (previousZoom !== undefined && settingsPage) {
+      try {
+        await settingsPage.locator('select#zoomLevel').selectOption(previousZoom);
+        if (baseline) {
+          await zoomPage.bringToFront();
+          await zoomPage.waitForFunction((before) =>
+            Math.abs(devicePixelRatio / before.devicePixelRatio - 1) < 0.02 &&
+            Math.abs(innerWidth / before.width - 1) < 0.02 &&
+            Math.abs((visualViewport?.scale ?? 0) - 1) < 0.02,
+          baseline, { timeout: 10_000 });
+        }
+        zoomRestored = true;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (settingsPage) {
+      try { await settingsPage.close(); } catch (error) { cleanupErrors.push(error); }
+    }
+    if (zoomContext) {
+      try {
+        await zoomContext.close();
+        contextClosed = true;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (contextClosed) {
+      try {
+        assert.equal(dirname(profilePath), bundleRoot, 'Zoom profile escaped the bundle root');
+        assert(basename(profilePath).startsWith(ZOOM_PROFILE_PREFIX), 'Zoom profile is not task-owned');
+        await rm(profilePath, { recursive: true, force: false, maxRetries: 3, retryDelay: 100 });
+        profileRemoved = true;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (primaryError || cleanupErrors.length) {
+      const diagnostic = {
+        stage,
+        error: primaryError === undefined ? null :
+          primaryError instanceof Error ? primaryError.message : String(primaryError),
+        cleanupErrors: cleanupErrors.map((error) => error instanceof Error ? error.message : String(error)),
+        profileName: basename(profilePath),
+        contextClosed,
+        profileRemoved,
+        zoomRestored,
+      };
+      try {
+        await writeFile(join(outputRoot, `${PROFILE_ID}-browser-zoom-failure.json`),
+          `${JSON.stringify(diagnostic, null, 2)}\n`);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+  }
+  if (cleanupErrors.length) {
+    throw new AggregateError(
+      [primaryError, ...cleanupErrors].filter((error) => error !== undefined),
+      'Owned Chrome zoom validation or cleanup failed'
+    );
+  }
+  if (primaryError) throw primaryError;
+  return { ...result, cleanup: { contextClosed, profileRemoved, zoomRestored } };
+}
+
 async function installCancellationInspector(page) {
   return page.evaluate(() => {
     const visible = (element) =>
@@ -900,6 +1405,10 @@ async function installCancellationInspector(page) {
       const settingsCancel = document.querySelector('[data-testid="stop-conversion-button"]');
       const dropzoneCancel = document.querySelector('[data-testid="dropzone-cancel-button"]');
       const dropzone = document.querySelector('[data-testid="dropzone"]');
+      const progressBusyRegion = currentProgressBars[0]?.closest('[aria-busy]');
+      const diagnostics = dropzone?.querySelector('[data-testid="progress-diagnostics"]');
+      const diagnosticsSummary = diagnostics?.querySelector('summary');
+      const statusMessage = dropzone?.querySelector('[data-testid="progress-status-message"]');
       inspector.observation = {
         stateText,
         sameProgressElement: currentProgressBars[0] === inspector.progressBar,
@@ -920,6 +1429,18 @@ async function installCancellationInspector(page) {
           label: dropzoneCancel?.getAttribute('aria-label') ?? null,
         },
         dropzoneBusy: dropzone?.getAttribute('aria-busy') ?? null,
+        progressBusy: progressBusyRegion && progressBusyRegion !== dropzone && dropzone?.contains(progressBusyRegion)
+          ? progressBusyRegion.getAttribute('aria-busy')
+          : null,
+        progressAriaValueNow: currentProgressBars[0]?.getAttribute('aria-valuenow') ?? null,
+        diagnosticsCount: dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length ?? 0,
+        diagnosticsOpen: diagnostics?.open ?? null,
+        diagnosticsSummaryFontSizePx: diagnosticsSummary
+          ? Number.parseFloat(getComputedStyle(diagnosticsSummary).fontSize)
+          : null,
+        statusFontSizePx: statusMessage
+          ? Number.parseFloat(getComputedStyle(statusMessage).fontSize)
+          : null,
       };
     };
     inspector.observer = new MutationObserver(capture);
@@ -1127,6 +1648,11 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     `Cancellation produced an error: ${errorText ?? 'unknown error'}`
   );
   const cancellationUi = await readCancellationInspector(page);
+  const cancellationFile = `${PROFILE_ID}-cancellation-state.json`;
+  const cancellationBytes = Buffer.from(`${JSON.stringify(cancellationUi, null, 2)}\n`);
+  await writeFile(join(outputRoot, cancellationFile), cancellationBytes);
+  artifacts.push({ kind: 'diagnostic', file: cancellationFile,
+    bytes: cancellationBytes.byteLength, sha256: sha256(cancellationBytes) });
   assert(cancellationUi, 'Cancellation state was not observable by the UI inspector');
   assert.equal(cancellationUi.sameProgressElement, true);
   assert.deepEqual(cancellationUi.progressValues, [progressBeforeCancel]);
@@ -1137,6 +1663,12 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
   assert.equal(cancellationUi.settingsCancel.label, cancellationUi.stateText);
   assert.equal(cancellationUi.dropzoneCancel.label, cancellationUi.stateText);
   assert.equal(cancellationUi.dropzoneBusy, 'true');
+  assert.equal(cancellationUi.progressBusy, 'true');
+  assert.equal(cancellationUi.progressAriaValueNow, String(progressBeforeCancel));
+  assert.equal(cancellationUi.diagnosticsCount, 1);
+  assert.equal(cancellationUi.diagnosticsOpen, false);
+  assert(cancellationUi.diagnosticsSummaryFontSizePx >= 14);
+  assert(cancellationUi.statusFontSizePx >= 14);
   const previewRecovery = await inspectRestoredPreview(page);
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-cancelled.png`, artifacts);
   return {
@@ -1317,6 +1849,10 @@ export async function run({ browser, root, output }) {
     assert(fallback.workerAttempts > 0, 'WASM fallback did not attempt its preferred Worker path');
     assert.equal(fallback.nativeWebpAvailable, false);
     checks.push({ ...wasmCheck, fallback });
+    checks.push(await exerciseLongLocaleResult(page, outputRoot, artifacts));
+    checks.push(await exerciseBrowserZoom(
+      browser, page, bundleRoot, started.url, smallFixture, outputRoot, artifacts
+    ));
 
     await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);

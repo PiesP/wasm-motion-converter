@@ -18,7 +18,8 @@ interface FileDropzoneProps {
   cancelLabel?: string | undefined;
   onClear?: (() => void) | undefined;
   disabled?: boolean | undefined;
-  progress?: number | undefined;
+  progress?: number | null | undefined;
+  busy?: boolean | undefined;
   status?: string | undefined;
   statusMessage?: string | undefined;
   showElapsedTime?: boolean | undefined;
@@ -49,6 +50,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     'onClear',
     'disabled',
     'progress',
+    'busy',
     'status',
     'statusMessage',
     'showElapsedTime',
@@ -75,7 +77,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   let previewVideoElement: HTMLVideoElement | undefined;
   let selectionFeedbackTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  const isBusy = createMemo(() => !!local.status);
+  const isBusy = createMemo(() => local.busy ?? !!local.status);
   const isInteractive = createMemo(() => !local.disabled && !isBusy());
   const hasFile = createMemo(() => !!local.previewUrl);
   const hasSelectionPreview = createMemo(() => (local.duration ?? 0) > 0 && !!local.onTrimChange);
@@ -83,11 +85,6 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     if (local.disabled) return t('dropzone.selectFile');
     if (hasFile() && !isBusy()) return t('dropzone.changeFile');
     return t('dropzone.selectFile');
-  });
-  const progressValue = createMemo(() => {
-    const raw = local.progress ?? 0;
-    if (!Number.isFinite(raw)) return 0;
-    return Math.min(100, Math.max(0, Math.round(raw)));
   });
   const effectiveTrimEnd = createMemo(() => {
     const duration = local.duration ?? 0;
@@ -284,7 +281,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
             {/* Compact progress bar */}
             <div class="max-w-md mx-auto">
               <ProgressBar
-                progress={progressValue()}
+                progress={local.progress ?? null}
+                busy={isBusy()}
                 status={local.status || t('dropzone.processing')}
                 statusMessage={local.statusMessage}
                 showSpinner={false}
