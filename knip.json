@@ -7,6 +7,7 @@
     "scripts/ci/classify-workflow-changes.ts",
     "scripts/ci/repository-authority.test.ts",
     "scripts/check/run-child.test.ts",
+    "scripts/release/verify-source.test.ts",
     "scripts/ci/pinned-tools.ts",
     "scripts/ci/check-pinned-tools.ts",
     "scripts/ci/install-nose.ts",

@@ -183,9 +183,9 @@ describe('Release infrastructure', () => {
     expect(provenance).toContain('fetch-tags: true');
     expect(provenance).toContain('persist-credentials: false');
     expect(provenance).toContain('RELEASE_TAG: ${{ inputs.tag }}');
-    expect(provenance).toContain('git fetch --force origin');
-    expect(provenance).toContain('git rev-parse --verify "${RELEASE_TAG}^{commit}"');
-    expect(provenance).toContain('git merge-base --is-ancestor "$release_sha" "$GITHUB_SHA"');
+    expect(provenance).toContain('uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969');
+    expect(provenance).toContain("install-dependencies: 'false'");
+    expect(provenance).toContain('run: node --experimental-strip-types scripts/release/verify-source.ts');
 
     const localExecutionMarker = {
       quality: 'uses: ./.github/actions/setup-release',
