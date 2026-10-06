@@ -33,12 +33,8 @@ describe('Playwright workflow profiles', () => {
 
     expect(config).toContain("TEST_PROFILE === 'resource'");
     expect(config).toContain("'e2e/resource-profile.spec.ts'");
-    expect(packageJson.scripts?.['test:e2e:resource']).toContain(
-      'PLAYWRIGHT_TEST_PROFILE=resource',
-    );
-    expect(packageJson.scripts?.['pretest:e2e:resource']).toContain(
-      'PREPARE_RESOURCE_FIXTURES=true',
-    );
+    expect(packageJson.scripts?.['test:e2e:resource']).toContain('run-playwright.ts resource');
+    expect(packageJson.scripts?.['pretest:e2e:resource']).toContain('prepare-resource-fixtures.ts');
     expect(fixtureGenerator).toContain('test-video-resource-hostile-par.webm');
     expect(fixtureGenerator).toContain('setsar=100/1:max=100');
     expect(resourceProfile).toContain('HOSTILE_PAR_FIXTURE');
@@ -53,7 +49,7 @@ describe('Playwright workflow profiles', () => {
     const workflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
     const e2eJob = workflow.slice(workflow.indexOf('  e2e:\n'), workflow.indexOf('\n  build:\n'));
 
-    expect(packageJson.scripts?.['test:e2e:ci']).toContain('PLAYWRIGHT_TEST_PROFILE=ci');
+    expect(packageJson.scripts?.['test:e2e:ci']).toContain('run-playwright.ts ci');
     expect(packageJson.scripts?.['pretest:e2e:ci']).toBe('pnpm prepare:e2e:fixture');
     expect(workflow).toContain('pnpm test:e2e:ci');
     expect(workflow).toContain('sudo apt-get install --yes ffmpeg');

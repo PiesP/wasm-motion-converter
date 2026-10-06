@@ -54,6 +54,25 @@ external tool; required CI installation and integrity checks are owned by
 Revisit the external-tool exception if Nose gains a repository-local Node API
 that preserves its pinned installer and CI integrity contract.
 
+### Portable build and E2E commands
+
+`dev`, `build`, `build:ci`, `analyze`, and `preview` use
+`scripts/build/run-vite.ts`; the three named E2E profiles use
+`scripts/test/run-playwright.ts`. These adapters launch the installed Vite and
+Playwright Node entrypoints with inherited arguments and working directory.
+They set `NODE_OPTIONS=--no-deprecation` for Vite and override
+`PLAYWRIGHT_TEST_PROFILE` for the selected E2E profile. `analyze` alone sets
+`VITE_ANALYZE_BUNDLE=true` and prints the stats path after a successful build.
+
+The normal `build` script still uses pnpm's `prebuild` quality and license checks
+and `postbuild` step. `build:ci` runs license generation, Vite, and postbuild in
+that order without the local quality gate. The resource E2E prehook uses
+`scripts/test/prepare-resource-fixtures.ts` to set
+`PREPARE_RESOURCE_FIXTURES=true`; the CI and deploy prehooks keep the ordinary
+fixture generator and inherit any caller environment. All adapters forward
+child output and failure status. Their focused regression checks run in
+`pnpm test:ci`.
+
 ## Validation
 
 ### Workflow change classifier

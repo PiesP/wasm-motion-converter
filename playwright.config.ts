@@ -108,7 +108,7 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          command: `NODE_OPTIONS='--no-deprecation' pnpm exec vite --host 127.0.0.1 --port ${DEV_SERVER_PORT} --strictPort`,
+          command: `node --experimental-strip-types scripts/build/run-vite.ts dev --host 127.0.0.1 --port ${DEV_SERVER_PORT} --strictPort`,
           url: DEV_SERVER_URL,
           reuseExistingServer: true,
           timeout: 120_000,
