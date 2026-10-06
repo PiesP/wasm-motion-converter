@@ -1059,6 +1059,74 @@ async function exerciseLongLocaleResult(page, outputRoot, artifacts) {
   return { id: 'long-locale-narrow-result', status: 'passed', observations };
 }
 
+async function exerciseBrowserZoom(page, outputRoot, artifacts) {
+  const userAgent = await page.evaluate(() => navigator.userAgent);
+  if (userAgent.includes('Edg/')) {
+    return { id: 'browser-zoom-200', status: 'not-run', reason: 'Chrome Settings adapter only' };
+  }
+  const previousViewport = page.viewportSize();
+  const settingsPage = await page.context().newPage();
+  let previousZoom;
+  try {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await settingsPage.goto('chrome://settings/appearance');
+    const zoom = settingsPage.locator('select#zoomLevel');
+    previousZoom = await zoom.inputValue();
+    assert.equal(Number(previousZoom), 1, 'Isolated Chrome profile did not start at 100% zoom');
+    const baseline = await page.evaluate(() => ({
+      devicePixelRatio, width: innerWidth, scale: visualViewport?.scale,
+    }));
+    await zoom.selectOption('2');
+    await page.bringToFront();
+    await page.waitForFunction((before) =>
+      Math.abs(devicePixelRatio / before.devicePixelRatio - 2) < 0.02 &&
+      Math.abs(innerWidth / before.width - 0.5) < 0.02 &&
+      Math.abs((visualViewport?.scale ?? 0) - 1) < 0.02,
+    baseline, { timeout: 10_000 });
+    const toggle = page.locator('[data-testid="result-preview-toggle"]');
+    const download = page.locator('[data-testid="download-result-button"]');
+    const href = await download.getAttribute('href');
+    assert(href?.startsWith('blob:'), 'Zoomed result lost its download');
+    await toggle.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    await page.locator('[data-testid="result-image"]').waitFor({ state: 'visible' });
+    await page.keyboard.press('Space');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
+    assert.equal(await download.getAttribute('href'), href);
+    const observation = await page.evaluate(() => ({
+      devicePixelRatio, width: innerWidth, scale: visualViewport?.scale,
+      language: document.documentElement.lang,
+      direction: document.documentElement.dir,
+      horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }));
+    assert(observation.horizontalOverflow <= 1, '200% browser zoom caused horizontal overflow');
+    for (const control of [toggle, download]) {
+      await control.focus();
+      const geometry = await control.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: innerWidth,
+          fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
+          focused: document.activeElement === element };
+      });
+      assert(geometry.left >= -1 && geometry.right <= geometry.width + 1,
+        'A zoomed result control was clipped horizontally');
+      assert(geometry.focused && geometry.fontSize >= 12);
+    }
+    await settleVisualState(page);
+    await recordScreenshot(page, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts);
+    return { id: 'browser-zoom-200', status: 'passed', factor: 2,
+      method: 'isolated-chrome-settings-page', baseline, observation };
+  } finally {
+    if (previousZoom !== undefined) {
+      await settingsPage.locator('select#zoomLevel').selectOption(previousZoom);
+    }
+    await settingsPage.close();
+    if (previousViewport) await page.setViewportSize(previousViewport);
+  }
+}
+
 async function installCancellationInspector(page) {
   return page.evaluate(() => {
     const visible = (element) =>
@@ -1523,6 +1591,7 @@ export async function run({ browser, root, output }) {
     assert.equal(fallback.nativeWebpAvailable, false);
     checks.push({ ...wasmCheck, fallback });
     checks.push(await exerciseLongLocaleResult(page, outputRoot, artifacts));
+    checks.push(await exerciseBrowserZoom(page, outputRoot, artifacts));
 
     await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);

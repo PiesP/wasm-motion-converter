@@ -82,6 +82,10 @@ record:
   with product-language selection, translated preview actions, RTL direction,
   control bounds, text size, no horizontal overflow, unchanged Blob download,
   and headed-browser screenshots;
+- actual Chrome 200% page zoom through the isolated browser's Settings page,
+  confirmed by doubled device-pixel ratio, halved layout viewport, and unchanged
+  visual-viewport scale; keyboard preview controls and the hidden result's Blob
+  download remain available in the Arabic result flow, and prior zoom is restored;
 - native metadata and advanced-settings disclosures, including keyboard toggling
   and frame-skip selection;
 - the collapsed sharing-settings disclosure after the primary Convert action,
@@ -117,6 +121,7 @@ pixel baselines.
 The environment report describes the installed browser, exposed Web APIs, and
 WebGL renderer. It does not measure or qualify GPU, codec, or conversion
 performance. Forced Colors in this profile is browser emulation; it does not
-prove the VM's native high-contrast setting. Browser 200% zoom, physical DPI,
-and comprehensive screen-reader behavior require separate source-bound
-observations. VM results must not be used as host-hardware benchmark evidence.
+prove the VM's native high-contrast setting. The Settings adapter checks Chrome
+page zoom; Edge records that case as not run. Physical DPI and comprehensive
+screen-reader behavior require separate source-bound observations. VM results
+must not be used as host-hardware benchmark evidence.
