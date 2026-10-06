@@ -56,6 +56,23 @@ that preserves its pinned installer and CI integrity contract.
 
 ## Validation
 
+### Workflow change classifier
+
+`scripts/ci/classify-workflow-changes.ts` owns the CI and security changed-path
+policy. The `changes` jobs in `.github/workflows/ci.yaml` and
+`.github/workflows/security.yaml` run it with built-in Node TypeScript stripping
+after setting up the manifest-pinned Node runtime without project dependencies.
+For pull requests and merge groups, each job extracts the classifier from its
+trusted base commit before running it; a missing trusted file or failed routing
+enables every gate. This also covers the first migration PR. Pushes and manual
+or scheduled runs use the checked-out protected revision. The classifier reads
+the GitHub event JSON and a direct `git diff --no-renames --name-only -z` between
+the event's two commits, then writes fixed Boolean outputs to `GITHUB_OUTPUT`.
+It creates no repository files. `pnpm test test/unit/config/workflow-routing.test.ts`
+checks real Git boundaries and path routing; `pnpm check:scripts` checks its
+NodeNext types. Review this trusted-source rule when the workflow event model
+or classifier path changes.
+
 Run the narrowest relevant test while working. Before opening a pull request, run:
 
 ```bash
