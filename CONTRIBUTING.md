@@ -41,6 +41,19 @@ pnpm dev
 
 COOP/COEP headers are configured in `vite.config.ts` for development and preview.
 
+### Command ownership: install and local duplication check
+
+| Public command | Purpose and implementation | Runtime and prerequisites | Inputs, outputs, and side effects | Verification |
+| --- | --- | --- | --- | --- |
+| `pnpm install` → `preinstall` | Check `packages/core/package.json` in `scripts/check/bootstrap.ts` before dependency installation. | Manifest-supported Node with built-in TypeScript stripping; no `node_modules` or initialized submodule required to run the check. | Reads the shared-core package path; exits with an actionable submodule command if it is missing. It does not write files. | `test/unit/config/command-adapters.test.ts`; `pnpm check:scripts` |
+| `pnpm quality:nose` (also called by `pnpm quality`) | Run the local duplication query from `scripts/check/nose.ts`. | Manifest-supported Node and optional externally installed Nose. | Inherits the environment and project working directory; reads `src` and `.nose-baseline.json`, and forwards Nose output/status/signal. The adapter itself writes no project files. Only a missing Nose binary skips locally. | `test/unit/config/command-adapters.test.ts`; `pnpm quality` |
+
+Both adapters are import-inert TypeScript commands. The Nose executable is an
+external tool; required CI installation and integrity checks are owned by
+`scripts/ci/install-nose.sh` and the workflows, where failure remains fatal.
+Revisit the external-tool exception if Nose gains a repository-local Node API
+that preserves its pinned installer and CI integrity contract.
+
 ## Validation
 
 Run the narrowest relevant test while working. Before opening a pull request, run:
