@@ -2,6 +2,21 @@ import type { UserConfig } from 'vite';
 import solid from 'vite-plugin-solid';
 import tailwindcss from '@tailwindcss/vite';
 
+export function browserAppManualChunk(id: string): string | undefined {
+  // Keep Vite's shared preload helper separate from the lazy codec chunk.
+  if (id === '\0vite/preload-helper.js') {
+    return 'preload-helper';
+  }
+  // Match the dependency package, not our lazily imported wasm-webp singleton.
+  if (/(?:^|[/\\])node_modules[/\\]wasm-webp[/\\]/.test(id)) {
+    return 'wasm-webp';
+  }
+  if (id.includes('gifenc')) {
+    return 'gifenc';
+  }
+  return undefined;
+}
+
 const browserAppPreset: UserConfig = {
   plugins: [solid(), tailwindcss()],
 
@@ -36,17 +51,8 @@ const browserAppPreset: UserConfig = {
         assetFileNames: 'assets/[name].[hash].[ext]',
         preserveModules: false,
         exports: 'auto',
-        manualChunks(id: string): string | undefined {
-          // Keep wasm-webp out of the worker chunk — it's only needed for
-          // the main-thread fallback path, not the OffscreenCanvas worker path.
-          if (id.includes('wasm-webp')) {
-            return 'wasm-webp';
-          }
-          if (id.includes('gifenc')) {
-            return 'gifenc';
-          }
-          return undefined;
-        },
+        // Keep wasm-webp out of the worker chunk and defer it until WebP encoding.
+        manualChunks: browserAppManualChunk,
       },
       onwarn(warning: { code?: string; message: string }, defaultHandler: (w: { code?: string; message: string }) => void) {
         // Suppress "module" externalization warning from wasm-webp
