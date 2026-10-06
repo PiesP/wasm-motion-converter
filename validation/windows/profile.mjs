@@ -1085,6 +1085,8 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
   if (userAgent.includes('Edg/')) {
     return { id: 'browser-zoom-200', status: 'not-run', reason: 'Chrome Settings adapter only' };
   }
+  const { mode } = JSON.parse(await readFile(join(bundleRoot, 'bundle.json'), 'utf8'));
+  assert(['desktop', 'headless-diagnostic'].includes(mode), 'Unsupported Windows bundle mode');
   const profilePath = await mkdtemp(join(bundleRoot, ZOOM_PROFILE_PREFIX));
   let zoomContext;
   let zoomPage;
@@ -1102,7 +1104,8 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
   try {
     zoomContext = await browser.browserType().launchPersistentContext(profilePath, {
       channel: 'chrome',
-      headless: false,
+      headless: mode === 'headless-diagnostic',
+      args: ['--mute-audio'],
       acceptDownloads: true,
       colorScheme: 'light',
       locale: 'en-US',
