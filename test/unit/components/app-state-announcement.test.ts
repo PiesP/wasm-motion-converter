@@ -198,4 +198,83 @@ describe('App state announcement', () => {
     expect(cancel?.getAttribute('title')).toBe('translated:dropzone.cancelAnalysis');
     dispose();
   });
+
+  it('keeps analysis indeterminate and free of conversion controls until cancellation cleanup finishes', async () => {
+    setAppState('analyzing');
+    const { default: App } = await import('@/App');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(() => App({}), container);
+    const cancel = container.querySelector<HTMLButtonElement>('[data-testid="dropzone-cancel-button"]');
+    expect(cancel?.getAttribute('aria-label')).toBe('translated:dropzone.cancelAnalysis');
+
+    cancel?.click();
+    // The mocked handler leaves metadata cleanup pending after the user's intent.
+    setAppState('cancelling');
+
+    await vi.waitFor(() => {
+      const dropzone = container.querySelector('[data-testid="dropzone"]');
+      const progress = dropzone?.querySelector('[role="progressbar"]');
+      const pendingCancel = container.querySelector<HTMLButtonElement>(
+        '[data-testid="dropzone-cancel-button"]'
+      );
+      expect(dropzone?.getAttribute('aria-busy')).toBe('true');
+      expect(progress?.hasAttribute('aria-valuenow')).toBe(false);
+      expect(progress?.hasAttribute('data-progress')).toBe(false);
+      expect(dropzone?.textContent).toContain('translated:progress.cancelling');
+      expect(dropzone?.textContent).not.toContain('0%');
+      for (const phase of ['demux', 'decode', 'encode', 'final'] as const) {
+        expect(dropzone?.textContent).not.toContain(`translated:progress.${phase}`);
+      }
+      expect(dropzone?.querySelector('[data-testid="progress-diagnostics"]')).toBeNull();
+      expect(pendingCancel?.disabled).toBe(true);
+      expect(container.querySelector('[data-testid="stop-conversion-button"]')).toBeNull();
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="convert-button"]')?.disabled).toBe(true);
+    });
+
+    setAppState('idle');
+    await vi.waitFor(() => {
+      expect(container.querySelector('[role="progressbar"]')).toBeNull();
+      expect(container.querySelector('[data-testid="stop-conversion-button"]')).toBeNull();
+      expect(container.querySelector('[data-testid="choose-file-button"]')).not.toBeNull();
+    });
+    dispose();
+  });
+
+  it('keeps a 100% conversion busy through finalization and cancellation cleanup', async () => {
+    setConversionProgress(100);
+    setConversionStatusMessage('Finalizing output');
+    setAppState('converting');
+    const { default: App } = await import('@/App');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const dispose = render(() => App({}), container);
+
+    const dropzone = container.querySelector('[data-testid="dropzone"]');
+    const progress = dropzone?.querySelector('[role="progressbar"]');
+    const stop = container.querySelector<HTMLButtonElement>('[data-testid="stop-conversion-button"]');
+    expect(progress?.getAttribute('aria-valuenow')).toBe('100');
+    expect(dropzone?.getAttribute('aria-busy')).toBe('true');
+    expect(stop?.disabled).toBe(false);
+    expect(container.querySelector('[data-testid="result-section"]')).toBeNull();
+
+    stop?.click();
+    // The mocked handler leaves conversion finalization cleanup pending.
+    setAppState('cancelling');
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-testid="dropzone"]')).toBe(dropzone);
+      expect(dropzone?.querySelector('[role="progressbar"]')).toBe(progress);
+      expect(progress?.getAttribute('aria-valuenow')).toBe('100');
+      expect(dropzone?.getAttribute('aria-busy')).toBe('true');
+      expect(stop?.disabled).toBe(true);
+      expect(container.querySelector('[data-testid="result-section"]')).toBeNull();
+    });
+
+    setAppState('idle');
+    await vi.waitFor(() => {
+      expect(container.querySelector('[role="progressbar"]')).toBeNull();
+      expect(container.querySelector('[data-testid="result-section"]')).toBeNull();
+    });
+    dispose();
+  });
 });

@@ -78,6 +78,10 @@ record:
 - headed-browser screenshots for both result states;
 - headed-browser screenshots of the reduced-motion default, shown and hidden
   results, dark appearance, and emulated Forced Colors;
+- supported Spanish and Arabic result flows at an 800px-wide desktop viewport,
+  with product-language selection, translated preview actions, RTL direction,
+  control bounds, text size, no horizontal overflow, unchanged Blob download,
+  and headed-browser screenshots;
 - native metadata and advanced-settings disclosures, including keyboard toggling
   and frame-skip selection;
 - the collapsed sharing-settings disclosure after the primary Convert action,

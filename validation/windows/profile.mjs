@@ -988,6 +988,77 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
   };
 }
 
+async function exerciseLongLocaleResult(page, outputRoot, artifacts) {
+  await page.setViewportSize({ width: 800, height: 800 });
+  const toggle = page.locator('[data-testid="result-preview-toggle"]');
+  const download = page.locator('[data-testid="download-result-button"]');
+  assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), true);
+  if ((await toggle.getAttribute('aria-expanded')) === 'true') await toggle.click();
+  const downloadHref = await download.getAttribute('href');
+  assert(downloadHref?.startsWith('blob:'), 'Localized result has no Blob download');
+
+  const observations = [];
+  for (const { locale, dir, showLabel } of [
+    { locale: 'es', dir: 'ltr', showLabel: 'Mostrar vista previa animada' },
+    { locale: 'ar', dir: 'rtl', showLabel: 'إظهار المعاينة المتحركة' },
+  ]) {
+    await page.locator('[data-testid="language-selector"]').selectOption(locale);
+    await page.waitForFunction(
+      ({ locale, showLabel }) =>
+        document.documentElement.lang === locale &&
+        document.querySelector('[data-testid="result-preview-toggle"]')?.textContent?.trim() ===
+          showLabel,
+      { locale, showLabel }
+    );
+    const layout = await page.evaluate(() => {
+      const controls = [
+        document.querySelector('[data-testid="result-preview-toggle"]'),
+        document.querySelector('[data-testid="download-result-button"]'),
+        document.querySelector('[data-testid="language-selector"]'),
+      ];
+      return {
+        lang: document.documentElement.lang,
+        dir: document.documentElement.dir,
+        viewportWidth: innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        controls: controls.map((control) => {
+          const rect = control?.getBoundingClientRect();
+          return {
+            text: control?.textContent?.trim() ?? null,
+            left: rect?.left ?? null,
+            right: rect?.right ?? null,
+            height: rect?.height ?? null,
+            fontSizePx: control ? Number.parseFloat(getComputedStyle(control).fontSize) : null,
+          };
+        }),
+      };
+    });
+    assert.equal(layout.lang, locale);
+    assert.equal(layout.dir, dir);
+    assert(layout.documentWidth <= layout.viewportWidth + 1, `${locale} result overflows horizontally`);
+    for (const [index, control] of layout.controls.entries()) {
+      assert(control.left !== null && control.left >= -1, `${locale} control is clipped at start`);
+      assert(
+        control.right !== null && control.right <= layout.viewportWidth + 1,
+        `${locale} control is clipped at end`
+      );
+      assert(
+        control.height !== null && control.height >= (index < 2 ? 44 : 28),
+        `${locale} control is too short`
+      );
+      assert(control.fontSizePx !== null && control.fontSizePx >= 12, `${locale} control text is too small`);
+    }
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
+    assert.equal(await download.getAttribute('href'), downloadHref);
+    await settleVisualState(page);
+    await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${locale}-narrow-result.png`, artifacts);
+    observations.push(layout);
+  }
+
+  return { id: 'long-locale-narrow-result', status: 'passed', observations };
+}
+
 async function installCancellationInspector(page) {
   return page.evaluate(() => {
     const visible = (element) =>
@@ -1451,6 +1522,7 @@ export async function run({ browser, root, output }) {
     assert(fallback.workerAttempts > 0, 'WASM fallback did not attempt its preferred Worker path');
     assert.equal(fallback.nativeWebpAvailable, false);
     checks.push({ ...wasmCheck, fallback });
+    checks.push(await exerciseLongLocaleResult(page, outputRoot, artifacts));
 
     await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);

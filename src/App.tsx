@@ -92,6 +92,7 @@ const App: Component = () => {
   );
   const [memoryWarning, setMemoryWarning] = createSignal(false);
   const [preferResultPreviewHidden, setPreferResultPreviewHidden] = createSignal(false);
+  const [cancellingAnalysis, setCancellingAnalysis] = createSignal(false);
 
   const [memoryUsageText, setMemoryUsageText] = createSignal<string | null>(null);
 
@@ -114,6 +115,22 @@ const App: Component = () => {
     t,
   });
 
+  const cancelAnalysis = () => {
+    setCancellingAnalysis(true);
+    handleCancelAnalysis();
+  };
+  const cancelConversion = () => {
+    setCancellingAnalysis(false);
+    handleCancelConversion();
+  };
+
+  const isAnalysisOperation = createMemo(
+    () => appState() === 'analyzing' || (appState() === 'cancelling' && cancellingAnalysis())
+  );
+  const isConversionActive = createMemo(
+    () => appState() === 'converting' || (appState() === 'cancelling' && !cancellingAnalysis())
+  );
+
   useNetworkState();
 
   onMount(() => {
@@ -131,7 +148,7 @@ const App: Component = () => {
 
   // Keep the last conversion telemetry visible while cancellation tears down.
   createEffect(() => {
-    if (appState() !== 'converting' && appState() !== 'cancelling') {
+    if (!isConversionActive()) {
       setMemoryUsageText(null);
     }
   });
@@ -179,7 +196,7 @@ const App: Component = () => {
 
   const dropzoneStatus = createMemo(() => {
     const state = appState();
-    if (state === 'converting' || state === 'cancelling') {
+    if (state === 'converting' || (state === 'cancelling' && !isAnalysisOperation())) {
       const isCancelling = state === 'cancelling';
       return {
         label: t(isCancelling ? 'progress.cancelling' : 'progress.converting'),
@@ -195,21 +212,18 @@ const App: Component = () => {
         outputFrames: outputFrames(),
       };
     }
-    if (state === 'analyzing') {
+    if (isAnalysisOperation()) {
+      const isCancelling = state === 'cancelling';
       return {
-        label: t('progress.analyzing'),
+        label: t(isCancelling ? 'progress.cancelling' : 'progress.analyzing'),
         progress: null,
-        message: t('progress.readingMetadata'),
-        subPhaseLabel: t('progress.readingMetadata'),
+        message: t(isCancelling ? 'progress.cancelling' : 'progress.readingMetadata'),
+        subPhaseLabel: isCancelling ? undefined : t('progress.readingMetadata'),
         busy: true,
       };
     }
     return null;
   });
-
-  const isConversionActive = createMemo(
-    () => appState() === 'converting' || appState() === 'cancelling'
-  );
 
   const isBusy = createMemo(
     () => appState() === 'analyzing' || appState() === 'converting' || appState() === 'cancelling'
@@ -319,7 +333,7 @@ const App: Component = () => {
                 <Suspense fallback={<div class="h-24 animate-pulse rounded-lg bg-bg-elevated" />}>
                   <MemoryWarning
                     isDuringConversion={appState() === 'converting'}
-                    onCancel={handleCancelConversion}
+                    onCancel={cancelConversion}
                     onDismiss={handleDismissMemoryWarning}
                     onReduceSettings={handleReduceSettings}
                   />
@@ -331,15 +345,13 @@ const App: Component = () => {
                 disabled={isBusy()}
                 estimatedSecondsRemaining={dropzoneStatus()?.estimatedSecondsRemaining}
                 memoryUsage={dropzoneStatus()?.memoryUsage}
-                onCancel={
-                  appState() === 'analyzing' ? handleCancelAnalysis : handleCancelConversion
-                }
+                onCancel={isAnalysisOperation() ? cancelAnalysis : cancelConversion}
                 cancelDisabled={appState() === 'cancelling'}
                 cancelLabel={
                   appState() === 'cancelling'
                     ? t('progress.cancelling')
                     : t(
-                        appState() === 'analyzing'
+                        isAnalysisOperation()
                           ? 'dropzone.cancelAnalysis'
                           : 'dropzone.cancelConversion'
                       )
@@ -381,11 +393,11 @@ const App: Component = () => {
             <div class="lg:sticky lg:top-8 order-2">
               <SettingsPanel
                 isBusy={isBusy()}
-                isCancelling={appState() === 'cancelling'}
+                isCancelling={appState() === 'cancelling' && isConversionActive()}
                 isComplete={appState() === 'done'}
                 isConversionActive={isConversionActive()}
                 metadata={videoMetadata()}
-                onCancel={handleCancelConversion}
+                onCancel={cancelConversion}
                 onConvert={handleConvertWithMemoryCheck}
                 onFormatChange={(format) =>
                   setConversionSettings({ ...conversionSettings(), format })
