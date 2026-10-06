@@ -796,11 +796,12 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   assert.equal(downloadLabel.forcedColorAdjust, 'none');
   assert.equal(downloadLabel.color, downloadControl.color);
   assert.equal(parseCssColor(downloadLabel.backgroundColor).alpha, 0);
-  forcedColors.downloadLabelContrast = contrastRatio(
-    parseCssColor(downloadLabel.color).channels,
-    parseCssColor(downloadControl.backgroundColor).channels
+  forcedColors.downloadLabelContrast = await readResultMetadataContrast(
+    page, '[data-testid="download-result-label"]'
   );
-  assert(forcedColors.downloadLabelContrast >= 4.5,
+  assert.equal(forcedColors.downloadLabelContrast.opacity, 1);
+  assert(forcedColors.downloadLabelContrast.fontSizePx >= 12);
+  assert(forcedColors.downloadLabelContrast.ratio >= 4.5,
     'Forced Colors download label and background have insufficient computed contrast');
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-forced-colors.png`, artifacts);
   await page.locator('[data-testid="download-result-button"]').scrollIntoViewIfNeeded();
