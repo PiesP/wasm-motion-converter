@@ -4,6 +4,7 @@
     "index.html!",
     "src/services/conversion-worker/worker.ts!",
     "src/services/webp-encoder-worker.ts!",
+    "scripts/ci/classify-workflow-changes.ts",
     "test/unit/**/*.test.{ts,tsx}",
     "test/e2e/**/*.spec.ts"
   ],

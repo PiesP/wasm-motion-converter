@@ -55,24 +55,33 @@ jobs:
           persist-credentials: false
           submodules: false
 
+      - name: 📦 Setup routing Node without dependencies
+        id: routing_runtime
+        if: ${{ steps.routing_checkout.outcome == 'success' }}
+        continue-on-error: true
+        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
+        with:
+          install-dependencies: 'false'
+
       - name: 🧭 Classify changed paths
         id: classify
-        if: ${{ steps.routing_checkout.outcome == 'success' }}
+        if: ${{ steps.routing_checkout.outcome == 'success' && steps.routing_runtime.outcome == 'success' }}
         continue-on-error: true
         env:
           EVENT_NAME: ${{ github.event_name }}
           TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
           set -euo pipefail
-          classifier=scripts/ci/classify-workflow-changes.sh
+          classifier=scripts/ci/classify-workflow-changes.ts
           case "$EVENT_NAME" in
             pull_request | merge_group)
-              classifier="$RUNNER_TEMP/trusted-classify-workflow-changes.sh"
+              classifier="$RUNNER_TEMP/trusted-classify-workflow-changes.ts"
               [[ "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-              git show "$TRUSTED_BASE_SHA:scripts/ci/classify-workflow-changes.sh" > "$classifier"
+              # A trusted base without this file fails routing and enables every gate.
+              git show "$TRUSTED_BASE_SHA:scripts/ci/classify-workflow-changes.ts" > "$classifier"
               ;;
           esac
-          bash "$classifier"
+          node --experimental-strip-types "$classifier"
 
       - name: 🛡️ Resolve fail-open routing
         id: route

@@ -60,7 +60,7 @@ describe('Release infrastructure', () => {
     );
 
     expect(workflow).toContain('name: Classify security changes');
-    expect(workflow).toContain('bash "$classifier"');
+    expect(workflow).toContain('node --experimental-strip-types "$classifier"');
     expect(workflow).toContain("needs.changes.outputs.security_tools == 'true'");
     expect(workflow).toContain("needs.changes.outputs.dependency == 'true'");
     expect(workflow).toContain("needs.changes.outputs.codeql == 'true'");
