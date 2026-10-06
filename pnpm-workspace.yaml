@@ -4,8 +4,8 @@ overrides:
   # Solid 1.9.15 constrains the patched serializer outside its upstream range.
   # Revisit when Solid permits the fixed release without an override.
   solid-js@1.9.15>seroval: "1.6.3"
-  # Miniflare pins a sharp release affected by GHSA-rgj7-g3m4-5g8c.
-  sharp@>=0.35.0 <0.35.4: "^0.35.4"
+  # Miniflare pins sharp releases affected by GHSA-rgj7-g3m4-5g8c and GHSA-wq5f-xc86-pv6w.
+  sharp@>=0.35.0 <0.35.5: "0.35.5"
   # Miniflare pins an Undici version with HTTP and TLS security advisories.
   undici@>=7.0.0 <7.29.1: "7.29.1"
 
