@@ -293,7 +293,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               format: outputExtension().toUpperCase(),
               fileName: downloadFileName(),
             })}
-            class="inline-flex min-h-target-minimum shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-button bg-brand px-4 py-2 text-sm font-medium text-brand-foreground shadow-lg transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+            class="result-download-action inline-flex min-h-target-minimum shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-button bg-brand px-4 py-2 text-sm font-medium text-brand-foreground shadow-lg transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
             data-testid="download-result-button"
           >
             <svg
@@ -310,10 +310,12 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
                 d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
               />
             </svg>
-            {t('result.downloadButton', {
-              format: outputExtension().toUpperCase(),
-              size: formatBytes(local.outputBlob.size, locale()),
-            })}
+            <span data-testid="download-result-label">
+              {t('result.downloadButton', {
+                format: outputExtension().toUpperCase(),
+                size: formatBytes(local.outputBlob.size, locale()),
+              })}
+            </span>
           </a>
         </div>
       </section>

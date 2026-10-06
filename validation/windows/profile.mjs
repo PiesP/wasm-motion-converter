@@ -483,10 +483,31 @@ async function recordScreenshot(page, outputRoot, fileName, artifacts, fullPage 
   artifacts.push({ kind: 'screenshot', file: fileName, bytes: bytes.byteLength, sha256: sha256(bytes) });
 }
 
+async function recordChromeZoomScreenshot(page, outputRoot, fileName, artifacts) {
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send('Page.bringToFront');
+    // An omitted clip follows Chrome's real zoomed surface, not Playwright's pre-zoom viewport.
+    const { data } = await session.send('Page.captureScreenshot', {
+      format: 'png', fromSurface: true, captureBeyondViewport: false,
+    });
+    const bytes = Buffer.from(data, 'base64');
+    assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a',
+      'Chrome zoom capture is not a PNG');
+    await writeFile(join(outputRoot, fileName), bytes);
+    artifacts.push({ kind: 'screenshot', file: fileName,
+      bytes: bytes.byteLength, sha256: sha256(bytes) });
+    return { method: 'cdp-page-capture-screenshot-no-clip',
+      width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  } finally {
+    await session.detach();
+  }
+}
+
 async function readForcedColorsControlDiagnostics(page) {
   return page.evaluate(() => ({
     viewport: { width: innerWidth, height: innerHeight, scrollY },
-    controls: ['download-result-button', 'result-preview-toggle'].map((testId) => {
+    controls: ['download-result-button', 'download-result-label', 'result-preview-toggle'].map((testId) => {
       const element = document.querySelector(`[data-testid="${testId}"]`);
       if (!(element instanceof HTMLElement)) return { testId, present: false };
       const style = getComputedStyle(element);
@@ -762,6 +783,25 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   assert.equal(forcedColors.downloadVisible, true);
   // DOM styles and geometry are diagnostics, not proof that text pixels are legible.
   forcedColors.beforeFullPageScreenshot = await readForcedColorsControlDiagnostics(page);
+  const downloadControl = forcedColors.beforeFullPageScreenshot.controls.find(
+    (control) => control.testId === 'download-result-button'
+  );
+  const downloadLabel = forcedColors.beforeFullPageScreenshot.controls.find(
+    (control) => control.testId === 'download-result-label'
+  );
+  assert(downloadControl, 'Forced Colors download control diagnostics are missing');
+  assert(downloadLabel, 'Forced Colors download label diagnostics are missing');
+  assert.equal(downloadLabel.present, true, 'Forced Colors download label is missing');
+  assert.equal(downloadControl.forcedColorAdjust, 'none');
+  assert.equal(downloadLabel.forcedColorAdjust, 'none');
+  assert.equal(downloadLabel.color, downloadControl.color);
+  assert.equal(parseCssColor(downloadLabel.backgroundColor).alpha, 0);
+  forcedColors.downloadLabelContrast = contrastRatio(
+    parseCssColor(downloadLabel.color).channels,
+    parseCssColor(downloadControl.backgroundColor).channels
+  );
+  assert(forcedColors.downloadLabelContrast >= 4.5,
+    'Forced Colors download label and background have insufficient computed contrast');
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-forced-colors.png`, artifacts);
   await page.locator('[data-testid="download-result-button"]').scrollIntoViewIfNeeded();
   await page.locator('[data-testid="result-preview-toggle"]').scrollIntoViewIfNeeded();
@@ -1206,7 +1246,7 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     assert.equal(await zoomPage.locator('[data-testid="result-image"]').count(), 0);
     assert.equal(await download.getAttribute('href'), href);
     const observation = await zoomPage.evaluate(() => ({
-      devicePixelRatio, width: innerWidth, scale: visualViewport?.scale,
+      devicePixelRatio, width: innerWidth, height: innerHeight, scale: visualViewport?.scale,
       language: document.documentElement.lang,
       direction: document.documentElement.dir,
       horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -1246,8 +1286,11 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
         control.top >= -1 && control.bottom <= control.viewportHeight + 1,
       `${control.testId} is outside the zoom screenshot viewport`);
     }
-    // Whole-viewport capture avoids full-page clipping coordinates at real Chrome zoom.
-    await recordScreenshot(zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts, false);
+    const zoomScreenshot = await recordChromeZoomScreenshot(
+      zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts
+    );
+    assert.equal(zoomScreenshot.width, Math.round(observation.width * observation.devicePixelRatio));
+    assert.equal(zoomScreenshot.height, Math.round(observation.height * observation.devicePixelRatio));
 
     stage = 'download-zoomed-gif';
     const downloadPromise = zoomPage.waitForEvent('download', { timeout: 30_000 });
@@ -1263,7 +1306,7 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     assert.deepEqual(pageErrors, [], 'Owned Chrome result page emitted errors');
     result = { id: 'browser-zoom-200', status: 'passed', factor: 2,
       method: 'owned-persistent-chrome-settings-page', baseline, observation,
-      language: 'ar', previewHiddenAfterKeyboard: true, screenshotControls,
+      language: 'ar', previewHiddenAfterKeyboard: true, screenshotControls, zoomScreenshot,
       download: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) } };
   } catch (error) {
     primaryError = error;

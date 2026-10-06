@@ -212,6 +212,14 @@ html.dark :focus-visible {
 }
 
 @media (forced-colors: active) {
+  /* Keep the user's paired highlight colors without a text backplate. */
+  .result-download-action,
+  .result-download-action:hover {
+    forced-color-adjust: none;
+    color: HighlightText;
+    background-color: Highlight;
+  }
+
   /* Ensure borders remain visible in high-contrast mode */
   [class*="border-red"],
   [class*="border-yellow"],
