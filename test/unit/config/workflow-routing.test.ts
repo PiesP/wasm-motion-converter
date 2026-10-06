@@ -246,6 +246,56 @@ describe('Workflow change routing', () => {
     }
   });
 
+  it.skipIf(process.platform === 'win32')('does not spawn Git or write outputs on import, and runs through a symlink', () => {
+    const { directory } = gitFixture();
+    try {
+      const fakeBin = join(directory, 'fake-bin');
+      mkdirSync(fakeBin);
+      const gitRecord = join(directory, 'git-record');
+      const output = join(directory, 'github-output');
+      const eventPath = join(directory, 'event.json');
+      writeFileSync(join(fakeBin, 'git'), '#!/bin/sh\nprintf invoked > "$GIT_RECORD"\n', { mode: 0o755 });
+      writeFileSync(output, 'existing=true\n');
+      writeFileSync(eventPath, JSON.stringify({ before: 'a'.repeat(40), after: 'b'.repeat(40) }));
+
+      const imported = spawnSync(
+        process.execPath,
+        ['--experimental-strip-types', '--input-type=module', '-e', `import ${JSON.stringify(pathToFileURL(classifier).href)};`],
+        {
+          cwd: directory,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: fakeBin,
+            GIT_RECORD: gitRecord,
+            GITHUB_OUTPUT: output,
+            GITHUB_EVENT_NAME: 'push',
+            GITHUB_EVENT_PATH: eventPath,
+          },
+        }
+      );
+      expect(imported.status).toBe(0);
+      expect(imported.stdout).toBe('');
+      expect(imported.stderr).toBe('');
+      expect(readFileSync(output, 'utf8')).toBe('existing=true\n');
+      expect(() => readFileSync(gitRecord)).toThrow();
+
+      const linked = join(directory, 'linked-classifier.ts');
+      symlinkSync(classifier, linked);
+      const invoked = spawnSync(process.execPath, ['--experimental-strip-types', linked, '--files-from-stdin'], {
+        cwd: directory,
+        input: 'README.md\n',
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_OUTPUT: '' },
+      });
+      expect(invoked.status).toBe(0);
+      expect(invoked.stdout).toContain('all=false\n');
+      expect(invoked.stdout).toContain('semgrep=true\n');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('uses the direct PR base/head diff, including paths absent from the PR head', () => {
     const { directory, git, write } = gitFixture();
     try {
