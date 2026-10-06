@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { verifyAnimatedOutput } from './output-contract.mjs';
 
 const PROFILE_ID = 'wmc-media';
@@ -15,6 +15,7 @@ const CANCELLATION_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 const OUTPUT_CONTRACT = 'validation/windows/output-contract.json';
 const CONVERSION_TIMEOUT_MS = 120_000;
 const CANCELLATION_TIMEOUT_MS = 180_000;
+const ZOOM_PROFILE_PREFIX = 'wmc-zoom-chrome-';
 
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -1079,49 +1080,103 @@ async function exerciseLongLocaleResult(page, outputRoot, artifacts) {
   return { id: 'long-locale-narrow-result', status: 'passed', observations };
 }
 
-async function exerciseBrowserZoom(page, outputRoot, artifacts) {
+async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePath, outputRoot, artifacts) {
   const userAgent = await page.evaluate(() => navigator.userAgent);
   if (userAgent.includes('Edg/')) {
     return { id: 'browser-zoom-200', status: 'not-run', reason: 'Chrome Settings adapter only' };
   }
-  const previousViewport = page.viewportSize();
-  const settingsPage = await page.context().newPage();
+  const profilePath = await mkdtemp(join(bundleRoot, ZOOM_PROFILE_PREFIX));
+  let zoomContext;
+  let zoomPage;
+  let settingsPage;
   let previousZoom;
+  let baseline;
+  let result;
+  let primaryError;
+  let stage = 'launch-owned-chrome';
+  let contextClosed = false;
+  let profileRemoved = false;
+  let zoomRestored = false;
+  const cleanupErrors = [];
+  const pageErrors = [];
   try {
-    await page.setViewportSize({ width: 1280, height: 900 });
+    zoomContext = await browser.browserType().launchPersistentContext(profilePath, {
+      channel: 'chrome',
+      headless: false,
+      acceptDownloads: true,
+      colorScheme: 'light',
+      locale: 'en-US',
+      reducedMotion: 'reduce',
+      viewport: { width: 1280, height: 900 },
+    });
+    zoomPage = zoomContext.pages()[0] ?? await zoomContext.newPage();
+    zoomPage.on('pageerror', (error) => pageErrors.push(error.message));
+    stage = 'load-same-production-bundle';
+    const appLoad = await loadApplication(zoomPage, baseUrl);
+    assert.equal(appLoad.crossOriginIsolated, true, 'Owned Chrome profile lost COOP/COEP isolation');
+
+    stage = 'convert-owned-gif';
+    await selectFixture(zoomPage, fixturePath);
+    await chooseOption(zoomPage, 'format', 'gif');
+    await chooseOption(zoomPage, 'quality', 'low');
+    await chooseOption(zoomPage, 'scale', '0.5');
+    await zoomPage.locator('[data-testid="convert-button"]').click();
+    await proceedIfPrompted(zoomPage);
+    await waitForConversionOutcome(zoomPage, CONVERSION_TIMEOUT_MS);
+    const toggle = zoomPage.locator('[data-testid="result-preview-toggle"]');
+    const download = zoomPage.locator('[data-testid="download-result-button"]');
+    await toggle.waitFor({ state: 'visible' });
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false',
+      'Reduced-motion GIF started animating in the owned profile');
+    assert.equal(await zoomPage.locator('[data-testid="result-image"]').count(), 0);
+    const href = await download.getAttribute('href');
+    assert(href?.startsWith('blob:'), 'Owned GIF result has no Blob download');
+
+    stage = 'select-arabic-product-locale';
+    await zoomPage.locator('[data-testid="language-selector"]').selectOption('ar');
+    await zoomPage.waitForFunction(() =>
+      document.documentElement.lang === 'ar' &&
+      document.documentElement.dir === 'rtl' &&
+      document.querySelector('[data-testid="result-preview-toggle"]')?.textContent?.trim() ===
+        'إظهار المعاينة المتحركة'
+    );
+
+    stage = 'set-real-browser-zoom';
+    settingsPage = await zoomContext.newPage();
     await settingsPage.goto('chrome://settings/appearance');
     const zoom = settingsPage.locator('select#zoomLevel');
     previousZoom = await zoom.inputValue();
-    assert.equal(Number(previousZoom), 1, 'Isolated Chrome profile did not start at 100% zoom');
-    const baseline = await page.evaluate(() => ({
+    assert.equal(Number(previousZoom), 1, 'Owned Chrome profile did not start at 100% zoom');
+    baseline = await zoomPage.evaluate(() => ({
       devicePixelRatio, width: innerWidth, scale: visualViewport?.scale,
     }));
     await zoom.selectOption('2');
-    await page.bringToFront();
-    await page.waitForFunction((before) =>
+    await zoomPage.bringToFront();
+    await zoomPage.waitForFunction((before) =>
       Math.abs(devicePixelRatio / before.devicePixelRatio - 2) < 0.02 &&
       Math.abs(innerWidth / before.width - 0.5) < 0.02 &&
       Math.abs((visualViewport?.scale ?? 0) - 1) < 0.02,
     baseline, { timeout: 10_000 });
-    const toggle = page.locator('[data-testid="result-preview-toggle"]');
-    const download = page.locator('[data-testid="download-result-button"]');
-    const href = await download.getAttribute('href');
-    assert(href?.startsWith('blob:'), 'Zoomed result lost its download');
+
+    stage = 'exercise-zoomed-result';
+    assert.equal(await download.getAttribute('href'), href, 'Browser zoom replaced the Blob URL');
     await toggle.focus();
-    await page.keyboard.press('Enter');
+    await zoomPage.keyboard.press('Enter');
     assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
-    await page.locator('[data-testid="result-image"]').waitFor({ state: 'visible' });
-    await page.keyboard.press('Space');
+    await zoomPage.locator('[data-testid="result-image"]').waitFor({ state: 'visible' });
+    await zoomPage.keyboard.press('Space');
     assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
-    assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
+    assert.equal(await zoomPage.locator('[data-testid="result-image"]').count(), 0);
     assert.equal(await download.getAttribute('href'), href);
-    const observation = await page.evaluate(() => ({
+    const observation = await zoomPage.evaluate(() => ({
       devicePixelRatio, width: innerWidth, scale: visualViewport?.scale,
       language: document.documentElement.lang,
       direction: document.documentElement.dir,
       horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     }));
     assert(observation.horizontalOverflow <= 1, '200% browser zoom caused horizontal overflow');
+    assert.equal(observation.language, 'ar');
+    assert.equal(observation.direction, 'rtl');
     for (const control of [toggle, download]) {
       await control.focus();
       const geometry = await control.evaluate((element) => {
@@ -1134,17 +1189,92 @@ async function exerciseBrowserZoom(page, outputRoot, artifacts) {
         'A zoomed result control was clipped horizontally');
       assert(geometry.focused && geometry.fontSize >= 12);
     }
-    await settleVisualState(page);
-    await recordScreenshot(page, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts);
-    return { id: 'browser-zoom-200', status: 'passed', factor: 2,
-      method: 'isolated-chrome-settings-page', baseline, observation };
+    await settleVisualState(zoomPage);
+    await recordScreenshot(zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts);
+
+    stage = 'download-zoomed-gif';
+    const downloadPromise = zoomPage.waitForEvent('download', { timeout: 30_000 });
+    await download.click();
+    const browserDownload = await downloadPromise;
+    assert(browserDownload.suggestedFilename().toLowerCase().endsWith('.gif'));
+    const bytes = await readDownload(browserDownload);
+    validateOutput(bytes, 'gif');
+    const outputFile = `${PROFILE_ID}-browser-zoom-gif.gif`;
+    await writeFile(join(outputRoot, outputFile), bytes);
+    artifacts.push({ kind: 'zoomed-converted-media', file: outputFile,
+      bytes: bytes.byteLength, sha256: sha256(bytes) });
+    assert.deepEqual(pageErrors, [], 'Owned Chrome result page emitted errors');
+    result = { id: 'browser-zoom-200', status: 'passed', factor: 2,
+      method: 'owned-persistent-chrome-settings-page', baseline, observation,
+      language: 'ar', previewHiddenAfterKeyboard: true,
+      download: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) } };
+  } catch (error) {
+    primaryError = error;
   } finally {
-    if (previousZoom !== undefined) {
-      await settingsPage.locator('select#zoomLevel').selectOption(previousZoom);
+    if (previousZoom !== undefined && settingsPage) {
+      try {
+        await settingsPage.locator('select#zoomLevel').selectOption(previousZoom);
+        if (baseline) {
+          await zoomPage.bringToFront();
+          await zoomPage.waitForFunction((before) =>
+            Math.abs(devicePixelRatio / before.devicePixelRatio - 1) < 0.02 &&
+            Math.abs(innerWidth / before.width - 1) < 0.02 &&
+            Math.abs((visualViewport?.scale ?? 0) - 1) < 0.02,
+          baseline, { timeout: 10_000 });
+        }
+        zoomRestored = true;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
     }
-    await settingsPage.close();
-    if (previousViewport) await page.setViewportSize(previousViewport);
+    if (settingsPage) {
+      try { await settingsPage.close(); } catch (error) { cleanupErrors.push(error); }
+    }
+    if (zoomContext) {
+      try {
+        await zoomContext.close();
+        contextClosed = true;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (contextClosed) {
+      try {
+        assert.equal(dirname(profilePath), bundleRoot, 'Zoom profile escaped the bundle root');
+        assert(basename(profilePath).startsWith(ZOOM_PROFILE_PREFIX), 'Zoom profile is not task-owned');
+        await rm(profilePath, { recursive: true, force: false, maxRetries: 3, retryDelay: 100 });
+        profileRemoved = true;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (primaryError || cleanupErrors.length) {
+      const diagnostic = {
+        stage,
+        error: primaryError === undefined ? null :
+          primaryError instanceof Error ? primaryError.message : String(primaryError),
+        cleanupErrors: cleanupErrors.map((error) => error instanceof Error ? error.message : String(error)),
+        profileName: basename(profilePath),
+        contextClosed,
+        profileRemoved,
+        zoomRestored,
+      };
+      try {
+        await writeFile(join(outputRoot, `${PROFILE_ID}-browser-zoom-failure.json`),
+          `${JSON.stringify(diagnostic, null, 2)}\n`);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
   }
+  if (cleanupErrors.length) {
+    throw new AggregateError(
+      [primaryError, ...cleanupErrors].filter((error) => error !== undefined),
+      'Owned Chrome zoom validation or cleanup failed'
+    );
+  }
+  if (primaryError) throw primaryError;
+  return { ...result, cleanup: { contextClosed, profileRemoved, zoomRestored } };
 }
 
 async function installCancellationInspector(page) {
@@ -1619,7 +1749,9 @@ export async function run({ browser, root, output }) {
     assert.equal(fallback.nativeWebpAvailable, false);
     checks.push({ ...wasmCheck, fallback });
     checks.push(await exerciseLongLocaleResult(page, outputRoot, artifacts));
-    checks.push(await exerciseBrowserZoom(page, outputRoot, artifacts));
+    checks.push(await exerciseBrowserZoom(
+      browser, page, bundleRoot, started.url, smallFixture, outputRoot, artifacts
+    ));
 
     await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);
