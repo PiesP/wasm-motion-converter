@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -8,6 +8,34 @@ import { runVite } from '../build/run-vite.ts';
 import { prepareResourceFixtures } from '../test/prepare-resource-fixtures.ts';
 import { runPlaywright } from '../test/run-playwright.ts';
 import { runChild } from './run-child.ts';
+
+test('portable adapters remain inert when imported with a missing argv entry', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'wmc-command-import-'));
+  try {
+    const modules = [
+      new URL('../build/run-vite.ts', import.meta.url).href,
+      new URL('../test/run-playwright.ts', import.meta.url).href,
+      new URL('../test/prepare-resource-fixtures.ts', import.meta.url).href,
+    ];
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '-e',
+        `process.argv[1] = ${JSON.stringify(join(directory, 'absent.ts'))};
+       process.argv[2] = 'invalid-mode';
+       for (const url of ${JSON.stringify(modules)}) await import(url);`,
+      ],
+      { cwd: directory, encoding: 'utf8' }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 type Call = { script: string; args: readonly string[]; env: NodeJS.ProcessEnv };
 

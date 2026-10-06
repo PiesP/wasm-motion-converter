@@ -1,6 +1,4 @@
-import { realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { packageBinary, runChild } from '../check/run-child.ts';
+import { isCliEntry, packageBinary, runChild } from '../check/run-child.ts';
 
 export type PlaywrightProfile = 'ci' | 'resource' | 'deploy';
 
@@ -14,7 +12,7 @@ export function runPlaywright(
   });
 }
 
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isCliEntry(import.meta.url)) {
   const profile = process.argv[2];
   if (!['ci', 'resource', 'deploy'].includes(profile ?? '')) {
     console.error('Expected ci, resource, or deploy');

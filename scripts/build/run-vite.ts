@@ -1,6 +1,5 @@
-import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { packageBinary, runChild } from '../check/run-child.ts';
+import { isCliEntry, packageBinary, runChild } from '../check/run-child.ts';
 
 export type ViteMode = 'dev' | 'build' | 'ci' | 'analyze' | 'preview';
 
@@ -29,7 +28,7 @@ export async function runVite(
   return 0;
 }
 
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isCliEntry(import.meta.url)) {
   const mode = process.argv[2];
   if (!['dev', 'build', 'ci', 'analyze', 'preview'].includes(mode ?? '')) {
     console.error('Expected dev, build, ci, analyze, or preview');
