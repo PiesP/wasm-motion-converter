@@ -217,8 +217,11 @@ function changedPathsForEvent(routes: Routes): string[] {
       maxBuffer: 64 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    const paths = result.toString('utf8').split('\0');
+    if (result.length > 0 && result.at(-1) !== 0)
+      throw new Error('Git path list is not NUL-terminated');
+    const paths = new TextDecoder('utf-8', { fatal: true }).decode(result).split('\0');
     if (paths.at(-1) === '') paths.pop();
+    if (paths.includes('')) throw new Error('Git path list contains an empty path');
     if (paths.length === 0) {
       console.error('GitHub diff is empty; enabling all checks.');
       enableAll(routes);

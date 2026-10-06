@@ -65,7 +65,8 @@ function classifyGitEvent(
   directory: string,
   eventName: string,
   payload: unknown,
-  mergeSha = ''
+  mergeSha = '',
+  extraEnv: Record<string, string> = {}
 ): Record<string, string> {
   const eventPath = join(directory, 'event.json');
   writeFileSync(eventPath, JSON.stringify(payload));
@@ -78,6 +79,7 @@ function classifyGitEvent(
       GITHUB_EVENT_NAME: eventName,
       GITHUB_EVENT_PATH: eventPath,
       GITHUB_SHA: mergeSha,
+      ...extraEnv,
     },
   });
   expect(result.status, result.stderr).toBe(0);
@@ -399,6 +401,28 @@ describe('Workflow change routing', () => {
         classifyGitEvent(directory, 'merge_group', { merge_group: { base_sha: sha, head_sha: 'bad' } }),
       ]) {
         expect(new Set(Object.values(result))).toEqual(new Set(['true']));
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('enables every gate for malformed Git path streams', () => {
+    const { directory } = gitFixture();
+    try {
+      const fakeBin = join(directory, 'fake-bin');
+      mkdirSync(fakeBin);
+      const fakeGit = join(fakeBin, 'git');
+      const before = 'a'.repeat(40);
+      const after = 'b'.repeat(40);
+      for (const output of [
+        'README.md',
+        'test/__screenshots__/e2e/example.png\\377\\0',
+        'test/__screenshots__/e2e/example.png\\0\\0',
+      ]) {
+        writeFileSync(fakeGit, `#!/bin/sh\nprintf '${output}'\n`, { mode: 0o755 });
+        const result = classifyGitEvent(directory, 'push', { before, after }, '', { PATH: fakeBin });
+        expect(new Set(Object.values(result)), output).toEqual(new Set(['true']));
       }
     } finally {
       rmSync(directory, { recursive: true, force: true });
