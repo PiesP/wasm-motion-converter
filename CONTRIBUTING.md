@@ -101,6 +101,18 @@ Use `pnpm verify:full` for substantive or publication-level changes. Browser
 behavior changes also require the relevant Playwright flow. See the
 [testing guide](./test/README.md) for profiles and fixtures.
 
+The deploy dogfood JavaScript budget remains 150,000 bytes of positive
+`PerformanceResourceTiming.transferSize` for resource URLs ending in `.js` on a
+first navigation in a fresh Chromium context with service workers blocked. Its
+test attaches per-resource transfer, encoded-body and decoded-body sizes and
+fails if timing is empty or every transfer is zero. The [Resource Timing
+specification](https://www.w3.org/TR/resource-timing/) defines transfer size
+using the encoded body plus a fixed 300-byte header estimate for network loads;
+local cache returns zero and validated cache returns 300. Compression changes
+the encoded size, and cross-origin timing restrictions can conceal sizes. This
+filter excludes other URL suffixes, including `.mjs` and `.wasm`, and resources
+loaded only after an interaction; it is not a whole-page network-byte total.
+
 ## Release publication order
 
 The manual release workflow accepts a verified `vX.Y.Z` tag from protected

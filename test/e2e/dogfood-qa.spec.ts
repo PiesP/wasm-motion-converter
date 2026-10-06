@@ -208,19 +208,24 @@ test.describe('Accessibility', () => {
   });
 
   test('tooltip info buttons have aria-label', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('dropconvert.locale', 'en'));
     await page.goto(DEPLOY_URL);
+
+    const advancedSettings = page.locator('details').filter({
+      has: page.locator('summary').getByText('Performance', { exact: true }),
+    });
+    await advancedSettings.locator('summary').click();
+    await expect(advancedSettings).toHaveAttribute('open', '');
 
     const infoBtns = page.locator('button[aria-label^="Information about"]');
     await expect(infoBtns).toHaveCount(4);
-    const labels = await infoBtns.evaluateAll((buttons) =>
-      buttons.map((button) => button.getAttribute('aria-label'))
-    );
-    expect(labels).toEqual([
-      'Information about Output Format',
-      'Information about Quality Preset',
-      'Information about Smart Frame Skip',
-      'Information about Output Scale',
-    ]);
+    for (const title of ['Output Format', 'Quality Preset', 'Smart Frame Skip', 'Output Scale']) {
+      const group = page.locator(`fieldset[aria-label="${title}"]`);
+      await expect(group).toHaveCount(1);
+      const tooltip = group.locator('legend button');
+      await expect(tooltip).toHaveCount(1);
+      await expect(tooltip).toHaveAttribute('aria-label', `Information about ${title}`);
+    }
   });
 });
 
@@ -246,6 +251,9 @@ test.describe('System Theme', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Performance', () => {
+  // Keep service-worker responses out of the cold-network transfer diagnostic.
+  test.use({ serviceWorkers: 'block' });
+
   test('JS bundle count is reasonable (< 6 chunks)', async ({ page }) => {
     await page.goto(DEPLOY_URL);
     await page.waitForLoadState('networkidle');
@@ -271,22 +279,47 @@ test.describe('Performance', () => {
     }
   });
 
-  test('total JS transfer size under 150KB', async ({ page }) => {
+  test('total JS transfer size under 150KB', async ({ page }, testInfo) => {
     await page.goto(DEPLOY_URL);
     await page.waitForLoadState('networkidle');
 
-    const totalSize = await page.evaluate(() => {
-      return performance
+    const timing = await page.evaluate(() => ({
+      serviceWorkerControlled: Boolean(navigator.serviceWorker?.controller),
+      resources: performance
         .getEntriesByType('resource')
         .filter(
           (entry): entry is PerformanceResourceTiming =>
-            entry instanceof PerformanceResourceTiming &&
-            entry.name.endsWith('.js') &&
-            entry.transferSize > 0
+            entry instanceof PerformanceResourceTiming && entry.name.endsWith('.js')
         )
-        .reduce((sum, r) => sum + r.transferSize, 0);
+        .map((resource) => ({
+          name: resource.name,
+          initiatorType: resource.initiatorType,
+          transferSize: resource.transferSize,
+          encodedBodySize: resource.encodedBodySize,
+          decodedBodySize: resource.decodedBodySize,
+        })),
+    }));
+    const measured = timing.resources.filter((resource) => resource.transferSize > 0);
+    const totalSize = measured.reduce((sum, resource) => sum + resource.transferSize, 0);
+
+    await testInfo.attach('js-transfer-timing', {
+      body: Buffer.from(JSON.stringify({
+        target: page.url(),
+        measuredAt: new Date().toISOString(),
+        browserProject: testInfo.project.name,
+        serviceWorkers: 'blocked',
+        serviceWorkerControlled: timing.serviceWorkerControlled,
+        context: 'fresh Playwright context, first navigation, networkidle',
+        resourceFilter: 'resource timing name ends with .js; sum positive transferSize only',
+        totalTransferSize: totalSize,
+        resources: timing.resources,
+      }, null, 2)),
+      contentType: 'application/json',
     });
 
+    expect(timing.resources.length, 'No .js Resource Timing entries were observed').toBeGreaterThan(0);
+    expect(measured.length, 'No .js Resource Timing entries reported positive transferSize').toBeGreaterThan(0);
+    expect(totalSize).toBeGreaterThan(0);
     expect(totalSize).toBeLessThan(150_000);
   });
 });
