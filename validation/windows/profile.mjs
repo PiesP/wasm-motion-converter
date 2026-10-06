@@ -334,7 +334,32 @@ async function loadApplication(page, url) {
   };
 }
 
-async function selectFixture(page, filePath) {
+async function selectFixture(page, filePath, inspectAnalysis = false) {
+  if (inspectAnalysis) {
+    await page.evaluate(() => {
+      const observations = [];
+      const capture = () => {
+        const state = document.querySelector('#app-state')?.textContent?.trim() ?? '';
+        const dropzone = document.querySelector('[data-testid="dropzone"]');
+        const progress = dropzone?.querySelector('[role="progressbar"]');
+        const cancel = document.querySelector('[data-testid="dropzone-cancel-button"]');
+        if (!state.startsWith('Analyzing') || !progress || !cancel) return;
+        observations.push({
+          state,
+          busy: dropzone?.getAttribute('aria-busy'),
+          ariaValueNow: progress.getAttribute('aria-valuenow'),
+          dataProgress: progress.getAttribute('data-progress'),
+          cancelLabel: cancel.getAttribute('aria-label'),
+          cancelTitle: cancel.getAttribute('title'),
+          diagnosticsCount: dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length,
+          visibleZero: dropzone?.textContent?.includes('0%') ?? false,
+        });
+      };
+      const observer = new MutationObserver(capture);
+      observer.observe(document.body, { attributes: true, characterData: true, childList: true, subtree: true });
+      globalThis.__wmcAnalysisInspector = { observer, observations };
+    });
+  }
   const input = page.locator('[data-testid="file-input"]');
   await input.setInputFiles(filePath);
   await page.waitForFunction(() => {
@@ -347,6 +372,23 @@ async function selectFixture(page, filePath) {
     (await metadata.textContent())?.includes(basename(filePath)),
     'Selected fixture name is absent from metadata'
   );
+  if (!inspectAnalysis) return null;
+  const observations = await page.evaluate(() => {
+    const inspector = globalThis.__wmcAnalysisInspector;
+    inspector?.observer.disconnect();
+    delete globalThis.__wmcAnalysisInspector;
+    return inspector?.observations ?? [];
+  });
+  for (const observation of observations) {
+    assert.equal(observation.busy, 'true', 'Analysis was not busy');
+    assert.equal(observation.ariaValueNow, null, 'Unknown analysis exposed a numeric progress value');
+    assert.equal(observation.dataProgress, null, 'Unknown analysis exposed synthetic progress data');
+    assert.equal(observation.cancelLabel, 'Cancel analysis');
+    assert.equal(observation.cancelTitle, 'Cancel analysis');
+    assert.equal(observation.diagnosticsCount, 0, 'Analysis displayed conversion diagnostics');
+    assert.equal(observation.visibleZero, false, 'Analysis displayed synthetic zero percent');
+  }
+  return { status: observations.length > 0 ? 'observed' : 'not-observed', observations };
 }
 
 async function chooseOption(page, group, value) {
@@ -499,8 +541,9 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   await page.setViewportSize(
     format === 'webp' ? { width: 390, height: 844 } : { width: 1280, height: 900 }
   );
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
   await loadApplication(page, baseUrl);
-  await selectFixture(page, fixturePath);
+  const analysis = await selectFixture(page, fixturePath, true);
   await chooseOption(page, 'format', format);
   await chooseOption(page, 'quality', 'low');
   await chooseOption(page, 'scale', '0.5');
@@ -508,6 +551,56 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   await proceedIfPrompted(page);
   await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
 
+  const previewToggle = page.locator('[data-testid="result-preview-toggle"]');
+  await previewToggle.waitFor({ state: 'visible', timeout: 30_000 });
+  assert.equal(await previewToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal((await previewToggle.textContent())?.trim(), 'Show animated preview');
+  assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
+  assert.equal(await page.locator('[data-testid="result-preview-hidden"]').isVisible(), true);
+  const downloadHref = await page.locator('[data-testid="download-result-button"]').getAttribute('href');
+  assert(downloadHref?.startsWith('blob:'), 'Reduced-motion result has no download URL');
+  assert.equal(
+    await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
+    true,
+    'Reduced-motion emulation was not active in the product page'
+  );
+
+  let initialDiscovery;
+  try {
+    await page.waitForFunction(() => {
+      const button = document.querySelector('[data-testid="download-result-button"]');
+      if (!(button instanceof HTMLElement) || document.activeElement !== button) return false;
+      const rect = button.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= innerHeight;
+    }, undefined, { timeout: 5_000 });
+    initialDiscovery = await readResultDiscoveryState(page, format);
+  } catch (error) {
+    initialDiscovery = await readResultDiscoveryState(page, format);
+    const diagnosticFile = `${PROFILE_ID}-${format}-discovery-failure.json`;
+    const diagnosticBytes = Buffer.from(`${JSON.stringify(initialDiscovery, null, 2)}\n`);
+    await writeFile(join(outputRoot, diagnosticFile), diagnosticBytes);
+    artifacts.push({
+      kind: 'diagnostic',
+      file: diagnosticFile,
+      bytes: diagnosticBytes.byteLength,
+      sha256: sha256(diagnosticBytes),
+    });
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Result discovery failed for ${format}: ${JSON.stringify(initialDiscovery)}; ${reason}`
+    );
+  }
+  assert.equal(initialDiscovery.button.focused, true, 'Download did not receive completion focus');
+  assert.equal(initialDiscovery.summary.present, true, 'Reduced-motion result summary is missing');
+  assert.equal(initialDiscovery.summary.beforeDownload, true);
+  assert.equal(initialDiscovery.image.present, false, 'Reduced-motion result auto-played');
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-reduced-default.png`, artifacts);
+
+  await previewToggle.focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await previewToggle.getAttribute('aria-expanded'), 'true');
+  assert.equal((await previewToggle.textContent())?.trim(), 'Hide animated preview');
+  assert.equal(await previewToggle.evaluate((button) => document.activeElement === button), true);
   const preview = page.locator('[data-testid="result-image"]');
   await preview.waitFor({ state: 'visible', timeout: 30_000 });
   await page.waitForFunction(() => {
@@ -520,31 +613,7 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   }));
   assert.deepEqual(dimensions, { width: 80, height: 45 });
 
-  let discovery;
-  try {
-    await page.waitForFunction(() => {
-      const button = document.querySelector('[data-testid="download-result-button"]');
-      if (!(button instanceof HTMLElement) || document.activeElement !== button) return false;
-      const rect = button.getBoundingClientRect();
-      return rect.top >= 0 && rect.bottom <= innerHeight;
-    }, undefined, { timeout: 5_000 });
-    discovery = await readResultDiscoveryState(page, format);
-  } catch (error) {
-    discovery = await readResultDiscoveryState(page, format);
-    const diagnosticFile = `${PROFILE_ID}-${format}-discovery-failure.json`;
-    const diagnosticBytes = Buffer.from(`${JSON.stringify(discovery, null, 2)}\n`);
-    await writeFile(join(outputRoot, diagnosticFile), diagnosticBytes);
-    artifacts.push({
-      kind: 'diagnostic',
-      file: diagnosticFile,
-      bytes: diagnosticBytes.byteLength,
-      sha256: sha256(diagnosticBytes),
-    });
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Result discovery failed for ${format}: ${JSON.stringify(discovery)}; ${reason}`
-    );
-  }
+  const discovery = await readResultDiscoveryState(page, format);
   assert.equal(discovery.summary.present, true, 'Result summary is missing');
   assert.equal(discovery.summary.beforeDownload, true, 'Result summary does not precede download');
   assert.equal(
@@ -601,7 +670,7 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   }, undefined, { timeout: 5_000 });
   await settleVisualState(page);
 
-  await page.emulateMedia({ colorScheme: 'light' });
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
   await settleVisualState(page);
   const lightMetadataContrast = {
     summary: await readResultMetadataContrast(page, '[data-testid="result-summary"]'),
@@ -615,7 +684,7 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
       `Light ${surface} metadata contrast is ${contrast.ratio.toFixed(2)}:1`
     );
   }
-  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
   await settleVisualState(page);
   const darkMetadataContrast = {
     summary: await readResultMetadataContrast(page, '[data-testid="result-summary"]'),
@@ -629,8 +698,45 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
       `Dark ${surface} metadata contrast is ${contrast.ratio.toFixed(2)}:1`
     );
   }
-  await page.emulateMedia({ colorScheme: 'light' });
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-dark.png`, artifacts);
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce', forcedColors: 'active' });
   await settleVisualState(page);
+  const forcedColors = await page.evaluate(() => ({
+    active: matchMedia('(forced-colors: active)').matches,
+    horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    previewToggleVisible:
+      (document.querySelector('[data-testid="result-preview-toggle"]')?.getClientRects().length ?? 0) > 0,
+    downloadVisible:
+      (document.querySelector('[data-testid="download-result-button"]')?.getClientRects().length ?? 0) > 0,
+  }));
+  assert.equal(forcedColors.active, true, 'Forced Colors emulation was not active');
+  assert(forcedColors.horizontalOverflow <= 1, 'Forced Colors result overflowed horizontally');
+  assert.equal(forcedColors.previewToggleVisible, true);
+  assert.equal(forcedColors.downloadVisible, true);
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-forced-colors.png`, artifacts);
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce', forcedColors: 'none' });
+  await settleVisualState(page);
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-result.png`, artifacts);
+
+  await previewToggle.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await previewToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal((await previewToggle.textContent())?.trim(), 'Show animated preview');
+  assert.equal(await previewToggle.evaluate((button) => document.activeElement === button), true);
+  assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
+  assert.equal(await page.locator('[data-testid="result-preview-hidden"]').isVisible(), true);
+  assert.equal(
+    await page.locator('[data-testid="download-result-button"]').getAttribute('href'),
+    downloadHref,
+    'Hiding the preview revoked or replaced the download URL'
+  );
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  assert.equal(
+    await page.locator('[data-testid="result-image"]').count(),
+    0,
+    'A motion preference change overrode the explicit hide choice'
+  );
+  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-hidden.png`, artifacts);
 
   const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
   await page.locator('[data-testid="download-result-button"]').click();
@@ -649,12 +755,20 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
     bytes: bytes.byteLength,
     sha256: sha256(bytes),
   });
-  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-result.png`, artifacts);
 
   return {
     id: `h264-to-${format}`,
     status: 'passed',
+    analysis,
     preview: dimensions,
+    previewControl: {
+      reducedMotionDefaultHidden: true,
+      keyboardShowAndHide: true,
+      explicitHideSurvivedPreferenceChange: true,
+      imageDetachedWhenHidden: true,
+      downloadUrlRetainedWhenHidden: true,
+      downloadedWhileHidden: true,
+    },
     presentation: {
       actual: actualPresentation,
       fit: fitPresentation,
@@ -662,13 +776,14 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
         light: lightMetadataContrast,
         dark: darkMetadataContrast,
       },
+      forcedColors,
     },
     download: {
       file: outputFile,
       bytes: bytes.byteLength,
       sha256: sha256(bytes),
-      focusedAndVisibleBeforeClick: true,
-      discovery,
+      focusedAndVisibleOnCompletion: initialDiscovery.button.focused,
+      discovery: { initial: initialDiscovery, shown: discovery },
     },
   };
 }
@@ -900,6 +1015,9 @@ async function installCancellationInspector(page) {
       const settingsCancel = document.querySelector('[data-testid="stop-conversion-button"]');
       const dropzoneCancel = document.querySelector('[data-testid="dropzone-cancel-button"]');
       const dropzone = document.querySelector('[data-testid="dropzone"]');
+      const diagnostics = dropzone?.querySelector('[data-testid="progress-diagnostics"]');
+      const diagnosticsSummary = diagnostics?.querySelector('summary');
+      const statusMessage = dropzone?.querySelector('[data-testid="progress-status-message"]');
       inspector.observation = {
         stateText,
         sameProgressElement: currentProgressBars[0] === inspector.progressBar,
@@ -920,6 +1038,16 @@ async function installCancellationInspector(page) {
           label: dropzoneCancel?.getAttribute('aria-label') ?? null,
         },
         dropzoneBusy: dropzone?.getAttribute('aria-busy') ?? null,
+        progressBusy: currentProgressBars[0]?.parentElement?.getAttribute('aria-busy') ?? null,
+        progressAriaValueNow: currentProgressBars[0]?.getAttribute('aria-valuenow') ?? null,
+        diagnosticsCount: dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length ?? 0,
+        diagnosticsOpen: diagnostics?.open ?? null,
+        diagnosticsSummaryFontSizePx: diagnosticsSummary
+          ? Number.parseFloat(getComputedStyle(diagnosticsSummary).fontSize)
+          : null,
+        statusFontSizePx: statusMessage
+          ? Number.parseFloat(getComputedStyle(statusMessage).fontSize)
+          : null,
       };
     };
     inspector.observer = new MutationObserver(capture);
@@ -1137,6 +1265,12 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
   assert.equal(cancellationUi.settingsCancel.label, cancellationUi.stateText);
   assert.equal(cancellationUi.dropzoneCancel.label, cancellationUi.stateText);
   assert.equal(cancellationUi.dropzoneBusy, 'true');
+  assert.equal(cancellationUi.progressBusy, 'true');
+  assert.equal(cancellationUi.progressAriaValueNow, String(progressBeforeCancel));
+  assert.equal(cancellationUi.diagnosticsCount, 1);
+  assert.equal(cancellationUi.diagnosticsOpen, false);
+  assert(cancellationUi.diagnosticsSummaryFontSizePx >= 14);
+  assert(cancellationUi.statusFontSizePx >= 14);
   const previewRecovery = await inspectRestoredPreview(page);
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-cancelled.png`, artifacts);
   return {

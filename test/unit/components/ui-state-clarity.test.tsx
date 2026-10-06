@@ -279,7 +279,8 @@ describe('UI state clarity', () => {
     toggle.focus();
     toggle.click();
     expect(toggle.textContent).toContain('result.hidePreview');
-    expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull();
+    const firstImage = container.querySelector('[data-testid="result-image"]');
+    expect(firstImage).not.toBeNull();
     expect(document.activeElement).toBe(toggle);
     toggle.click();
     expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
@@ -288,7 +289,9 @@ describe('UI state clarity', () => {
     expect(createUrl).toHaveBeenCalledTimes(1);
     expect(revokeUrl).not.toHaveBeenCalled();
 
+    firstImage?.dispatchEvent(new Event('load'));
     toggle.click();
+    expect(container.querySelector('.animate-pulse')).not.toBeNull();
     motionPreference.matches = false;
     motionPreference.dispatchEvent(new Event('change'));
     expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull();

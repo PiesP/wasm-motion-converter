@@ -235,6 +235,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
 
   const handlePreviewLoad = (event: Event) => {
     const image = event.currentTarget as HTMLImageElement;
+    if (!previewShown() || !image.isConnected) return;
     resultImageRef = image;
     if (image.naturalWidth > 0 && image.naturalHeight > 0) {
       setActualWidth(image.naturalWidth);
@@ -249,7 +250,8 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     }
     keepFocusedDownloadVisible();
   };
-  const handlePreviewError = () => {
+  const handlePreviewError = (event: Event) => {
+    if (!previewShown() || !(event.currentTarget as HTMLImageElement).isConnected) return;
     setPreviewError(true);
     setLoaded(true);
     keepFocusedDownloadVisible();
