@@ -6,6 +6,9 @@
     "src/services/webp-encoder-worker.ts!",
     "scripts/ci/classify-workflow-changes.ts",
     "scripts/check/run-child.test.ts",
+    "scripts/ci/pinned-tools.ts",
+    "scripts/ci/check-pinned-tools.ts",
+    "scripts/ci/install-nose.ts",
     "test/unit/**/*.test.{ts,tsx}",
     "test/e2e/**/*.spec.ts"
   ],
