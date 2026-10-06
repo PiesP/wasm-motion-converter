@@ -133,7 +133,6 @@ function classifyPath(routes: Routes, path: string): void {
       'security_tools'
     );
   } else if (path.startsWith('scripts/security/')) {
-    if (path === 'scripts/security/validate-osv-results.py') enable(routes, 'dependency');
     enable(routes, 'quality', 'unit', 'codeql', 'semgrep', 'semgrep_full', 'security_tools');
   } else if (path === '.github/workflows/security.yaml') {
     enable(routes, 'unit', 'dependency', 'codeql', 'semgrep', 'semgrep_full', 'security_tools');

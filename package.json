@@ -48,7 +48,7 @@
     "preview": "node --experimental-strip-types scripts/build/run-vite.ts preview",
     "clean": "node --experimental-strip-types scripts/build/clean.ts",
     "test": "vitest run",
-    "test:ci": "node --experimental-strip-types --test scripts/ci/deep-check-reuse.test.ts scripts/ci/repository-authority.test.ts scripts/check/run-child.test.ts",
+    "test:ci": "node --experimental-strip-types --test scripts/ci/deep-check-reuse.test.ts scripts/ci/repository-authority.test.ts scripts/release/verify-source.test.ts scripts/check/run-child.test.ts",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "prepare:e2e:fixture": "node --experimental-strip-types scripts/test/generate-e2e-video.ts",

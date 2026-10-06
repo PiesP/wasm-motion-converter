@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -56,6 +57,20 @@ function stub(path: string, contents: string): void {
 }
 
 describe('direct Node script boundaries', () => {
+  it('checks syntax of every bundled Windows module', () => {
+    const moduleRoot = join(project, 'validation/windows');
+    const modules = readdirSync(moduleRoot, { recursive: true })
+      .map((path) => path.toString())
+      .filter((path) => path.endsWith('.mjs'))
+      .sort();
+    expect(modules.length).toBeGreaterThan(0);
+    for (const module of modules) {
+      const path = join(moduleRoot, module);
+      const result = spawnSync(process.execPath, ['--check', path], { encoding: 'utf8' });
+      expect(result.status, path + ': ' + result.stderr).toBe(0);
+    }
+  });
+
   it('imports all entrypoints with invalid argv without spawning, deleting, or validating CLI inputs', () => {
     const { root } = fixture();
     mkdirSync(join(root, 'dist'));

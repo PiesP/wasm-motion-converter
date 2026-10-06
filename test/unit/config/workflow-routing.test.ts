@@ -168,10 +168,6 @@ describe('Workflow change routing', () => {
       semgrep_full: 'true',
       security_tools: 'true',
     });
-    expect(classify(['scripts/security/validate-osv-results.py'])).toMatchObject({
-      unit: 'true',
-      dependency: 'true',
-    });
     expect(classify(['scripts/ci/pinned-tools.json'])).toMatchObject({
       duplication: 'true',
       dependency: 'true',
