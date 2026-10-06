@@ -50,7 +50,7 @@ COOP/COEP headers are configured in `vite.config.ts` for development and preview
 
 Both adapters are import-inert TypeScript commands. The Nose executable is an
 external tool; required CI installation and integrity checks are owned by
-`scripts/ci/install-nose.sh` and the workflows, where failure remains fatal.
+`scripts/ci/install-nose.ts` and the workflows, where failure remains fatal.
 Revisit the external-tool exception if Nose gains a repository-local Node API
 that preserves its pinned installer and CI integrity contract.
 
