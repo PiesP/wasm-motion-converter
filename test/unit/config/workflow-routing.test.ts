@@ -172,6 +172,16 @@ describe('Workflow change routing', () => {
       unit: 'true',
       dependency: 'true',
     });
+    expect(classify(['scripts/ci/pinned-tools.json'])).toMatchObject({
+      duplication: 'true',
+      dependency: 'true',
+      semgrep: 'true',
+      security_tools: 'true',
+    });
+    expect(classify(['scripts/ci/install-nose.ts'])).toMatchObject({
+      duplication: 'true',
+      security_tools: 'true',
+    });
   });
 
   it('does not run code scanners for binary visual baselines', () => {

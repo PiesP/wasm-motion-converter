@@ -87,7 +87,10 @@ describe('central project setup action', () => {
     }
 
     expect(releaseWorkflow.split(localReleaseSetupAction)).toHaveLength(expectedJobs.length + 1);
-    expect(releaseWorkflow).not.toContain(centralSetupAction);
+    const duplication = jobBlock(releaseWorkflow, 'duplication');
+    expect(duplication).toContain(centralSetupAction);
+    expect(duplication).toContain("install-dependencies: 'false'");
+    expect(releaseWorkflow.replace(duplication, '')).not.toContain(centralSetupAction);
   });
 
   it('keeps direct toolchain setup and frozen installs out of project workflows', () => {

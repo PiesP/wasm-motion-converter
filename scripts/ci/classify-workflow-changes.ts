@@ -119,6 +119,9 @@ function classifyPath(routes: Routes, path: string): void {
   } else if (path.startsWith('scripts/build/') || path.startsWith('scripts/release/')) {
     enable(routes, 'quality', 'unit', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path.startsWith('scripts/ci/')) {
+    if (path === 'scripts/ci/pinned-tools.json' || path === 'scripts/ci/pinned-tools.ts') {
+      enable(routes, 'dependency');
+    }
     enable(
       routes,
       'quality',
