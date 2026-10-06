@@ -36,21 +36,6 @@
     "stableTypeOrdering": true,
     "ignoreDeprecations": "6.0"
   },
-  "include": [
-    "src/**/*",
-    "vite.config.ts",
-    "scripts/**/*",
-    "public/service-worker.js",
-    "index.html"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "tmp/**",
-    ".vite-sw-temp/**",
-    ".vscode",
-    "test",
-    "scripts/ci/deep-check-reuse.ts",
-    "scripts/ci/deep-check-reuse.test.ts"
-  ]
+  "include": ["src/**/*", "vite.config.ts", "public/service-worker.js", "index.html"],
+  "exclude": ["node_modules", "dist", "tmp/**", ".vite-sw-temp/**", ".vscode", "test"]
 }

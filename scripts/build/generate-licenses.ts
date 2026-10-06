@@ -8,7 +8,7 @@
 // Usage: node --experimental-strip-types scripts/build/generate-licenses.ts
 // Called automatically during `pnpm build` via the `prebuild` script.
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -178,22 +178,35 @@ This project uses the following open-source libraries.
 
 // ── Main ──────────────────────────────────────────────────────────
 
-console.log('📋 Collecting license information...\n');
+export function generateLicenses(): void {
+  console.log('📋 Collecting license information...\n');
 
-const entries = collectRuntimeDeps();
+  const entries = collectRuntimeDeps();
 
-if (entries.length === 0) {
-  console.error('❌ No runtime dependencies found. Run `pnpm install` first.');
-  process.exit(1);
+  if (entries.length === 0) {
+    console.error('❌ No runtime dependencies found. Run `pnpm install` first.');
+    process.exit(1);
+  }
+
+  console.log(`  Found ${entries.length} runtime dependencies:`);
+  for (const entry of entries) {
+    console.log(`    • ${entry.name}@${entry.version} — ${entry.license}`);
+  }
+
+  const licenseMd = `${generateLicenseText(entries).trimEnd()}\n`;
+  const outputPath = join(ROOT, 'public', 'LICENSES.md');
+  writeFileSync(outputPath, licenseMd, 'utf-8');
+
+  console.log(`\n✅ Generated ${outputPath}`);
 }
 
-console.log(`  Found ${entries.length} runtime dependencies:`);
-for (const entry of entries) {
-  console.log(`    • ${entry.name}@${entry.version} — ${entry.license}`);
+function isDirectInvocation(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
 
-const licenseMd = `${generateLicenseText(entries).trimEnd()}\n`;
-const outputPath = join(ROOT, 'public', 'LICENSES.md');
-writeFileSync(outputPath, licenseMd, 'utf-8');
-
-console.log(`\n✅ Generated ${outputPath}`);
+if (isDirectInvocation()) generateLicenses();
