@@ -1174,6 +1174,7 @@ async function installCancellationInspector(page) {
       const settingsCancel = document.querySelector('[data-testid="stop-conversion-button"]');
       const dropzoneCancel = document.querySelector('[data-testid="dropzone-cancel-button"]');
       const dropzone = document.querySelector('[data-testid="dropzone"]');
+      const progressBusyRegion = currentProgressBars[0]?.closest('[aria-busy]');
       const diagnostics = dropzone?.querySelector('[data-testid="progress-diagnostics"]');
       const diagnosticsSummary = diagnostics?.querySelector('summary');
       const statusMessage = dropzone?.querySelector('[data-testid="progress-status-message"]');
@@ -1197,7 +1198,9 @@ async function installCancellationInspector(page) {
           label: dropzoneCancel?.getAttribute('aria-label') ?? null,
         },
         dropzoneBusy: dropzone?.getAttribute('aria-busy') ?? null,
-        progressBusy: currentProgressBars[0]?.parentElement?.getAttribute('aria-busy') ?? null,
+        progressBusy: progressBusyRegion && progressBusyRegion !== dropzone && dropzone?.contains(progressBusyRegion)
+          ? progressBusyRegion.getAttribute('aria-busy')
+          : null,
         progressAriaValueNow: currentProgressBars[0]?.getAttribute('aria-valuenow') ?? null,
         diagnosticsCount: dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length ?? 0,
         diagnosticsOpen: diagnostics?.open ?? null,
@@ -1414,6 +1417,11 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     `Cancellation produced an error: ${errorText ?? 'unknown error'}`
   );
   const cancellationUi = await readCancellationInspector(page);
+  const cancellationFile = `${PROFILE_ID}-cancellation-state.json`;
+  const cancellationBytes = Buffer.from(`${JSON.stringify(cancellationUi, null, 2)}\n`);
+  await writeFile(join(outputRoot, cancellationFile), cancellationBytes);
+  artifacts.push({ kind: 'diagnostic', file: cancellationFile,
+    bytes: cancellationBytes.byteLength, sha256: sha256(cancellationBytes) });
   assert(cancellationUi, 'Cancellation state was not observable by the UI inspector');
   assert.equal(cancellationUi.sameProgressElement, true);
   assert.deepEqual(cancellationUi.progressValues, [progressBeforeCancel]);
