@@ -1168,6 +1168,7 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
   let settingsPage;
   let previousZoom;
   let baseline;
+  let baselineScreenshot;
   let result;
   let primaryError;
   let stage = 'launch-owned-chrome';
@@ -1228,6 +1229,9 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     baseline = await zoomPage.evaluate(() => ({
       devicePixelRatio, width: innerWidth, scale: visualViewport?.scale,
     }));
+    baselineScreenshot = await recordChromeZoomScreenshot(
+      zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-100.png`, artifacts
+    );
     await zoom.selectOption('2');
     await zoomPage.bringToFront();
     await zoomPage.waitForFunction((before) =>
@@ -1290,8 +1294,9 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     const zoomScreenshot = await recordChromeZoomScreenshot(
       zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts
     );
-    assert.equal(zoomScreenshot.width, Math.round(observation.width * observation.devicePixelRatio));
-    assert.equal(zoomScreenshot.height, Math.round(observation.height * observation.devicePixelRatio));
+    // CDP captures the native surface while Playwright may emulate the page's DPR.
+    assert.equal(zoomScreenshot.width, baselineScreenshot.width);
+    assert.equal(zoomScreenshot.height, baselineScreenshot.height);
 
     stage = 'download-zoomed-gif';
     const downloadPromise = zoomPage.waitForEvent('download', { timeout: 30_000 });
@@ -1307,7 +1312,8 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     assert.deepEqual(pageErrors, [], 'Owned Chrome result page emitted errors');
     result = { id: 'browser-zoom-200', status: 'passed', factor: 2,
       method: 'owned-persistent-chrome-settings-page', baseline, observation,
-      language: 'ar', previewHiddenAfterKeyboard: true, screenshotControls, zoomScreenshot,
+      language: 'ar', previewHiddenAfterKeyboard: true, screenshotControls,
+      baselineScreenshot, zoomScreenshot,
       download: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) } };
   } catch (error) {
     primaryError = error;
