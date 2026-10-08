@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { ENCODED_PACKET_BUDGET_BYTES, MEDIA_BUNNY_BUFFER_BUDGET_BYTES } from '@utils/constants';
+import {
+  ENCODED_PACKET_BUDGET_BYTES,
+  MEDIA_BUNNY_BUFFER_BUDGET_BYTES,
+  MP4_MAX_LOGICAL_SAMPLES,
+  MP4_METADATA_BUDGET_BYTES,
+} from '@utils/constants';
 import { ALL_FORMATS, BlobSource, BufferSource, Input } from 'mediabunny';
 
 const MAX_ENCODED_PACKET_BYTES = ENCODED_PACKET_BUDGET_BYTES - 1024;
@@ -10,6 +15,8 @@ type BoundedInput = Input & {
   _maxContiguousReadBytes: number;
   _maxEncodedPacketBytes: number;
   _maxBufferedPacketBytes: number;
+  _maxIsobmffMetadataBytes: number;
+  _maxIsobmffSamples: number;
 };
 
 function applyMediaBunnyMemoryLimits(input: Input): Input {
@@ -17,6 +24,8 @@ function applyMediaBunnyMemoryLimits(input: Input): Input {
   bounded._maxContiguousReadBytes = MEDIA_BUNNY_BUFFER_BUDGET_BYTES;
   bounded._maxEncodedPacketBytes = MAX_ENCODED_PACKET_BYTES;
   bounded._maxBufferedPacketBytes = MEDIA_BUNNY_BUFFER_BUDGET_BYTES;
+  bounded._maxIsobmffMetadataBytes = MP4_METADATA_BUDGET_BYTES;
+  bounded._maxIsobmffSamples = MP4_MAX_LOGICAL_SAMPLES;
   return input;
 }
 

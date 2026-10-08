@@ -60,6 +60,8 @@ The returned value is plain JSON. Functional failures throw. Successful runs
 record:
 
 - production app load with CSP and cross-origin isolation;
+- a compact over-budget MP4 sample declaration rejected before expansion, followed
+  by a successful normal GIF conversion/download in the same application document;
 - the CI H.264 fixture converted to low-quality, 50% GIF and WebP;
 - observed metadata analysis samples, when its transient state is caught,
   with indeterminate progress, task-correct cancellation labels, and no

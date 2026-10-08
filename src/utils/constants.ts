@@ -82,6 +82,11 @@ export const ENCODED_PACKET_BUDGET_BYTES = DEMUX_MEMORY_BUDGET_BYTES / 8;
 /** WebCodecs may retain queued encoded chunks using half of the demux reserve. */
 export const ENCODED_CHUNK_BUDGET_BYTES = DEMUX_MEMORY_BUDGET_BYTES / 2;
 
+/** Remaining demux reserve for MP4 sample/index allocation and cumulative fragment work. */
+export const MP4_METADATA_BUDGET_BYTES = DEMUX_MEMORY_BUDGET_BYTES / 4;
+/** Logical samples may remain compact, including 15 minutes of high-rate PCM audio. */
+export const MP4_MAX_LOGICAL_SAMPLES = 100_000_000;
+
 /** Three eighths of the envelope are reserved for live frame processing. */
 export const FRAME_PIPELINE_MEMORY_BUDGET_BYTES = CONVERSION_MEMORY_BUDGET_BYTES * 0.375;
 
