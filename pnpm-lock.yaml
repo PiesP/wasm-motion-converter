@@ -11,7 +11,7 @@ overrides:
   undici@>=7.0.0 <7.29.1: 7.29.1
 
 patchedDependencies:
-  mediabunny@1.59.1: 095f3d2b2716bdb2dadad0540342dce8f1b7c2ec2d8af2b94251a621ac70603c
+  mediabunny@1.59.1: 1c205423eea933b973cdd819901bca5b785f7c2ded9789e45211d4b1599701f8
   wasm-webp@0.1.0: bef378941329357206c2b92a9ed683d03a25ca0c9331dd09f664fe0392d0b6f5
 
 importers:
@@ -26,7 +26,7 @@ importers:
         version: 1.0.3
       mediabunny:
         specifier: 1.59.1
-        version: 1.59.1(patch_hash=095f3d2b2716bdb2dadad0540342dce8f1b7c2ec2d8af2b94251a621ac70603c)
+        version: 1.59.1(patch_hash=1c205423eea933b973cdd819901bca5b785f7c2ded9789e45211d4b1599701f8)
       solid-js:
         specifier: 1.9.15
         version: 1.9.15
@@ -5172,7 +5172,7 @@ snapshots:
 
   mdn-data@2.27.1: {}
 
-  mediabunny@1.59.1(patch_hash=095f3d2b2716bdb2dadad0540342dce8f1b7c2ec2d8af2b94251a621ac70603c):
+  mediabunny@1.59.1(patch_hash=1c205423eea933b973cdd819901bca5b785f7c2ded9789e45211d4b1599701f8):
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13

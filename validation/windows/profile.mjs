@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { verifyAnimatedOutput } from './output-contract.mjs';
+import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
 
 const PROFILE_ID = 'wmc-media';
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
@@ -605,12 +606,12 @@ async function readResultDiscoveryState(page, format) {
   }, format);
 }
 
-async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoot, artifacts) {
+async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoot, artifacts, reusePage = false) {
   await page.setViewportSize(
     format === 'webp' ? { width: 390, height: 844 } : { width: 1280, height: 900 }
   );
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
-  await loadApplication(page, baseUrl);
+  if (!reusePage) await loadApplication(page, baseUrl);
   const analysis = await selectFixture(page, fixturePath, true);
   await chooseOption(page, 'format', format);
   await chooseOption(page, 'quality', 'low');
@@ -1801,7 +1802,30 @@ export async function run({ browser, root, output }) {
     assert.equal(appLoad.crossOriginIsolated, true, 'COOP/COEP did not produce a cross-origin-isolated app');
 
     const checks = [{ id: 'app-load', status: 'passed', ...appLoad }];
-    checks.push(await convertSmallFixture(page, started.url, smallFixture, 'gif', outputRoot, artifacts));
+    const budgetFixture = makeMp4BudgetFixture(await readFile(smallFixture));
+    const documentIdentity = await page.evaluate(() => performance.timeOrigin);
+    const rejectedAt = performance.now();
+    await page.locator('[data-testid="file-input"]').setInputFiles({
+      name: 'sample-budget.mp4', mimeType: 'video/mp4', buffer: budgetFixture.bytes,
+    });
+    const metadataError = page.locator('[data-testid="error-display"]');
+    await metadataError.waitFor({ state: 'visible', timeout: 10_000 });
+    const errorText = await metadataError.textContent();
+    assert(errorText?.includes('ISOBMFF sample metadata') && errorText.includes('sample count'));
+    assert.equal(await page.locator('[data-testid="choose-file-button"]').isEnabled(), true);
+    const rejectionMs = performance.now() - rejectedAt;
+    assert(rejectionMs < 10_000, 'Over-budget metadata did not settle within the bounded observation');
+    await recordScreenshot(page, outputRoot, 'mp4-sample-budget-error.png', artifacts);
+    const recoveredGif = await convertSmallFixture(page, started.url, smallFixture, 'gif', outputRoot, artifacts, true);
+    assert.equal(await page.evaluate(() => performance.timeOrigin), documentIdentity,
+      'Recovery must use the same application document');
+    assert.equal(await metadataError.isVisible(), false);
+    checks.push({ id: 'mp4-sample-budget-recovery', status: 'passed',
+      fixtureBytes: budgetFixture.bytes.length, fixtureSha256: sha256(budgetFixture.bytes),
+      originalCount: budgetFixture.originalCount, declaredCount: budgetFixture.declaredCount,
+      rejectionMs, sameDocument: true, subsequentGifDownload: recoveredGif.status,
+      accounting: 'Logical-count rejection before size-table expansion; browser heap/RSS not measured' });
+    checks.push(recoveredGif);
     checks.push(await convertSmallFixture(page, started.url, smallFixture, 'webp', outputRoot, artifacts));
     checks.push(await exerciseCancellation(page, started.url, cancellationFixture, outputRoot, artifacts));
     checks.push(await exerciseUiDisclosures(page, started.url, smallFixture, outputRoot, artifacts));

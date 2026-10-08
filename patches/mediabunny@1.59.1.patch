@@ -77,7 +77,7 @@ index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982
                          if (isThenable(pictureBlock))
                              pictureBlock = await pictureBlock;
 diff --git a/dist/modules/src/hls/hls-segmented-input.js b/dist/modules/src/hls/hls-segmented-input.js
-index f6ab507e25120f0901c9d5e433583596c50f936b..113137c40e13e45eee5db3898d84ed6cbb5d7a59 100644
+index f6ab507e25120f0901c9d5e433583596c50f936b..861e623d92b3d3c5aabcbce6a552faef2068228a 100644
 --- a/dist/modules/src/hls/hls-segmented-input.js
 +++ b/dist/modules/src/hls/hls-segmented-input.js
 @@ -117,7 +117,7 @@ export class HlsSegmentedInput extends SegmentedInput {
@@ -104,31 +104,35 @@ index f6ab507e25120f0901c9d5e433583596c50f936b..113137c40e13e45eee5db3898d84ed6c
                              const keySlice = await keyReader.requestSlice(0, AES_128_BLOCK_SIZE);
                              if (!keySlice) {
                                  throw new Error('Invalid AES-128 key; expected at least 16 bytes of data.');
-@@ -624,6 +624,9 @@ export class HlsSegmentedInput extends SegmentedInput {
+@@ -624,6 +624,11 @@ export class HlsSegmentedInput extends SegmentedInput {
              initInput: initInput ?? undefined,
              formatOptions,
          });
 +        input._maxContiguousReadBytes = this.input._maxContiguousReadBytes;
 +        input._maxEncodedPacketBytes = this.input._maxEncodedPacketBytes;
 +        input._maxBufferedPacketBytes = this.input._maxBufferedPacketBytes;
++        input._maxIsobmffMetadataBytes = this.input._maxIsobmffMetadataBytes;
++        input._maxIsobmffSamples = this.input._maxIsobmffSamples;
          input._onFormatDetermined = (format) => {
              if ((hlsSegment.encryption?.method === 'SAMPLE-AES' || hlsSegment.encryption?.method === 'SAMPLE-AES-CTR')
                  && !format._isIsobmff) {
 diff --git a/dist/modules/src/input.js b/dist/modules/src/input.js
-index d4bec8fe6718f68a1cefa5409161ee51e8ffdfce..8707b10b74d83f6e27ea92a144b82274fa7ee77e 100644
+index d4bec8fe6718f68a1cefa5409161ee51e8ffdfce..20cd1b15298501c5a2dd1639a2e7491897c7662e 100644
 --- a/dist/modules/src/input.js
 +++ b/dist/modules/src/input.js
-@@ -72,6 +72,9 @@ export class Input extends EventEmitter {
+@@ -72,6 +72,11 @@ export class Input extends EventEmitter {
          this._formats = options.formats;
          this._initInput = options.initInput ?? null;
          this._formatOptions = options.formatOptions ?? {};
 +        this._maxContiguousReadBytes = Infinity;
 +        this._maxEncodedPacketBytes = Infinity;
 +        this._maxBufferedPacketBytes = Infinity;
++        this._maxIsobmffMetadataBytes = Infinity;
++        this._maxIsobmffSamples = Infinity;
          if (options.source instanceof Source) {
              this._rootRef = options.source.ref();
          }
-@@ -141,7 +144,7 @@ export class Input extends EventEmitter {
+@@ -141,7 +146,7 @@ export class Input extends EventEmitter {
      /** @internal */
      _getDemuxer() {
          return this._demuxerPromise ??= (async () => {
@@ -138,10 +142,382 @@ index d4bec8fe6718f68a1cefa5409161ee51e8ffdfce..8707b10b74d83f6e27ea92a144b82274
              for (const format of this._formats) {
                  const canRead = await format._canReadInput(this);
 diff --git a/dist/modules/src/isobmff/isobmff-demuxer.js b/dist/modules/src/isobmff/isobmff-demuxer.js
-index 86b79279f0532c79114f73696e1c2530ab90273c..bbd368b7e07e6b8c604f38434283123103e1d20c 100644
+index 86b79279f0532c79114f73696e1c2530ab90273c..d29de770b65b95e40b9d18c084a52f194be9c759 100644
 --- a/dist/modules/src/isobmff/isobmff-demuxer.js
 +++ b/dist/modules/src/isobmff/isobmff-demuxer.js
-@@ -2642,6 +2642,9 @@ class IsobmffTrackBacking {
+@@ -17,6 +17,7 @@ import { readBytes, readF64Be, readI16Be, readI32Be, readI64Be, readU16Be, readU
+ import { DEFAULT_TRACK_DISPOSITION, RichImageData } from '../metadata.js';
+ import { AC3_SAMPLE_RATES } from '../../shared/ac3-misc.js';
+ import { Bitstream } from '../../shared/bitstream.js';
++import { IsobmffSampleBudget } from './sample-budget.js';
+ import { Aes128CbcContext } from '../aes.js';
+ import { Logging } from '../logging.js';
+ export class IsobmffDemuxer extends Demuxer {
+@@ -43,6 +44,7 @@ export class IsobmffDemuxer extends Demuxer {
+         this.lastReadFragment = null;
+         this.decryptionKeyCache = new Map();
+         this.reader = input._reader;
++        this.sampleBudget = new IsobmffSampleBudget(input);
+     }
+     async getTrackBackings() {
+         await this.readMetadata();
+@@ -211,10 +213,15 @@ export class IsobmffDemuxer extends Demuxer {
+         }
+     }
+     getSampleTableForTrack(internalTrack) {
++        this.sampleBudget.check();
+         if (internalTrack.sampleTable) {
+             return internalTrack.sampleTable;
+         }
+         const sampleTable = {
++            declaredSampleCount: null,
++            timingSampleCount: 0,
++            compositionSampleCount: null,
++            seenTables: new Set(),
+             sampleTimingEntries: [],
+             sampleCompositionTimeOffsets: [],
+             sampleSizes: [],
+@@ -232,8 +239,51 @@ export class IsobmffDemuxer extends Demuxer {
+         assert(this.moovSlice);
+         const stblContainerSlice = this.moovSlice.slice(internalTrack.sampleTableByteOffset);
+         this.currentTrack = internalTrack;
+-        this.traverseBox(stblContainerSlice);
++        try {
++            this.traverseBox(stblContainerSlice);
++        }
++        catch (error) {
++            this.sampleBudget.error = error instanceof Error ? error : new Error(String(error));
++            throw this.sampleBudget.error;
++        }
++        finally {
++            this.currentTrack = null;
++        }
+         this.currentTrack = null;
++        if ((sampleTable.declaredSampleCount !== null
++            && sampleTable.declaredSampleCount !== sampleTable.timingSampleCount)
++            || (sampleTable.compositionSampleCount !== null
++                && sampleTable.compositionSampleCount !== sampleTable.timingSampleCount)) {
++            this.sampleBudget.fail('inconsistent sample counts.');
++        }
++        if (sampleTable.sampleToChunk.length > 0) {
++            let chunkSamples = 0;
++            if (sampleTable.sampleToChunk[0].startChunkIndex !== 0) {
++                this.sampleBudget.fail('invalid first sample chunk.');
++            }
++            for (let i = 0; i < sampleTable.sampleToChunk.length; i++) {
++                const entry = sampleTable.sampleToChunk[i];
++                const end = sampleTable.sampleToChunk[i + 1]?.startChunkIndex ?? sampleTable.chunkOffsets.length;
++                if (end <= entry.startChunkIndex || end > sampleTable.chunkOffsets.length) {
++                    this.sampleBudget.fail('sample chunk range exceeds its offset table.');
++                }
++                chunkSamples += (end - entry.startChunkIndex) * entry.samplesPerChunk;
++                this.sampleBudget.count(chunkSamples);
++            }
++            if (chunkSamples !== sampleTable.timingSampleCount) {
++                this.sampleBudget.fail('inconsistent sample chunk counts.');
++            }
++        }
++        if (sampleTable.keySampleIndices) {
++            let previous = -1;
++            for (const index of sampleTable.keySampleIndices) {
++                if (index <= previous || (index >= sampleTable.timingSampleCount
++                    && !(sampleTable.timingSampleCount === 0 && index === 0))) {
++                    this.sampleBudget.fail('invalid key sample index.');
++                }
++                previous = index;
++            }
++        }
+         const isPcmCodec = internalTrack.info?.type === 'audio'
+             && internalTrack.info.codec
+             && PCM_AUDIO_CODECS.includes(internalTrack.info.codec);
+@@ -247,6 +297,7 @@ export class IsobmffDemuxer extends Demuxer {
+             // encodes valid audio information.
+             assert(internalTrack.info?.type === 'audio');
+             const pcmInfo = parsePcmCodec(internalTrack.info.codec);
++            this.sampleBudget.reserve(sampleTable.chunkOffsets.length, 112);
+             const newSampleTimingEntries = [];
+             const newSampleSizes = [];
+             for (let i = 0; i < sampleTable.sampleToChunk.length; i++) {
+@@ -297,6 +348,7 @@ export class IsobmffDemuxer extends Demuxer {
+         if (sampleTable.sampleCompositionTimeOffsets.length > 0) {
+             // If composition time offsets are defined, we must build a list of all presentation timestamps and then
+             // sort them
++            this.sampleBudget.reserve(sampleTable.timingSampleCount, 128);
+             sampleTable.presentationTimestamps = [];
+             for (const entry of sampleTable.sampleTimingEntries) {
+                 for (let i = 0; i < entry.count; i++) {
+@@ -328,6 +380,7 @@ export class IsobmffDemuxer extends Demuxer {
+         return sampleTable;
+     }
+     async readFragment(startPos) {
++        this.sampleBudget.check();
+         if (this.lastReadFragment?.moofOffset === startPos) {
+             return this.lastReadFragment;
+         }
+@@ -377,6 +430,7 @@ export class IsobmffDemuxer extends Demuxer {
+             const insertionIndex = binarySearchLessOrEqual(fragmentPositionCache, trackData.startTimestamp, x => x.startTimestamp);
+             if (insertionIndex === -1
+                 || fragmentPositionCache[insertionIndex].moofOffset !== fragment.moofOffset) {
++                this.sampleBudget.reserve(1, 96);
+                 fragmentPositionCache.splice(insertionIndex + 1, 0, {
+                     moofOffset: fragment.moofOffset,
+                     startTimestamp: trackData.startTimestamp,
+@@ -385,7 +439,7 @@ export class IsobmffDemuxer extends Demuxer {
+             }
+             // If senc wasn't parsed but saiz+saio were, fetch the aux info now and stamp each sample with it
+             if (trackData.encryptionAuxInfo && track.encryptionInfo) {
+-                const entries = await resolveEncryptionAuxInfo(this.reader, track.encryptionInfo, trackData.encryptionAuxInfo);
++                const entries = await resolveEncryptionAuxInfo(this.reader, track.encryptionInfo, trackData.encryptionAuxInfo, (count, cost) => this.sampleBudget.reserve(count, cost));
+                 for (let i = 0; i < Math.min(trackData.samples.length, entries.length); i++) {
+                     const entry = entries[i];
+                     trackData.samples[i].encryption = entry;
+@@ -417,6 +471,7 @@ export class IsobmffDemuxer extends Demuxer {
+         }
+     }
+     traverseBox(slice) {
++        this.sampleBudget.check();
+         const startPos = slice.filePos;
+         const boxInfo = readBoxHeader(slice);
+         if (!boxInfo) {
+@@ -1427,11 +1482,20 @@ export class IsobmffDemuxer extends Demuxer {
+                     }
+                     slice.skip(4); // Version + flags
+                     const entryCount = readU32Be(slice);
++                    if (track.sampleTable.seenTables.has('stts'))
++                        this.sampleBudget.fail('duplicate sample table.');
++                    track.sampleTable.seenTables.add('stts');
++                    this.sampleBudget.encoded(entryCount, 8, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(entryCount, 96);
+                     let currentIndex = 0;
+                     let currentTimestamp = 0;
+                     for (let i = 0; i < entryCount; i++) {
+                         const sampleCount = readU32Be(slice);
+                         const sampleDelta = readU32Be(slice);
++                        this.sampleBudget.track(track, currentIndex + sampleCount);
++                        if (!Number.isSafeInteger(currentTimestamp + sampleCount * sampleDelta)) {
++                            this.sampleBudget.fail('invalid timing arithmetic.');
++                        }
+                         track.sampleTable.sampleTimingEntries.push({
+                             startIndex: currentIndex,
+                             startDecodeTimestamp: currentTimestamp,
+@@ -1441,6 +1505,7 @@ export class IsobmffDemuxer extends Demuxer {
+                         currentIndex += sampleCount;
+                         currentTimestamp += sampleCount * sampleDelta;
+                     }
++                    track.sampleTable.timingSampleCount = currentIndex;
+                 }
+                 ;
+                 break;
+@@ -1455,10 +1520,16 @@ export class IsobmffDemuxer extends Demuxer {
+                     }
+                     slice.skip(1 + 3); // Version + flags
+                     const entryCount = readU32Be(slice);
++                    if (track.sampleTable.seenTables.has('ctts'))
++                        this.sampleBudget.fail('duplicate sample table.');
++                    track.sampleTable.seenTables.add('ctts');
++                    this.sampleBudget.encoded(entryCount, 8, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(entryCount, 96);
+                     let sampleIndex = 0;
+                     for (let i = 0; i < entryCount; i++) {
+                         const sampleCount = readU32Be(slice);
+                         const sampleOffset = readI32Be(slice);
++                        this.sampleBudget.track(track, sampleIndex + sampleCount);
+                         track.sampleTable.sampleCompositionTimeOffsets.push({
+                             startIndex: sampleIndex,
+                             count: sampleCount,
+@@ -1466,6 +1537,7 @@ export class IsobmffDemuxer extends Demuxer {
+                         });
+                         sampleIndex += sampleCount;
+                     }
++                    track.sampleTable.compositionSampleCount = sampleIndex;
+                 }
+                 ;
+                 break;
+@@ -1481,6 +1553,13 @@ export class IsobmffDemuxer extends Demuxer {
+                     slice.skip(4); // Version + flags
+                     const sampleSize = readU32Be(slice);
+                     const sampleCount = readU32Be(slice);
++                    if (track.sampleTable.seenTables.has('sizes'))
++                        this.sampleBudget.fail('duplicate size table.');
++                    track.sampleTable.seenTables.add('sizes');
++                    this.sampleBudget.track(track, sampleCount);
++                    track.sampleTable.declaredSampleCount = sampleCount;
++                    this.sampleBudget.encoded(sampleSize === 0 ? sampleCount : 0, 4, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(sampleSize === 0 ? sampleCount : 1, 16);
+                     if (sampleSize === 0) {
+                         for (let i = 0; i < sampleCount; i++) {
+                             const sampleSize = readU32Be(slice);
+@@ -1506,6 +1585,16 @@ export class IsobmffDemuxer extends Demuxer {
+                     slice.skip(3); // Reserved
+                     const fieldSize = readU8(slice); // in bits
+                     const sampleCount = readU32Be(slice);
++                    if (track.sampleTable.seenTables.has('sizes'))
++                        this.sampleBudget.fail('duplicate size table.');
++                    track.sampleTable.seenTables.add('sizes');
++                    this.sampleBudget.track(track, sampleCount);
++                    track.sampleTable.declaredSampleCount = sampleCount;
++                    if (fieldSize !== 4 && fieldSize !== 8 && fieldSize !== 16) {
++                        this.sampleBudget.fail('unsupported compact sample-size width.');
++                    }
++                    this.sampleBudget.encoded(Math.ceil(sampleCount * fieldSize / 8), 1, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(sampleCount, 16);
+                     const bytes = readBytes(slice, Math.ceil(sampleCount * fieldSize / 8));
+                     const bitstream = new Bitstream(bytes);
+                     for (let i = 0; i < sampleCount; i++) {
+@@ -1527,6 +1616,11 @@ export class IsobmffDemuxer extends Demuxer {
+                     slice.skip(4); // Version + flags
+                     track.sampleTable.keySampleIndices = [];
+                     const entryCount = readU32Be(slice);
++                    if (track.sampleTable.seenTables.has('stss'))
++                        this.sampleBudget.fail('duplicate sample table.');
++                    track.sampleTable.seenTables.add('stss');
++                    this.sampleBudget.encoded(entryCount, 4, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(entryCount + 1, 16);
+                     for (let i = 0; i < entryCount; i++) {
+                         const sampleIndex = readU32Be(slice) - 1; // Convert to 0-indexed
+                         track.sampleTable.keySampleIndices.push(sampleIndex);
+@@ -1550,10 +1644,19 @@ export class IsobmffDemuxer extends Demuxer {
+                     }
+                     slice.skip(4);
+                     const entryCount = readU32Be(slice);
++                    if (track.sampleTable.seenTables.has('stsc'))
++                        this.sampleBudget.fail('duplicate sample table.');
++                    track.sampleTable.seenTables.add('stsc');
++                    this.sampleBudget.encoded(entryCount, 12, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(entryCount, 96);
+                     for (let i = 0; i < entryCount; i++) {
+                         const startChunkIndex = readU32Be(slice) - 1; // Convert to 0-indexed
+                         const samplesPerChunk = readU32Be(slice);
+                         const sampleDescriptionIndex = readU32Be(slice);
++                        if (startChunkIndex < 0 || samplesPerChunk === 0
++                            || (i > 0 && startChunkIndex <= track.sampleTable.sampleToChunk[i - 1].startChunkIndex)) {
++                            this.sampleBudget.fail('invalid sample-to-chunk table.');
++                        }
+                         track.sampleTable.sampleToChunk.push({
+                             startSampleIndex: -1,
+                             startChunkIndex,
+@@ -1569,6 +1672,7 @@ export class IsobmffDemuxer extends Demuxer {
+                             const chunkCount = nextChunk.startChunkIndex
+                                 - track.sampleTable.sampleToChunk[i].startChunkIndex;
+                             startSampleIndex += chunkCount * track.sampleTable.sampleToChunk[i].samplesPerChunk;
++                            this.sampleBudget.count(startSampleIndex);
+                         }
+                     }
+                 }
+@@ -1585,6 +1689,11 @@ export class IsobmffDemuxer extends Demuxer {
+                     }
+                     slice.skip(4); // Version + flags
+                     const entryCount = readU32Be(slice);
++                    if (track.sampleTable.seenTables.has('chunks'))
++                        this.sampleBudget.fail('duplicate sample table.');
++                    track.sampleTable.seenTables.add('chunks');
++                    this.sampleBudget.encoded(entryCount, 4, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(entryCount, 16);
+                     for (let i = 0; i < entryCount; i++) {
+                         const chunkOffset = readU32Be(slice);
+                         track.sampleTable.chunkOffsets.push(chunkOffset);
+@@ -1603,6 +1712,11 @@ export class IsobmffDemuxer extends Demuxer {
+                     }
+                     slice.skip(4); // Version + flags
+                     const entryCount = readU32Be(slice);
++                    if (track.sampleTable.seenTables.has('chunks'))
++                        this.sampleBudget.fail('duplicate sample table.');
++                    track.sampleTable.seenTables.add('chunks');
++                    this.sampleBudget.encoded(entryCount, 8, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(entryCount, 16);
+                     for (let i = 0; i < entryCount; i++) {
+                         const chunkOffset = readU64Be(slice);
+                         track.sampleTable.chunkOffsets.push(chunkOffset);
+@@ -1663,6 +1777,8 @@ export class IsobmffDemuxer extends Demuxer {
+                     const readTrunNum = functions[lengthSizeOfTrunNum];
+                     const readSampleNum = functions[lengthSizeOfSampleNum];
+                     const numberOfEntries = readU32Be(slice);
++                    this.sampleBudget.encoded(numberOfEntries, (version === 1 ? 16 : 8) + lengthSizeOfTrafNum + lengthSizeOfTrunNum + lengthSizeOfSampleNum + 3, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(numberOfEntries, 112);
+                     for (let i = 0; i < numberOfEntries; i++) {
+                         const time = version === 1 ? readU64Be(slice) : readU32Be(slice);
+                         const moofOffset = version === 1 ? readU64Be(slice) : readU32Be(slice);
+@@ -1690,6 +1806,7 @@ export class IsobmffDemuxer extends Demuxer {
+                 break;
+             case 'moof':
+                 {
++                    this.sampleBudget.currentFragmentBytes = 0;
+                     this.currentFragment = {
+                         moofOffset: startPos,
+                         moofSize: boxInfo.totalSize,
+@@ -1699,6 +1816,8 @@ export class IsobmffDemuxer extends Demuxer {
+                     };
+                     this.readContiguousBoxes(slice.slice(contentStartPos, boxInfo.contentSize));
+                     this.lastReadFragment = this.currentFragment;
++                    this.sampleBudget.lastFragmentBytes = this.sampleBudget.currentFragmentBytes;
++                    this.sampleBudget.currentFragmentBytes = 0;
+                     this.currentFragment = null;
+                 }
+                 ;
+@@ -1718,6 +1837,7 @@ export class IsobmffDemuxer extends Demuxer {
+                                 this.currentFragment.trackData.delete(this.currentTrack.id);
+                                 break cond;
+                             }
++                            this.sampleBudget.reserve(trackData.samples.length, 112, true);
+                             trackData.presentationTimestamps = trackData.samples
+                                 .map((x, i) => ({ presentationTimestamp: x.presentationTimestamp, sampleIndex: i }))
+                                 .sort((a, b) => a.presentationTimestamp - b.presentationTimestamp);
+@@ -1889,6 +2009,16 @@ export class IsobmffDemuxer extends Demuxer {
+                         };
+                         this.currentFragment.trackData.set(track.id, trackData);
+                     }
++                    const fieldsPerSample = Number(sampleDurationPresent) + Number(sampleSizePresent)
++                        + Number(sampleFlagsPresent) + Number(sampleCompositionTimeOffsetsPresent);
++                    this.sampleBudget.encoded(sampleCount, fieldsPerSample * 4, boxEndPos - slice.filePos);
++                    this.sampleBudget.fragment(this.currentFragment.moofOffset, track, sampleCount, trackData.samples.length + sampleCount);
++                    if ((!sampleDurationPresent && !Number.isSafeInteger(trackData.currentTimestamp
++                        + sampleCount * (track.currentFragmentState.defaultSampleDuration ?? 0)))
++                        || (!sampleSizePresent && !Number.isSafeInteger(trackData.currentOffset
++                            + sampleCount * (track.currentFragmentState.defaultSampleSize ?? 0)))) {
++                        this.sampleBudget.fail('invalid fragment arithmetic.');
++                    }
+                     for (let i = 0; i < sampleCount; i++) {
+                         let sampleDuration;
+                         if (sampleDurationPresent) {
+@@ -1926,6 +2056,11 @@ export class IsobmffDemuxer extends Demuxer {
+                                 sampleCompositionTimeOffset = readI32Be(slice);
+                             }
+                         }
++                        if (!Number.isSafeInteger(trackData.currentTimestamp + sampleDuration)
++                            || !Number.isSafeInteger(trackData.currentTimestamp + sampleCompositionTimeOffset)
++                            || !Number.isSafeInteger(trackData.currentOffset + sampleSize) || trackData.currentOffset < 0) {
++                            this.sampleBudget.fail('invalid fragment arithmetic.');
++                        }
+                         const isKeyFrame = !(sampleFlags & 0x00010000);
+                         trackData.samples.push({
+                             presentationTimestamp: trackData.currentTimestamp + sampleCompositionTimeOffset,
+@@ -1961,6 +2096,8 @@ export class IsobmffDemuxer extends Demuxer {
+                     }
+                     const defaultSampleInfoSize = readU8(slice);
+                     const sampleCount = readU32Be(slice);
++                    this.sampleBudget.encoded(defaultSampleInfoSize === 0 ? sampleCount : 0, 1, boxEndPos - slice.filePos);
++                    this.sampleBudget.reserve(sampleCount, 128);
+                     let sampleSizes = null;
+                     if (defaultSampleInfoSize === 0 && sampleCount > 0) {
+                         sampleSizes = readBytes(slice, sampleCount);
+@@ -2024,6 +2161,7 @@ export class IsobmffDemuxer extends Demuxer {
+                     const sampleCount = readU32Be(slice);
+                     const ivSize = track.encryptionInfo.defaultPerSampleIvSize;
+                     assert(ivSize !== null);
++                    this.sampleBudget.reserve(Math.min(sampleCount, trackData.samples.length), 128, true);
+                     for (let i = 0; i < Math.min(sampleCount, trackData.samples.length); i++) {
+                         // Normalize the IV to 16 bytes so downstream code can assume a full-length buffer. For CTR with
+                         // an 8-byte per-sample IV the lower 8 bytes are zero (that's the CENC spec's block counter start);
+@@ -2038,6 +2176,8 @@ export class IsobmffDemuxer extends Demuxer {
+                         let subsamples = null;
+                         if (useSubsamples) {
+                             const subsampleCount = readU16Be(slice);
++                            this.sampleBudget.encoded(subsampleCount, 6, boxEndPos - slice.filePos);
++                            this.sampleBudget.reserve(subsampleCount, 80, true);
+                             subsamples = [];
+                             for (let j = 0; j < subsampleCount; j++) {
+                                 const clearLen = readU16Be(slice);
+@@ -2642,6 +2782,9 @@ class IsobmffTrackBacking {
              data = PLACEHOLDER_DATA;
          }
          else {
@@ -151,7 +527,16 @@ index 86b79279f0532c79114f73696e1c2530ab90273c..bbd368b7e07e6b8c604f384342831231
              let slice = this.internalTrack.demuxer.reader.requestSlice(sampleInfo.sampleOffset, sampleInfo.sampleSize);
              if (isThenable(slice))
                  slice = await slice;
-@@ -2682,6 +2685,9 @@ class IsobmffTrackBacking {
+@@ -2652,7 +2795,7 @@ class IsobmffTrackBacking {
+             if (this.internalTrack.encryptionInfo) {
+                 let sampleEncryption = null;
+                 if (this.internalTrack.encryptionAuxInfo) {
+-                    const entries = await resolveEncryptionAuxInfo(this.internalTrack.demuxer.reader, this.internalTrack.encryptionInfo, this.internalTrack.encryptionAuxInfo);
++                    const entries = await resolveEncryptionAuxInfo(this.internalTrack.demuxer.reader, this.internalTrack.encryptionInfo, this.internalTrack.encryptionAuxInfo, (count, cost) => this.internalTrack.demuxer.sampleBudget.reserve(count, cost));
+                     if (sampleIndex < entries.length) {
+                         sampleEncryption = entries[sampleIndex];
+                     }
+@@ -2682,6 +2825,9 @@ class IsobmffTrackBacking {
              data = PLACEHOLDER_DATA;
          }
          else {
@@ -161,6 +546,114 @@ index 86b79279f0532c79114f73696e1c2530ab90273c..bbd368b7e07e6b8c604f384342831231
              let slice = this.internalTrack.demuxer.reader.requestSlice(fragmentSample.byteOffset, fragmentSample.byteSize);
              if (isThenable(slice))
                  slice = await slice;
+@@ -3108,7 +3254,7 @@ const getOrCreateEncryptionAuxInfo = (track) => {
+         };
+     }
+ };
+-const resolveEncryptionAuxInfo = async (reader, encryptionInfo, aux) => {
++const resolveEncryptionAuxInfo = async (reader, encryptionInfo, aux, reserveMetadata) => {
+     if (aux.resolved) {
+         return aux.resolved;
+     }
+@@ -3151,6 +3297,7 @@ const resolveEncryptionAuxInfo = async (reader, encryptionInfo, aux) => {
+         let subsamples = null;
+         if (entrySize > ivSize) {
+             const subsampleCount = readU16Be(slice);
++            reserveMetadata(subsampleCount, 80);
+             subsamples = [];
+             for (let j = 0; j < subsampleCount; j++) {
+                 const clearLen = readU16Be(slice);
+diff --git a/dist/modules/src/isobmff/sample-budget.js b/dist/modules/src/isobmff/sample-budget.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..b994275aca28a8cc3ad933ba369442f61fac1a74
+--- /dev/null
++++ b/dist/modules/src/isobmff/sample-budget.js
+@@ -0,0 +1,85 @@
++// Input-wide MP4 sample/index accounting. Costs include array spare capacity,
++// object/reference overhead and sort scratch; they are policy units, not measured heap bytes.
++export class IsobmffSampleBudget {
++    constructor(input) {
++        this.input = input;
++        this.retainedBytes = 0;
++        this.uniqueFragmentBytes = 0;
++        this.currentFragmentBytes = 0;
++        this.lastFragmentBytes = 0;
++        this.totalSamples = 0;
++        this.error = null;
++        this.tracks = new Map();
++        this.fragments = new Map();
++    }
++    fail(message) {
++        this.error ??= new RangeError('ISOBMFF sample metadata: ' + message);
++        throw this.error;
++    }
++    check() {
++        if (this.error)
++            throw this.error;
++    }
++    count(count) {
++        this.check();
++        if (!Number.isSafeInteger(count) || count < 0 || count > this.input._maxIsobmffSamples) {
++            this.fail('sample count exceeds the configured safety limit.');
++        }
++    }
++    encoded(count, bytesPerEntry, remainingBytes) {
++        this.count(count);
++        const bytes = count * bytesPerEntry;
++        if (!Number.isSafeInteger(bytes) || bytes > remainingBytes) {
++            this.fail('truncated or invalid sample table.');
++        }
++    }
++    reserve(count, cost, fragment = false) {
++        this.count(count);
++        const bytes = count * cost;
++        const limit = this.input._maxIsobmffMetadataBytes;
++        if (!Number.isSafeInteger(bytes)
++            || bytes > limit - this.retainedBytes - this.currentFragmentBytes - this.lastFragmentBytes
++            || (!fragment && bytes > limit - this.retainedBytes - this.uniqueFragmentBytes)) {
++            this.fail('allocation exceeds the configured memory limit.');
++        }
++        if (fragment)
++            this.currentFragmentBytes += bytes;
++        else
++            this.retainedBytes += bytes;
++    }
++    track(track, table, addedFragments = 0) {
++        const previous = this.tracks.get(track) ?? { table: 0, fragments: 0 };
++        const nextTable = Math.max(previous.table, table);
++        const fragments = previous.fragments + addedFragments;
++        const added = nextTable - previous.table + addedFragments;
++        this.count(nextTable + fragments);
++        this.count(this.totalSamples + added);
++        if (!this.tracks.has(track))
++            this.reserve(1, 128);
++        this.totalSamples += added;
++        this.tracks.set(track, { table: nextTable, fragments });
++    }
++    fragment(offset, track, count, runTotal) {
++        this.count(runTotal);
++        let counts = this.fragments.get(offset);
++        if (!counts) {
++            this.reserve(1, 128);
++            counts = new Map();
++            this.fragments.set(offset, counts);
++        }
++        const previous = counts.get(track) ?? 0;
++        const added = Math.max(0, runTotal - previous);
++        this.track(track, 0, added);
++        if (!counts.has(track))
++            this.reserve(1, 96);
++        // A fragment sample plus mapped presentation entry/sort references costs 304 units.
++        const bytes = added * 304;
++        if (!Number.isSafeInteger(bytes)
++            || bytes > this.input._maxIsobmffMetadataBytes - this.retainedBytes - this.uniqueFragmentBytes) {
++            this.fail('cumulative fragment work exceeds the configured memory limit.');
++        }
++        this.uniqueFragmentBytes += bytes;
++        counts.set(track, Math.max(previous, runTotal));
++        this.reserve(count, 192, true);
++    }
++}
 diff --git a/dist/modules/src/matroska/matroska-demuxer.js b/dist/modules/src/matroska/matroska-demuxer.js
 index 5a3579537995b6a3672f130ae67c67d69f081bdc..33023af6a751ec099dd9ccd52cff95be419949d7 100644
 --- a/dist/modules/src/matroska/matroska-demuxer.js
@@ -657,7 +1150,7 @@ index 9bd1aa06dad9509cc9ac9bc5654b4ae74d9c0828..d86ff749decd2fce6d876e7281edb94d
              return null; // Invalid packet, treat it as end of stream
          }
 diff --git a/dist/modules/src/reader.d.ts b/dist/modules/src/reader.d.ts
-index da0db97b8cfe01f9fc8ea552fdc90c9af3276c3e..096acfd6f8b2239121be54f4f3f3a539faed0b0f 100644
+index da0db97b8cfe01f9fc8ea552fdc90c9af3276c3e..affc312bdd8e3d3ae76e517927e93df2781c26b9 100644
 --- a/dist/modules/src/reader.d.ts
 +++ b/dist/modules/src/reader.d.ts
 @@ -9,7 +9,8 @@ import { MaybePromise } from './misc.js';
@@ -808,7 +1301,7 @@ index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a22417
  							currentPos,
  							size,
 diff --git a/src/hls/hls-segmented-input.ts b/src/hls/hls-segmented-input.ts
-index 3f28cd7ff02167740822da1be5641aad90fcc473..1ab57952aa708d9fa68d66147050509c73fa5469 100644
+index 3f28cd7ff02167740822da1be5641aad90fcc473..f742ad8b16aad4001a76793db65cfbe1b427de51 100644
 --- a/src/hls/hls-segmented-input.ts
 +++ b/src/hls/hls-segmented-input.ts
 @@ -129,7 +129,7 @@ export class HlsSegmentedInput extends SegmentedInput {
@@ -840,21 +1333,23 @@ index 3f28cd7ff02167740822da1be5641aad90fcc473..1ab57952aa708d9fa68d66147050509c
  							const keySlice = await keyReader.requestSlice(0, AES_128_BLOCK_SIZE);
  							if (!keySlice) {
  								throw new Error('Invalid AES-128 key; expected at least 16 bytes of data.');
-@@ -728,6 +731,9 @@ export class HlsSegmentedInput extends SegmentedInput {
+@@ -728,6 +731,11 @@ export class HlsSegmentedInput extends SegmentedInput {
  			initInput: initInput ?? undefined,
  			formatOptions,
  		});
 +		input._maxContiguousReadBytes = this.input._maxContiguousReadBytes;
 +		input._maxEncodedPacketBytes = this.input._maxEncodedPacketBytes;
 +		input._maxBufferedPacketBytes = this.input._maxBufferedPacketBytes;
++		input._maxIsobmffMetadataBytes = this.input._maxIsobmffMetadataBytes;
++		input._maxIsobmffSamples = this.input._maxIsobmffSamples;
  
  		input._onFormatDetermined = (format) => {
  			if (
 diff --git a/src/input.ts b/src/input.ts
-index a58fd76e6b0dbe291f620a3148249879a81f31fd..f95862968fac617708a07bce3f2e4709a5c70410 100644
+index a58fd76e6b0dbe291f620a3148249879a81f31fd..7de92d9945302b85eccdfa15fec7e47a80aef416 100644
 --- a/src/input.ts
 +++ b/src/input.ts
-@@ -136,6 +136,12 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
+@@ -136,6 +136,16 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
  	/** @internal */
  	_formatOptions: InputFormatOptions;
  	/** @internal */
@@ -864,10 +1359,14 @@ index a58fd76e6b0dbe291f620a3148249879a81f31fd..f95862968fac617708a07bce3f2e4709
 +	/** @internal */
 +	_maxBufferedPacketBytes = Infinity;
 +	/** @internal */
++	_maxIsobmffMetadataBytes = Infinity;
++	/** @internal */
++	_maxIsobmffSamples = Infinity;
++	/** @internal */
  	_onFormatDetermined: ((format: InputFormat) => void) | null = null;
  
  	/** True if the input has been disposed. */
-@@ -168,7 +174,6 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
+@@ -168,7 +178,6 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
  		if (options.formatOptions !== undefined) {
  			validateInputFormatOptions(options.formatOptions, 'formatOptions');
  		}
@@ -875,7 +1374,7 @@ index a58fd76e6b0dbe291f620a3148249879a81f31fd..f95862968fac617708a07bce3f2e4709
  		this._formats = options.formats;
  		this._initInput = options.initInput ?? null;
  		this._formatOptions = options.formatOptions ?? {};
-@@ -270,7 +275,7 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
+@@ -270,7 +279,7 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
  	/** @internal */
  	_getDemuxer() {
  		return this._demuxerPromise ??= (async () => {
@@ -885,10 +1384,399 @@ index a58fd76e6b0dbe291f620a3148249879a81f31fd..f95862968fac617708a07bce3f2e4709
  
  			for (const format of this._formats) {
 diff --git a/src/isobmff/isobmff-demuxer.ts b/src/isobmff/isobmff-demuxer.ts
-index 17d648dc2e66532b0a40d50778de7af3e04de05a..bb3cf9c3a6dad5e9a489cfd90b09e63a5c7ed0f3 100644
+index 17d648dc2e66532b0a40d50778de7af3e04de05a..0512e5f84635fab05eb334b11452bbddb6a10f0f 100644
 --- a/src/isobmff/isobmff-demuxer.ts
 +++ b/src/isobmff/isobmff-demuxer.ts
-@@ -3176,6 +3176,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+@@ -109,6 +109,7 @@ import {
+ import { DEFAULT_TRACK_DISPOSITION, MetadataTags, RichImageData, TrackDisposition } from '../metadata';
+ import { AC3_SAMPLE_RATES } from '../../shared/ac3-misc';
+ import { Bitstream } from '../../shared/bitstream';
++import { IsobmffSampleBudget } from './sample-budget';
+ import { Aes128CbcContext } from '../aes';
+ import { Logging } from '../logging';
+ 
+@@ -187,6 +188,10 @@ type InternalVideoTrack = InternalTrack & {	info: { type: 'video' } };
+ type InternalAudioTrack = InternalTrack & {	info: { type: 'audio' } };
+ 
+ type SampleTable = {
++	declaredSampleCount: number | null;
++	timingSampleCount: number;
++	compositionSampleCount: number | null;
++	seenTables: Set<string>;
+ 	sampleTimingEntries: SampleTimingEntry[];
+ 	sampleCompositionTimeOffsets: SampleCompositionTimeOffsetEntry[];
+ 	sampleSizes: number[];
+@@ -336,10 +341,13 @@ export class IsobmffDemuxer extends Demuxer {
+ 
+ 	decryptionKeyCache = new Map<string, Promise<Uint8Array>>();
+ 
++	sampleBudget: IsobmffSampleBudget;
++
+ 	constructor(input: Input) {
+ 		super(input);
+ 
+ 		this.reader = input._reader;
++		this.sampleBudget = new IsobmffSampleBudget(input);
+ 	}
+ 
+ 	override async getTrackBackings() {
+@@ -539,11 +547,16 @@ export class IsobmffDemuxer extends Demuxer {
+ 	}
+ 
+ 	getSampleTableForTrack(internalTrack: InternalTrack) {
++		this.sampleBudget.check();
+ 		if (internalTrack.sampleTable) {
+ 			return internalTrack.sampleTable;
+ 		}
+ 
+ 		const sampleTable: SampleTable = {
++			declaredSampleCount: null,
++			timingSampleCount: 0,
++			compositionSampleCount: null,
++			seenTables: new Set(),
+ 			sampleTimingEntries: [],
+ 			sampleCompositionTimeOffsets: [],
+ 			sampleSizes: [],
+@@ -565,9 +578,50 @@ export class IsobmffDemuxer extends Demuxer {
+ 		const stblContainerSlice = this.moovSlice.slice(internalTrack.sampleTableByteOffset);
+ 
+ 		this.currentTrack = internalTrack;
+-		this.traverseBox(stblContainerSlice);
++		try {
++			this.traverseBox(stblContainerSlice);
++		} catch (error) {
++			this.sampleBudget.error = error instanceof Error ? error : new Error(String(error));
++			throw this.sampleBudget.error;
++		} finally {
++			this.currentTrack = null;
++		}
+ 		this.currentTrack = null;
+ 
++		if ((sampleTable.declaredSampleCount !== null
++			&& sampleTable.declaredSampleCount !== sampleTable.timingSampleCount)
++			|| (sampleTable.compositionSampleCount !== null
++				&& sampleTable.compositionSampleCount !== sampleTable.timingSampleCount)) {
++			this.sampleBudget.fail('inconsistent sample counts.');
++		}
++		if (sampleTable.sampleToChunk.length > 0) {
++			let chunkSamples = 0;
++			if (sampleTable.sampleToChunk[0]!.startChunkIndex !== 0) {
++				this.sampleBudget.fail('invalid first sample chunk.');
++			}
++			for (let i = 0; i < sampleTable.sampleToChunk.length; i++) {
++				const entry = sampleTable.sampleToChunk[i]!;
++				const end = sampleTable.sampleToChunk[i + 1]?.startChunkIndex ?? sampleTable.chunkOffsets.length;
++				if (end <= entry.startChunkIndex || end > sampleTable.chunkOffsets.length) {
++					this.sampleBudget.fail('sample chunk range exceeds its offset table.');
++				}
++				chunkSamples += (end - entry.startChunkIndex) * entry.samplesPerChunk;
++				this.sampleBudget.count(chunkSamples);
++			}
++			if (chunkSamples !== sampleTable.timingSampleCount) {
++				this.sampleBudget.fail('inconsistent sample chunk counts.');
++			}
++		}
++		if (sampleTable.keySampleIndices) {
++			let previous = -1;
++			for (const index of sampleTable.keySampleIndices) {
++				if (index <= previous || (index >= sampleTable.timingSampleCount
++					&& !(sampleTable.timingSampleCount === 0 && index === 0))) {
++					this.sampleBudget.fail('invalid key sample index.');
++				}
++				previous = index;
++			}
++		}
+ 		const isPcmCodec = internalTrack.info?.type === 'audio'
+ 			&& internalTrack.info.codec
+ 			&& (PCM_AUDIO_CODECS as readonly string[]).includes(internalTrack.info.codec);
+@@ -584,6 +638,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 			assert(internalTrack.info?.type === 'audio');
+ 			const pcmInfo = parsePcmCodec(internalTrack.info.codec as PcmAudioCodec);
+ 
++			this.sampleBudget.reserve(sampleTable.chunkOffsets.length, 112);
+ 			const newSampleTimingEntries: SampleTimingEntry[] = [];
+ 			const newSampleSizes: number[] = [];
+ 
+@@ -651,6 +706,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 		if (sampleTable.sampleCompositionTimeOffsets.length > 0) {
+ 			// If composition time offsets are defined, we must build a list of all presentation timestamps and then
+ 			// sort them
++			this.sampleBudget.reserve(sampleTable.timingSampleCount, 128);
+ 			sampleTable.presentationTimestamps = [];
+ 
+ 			for (const entry of sampleTable.sampleTimingEntries) {
+@@ -688,6 +744,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 	}
+ 
+ 	async readFragment(startPos: number): Promise<Fragment> {
++		this.sampleBudget.check();
+ 		if (this.lastReadFragment?.moofOffset === startPos) {
+ 			return this.lastReadFragment;
+ 		}
+@@ -753,6 +810,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 				insertionIndex === -1
+ 				|| fragmentPositionCache[insertionIndex]!.moofOffset !== fragment.moofOffset
+ 			) {
++				this.sampleBudget.reserve(1, 96);
+ 				fragmentPositionCache.splice(insertionIndex + 1, 0, {
+ 					moofOffset: fragment.moofOffset,
+ 					startTimestamp: trackData.startTimestamp,
+@@ -766,6 +824,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 					this.reader,
+ 					track.encryptionInfo,
+ 					trackData.encryptionAuxInfo,
++					(count, cost) => this.sampleBudget.reserve(count, cost),
+ 				);
+ 
+ 				for (let i = 0; i < Math.min(trackData.samples.length, entries.length); i++) {
+@@ -807,6 +866,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 	}
+ 
+ 	traverseBox(slice: FileSlice): boolean {
++		this.sampleBudget.check();
+ 		const startPos = slice.filePos;
+ 		const boxInfo = readBoxHeader(slice);
+ 		if (!boxInfo) {
+@@ -1849,6 +1909,10 @@ export class IsobmffDemuxer extends Demuxer {
+ 				slice.skip(4); // Version + flags
+ 
+ 				const entryCount = readU32Be(slice);
++				if (track.sampleTable.seenTables.has('stts')) this.sampleBudget.fail('duplicate sample table.');
++				track.sampleTable.seenTables.add('stts');
++				this.sampleBudget.encoded(entryCount, 8, boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(entryCount, 96);
+ 
+ 				let currentIndex = 0;
+ 				let currentTimestamp = 0;
+@@ -1856,6 +1920,10 @@ export class IsobmffDemuxer extends Demuxer {
+ 				for (let i = 0; i < entryCount; i++) {
+ 					const sampleCount = readU32Be(slice);
+ 					const sampleDelta = readU32Be(slice);
++					this.sampleBudget.track(track, currentIndex + sampleCount);
++					if (!Number.isSafeInteger(currentTimestamp + sampleCount * sampleDelta)) {
++						this.sampleBudget.fail('invalid timing arithmetic.');
++					}
+ 
+ 					track.sampleTable.sampleTimingEntries.push({
+ 						startIndex: currentIndex,
+@@ -1867,6 +1935,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 					currentIndex += sampleCount;
+ 					currentTimestamp += sampleCount * sampleDelta;
+ 				}
++				track.sampleTable.timingSampleCount = currentIndex;
+ 			}; break;
+ 
+ 			case 'ctts': {
+@@ -1882,11 +1951,16 @@ export class IsobmffDemuxer extends Demuxer {
+ 				slice.skip(1 + 3); // Version + flags
+ 
+ 				const entryCount = readU32Be(slice);
++				if (track.sampleTable.seenTables.has('ctts')) this.sampleBudget.fail('duplicate sample table.');
++				track.sampleTable.seenTables.add('ctts');
++				this.sampleBudget.encoded(entryCount, 8, boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(entryCount, 96);
+ 
+ 				let sampleIndex = 0;
+ 				for (let i = 0; i < entryCount; i++) {
+ 					const sampleCount = readU32Be(slice);
+ 					const sampleOffset = readI32Be(slice);
++					this.sampleBudget.track(track, sampleIndex + sampleCount);
+ 
+ 					track.sampleTable.sampleCompositionTimeOffsets.push({
+ 						startIndex: sampleIndex,
+@@ -1896,6 +1970,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 
+ 					sampleIndex += sampleCount;
+ 				}
++				track.sampleTable.compositionSampleCount = sampleIndex;
+ 			}; break;
+ 
+ 			case 'stsz': {
+@@ -1912,6 +1987,12 @@ export class IsobmffDemuxer extends Demuxer {
+ 
+ 				const sampleSize = readU32Be(slice);
+ 				const sampleCount = readU32Be(slice);
++				if (track.sampleTable.seenTables.has('sizes')) this.sampleBudget.fail('duplicate size table.');
++				track.sampleTable.seenTables.add('sizes');
++				this.sampleBudget.track(track, sampleCount);
++				track.sampleTable.declaredSampleCount = sampleCount;
++				this.sampleBudget.encoded(sampleSize === 0 ? sampleCount : 0, 4, boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(sampleSize === 0 ? sampleCount : 1, 16);
+ 
+ 				if (sampleSize === 0) {
+ 					for (let i = 0; i < sampleCount; i++) {
+@@ -1938,6 +2019,15 @@ export class IsobmffDemuxer extends Demuxer {
+ 
+ 				const fieldSize = readU8(slice); // in bits
+ 				const sampleCount = readU32Be(slice);
++				if (track.sampleTable.seenTables.has('sizes')) this.sampleBudget.fail('duplicate size table.');
++				track.sampleTable.seenTables.add('sizes');
++				this.sampleBudget.track(track, sampleCount);
++				track.sampleTable.declaredSampleCount = sampleCount;
++				if (fieldSize !== 4 && fieldSize !== 8 && fieldSize !== 16) {
++					this.sampleBudget.fail('unsupported compact sample-size width.');
++				}
++				this.sampleBudget.encoded(Math.ceil(sampleCount * fieldSize / 8), 1, boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(sampleCount, 16);
+ 
+ 				const bytes = readBytes(slice, Math.ceil(sampleCount * fieldSize / 8));
+ 				const bitstream = new Bitstream(bytes);
+@@ -1963,6 +2053,10 @@ export class IsobmffDemuxer extends Demuxer {
+ 				track.sampleTable.keySampleIndices = [];
+ 
+ 				const entryCount = readU32Be(slice);
++				if (track.sampleTable.seenTables.has('stss')) this.sampleBudget.fail('duplicate sample table.');
++				track.sampleTable.seenTables.add('stss');
++				this.sampleBudget.encoded(entryCount, 4, boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(entryCount + 1, 16);
+ 				for (let i = 0; i < entryCount; i++) {
+ 					const sampleIndex = readU32Be(slice) - 1; // Convert to 0-indexed
+ 					track.sampleTable.keySampleIndices.push(sampleIndex);
+@@ -1988,11 +2082,19 @@ export class IsobmffDemuxer extends Demuxer {
+ 				slice.skip(4);
+ 
+ 				const entryCount = readU32Be(slice);
++				if (track.sampleTable.seenTables.has('stsc')) this.sampleBudget.fail('duplicate sample table.');
++				track.sampleTable.seenTables.add('stsc');
++				this.sampleBudget.encoded(entryCount, 12, boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(entryCount, 96);
+ 
+ 				for (let i = 0; i < entryCount; i++) {
+ 					const startChunkIndex = readU32Be(slice) - 1; // Convert to 0-indexed
+ 					const samplesPerChunk = readU32Be(slice);
+ 					const sampleDescriptionIndex = readU32Be(slice);
++					if (startChunkIndex < 0 || samplesPerChunk === 0
++						|| (i > 0 && startChunkIndex <= track.sampleTable.sampleToChunk[i - 1]!.startChunkIndex)) {
++						this.sampleBudget.fail('invalid sample-to-chunk table.');
++					}
+ 
+ 					track.sampleTable.sampleToChunk.push({
+ 						startSampleIndex: -1,
+@@ -2011,6 +2113,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 						const chunkCount = nextChunk.startChunkIndex
+ 							- track.sampleTable.sampleToChunk[i]!.startChunkIndex;
+ 						startSampleIndex += chunkCount * track.sampleTable.sampleToChunk[i]!.samplesPerChunk;
++						this.sampleBudget.count(startSampleIndex);
+ 					}
+ 				}
+ 			}; break;
+@@ -2028,6 +2131,10 @@ export class IsobmffDemuxer extends Demuxer {
+ 				slice.skip(4); // Version + flags
+ 
+ 				const entryCount = readU32Be(slice);
++				if (track.sampleTable.seenTables.has('chunks')) this.sampleBudget.fail('duplicate sample table.');
++				track.sampleTable.seenTables.add('chunks');
++				this.sampleBudget.encoded(entryCount, 4, boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(entryCount, 16);
+ 
+ 				for (let i = 0; i < entryCount; i++) {
+ 					const chunkOffset = readU32Be(slice);
+@@ -2048,6 +2155,10 @@ export class IsobmffDemuxer extends Demuxer {
+ 				slice.skip(4); // Version + flags
+ 
+ 				const entryCount = readU32Be(slice);
++				if (track.sampleTable.seenTables.has('chunks')) this.sampleBudget.fail('duplicate sample table.');
++				track.sampleTable.seenTables.add('chunks');
++				this.sampleBudget.encoded(entryCount, 8, boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(entryCount, 16);
+ 
+ 				for (let i = 0; i < entryCount; i++) {
+ 					const chunkOffset = readU64Be(slice);
+@@ -2110,6 +2221,10 @@ export class IsobmffDemuxer extends Demuxer {
+ 				const readSampleNum = functions[lengthSizeOfSampleNum]!;
+ 
+ 				const numberOfEntries = readU32Be(slice);
++				this.sampleBudget.encoded(numberOfEntries,
++					(version === 1 ? 16 : 8) + lengthSizeOfTrafNum + lengthSizeOfTrunNum + lengthSizeOfSampleNum + 3,
++					boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(numberOfEntries, 112);
+ 				for (let i = 0; i < numberOfEntries; i++) {
+ 					const time = version === 1 ? readU64Be(slice) : readU32Be(slice);
+ 					const moofOffset = version === 1 ? readU64Be(slice) : readU32Be(slice);
+@@ -2140,6 +2255,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 			}; break;
+ 
+ 			case 'moof': {
++				this.sampleBudget.currentFragmentBytes = 0;
+ 				this.currentFragment = {
+ 					moofOffset: startPos,
+ 					moofSize: boxInfo.totalSize,
+@@ -2151,6 +2267,8 @@ export class IsobmffDemuxer extends Demuxer {
+ 				this.readContiguousBoxes(slice.slice(contentStartPos, boxInfo.contentSize));
+ 
+ 				this.lastReadFragment = this.currentFragment;
++				this.sampleBudget.lastFragmentBytes = this.sampleBudget.currentFragmentBytes;
++				this.sampleBudget.currentFragmentBytes = 0;
+ 				this.currentFragment = null;
+ 			}; break;
+ 
+@@ -2172,6 +2290,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 							break cond;
+ 						}
+ 
++						this.sampleBudget.reserve(trackData.samples.length, 112, true);
+ 						trackData.presentationTimestamps = trackData.samples
+ 							.map((x, i) => ({ presentationTimestamp: x.presentationTimestamp, sampleIndex: i }))
+ 							.sort((a, b) => a.presentationTimestamp - b.presentationTimestamp);
+@@ -2360,6 +2479,19 @@ export class IsobmffDemuxer extends Demuxer {
+ 					this.currentFragment.trackData.set(track.id, trackData);
+ 				}
+ 
++				const fieldsPerSample = Number(sampleDurationPresent) + Number(sampleSizePresent)
++					+ Number(sampleFlagsPresent) + Number(sampleCompositionTimeOffsetsPresent);
++				this.sampleBudget.encoded(sampleCount, fieldsPerSample * 4, boxEndPos - slice.filePos);
++				this.sampleBudget.fragment(this.currentFragment.moofOffset, track, sampleCount,
++					trackData.samples.length + sampleCount);
++
++				if ((!sampleDurationPresent && !Number.isSafeInteger(trackData.currentTimestamp
++					+ sampleCount * (track.currentFragmentState.defaultSampleDuration ?? 0)))
++					|| (!sampleSizePresent && !Number.isSafeInteger(trackData.currentOffset
++						+ sampleCount * (track.currentFragmentState.defaultSampleSize ?? 0)))) {
++					this.sampleBudget.fail('invalid fragment arithmetic.');
++				}
++
+ 				for (let i = 0; i < sampleCount; i++) {
+ 					let sampleDuration: number;
+ 					if (sampleDurationPresent) {
+@@ -2397,6 +2529,11 @@ export class IsobmffDemuxer extends Demuxer {
+ 						}
+ 					}
+ 
++					if (!Number.isSafeInteger(trackData.currentTimestamp + sampleDuration)
++						|| !Number.isSafeInteger(trackData.currentTimestamp + sampleCompositionTimeOffset)
++						|| !Number.isSafeInteger(trackData.currentOffset + sampleSize) || trackData.currentOffset < 0) {
++						this.sampleBudget.fail('invalid fragment arithmetic.');
++					}
+ 					const isKeyFrame = !(sampleFlags & 0x00010000);
+ 
+ 					trackData.samples.push({
+@@ -2436,6 +2573,8 @@ export class IsobmffDemuxer extends Demuxer {
+ 
+ 				const defaultSampleInfoSize = readU8(slice);
+ 				const sampleCount = readU32Be(slice);
++				this.sampleBudget.encoded(defaultSampleInfoSize === 0 ? sampleCount : 0, 1, boxEndPos - slice.filePos);
++				this.sampleBudget.reserve(sampleCount, 128);
+ 
+ 				let sampleSizes: Uint8Array | null = null;
+ 				if (defaultSampleInfoSize === 0 && sampleCount > 0) {
+@@ -2507,6 +2646,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 				const ivSize = track.encryptionInfo.defaultPerSampleIvSize;
+ 				assert(ivSize !== null);
+ 
++				this.sampleBudget.reserve(Math.min(sampleCount, trackData.samples.length), 128, true);
+ 				for (let i = 0; i < Math.min(sampleCount, trackData.samples.length); i++) {
+ 					// Normalize the IV to 16 bytes so downstream code can assume a full-length buffer. For CTR with
+ 					// an 8-byte per-sample IV the lower 8 bytes are zero (that's the CENC spec's block counter start);
+@@ -2521,6 +2661,8 @@ export class IsobmffDemuxer extends Demuxer {
+ 					let subsamples: SampleEncryptionInfo['subsamples'] = null;
+ 					if (useSubsamples) {
+ 						const subsampleCount = readU16Be(slice);
++						this.sampleBudget.encoded(subsampleCount, 6, boxEndPos - slice.filePos);
++						this.sampleBudget.reserve(subsampleCount, 80, true);
+ 						subsamples = [];
+ 						for (let j = 0; j < subsampleCount; j++) {
+ 							const clearLen = readU16Be(slice);
+@@ -3176,6 +3318,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
  		if (options.metadataOnly) {
  			data = PLACEHOLDER_DATA;
  		} else {
@@ -898,7 +1786,15 @@ index 17d648dc2e66532b0a40d50778de7af3e04de05a..bb3cf9c3a6dad5e9a489cfd90b09e63a
  			let slice = this.internalTrack.demuxer.reader.requestSlice(
  				sampleInfo.sampleOffset,
  				sampleInfo.sampleSize,
-@@ -3239,6 +3242,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+@@ -3195,6 +3340,7 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+ 						this.internalTrack.demuxer.reader,
+ 						this.internalTrack.encryptionInfo,
+ 						this.internalTrack.encryptionAuxInfo,
++						(count, cost) => this.internalTrack.demuxer.sampleBudget.reserve(count, cost),
+ 					);
+ 
+ 					if (sampleIndex < entries.length) {
+@@ -3239,6 +3385,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
  		if (options.metadataOnly) {
  			data = PLACEHOLDER_DATA;
  		} else {
@@ -908,6 +1804,115 @@ index 17d648dc2e66532b0a40d50778de7af3e04de05a..bb3cf9c3a6dad5e9a489cfd90b09e63a
  			let slice = this.internalTrack.demuxer.reader.requestSlice(
  				fragmentSample.byteOffset,
  				fragmentSample.byteSize,
+@@ -3811,6 +3960,7 @@ const resolveEncryptionAuxInfo = async (
+ 	reader: Reader,
+ 	encryptionInfo: TrackEncryptionInfo,
+ 	aux: SampleEncryptionAuxInfo,
++	reserveMetadata: (count: number, cost: number) => void,
+ ) => {
+ 	if (aux.resolved) {
+ 		return aux.resolved;
+@@ -3858,6 +4008,7 @@ const resolveEncryptionAuxInfo = async (
+ 		let subsamples: { clearLen: number; protectedLen: number }[] | null = null;
+ 		if (entrySize > ivSize) {
+ 			const subsampleCount = readU16Be(slice);
++			reserveMetadata(subsampleCount, 80);
+ 			subsamples = [];
+ 			for (let j = 0; j < subsampleCount; j++) {
+ 				const clearLen = readU16Be(slice);
+diff --git a/src/isobmff/sample-budget.ts b/src/isobmff/sample-budget.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c2150f01e1befee1781e5a457c172ff950aea542
+--- /dev/null
++++ b/src/isobmff/sample-budget.ts
+@@ -0,0 +1,87 @@
++// Input-wide MP4 sample/index accounting. Costs include array spare capacity,
++// object/reference overhead and sort scratch; they are policy units, not measured heap bytes.
++export class IsobmffSampleBudget {
++	retainedBytes = 0;
++	uniqueFragmentBytes = 0;
++	currentFragmentBytes = 0;
++	lastFragmentBytes = 0;
++	totalSamples = 0;
++	error: Error | null = null;
++	tracks = new Map<object, { table: number; fragments: number }>();
++	fragments = new Map<number, Map<object, number>>();
++
++	constructor(readonly input: { _maxIsobmffMetadataBytes: number; _maxIsobmffSamples: number }) {}
++
++	fail(message: string): never {
++		this.error ??= new RangeError('ISOBMFF sample metadata: ' + message);
++		throw this.error;
++	}
++
++	check() {
++		if (this.error) throw this.error;
++	}
++
++	count(count: number) {
++		this.check();
++		if (!Number.isSafeInteger(count) || count < 0 || count > this.input._maxIsobmffSamples) {
++			this.fail('sample count exceeds the configured safety limit.');
++		}
++	}
++
++	encoded(count: number, bytesPerEntry: number, remainingBytes: number) {
++		this.count(count);
++		const bytes = count * bytesPerEntry;
++		if (!Number.isSafeInteger(bytes) || bytes > remainingBytes) {
++			this.fail('truncated or invalid sample table.');
++		}
++	}
++
++	reserve(count: number, cost: number, fragment = false) {
++		this.count(count);
++		const bytes = count * cost;
++		const limit = this.input._maxIsobmffMetadataBytes;
++		if (!Number.isSafeInteger(bytes)
++			|| bytes > limit - this.retainedBytes - this.currentFragmentBytes - this.lastFragmentBytes
++			|| (!fragment && bytes > limit - this.retainedBytes - this.uniqueFragmentBytes)) {
++			this.fail('allocation exceeds the configured memory limit.');
++		}
++		if (fragment) this.currentFragmentBytes += bytes;
++		else this.retainedBytes += bytes;
++	}
++
++	track(track: object, table: number, addedFragments = 0) {
++		const previous = this.tracks.get(track) ?? { table: 0, fragments: 0 };
++		const nextTable = Math.max(previous.table, table);
++		const fragments = previous.fragments + addedFragments;
++		const added = nextTable - previous.table + addedFragments;
++		this.count(nextTable + fragments);
++		this.count(this.totalSamples + added);
++		if (!this.tracks.has(track)) this.reserve(1, 128);
++		this.totalSamples += added;
++		this.tracks.set(track, { table: nextTable, fragments });
++	}
++
++	fragment(offset: number, track: object, count: number, runTotal: number) {
++		this.count(runTotal);
++		let counts = this.fragments.get(offset);
++		if (!counts) {
++			this.reserve(1, 128);
++			counts = new Map();
++			this.fragments.set(offset, counts);
++		}
++		const previous = counts.get(track) ?? 0;
++		const added = Math.max(0, runTotal - previous);
++		this.track(track, 0, added);
++		if (!counts.has(track)) this.reserve(1, 96);
++		// A fragment sample plus mapped presentation entry/sort references costs 304 units.
++		const bytes = added * 304;
++		if (!Number.isSafeInteger(bytes)
++			|| bytes > this.input._maxIsobmffMetadataBytes - this.retainedBytes - this.uniqueFragmentBytes) {
++			this.fail('cumulative fragment work exceeds the configured memory limit.');
++		}
++		this.uniqueFragmentBytes += bytes;
++		counts.set(track, Math.max(previous, runTotal));
++		this.reserve(count, 192, true);
++	}
++}
++
 diff --git a/src/matroska/matroska-demuxer.ts b/src/matroska/matroska-demuxer.ts
 index 6a0f4225e8f3275012fa7ddd761578cd93a1020f..133a97ae89f7744d7dff9f85afdd49ad2e9b632c 100644
 --- a/src/matroska/matroska-demuxer.ts

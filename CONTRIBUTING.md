@@ -86,6 +86,28 @@ pinned. The table records execution stage, inputs, side effects and checks.
 
 The raw `.mjs` is retained because the controller has no declared TS transpilation/loader or generated-JS stale-output contract; revisit only when one exists, all profile assets/imports are updated together, and focused prepared-VM validation succeeds. The Node boundary suite runs `node --check` over every `validation/windows/**/*.mjs` file; the E2E output-contract and resource-profile specs cover related behavior. This does not establish desktop, physical codec, GPU or media performance acceptance.
 
+MP4 sample metadata uses the maintained MediaBunny patch and the limits in
+`src/utils/constants.ts`. Its 32 MiB policy reserve completes the 128 MiB demux
+envelope alongside source/packet and decoder-queue reserves. Scalar array entries
+cost 16 policy bytes, timing/chunk records 96, presentation objects plus sorting
+and inverse indices 128, and fragment samples plus presentation/sort data 304.
+These conservative accounting units cover retained objects, spare array capacity
+and overlapping index construction; they are not a measured browser heap bound.
+Tables share a per-Input allocation budget. Unique fragment offsets also share a
+cumulative work budget, while reparsing still reserves space alongside the prior
+fragment. Repeated visits do not spend the unique-fragment quota again.
+
+The separate 100,000,000 logical-sample ceiling bounds compact runs across tracks
+without treating every implicit PCM audio frame as an allocated JavaScript
+object. For comparison, 15 minutes at 48 kHz contains 43,200,000 PCM samples,
+whereas 15 minutes at the supported 120 fps conversion clamp contains 108,000
+video packets. Actual expanded tables remain constrained by the allocation
+reserve. Malformed, inconsistent or over-budget metadata fails before expansion;
+the caller disposes the input and the user can select another file. The focused
+installed-parser tests use reduced budgets. The Windows profile checks bounded
+production rejection and a subsequent GIF download in the same application
+document; it does not run a destructive out-of-memory test.
+
 Small workflow shell blocks remain runner bootstrap, checkout, output, and action-launch adapters; revisit them when tested Node entrypoints preserve trusted-source and write ordering. The Git hooks remain Bash because Git invokes them before pinned Node setup.
 
 ## Validation
