@@ -1812,10 +1812,15 @@ export async function run({ browser, root, output }) {
     await metadataError.waitFor({ state: 'visible', timeout: 10_000 });
     const errorText = await metadataError.textContent();
     assert(errorText?.includes('ISOBMFF sample metadata') && errorText.includes('sample count'));
-    assert.equal(await page.locator('[data-testid="choose-file-button"]').isEnabled(), true);
+    const selectDifferent = page.locator(
+      '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
+    );
+    assert.equal(await selectDifferent.isEnabled(), true);
     const rejectionMs = performance.now() - rejectedAt;
     assert(rejectionMs < 10_000, 'Over-budget metadata did not settle within the bounded observation');
     await recordScreenshot(page, outputRoot, 'mp4-sample-budget-error.png', artifacts);
+    await selectDifferent.click();
+    await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     const recoveredGif = await convertSmallFixture(page, started.url, smallFixture, 'gif', outputRoot, artifacts, true);
     assert.equal(await page.evaluate(() => performance.timeOrigin), documentIdentity,
       'Recovery must use the same application document');
