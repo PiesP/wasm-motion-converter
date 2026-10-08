@@ -9,6 +9,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { verifyAnimatedOutput } from './output-contract.mjs';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
+import { exerciseOfflineRecovery } from './offline-recovery.mjs';
 
 const PROFILE_ID = 'wmc-media';
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
@@ -1802,6 +1803,11 @@ export async function run({ browser, root, output }) {
     assert.equal(appLoad.crossOriginIsolated, true, 'COOP/COEP did not produce a cross-origin-isolated app');
 
     const checks = [{ id: 'app-load', status: 'passed', ...appLoad }];
+    checks.push(await exerciseOfflineRecovery(browser, started.url, outputRoot));
+    for (const file of ['offline-app-recovery.png', 'offline-static-recovery.png']) {
+      const bytes = await readFile(join(outputRoot, file));
+      artifacts.push({ kind: 'screenshot', file, bytes: bytes.byteLength, sha256: sha256(bytes) });
+    }
     const budgetFixture = makeMp4BudgetFixture(await readFile(smallFixture));
     const documentIdentity = await page.evaluate(() => performance.timeOrigin);
     const rejectedAt = performance.now();
