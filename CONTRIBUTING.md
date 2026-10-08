@@ -76,7 +76,7 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `.github/workflows/deep-checks.yaml` | `scripts/ci/deep-check-reuse.ts` owns bounded duplication/mutation reuse. The workflow copies `scripts/ci/{pinned-tools.json,pinned-tools.ts,install-nose.ts}` from the reviewed tool revision before required Nose installation. | `scripts/ci/deep-check-reuse.test.ts` and `test/unit/config/pinned-tools-cli.test.ts`; installer digest/network failure remains fatal. |
 | `.github/workflows/security.yaml` pinned tools and OSV | `scripts/ci/pinned-tools.json` owns tool versions/digests; trusted private `pinned-tools.ts` and `check-pinned-tools.ts` provide image env and freshness checks. The independently pinned browser-core `automation/actions/prepare-osv` supplies the private `consumer` OSV helper; `packages/core` is the runtime gitlink. | `test/unit/config/pinned-tools-cli.test.ts`, `test/unit/config/osv-workflow-composition.test.ts`, and provider OSV fixtures; `docs/osv-workflow.md` explains trust order and live-container limits. |
 | `.github/workflows/release.yaml` | `scripts/release/verify-source.ts` checks protected tagged source before validation fan-out; `prepare.ts` creates local files and `publication-guard.ts` plus `legacy-state.ts` own the locked public write decision. Short runner `run:` blocks select checkout, append outputs and launch actions. | `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts`, `scripts/release/verify-source.test.ts` and artifact inspection. Preparation is not publication. |
-| `.github/workflows/dependabot-auto-merge*.yaml`, `update-browser-core.yaml` | Dependabot gate artifact precedes `scripts/ci/dependabot-apply.ts` validation and exact PR/commit rechecks before approval/merge. `scripts/ci/update-browser-core.ts` verifies remote SHA/impact and owns gitlink PR preparation/publication. Runner shell passes event inputs and bounded output/checkout glue. | `test/unit/config/{dependabot-auto-merge,browser-core-automation}.test.ts` and `scripts/ci/repository-authority.test.ts`; hosted exact-SHA checks establish privileged results. |
+| `.github/workflows/dependabot-auto-merge*.yaml`, `update-browser-core.yaml` | Dependabot gate artifact precedes `scripts/ci/dependabot-apply.ts` validation rejects old or positive decisions and rechecks exact PR/commit identity before reporting required manual review. `scripts/ci/update-browser-core.ts` verifies remote SHA/impact and owns gitlink PR preparation/publication. Runner shell passes event inputs and bounded output/checkout glue. | `test/unit/config/{dependabot-auto-merge,browser-core-automation}.test.ts` and `scripts/ci/repository-authority.test.ts`; hosted exact-SHA checks establish privileged results. |
 | `.githooks/pre-commit`, `.githooks/pre-push` | Minimal Git-launched Bash guard rejects detached/default-branch commits and direct default-branch pushes before pinned Node setup. | `test/unit/config/git-hooks.test.ts`. Retain as a small pre-runtime Git adapter; revisit if the hook installer guarantees pinned Node for every local Git invocation without loosening the refusal. |
 | Test subprocess callers | `test/unit/config/{command-adapters,workflow-routing,release-runtime,release-publication-guard,git-hooks,node-script-boundaries,playwright-profile}.test.ts`, `scripts/check/run-child.test.ts`, and `scripts/ci/repository-authority.test.ts` exercise CLI, child, Git, and release policy in fixtures. Provider tests own OSV parser/scanner behavior. | Keep callers and NodeNext configs aligned; fixture tests do not prove browser media or publication acceptance. |
 
@@ -189,11 +189,30 @@ marker, that marker becomes the branch identity for subsequent runs.
   modern platform and ecosystem capabilities quickly.
 - pnpm and Dependabot enforce a 24-hour cooling window for newly published
   packages. Do not bypass it for routine updates.
-- Dependabot checks npm packages and GitHub Actions daily. Passing patch/minor
-  updates from the reviewed tooling allowlist may auto-merge; majors and runtime
-  behavior changes require manual review.
+- Dependabot creates grouped npm and GitHub Action updates on the configured
+  schedule. Every dependency update requires explicit maintainer review,
+  including patch/minor, major and security updates; no auto-eligible category
+  remains. An open security alert prioritizes review and never authorizes it.
 - `package.json`, `pnpm-workspace.yaml`, and pinned workflow digests are the
   authoritative versions. Run `pnpm verify:full` after substantive upgrades.
+
+Review the exact dependency/Action diff and its upstream source, release notes,
+security advisory and changed executable/install behavior. Verify the selected
+version or immutable Action SHA, frozen-lock installation and applicable CI at
+the current PR head, then use the ordinary protected merge path. Re-review if
+that head changes; never bypass protection or cooling/trust controls. Security
+updates follow the same admission boundary with higher review priority. The
+read-only gate records a policy-bound negative decision, and trusted apply
+rejects old or positive decisions without approval or merge authority.
+
+The browser-core updater computes impact and previews publication in a read-only
+job. A separate writer checks out trusted current source, installs no project
+dependencies, reprepares the update and requires the classified base/target to
+match before publishing only the gitlink PR. Its pinned runtime setup and
+publication code still require maintainer trust. Release build/test jobs remain
+read-only; existing protected-source, integrity and locked publication checks
+remain required. Manual review, pins, checksums and attestations do not prove
+that an upstream compiler, Action or resulting build is free of malicious code.
 
 ## License
 
