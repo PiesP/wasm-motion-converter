@@ -5,8 +5,23 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const origin = 'https://drop.test';
+
+function documentResponse(body = 'app', overrides: { url?: string; status?: number; type?: string; contentType?: string | null } = {}) {
+  const response = {
+    body,
+    url: overrides.url ?? `${origin}/`,
+    status: overrides.status ?? 200,
+    type: overrides.type ?? 'basic',
+    ok: (overrides.status ?? 200) >= 200 && (overrides.status ?? 200) < 300,
+    headers: new Headers(overrides.contentType === null ? {} : { 'content-type': overrides.contentType ?? 'text/html; charset=utf-8' }),
+    clone: () => response,
+  };
+  return response;
+}
+
 interface FetchEventLike {
-  request: { destination: string; method: string; url: string };
+  request: { destination: string; method: string; mode: string; url: string };
   respondWith: (response: Promise<unknown>) => void;
   waitUntil: (work: Promise<unknown>) => void;
 }
@@ -22,12 +37,13 @@ function loadServiceWorker(): {
   staticCacheEntries: Map<string, unknown>;
   dispatchFetch: (url: string, destination?: string) => Promise<unknown>;
   dispatchInstall: () => Promise<void>;
+  dispatchActivate: () => Promise<void>;
+  cacheStores: Map<string, Map<string, unknown>>;
   setNetworkFailure: (error: unknown) => void;
   setNetworkResponse: (response: unknown) => void;
 } {
-  const origin = 'https://drop.test';
-  const staticCacheName = 'dropconvert-static-v20260714';
-  const dynamicCacheName = 'dropconvert-dynamic-v20260714';
+  const staticCacheName = 'dropconvert-static-v20261008-documents';
+  const dynamicCacheName = 'dropconvert-dynamic-v20261008-documents';
   const listeners = new Map<string, (event: ServiceWorkerEventLike) => void>();
   const cacheStores = new Map<string, Map<string, unknown>>();
   const staticCacheEntries = new Map<string, unknown>();
@@ -35,8 +51,8 @@ function loadServiceWorker(): {
   cacheStores.set(staticCacheName, staticCacheEntries);
   cacheStores.set(dynamicCacheName, cacheEntries);
 
-  const toCacheKey = (key: string): string => new URL(String(key), origin).href;
-  const defaultResponse = { clone: () => defaultResponse, ok: true };
+  const toCacheKey = (key: string | { url: string }): string => new URL(typeof key === 'string' ? key : key.url, origin).href;
+  const defaultResponse = documentResponse();
   let networkResponse: unknown = defaultResponse;
   let networkFailure: unknown;
   const fetchMock = vi.fn((_url: string) =>
@@ -73,7 +89,12 @@ function loadServiceWorker(): {
       }
       return Promise.resolve(undefined);
     }),
-    open: vi.fn((cacheName: string) => Promise.resolve(createCache(cacheName))),
+    keys: vi.fn(() => Promise.resolve([...cacheStores.keys()])),
+    delete: vi.fn((cacheName: string) => Promise.resolve(cacheStores.delete(cacheName))),
+    open: vi.fn((cacheName: string) => {
+      if (!cacheStores.has(cacheName)) cacheStores.set(cacheName, new Map());
+      return Promise.resolve(createCache(cacheName));
+    }),
   };
   const self = {
     addEventListener: (type: string, listener: (event: ServiceWorkerEventLike) => void) => {
@@ -95,11 +116,12 @@ function loadServiceWorker(): {
   return {
     cacheEntries,
     staticCacheEntries,
+    cacheStores,
     dispatchFetch: async (url: string, destination = '') => {
       const waits: Promise<unknown>[] = [];
       let responsePromise: Promise<unknown> | undefined;
       listeners.get('fetch')?.({
-        request: { destination, method: 'GET', url },
+        request: { destination, method: 'GET', mode: destination === 'document' ? 'navigate' : 'cors', url },
         respondWith: (promise) => {
           responsePromise = promise;
         },
@@ -112,6 +134,11 @@ function loadServiceWorker(): {
     dispatchInstall: async () => {
       const waits: Promise<unknown>[] = [];
       listeners.get('install')?.({ waitUntil: (promise) => waits.push(promise) });
+      await Promise.all(waits);
+    },
+    dispatchActivate: async () => {
+      const waits: Promise<unknown>[] = [];
+      listeners.get('activate')?.({ waitUntil: (promise) => waits.push(promise) });
       await Promise.all(waits);
     },
     setNetworkFailure: (error) => {
@@ -127,7 +154,7 @@ function loadServiceWorker(): {
 describe('service worker dynamic cache boundaries', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('stores every same-origin document query under one canonical key', async () => {
+  it('stores supported application document queries under one canonical key', async () => {
     const worker = loadServiceWorker();
 
     await worker.dispatchFetch('https://drop.test/?nonce=one', 'document');
@@ -138,8 +165,8 @@ describe('service worker dynamic cache boundaries', () => {
 
   it('prefers the latest dynamic document over the static precache offline', async () => {
     const worker = loadServiceWorker();
-    const versionA = { body: 'A', clone: () => versionA, ok: true };
-    const versionB = { body: 'B', clone: () => versionB, ok: true };
+    const versionA = documentResponse('A');
+    const versionB = documentResponse('B');
 
     worker.setNetworkResponse(versionA);
     await worker.dispatchInstall();
@@ -155,10 +182,98 @@ describe('service worker dynamic cache boundaries', () => {
     );
   });
 
+  it.each(['/robots.txt', '/sitemap.xml', '/manifest.json', '/error.html', '/other'])('does not replace the recovery document with %s', async (path) => {
+    const worker = loadServiceWorker();
+    const app = documentResponse();
+    worker.setNetworkResponse(app);
+    await worker.dispatchFetch(`${origin}/`, 'document');
+    const resource = documentResponse('resource', { url: `${origin}${path}` });
+    worker.setNetworkResponse(resource);
+    await expect(worker.dispatchFetch(`${origin}${path}`, 'document')).resolves.toBe(resource);
+    expect(worker.cacheEntries.get(`${origin}/`)).toBe(app);
+    worker.setNetworkFailure(new Error('offline'));
+    await expect(worker.dispatchFetch(`${origin}/?offline`, 'document')).resolves.toBe(app);
+    await expect(worker.dispatchFetch(`${origin}${path}?uncached`, 'document')).rejects.toThrow('offline');
+  });
+
+  it.each([
+    { status: 204 }, { status: 206 }, { status: 404 },
+    { contentType: 'text/plain' }, { contentType: 'application/xml' }, { contentType: null },
+    { type: 'opaque' }, { type: 'opaqueredirect' },
+    { url: `${origin}/robots.txt` }, { url: `${origin}/error.html` },
+    { url: 'https://elsewhere.test/' }, { url: '' },
+  ])('returns but does not admit an invalid root response %j', async (overrides) => {
+    const worker = loadServiceWorker();
+    const app = documentResponse();
+    worker.setNetworkResponse(app);
+    await worker.dispatchFetch(`${origin}/`, 'document');
+    const invalid = documentResponse('invalid', overrides);
+    worker.setNetworkResponse(invalid);
+    await expect(worker.dispatchFetch(`${origin}/?changed`, 'document')).resolves.toBe(invalid);
+    expect(worker.cacheEntries.get(`${origin}/`)).toBe(app);
+  });
+
+  it('accepts a redirect within the supported document set', async () => {
+    const worker = loadServiceWorker();
+    const app = documentResponse('redirected app', { url: `${origin}/index.html?new` });
+    worker.setNetworkResponse(app);
+    await worker.dispatchFetch(`${origin}/?redirect`, 'document');
+    expect(worker.cacheEntries.get(`${origin}/`)).toBe(app);
+    await worker.dispatchFetch(`${origin}/index.html?new`, 'document');
+    expect(worker.cacheEntries.size).toBe(1);
+  });
+
+  it('rejects a polluted dynamic entry and uses the valid static document', async () => {
+    const worker = loadServiceWorker();
+    const app = documentResponse('static app');
+    worker.setNetworkResponse(app);
+    await worker.dispatchInstall();
+    worker.cacheEntries.set(`${origin}/`, documentResponse('robots', { url: `${origin}/robots.txt`, contentType: 'text/plain' }));
+    worker.setNetworkFailure(new Error('offline'));
+    await expect(worker.dispatchFetch(`${origin}/`, 'document')).resolves.toBe(app);
+    expect(worker.cacheEntries.has(`${origin}/`)).toBe(false);
+  });
+
+  it('fails offline when neither recovery entry is valid', async () => {
+    const worker = loadServiceWorker();
+    worker.cacheEntries.set(`${origin}/`, documentResponse('bad dynamic', { contentType: 'text/plain' }));
+    worker.staticCacheEntries.set(`${origin}/`, documentResponse('bad static', { url: 'https://elsewhere.test/' }));
+    worker.setNetworkFailure(new Error('offline'));
+    await expect(worker.dispatchFetch(`${origin}/`, 'document')).rejects.toThrow('offline');
+    expect(worker.cacheEntries.size).toBe(0);
+    expect(worker.staticCacheEntries.size).toBe(0);
+  });
+
+  it('removes the prior polluted cache version and preserves unrelated origin caches', async () => {
+    const worker = loadServiceWorker();
+    const bad = new Map([['https://drop.test/', documentResponse('robots', { contentType: 'text/plain' })]]);
+    worker.cacheStores.set('dropconvert-dynamic-v20260714', bad);
+    worker.cacheStores.set('other-application-cache', new Map([['unrelated', 'data']]));
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+    expect(worker.cacheStores.has('dropconvert-dynamic-v20260714')).toBe(false);
+    expect(worker.cacheStores.get('other-application-cache')?.get('unrelated')).toBe('data');
+    worker.setNetworkFailure(new Error('offline'));
+    await expect(worker.dispatchFetch(`${origin}/`, 'document')).resolves.toBe(worker.staticCacheEntries.get(`${origin}/`));
+  });
+
+  it('does not cache video files or substitute the app for API/cross-origin misses', async () => {
+    const worker = loadServiceWorker();
+    await worker.dispatchInstall();
+    await worker.dispatchFetch(`${origin}/video.mp4`, 'document');
+    await worker.dispatchFetch(`${origin}/video.webm`, 'document');
+    expect(worker.cacheEntries.size).toBe(0);
+    worker.setNetworkFailure(new Error('offline'));
+    for (const url of [`${origin}/api/data`, 'https://elsewhere.test/']) {
+      await expect(worker.dispatchFetch(url)).rejects.toThrow('offline');
+    }
+    await expect(worker.dispatchFetch(`${origin}/video.mp4`, 'document')).rejects.toThrow('offline');
+  });
+
   it('keeps the latest navigation document while evicting runtime assets', async () => {
     const worker = loadServiceWorker();
-    const versionA = { body: 'A', clone: () => versionA, ok: true };
-    const versionB = { body: 'B', clone: () => versionB, ok: true };
+    const versionA = documentResponse('A');
+    const versionB = documentResponse('B');
 
     worker.setNetworkResponse(versionA);
     await worker.dispatchInstall();

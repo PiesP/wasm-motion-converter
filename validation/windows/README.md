@@ -133,3 +133,5 @@ launch or cleanup leaves a diagnostic record and preserves any profile whose
 browser close could not be confirmed. Edge records that case as not run. Physical
 DPI and comprehensive screen-reader behavior require separate source-bound
 observations. VM results must not be used as host-hardware benchmark evidence.
+
+The production service-worker scenario in `offline-recovery.mjs` uses a separate task-owned browser context and loopback origin. It seeds the prior polluted cache, verifies activation removes it while preserving an unrelated cache, loads the app under its controller, visits a text resource, then disables network access and verifies the unchanged application recovery document and settings interaction. It also poisons the current dynamic entry and checks that the validated static document recovers the app. It records before/after document digests and restores online state before closing the context; this is isolated browser evidence rather than a deployed-origin check.

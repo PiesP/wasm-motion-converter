@@ -6,7 +6,7 @@
  *
  * Caching strategy:
  * - Static assets (/assets/*): cache-first, network fallback with background cache update
- * - HTML navigation: network-first, cache fallback, index.html SPA fallback
+ * - Application navigation: network-first, verified application document fallback
  * - Video files (.webm, .mp4): network-only (never cache — too large for SW cache)
  *
  * @see https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API/Using_Service_Workers
@@ -15,10 +15,8 @@
 /// <reference lib="webworker" />
 
 const CACHE_PREFIX = 'dropconvert';
-// Cache version derived from build timestamp — bumping this value invalidates
-// old caches on every new deploy. In the future, this can be replaced with a
-// hash from the build output for automatic versioning.
-const CACHE_VERSION = 'v20260714';
+// Bump on cache-policy changes so activation removes old application caches.
+const CACHE_VERSION = 'v20261008-documents';
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `${CACHE_PREFIX}-dynamic-${CACHE_VERSION}`;
 const DYNAMIC_CACHE_MAX_ENTRIES = 64;
@@ -51,6 +49,39 @@ function isVideoFile(url) {
 
 function getStaticAssetCacheKey(url) {
   return new URL(url.pathname, self.location.origin).href;
+}
+
+// The application has one document and no client-side route tree. Query
+// parameters do not change the recovery document; other paths must retain
+// their own content instead of becoming the canonical offline shell.
+function isAppDocumentUrl(url) {
+  return (
+    url.origin === self.location.origin && (url.pathname === '/' || url.pathname === '/index.html')
+  );
+}
+
+function isAppDocumentResponse(response) {
+  if (response?.status !== 200 || response.type === 'opaque' || response.type === 'opaqueredirect')
+    return false;
+  const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+  if (contentType !== 'text/html') return false;
+  try {
+    return isAppDocumentUrl(new URL(response.url));
+  } catch {
+    return false;
+  }
+}
+
+async function getRecoveryDocument() {
+  for (const cacheName of [DYNAMIC_CACHE, STATIC_CACHE]) {
+    const cached = await caches.match(NAVIGATION_CACHE_KEY, { cacheName });
+    if (isAppDocumentResponse(cached)) return cached;
+    if (cached) {
+      const cache = await caches.open(cacheName);
+      await cache.delete(NAVIGATION_CACHE_KEY);
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -137,7 +168,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   const documentCacheKey =
-    request.destination === 'document' && url.origin === self.location.origin
+    request.mode === 'navigate' && request.destination === 'document' && isAppDocumentUrl(url)
       ? NAVIGATION_CACHE_KEY
       : null;
 
@@ -145,19 +176,15 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(request)
       .then((response) => {
-        if (response.ok && documentCacheKey) {
+        if (documentCacheKey && isAppDocumentResponse(response)) {
           event.waitUntil(putInCache(documentCacheKey, response.clone()));
         }
         return response;
       })
-      .catch(() =>
-        documentCacheKey
-          ? caches
-              .match(documentCacheKey, { cacheName: DYNAMIC_CACHE })
-              .then(
-                (cached) => cached || caches.match(documentCacheKey, { cacheName: STATIC_CACHE })
-              )
-          : caches.match(request).then((cached) => cached || caches.match('/'))
-      )
+      .catch(async (error) => {
+        const cached = documentCacheKey ? await getRecoveryDocument() : await caches.match(request);
+        if (cached) return cached;
+        throw error;
+      })
   );
 });
