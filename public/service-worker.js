@@ -61,11 +61,7 @@ function isAppDocumentUrl(url) {
 }
 
 function isAppDocumentResponse(response) {
-  if (
-    response?.status !== 200 ||
-    response.type === 'opaque' ||
-    response.type === 'opaqueredirect'
-  )
+  if (response?.status !== 200 || response.type === 'opaque' || response.type === 'opaqueredirect')
     return false;
   const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
   if (contentType !== 'text/html') return false;
