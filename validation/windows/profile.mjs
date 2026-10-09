@@ -1386,7 +1386,7 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
   return { ...result, cleanup: { contextClosed, profileRemoved, zoomRestored } };
 }
 
-async function installCancellationInspector(page) {
+export async function installCancellationInspector(page) {
   return page.evaluate(() => {
     const visible = (element) =>
       element instanceof HTMLElement && element.getClientRects().length > 0;
@@ -1404,12 +1404,30 @@ async function installCancellationInspector(page) {
       observer: null,
     };
     const capture = () => {
-      if (inspector.observation) return;
       const stateText = document.querySelector('#app-state')?.textContent?.trim() ?? '';
       if (!stateText.toLowerCase().startsWith('cancelling')) return;
       const currentProgressBars = [...document.querySelectorAll('[role="progressbar"]')].filter(
         visible
       );
+      const progressSample = {
+        values: currentProgressBars.map((element) => Number(element.getAttribute('data-progress'))),
+        ariaValueNow: currentProgressBars[0]?.getAttribute('aria-valuenow') ?? null,
+        sameProgressElement: currentProgressBars[0] === inspector.progressBar,
+      };
+      if (inspector.observation) {
+        const samples = inspector.observation.progressSamples;
+        const previous = samples.at(-1);
+        if (
+          previous.values.length !== progressSample.values.length ||
+          previous.values.some((value, index) => value !== progressSample.values[index]) ||
+          previous.ariaValueNow !== progressSample.ariaValueNow ||
+          previous.sameProgressElement !== progressSample.sameProgressElement
+        ) {
+          if (samples.length < 128) samples.push(progressSample);
+          else inspector.observation.sampleOverflow = true;
+        }
+        return;
+      }
       const settingsCancel = document.querySelector('[data-testid="stop-conversion-button"]');
       const dropzoneCancel = document.querySelector('[data-testid="dropzone-cancel-button"]');
       const dropzone = document.querySelector('[data-testid="dropzone"]');
@@ -1419,10 +1437,11 @@ async function installCancellationInspector(page) {
       const statusMessage = dropzone?.querySelector('[data-testid="progress-status-message"]');
       inspector.observation = {
         stateText,
-        sameProgressElement: currentProgressBars[0] === inspector.progressBar,
-        progressValues: currentProgressBars.map((element) =>
-          Number(element.getAttribute('data-progress'))
-        ),
+        progressBeforeClick: inspector.progress,
+        sameProgressElement: progressSample.sameProgressElement,
+        progressValues: progressSample.values,
+        progressSamples: [progressSample],
+        sampleOverflow: false,
         visibleProgressBarCount: currentProgressBars.length,
         legacyProgressCount: document.querySelectorAll('[data-testid="conversion-progress"]')
           .length,
@@ -1440,7 +1459,7 @@ async function installCancellationInspector(page) {
         progressBusy: progressBusyRegion && progressBusyRegion !== dropzone && dropzone?.contains(progressBusyRegion)
           ? progressBusyRegion.getAttribute('aria-busy')
           : null,
-        progressAriaValueNow: currentProgressBars[0]?.getAttribute('aria-valuenow') ?? null,
+        progressAriaValueNow: progressSample.ariaValueNow,
         diagnosticsCount: dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length ?? 0,
         diagnosticsOpen: diagnostics?.open ?? null,
         diagnosticsSummaryFontSizePx: diagnosticsSummary
@@ -1463,7 +1482,7 @@ async function installCancellationInspector(page) {
   });
 }
 
-async function readCancellationInspector(page) {
+export async function readCancellationInspector(page) {
   return page.evaluate(() => {
     const inspector = globalThis.__wmcCancellationInspector;
     inspector?.observer?.disconnect();
@@ -1663,7 +1682,15 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     bytes: cancellationBytes.byteLength, sha256: sha256(cancellationBytes) });
   assert(cancellationUi, 'Cancellation state was not observable by the UI inspector');
   assert.equal(cancellationUi.sameProgressElement, true);
-  assert.deepEqual(cancellationUi.progressValues, [progressBeforeCancel]);
+  const progressAtCancellation = cancellationUi.progressValues[0];
+  assert(Number.isFinite(progressAtCancellation) && progressAtCancellation > 0);
+  assert.equal(cancellationUi.progressBeforeClick, progressBeforeCancel);
+  assert.equal(cancellationUi.sampleOverflow, false, 'Cancellation progress samples overflowed');
+  assert.deepEqual(cancellationUi.progressSamples, [{
+    values: [progressAtCancellation],
+    ariaValueNow: String(progressAtCancellation),
+    sameProgressElement: true,
+  }], 'Progress changed while the UI was cancelling');
   assert.equal(cancellationUi.visibleProgressBarCount, 1);
   assert.equal(cancellationUi.legacyProgressCount, 0);
   assert.equal(cancellationUi.settingsCancel.disabled, true);
@@ -1672,7 +1699,7 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
   assert.equal(cancellationUi.dropzoneCancel.label, cancellationUi.stateText);
   assert.equal(cancellationUi.dropzoneBusy, 'true');
   assert.equal(cancellationUi.progressBusy, 'true');
-  assert.equal(cancellationUi.progressAriaValueNow, String(progressBeforeCancel));
+  assert.equal(cancellationUi.progressAriaValueNow, String(progressAtCancellation));
   assert.equal(cancellationUi.diagnosticsCount, 1);
   assert.equal(cancellationUi.diagnosticsOpen, false);
   assert(cancellationUi.diagnosticsSummaryFontSizePx >= 14);
@@ -1685,6 +1712,7 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     attempted: true,
     effective: true,
     progressBeforeCancel,
+    progressAtCancellation,
     cancellationUi,
     previewRecovery,
   };
