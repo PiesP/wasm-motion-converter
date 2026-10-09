@@ -8,6 +8,22 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-09
+
+### Fixed
+
+- **MP4 metadata limits** — Reject oversized sample tables, timing entries, fragments, and auxiliary metadata before expanding them. Preserve valid compact PCM and bounded input, packet, and read handling. These checks enforce application accounting limits; they are not a measured browser heap or RSS bound.
+- **Offline recovery** — Cache and recover only verified application documents. Exclude non-application navigation responses, remove polluted application-cache entries, and preserve dynamic and static offline recovery across cache upgrades.
+- **Conversion output** — Preserve animated frame colors, trim timing, display rotation, and non-square-pixel geometry. Initialize the WebP WASM fallback under the existing strict CSP and load the WebP codec when conversion needs it.
+- **Operation state and results** — Clear stale replacement-file state, distinguish decoding work from output frame limits, account for trims in conversion estimates, and keep cancellation progress and result-preview controls understandable.
+- **Release integrity** — Reject stale publication or incomplete same-source retries, and verify published archives, metadata, checksums, and deployment identity before advancing release state.
+
+### Changed
+
+- **Sharing and preview controls** — Add optional smaller-output guidance while preserving format, trim, and frame-skip choices. Keep reduced-motion result previews opt-in, keyboard accessible, and independent of download availability.
+- **Maintenance admission** — Require an explicit maintainer decision before dependency updates can be admitted. Preserve trusted evaluation, exact source checks, immutable tool references, and the MediaBunny patch.
+- **Validation and tooling** — Expand deterministic GIF/WebP output, parser, service-worker, cancellation, and Windows-browser contracts; refresh reviewed dependency and shared-core inputs without claiming measured performance gains.
+
 ## [0.2.2] - 2026-09-22
 
 ### Fixed
