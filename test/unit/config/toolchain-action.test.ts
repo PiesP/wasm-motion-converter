@@ -109,13 +109,19 @@ describe('central project setup action', () => {
 
   it('selects the protected checkout for the direct publication runtime setup', () => {
     const publish = jobBlock(releaseWorkflow, 'publish');
+    const checkoutMarker = '      - name: 📥 Checkout protected publication guard\n';
+    const checkout = publish.split(checkoutMarker)[1]?.split('\n      - name:')[0];
     const setupMarker = '      - name: 📦 Setup verified Node.js runtime\n';
     const setup = publish.split(setupMarker)[1]?.split('\n      - name:')[0];
 
     expect(setup).toBeDefined();
     expect(setup).toContain(
-      'uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0'
+      'uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0'
     );
+    expect(checkout).toContain('ref: ${{ github.sha }}');
+    expect(checkout).toContain('persist-credentials: false');
+    expect(checkout).not.toContain('release-sha');
+    expect(publish.indexOf(checkoutMarker)).toBeLessThan(publish.indexOf(setupMarker));
     expect(setup).toContain('working-directory: .');
     expect(setup).not.toContain('package-json-file:');
     expect(setup).toContain('runtime: "node@${{ needs.provenance.outputs.node-version }}"');
