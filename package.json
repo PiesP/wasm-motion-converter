@@ -95,6 +95,6 @@
     "vite": "8.3.4",
     "vite-plugin-solid": "2.11.14",
     "vitest": "^4.1.11",
-    "wrangler": "^4.145.0"
+    "wrangler": "^4.149.0"
   }
 }
