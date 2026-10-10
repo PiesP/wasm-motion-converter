@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-> Auto-generated on 2026-09-25 by `scripts/build/generate-licenses.ts`.
+> Auto-generated on 2026-10-10 by `scripts/build/generate-licenses.ts`.
 > Do not edit manually — run `pnpm build` to regenerate.
 
 This project uses the following open-source libraries.
@@ -30,7 +30,7 @@ This project uses the following open-source libraries.
 
 ### solid-js
 
-- **Version:** 1.9.15
+- **Version:** 1.9.17
 - **License:** MIT
 - **Repository:** https://solidjs.com
 - **Purpose:** UI framework (reactive signals, components)

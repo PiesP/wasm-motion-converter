@@ -8,6 +8,10 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency maintenance** — Refresh Solid and the asset-building toolchain, use the serializer versions supported by Solid, and update local Pages, browser-test, and quality tooling.
+
 ## [0.2.3] - 2026-10-09
 
 ### Fixed
