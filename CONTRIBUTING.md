@@ -171,9 +171,18 @@ registration script and source metadata revalidate. A top-level `404.html`
 prevents missing JavaScript/CSS/WASM URLs becoming successful SPA documents.
 Static `_headers` supplies CSP and isolation without a global Pages Function;
 check document, redirects, errors, both workers, WASM and offline recovery when
-changing it. Pages may omit ETag on a 304 response. Deployment checks require
-the 200 validator, a matching empty 304, an unmatched 200 with identical bytes,
-and the security/cache policy on each response; a returned 304 ETag must match.
+changing it. [RFC 9110 section 15.4.5](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4.5)
+requires a 304 response to include ETag when the corresponding 200 would include
+it. Pages and local Wrangler omitted it in the historical observations in
+[#289](https://github.com/PiesP/wasm-motion-converter/issues/289) and
+[#292](https://github.com/PiesP/wasm-motion-converter/pull/292). The maintained
+integration tolerates this provider compatibility exception and reports the
+omission as nonconforming to that ETag requirement; it is not a general HTTP
+allowance. Checks still require a usable 200 validator, a matching empty 304,
+an unmatched 200 with identical bytes and ETag, and the security/cache policy
+on every response. A present 304 ETag must match. Revisit this exception when
+the provider/runtime changes or consistent compliant observations support
+removing it; historical observations alone do not prove current behavior.
 Pages Web Analytics injection is disabled at the project: build
 processing cannot remove scripts injected later. The application does not ship
 inline scripts or load external runtime code. Legacy provider CSP hashes are
@@ -209,10 +218,35 @@ old-to-new cache/public scenarios are documented in
 Service-worker assets use one bounded app-owned cache across this update.
 Previously cached entries are body-validated once during admission migration;
 admitted hits need no fetch, clone, write or FIFO enumeration. A removed lazy
-asset that was never cached cannot be reconstructed. The app offers an explicit
-reload after an update or failed asset, disables it during operations and while
+asset that was never cached cannot be reconstructed. Independently of worker
+updates, a clean production build compiles its source SHA into the running app.
+The app compares it with validated `/deployment-state.json` from its current
+origin, including immutable deployments and local serving. SHAs are opaque
+identities: a different build need not have a higher package version, and the
+notice does not promise that every new asset is available offline. Development,
+dirty and non-Git builds have unknown identity and do not check.
+
+`observeDeploymentUpdates` checks at initial visible/online initialization,
+when the tab becomes visible, on an online event while visible, and on BFCache
+restoration. Attempts start at least 60 seconds apart with one request in flight
+per owner. There is no polling or retry timer, so a continuously foreground tab
+does not discover every deployment immediately. Each revalidating same-origin
+request is limited to 10 seconds and 64 KiB, rejects redirects, non-200 or
+non-JSON responses and invalid/dirty identity metadata. Offline, timeout and
+unavailable responses remain unknown; a later eligible event may try again.
+Owner cleanup aborts requests and ignores stale completion; BFCache retains
+observation on return. Metadata is never used as the running app's first-fetch
+baseline or persisted as another tab's identity.
+
+The app offers an explicit reload after a different build, worker update or
+failed asset, disables it during operations and while
 a downloadable result remains, and asks users to download and clear the result
-first. Existing older tabs may show their original conversion error and need a
+first. The notice provides an explicit **Clear result** action, disabled during
+operations, so clearing a result allows reload without changing the selected
+file or conversion settings. Changing the selected file alone retains the
+result. A failed-asset warning takes precedence over an ordinary update notice.
+Tabs loaded before this detector was deployed cannot acquire it without loading
+the new app; they may show their original conversion error and need a
 manual browser reload; updates never reload them automatically or delete their
 result Blob.
 

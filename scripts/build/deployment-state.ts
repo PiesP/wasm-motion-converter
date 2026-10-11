@@ -64,7 +64,7 @@ export function distributionFiles(dist: string): DeploymentFile[] {
   return files;
 }
 
-export function writeDeploymentState(root: string, dist: string): void {
+function readSource(root: string): { sourceSha: string; sourceDirty: boolean } | null {
   const git = (args: string[]): string =>
     execFileSync('git', args, {
       cwd: root,
@@ -76,32 +76,58 @@ export function writeDeploymentState(root: string, dist: string): void {
     sourceSha = git(['rev-parse', 'HEAD']);
   } catch (error) {
     if (process.env.CF_PAGES) throw error;
-    console.log('[postbuild] Source metadata unavailable outside a Git checkout');
-    return;
+    return null;
   }
   if (!sourceShaPattern.test(sourceSha)) throw new Error('Invalid build source SHA');
   if (process.env.CF_PAGES_COMMIT_SHA && process.env.CF_PAGES_COMMIT_SHA !== sourceSha) {
     throw new Error('Pages source SHA does not match checked-out source');
   }
+  return {
+    sourceSha,
+    sourceDirty: git(['status', '--porcelain', '--untracked-files=all'])
+      .split('\n')
+      .some((line) => line && !line.endsWith(' public/LICENSES.md')),
+  };
+}
+
+// Compile the running app's identity, never a version or metadata fetched later.
+// Dirty and non-Git local builds cannot claim an exact checked-in source.
+export function applicationSourceSha(root: string): string | null {
+  const source = readSource(root);
+  return source && !source.sourceDirty ? source.sourceSha : null;
+}
+
+export function writeDeploymentState(root: string, dist: string): void {
+  const source = readSource(root);
+  if (!source) {
+    console.log('[postbuild] Source metadata unavailable outside a Git checkout');
+    return;
+  }
+  const git = (args: string[]): string =>
+    execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
   const coreSha = git(['rev-parse', 'HEAD:packages/core']);
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
     version: string;
   };
   const state: DeploymentState = {
     schemaVersion: 1,
-    sourceSha,
+    sourceSha: source.sourceSha,
     treeSha: git(['rev-parse', 'HEAD^{tree}']),
     coreSha,
     version: manifest.version,
     branch: process.env.CF_PAGES_BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD']),
-    sourceDirty: git(['status', '--porcelain', '--untracked-files=all'])
-      .split('\n')
-      .some((line) => line && !line.endsWith(' public/LICENSES.md')),
+    sourceDirty: source.sourceDirty,
     headersSha256: createHash('sha256')
       .update(readFileSync(join(dist, '_headers')))
       .digest('hex'),
     files: distributionFiles(dist),
   };
   writeFileSync(join(dist, 'deployment-state.json'), `${JSON.stringify(state, null, 2)}\n`);
-  console.log(`[postbuild] Recorded source ${sourceSha} and ${state.files.length} public files`);
+  console.log(
+    `[postbuild] Recorded source ${source.sourceSha} and ${state.files.length} public files`
+  );
 }

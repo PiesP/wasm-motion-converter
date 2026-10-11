@@ -86,4 +86,6 @@ reports/
 coverage/
 validation/windows/prior-dist/
 validation/windows/public-target.json
+validation/windows/inputs/app-update.json
+validation/windows/inputs/deployment-a/
 deployment-verification.json

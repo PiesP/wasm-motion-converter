@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fingerprintedAssetHeaders, writeDeploymentState } from '../../../scripts/build/deployment-state';
+import { applicationSourceSha, fingerprintedAssetHeaders, writeDeploymentState } from '../../../scripts/build/deployment-state';
 import { pagesBuild } from '../../../scripts/build/pages-build';
 
 const roots: string[] = [];
@@ -20,6 +20,26 @@ afterEach(() => {
 });
 
 describe('Pages source-build contract', () => {
+  it('binds the app to a clean source and leaves dirty/non-Git local builds unknown', () => {
+    const root = fixture();
+    expect(applicationSourceSha(root)).toBeNull();
+    const git = (args: string[]): string => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+    git(['init', '-q']);
+    git(['config', 'user.email', 'test@example.test']);
+    git(['config', 'user.name', 'Test']);
+    git(['add', 'package.json', '.node-version']);
+    git(['commit', '-qm', 'fixture']);
+    const source = git(['rev-parse', 'HEAD']);
+    expect(applicationSourceSha(root)).toBe(source);
+    writeFileSync(join(root, '.node-version'), 'dirty');
+    expect(applicationSourceSha(root)).toBeNull();
+    git(['checkout', '--', '.node-version']);
+    mkdirSync(join(root, 'public'));
+    writeFileSync(join(root, 'public/LICENSES.md'), 'Generated only');
+    expect(applicationSourceSha(root)).toBe(source);
+    vi.stubEnv('CF_PAGES_COMMIT_SHA', 'b'.repeat(40));
+    expect(() => applicationSourceSha(root)).toThrow('source SHA');
+  });
   it('initializes the recorded core before one frozen development install and the full build lifecycle', () => {
     const calls: { command: string; args: string[]; environment?: NodeJS.ProcessEnv }[] = [];
     const run = (command: string, args: string[], environment?: NodeJS.ProcessEnv): string => {
