@@ -38,6 +38,18 @@ function response(
   return result;
 }
 
+function openResponse(options: Parameters<typeof response>[1] = {}): {
+  result: Response;
+  cancel: ReturnType<typeof vi.fn>;
+} {
+  const cancel = vi.fn();
+  const result = response(metadata(remoteSha), options);
+  Object.defineProperty(result, 'body', {
+    value: new ReadableStream<Uint8Array>({ cancel }),
+  });
+  return { result, cancel };
+}
+
 function observe(sourceSha: string | null = localSha, onUpdate = vi.fn()): ReturnType<typeof vi.fn> {
   cleanups.push(observeDeploymentUpdates({ sourceSha, onUpdate }));
   return onUpdate;
@@ -170,6 +182,112 @@ describe('deployment update observer', () => {
     fetchMock.mockResolvedValue(unusable);
     const callback = observe();
     await settle();
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: 404 },
+    { contentType: 'text/html' },
+    { redirected: true },
+    { url: 'https://elsewhere.test/deployment-state.json' },
+    { contentLength: '65537' },
+    { contentLength: 'malformed' },
+  ])('releases an open response rejected by headers (%j), then permits a valid check', async (options) => {
+    const rejected = openResponse(options);
+    fetchMock.mockResolvedValueOnce(rejected.result).mockResolvedValueOnce(response(metadata(remoteSha)));
+    const callback = observe();
+    const firstSignal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
+    await settle();
+    expect(firstSignal.aborted).toBe(true);
+    expect(rejected.cancel).toHaveBeenCalledTimes(1);
+    expect(callback).not.toHaveBeenCalled();
+
+    now = 60_000;
+    window.dispatchEvent(new Event('online'));
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts a request when the body exceeds the byte limit', async () => {
+    fetchMock.mockResolvedValue(response(metadata(remoteSha), { body: ' '.repeat(65_537) }));
+    const callback = observe();
+    const signal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
+    await settle();
+    expect(signal.aborted).toBe(true);
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('aborts a request with malformed JSON and permits the next valid check', async () => {
+    fetchMock.mockResolvedValueOnce(response(metadata(remoteSha), { body: '{' }))
+      .mockResolvedValueOnce(response(metadata(remoteSha)));
+    const callback = observe();
+    const firstSignal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
+    await settle();
+    expect(firstSignal.aborted).toBe(true);
+    expect(callback).not.toHaveBeenCalled();
+    now = 60_000;
+    window.dispatchEvent(new Event('online'));
+    await settle();
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts a request when reading the body fails', async () => {
+    const unreadable = response(metadata(remoteSha));
+    Object.defineProperty(unreadable, 'body', {
+      value: new ReadableStream<Uint8Array>({ pull() { throw new Error('read failed'); } }),
+    });
+    fetchMock.mockResolvedValue(unreadable);
+    const callback = observe();
+    const signal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
+    await settle();
+    expect(signal.aborted).toBe(true);
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('releases a late response from suspended A without aborting active B', async () => {
+    let resolveA!: (value: Response) => void;
+    let resolveB!: (value: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveB = resolve; }));
+    const callback = observe();
+    const signalA = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
+    pageEvent('pagehide', true);
+    expect(signalA.aborted).toBe(true);
+    now = 60_000;
+    pageEvent('pageshow', true);
+    const signalB = fetchMock.mock.calls[1]?.[1].signal as AbortSignal;
+    const late = openResponse({ contentType: 'text/html' });
+    resolveA(late.result);
+    await settle();
+    expect(late.cancel).toHaveBeenCalledTimes(1);
+    expect(signalB.aborted).toBe(false);
+    now = 120_000;
+    window.dispatchEvent(new Event('online'));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    resolveB(response(metadata(remoteSha)));
+    await settle();
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps B deadline after suspended A settles late', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    let resolveA!: (value: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise<Response>(() => {}));
+    const callback = observe();
+    pageEvent('pagehide', true);
+    now = 60_000;
+    pageEvent('pageshow', true);
+    const signalB = fetchMock.mock.calls[1]?.[1].signal as AbortSignal;
+    resolveA(response(metadata(remoteSha)));
+    await settle();
+    expect(signalB.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(signalB.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signalB.aborted).toBe(true);
     expect(callback).not.toHaveBeenCalled();
   });
 

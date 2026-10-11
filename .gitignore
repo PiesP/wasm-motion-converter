@@ -88,4 +88,5 @@ validation/windows/prior-dist/
 validation/windows/public-target.json
 validation/windows/inputs/app-update.json
 validation/windows/inputs/deployment-a/
+validation/windows/inputs/cleanup-baseline/
 deployment-verification.json
