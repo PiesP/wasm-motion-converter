@@ -1897,7 +1897,8 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     });
   });
   try {
-    const metadataResponse = await context.request.get(new URL('/deployment-state.json', target.url).href);
+    const metadataResponse = await context.request.get(new URL('/deployment-state.json', target.url).href,
+      { maxRedirects: 0 });
     assert.equal(metadataResponse.status(), 200, 'Public deployment metadata is unavailable');
     assert.match(metadataResponse.headers()['content-type'] ?? '', /^application\/json\b/i,
       'Public deployment metadata has the wrong MIME type');
@@ -1915,7 +1916,8 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
         !file.path.split('/').includes('..'), 'Invalid metadata asset path');
       assert(Number.isSafeInteger(file.size) && file.size >= 0);
       assert(/^[a-f0-9]{64}$/.test(file.sha256));
-      const response = await context.request.get(new URL(`/${file.path}`, target.url).href);
+      const path = file.path === 'index.html' ? '/' : file.path === '404.html' ? '/404' : `/${file.path}`;
+      const response = await context.request.get(new URL(path, target.url).href, { maxRedirects: 0 });
       assert.equal(response.status(), 200, `Public asset ${file.path} did not return 200`);
       const bytes = await response.body();
       assert.equal(bytes.byteLength, file.size, `Public asset size differs: ${file.path}`);
