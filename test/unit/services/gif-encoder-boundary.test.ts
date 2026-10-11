@@ -138,9 +138,8 @@ describe('GIF exact pixel boundaries', () => {
     }
     expect(mocks.applyResults[0]?.byteLength).toBe(width * height);
     expect(mocks.applyResults[0]?.buffer.byteLength).toBe(width * height);
-    expect(mocks.writeInputs).toHaveLength(2);
+    expect(mocks.writeInputs).toHaveLength(1);
     expect(mocks.writeInputs[0]).toBe(mocks.applyResults[0]);
-    expect(mocks.writeInputs[1]).toBe(mocks.applyResults[0]);
     expect(memoryChecks.some((bytes) => bytes >= 4096 + exactRgbaBytes + width * height)).toBe(
       true
     );

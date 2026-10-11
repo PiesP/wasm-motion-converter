@@ -4,8 +4,9 @@
 /**
  * GIF Encoder Service — Streaming Architecture
  *
- * Interleaves decoding and encoding: frames are encoded immediately after
- * decoding, so only one RGBA frame and one exact gifenc scratch exist at a time.
+ * Interleaves decoding and encoding: each selected frame is indexed immediately,
+ * then written when the next selected source timestamp fixes its display hold.
+ * Only one RGBA scratch and one indexed frame are retained.
  *
  * Previous architecture held ALL decoded frames in an array, causing:
  *   - 1080p @ 30fps × 5s = 146 frames × 6MB = ~900MB peak
@@ -13,7 +14,7 @@
  *
  * Pipeline:
  *   1. decodeFrames streams frames via callback (no array accumulation)
- *   2. Per frame: exact RGBA scratch → dither → quantize/applyPalette → writeFrame
+ *   2. Per frame: exact RGBA scratch → dither → quantize/applyPalette → pending index
  *   3. Encoder writes GIF incrementally
  */
 
@@ -53,6 +54,12 @@ const QUALITY_DITHER_STRENGTH: Record<BaseEncoderOptions['quality'], number> = {
 interface GifEncoderOptions extends BaseEncoderOptions {
   /** Assert the aggregate Worker budget using the GIF stream's live peak bytes. */
   assertAdditionalMemoryBytes?: ((additionalBytes: number) => void) | undefined;
+}
+
+/** Original source presentation interval supplied by the streaming decoder. */
+interface PresentationInterval {
+  startUs: number;
+  endUs: number;
 }
 
 // ─── Bayer Ordered Dithering ────────────────────────────────────────
@@ -288,6 +295,9 @@ export async function encodeGif(
   let sourceTotalMs = demux.sourceTotalMs;
 
   let accumulatedDuration = 0;
+  let pendingStartUs: number | null = null;
+  let pendingFallbackMs = 0;
+  let presentationMode: 'source' | 'legacy' | null = null;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController();
@@ -320,11 +330,7 @@ export async function encodeGif(
     return true;
   }
 
-  function writeFrameWithDelay(rgbaData: Uint8Array, delayMs: number, palette: number[][]): void {
-    // The previous index is needed only for a possible tail. Drop the reference
-    // before allocating its replacement so only one external index is retained.
-    lastIndexedData = null;
-    liveIndexedBytes = 0;
+  function prepareIndexedFrame(rgbaData: Uint8Array, palette: number[][]): void {
     assertGifWorkingMemory(encoder.stream.buffer.byteLength, exactRgbaBytes, pixelCount);
     const paletteMapStart = opts.profileOperation ? performance.now() : null;
     const indexed = applyPalette(rgbaData, palette, 'rgb565');
@@ -343,34 +349,42 @@ export async function encodeGif(
     liveIndexedBytes =
       indexed.buffer instanceof ArrayBuffer ? indexed.buffer.byteLength : indexed.byteLength;
     assertGifWorkingMemory(encoder.stream.buffer.byteLength);
+  }
 
-    // gifenc's writeFrame expects delay in MILLISECONDS and converts
-    // internally to centiseconds via Math.round(delay/10).
-    // Do NOT pre-convert to cs — that would double-divide by 10.
-    if (delayMs <= GIF_MAX_FRAME_DELAY_CS * 10) {
-      writeQuantizedFrame(indexed, delayMs, palette);
-      return;
+  async function flushPending(delayMs: number): Promise<void> {
+    if (!lastIndexedData || !lastPalette) return;
+    if (!Number.isFinite(delayMs) || delayMs < 0) {
+      throw new RangeError('Invalid GIF presentation duration');
     }
-    // Split long-delay frames into multiple writes with the same indexed data.
-    // No re-quantization needed — the pixel content is identical.
+    // gifenc expects milliseconds and rounds internally to centiseconds. Each
+    // bounded continuation uses the same index and palette, while cumulative
+    // quantization prevents a one-centisecond error on every source frame.
     let remainingMs = delayMs;
     while (remainingMs > 0) {
+      if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
       const chunk = Math.min(remainingMs, GIF_MAX_FRAME_DELAY_CS * 10);
-      writeQuantizedFrame(indexed, chunk, palette);
+      writeQuantizedFrame(lastIndexedData, chunk, lastPalette);
       remainingMs -= chunk;
       if (remainingMs > 0) splitFrames++;
+      if ((splitFrames & 63) === 0 && remainingMs > 0) await yieldToMain();
     }
+    lastIndexedData = null;
+    lastPalette = null;
+    liveIndexedBytes = 0;
+    pendingStartUs = null;
+    pendingFallbackMs = 0;
   }
 
   try {
-    // Decode frames with streaming callback — each frame is encoded immediately
+    // Decode frames with a streaming callback and retain one pending index.
     const {
       totalInputFrames: totalDecoded,
       skippedByDecimation: decoderSkippedByDecimation,
       smartSkipped: decoderSmartSkipped,
       sourceTotalMs: decodedSourceTotalMs,
       tailAccumulatedMs,
-    } = await decodeFrames(
+      presentationEndUs,
+    } = (await decodeFrames(
       demux,
       {
         width: w,
@@ -388,11 +402,13 @@ export async function encodeGif(
             opts.onFrameDecoded(encodeIdx, total);
           }
         },
-        // Streaming callback: encode each frame immediately upon decoding
+        // Streaming callback: index each selected frame after flushing its predecessor.
         onFrameAvailable: async (
           rgbaData: Uint8Array,
           frameDurationMs: number,
-          frameNum: number
+          frameNum: number,
+          _memoryHandoff?: unknown,
+          presentation?: PresentationInterval
         ) => {
           if (signal?.aborted) {
             globalBufferPool.release(rgbaData);
@@ -406,31 +422,58 @@ export async function encodeGif(
           // for a 150-frame video). Yielding every 5 frames reduces this to ~30-120ms
           // while still keeping the UI responsive.
           if (frameNum % 5 === 0) {
-            await yieldToMain();
+            try {
+              await yieldToMain();
+            } catch (error) {
+              globalBufferPool.release(rgbaData);
+              throw error;
+            }
+          }
+          if (signal?.aborted) {
+            globalBufferPool.release(rgbaData);
+            throw new DOMException('Cancelled', 'AbortError');
+          }
+
+          const frameMode = presentation ? 'source' : 'legacy';
+          if (presentationMode && presentationMode !== frameMode) {
+            globalBufferPool.release(rgbaData);
+            throw new Error('GIF presentation intervals cannot change midstream');
+          }
+          presentationMode = frameMode;
+          if (
+            presentation &&
+            (!Number.isSafeInteger(presentation.startUs) ||
+              !Number.isSafeInteger(presentation.endUs) ||
+              presentation.startUs < 0 ||
+              presentation.endUs <= presentation.startUs)
+          ) {
+            globalBufferPool.release(rgbaData);
+            throw new RangeError('Invalid GIF presentation interval');
           }
 
           // ── Dynamic decimation based on memory pressure ──
           const shouldSkip = decimationController.shouldSkip(frameNum);
 
           if (shouldSkip) {
-            // Skip this frame: accumulate its duration and release buffer
-            accumulatedDuration += frameDurationMs;
+            // Source timestamps make skipped frames part of the preceding
+            // frame's hold. Legacy test doubles use accumulated durations.
+            if (!presentation) accumulatedDuration += frameDurationMs;
             globalBufferPool.release(rgbaData);
             return;
           }
 
-          // Accumulate duration from skipped frames (both decoder decimation + dynamic skip)
-          const totalDelayWithAccumulated = frameDurationMs + accumulatedDuration;
-          accumulatedDuration = 0;
-
-          // Apply minimum delays (in ms, will be converted to cs in writeFrameWithDelay)
-          const delay = Math.max(GIF_MIN_FRAME_DELAY_MS, totalDelayWithAccumulated);
-
-          // Reject the next emitted frame before allocating RGBA/indexed buffers.
-          assertCanWriteOutputFrame();
-
           let rgbaReleased = false;
           try {
+            if (lastIndexedData) {
+              const delayMs = presentation
+                ? (presentation.startUs - pendingStartUs!) / 1000
+                : pendingFallbackMs + accumulatedDuration;
+              await flushPending(delayMs);
+            }
+            accumulatedDuration = 0;
+
+            // Reject the next selected frame before allocating RGBA or index data.
+            assertCanWriteOutputFrame();
             if (rgbaData.byteLength < exactRgbaBytes) {
               throw new RangeError(
                 `Decoded RGBA buffer is too small: expected ${exactRgbaBytes} bytes, got ${rgbaData.byteLength}`
@@ -470,7 +513,9 @@ export async function encodeGif(
               );
             }
             lastPalette = framePalette;
-            writeFrameWithDelay(exactRgbaScratch, delay, framePalette);
+            prepareIndexedFrame(exactRgbaScratch, framePalette);
+            pendingStartUs = presentation?.startUs ?? null;
+            pendingFallbackMs = frameDurationMs;
           } finally {
             if (!rgbaReleased) globalBufferPool.release(rgbaData);
           }
@@ -484,7 +529,7 @@ export async function encodeGif(
         },
       },
       signal
-    );
+    )) as Awaited<ReturnType<typeof decodeFrames>> & { presentationEndUs?: number };
     sourceTotalMs = decodedSourceTotalMs;
 
     totalInputFrames = totalDecoded;
@@ -494,28 +539,23 @@ export async function encodeGif(
     if (encodeIdx === 0) {
       throw new Error('No frames decoded for GIF encoding');
     }
+    if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
 
-    // ── Tail accumulated duration fix ──
-    // In streaming mode, frames skipped after the last kept frame have their
-    // durations accumulated by the decoder but never consumed. Add this tail
-    // duration as extra delay on the last frame by writing a continuation frame
-    // with the same pixel data and only the tail delay.
-    const totalTailDuration = tailAccumulatedMs + accumulatedDuration;
-    if (totalTailDuration > 0 && lastIndexedData && lastPalette) {
-      // Pass ms directly — gifenc converts ms→cs internally via Math.round(delay/10)
-      let remainingTailMs = totalTailDuration;
-      while (remainingTailMs > 0) {
-        if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
-        const delay = Math.min(remainingTailMs, GIF_MAX_FRAME_DELAY_CS * 10);
-        writeQuantizedFrame(lastIndexedData, delay, lastPalette);
-        remainingTailMs -= delay;
-        if (remainingTailMs > 0) splitFrames++;
-        if ((splitFrames & 63) === 0) await yieldToMain();
+    if (lastIndexedData) {
+      if (presentationMode === 'source' && !Number.isSafeInteger(presentationEndUs)) {
+        throw new RangeError('Missing GIF presentation end');
       }
-      logger.info('encoders', 'GIF tail duration added', {
-        tailMs: Math.round(totalTailDuration),
-        tailCs: Math.round(totalTailDuration / 10),
-      });
+      const finalDelayMs =
+        presentationMode === 'source'
+          ? (presentationEndUs! - pendingStartUs!) / 1000
+          : pendingFallbackMs + tailAccumulatedMs + accumulatedDuration;
+      // Only a whole clip shorter than 20 ms needs the GIF viewer floor.
+      const wholeClipMs = presentationMode === 'source' ? presentationEndUs! / 1000 : sourceTotalMs;
+      await flushPending(
+        wholeClipMs < GIF_MIN_FRAME_DELAY_MS
+          ? Math.max(finalDelayMs, GIF_MIN_FRAME_DELAY_MS - outputTotalDelay * 10)
+          : finalDelayMs
+      );
     }
 
     // Pixel scratch and the tail index are no longer needed during GIF stream
