@@ -59,6 +59,7 @@ export interface TranslationKeys {
   'app.error.retry': string;
   'app.error.reload': string;
   'update.available': string;
+  'update.clearResults': string;
   'update.unavailable': string;
   'update.wait': string;
   'update.download': string;

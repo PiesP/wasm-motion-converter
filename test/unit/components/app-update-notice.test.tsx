@@ -21,7 +21,7 @@ it('keeps reload explicit and disabled throughout an operation and while a downl
   const [hasResults, setResults] = createSignal(false);
   const container = document.createElement('div');
   document.body.append(container);
-  dispose = render(() => <AppUpdateNotice busy={busy()} hasResults={hasResults()} t={(key) => key} />, container);
+  dispose = render(() => <AppUpdateNotice busy={busy()} hasResults={hasResults()} onClearResults={() => {}} t={(key) => key} />, container);
   await Promise.resolve();
   expect(container.querySelector('button')).toBeNull();
   registration.options.onAssetUnavailable?.();
@@ -41,10 +41,39 @@ it('keeps reload explicit and disabled throughout an operation and while a downl
   expect(registration.deploymentCleanup).toHaveBeenCalledTimes(1);
 });
 
+it('clears a retained result only through an explicit idle action and then allows reload', async () => {
+  const [busy, setBusy] = createSignal(true);
+  const [hasResults, setResults] = createSignal(true);
+  const clearResults = vi.fn(() => setResults(false));
+  const container = document.createElement('div');
+  document.body.append(container);
+  dispose = render(() => <AppUpdateNotice busy={busy()} hasResults={hasResults()} onClearResults={clearResults} t={(key) => key} />, container);
+  await Promise.resolve();
+  registration.deploymentUpdate();
+  const buttons = Array.from(container.querySelectorAll('button'));
+  const clear = buttons.find((button) => button.textContent === 'update.clearResults')!;
+  const reload = buttons.find((button) => button.textContent === 'app.error.reload')!;
+  expect(clear.disabled).toBe(true);
+  clear.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(clearResults).not.toHaveBeenCalled();
+  expect(hasResults()).toBe(true);
+  setBusy(false);
+  expect(clear.disabled).toBe(false);
+  expect(reload.disabled).toBe(true);
+  expect(clearResults).not.toHaveBeenCalled();
+  clear.click();
+  expect(clearResults).toHaveBeenCalledTimes(1);
+  expect(hasResults()).toBe(false);
+  expect(clear.isConnected).toBe(false);
+  expect(reload.disabled).toBe(false);
+  clear.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(clearResults).toHaveBeenCalledTimes(1);
+});
+
 it('coalesces worker and deployment updates while preserving a distinct unavailable warning', async () => {
   const container = document.createElement('div');
   document.body.append(container);
-  dispose = render(() => <AppUpdateNotice busy={false} hasResults={false} t={(key) => key} />, container);
+  dispose = render(() => <AppUpdateNotice busy={false} hasResults={false} onClearResults={() => {}} t={(key) => key} />, container);
   await Promise.resolve();
   registration.deploymentUpdate();
   registration.options.onUpdate?.();
@@ -64,7 +93,7 @@ it('coalesces worker and deployment updates while preserving a distinct unavaila
 it('cleans up a registration that resolves after its owner is disposed', async () => {
   const container = document.createElement('div');
   document.body.append(container);
-  dispose = render(() => <AppUpdateNotice busy={false} hasResults={false} t={(key) => key} />, container);
+  dispose = render(() => <AppUpdateNotice busy={false} hasResults={false} onClearResults={() => {}} t={(key) => key} />, container);
   dispose(); dispose = undefined;
   await Promise.resolve();
   expect(registration.cleanup).toHaveBeenCalledTimes(1);

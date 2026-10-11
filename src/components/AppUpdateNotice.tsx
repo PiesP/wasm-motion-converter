@@ -7,9 +7,12 @@ declare const __APP_SOURCE_SHA__: string | null;
 
 import { registerServiceWorker } from '@/sw-register';
 
-const AppUpdateNotice: Component<{ busy: boolean; hasResults: boolean; t: TFunction }> = (
-  props
-) => {
+const AppUpdateNotice: Component<{
+  busy: boolean;
+  hasResults: boolean;
+  onClearResults: () => void;
+  t: TFunction;
+}> = (props) => {
   const [notice, setNotice] = createSignal<'available' | 'unavailable' | null>(null);
   let disposed = false;
   let cleanup: (() => void) | undefined;
@@ -40,6 +43,9 @@ const AppUpdateNotice: Component<{ busy: boolean; hasResults: boolean; t: TFunct
   const reload = (): void => {
     if (!props.busy && !props.hasResults) window.location.reload();
   };
+  const clearResults = (): void => {
+    if (!disposed && !props.busy && props.hasResults) props.onClearResults();
+  };
   return (
     <Show when={notice()}>
       <div
@@ -61,6 +67,16 @@ const AppUpdateNotice: Component<{ busy: boolean; hasResults: boolean; t: TFunct
         >
           {props.t('app.error.reload')}
         </button>
+        <Show when={props.hasResults}>
+          <button
+            type="button"
+            disabled={props.busy}
+            onClick={clearResults}
+            class="ms-3 rounded-md border border-border-standard px-4 py-2 font-medium disabled:opacity-50"
+          >
+            {props.t('update.clearResults')}
+          </button>
+        </Show>
       </div>
     </Show>
   );

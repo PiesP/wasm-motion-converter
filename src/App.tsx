@@ -33,6 +33,7 @@ import {
   errorMessage,
   inputFile,
   outputFrames,
+  setConversionResults,
   setEnvironmentSupported,
   videoMetadata,
   videoPreviewUrl,
@@ -316,7 +317,14 @@ const App: Component = () => {
           id="main-content"
           class="mx-auto w-full max-w-[1200px] flex-1 px-4 py-8 sm:px-6 lg:px-8"
         >
-          <AppUpdateNotice busy={isBusy()} hasResults={conversionResults().length > 0} t={t} />
+          <AppUpdateNotice
+            busy={isBusy()}
+            hasResults={conversionResults().length > 0}
+            onClearResults={() => {
+              if (!isBusy()) setConversionResults([]);
+            }}
+            t={t}
+          />
           <StatusAlerts
             environmentSupported={environmentSupported()}
             errorContext={errorContext()}

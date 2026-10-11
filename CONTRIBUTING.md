@@ -241,7 +241,10 @@ baseline or persisted as another tab's identity.
 The app offers an explicit reload after a different build, worker update or
 failed asset, disables it during operations and while
 a downloadable result remains, and asks users to download and clear the result
-first. A failed-asset warning takes precedence over an ordinary update notice.
+first. The notice provides an explicit **Clear result** action, disabled during
+operations, so clearing a result allows reload without changing the selected
+file or conversion settings. Changing the selected file alone retains the
+result. A failed-asset warning takes precedence over an ordinary update notice.
 Tabs loaded before this detector was deployed cannot acquire it without loading
 the new app; they may show their original conversion error and need a
 manual browser reload; updates never reload them automatically or delete their

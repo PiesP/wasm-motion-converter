@@ -188,6 +188,7 @@
   "trim.timeline": "Video timeline. Click to preview a frame.",
   "trim.tooShort": "Video too short for trimming",
   "update.available": "The app has changed. Reload when you are ready.",
+  "update.clearResults": "Clear result",
   "update.download": "Download your result, then clear it before reloading.",
   "update.unavailable": "Some app files could not load. Check your connection, then reload when you are ready.",
   "update.wait": "Finish or cancel the current operation before reloading.",

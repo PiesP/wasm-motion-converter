@@ -188,6 +188,7 @@
   "trim.timeline": "Línea de tiempo del vídeo. Haz clic para previsualizar un fotograma.",
   "trim.tooShort": "Vídeo demasiado corto para recortar",
   "update.available": "La aplicación ha cambiado. Recarga la página cuando estés listo.",
+  "update.clearResults": "Borrar resultado",
   "update.download": "Descarga el resultado y bórralo antes de recargar.",
   "update.unavailable": "No se pudieron cargar algunos archivos de la aplicación. Comprueba la conexión y recarga cuando estés listo.",
   "update.wait": "Finaliza o cancela la operación actual antes de recargar.",
