@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -57,6 +57,18 @@ afterEach(() => {
 });
 
 describe('deployment diagnostic artifact', () => {
+  it('accepts the exact report byte limit and rejects overflow before writing evidence', () => {
+    const { file, output } = fixture(report());
+    const content = readFileSync(file);
+    writeFileSync(file, Buffer.concat([content, Buffer.alloc(2_000_000 - content.length, 0x20)]));
+    expect(() => preserveDeploymentDiagnostics(file, state, target, 0, output)).not.toThrow();
+    const artifacts = readdirSync(output);
+    appendFileSync(file, ' ');
+    expect(() => preserveDeploymentDiagnostics(file, state, target, 0, output))
+      .toThrow('Deployment Playwright report exceeds byte limit');
+    expect(readdirSync(output)).toEqual(artifacts);
+  });
+
   it('retains successful conditional and timing data with source, target, outcome and retry identity', () => {
     const { file, output } = fixture(report());
     const path = preserveDeploymentDiagnostics(file, state, target, 0, output);

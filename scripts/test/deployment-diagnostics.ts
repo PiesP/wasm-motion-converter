@@ -1,6 +1,6 @@
 /** Keep successful Playwright deployment observations in the uploaded test-results artifact. */
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DeploymentState } from '../build/deployment-state.ts';
 
@@ -21,6 +21,24 @@ const PRODUCERS = [
 ] as const;
 
 type JsonRecord = Record<string, unknown>;
+
+function readBoundedReport(reportFile: string): string {
+  const descriptor = openSync(reportFile, 'r');
+  try {
+    const bytes = Buffer.alloc(MAX_REPORT_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(descriptor, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > MAX_REPORT_BYTES)
+      throw new Error('Deployment Playwright report exceeds byte limit');
+    return bytes.toString('utf8', 0, length);
+  } finally {
+    closeSync(descriptor);
+  }
+}
 
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -116,9 +134,7 @@ export function preserveDeploymentDiagnostics(
   playwrightExitCode: number,
   outputDirectory = 'test-results'
 ): string {
-  if (statSync(reportFile).size > MAX_REPORT_BYTES)
-    throw new Error('Deployment Playwright report exceeds byte limit');
-  const report = record(JSON.parse(readFileSync(reportFile, 'utf8')), 'report');
+  const report = record(JSON.parse(readBoundedReport(reportFile)), 'report');
   const specs = observedTests(report);
   const runId = randomUUID();
   const diagnostics = PRODUCERS.map((producer) => {
