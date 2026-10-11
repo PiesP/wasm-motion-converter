@@ -5,11 +5,13 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.mjs';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
 import { exerciseOfflineRecovery } from './offline-recovery.mjs';
+import { runAppUpdate } from './app-update.mjs';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.mjs';
 
 const PROFILE_ID = 'wmc-media';
@@ -338,9 +340,14 @@ async function startStaticServer(bundleRoot) {
         'Content-Type',
         MIME_TYPES.get(extname(file).toLowerCase()) ?? 'application/octet-stream'
       );
-      response.setHeader('Content-Length', String(bytes.byteLength));
+      const compressible = ['.js', '.css', '.json'].includes(extname(file).toLowerCase());
+      const acceptsGzip = /(?:^|,)\s*gzip\s*(?:;|,|$)/i.test(request.headers['accept-encoding'] ?? '');
+      const wireBytes = compressible && acceptsGzip ? gzipSync(bytes) : bytes;
+      if (compressible) response.setHeader('Vary', 'Accept-Encoding');
+      if (wireBytes !== bytes) response.setHeader('Content-Encoding', 'gzip');
+      response.setHeader('Content-Length', String(wireBytes.byteLength));
       response.writeHead(200);
-      response.end(request.method === 'HEAD' ? undefined : bytes);
+      response.end(request.method === 'HEAD' ? undefined : wireBytes);
     } catch (error) {
       const statusCode = Number.isInteger(error?.statusCode)
         ? error.statusCode
@@ -2138,6 +2145,27 @@ export async function run({ browser, root, output }) {
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const appUpdateConfig = 'validation/windows/inputs/app-update.json';
+  let appUpdatePresent = false;
+  try {
+    appUpdatePresent = (await stat(resolve(bundleRoot, appUpdateConfig))).isFile();
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  if (appUpdatePresent) {
+    const configPath = await validateBundleFile(bundleRoot, appUpdateConfig);
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    assert.deepEqual(config, {
+      schemaVersion: 1,
+      mode: 'application-update',
+      buildA: 'validation/windows/inputs/deployment-a',
+      baseline: 'validation/windows/prior-dist',
+    }, 'Invalid application-update bundle configuration');
+    const outputRoot = resolve(output);
+    await mkdir(outputRoot, { recursive: true });
+    return runAppUpdate({ browser, bundleRoot, outputRoot, config,
+      startStaticServer, closeServer, validateBundleFile });
+  }
   const smallFixture = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
   const publicTargets = await loadPublicTargets(bundleRoot);
   const cancellationFixture = await validateBundleFile(bundleRoot, CANCELLATION_FIXTURE);
