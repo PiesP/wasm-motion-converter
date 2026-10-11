@@ -62,7 +62,7 @@ test.describe('Page Load & Console Health', () => {
       });
     });
     await page.goto(DEPLOY_URL);
-    await page.waitForLoadState('domcontentloaded');
+    await page.waitForLoadState('networkidle');
     expect(errors).toEqual([]);
     expect(pageErrors).toEqual([]);
     expect(requestFailures).toEqual([]);

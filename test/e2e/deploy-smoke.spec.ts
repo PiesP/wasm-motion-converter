@@ -104,7 +104,7 @@ test.describe('Deployment: Page Load', () => {
   test('page loads without application runtime failures', async ({ page }, testInfo) => {
     const runtimeFailures = await collectRuntimeFailures(page);
     const response = await page.goto(DEPLOY_URL);
-    await page.waitForLoadState('domcontentloaded');
+    await page.waitForLoadState('networkidle');
 
     expect(response?.status()).toBe(200);
     expect(response?.headers()['content-type']).toMatch(/^text\/html\b/i);
