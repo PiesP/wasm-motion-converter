@@ -93,6 +93,18 @@ function sampledScopedCycles(durationsMs: number[], blueCycle = -1, sparseCycle 
   return frames;
 }
 
+function sampledMissingLime(sparseRedToBlue = false) {
+  const frames = sampledScopedCycles([128, 128, 128, 128]);
+  for (const frame of frames) {
+    if (frame.timestampMs === 448 || frame.timestampMs === 480) frame.marker = 'blue';
+  }
+  if (sparseRedToBlue) {
+    frames.splice(frames.findIndex((frame) => frame.timestampMs === 416), 1);
+    frames.forEach((frame, sequence) => { frame.sequence = sequence; });
+  }
+  return frames;
+}
+
 function observation(delaysCs: number[], frames = sampledCycles()) {
   const frameRecords = frames.map((frame) => ({
     ...frame,
@@ -184,9 +196,9 @@ describe('ordinary-image GIF playback evidence', () => {
       'qualified', 'qualified', 'qualified',
     ]);
     expect(evidence.cycleAnalysis.cycles.map((cycle) => cycle.bracketsMs)).toEqual([
-      { startReturnToRed: 16, redToLime: 32, returnToRed: 32 },
-      { startReturnToRed: 32, redToLime: 32, returnToRed: 16 },
-      { startReturnToRed: 16, redToLime: 32, returnToRed: 32 },
+      { startReturnToRed: 16, redToLime: 32, redToBlue: null, returnToRed: 32 },
+      { startReturnToRed: 32, redToLime: 32, redToBlue: null, returnToRed: 16 },
+      { startReturnToRed: 16, redToLime: 32, redToBlue: null, returnToRed: 32 },
     ]);
     expect(evidence.cycleAnalysis.blueVisibility).toEqual({
       observedFrames: 1,
@@ -267,6 +279,26 @@ describe('ordinary-image GIF playback evidence', () => {
       128, 128, 200, 128, 128,
     ]);
     expect(() => assertGifPlayback(evidence)).toThrow('35ms timestamp-error budget');
+  });
+
+  it('rejects a tightly bracketed red-to-blue omission of the mandatory lime scene', () => {
+    const evidence = observation([5, 5, 2], sampledMissingLime());
+    expect(evidence.cycleAnalysis.maxConsecutiveQualifiedCycles).toBe(3);
+    expect(evidence.cycleAnalysis.cycles[3]!.markers).toEqual(['red', 'blue', 'red']);
+    expect(evidence.cycleAnalysis.cycles[3]!.bracketsMs.redToBlue).toBe(32);
+    expect(evidence.cycleAnalysis.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('Mandatory lime scene omitted'),
+    ]));
+    expect(() => assertGifPlayback(evidence)).toThrow('Mandatory lime scene omitted');
+  });
+
+  it('keeps a sparsely sampled red-to-blue omission explicitly unknown', () => {
+    const evidence = observation([5, 5, 2], sampledMissingLime(true));
+    expect(evidence.cycleAnalysis.cycles[3]!.markers).toEqual(['red', 'blue', 'red']);
+    expect(evidence.cycleAnalysis.cycles[3]!.bracketsMs.redToBlue).toBe(64);
+    expect(evidence.cycleAnalysis.cycles[3]!.status).toBe('unknown');
+    expect(evidence.cycleAnalysis.errors).toEqual([]);
+    expect(assertGifPlayback(evidence)).toBe(evidence);
   });
 
   it('rejects timestamp, sequence, and observed color order violations', () => {
