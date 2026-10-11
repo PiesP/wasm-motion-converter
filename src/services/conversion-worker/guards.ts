@@ -12,7 +12,12 @@
 
 import { isRecord } from '@piesp/browser-core/util';
 import { isBoundedCodecDescription } from '@services/codec-description';
-import type { StageMetrics } from '@services/conversion-profiler';
+import {
+  PROFILE_COPY_PATHS,
+  PROFILE_ENCODER_ROUTES,
+  PROFILE_OPERATIONS,
+  type StageMetrics,
+} from '@services/conversion-profiler';
 import type { WorkerRequest, WorkerResponse } from './types';
 import { WORKER_LOG_MAX_MESSAGE_CHARS, WORKER_LOG_MAX_REQUEST_ID_CHARS } from './types';
 
@@ -24,6 +29,14 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isFiniteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function isNullableMeasurement(value: unknown): boolean {
+  return value === null || isFiniteNonNegative(value);
+}
+
+function isNullableCount(value: unknown): boolean {
+  return value === null || isCount(value);
 }
 
 function isCount(value: unknown): boolean {
@@ -39,16 +52,6 @@ function isVideoRotation(value: unknown): boolean {
 }
 
 const PROFILE_STAGES = ['demuxing', 'transcoding', 'finalizing'] as const;
-const PROFILE_OPERATIONS = [
-  'pixelCopy',
-  'motionFeatures',
-  'motionDecision',
-  'gifPixelPreparation',
-  'gifQuantization',
-  'gifPaletteMapping',
-  'gifFrameWrite',
-] as const;
-const PROFILE_COPY_PATHS = ['RGBX', 'RGBA', 'BGRA', 'BGRX', 'canvas', 'unknown'] as const;
 const WORKER_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const WORKER_LOG_CATEGORIES = ['conversion', 'general', 'demuxer', 'encoders', 'decoders'] as const;
 
@@ -66,30 +69,29 @@ function isWorkerLogCategory(value: unknown): boolean {
 
 function isValidStageMetrics(value: unknown): value is StageMetrics {
   if (!isRecord(value) || !isProfileStage(value.stage)) return false;
-  const commonValid = [
-    value.startMs,
-    value.endMs,
-    value.durationMs,
-    value.heapStartMB,
-    value.heapEndMB,
-    value.heapPeakMB,
-  ].every(isFiniteNonNegative);
-  if (!commonValid) return false;
+  const commonValid = [value.startMs, value.endMs, value.durationMs].every(isFiniteNonNegative);
+  if (
+    !commonValid ||
+    ![value.heapStartMB, value.heapEndMB, value.heapPeakMB].every(isNullableMeasurement)
+  )
+    return false;
   if (value.stage === 'demuxing') {
-    return [value.framesProcessed, value.fps].every(isFiniteNonNegative);
+    return isNullableCount(value.framesProcessed) && isNullableMeasurement(value.fps);
   }
   if (value.stage === 'transcoding') {
     return (
       value.mode === 'streaming-decode-encode' &&
       value.attribution === 'combined' &&
       [
+        value.consumedChunks,
         value.decodedFrames,
+        value.selectedFrames,
         value.encodedFrames,
-        value.decodeFps,
-        value.encodeFps,
-        value.outputBytes,
-        value.throughputMBps,
-      ].every(isFiniteNonNegative)
+        value.emittedFrames,
+      ].every(isNullableCount) &&
+      [value.decodeFps, value.encodeFps, value.outputBytes, value.throughputMBps].every(
+        isNullableMeasurement
+      )
     );
   }
   return true;
@@ -98,11 +100,15 @@ function isValidStageMetrics(value: unknown): value is StageMetrics {
 /** Validate a profiler report crossing the Worker boundary. */
 function isValidProfileReport(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (value.schemaVersion !== 3) return false;
+  if (value.schemaVersion !== 4) return false;
   if (!isFiniteNonNegative(value.totalDurationMs)) return false;
-  if (!isFiniteNonNegative(value.heapStartMB)) return false;
-  if (!isFiniteNonNegative(value.heapEndMB)) return false;
-  if (!isFiniteNonNegative(value.heapPeakMB)) return false;
+  if (![value.heapStartMB, value.heapEndMB, value.heapPeakMB].every(isNullableMeasurement))
+    return false;
+  if (
+    value.encoderRoute !== null &&
+    !PROFILE_ENCODER_ROUTES.some((route) => route === value.encoderRoute)
+  )
+    return false;
   if (
     !Array.isArray(value.stages) ||
     value.stages.length > PROFILE_STAGES.length ||
@@ -226,8 +232,23 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
       if (!isNonEmptyString(value.phase)) return false;
       if (!isFiniteNumber(value.percent)) return false;
       if (!isFiniteNonNegative(value.fps)) return false;
-      if (typeof value.memoryMB !== 'number') return false;
-      if (!isFiniteNumber(value.etaSeconds)) return false;
+      if (!isNullableMeasurement(value.memoryMB)) return false;
+      if (!isNullableMeasurement(value.etaSeconds)) return false;
+      if (value.accountedMemoryMB !== undefined && !isFiniteNonNegative(value.accountedMemoryMB))
+        return false;
+      if (
+        ![
+          'consumedChunks',
+          'decodedFrames',
+          'selectedFrames',
+          'encodedFrames',
+          'emittedFrames',
+          'currentFrame',
+          'totalFrames',
+          'outputFrames',
+        ].every((key) => value[key] === undefined || isCount(value[key]))
+      )
+        return false;
       return true;
     }
     case 'complete': {

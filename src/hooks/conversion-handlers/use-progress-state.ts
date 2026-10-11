@@ -213,8 +213,8 @@ export class ProgressState {
     });
   }
 
-  updateMemoryUsage(memoryMB: number): void {
-    if (!Number.isFinite(memoryMB) || memoryMB <= 0) {
+  updateMemoryUsage(memoryMB: number | null): void {
+    if (memoryMB === null || !Number.isFinite(memoryMB) || memoryMB <= 0) {
       this.deps.setMemoryUsageText(null);
       return;
     }

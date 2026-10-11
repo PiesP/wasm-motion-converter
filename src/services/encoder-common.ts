@@ -14,6 +14,15 @@ import type { SmartFrameSkipMode } from '@t/conversion-types';
 import { FPS_CLAMP_MAX, MEMORY_PRESSURE_TARGET_FPS, MIN_OUTPUT_FPS } from '@utils/constants';
 import type { ProfileCopyPathRecorder, ProfileOperationRecorder } from './conversion-profiler';
 
+/** Exact observations at the native decoder, encoder, and container boundaries. */
+export interface EncoderFrameCounts {
+  consumedChunks?: number | undefined;
+  decodedFrames: number;
+  selectedFrames?: number | undefined;
+  encodedFrames: number;
+  emittedFrames?: number | undefined;
+}
+
 /** Base options shared by all format encoders */
 export interface BaseEncoderOptions {
   width: number;
@@ -30,13 +39,10 @@ export interface BaseEncoderOptions {
   onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /**
    * Callback fired after each frame is encoded.
-   * @note Currently only used by the GIF encoder; WebP does not invoke this.
    */
   onFrameEncoded?: ((encodedFrameCount: number, totalFrames: number) => void) | undefined;
   /** Terminal exact counts, emitted after the encoder has finished consuming input. */
-  onEncodingComplete?:
-    | ((counts: { decodedFrames: number; encodedFrames: number }) => void)
-    | undefined;
+  onEncodingComplete?: ((counts: EncoderFrameCounts) => void) | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
   /** Development profiling callback for overlapping per-operation wall time. */

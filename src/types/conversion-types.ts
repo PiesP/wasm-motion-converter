@@ -290,7 +290,14 @@ export interface ConversionProgress {
   progress: number;
   fps: number;
   etaSeconds: number | null;
-  memoryMB: number;
+  memoryMB: number | null;
+  /** Conversion-owned byte estimate; separate from measured JS heap. */
+  accountedMemoryMB?: number | undefined;
+  consumedChunks?: number | undefined;
+  decodedFrames?: number | undefined;
+  selectedFrames?: number | undefined;
+  encodedFrames?: number | undefined;
+  emittedFrames?: number | undefined;
   currentFrame?: number | undefined;
   totalFrames?: number | undefined;
   outputFrames?: number | undefined;

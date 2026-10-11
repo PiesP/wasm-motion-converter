@@ -40,11 +40,17 @@ export type WorkerResponse =
       phase: 'demuxing' | 'decoding' | 'encoding' | 'assembling';
       percent: number;
       fps: number;
-      memoryMB: number;
+      memoryMB: number | null;
+      accountedMemoryMB?: number;
+      consumedChunks?: number;
+      decodedFrames?: number;
+      selectedFrames?: number;
+      encodedFrames?: number;
+      emittedFrames?: number;
       currentFrame?: number;
       totalFrames?: number;
       outputFrames?: number | undefined;
-      etaSeconds: number;
+      etaSeconds: number | null;
       elapsedMs?: number | undefined;
     }
   | {
