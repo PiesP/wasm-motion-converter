@@ -636,9 +636,15 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     await assertRuntimeHealth(busyPage, busyRecord);
 
     diagnostics.phase = 'explicit-reload';
-    await resultPage.getByRole('button', { name: 'Change', exact: true }).click();
+    const clearResult = updateNotice(resultPage).getByRole('button',
+      { name: 'Clear result', exact: true });
+    assert(await clearResult.isEnabled(), 'Result clear action is disabled');
+    await clearResult.click();
+    await resultPage.getByTestId('result-section').waitFor({ state: 'detached' });
     await resultReload.waitFor({ state: 'visible' });
     assert(await resultReload.isEnabled(), 'Reload did not enable after result was cleared');
+    assert.equal(await resultPage.evaluate(() => performance.timeOrigin), resultTimeOrigin,
+      'Clearing the retained result navigated the document');
     const reloadedScripts = [];
     resultPage.on('response', (response) => {
       if (new URL(response.url()).pathname === `/${buildB.main.path}`) reloadedScripts.push(response);
