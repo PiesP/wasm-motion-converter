@@ -390,13 +390,13 @@ async function waitForClosedResponse(record) {
 }
 
 function responseSnapshot(record) {
-  return { status: record.status, startedAtMs: record.startedAtMs,
+  return { kind: record.kind, status: record.status, startedAtMs: record.startedAtMs,
     closedAtMs: record.closedAtMs, finishedAtMs: record.finishedAtMs,
     releaseMs: record.closedAtMs === null ? null : record.closedAtMs - record.startedAtMs };
 }
 
 async function observeCleanupCase({ browser, bundleRoot, build, caseSpec, fixed,
-  startStaticServer, closeServer, diagnostics }) {
+  validMetadata, startStaticServer, closeServer, diagnostics }) {
   const records = [];
   const waiters = [];
   const pageErrors = [];
@@ -415,20 +415,24 @@ async function observeCleanupCase({ browser, bundleRoot, build, caseSpec, fixed,
     started = await startStaticServer(bundleRoot, {
       metadataHandler(request, response) {
         assert.equal(request.method, 'GET', 'Metadata check changed HTTP method');
-        assert(records.length < 2, 'Unexpected third metadata request');
-        const record = { status: caseSpec.status, startedAtMs: performance.now(),
+        assert(records.length < (fixed ? 3 : 2), 'Unexpected extra metadata request');
+        const valid = fixed && records.length === 2;
+        const record = { status: valid ? 200 : caseSpec.status,
+          kind: valid ? 'valid' : 'rejected', startedAtMs: performance.now(),
           closedAtMs: null, finishedAtMs: null, response };
         record.closed = new Promise((resolveClose) => {
           response.once('close', () => { record.closedAtMs = performance.now(); resolveClose(); });
         });
         response.once('finish', () => { record.finishedAtMs = performance.now(); });
         records.push(record);
-        response.writeHead(caseSpec.status, {
-          'Content-Type': caseSpec.contentType,
+        response.writeHead(record.status, {
+          'Content-Type': valid ? 'application/json' : caseSpec.contentType,
           'Cache-Control': 'no-store',
-          ...(caseSpec.contentLength ? { 'Content-Length': String(caseSpec.contentLength) } : {}),
+          ...(valid ? { 'Content-Length': String(validMetadata.length) } :
+            caseSpec.contentLength ? { 'Content-Length': String(caseSpec.contentLength) } : {}),
         });
-        response.write(caseSpec.prefix);
+        if (valid) response.end(validMetadata);
+        else response.write(caseSpec.prefix);
         for (const waiter of [...waiters]) {
           if (records.length < waiter.number) continue;
           clearTimeout(waiter.timer);
@@ -489,6 +493,7 @@ async function observeCleanupCase({ browser, bundleRoot, build, caseSpec, fixed,
     assert.equal(document?.status(), 200);
     assert.equal(sha256(await document.body()), build.indexSha256,
       'Cleanup scenario loaded the wrong application artifact');
+    const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
     const first = await requireRecord(firstWait);
     assert.equal(await anyUpdateNotice(page).isVisible(), false,
       'Rejected metadata announced an update');
@@ -525,8 +530,48 @@ async function observeCleanupCase({ browser, bundleRoot, build, caseSpec, fixed,
     result.signalEvents = await page.evaluate(() => globalThis.__cleanupFetchSignals);
     assert.equal(await page.evaluate(() => globalThis.__cleanupFetchOverflow), false);
     assert.equal(result.signalEvents.length, 2, 'Observed metadata Fetch count differs');
-    if (fixed) assert(result.signalEvents.every((entry) => entry.abortedAtMs !== null),
-      'Fixed app did not abort both rejected metadata Fetch signals');
+    if (fixed) {
+      assert(result.signalEvents.every((entry) => entry.abortedAtMs !== null),
+        'Fixed app did not abort both rejected metadata Fetch signals');
+      result.rejectedCleanup = { observedAtMs: performance.now(),
+        responseBodies: records.map(responseSnapshot),
+        unfinishedResponseWork: records.filter((record) => record.closedAtMs === null).length,
+        signalEvents: result.signalEvents };
+      assert.equal(result.rejectedCleanup.unfinishedResponseWork, 0,
+        'Rejected metadata response work remained before the valid check');
+      await page.waitForTimeout(Math.max(0,
+        CLEANUP_SECOND_ATTEMPT_MS - (performance.now() - second.startedAtMs)));
+      assert.equal(records.length, 2, 'Metadata polling occurred before the valid check event');
+      const thirdWait = waitForResponseNumber(records, waiters, 3);
+      const validResponse = captureResponseWait(page, (response) =>
+        new URL(response.url()).pathname === METADATA_PATH && response.status() === 200,
+      20_000);
+      await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      const third = await requireRecord(thirdWait);
+      const response = await requireResponse(validResponse);
+      const observedMetadata = await response.body();
+      assert.equal(observedMetadata.length, validMetadata.length);
+      assert.equal(sha256(observedMetadata), sha256(validMetadata),
+        'Valid metadata response bytes differ from the original source artifact');
+      assert(await waitForClosedResponse(third), 'Valid metadata response did not finish');
+      assert.notEqual(third.finishedAtMs, null, 'Valid metadata response did not finish normally');
+      await updateNotice(page).waitFor({ state: 'visible', timeout: 10_000 });
+      assert.equal(await page.evaluate(() => performance.timeOrigin), documentTimeOrigin,
+        'Valid metadata notice automatically navigated the built app');
+      assert.equal(records.length, 3, 'Valid event did not produce exactly one third request');
+      result.signalEvents = await page.evaluate(() => globalThis.__cleanupFetchSignals);
+      assert.equal(await page.evaluate(() => globalThis.__cleanupFetchOverflow), false);
+      assert.equal(result.signalEvents.length, 3, 'Valid metadata Fetch count differs');
+      assert(result.signalEvents.slice(0, 2).every((entry) => entry.abortedAtMs !== null),
+        'Rejected metadata Fetch signals lost their abort evidence');
+      assert.equal(result.signalEvents[2].abortedAtMs, null,
+        'Successful valid metadata Fetch was aborted');
+      result.validDetection = { sourceSha: JSON.parse(validMetadata.toString('utf8')).sourceSha,
+        response: responseSnapshot(third), notice: true, automaticNavigation: false,
+        thirdSignalAborted: false };
+      assert.equal(records.filter((record) => record.closedAtMs === null).length, 0,
+        'Valid detection left response work unfinished');
+    }
     assert.deepEqual(await page.evaluate(() => globalThis.__cleanupCspViolations), []);
     assert.deepEqual(pageErrors, []);
     assert.deepEqual(consoleErrors, []);
@@ -581,11 +626,16 @@ async function observeMetadataCleanup({ browser, bundleRoot, config, buildB,
   assert.equal(original.state.version, buildB.state.version);
   assert.equal(original.workerSha256, buildB.workerSha256,
     'Cleanup comparison changed service-worker bytes');
+  const validMetadata = await readFile(await validateBundleFile(bundleRoot,
+    `${config.cleanupBaseline}/deployment-state.json`));
+  assert(validMetadata.length > 0 && validMetadata.length <= MAX_METADATA_BYTES,
+    'Valid metadata response exceeds the application size limit');
+  assert.equal(JSON.parse(validMetadata.toString('utf8')).sourceSha, original.state.sourceSha);
   const observations = [];
   diagnostics.cleanupResponses = observations;
   for (const [build, fixed] of [[original, false], [buildB, true]]) {
     const cases = await Promise.allSettled(CLEANUP_CASES.map((caseSpec) => observeCleanupCase({
-      browser, bundleRoot, build, caseSpec, fixed, startStaticServer, closeServer,
+      browser, bundleRoot, build, caseSpec, fixed, validMetadata, startStaticServer, closeServer,
       diagnostics: observations,
     })));
     const failure = cases.find((outcome) => outcome.status === 'rejected');
