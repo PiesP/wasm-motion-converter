@@ -44,14 +44,29 @@ describe('getMemoryInfo', () => {
     expect(getMemoryInfo()?.deviceMemoryGB).toBeUndefined();
   });
 
-  it('estimates a heap limit from positive device memory when performance.memory is absent', () => {
+  it('does not present device RAM as a measured JS heap', () => {
     setPerformanceMemory(undefined);
     vi.stubGlobal('navigator', { deviceMemory: 4 });
+    expect(getMemoryInfo()).toBeNull();
+  });
 
-    const info = getMemoryInfo();
-    expect(info?.usedJSHeapSize).toBe(0);
-    expect(info?.usagePercentage).toBe(0);
-    expect(info?.jsHeapSizeLimit).toBe(4 * 1024 * 1024 * 1024 * 0.25);
+  it.each([
+    { usedJSHeapSize: Number.NaN, totalJSHeapSize: 80, jsHeapSizeLimit: 100 },
+    { usedJSHeapSize: 40, totalJSHeapSize: Number.POSITIVE_INFINITY, jsHeapSizeLimit: 100 },
+    { usedJSHeapSize: 40, totalJSHeapSize: 80, jsHeapSizeLimit: 0 },
+    { usedJSHeapSize: 90, totalJSHeapSize: 80, jsHeapSizeLimit: 100 },
+    { usedJSHeapSize: 80, totalJSHeapSize: 120, jsHeapSizeLimit: 100 },
+    { usedJSHeapSize: 120, totalJSHeapSize: 120, jsHeapSizeLimit: 100 },
+  ])('rejects invalid performance.memory fields: %o', (memory) => {
+    setPerformanceMemory(memory);
+    vi.stubGlobal('navigator', { deviceMemory: 8 });
+    expect(getMemoryInfo()).toBeNull();
+  });
+
+  it('ignores invalid device memory while retaining valid heap measurements', () => {
+    setPerformanceMemory({ usedJSHeapSize: 1, totalJSHeapSize: 2, jsHeapSizeLimit: 4 });
+    vi.stubGlobal('navigator', { deviceMemory: Number.POSITIVE_INFINITY });
+    expect(getMemoryInfo()?.deviceMemoryGB).toBeUndefined();
   });
 
   it('returns null when neither memory API is available', () => {
