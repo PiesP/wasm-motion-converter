@@ -33,8 +33,12 @@ export interface BaseEncoderOptions {
   maxFrames?: number | undefined;
   /** Hard ceiling for cumulative encoded output bytes. */
   maxOutputBytes?: number | undefined;
-  /** Source FPS / target FPS; integer forced values retain their frame floor. */
+  /** Source FPS / target FPS, sampled against presentation timestamps. */
   frameDecimation?: number | undefined;
+  /** Explicit minimum source-frame gap; never inferred from the cadence ratio. */
+  minimumSourceFrameGap?: number | undefined;
+  /** Additional critical-memory time cadence applied after normal frame selection. */
+  pressureCadenceRatio?: number | undefined;
   /** Callback fired after each frame is decoded */
   onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /**
@@ -75,7 +79,7 @@ export interface BaseEncoderOptions {
  *
  * @param sourceFps - Source video frame rate
  * @param targetFps - Desired output frame rate (from a format-specific target FPS map)
- * @param forceDecimation - Override all calculations (used for memory-pressure forced decimation)
+ * @param forceDecimation - Legacy explicit integer source-frame override
  * @returns Source/target cadence ratio (1 = keep every frame)
  */
 export function calcAutoDecimation(
@@ -113,4 +117,33 @@ export function calcMemoryPressureDecimation(sourceFps: number, targetFps: numbe
     calcAutoDecimation(sourceFps, targetFps),
     calcAutoDecimation(sourceFps, MEMORY_PRESSURE_TARGET_FPS)
   );
+}
+
+/** Keep the normal selection grid, pressure filter, and explicit source gap separate. */
+export function resolveCadencePolicy(
+  sourceFps: number,
+  targetFps: number,
+  forceDecimation?: number,
+  memoryPressureCadenceRatio?: number
+): {
+  frameDecimation: number;
+  minimumSourceFrameGap: number;
+  pressureCadenceRatio: number | undefined;
+} {
+  const explicitGap =
+    forceDecimation !== undefined && Number.isFinite(forceDecimation) && forceDecimation > 0
+      ? Math.max(1, Math.round(forceDecimation))
+      : 1;
+  const pressureRatio =
+    memoryPressureCadenceRatio !== undefined &&
+    Number.isFinite(memoryPressureCadenceRatio) &&
+    memoryPressureCadenceRatio > 0
+      ? Math.max(1, memoryPressureCadenceRatio)
+      : 1;
+  const frameDecimation = calcAutoDecimation(sourceFps, targetFps, forceDecimation);
+  return {
+    frameDecimation,
+    minimumSourceFrameGap: explicitGap,
+    pressureCadenceRatio: pressureRatio > frameDecimation ? pressureRatio : undefined,
+  };
 }

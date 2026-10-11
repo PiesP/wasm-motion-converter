@@ -226,12 +226,39 @@ describe('direct Node script boundaries', () => {
   it('generates bounded E2E fixtures with stubbed codec tools and propagates failures', () => {
     const { root, run } = fixture();
     const bin = join(root, 'bin');
-    stub(join(bin, 'ffmpeg'), 'for last do :; done\nprintf video > "$last"');
+    // The short-tail generator rewrites real MP4 timing boxes after encoding.
+    const box = (type: string, ...contents: Buffer[]): Buffer => {
+      const body = Buffer.concat(contents);
+      const header = Buffer.alloc(8);
+      header.writeUInt32BE(body.length + 8);
+      header.write(type, 4, 'ascii');
+      return Buffer.concat([header, body]);
+    };
+    const clock = Buffer.alloc(24);
+    clock.writeUInt32BE(1000, 12);
+    clock.writeUInt32BE(1, 16);
+    const track = Buffer.alloc(24);
+    track.writeUInt32BE(1, 20);
+    const timing = Buffer.alloc(16);
+    timing.writeUInt32BE(1, 4);
+    timing.writeUInt32BE(1, 8);
+    timing.writeUInt32BE(1, 12);
+    const edit = Buffer.alloc(20);
+    edit.writeUInt32BE(1, 4);
+    edit.writeUInt32BE(1, 8);
+    const mp4Path = join(root, 'singleton.mp4');
+    writeFileSync(mp4Path, box('moov', box('mvhd', clock), box('trak',
+      box('tkhd', track), box('edts', box('elst', edit)), box('mdia',
+        box('mdhd', clock), box('minf', box('stbl', box('stts', timing)))))));
+    stub(join(bin, 'ffmpeg'), 'for last do :; done\ncase "$last" in\n*short-tail.mp4) cp "$FAKE_MP4" "$last" ;;\n*) printf video > "$last" ;;\nesac');
     stub(join(bin, 'ffprobe'), `printf '%s\\n' '{"streams":[{"has_b_frames":1}],"packets_and_frames":[{"type":"packet","pts":2,"dts":0},{"type":"packet","pts":1,"dts":1},{"type":"frame","pict_type":"B"}]}'`);
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, PREPARE_RESOURCE_FIXTURES: 'false' };
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, PREPARE_RESOURCE_FIXTURES: 'false', FAKE_MP4: mp4Path };
     const result = run('scripts/test/generate-e2e-video.ts', env);
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(join(root, 'public/test-video-contract-bframes.mp4'), 'utf8')).toBe('video');
+    const shortTail = readFileSync(join(root, 'public/test-video-contract-short-tail.mp4'));
+    const sttsType = shortTail.indexOf(Buffer.from('stts'));
+    expect(shortTail.readUInt32BE(sttsType + 16)).toBe(10);
     expect(existsSync(join(root, 'public/test-video-contract-rotate-90.mp4.unrotated.mp4'))).toBe(false);
     stub(join(bin, 'ffmpeg'), 'exit 7');
     const failed = run('scripts/test/generate-e2e-video.ts', env);

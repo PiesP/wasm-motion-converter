@@ -48,10 +48,33 @@ describe('presentation timestamp sampling', () => {
   });
 
   it('enforces an explicit integer frame floor with dense presentation timestamps', () => {
-    const select = createPresentationSampler(30, 2);
+    const select = createPresentationSampler(30, 2, 2);
     const startsUs = [0, 70_000, 70_001, 70_002];
     expect(startsUs.flatMap((startUs, frame) => (select(startUs, frame) ? [frame] : []))).toEqual([
       0, 2,
+    ]);
+  });
+
+  it.each([2, 3, 4])('keeps overdue VFR scenes under automatic integer ratio %i', (ratio) => {
+    const select = createPresentationSampler(30 * ratio, ratio);
+    expect([0, 1_000_000, 2_000_000].flatMap((pts, frame) =>
+      select(pts, frame) ? [pts] : []
+    )).toEqual([0, 1_000_000, 2_000_000]);
+  });
+
+  it('keeps the first post-gap scene without a catch-up burst or a source-frame floor', () => {
+    const select = createPresentationSampler(60, 4);
+    const pts = [0, 10_000, 20_000, 1_000_000, 1_000_001, 1_000_002, 1_100_000];
+    expect(pts.flatMap((startUs, frame) => select(startUs, frame) ? [startUs] : [])).toEqual([
+      0, 1_000_000, 1_100_000,
+    ]);
+  });
+
+  it('does not create a catch-up burst from duplicate presentation timestamps', () => {
+    const select = createPresentationSampler(60, 3);
+    const pts = [0, 0, 0, 1_000_000, 1_000_000, 1_000_001, 1_050_000];
+    expect(pts.flatMap((startUs, frame) => select(startUs, frame) ? [frame] : [])).toEqual([
+      0, 3, 6,
     ]);
   });
 });

@@ -18,20 +18,10 @@ pnpm prepare:e2e:fixture
 pnpm build:ci
 ```
 
-The common Windows acceptance runner reads `profile.json` and bundles exactly
-these repository-relative assets:
-
-- `dist/`, including `dist/_headers`
-- `public/test-video-ci-h264.mp4`
-- `public/test-video-ci-high-motion-120fps.mp4`
-- `public/test-video-contract-cfr.mp4`
-- `public/test-video-contract-motion-120fps.mp4`
-- `public/test-video-contract-bframes.mp4`
-- `public/test-video-contract-vp9.webm`
-- `public/test-video-contract-vfr-par.mp4`
-- `public/test-video-contract-rotate-90.mp4`
-- `validation/windows/output-contract.json`
-- `validation/windows/output-contract.mjs`
+The common Windows acceptance runner reads
+[`profile.json`](./profile.json) for the exact repository-relative asset list,
+including production `dist/`, deterministic media, output contracts, and
+playback helpers.
 
 The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
@@ -101,6 +91,18 @@ record:
 - the same VFR/PAR WebP output contract through the production WASM fallback,
   with Worker construction and native WebP encoding disabled under the deployed
   CSP; the real WASM binary must initialize without JavaScript string evaluation;
+- short-tail GIF raw delays and ordinary `<img>` playback observed through
+  bounded timestamped compositor PNGs; repeated red-return cycles containing
+  lime have a declared sampling tolerance separate from serialized endpoint
+  error. Qualifying transition brackets must be at most 35 ms, each cycle must
+  be within 35 ms of the 120 ms serialized cycle, and the median error must be
+  at most 20 ms, with at least three consecutive qualifying cycles. Sparse
+  cycles remain unknown in the retained record. Full red/lime/blue observations
+  remain a separate diagnostic: this cadence check does not establish the
+  visible duration of every 20 ms blue hold;
+- integer-ratio sparse VFR outputs through GIF and parallel/serial/WASM WebP,
+  plus controlled critical-pressure conversions with real GIF Worker terminal
+  counts and native WebP decoder/encoder-task observations;
 - high-motion GIF cancellation from a non-zero progress value, including an
   inspector assertion that the same progress bar and value remain visible while
   both cancellation controls are disabled and accurately named, the operation

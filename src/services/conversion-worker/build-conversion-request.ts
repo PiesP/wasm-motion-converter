@@ -36,6 +36,7 @@ export function buildConversionRequest(
     maxMemoryMB,
     ...outputLimits,
     forceDecimation: options.forceDecimation,
+    memoryPressureCadenceRatio: options.memoryPressureCadenceRatio,
     smartFrameSkip: options.smartFrameSkip ?? 'off',
   };
 }

@@ -68,12 +68,18 @@ describe('encodeWebp timing', () => {
         totalFrames: 1,
       },
       { width: 1, height: 1, quality: 'medium', scale: 1,
+        frameDecimation: 1.05, minimumSourceFrameGap: 2, pressureCadenceRatio: 1.4,
         onFrameDecoded, onFrameEncoded, onEncodingComplete }
     );
 
     expect(mocks.finishPresentation).toHaveBeenCalledWith(175_000);
     expect(mocks.encodeRGBReuse).toHaveBeenCalledWith(expect.any(Uint8Array), 1, 1, 75);
     expect(mocks.decodeOptions).not.toHaveProperty('maxInputChunks');
+    expect(mocks.decodeOptions).toEqual(expect.objectContaining({
+      frameDecimation: 1.05,
+      minimumSourceFrameGap: 2,
+      pressureCadenceRatio: 1.4,
+    }));
     expect(onFrameDecoded).toHaveBeenCalledWith(1, 1);
     expect(onFrameEncoded).toHaveBeenCalledWith(1, 1);
     expect(onEncodingComplete).toHaveBeenCalledWith({

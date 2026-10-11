@@ -49,7 +49,7 @@ import { buildEncodingProgress } from './conversion-progress';
 import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
-import { calcAutoDecimation, type EncoderFrameCounts } from './encoder-common';
+import { type EncoderFrameCounts, resolveCadencePolicy } from './encoder-common';
 import { calculateWebpWorkerCountForBudget, WebpFrameMemoryBudget } from './frame-memory';
 import {
   clearCanvasCache,
@@ -242,8 +242,8 @@ async function _runPipelineInner(
     let encodeResult: { outputBytes: number } | null = null;
 
     // Track frame times for FPS calculation
-    // Progress callback fires every ~10 frames (throttled in decoder-service),
-    // so we count actual frames and compute FPS over the interval.
+    // The decoder reports bounded native counts independently of frame selection;
+    // compute rate from observed count advancement over the elapsed interval.
     const fpsTracker = { current: 0, lastTime: performance.now(), lastFrame: 0 };
 
     // estimatedOutputFrames is computed after decimationRatio is determined
@@ -274,8 +274,8 @@ async function _runPipelineInner(
         progress: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
         fps: fpsTracker.current,
         etaSeconds:
-          fpsTracker.current > 0
-            ? Math.max(0, Math.round((demuxResult.totalFrames - frameIdx) / fpsTracker.current))
+          fpsTracker.current > 0 && demuxResult.totalFrames > frameIdx
+            ? Math.ceil((demuxResult.totalFrames - frameIdx) / fpsTracker.current)
             : null,
         memoryMB: sampleMemory(),
         accountedMemoryMB: sampleAccountedMemoryMB(),
@@ -341,12 +341,19 @@ async function _runPipelineInner(
 
     if (request.format === 'gif') {
       profiler?.setEncoderRoute('gif-main');
-      const gifDecimation = calcAutoDecimation(
+      const gifCadence = resolveCadencePolicy(
         sourceFps,
         GIF_TARGET_FPS[request.quality],
-        request.forceDecimation
+        request.forceDecimation,
+        request.memoryPressureCadenceRatio
       );
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
+      const gifDecimation = gifCadence.frameDecimation;
+      estimatedOutputFrames = Math.max(
+        1,
+        Math.ceil(
+          demuxResult.totalFrames / Math.max(gifDecimation, gifCadence.pressureCadenceRatio ?? 1)
+        )
+      );
 
       logger.info('conversion', '  ├─ Branch: GIF encoder (streaming decode→encode)', {
         codec: demuxResult.config.codec,
@@ -368,6 +375,8 @@ async function _runPipelineInner(
                 quality: request.quality,
                 scale: request.scale,
                 frameDecimation: gifDecimation,
+                minimumSourceFrameGap: gifCadence.minimumSourceFrameGap,
+                pressureCadenceRatio: gifCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
@@ -389,12 +398,19 @@ async function _runPipelineInner(
         outputBytes: output.byteLength,
       };
     } else {
-      const webpDecimation = calcAutoDecimation(
+      const webpCadence = resolveCadencePolicy(
         sourceFps,
         WEBP_TARGET_FPS[request.quality],
-        request.forceDecimation
+        request.forceDecimation,
+        request.memoryPressureCadenceRatio
       );
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
+      const webpDecimation = webpCadence.frameDecimation;
+      estimatedOutputFrames = Math.max(
+        1,
+        Math.ceil(
+          demuxResult.totalFrames / Math.max(webpDecimation, webpCadence.pressureCadenceRatio ?? 1)
+        )
+      );
 
       // Use the parallel Worker-based encoder when its complete resource model fits.
       // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
@@ -493,6 +509,8 @@ async function _runPipelineInner(
                 width: w,
                 height: h,
                 frameDecimation: webpDecimation,
+                minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
+                pressureCadenceRatio: webpCadence.pressureCadenceRatio,
                 hwAccel: 'prefer-hardware',
                 smartFrameSkip: request.smartFrameSkip,
                 pixelFormat: 'rgba',
@@ -575,6 +593,8 @@ async function _runPipelineInner(
                 quality: request.quality,
                 scale: request.scale,
                 frameDecimation: webpDecimation,
+                minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
+                pressureCadenceRatio: webpCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
@@ -614,6 +634,8 @@ async function _runPipelineInner(
                 quality: request.quality,
                 scale: request.scale,
                 frameDecimation: webpDecimation,
+                minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
+                pressureCadenceRatio: webpCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,

@@ -68,13 +68,17 @@ export type { PresentationInterval } from './presentation-timing';
 export interface DecodeOptions {
   width: number;
   height: number;
-  /** Source/target FPS ratio; integer values also enforce a source-frame floor. */
+  /** Source/target FPS ratio for presentation-time selection. */
   frameDecimation?: number | undefined;
+  /** Explicit source-frame restriction, independent of presentation-time cadence. */
+  minimumSourceFrameGap?: number | undefined;
+  /** Additional time cadence applied only to frames admitted by normal selection. */
+  pressureCadenceRatio?: number | undefined;
   /** CPU pixel layout delivered to onFrameAvailable. */
   pixelFormat?: CpuPixelFormat | undefined;
   /** Hardware acceleration policy */
   hwAccel?: ('prefer-hardware' | 'prefer-software') | undefined;
-  /** Callback fired after each frame is decoded (for progress tracking) */
+  /** Throttled visible-decoded count, with an exact final observation on success. */
   onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /** Development-only observer for operation wall time; operation totals can overlap. */
   profileOperation?: ProfileOperationRecorder | undefined;
@@ -191,6 +195,8 @@ export async function decodeFrames(
     width,
     height,
     frameDecimation = 1,
+    minimumSourceFrameGap = 1,
+    pressureCadenceRatio,
     pixelFormat = 'rgb',
     hwAccel = 'prefer-software',
     onFrameDecoded,
@@ -461,8 +467,21 @@ export async function decodeFrames(
   let lastAdaptiveKeptFrame = Number.NEGATIVE_INFINITY;
   const requestedDecimation =
     Number.isFinite(frameDecimation) && frameDecimation > 0 ? Math.max(1, frameDecimation) : 1;
-  const selectFixedFrame = createPresentationSampler(sourceFps, requestedDecimation);
-  const requestedFrameFloor = Math.max(1, Math.floor(requestedDecimation));
+  const requestedFrameFloor =
+    Number.isSafeInteger(minimumSourceFrameGap) && minimumSourceFrameGap > 0
+      ? minimumSourceFrameGap
+      : 1;
+  const selectFixedFrame = createPresentationSampler(
+    sourceFps,
+    requestedDecimation,
+    requestedFrameFloor
+  );
+  const selectPressureFrame =
+    pressureCadenceRatio !== undefined &&
+    Number.isFinite(pressureCadenceRatio) &&
+    pressureCadenceRatio > 1
+      ? createPresentationSampler(sourceFps, pressureCadenceRatio)
+      : null;
   const canRunAdaptiveAnalysis =
     isAdaptive && streaming && typeof onVideoFrameAvailable !== 'function';
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
@@ -511,6 +530,39 @@ export async function decodeFrames(
       recordConversionError(processingFailureSignal.reason);
     }
     return firstConversionError !== null;
+  };
+
+  let lastDecodedProgressCount = 0;
+  let lastDecodedProgressTime = 0;
+  const reportDecodedProgress = (count: number, terminal = false): void => {
+    if (
+      !onFrameDecoded ||
+      signal?.aborted ||
+      processingFailureSignal?.aborted ||
+      firstPipelineFailure
+    ) {
+      return;
+    }
+    if (!terminal && count <= lastDecodedProgressCount) return;
+    const now = performance.now();
+    const advanced = count - lastDecodedProgressCount;
+    // Time-based updates cover sparse decodes, while count advancement also
+    // covers fast bursts. Both paths cap callbacks independently of selection.
+    if (
+      !terminal &&
+      lastDecodedProgressCount > 0 &&
+      advanced < 10 &&
+      (advanced < 2 || now - lastDecodedProgressTime < 100)
+    ) {
+      return;
+    }
+    lastDecodedProgressCount = count;
+    lastDecodedProgressTime = now;
+    try {
+      onFrameDecoded(count, demux.totalFrames);
+    } catch (error) {
+      recordConversionError(error);
+    }
   };
 
   const handleProcessingFailure = (): void => {
@@ -840,12 +892,17 @@ export async function decodeFrames(
           // and count/close later native outputs before pixel admission.
           duplicateTimestamps++;
           frame.close();
+          reportDecodedProgress(inputFrameCount);
           return;
         }
         inputFrameCount += deferredDuplicateCount;
         duplicateTimestamps += deferredDuplicateCount;
         lastVisibleSourceStartUs = sourceStartUs;
-        const decodedInputCount = inputFrameCount;
+        reportDecodedProgress(inputFrameCount);
+        if (firstPipelineFailure || signal?.aborted) {
+          frame.close();
+          return;
+        }
         const frameDuration = Math.max(1, Math.round((overlapEndUs - overlapStartUs) / 1000));
 
         // Select at source presentation boundaries, preserving fractional
@@ -853,6 +910,21 @@ export async function decodeFrames(
         const cadenceEligible =
           canRunAdaptiveAnalysis || selectFixedFrame(presentation.startUs, frameNum);
         if (!canRunAdaptiveAnalysis && !cadenceEligible) {
+          frame.close();
+          skippedByDecimation++;
+          return;
+        }
+        // With no CPU smart selection, a pressure rejection can avoid a frame
+        // copy. Otherwise wait until the normal smart/adaptive decision has
+        // updated its independent history before applying the pressure filter.
+        const pressureBeforeCopy =
+          !canRunAdaptiveAnalysis &&
+          (!streaming || skipThreshold < 0 || typeof onVideoFrameAvailable === 'function');
+        if (
+          pressureBeforeCopy &&
+          selectPressureFrame &&
+          !selectPressureFrame(presentation.startUs, frameNum)
+        ) {
           frame.close();
           skippedByDecimation++;
           return;
@@ -1121,8 +1193,9 @@ export async function decodeFrames(
             // ── Adaptive motion-classified decimation ──
             // Instead of fixed decimation, classify each frame's motion level
             // and apply variable decimation: static scenes get aggressive skip,
-            // while fast motion uses the preset/memory decimation floor. Uses bounded RGB tile statistics
-            // and a local-change safeguard for comparison.
+            // while fast motion uses only an explicitly requested source-frame gap.
+            // Presentation-time cadence remains a separate admission check.
+            // Uses bounded RGB tile statistics and a local-change safeguard.
             //
             // NOTE: This block is NEVER entered when onVideoFrameAvailable is active
             // (GPU-only path) because that path skips copyFrameToPixels entirely, meaning
@@ -1143,8 +1216,8 @@ export async function decodeFrames(
                 motionClass = classifyAdaptiveMotion(frameDistance, noiseFloor);
 
                 // Scene change detection: align the adaptive cadence so the new
-                // scene remains visible, but never reset it before the requested
-                // preset or memory floor allows another frame.
+                // scene remains visible, but never reset it before an explicit
+                // source-frame gap allows another frame.
                 if (
                   isSignificantMotionIncrease(motionClass, adaptLastMotionClass) &&
                   frameNum - lastAdaptiveKeptFrame >= requestedFrameFloor
@@ -1191,6 +1264,17 @@ export async function decodeFrames(
               lastRetainedStartUs = presentation.startUs;
             }
 
+            if (
+              !pressureBeforeCopy &&
+              selectPressureFrame &&
+              !selectPressureFrame(presentation.startUs, frameNum)
+            ) {
+              skippedByDecimation++;
+              globalBufferPool.release(pixelData);
+              recordMotionDecision();
+              return;
+            }
+
             recordMotionDecision();
 
             if (streaming) {
@@ -1224,21 +1308,6 @@ export async function decodeFrames(
               }
               batchFrames.push({ data: pixelData, duration: frameDuration });
               lastBatchStartUs = presentation.startUs;
-            }
-
-            // Report decoding progress — throttle to every 10 frames.
-            // The modulo check has negligible overhead (~1ns per frame) and
-            // avoids excessive callback invocations that would flood the
-            // progress store and trigger unnecessary SolidJS re-renders.
-            // At 60fps source, this fires ~6 times/second — smooth enough
-            // for the UI progress bar without overwhelming the reactive system.
-            if (
-              onFrameDecoded &&
-              (streaming
-                ? decodedInputCount % 10 === 0
-                : batchFrames.length % 10 === 0 || batchFrames.length === 1)
-            ) {
-              onFrameDecoded(decodedInputCount, demux.totalFrames);
             }
           } catch (error) {
             recordConversionError(error);
@@ -1617,6 +1686,9 @@ export async function decodeFrames(
   }
   const cleanupFailure = await cleanupDecoderLifecycle(primaryFailure);
   if (cleanupFailure) throw cleanupFailure;
+  reportDecodedProgress(inputFrameCount, true);
+  const progressFailure = getLatchedFailureError();
+  if (progressFailure) throw progressFailure;
   return decodeResult as DecodeResult;
 }
 

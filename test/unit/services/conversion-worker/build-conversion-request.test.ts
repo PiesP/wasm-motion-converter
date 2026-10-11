@@ -74,6 +74,16 @@ describe('buildConversionRequest', () => {
     expect(request.forceDecimation).toBeUndefined();
   });
 
+  it('preserves fractional memory cadence separately from an explicit frame gap', () => {
+    const request = buildConversionRequest(new ArrayBuffer(0), {
+      ...baseOptions,
+      forceDecimation: 2,
+      memoryPressureCadenceRatio: 1.4,
+    });
+    expect(request.forceDecimation).toBe(2);
+    expect(request.memoryPressureCadenceRatio).toBe(1.4);
+  });
+
   it('does not allow serialized limits above the format hard ceilings', () => {
     const buffer = new ArrayBuffer(1024);
     const request = buildConversionRequest(buffer, {

@@ -211,7 +211,7 @@ async function performConversion(
     runtime.startMemoryMonitoring();
 
     const metadata = videoMetadata();
-    const forcedDecimation = runMemoryCheck(metadata, settings);
+    const memoryPressureCadenceRatio = runMemoryCheck(metadata, settings);
 
     if (signal.aborted) {
       throw new DOMException('Cancelled', 'AbortError');
@@ -220,7 +220,7 @@ async function performConversion(
     const progressCallback = createProgressCallback(isActive, runtime, t);
     const { serializedConfig, serializedOptions } = serializeConversionInputs(
       metadata,
-      forcedDecimation,
+      memoryPressureCadenceRatio,
       settings
     );
     const sourceDimensions = serializedConfig ? resolveVideoDimensions(serializedConfig) : null;
@@ -274,16 +274,16 @@ function runMemoryCheck(
     estFrames: plan.estimatedFrames,
   });
 
-  const forcedDecimation = resolveMemoryPressureDecimation(plan, memCheck.level);
-  if (forcedDecimation !== undefined) {
-    logger.warn('conversion', 'Forcing frame decimation due to memory pressure', {
-      forcedDecimation,
+  const memoryPressureCadenceRatio = resolveMemoryPressureDecimation(plan, memCheck.level);
+  if (memoryPressureCadenceRatio !== undefined) {
+    logger.warn('conversion', 'Restricting presentation cadence due to memory pressure', {
+      memoryPressureCadenceRatio,
       estimatedMB: memCheck.estimatedMB,
       availableMB: memCheck.availableMB,
     });
   }
 
-  return forcedDecimation;
+  return memoryPressureCadenceRatio;
 }
 
 function createProgressCallback(
@@ -365,6 +365,7 @@ async function executePipeline(
       maxFrames: serializedOptions.maxFrames,
       maxOutputBytes: serializedOptions.maxOutputBytes,
       forceDecimation: serializedOptions.forceDecimation,
+      memoryPressureCadenceRatio: serializedOptions.memoryPressureCadenceRatio,
       smartFrameSkip: serializedOptions.smartFrameSkip ?? 'off',
     };
     return runConversionPipeline(

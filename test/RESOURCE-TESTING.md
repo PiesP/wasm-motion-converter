@@ -27,6 +27,14 @@ explicit fallback measurements. Cold initialization is recorded separately from
 the five warmed conversions; it is excluded from leak slopes. The WASM override
 disables Canvas WebP encoding while retaining Canvas pixel-copy support.
 
+Two additional 21-fps GIF workloads compare normal and critical preflight
+pressure with identical input and settings. The injected `performance.memory`
+values select the policy and appear in embedded profiler heap fields; the CDP
+resource sampler measures actual renderer heap separately. Each result records
+the controlled values and
+asserts 21 native decoded frames and 20/15 admitted frames. These scenarios
+exercise approximate memory-driven sampling, not representation compression.
+
 `cfr-trim-gif` remains a separate output-contract test; it is not the current
 resource-profile workload. Measurements from the older `cfr-trim-gif` profile
 and the current `motion-cadence-gif` profile are not a direct before/after
@@ -45,7 +53,7 @@ allocations; it is not a GPU VRAM measurement.
 ## Signals and evidence
 
 On Linux, the profile samples Chromium process PSS, RSS, and CPU time through
-CDP and `/proc`, alongside page JS heap and the optional user-agent-specific
+CDP and `/proc`, alongside renderer JS heap from CDP `Runtime.getHeapUsage` and the optional user-agent-specific
 memory API. It does not pass the deterministic `--disable-gpu` setting used by
 regular tests; the actual hardware or software GPU remains
 environment-dependent, and GPU VRAM is not measured.

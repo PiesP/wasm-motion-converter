@@ -12,12 +12,13 @@ interface SourceFrame {
 
 const mocks = vi.hoisted(() => ({
   frames: [] as SourceFrame[],
-  nextPalette: 0,
+  currentFrame: 0,
 }));
 
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     for (const [number, frame] of mocks.frames.entries()) {
+      mocks.currentFrame = number;
       await options.onFrameAvailable(
         new Uint8Array(frame.indices.length * 4),
         (frame.endUs - frame.startUs) / 1000,
@@ -51,8 +52,8 @@ vi.mock('gifenc', async (importOriginal) => {
   const actual = await importOriginal<typeof import('gifenc')>();
   return {
     ...actual,
-    quantize: () => mocks.frames[mocks.nextPalette++]!.palette,
-    applyPalette: () => mocks.frames[mocks.nextPalette - 1]!.indices.slice(),
+    quantize: () => mocks.frames[mocks.currentFrame]!.palette,
+    applyPalette: () => mocks.frames[mocks.currentFrame]!.indices.slice(),
   };
 });
 
@@ -214,10 +215,141 @@ async function encodeFrames(
 
 beforeEach(() => {
   mocks.frames = [];
-  mocks.nextPalette = 0;
+  mocks.currentFrame = 0;
 });
 
 describe('GIF exact indexed representation', () => {
+  it('keeps a 110 ms three-scene clip safe for ordinary GIF playback', async () => {
+    mocks.frames = [
+      { startUs: 0, endUs: 50_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 50_000, endUs: 100_000, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 100_000, endUs: 110_000, palette: [[3, 0, 0]], indices: Uint8Array.of(0) },
+    ];
+
+    const frames = readGif(await encodeFrames(1, 1)).frames;
+    expect(frames.map((frame) => frame.colors)).toEqual([[0x010000], [0x020000], [0x030000]]);
+    expect(frames.map((frame) => frame.delayCs)).toEqual([5, 5, 2]);
+  });
+
+  it.each([
+    [25_001, [0x010000], [3]],
+    [29_999, [0x010000], [3]],
+    [30_000, [0x010000, 0x020000], [3, 2]],
+  ] as const)(
+    'bounds the endpoint for a 25 ms boundary and %i µs final scene',
+    async (endUs, colors, delaysCs) => {
+      mocks.frames = [
+        { startUs: 0, endUs: 25_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+        { startUs: 25_000, endUs, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+      ];
+
+      const frames = readGif(await encodeFrames(1, 1)).frames;
+      expect(frames.map((frame) => frame.colors[0])).toEqual(colors);
+      expect(frames.map((frame) => frame.delayCs)).toEqual(delaysCs);
+      expect(frames.reduce((total, frame) => total + frame.delayCs * 10, 0) - endUs / 1000)
+        .toBeLessThanOrEqual(20);
+    }
+  );
+
+  it('keeps a deferred scene once a later timestamp gives it a full hold', async () => {
+    mocks.frames = [
+      { startUs: 0, endUs: 25_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 25_000, endUs: 25_001, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 45_000, endUs: 65_000, palette: [[3, 0, 0]], indices: Uint8Array.of(0) },
+    ];
+
+    const frames = readGif(await encodeFrames(1, 1)).frames;
+    expect(frames.map((frame) => frame.colors[0])).toEqual([0x010000, 0x020000, 0x030000]);
+    expect(frames.map((frame) => frame.delayCs)).toEqual([3, 2, 2]);
+  });
+
+  it('keeps the predecessor when memory cannot retain a short terminal scene', async () => {
+    mocks.frames = [
+      { startUs: 0, endUs: 25_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 25_000, endUs: 25_001, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+    ];
+
+    const frames = readGif(await encodeFrames(1, 1, 'low', 20_000)).frames;
+    expect(frames.map((frame) => frame.colors[0])).toEqual([0x010000]);
+    expect(frames.map((frame) => frame.delayCs)).toEqual([3]);
+  });
+
+  it('omits an interior short scene without moving later source colors earlier', async () => {
+    mocks.frames = [
+      { startUs: 0, endUs: 15_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 15_000, endUs: 28_000, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 28_000, endUs: 50_000, palette: [[3, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 50_000, endUs: 80_000, palette: [[4, 0, 0]], indices: Uint8Array.of(0) },
+    ];
+
+    const frames = readGif(await encodeFrames(1, 1)).frames;
+    expect(frames.map((frame) => frame.colors)).toEqual([[0x010000], [0x020000], [0x040000]]);
+    expect(frames.map((frame) => frame.delayCs)).toEqual([2, 3, 3]);
+  });
+
+  it.each([109_999, 110_000, 110_001])(
+    'floors a short final hold at the %i µs trim endpoint',
+    async (endUs) => {
+      mocks.frames = [
+        { startUs: 0, endUs: 50_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+        { startUs: 50_000, endUs: 100_000, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+        { startUs: 100_000, endUs, palette: [[3, 0, 0]], indices: Uint8Array.of(0) },
+      ];
+
+      expect(readGif(await encodeFrames(1, 1)).frames.map((frame) => frame.delayCs)).toEqual([
+        5, 5, 2,
+      ]);
+    }
+  );
+
+  it.each([9_999, 10_000, 10_001])(
+    'floors an entire %i µs clip once',
+    async (endUs) => {
+      mocks.frames = [
+        { startUs: 0, endUs, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+      ];
+      expect(readGif(await encodeFrames(1, 1)).frames.map((frame) => frame.delayCs)).toEqual([2]);
+    }
+  );
+
+  it('does not let duplicate merging reintroduce a dropped short scene', async () => {
+    mocks.frames = [
+      { startUs: 0, endUs: 10_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 10_000, endUs: 20_000, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 20_000, endUs: 30_000, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 30_000, endUs: 40_000, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 40_000, endUs: 60_000, palette: [[3, 0, 0]], indices: Uint8Array.of(0) },
+    ];
+
+    const frames = readGif(await encodeFrames(1, 1)).frames;
+    expect(frames.map((frame) => frame.colors)).toEqual([[0x010000], [0x020000], [0x030000]]);
+    expect(frames.map((frame) => frame.delayCs)).toEqual([2, 2, 2]);
+  });
+
+  it('borrows from a long continuation so no remainder is one centisecond', async () => {
+    mocks.frames = [
+      { startUs: 0, endUs: 2_010_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+    ];
+
+    const frames = readGif(await encodeFrames(1, 1)).frames;
+    expect(frames.map((frame) => frame.delayCs)).toEqual([199, 2]);
+    expect(frames.map((frame) => frame.colors)).toEqual([[0x010000], [0x010000]]);
+  });
+
+  it('quantizes a fractional cadence cumulatively in the actual GIF stream', async () => {
+    mocks.frames = Array.from({ length: 45 }, (_, index) => ({
+      startUs: Math.round((index * 1_000_000) / 15),
+      endUs: Math.round(((index + 1) * 1_000_000) / 15),
+      palette: [[index + 1, 0, 0]],
+      indices: Uint8Array.of(0),
+    }));
+
+    const delays = readGif(await encodeFrames(1, 1)).frames.map((frame) => frame.delayCs);
+    expect(delays).toHaveLength(45);
+    expect(new Set(delays)).toEqual(new Set([6, 7]));
+    expect(delays.reduce((total, delay) => total + delay, 0)).toBe(300);
+  });
+
   it.each([64, 128, 256])('compacts a sparse %i-color table to its two used colors', async (size) => {
     const palette = Array.from({ length: size }, (_, index) => [index, 0, 255 - index]);
     const indices = Uint8Array.from({ length: 64 }, (_, pixel) => (pixel & 1 ? size - 1 : 0));

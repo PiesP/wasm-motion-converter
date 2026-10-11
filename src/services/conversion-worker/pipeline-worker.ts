@@ -12,7 +12,7 @@
 
 import { globalBufferPool } from '@services/buffer-pool';
 import { demuxVideo } from '@services/demuxer-service';
-import { calcAutoDecimation, type EncoderFrameCounts } from '@services/encoder-common';
+import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder-common';
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
@@ -334,12 +334,19 @@ export async function runWorkerPipeline(
     };
 
     if (options.format === 'gif') {
-      const gifDecimation = calcAutoDecimation(
+      const gifCadence = resolveCadencePolicy(
         sourceFps,
         GIF_TARGET_FPS[options.quality],
-        options.forceDecimation
+        options.forceDecimation,
+        options.memoryPressureCadenceRatio
       );
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
+      const gifDecimation = gifCadence.frameDecimation;
+      estimatedOutputFrames = Math.max(
+        1,
+        Math.ceil(
+          demuxResult.totalFrames / Math.max(gifDecimation, gifCadence.pressureCadenceRatio ?? 1)
+        )
+      );
       profiler?.setEncoderRoute('gif-worker');
 
       relayLog('info', 'encoders', '├─ GIF encoder (streaming decode→encode)', {
@@ -359,6 +366,8 @@ export async function runWorkerPipeline(
           quality: options.quality,
           scale: options.scale,
           frameDecimation: gifDecimation,
+          minimumSourceFrameGap: gifCadence.minimumSourceFrameGap,
+          pressureCadenceRatio: gifCadence.pressureCadenceRatio,
           smartFrameSkip: options.smartFrameSkip,
           decimationMemoryCheck,
           onEncodingComplete: recordCompletedFrameCounts,
@@ -374,12 +383,19 @@ export async function runWorkerPipeline(
       );
       output = toExactOutputBuffer(gifResult);
     } else {
-      const webpDecimation = calcAutoDecimation(
+      const webpCadence = resolveCadencePolicy(
         sourceFps,
         WEBP_TARGET_FPS[options.quality],
-        options.forceDecimation
+        options.forceDecimation,
+        options.memoryPressureCadenceRatio
       );
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
+      const webpDecimation = webpCadence.frameDecimation;
+      estimatedOutputFrames = Math.max(
+        1,
+        Math.ceil(
+          demuxResult.totalFrames / Math.max(webpDecimation, webpCadence.pressureCadenceRatio ?? 1)
+        )
+      );
       profiler?.setEncoderRoute('webp-wasm');
 
       // This Worker helper retains its WASM route. The UI WebP request uses
@@ -402,6 +418,8 @@ export async function runWorkerPipeline(
             quality: options.quality,
             scale: options.scale,
             frameDecimation: webpDecimation,
+            minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
+            pressureCadenceRatio: webpCadence.pressureCadenceRatio,
             smartFrameSkip: options.smartFrameSkip,
             decimationMemoryCheck,
             onEncodingComplete: recordCompletedFrameCounts,
