@@ -155,9 +155,13 @@ Node/pnpm against `.node-version` and `package.json`, restores and verifies the
 recorded core gitlink, installs the frozen lockfile with build dependencies,
 then runs `pnpm build`. Its quality, license and postbuild lifecycle stays a
 deployment prerequisite. License notices omit build dates so CI and Pages can
-reproduce the same public bytes across a date boundary. Read the provider log for effective tools and core
-SHA; `[vars]` is not a replacement for that verification. Source watch paths
-remain inclusive: runtime, patches, gitlinks, headers and build inputs must
+reproduce the same public bytes across a date boundary. Read the provider log
+for effective tools and core SHA. Declare `SKIP_DEPENDENCY_INSTALL = "1"` in
+Wrangler `[vars]` as well as
+the project settings: Pages projects using a Wrangler file read its variables
+into the build environment before deciding whether to install dependencies.
+Confirm the switch and the absence of an automatic install in the provider log.
+Source watch paths remain inclusive: runtime, patches, gitlinks, headers and build inputs must
 continue to trigger delivery. No custom-domain rules apply to the Pages-only
 hostname; keep its built-in compression and CDN caching.
 

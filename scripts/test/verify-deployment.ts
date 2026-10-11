@@ -141,7 +141,10 @@ export async function verifyDeploymentBytes(
     throw new Error('Deployment inventory differs from build artifact');
   const files = [];
   for (const file of expected.files) {
-    const url = new URL(file.path === 'index.html' ? '/' : `/${file.path}`, target);
+    // Pages serves top-level HTML documents at canonical extensionless URLs.
+    const path =
+      file.path === 'index.html' ? '/' : file.path === '404.html' ? '/404' : `/${file.path}`;
+    const url = new URL(path, target);
     const response = await fetcher(url, { redirect: 'error', signal: AbortSignal.timeout(20_000) });
     if (response.status !== 200) throw new Error(`${file.path} returned ${response.status}`);
     const body = await bytes(response, MAX_ASSET_BYTES);

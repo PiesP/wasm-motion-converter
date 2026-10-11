@@ -5,6 +5,7 @@ name = "dropconvert"
 compatibility_date = "2026-06-15"
 pages_build_output_dir = "dist"
 
-# Pages variable; the source bootstrap explicitly selects install/build mode.
+# Pages reads these variables before its automatic dependency-install step.
 [vars]
 NODE_ENV = "production"
+SKIP_DEPENDENCY_INSTALL = "1"
