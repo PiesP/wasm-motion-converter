@@ -300,7 +300,7 @@ async function resolveStaticFile(distRoot, requestUrl) {
   return resolvedFile;
 }
 
-async function startStaticServer(bundleRoot, { gzipAssets = false } = {}) {
+async function startStaticServer(bundleRoot, { gzipAssets = false, metadataHandler = null } = {}) {
   let distRoot;
   let headerRules;
   async function setDistribution(relativePath) {
@@ -330,6 +330,10 @@ async function startStaticServer(bundleRoot, { gzipAssets = false } = {}) {
       if (request.url === '/favicon.ico') {
         response.writeHead(204);
         response.end();
+        return;
+      }
+      if (metadataHandler && request.url === '/deployment-state.json') {
+        await metadataHandler(request, response);
         return;
       }
       const file = await resolveStaticFile(distRoot, request.url);
@@ -2158,13 +2162,17 @@ export async function run({ browser, root, output }) {
     const config = JSON.parse(await readFile(configPath, 'utf8'));
     assert.deepEqual(Object.keys(config).sort(), [
       'schemaVersion', 'mode', 'buildA', 'baseline', 'baselineSourceSha', 'baselineTreeSha',
+      'cleanupBaseline', 'cleanupBaselineSourceSha', 'cleanupBaselineTreeSha',
     ].sort(), 'Invalid application-update bundle configuration keys');
     assert.equal(config.schemaVersion, 1);
     assert.equal(config.mode, 'application-update');
     assert.equal(config.buildA, 'validation/windows/inputs/deployment-a');
     assert.equal(config.baseline, 'validation/windows/prior-dist');
+    assert.equal(config.cleanupBaseline, 'validation/windows/inputs/cleanup-baseline');
     assert.match(config.baselineSourceSha, /^[a-f0-9]{40}$/);
     assert.match(config.baselineTreeSha, /^[a-f0-9]{40}$/);
+    assert.equal(config.cleanupBaselineSourceSha, '6d2463937b46df629c406500bb06685ac115a98f');
+    assert.equal(config.cleanupBaselineTreeSha, '3a5c34857aa9e5a9d3dfbb7429d648004fd2fe44');
     const outputRoot = resolve(output);
     await mkdir(outputRoot, { recursive: true });
     return runAppUpdate({ browser, bundleRoot, outputRoot, config,
