@@ -72,7 +72,7 @@ vi.mock('gifenc', () => ({
       writeFrame: mocks.writeFrame,
     };
   },
-  quantize: () => [[0, 0, 0]],
+  quantize: (rgba: Uint8Array) => [[rgba[0]!, rgba[0]!, rgba[0]!]],
 }));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
