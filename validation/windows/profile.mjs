@@ -1839,13 +1839,10 @@ async function loadPublicTargets(bundleRoot) {
 async function exercisePublicTarget(browser, target, targetIndex, fixturePath, cancellationFixture, outputRoot, artifacts) {
   const publicDir = `public-${targetIndex + 1}-${target.deploymentId}`;
   const publicRoot = join(outputRoot, publicDir);
-  await mkdir(publicRoot, { recursive: true });
   const publicArtifacts = [];
-  const context = await browser.newContext({
-    acceptDownloads: true, locale: 'en-US', serviceWorkers: 'block',
-    viewport: { width: 1280, height: 900 },
-  });
-  const page = await context.newPage();
+  let context;
+  let primaryFailure;
+  let closeFailure;
   const errors = { page: [], console: [], request: [], csp: [], uploads: [], external: [] };
   const assets = new Map();
   const workers = [];
@@ -1872,31 +1869,37 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
       }));
     };
   };
-  page.on('worker', (worker) => workers.push(new URL(worker.url()).pathname));
-  page.on('pageerror', (error) => errors.page.push(error.message));
-  page.on('console', (message) => {
-    if (message.type() === 'error') errors.console.push(message.text());
-  });
-  context.on('requestfailed', (request) => {
-    if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED') return;
-    errors.request.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`);
-  });
-  context.on('request', (request) => {
-    if (!['GET', 'HEAD'].includes(request.method())) errors.uploads.push(`${request.method()} ${request.url()}`);
-    if (!request.url().startsWith('blob:') && new URL(request.url()).origin !== new URL(target.url).origin)
-      errors.external.push(request.url());
-  });
-  context.on('response', (response) => {
-    const path = new URL(response.url()).pathname;
-    if (/^\/assets\/.*\.(?:js|css|wasm)$/.test(path)) assets.set(path, response);
-  });
-  await context.addInitScript(() => {
-    globalThis.__wmcPublicViolations = [];
-    document.addEventListener('securitypolicyviolation', (event) => {
-      globalThis.__wmcPublicViolations.push(`${event.effectiveDirective}: ${event.blockedURI}`);
-    });
-  });
   try {
+    await mkdir(publicRoot, { recursive: true });
+    context = await browser.newContext({
+      acceptDownloads: true, locale: 'en-US', serviceWorkers: 'block',
+      viewport: { width: 1280, height: 900 },
+    });
+    const page = await context.newPage();
+    page.on('worker', (worker) => workers.push(new URL(worker.url()).pathname));
+    page.on('pageerror', (error) => errors.page.push(error.message));
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.console.push(message.text());
+    });
+    context.on('requestfailed', (request) => {
+      if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED') return;
+      errors.request.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`);
+    });
+    context.on('request', (request) => {
+      if (!['GET', 'HEAD'].includes(request.method())) errors.uploads.push(`${request.method()} ${request.url()}`);
+      if (!request.url().startsWith('blob:') && new URL(request.url()).origin !== new URL(target.url).origin)
+        errors.external.push(request.url());
+    });
+    context.on('response', (response) => {
+      const path = new URL(response.url()).pathname;
+      if (/^\/assets\/.*\.(?:js|css|wasm)$/.test(path)) assets.set(path, response);
+    });
+    await context.addInitScript(() => {
+      globalThis.__wmcPublicViolations = [];
+      document.addEventListener('securitypolicyviolation', (event) => {
+        globalThis.__wmcPublicViolations.push(`${event.effectiveDirective}: ${event.blockedURI}`);
+      });
+    });
     const metadataResponse = await context.request.get(new URL('/deployment-state.json', target.url).href,
       { maxRedirects: 0 });
     assert.equal(metadataResponse.status(), 200, 'Public deployment metadata is unavailable');
@@ -2081,12 +2084,18 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
       gif: { bytes: gifBytes.length, sha256: sha256(gifBytes) },
       webp: { bytes: webpBytes.length, sha256: sha256(webpBytes) },
     };
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
+    try { await context?.close(); }
+    catch (error) { closeFailure = error; }
     await writeFile(join(publicRoot, 'diagnostics.json'), JSON.stringify({
       target: target.url, sourceSha: target.sourceSha, deploymentId: target.deploymentId,
       errors, observedAssets: [...assets.keys()], workers,
+      failure: primaryFailure ? String(primaryFailure) : null,
+      cleanupErrors: closeFailure ? [String(closeFailure)] : [],
     }, null, 2)).catch(() => {});
-    await context.close();
     // The shared guest collector reads flat output files, including failures.
     // Keep each target's namespace while preserving every generated byte.
     const files = await readdir(publicRoot, { withFileTypes: true });
@@ -2095,6 +2104,7 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
       await rename(join(publicRoot, file.name), join(outputRoot, `${publicDir}-${file.name}`));
     }
     await rmdir(publicRoot);
+    if (closeFailure && !primaryFailure) throw closeFailure;
   }
 }
 
