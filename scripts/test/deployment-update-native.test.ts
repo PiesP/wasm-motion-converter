@@ -74,7 +74,7 @@ for (const [name, headers] of [
       assert.equal(openResponses.size, 0);
       assert.equal(notices, 0);
 
-      // Advance only the observer's cooldown clock; real network time stays below 2 seconds.
+      // Simulate the 60-second cooldown; response closure still uses real elapsed time.
       cooldownClock = 60_000;
       page.dispatchEvent(new Event('online'));
       await waitFor(() => closedResponses === 2, 'second rejected response close');
