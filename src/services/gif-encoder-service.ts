@@ -493,6 +493,8 @@ export async function encodeGif(
         width: w,
         height: h,
         frameDecimation,
+        minimumSourceFrameGap: opts.minimumSourceFrameGap,
+        pressureCadenceRatio: opts.pressureCadenceRatio,
         hwAccel: 'prefer-hardware',
         smartFrameSkip: opts.smartFrameSkip,
         pixelFormat: 'rgba',
@@ -500,7 +502,7 @@ export async function encodeGif(
         profileCopyPath: opts.profileCopyPath,
         onFrameDecoded: (nativeFrameCount, total) => {
           estimatedTotalFrames = total;
-          // Report decoding progress — throttle to every 10 frames
+          // Forward the decoder's bounded, selection-independent observations.
           opts.onFrameDecoded?.(nativeFrameCount, total);
         },
         // Streaming callback: index each selected frame after flushing its predecessor.

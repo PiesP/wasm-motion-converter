@@ -1053,7 +1053,8 @@ describe('decoder-service', () => {
     async function decodeAdaptive(
       intensities: number[],
       frameDecimation = 1,
-      framerate = 60
+      framerate = 60,
+      minimumSourceFrameGap = 1
     ): Promise<number[]> {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       const framePeriodUs = 1_000_000 / framerate;
@@ -1077,6 +1078,7 @@ describe('decoder-service', () => {
           height: 8,
           mode: 'stream',
           frameDecimation,
+          minimumSourceFrameGap,
           smartFrameSkip: 'adaptive',
           onFrameAvailable: (rgbData, _durationMs, frameNumber) => {
             delivered.push(frameNumber);
@@ -1735,10 +1737,12 @@ describe('decoder-service', () => {
       const gaps = delivered.slice(1).map((frame, index) => frame - delivered[index]!);
 
       // Static motion is recognized before calibration, using the bounded 8-frame
-      // cadence. Once movement begins, the requested 5-frame floor applies.
-      expect(delivered).toEqual([0, 8, 16, 21, 26, 31, 36]);
+      // cadence. Movement resumes the anchored time grid, without an implied source gap.
+      expect(delivered).toEqual([0, 8, 16, 20, 26, 30, 36]);
       expect(delivered).toContain(16); // scene change remains visible
-      expect(Math.min(...gaps)).toBeGreaterThanOrEqual(5);
+      expect(Math.min(...gaps)).toBeGreaterThanOrEqual(4);
+      const explicit = await decodeAdaptive(intensities, 5, 60, 5);
+      expect(explicit).toEqual([0, 8, 16, 21, 26, 31, 36]);
       expect(Math.max(...gaps)).toBeLessThanOrEqual(8);
     });
 
