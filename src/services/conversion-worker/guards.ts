@@ -31,6 +31,10 @@ function isFiniteNonNegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
+function isFinitePositive(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
 function isNullableMeasurement(value: unknown): boolean {
   return value === null || isFiniteNonNegative(value);
 }
@@ -182,7 +186,12 @@ function isValidConversionOptions(options: unknown): options is Record<string, u
     options.maxFrames > 0 &&
     typeof options.maxOutputBytes === 'number' &&
     Number.isFinite(options.maxOutputBytes) &&
-    options.maxOutputBytes > 0
+    options.maxOutputBytes > 0 &&
+    (options.forceDecimation === undefined ||
+      (isFinitePositive(options.forceDecimation) &&
+        Number.isSafeInteger(options.forceDecimation))) &&
+    (options.memoryPressureCadenceRatio === undefined ||
+      isFinitePositive(options.memoryPressureCadenceRatio))
   );
 }
 

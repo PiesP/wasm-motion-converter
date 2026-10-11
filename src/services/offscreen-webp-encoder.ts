@@ -105,6 +105,7 @@ export async function encodeWebpOffscreen(
       width: w,
       height: h,
       frameDecimation,
+      minimumSourceFrameGap: opts.minimumSourceFrameGap,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
       profileOperation: opts.profileOperation,

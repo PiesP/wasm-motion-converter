@@ -33,8 +33,10 @@ export interface BaseEncoderOptions {
   maxFrames?: number | undefined;
   /** Hard ceiling for cumulative encoded output bytes. */
   maxOutputBytes?: number | undefined;
-  /** Source FPS / target FPS; integer forced values retain their frame floor. */
+  /** Source FPS / target FPS, sampled against presentation timestamps. */
   frameDecimation?: number | undefined;
+  /** Explicit minimum source-frame gap; never inferred from the cadence ratio. */
+  minimumSourceFrameGap?: number | undefined;
   /** Callback fired after each frame is decoded */
   onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /**
@@ -75,7 +77,7 @@ export interface BaseEncoderOptions {
  *
  * @param sourceFps - Source video frame rate
  * @param targetFps - Desired output frame rate (from a format-specific target FPS map)
- * @param forceDecimation - Override all calculations (used for memory-pressure forced decimation)
+ * @param forceDecimation - Legacy explicit integer source-frame override
  * @returns Source/target cadence ratio (1 = keep every frame)
  */
 export function calcAutoDecimation(
@@ -113,4 +115,30 @@ export function calcMemoryPressureDecimation(sourceFps: number, targetFps: numbe
     calcAutoDecimation(sourceFps, targetFps),
     calcAutoDecimation(sourceFps, MEMORY_PRESSURE_TARGET_FPS)
   );
+}
+
+/** Keep preset/pressure time cadence separate from an explicit source-frame gap. */
+export function resolveCadencePolicy(
+  sourceFps: number,
+  targetFps: number,
+  forceDecimation?: number,
+  memoryPressureCadenceRatio?: number
+): { frameDecimation: number; minimumSourceFrameGap: number } {
+  const explicitGap =
+    forceDecimation !== undefined && Number.isFinite(forceDecimation) && forceDecimation > 0
+      ? Math.max(1, Math.round(forceDecimation))
+      : 1;
+  const pressureRatio =
+    memoryPressureCadenceRatio !== undefined &&
+    Number.isFinite(memoryPressureCadenceRatio) &&
+    memoryPressureCadenceRatio > 0
+      ? Math.max(1, memoryPressureCadenceRatio)
+      : 1;
+  return {
+    frameDecimation: Math.max(
+      calcAutoDecimation(sourceFps, targetFps, forceDecimation),
+      pressureRatio
+    ),
+    minimumSourceFrameGap: explicitGap,
+  };
 }

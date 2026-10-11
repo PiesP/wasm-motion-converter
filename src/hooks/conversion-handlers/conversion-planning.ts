@@ -69,7 +69,7 @@ export function resolveMemoryPressureDecimation(
 
 export function serializeConversionInputs(
   metadata: VideoMetadata | null,
-  forcedDecimation: number | undefined,
+  memoryPressureCadenceRatio: number | undefined,
   settings: ConversionSettings
 ): {
   serializedConfig: SerializedDecoderConfig | null;
@@ -92,7 +92,12 @@ export function serializeConversionInputs(
       trimEnd: settings.trimEnd > 0 ? settings.trimEnd : 0,
       maxFrames: outputLimits.maxFrames,
       maxOutputBytes: outputLimits.maxOutputBytes,
-      forceDecimation: forcedDecimation,
+      memoryPressureCadenceRatio:
+        memoryPressureCadenceRatio !== undefined &&
+        Number.isFinite(memoryPressureCadenceRatio) &&
+        memoryPressureCadenceRatio > 0
+          ? memoryPressureCadenceRatio
+          : undefined,
       smartFrameSkip: settings.smartFrameSkip,
     },
   };

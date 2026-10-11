@@ -168,6 +168,25 @@ describe('isWorkerRequest', () => {
     ).toBe(false);
   });
 
+  it('accepts fractional pressure cadence and integer explicit gaps only', () => {
+    expect(isWorkerRequest({
+      ...validStart,
+      options: { ...validStart.options, memoryPressureCadenceRatio: 1.4, forceDecimation: 2 },
+    })).toBe(true);
+    for (const invalid of [0, -1, NaN, Infinity, '1.4', null]) {
+      expect(isWorkerRequest({
+        ...validStart,
+        options: { ...validStart.options, memoryPressureCadenceRatio: invalid },
+      })).toBe(false);
+    }
+    for (const invalid of [0, -1, 1.4, NaN, Infinity, '2', null]) {
+      expect(isWorkerRequest({
+        ...validStart,
+        options: { ...validStart.options, forceDecimation: invalid },
+      })).toBe(false);
+    }
+  });
+
   it('rejects start with NaN duration', () => {
     expect(isWorkerRequest({ ...validStart, duration: NaN })).toBe(false);
   });

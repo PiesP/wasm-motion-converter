@@ -68,8 +68,10 @@ export type { PresentationInterval } from './presentation-timing';
 export interface DecodeOptions {
   width: number;
   height: number;
-  /** Source/target FPS ratio; integer values also enforce a source-frame floor. */
+  /** Source/target FPS ratio for presentation-time selection. */
   frameDecimation?: number | undefined;
+  /** Explicit source-frame restriction, independent of presentation-time cadence. */
+  minimumSourceFrameGap?: number | undefined;
   /** CPU pixel layout delivered to onFrameAvailable. */
   pixelFormat?: CpuPixelFormat | undefined;
   /** Hardware acceleration policy */
@@ -191,6 +193,7 @@ export async function decodeFrames(
     width,
     height,
     frameDecimation = 1,
+    minimumSourceFrameGap = 1,
     pixelFormat = 'rgb',
     hwAccel = 'prefer-software',
     onFrameDecoded,
@@ -461,8 +464,15 @@ export async function decodeFrames(
   let lastAdaptiveKeptFrame = Number.NEGATIVE_INFINITY;
   const requestedDecimation =
     Number.isFinite(frameDecimation) && frameDecimation > 0 ? Math.max(1, frameDecimation) : 1;
-  const selectFixedFrame = createPresentationSampler(sourceFps, requestedDecimation);
-  const requestedFrameFloor = Math.max(1, Math.floor(requestedDecimation));
+  const requestedFrameFloor =
+    Number.isSafeInteger(minimumSourceFrameGap) && minimumSourceFrameGap > 0
+      ? minimumSourceFrameGap
+      : 1;
+  const selectFixedFrame = createPresentationSampler(
+    sourceFps,
+    requestedDecimation,
+    requestedFrameFloor
+  );
   const canRunAdaptiveAnalysis =
     isAdaptive && streaming && typeof onVideoFrameAvailable !== 'function';
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
@@ -1121,8 +1131,9 @@ export async function decodeFrames(
             // ── Adaptive motion-classified decimation ──
             // Instead of fixed decimation, classify each frame's motion level
             // and apply variable decimation: static scenes get aggressive skip,
-            // while fast motion uses the preset/memory decimation floor. Uses bounded RGB tile statistics
-            // and a local-change safeguard for comparison.
+            // while fast motion uses only an explicitly requested source-frame gap.
+            // Presentation-time cadence remains a separate admission check.
+            // Uses bounded RGB tile statistics and a local-change safeguard.
             //
             // NOTE: This block is NEVER entered when onVideoFrameAvailable is active
             // (GPU-only path) because that path skips copyFrameToPixels entirely, meaning
@@ -1143,8 +1154,8 @@ export async function decodeFrames(
                 motionClass = classifyAdaptiveMotion(frameDistance, noiseFloor);
 
                 // Scene change detection: align the adaptive cadence so the new
-                // scene remains visible, but never reset it before the requested
-                // preset or memory floor allows another frame.
+                // scene remains visible, but never reset it before an explicit
+                // source-frame gap allows another frame.
                 if (
                   isSignificantMotionIncrease(motionClass, adaptLastMotionClass) &&
                   frameNum - lastAdaptiveKeptFrame >= requestedFrameFloor

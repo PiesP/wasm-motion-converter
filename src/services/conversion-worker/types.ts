@@ -95,8 +95,10 @@ export interface SerializedConversionOptions {
   trimEnd: number;
   maxFrames: number;
   maxOutputBytes: number;
-  /** Force frame decimation (overrides auto-decimation) */
+  /** Explicit integer source-frame gap (overrides automatic cadence). */
   forceDecimation?: number | undefined;
+  /** Additional fractional presentation-time restriction from critical memory pressure. */
+  memoryPressureCadenceRatio?: number | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
   /** Dynamic memory limit (MB) forwarded from main thread */

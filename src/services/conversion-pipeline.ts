@@ -49,7 +49,7 @@ import { buildEncodingProgress } from './conversion-progress';
 import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
-import { calcAutoDecimation, type EncoderFrameCounts } from './encoder-common';
+import { type EncoderFrameCounts, resolveCadencePolicy } from './encoder-common';
 import { calculateWebpWorkerCountForBudget, WebpFrameMemoryBudget } from './frame-memory';
 import {
   clearCanvasCache,
@@ -341,11 +341,13 @@ async function _runPipelineInner(
 
     if (request.format === 'gif') {
       profiler?.setEncoderRoute('gif-main');
-      const gifDecimation = calcAutoDecimation(
+      const gifCadence = resolveCadencePolicy(
         sourceFps,
         GIF_TARGET_FPS[request.quality],
-        request.forceDecimation
+        request.forceDecimation,
+        request.memoryPressureCadenceRatio
       );
+      const gifDecimation = gifCadence.frameDecimation;
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
 
       logger.info('conversion', '  ├─ Branch: GIF encoder (streaming decode→encode)', {
@@ -368,6 +370,7 @@ async function _runPipelineInner(
                 quality: request.quality,
                 scale: request.scale,
                 frameDecimation: gifDecimation,
+                minimumSourceFrameGap: gifCadence.minimumSourceFrameGap,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
@@ -389,11 +392,13 @@ async function _runPipelineInner(
         outputBytes: output.byteLength,
       };
     } else {
-      const webpDecimation = calcAutoDecimation(
+      const webpCadence = resolveCadencePolicy(
         sourceFps,
         WEBP_TARGET_FPS[request.quality],
-        request.forceDecimation
+        request.forceDecimation,
+        request.memoryPressureCadenceRatio
       );
+      const webpDecimation = webpCadence.frameDecimation;
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
 
       // Use the parallel Worker-based encoder when its complete resource model fits.
@@ -493,6 +498,7 @@ async function _runPipelineInner(
                 width: w,
                 height: h,
                 frameDecimation: webpDecimation,
+                minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
                 hwAccel: 'prefer-hardware',
                 smartFrameSkip: request.smartFrameSkip,
                 pixelFormat: 'rgba',
@@ -575,6 +581,7 @@ async function _runPipelineInner(
                 quality: request.quality,
                 scale: request.scale,
                 frameDecimation: webpDecimation,
+                minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
@@ -614,6 +621,7 @@ async function _runPipelineInner(
                 quality: request.quality,
                 scale: request.scale,
                 frameDecimation: webpDecimation,
+                minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
