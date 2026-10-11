@@ -40,6 +40,13 @@ describe('presentation timestamp sampling', () => {
     expect(selected).toEqual([0, 120, 210]);
   });
 
+  it('does not impose an integer frame gap on a fractional VFR cadence', () => {
+    const select = createPresentationSampler(10, 2.5);
+    const startsMs = [0, 300, 320, 600];
+    const selected = startsMs.filter((startMs, frame) => select(startMs * 1000, frame));
+    expect(selected).toEqual([0, 300, 600]);
+  });
+
   it('enforces an explicit integer frame floor with dense presentation timestamps', () => {
     const select = createPresentationSampler(30, 2);
     const startsUs = [0, 70_000, 70_001, 70_002];
