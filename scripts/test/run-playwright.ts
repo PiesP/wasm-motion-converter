@@ -5,10 +5,12 @@ export type PlaywrightProfile = 'ci' | 'resource' | 'deploy';
 export function runPlaywright(
   profile: PlaywrightProfile,
   args: string[],
-  run: typeof runChild = runChild
+  run: typeof runChild = runChild,
+  overrides: NodeJS.ProcessEnv = {}
 ): Promise<number> {
   return run(packageBinary('@playwright/test', 'playwright'), ['test', ...args], {
     PLAYWRIGHT_TEST_PROFILE: profile,
+    ...overrides,
   });
 }
 

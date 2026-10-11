@@ -1,10 +1,12 @@
 /** Verify a source-built Pages deployment against the exact CI build artifact. */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import type { DeploymentState } from '../build/deployment-state.ts';
-import { isCliEntry } from '../check/run-child.ts';
+import { isCliEntry, runChild } from '../check/run-child.ts';
+import { preserveDeploymentDiagnostics } from './deployment-diagnostics.ts';
 import { runPlaywright } from './run-playwright.ts';
 
 const sha = /^[a-f0-9]{40}$/;
@@ -221,8 +223,29 @@ export async function verifyPublication(): Promise<void> {
   // unset ensures its production-only dogfood assertions execute.
   delete process.env.SKIP_WEB_SERVER;
   process.env.DEPLOY_URL = target.href;
-  const result = await runPlaywright('deploy', ['--reporter=list']);
-  if (result !== 0) throw new Error(`Public deployment browser checks failed (${result})`);
+  const reportDirectory = mkdtempSync(join(tmpdir(), 'wmc-deployment-playwright-'));
+  try {
+    const reportFile = join(reportDirectory, 'results.json');
+    const result = await runPlaywright('deploy', ['--reporter=list,json'], runChild, {
+      PLAYWRIGHT_JSON_OUTPUT_FILE: reportFile,
+    });
+    if (result !== 0) {
+      // Keep the browser failure primary if setup failed before a report existed.
+      try {
+        preserveDeploymentDiagnostics(reportFile, expected, target, result);
+      } catch {
+        console.warn('Deployment diagnostic inventory unavailable after browser failure');
+      }
+      throw new Error(`Public deployment browser checks failed (${result})`);
+    }
+    preserveDeploymentDiagnostics(reportFile, expected, target, result);
+  } finally {
+    try {
+      rmSync(reportDirectory, { recursive: true, force: true });
+    } catch {
+      console.warn('Temporary Playwright report could not be removed');
+    }
+  }
   if (process.env.VERIFY_CURRENT_MASTER === '1' && currentMaster() !== expectedSha)
     throw new Error(
       'Source was superseded during public verification; this result does not accept current production'
