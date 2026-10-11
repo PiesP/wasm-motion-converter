@@ -47,6 +47,9 @@ Public checks verify deployment metadata status, MIME, schema, and source;
 compare every listed output byte digest with served bytes; exercise document
 isolation, a real GIF Worker, WebP WASM fallback, downloads, invalid recovery,
 and effective cancellation; and record cold/warm and conversion traffic.
+Public evidence files keep a target-specific prefix in the flat output
+directory required by the shared guest collector. Failure diagnostics use the
+same layout so collection cannot mask the original assertion.
 
 The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
