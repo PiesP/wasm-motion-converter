@@ -158,6 +158,7 @@ async function instrument(page, record) {
     globalThis.__appUpdateCspViolations = [];
     globalThis.__appUpdateLifecycle = [];
     window.addEventListener('pageshow', () => globalThis.__appUpdateLifecycle.push('pageshow'));
+    window.addEventListener('offline', () => globalThis.__appUpdateLifecycle.push('offline'));
     window.addEventListener('online', () => globalThis.__appUpdateLifecycle.push('online'));
     document.addEventListener('visibilitychange', () => {
       globalThis.__appUpdateLifecycle.push(`visibility:${document.visibilityState}`);
@@ -167,6 +168,13 @@ async function instrument(page, record) {
         `${event.effectiveDirective}: ${event.blockedURI}`);
     });
   });
+}
+
+async function waitForConnectivityEvent(page, fromIndex, event, online) {
+  await page.waitForFunction(({ fromIndex, event, online }) =>
+    navigator.onLine === online &&
+    globalThis.__appUpdateLifecycle.slice(fromIndex).includes(event),
+  { fromIndex, event, online }, { polling: 100, timeout: 10_000 });
 }
 
 async function assertRuntimeHealth(page, record) {
@@ -531,22 +539,23 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
       .some((element) => Number(element.getAttribute('aria-valuenow')) > 0),
     undefined, { timeout: 120_000 });
     const busyTimeOrigin = await busyPage.evaluate(() => performance.timeOrigin);
+    const busyLifecycleStart = await busyPage.evaluate(() => globalThis.__appUpdateLifecycle.length);
+    busyRecord.offline = true;
+    await busyContext.setOffline(true);
+    await waitForConnectivityEvent(busyPage, busyLifecycleStart, 'offline', false);
+    assert(await stop.isVisible(), 'Conversion stopped before connectivity recovery');
     await started.setDistribution('dist');
     const bMetadata = captureResponseWait(busyPage, (response) =>
       new URL(response.url()).pathname === METADATA_PATH && response.status() === 200,
     20_000);
-    const coverPage = await busyContext.newPage();
-    try {
-      await coverPage.goto('about:blank');
-      await coverPage.bringToFront();
-      await busyPage.bringToFront();
-    } finally {
-      await coverPage.close();
-    }
-    assert((await busyPage.evaluate(() => globalThis.__appUpdateLifecycle))
-      .includes('visibility:visible'), 'Busy tab did not exercise a visible-page event');
+    await busyContext.setOffline(false);
+    busyRecord.offline = false;
+    await waitForConnectivityEvent(busyPage, busyLifecycleStart, 'online', true);
+    assert.deepEqual(busyRecord.offlineMetadataFailures, [],
+      'Busy tab fetched deployment metadata while offline');
+    assert(await stop.isVisible(), 'Conversion stopped during connectivity recovery');
     assert.equal((await (await requireResponse(bMetadata)).json()).sourceSha, buildB.state.sourceSha,
-      'Busy visible event did not observe B metadata');
+      'Busy online event did not observe B metadata');
     await updateNotice(busyPage).waitFor({ state: 'visible', timeout: 20_000 });
     const busyReload = updateNotice(busyPage).getByRole('button', { name: 'Reload page' });
     assert.equal(await busyReload.isEnabled(), false, 'Reload must be disabled during conversion');
@@ -563,14 +572,20 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
       'Cancellation and reselection navigated the document');
 
     diagnostics.phase = 'result-notice';
+    const resultLifecycleStart = await resultPage.evaluate(() => globalThis.__appUpdateLifecycle.length);
+    resultRecord.offline = true;
+    await resultContext.setOffline(true);
+    await waitForConnectivityEvent(resultPage, resultLifecycleStart, 'offline', false);
+    await resultPage.bringToFront();
+    await resultPage.waitForFunction(() => document.visibilityState === 'visible');
     const resultBMetadata = captureResponseWait(resultPage, (response) =>
       new URL(response.url()).pathname === METADATA_PATH && response.status() === 200,
     20_000);
-    resultRecord.offline = true;
-    await resultContext.setOffline(true);
     await resultContext.setOffline(false);
     resultRecord.offline = false;
-    await resultPage.bringToFront();
+    await waitForConnectivityEvent(resultPage, resultLifecycleStart, 'online', true);
+    assert.deepEqual(resultRecord.offlineMetadataFailures, [],
+      'Result tab fetched deployment metadata while offline');
     assert.equal((await (await requireResponse(resultBMetadata)).json()).sourceSha,
       buildB.state.sourceSha,
       'Result online event did not observe B metadata');
@@ -656,11 +671,12 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
       baseline, firstInstallNotice: false, equalIdentityNotice: false,
       cold: { buildA: coldA, buildB: coldB },
       quietWindowMs: 61_000, equalCadenceMs, busyCadenceMs,
-      heldFirst, busyNotice: true, busyReloadDisabled: true,
+      heldFirst, busyTrigger: 'observed-offline-online', busyNotice: true,
+      busyReloadDisabled: true,
       busyDocumentRetained: true, cancellationReselection: true,
       resultDownload: { filename: firstGif.filename, bytes: firstGif.bytes.length,
         sha256: sha256(firstGif.bytes) }, resultRetained: true,
-      resultReloadDisabled: true, explicitReloadB: {
+      resultTrigger: 'observed-offline-online', resultReloadDisabled: true, explicitReloadB: {
         htmlSha256: buildB.indexSha256, mainJsSha256: servedMainSha,
         metadataSourceSha: buildB.state.sourceSha },
       initialWorker, busyWorker, resultWorkerEvents: resultEvents, busyWorkerEvents: busyEvents,
