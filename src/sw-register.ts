@@ -13,7 +13,7 @@ const SW_PATH = '/service-worker.js';
 export async function registerServiceWorker(
   options: SWRegisterOptions = {}
 ): Promise<SWRegistrationState> {
-  const { onUpdate, onOfflineReady } = options;
+  const { onUpdate, onOfflineReady, onAssetUnavailable } = options;
 
   if (!('serviceWorker' in navigator)) {
     return { supported: false, registered: false };
@@ -35,12 +35,13 @@ export async function registerServiceWorker(
     // Track whether we've already activated once
     let isFirstActivation = !registration.active;
 
+    const stateListeners = new Map<ServiceWorker, () => void>();
     // Handle new worker installation/updates
-    registration.addEventListener('updatefound', () => {
+    const handleUpdate = (): void => {
       const newWorker = registration.installing;
       if (!newWorker) return;
 
-      newWorker.addEventListener('statechange', () => {
+      const handleState = (): void => {
         if (newWorker.state === 'activated') {
           if (isFirstActivation) {
             isFirstActivation = false;
@@ -49,8 +50,29 @@ export async function registerServiceWorker(
             onUpdate?.();
           }
         }
-      });
-    });
+      };
+      stateListeners.set(newWorker, handleState);
+      newWorker.addEventListener('statechange', handleState);
+    };
+    registration.addEventListener('updatefound', handleUpdate);
+    const handleMessage = (event: MessageEvent<unknown>): void => {
+      if (event.source !== navigator.serviceWorker.controller || !event.source) return;
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+      const message = data as { type?: unknown; path?: unknown; status?: unknown };
+      if (
+        message.type !== 'dropconvert:asset-unavailable' ||
+        typeof message.path !== 'string' ||
+        !/^\/assets\/[\w.-]+[.-][\w-]{8}\.(?:js|css|wasm)$/.test(message.path) ||
+        typeof message.status !== 'number' ||
+        !Number.isInteger(message.status) ||
+        message.status < 0 ||
+        message.status > 599
+      )
+        return;
+      onAssetUnavailable?.();
+    };
+    navigator.serviceWorker.addEventListener('message', handleMessage);
 
     // Check for updates on page focus
     const handleVisibility = () => {
@@ -62,6 +84,12 @@ export async function registerServiceWorker(
 
     const cleanup = (): void => {
       document.removeEventListener('visibilitychange', handleVisibility);
+      registration.removeEventListener('updatefound', handleUpdate);
+      navigator.serviceWorker.removeEventListener('message', handleMessage);
+      for (const [worker, listener] of stateListeners)
+        worker.removeEventListener('statechange', listener);
+      stateListeners.clear();
+      window.removeEventListener('pagehide', cleanup);
     };
 
     // Ensure cleanup runs on page unload to avoid leaked listeners

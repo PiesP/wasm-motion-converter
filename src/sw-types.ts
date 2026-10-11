@@ -12,6 +12,8 @@ export interface SWRegisterOptions {
   onOfflineReady?: () => void;
   /** Called when a new service worker activates after an update. */
   onUpdate?: () => void;
+  /** A fingerprinted app resource was unavailable or failed content validation. */
+  onAssetUnavailable?: () => void;
 }
 
 export interface SWRegistrationState {

@@ -58,6 +58,10 @@ export interface TranslationKeys {
   'app.error.details': string;
   'app.error.retry': string;
   'app.error.reload': string;
+  'update.available': string;
+  'update.unavailable': string;
+  'update.wait': string;
+  'update.download': string;
 
   // Header / Footer
   'header.exportLogs': string;

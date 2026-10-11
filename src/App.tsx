@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import AppErrorFallback from '@components/AppErrorFallback';
+import AppUpdateNotice from '@components/AppUpdateNotice';
 import ConfirmationModal from '@components/ConfirmationModal';
 import ExportLogsButton from '@components/ExportLogsButton';
 import FileDropzone from '@components/FileDropzone';
@@ -315,6 +316,7 @@ const App: Component = () => {
           id="main-content"
           class="mx-auto w-full max-w-[1200px] flex-1 px-4 py-8 sm:px-6 lg:px-8"
         >
+          <AppUpdateNotice busy={isBusy()} hasResults={conversionResults().length > 0} t={t} />
           <StatusAlerts
             environmentSupported={environmentSupported()}
             errorContext={errorContext()}
