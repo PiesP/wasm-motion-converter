@@ -196,7 +196,6 @@ export const STALL_DETECTION_TIMEOUT_MS = 60_000;
 export const VP8_FOURCC = 0x56503820;
 
 /** VP8L FourCC (big-endian: "VP8L" = 0x5650384c) */
-export const VP8L_FOURCC = 0x5650384c;
 
 /** VP8X FourCC (big-endian: "VP8X" = 0x56503858) */
 export const VP8X_FOURCC = 0x56503858;
