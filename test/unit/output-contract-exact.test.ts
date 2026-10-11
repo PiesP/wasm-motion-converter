@@ -16,11 +16,102 @@ interface Fixture {
   frames: FixtureFrame[];
   loops: number;
   paletteTag?: string;
+  firstRect?: { left: number; top: number; width: number; height: number };
+  firstTransparent?: boolean;
+  firstBlend?: boolean;
+  firstCodec?: 'VP8 ' | 'VP8L';
 }
 
 const red = [255, 0, 0, 255];
 const blue = [0, 0, 255, 255];
-const encode = (fixture: Fixture) => new TextEncoder().encode(JSON.stringify(fixture));
+const fixtureByBytes = new Map<string, Fixture>();
+let nextFixtureId = 1;
+const bytesKey = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
+const u16 = (value: number) => [value & 255, (value >>> 8) & 255];
+const u24 = (value: number) => [value & 255, (value >>> 8) & 255, (value >>> 16) & 255];
+const u32 = (value: number) => [...u16(value), ...u16(value >>> 16)];
+const fourcc = (name: string) => [...new TextEncoder().encode(name)];
+const chunk = (name: string, payload: number[]) => [
+  ...fourcc(name),
+  ...u32(payload.length),
+  ...payload,
+  ...(payload.length & 1 ? [0] : []),
+];
+
+function encode(fixture: Fixture, format: 'gif' | 'webp' = 'gif') {
+  const id = nextFixtureId++;
+  const canvas = fixture.frames[0];
+  if (!canvas) throw new Error('Fixture requires a first frame');
+  const width = canvas.width ?? 1;
+  const height = canvas.height ?? 1;
+  const rect = fixture.firstRect ?? { left: 0, top: 0, width, height };
+  let bytes: Uint8Array;
+  if (format === 'gif') {
+    const palette =
+      fixture.paletteTag === 'reordered palette' ? [0, 0, 255, 255, 0, 0] : [255, 0, 0, 0, 0, 255];
+    bytes = new Uint8Array([
+      ...fourcc('GIF89a'),
+      ...u16(width),
+      ...u16(height),
+      0x80,
+      0,
+      0,
+      ...palette,
+      0x21,
+      0xff,
+      11,
+      ...fourcc('NETSCAPE2.0'),
+      3,
+      1,
+      ...u16(fixture.loops),
+      0,
+      0x21,
+      0xfe,
+      1,
+      id,
+      0, // Unique comment extension before first image.
+      0x21,
+      0xf9,
+      4,
+      fixture.firstTransparent ? 1 : 0,
+      10,
+      0,
+      0,
+      0,
+      0x2c,
+      ...u16(rect.left),
+      ...u16(rect.top),
+      ...u16(rect.width),
+      ...u16(rect.height),
+      0,
+      2,
+      2,
+      0x44,
+      0x01,
+      0,
+      0x3b,
+    ]);
+  } else {
+    const framePayload = [
+      ...u24(rect.left / 2),
+      ...u24(rect.top / 2),
+      ...u24(rect.width - 1),
+      ...u24(rect.height - 1),
+      ...u24(100),
+      fixture.firstBlend ? 2 : 0,
+      ...chunk(fixture.firstCodec ?? 'VP8 ', [id, 0]),
+    ];
+    const body = [
+      ...fourcc('WEBP'),
+      ...chunk('VP8X', [2, 0, 0, 0, ...u24(width - 1), ...u24(height - 1)]),
+      ...chunk('ANIM', [0, 0, 0, 0, ...u16(fixture.loops)]),
+      ...chunk('ANMF', framePayload),
+    ];
+    bytes = new Uint8Array([...fourcc('RIFF'), ...u32(body.length), ...body]);
+  }
+  fixtureByBytes.set(bytesKey(bytes), fixture);
+  return bytes;
+}
 
 function fakeBrowser() {
   const closedImages: number[] = [];
@@ -33,7 +124,9 @@ function fakeBrowser() {
     };
 
     constructor(options: { data: Uint8Array }) {
-      this.fixture = JSON.parse(new TextDecoder().decode(options.data)) as Fixture;
+      const fixture = fixtureByBytes.get(bytesKey(options.data));
+      if (!fixture) throw new Error('Unknown encoded fixture');
+      this.fixture = fixture;
       this.tracks = {
         ready: Promise.resolve(),
         selectedTrack: {
@@ -95,7 +188,10 @@ function fakeBrowser() {
   return { page, closedImages, closedDecoders };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  fixtureByBytes.clear();
+});
 
 describe('exact animated output comparison', () => {
   it('accepts duplicate-frame merging and different encoded metadata at every presentation boundary', async () => {
@@ -134,16 +230,29 @@ describe('exact animated output comparison', () => {
 
   it('rejects a pixel difference even when frame timing is identical', async () => {
     const { page, closedImages, closedDecoders } = fakeBrowser();
-    const reference = encode({
-      loops: 0,
-      frames: [{ rgba: [...red, ...red, ...red, ...red], duration: 100_000, width: 2, height: 2 }],
-    });
-    const candidate = encode({
-      loops: 0,
-      frames: [
-        { rgba: [...red, ...red, ...red, 254, 0, 0, 255], duration: 100_000, width: 2, height: 2 },
-      ],
-    });
+    const reference = encode(
+      {
+        loops: 0,
+        frames: [
+          { rgba: [...red, ...red, ...red, ...red], duration: 100_000, width: 2, height: 2 },
+        ],
+      },
+      'webp'
+    );
+    const candidate = encode(
+      {
+        loops: 0,
+        frames: [
+          {
+            rgba: [...red, ...red, ...red, 254, 0, 0, 255],
+            duration: 100_000,
+            width: 2,
+            height: 2,
+          },
+        ],
+      },
+      'webp'
+    );
 
     await expect(compareAnimatedOutputExact(page, reference, candidate, 'webp')).rejects.toThrow(
       'pixels differ'
@@ -219,5 +328,76 @@ describe('exact animated output comparison', () => {
       'decoded work exceeds'
     );
     expect(closedDecoders).toHaveLength(2);
+  });
+
+  it.each(['gif', 'webp'] as const)(
+    'rejects a partial first %s image even when a decoder reports opaque full-canvas pixels',
+    async (format) => {
+      const { page, closedDecoders } = fakeBrowser();
+      const full = encode(
+        {
+          loops: 0,
+          frames: [
+            { rgba: [...red, ...red, ...red, ...red], duration: 100_000, width: 2, height: 2 },
+          ],
+        },
+        format
+      );
+      const partial = encode(
+        {
+          loops: 0,
+          frames: [
+            { rgba: [...red, ...red, ...red, ...red], duration: 100_000, width: 2, height: 2 },
+          ],
+          firstRect: { left: 0, top: 0, width: 1, height: 2 },
+        },
+        format
+      );
+
+      await expect(compareAnimatedOutputExact(page, full, partial, format)).rejects.toThrow(
+        'loop start is unsupported'
+      );
+      expect(closedDecoders).toHaveLength(0);
+    }
+  );
+
+  it('rejects GIF transparency and blend-dependent first WebP frames from container metadata', async () => {
+    const { page } = fakeBrowser();
+    const gif = encode({ loops: 0, frames: [{ rgba: red, duration: 100_000 }] });
+    const transparentGif = encode({
+      loops: 0,
+      frames: [{ rgba: red, duration: 100_000 }],
+      firstTransparent: true,
+    });
+    await expect(compareAnimatedOutputExact(page, gif, transparentGif, 'gif')).rejects.toThrow(
+      'loop start is unsupported'
+    );
+
+    const webp = encode({ loops: 0, frames: [{ rgba: red, duration: 100_000 }] }, 'webp');
+    const losslessBlend = encode(
+      {
+        loops: 0,
+        frames: [{ rgba: red, duration: 100_000 }],
+        firstCodec: 'VP8L',
+      },
+      'webp'
+    );
+    await expect(compareAnimatedOutputExact(page, webp, losslessBlend, 'webp')).rejects.toThrow(
+      'loop start is unsupported'
+    );
+    const losslessOverwrite = encode(
+      {
+        loops: 0,
+        frames: [{ rgba: red, duration: 100_000 }],
+        firstCodec: 'VP8L',
+        firstBlend: true,
+      },
+      'webp'
+    );
+    await expect(
+      compareAnimatedOutputExact(page, webp, losslessOverwrite, 'webp')
+    ).resolves.toMatchObject({
+      loopTransitionChecked: true,
+    });
   });
 });
