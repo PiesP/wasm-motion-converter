@@ -10,18 +10,17 @@
 // Environment variables:
 //   DEPLOY_URL — the deployed URL to test (default: https://wasm-motion-converter.pages.dev)
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Response } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
-import { isCloudflareInsightsResource } from './fixtures/url-utils';
+import { assertExecutableBody, assertExecutableResponse } from './lib/deployment-responses';
 
 const DEPLOY_URL = process.env.DEPLOY_URL || 'https://wasm-motion-converter.pages.dev';
 const TEST_VIDEO_PATH =
   process.env.DEPLOY_TEST_VIDEO || resolve(process.cwd(), 'public/test-video-ci-h264.mp4');
 
-// Skip all tests in this file when running against local dev server
-// (no __TEST_HELPERS__, no file injection support).
-const isLocalDev = DEPLOY_URL.includes('127.0.0.1') || DEPLOY_URL.includes('localhost');
+test.use({ serviceWorkers: 'block' });
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -33,6 +32,32 @@ async function getConsoleErrors(page: Page): Promise<string[]> {
     if (msg.type() === 'error') errors.push(msg.text());
   });
   return errors;
+}
+
+async function collectRuntimeFailures(page: Page): Promise<() => Promise<Record<string, string[]>>> {
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const consoleErrors = await getConsoleErrors(page);
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('requestfailed', (request) => {
+    if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED') return;
+    requestFailures.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`);
+  });
+  await page.addInitScript(() => {
+    const violations: string[] = [];
+    Object.defineProperty(globalThis, '__deployCspViolations', { value: violations });
+    document.addEventListener('securitypolicyviolation', (event) => {
+      violations.push(`${event.effectiveDirective}: ${event.blockedURI}`);
+    });
+  });
+  return async () => ({
+    pageErrors,
+    requestFailures,
+    consoleErrors,
+    cspViolations: await page.evaluate(() => (
+      (globalThis as typeof globalThis & { __deployCspViolations?: string[] }).__deployCspViolations ?? []
+    )),
+  });
 }
 
 async function getFailedResources(page: Page): Promise<string[]> {
@@ -76,21 +101,19 @@ async function startConversion(page: Page): Promise<void> {
 // ---------------------------------------------------------------------------
 
 test.describe('Deployment: Page Load', () => {
-  test.skip(isLocalDev, 'Deploy smoke tests require production environment');
-  test('page loads without critical console errors', async ({ page }) => {
-    const errors = await getConsoleErrors(page);
+  test('page loads without application runtime failures', async ({ page }, testInfo) => {
+    const runtimeFailures = await collectRuntimeFailures(page);
     const response = await page.goto(DEPLOY_URL);
-    await page.waitForLoadState('domcontentloaded');
+    await page.waitForLoadState('networkidle');
 
     expect(response?.status()).toBe(200);
-
-    const criticalErrors = errors.filter(
-      (e) =>
-        !e.includes('Content Security Policy') &&
-        !isCloudflareInsightsResource(e) &&
-        !e.includes('ERR_CONNECTION_REFUSED')
-    );
-    expect(criticalErrors).toEqual([]);
+    expect(response?.headers()['content-type']).toMatch(/^text\/html\b/i);
+    expect(response?.headers()['cross-origin-opener-policy']).toBe('same-origin');
+    expect(response?.headers()['cross-origin-embedder-policy']).toBe('require-corp');
+    expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
+    const failures = await runtimeFailures();
+    await testInfo.attach('runtime-failures', { body: JSON.stringify(failures, null, 2), contentType: 'application/json' });
+    expect(failures).toEqual({ pageErrors: [], requestFailures: [], consoleErrors: [], cspViolations: [] });
   });
 
   test('no failed static resource loads', async ({ page }) => {
@@ -98,23 +121,45 @@ test.describe('Deployment: Page Load', () => {
     await page.goto(DEPLOY_URL);
     await page.waitForLoadState('networkidle');
 
-    const criticalFailed = failed.filter(
-      (f) => !isCloudflareInsightsResource(f)
-    );
-    expect(criticalFailed).toEqual([]);
+    expect(failed).toEqual([]);
   });
 
-  test('JS bundle is served with correct content-type', async ({ page }) => {
-    const responses: string[] = [];
+  test('loaded JS and CSS have successful executable responses', async ({ page }) => {
+    const responses: Response[] = [];
     page.on('response', (response) => {
-      if (response.url().includes('/assets/') && response.url().endsWith('.js')) {
-        responses.push(response.url());
+      if (new URL(response.url()).pathname.startsWith('/assets/')) {
+        responses.push(response);
       }
     });
     await page.goto(DEPLOY_URL);
     await page.waitForLoadState('networkidle');
 
-    expect(responses.length).toBeGreaterThan(0);
+    const kinds = new Set<string>();
+    for (const response of responses) {
+      const path = new URL(response.url()).pathname;
+      const kind = path.endsWith('.js') ? 'js' : path.endsWith('.css') ? 'css' : null;
+      if (!kind) continue;
+      await assertExecutableResponse(response, kind, new URL(DEPLOY_URL).origin);
+      kinds.add(kind);
+    }
+    expect(kinds).toEqual(new Set(['js', 'css']));
+  });
+
+  test('missing assets are 404 and cannot become immutable HTML', async ({ request }) => {
+    for (const extension of ['js', 'css', 'wasm']) {
+      const response = await request.get(new URL(`/assets/deploy-missing-289.${extension}`, DEPLOY_URL).href);
+      expect(response.status(), extension).toBe(404);
+      expect(response.headers()['cache-control'] ?? '', extension).not.toMatch(/immutable/i);
+      expect(response.headers()['cross-origin-opener-policy'], extension).toBe('same-origin');
+      expect(response.headers()['cross-origin-embedder-policy'], extension).toBe('require-corp');
+    }
+  });
+
+  test('validator rejects mislabeled HTML and invalid WASM bytes', () => {
+    const html = new TextEncoder().encode('<!doctype html><title>fallback</title>');
+    expect(() => assertExecutableBody('js', 200, 'text/javascript', html)).toThrow();
+    expect(() => assertExecutableBody('wasm', 200, 'application/wasm', html)).toThrow();
+    expect(() => assertExecutableBody('js', 404, 'text/javascript', new TextEncoder().encode('export {}'))).toThrow();
   });
 });
 
@@ -123,7 +168,6 @@ test.describe('Deployment: Page Load', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Deployment: Visual — Initial State', () => {
-  test.skip(isLocalDev, 'Deploy smoke tests require production environment');
   test('initial page renders correctly', async ({ page }) => {
     await page.goto(DEPLOY_URL);
     await page.waitForLoadState('domcontentloaded');
@@ -162,7 +206,6 @@ test.describe('Deployment: Visual — Initial State', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Deployment: Visual — File Upload', () => {
-  test.skip(isLocalDev, 'Deploy smoke tests require production environment');
   test('convert button enables after file upload', async ({ page }) => {
     await page.goto(DEPLOY_URL);
 
@@ -187,13 +230,11 @@ test.describe('Deployment: Visual — File Upload', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Deployment: Visual — Progress UI', () => {
-  test.skip(isLocalDev, 'Deploy smoke tests require production environment');
-  test.beforeEach(async ({ page }) => {
+  test('GIF conversion starts a module worker and downloads valid bytes', async ({ page }, testInfo) => {
+    const runtimeFailures = await collectRuntimeFailures(page);
+    const workers: string[] = [];
+    page.on('worker', (worker) => workers.push(worker.url()));
     await page.goto(DEPLOY_URL);
-    await page.waitForLoadState('domcontentloaded');
-  });
-
-  test('conversion exposes progress or completes, then renders a result', async ({ page }) => {
     await uploadTestVideo(page);
     await startConversion(page);
 
@@ -222,6 +263,64 @@ test.describe('Deployment: Visual — Progress UI', () => {
     await expect(resultSection).toBeVisible({ timeout: 120_000 });
     await captureScreenshot(page, 'deploy-conversion-complete');
     await expect(page.locator('[data-testid="download-result-button"]')).toBeVisible();
+    expect(workers.length, 'No module worker was started').toBeGreaterThan(0);
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.locator('[data-testid="download-result-button"]').click(),
+    ]);
+    const bytes = await readFile(await download.path());
+    expect(bytes.subarray(0, 6).toString('ascii')).toMatch(/^GIF8[79]a$/);
+    await testInfo.attach('first-gif-traffic', {
+      body: JSON.stringify(await page.evaluate(() => performance.getEntriesByType('resource')
+        .filter((entry) => entry instanceof PerformanceResourceTiming)
+        .map((entry) => ({ name: new URL(entry.name).pathname, transferSize: entry.transferSize }))), null, 2),
+      contentType: 'application/json',
+    });
+    expect(await runtimeFailures()).toEqual({ pageErrors: [], requestFailures: [], consoleErrors: [], cspViolations: [] });
+  });
+
+  test('WebP conversion uses real WASM fallback and downloads valid bytes', async ({ page }, testInfo) => {
+    const runtimeFailures = await collectRuntimeFailures(page);
+    await page.addInitScript(() => {
+      Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+        configurable: true, value: undefined,
+      });
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        value: class UnavailableWorker {
+          constructor() { throw new DOMException('Force WASM fallback', 'NotSupportedError'); }
+        },
+      });
+    });
+    const wasmResponses: Response[] = [];
+    page.on('response', (response) => {
+      if (new URL(response.url()).pathname.endsWith('.wasm')) wasmResponses.push(response);
+    });
+    await page.goto(DEPLOY_URL);
+    await uploadTestVideo(page);
+    await page.locator('[data-testid="option-format-webp"]').click();
+    await startConversion(page);
+    await expect(page.locator('[data-testid="result-section"]')).toBeVisible({ timeout: 120_000 });
+    expect(wasmResponses.length, 'WebP fallback loaded no WASM response').toBeGreaterThan(0);
+    for (const response of wasmResponses) {
+      await assertExecutableResponse(response, 'wasm', new URL(DEPLOY_URL).origin);
+      const bytes = await response.body();
+      await page.evaluate(async (value) => WebAssembly.compile(new Uint8Array(value)), [...bytes]);
+    }
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.locator('[data-testid="download-result-button"]').click(),
+    ]);
+    const bytes = await readFile(await download.path());
+    expect(bytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
+    expect(bytes.subarray(8, 12).toString('ascii')).toBe('WEBP');
+    await testInfo.attach('first-webp-traffic', {
+      body: JSON.stringify(await page.evaluate(() => performance.getEntriesByType('resource')
+        .filter((entry) => entry instanceof PerformanceResourceTiming)
+        .map((entry) => ({ name: new URL(entry.name).pathname, transferSize: entry.transferSize }))), null, 2),
+      contentType: 'application/json',
+    });
+    expect(await runtimeFailures()).toEqual({ pageErrors: [], requestFailures: [], consoleErrors: [], cspViolations: [] });
   });
 });
 
@@ -230,7 +329,6 @@ test.describe('Deployment: Visual — Progress UI', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Deployment: Visual — Result Section', () => {
-  test.skip(isLocalDev, 'Deploy smoke tests require production environment');
   test.beforeEach(async ({ page }) => {
     await page.goto(DEPLOY_URL);
     await page.waitForLoadState('domcontentloaded');
@@ -274,7 +372,6 @@ test.describe('Deployment: Visual — Result Section', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Deployment: Cross-environment', () => {
-  test.skip(isLocalDev, 'Deploy smoke tests require production environment');
   test('deployed version has same core elements as dev', async ({ page }) => {
     await page.goto(DEPLOY_URL);
     await page.waitForLoadState('domcontentloaded');
