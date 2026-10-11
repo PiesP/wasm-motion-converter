@@ -92,8 +92,14 @@ record:
   with Worker construction and native WebP encoding disabled under the deployed
   CSP; the real WASM binary must initialize without JavaScript string evaluation;
 - short-tail GIF raw delays and ordinary `<img>` playback observed through
-  bounded timestamped compositor PNGs; repeated rendered color cycles have a
-  declared sampling tolerance separate from serialized endpoint error;
+  bounded timestamped compositor PNGs; repeated red-return cycles containing
+  lime have a declared sampling tolerance separate from serialized endpoint
+  error. Qualifying transition brackets must be at most 35 ms, each cycle must
+  be within 35 ms of the 120 ms serialized cycle, and the median error must be
+  at most 20 ms, with at least three consecutive qualifying cycles. Sparse
+  cycles remain unknown in the retained record. Full red/lime/blue observations
+  remain a separate diagnostic: this cadence check does not establish the
+  visible duration of every 20 ms blue hold;
 - integer-ratio sparse VFR outputs through GIF and parallel/serial/WASM WebP,
   plus controlled critical-pressure conversions with real GIF Worker terminal
   counts and native WebP decoder/encoder-task observations;
