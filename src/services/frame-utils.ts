@@ -453,7 +453,135 @@ export function getFrameDurationMs(
   };
 }
 
-// ─── MAD (Mean Absolute Difference) for Frame Similarity ──────────
+// ─── Bounded, approximate frame-motion comparison ──────────────────
+
+const MOTION_TILE_COLUMNS = 16;
+const MOTION_TILE_COUNT = MOTION_TILE_COLUMNS * MOTION_TILE_COLUMNS;
+const MOTION_CHANNELS = 3;
+
+/**
+ * RGB area statistics for a fixed spatial grid. Every source pixel contributes
+ * to one tile, while its typed arrays remain 3,328 bytes at any frame size.
+ * This is an approximation: different images can have equal tile statistics,
+ * especially when small objects move within one tile.
+ */
+export interface MotionSignature {
+  readonly width: number;
+  readonly height: number;
+  readonly means: Uint8Array;
+  readonly minima: Uint8Array;
+  readonly maxima: Uint8Array;
+  readonly counts: Uint32Array;
+}
+
+export interface MotionComparison {
+  /** Area-weighted mean of RGB tile differences, in the 0–255 range. */
+  readonly globalDistance: number;
+  /** Strongest tile change, including a guarded color-extrema change. */
+  readonly localDistance: number;
+  /** Conservative motion score suitable for existing skip thresholds. */
+  readonly distance: number;
+}
+
+export function computeMotionSignature(
+  pixelData: Uint8Array,
+  width: number,
+  height: number,
+  pixelStride: 3 | 4 = 3
+): MotionSignature {
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    width > MAX_FRAME_PIXEL_COUNT / height ||
+    pixelData.byteLength < width * height * pixelStride
+  ) {
+    throw new RangeError('Invalid motion signature frame dimensions or pixels');
+  }
+
+  const sums = new Uint32Array(MOTION_TILE_COUNT * MOTION_CHANNELS);
+  const counts = new Uint32Array(MOTION_TILE_COUNT);
+  const minima = new Uint8Array(sums.length);
+  const maxima = new Uint8Array(sums.length);
+  minima.fill(255);
+
+  for (let y = 0; y < height; y++) {
+    const tileRow = Math.min(
+      MOTION_TILE_COLUMNS - 1,
+      Math.floor((y * MOTION_TILE_COLUMNS) / height)
+    );
+    for (let x = 0; x < width; x++) {
+      const tileColumn = Math.min(
+        MOTION_TILE_COLUMNS - 1,
+        Math.floor((x * MOTION_TILE_COLUMNS) / width)
+      );
+      const tile = tileRow * MOTION_TILE_COLUMNS + tileColumn;
+      const tileOffset = tile * MOTION_CHANNELS;
+      const pixelOffset = (y * width + x) * pixelStride;
+      counts[tile]!++;
+      for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
+        const value = pixelData[pixelOffset + channel]!;
+        const offset = tileOffset + channel;
+        sums[offset] = sums[offset]! + value;
+        if (value < minima[offset]!) minima[offset] = value;
+        if (value > maxima[offset]!) maxima[offset] = value;
+      }
+    }
+  }
+
+  const means = new Uint8Array(sums.length);
+  for (let tile = 0; tile < MOTION_TILE_COUNT; tile++) {
+    const count = counts[tile]!;
+    if (count === 0) continue;
+    for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
+      const offset = tile * MOTION_CHANNELS + channel;
+      means[offset] = Math.round(sums[offset]! / count);
+    }
+  }
+  return { width, height, means, minima, maxima, counts };
+}
+
+export function compareMotionSignatures(
+  current: MotionSignature,
+  previous: MotionSignature
+): MotionComparison {
+  if (current.width !== previous.width || current.height !== previous.height) {
+    throw new RangeError('Motion signatures must have matching dimensions');
+  }
+
+  let weightedDistance = 0;
+  let localDistance = 0;
+  for (let tile = 0; tile < MOTION_TILE_COUNT; tile++) {
+    const count = current.counts[tile]!;
+    if (count === 0) continue;
+    let meanDifference = 0;
+    let extremaDifference = 0;
+    for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
+      const offset = tile * MOTION_CHANNELS + channel;
+      meanDifference += Math.abs(current.means[offset]! - previous.means[offset]!);
+      extremaDifference = Math.max(
+        extremaDifference,
+        Math.abs(current.minima[offset]! - previous.minima[offset]!),
+        Math.abs(current.maxima[offset]! - previous.maxima[offset]!)
+      );
+    }
+    const tileDistance = meanDifference / MOTION_CHANNELS;
+    weightedDistance += tileDistance * count;
+    // A single changed codec-noise pixel should not dominate an otherwise
+    // unchanged tile. Strong extrema count only when its area mean moved too.
+    const safeguardedDistance =
+      tileDistance >= 1 && extremaDifference >= 32
+        ? Math.max(tileDistance, extremaDifference)
+        : tileDistance;
+    localDistance = Math.max(localDistance, safeguardedDistance);
+  }
+
+  const globalDistance = weightedDistance / (current.width * current.height);
+  return { globalDistance, localDistance, distance: Math.max(globalDistance, localDistance) };
+}
+
+// ─── Legacy MAD (Mean Absolute Difference) comparison ─────────────
 
 /**
  * Extract 8×8 grayscale samples from RGB frame data.

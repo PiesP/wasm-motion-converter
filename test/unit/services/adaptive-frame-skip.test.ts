@@ -11,8 +11,10 @@ import {
 import { describe, expect, it } from 'vitest';
 
 describe('adaptive frame skip policy', () => {
-  it('derives the noise floor from the median sample', () => {
-    expect(calculateAdaptiveNoiseFloor([8, 1, 4, 3, 2])).toBe(10.5);
+  it('derives a capped noise floor from valid median samples', () => {
+    expect(calculateAdaptiveNoiseFloor([0.1, 0.2, 0.3])).toBeCloseTo(0.7);
+    expect(calculateAdaptiveNoiseFloor([8, 1, 4, 3, 2])).toBe(4.5);
+    expect(calculateAdaptiveNoiseFloor([Number.NaN, -1, 0.4])).toBeCloseTo(1.4);
     expect(calculateAdaptiveNoiseFloor([])).toBe(0);
   });
 
@@ -31,6 +33,14 @@ describe('adaptive frame skip policy', () => {
     expect(classifyAdaptiveMotion(2, 7)).toBe('static');
     expect(classifyAdaptiveMotion(3.5, 7)).toBe('slow');
     expect(classifyAdaptiveMotion(5, 7)).toBe('normal');
+  });
+
+  it('keeps scene cuts fast even after a high-motion calibration window', () => {
+    const noiseFloor = calculateAdaptiveNoiseFloor(Array.from({ length: 15 }, () => 200));
+    expect(noiseFloor).toBe(4.5);
+    expect(classifyAdaptiveMotion(50, noiseFloor)).toBe('fast');
+    expect(classifyAdaptiveMotion(50, 200)).toBe('fast');
+    expect(classifyAdaptiveMotion(1, 0)).toBe('static'); // short clip before calibration
   });
 
   it('detects only jumps of more than one motion class', () => {
