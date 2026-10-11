@@ -51,6 +51,8 @@ function setupNavigator(withSw: boolean): void {
         getRegistrations: vi.fn().mockResolvedValue([]),
         ready: Promise.resolve(mockRegistration as unknown as ServiceWorkerRegistration),
         controller: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
       },
       writable: true,
       configurable: true,
@@ -221,6 +223,32 @@ describe('registerServiceWorker', () => {
       result.cleanup!();
       result.cleanup!();
     }).not.toThrow();
+  });
+
+  it('accepts unavailable messages only from the current controller and removes the listener on cleanup', async () => {
+    setupNavigator(true);
+    const controller = {} as ServiceWorker;
+    Object.defineProperty(navigator.serviceWorker, 'controller', { value: controller, configurable: true });
+    const onAssetUnavailable = vi.fn();
+    const { registerServiceWorker } = await import('@/sw-register');
+    const result = await registerServiceWorker({ onAssetUnavailable });
+    const listener = vi.mocked(navigator.serviceWorker.addEventListener).mock.calls.find(([type]) => type === 'message')?.[1];
+    if (typeof listener !== 'function') throw new Error('Message listener was not registered');
+    const dispatch = (source: unknown, data: unknown): void => {
+      const event = new Event('message');
+      Object.assign(event, { source, data });
+      listener(event);
+    };
+    const data = { type: 'dropconvert:asset-unavailable', path: '/assets/codec.ABCDef12.js', status: 404 };
+    dispatch({}, data);
+    dispatch(controller, { ...data, path: '/private.mp4' });
+    dispatch(controller, { ...data, status: -1 });
+    expect(onAssetUnavailable).not.toHaveBeenCalled();
+    dispatch(controller, data);
+    expect(onAssetUnavailable).toHaveBeenCalledTimes(1);
+    result.cleanup?.();
+    expect(navigator.serviceWorker.removeEventListener).toHaveBeenCalledWith('message', listener);
+    expect(mockRegistration.removeEventListener).toHaveBeenCalledWith('updatefound', expect.any(Function));
   });
 
   // ── Error handling ───────────────────────────────────────────────

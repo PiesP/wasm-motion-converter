@@ -226,26 +226,26 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: ⏭️ No build-relevant changes
-        if: ${{ needs.changes.outputs.build != 'true' }}
+        if: ${{ needs.changes.outputs.build != 'true' && !(github.event_name == 'push' && github.ref == 'refs/heads/master') }}
         run: echo "Production build is not affected by this change set."
 
       - name: 📥 Checkout code
-        if: ${{ needs.changes.outputs.build == 'true' }}
+        if: ${{ needs.changes.outputs.build == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/master') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
       - name: 📦 Setup project
-        if: ${{ needs.changes.outputs.build == 'true' }}
+        if: ${{ needs.changes.outputs.build == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/master') }}
         uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
 
       - name: 🏗️ Build app
-        if: ${{ needs.changes.outputs.build == 'true' }}
+        if: ${{ needs.changes.outputs.build == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/master') }}
         run: pnpm build:ci
 
       - name: 📊 Upload build artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: ${{ needs.changes.outputs.build == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
         with:
           name: build-${{ github.sha }}
           path: dist/

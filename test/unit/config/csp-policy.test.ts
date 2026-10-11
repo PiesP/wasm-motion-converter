@@ -69,9 +69,9 @@ describe('Content Security Policy', () => {
       .split('\n')
       .filter((line) => line.length > 0 && !line.startsWith('#') && !line.startsWith('  '));
 
-    expect(routeRules).toContain('/*.webm');
-    expect(routeRules).toContain('/*.mp4');
-    expect(routeRules).toContain('/*.m4v');
+    expect(routeRules).toContain('/service-worker.js');
+    expect(routeRules).toContain('/deployment-state.json');
+    expect(routeRules).not.toContain('/assets/*');
     expect(routeRules.every((route) => route.startsWith('/'))).toBe(true);
   });
 });

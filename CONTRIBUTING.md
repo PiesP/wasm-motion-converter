@@ -135,6 +135,80 @@ the encoded size, and cross-origin timing restrictions can conceal sizes. This
 filter excludes other URL suffixes, including `.mjs` and `.wasm`, and resources
 loaded only after an interaction; it is not a whole-page network-byte total.
 
+## Production Pages deployment
+
+The production path is the `master` source build in the existing `dropconvert`
+Pages project, whose public subdomain is `wasm-motion-converter.pages.dev`.
+Git integration, the production/preview controls, build image, install switch,
+build cache and Web Analytics injection are provider settings; `wrangler.toml`
+owns the Pages name, output directory, compatibility date and declared variables.
+Keep previews disabled unless a separate change approves their intended layout.
+The generated `release` branch has a different root layout and release cadence;
+it is not the production source. A prebuilt migration requires a current,
+source-bound artifact and a reviewed rollout, rather than reusing the historical
+release merely because it exists.
+
+The source-build settings are an empty repository root, output `dist`, build
+command `node --experimental-strip-types scripts/build/pages-build.ts`, and
+`SKIP_DEPENDENCY_INSTALL=1`. The dependency-free bootstrap validates effective
+Node/pnpm against `.node-version` and `package.json`, restores and verifies the
+recorded core gitlink, installs the frozen lockfile with build dependencies,
+then runs `pnpm build`. Its quality, license and postbuild lifecycle stays a
+deployment prerequisite. License notices omit build dates so CI and Pages can
+reproduce the same public bytes across a date boundary. Read the provider log for effective tools and core
+SHA; `[vars]` is not a replacement for that verification. Source watch paths
+remain inclusive: runtime, patches, gitlinks, headers and build inputs must
+continue to trigger delivery. No custom-domain rules apply to the Pages-only
+hostname; keep its built-in compression and CDN caching.
+
+`postbuild` appends exact immutable rules only for emitted fingerprinted assets,
+so a missing asset does not inherit a year-long cache rule. Document, worker
+registration script and source metadata revalidate. A top-level `404.html`
+prevents missing JavaScript/CSS/WASM URLs becoming successful SPA documents.
+Static `_headers` supplies CSP and isolation without a global Pages Function;
+check document, redirects, errors, both workers, WASM and offline recovery when
+changing it. Pages Web Analytics injection is disabled at the project: build
+processing cannot remove scripts injected later. The application does not ship
+inline scripts or load external runtime code. Legacy provider CSP hashes are
+retained until their original script is identified and removal is separately
+validated; they do not authorize analytics or external script loading.
+
+`deployment-state.json` records source/tree/core identity and hashes of the
+postprocessed public distribution. It is separate from the tagged release's
+`release-state.json`; a package version or 200 HTML fallback cannot identify
+a deployment. After every successful `master` CI run, Production verification
+downloads that exact run's build artifact, waits at most eight source checks
+for Pages, compares the complete runtime inventory, and executes the maintained
+deploy profile. It has read permissions and no production secrets. Superseded
+sources fail explicitly as incomplete verification; unavailable expected metadata fails with a
+provider pending/failed/skipped diagnostic instead of accepting old production.
+The provider deployment ID, terminal result and source still need account
+readback during a release/issue closeout.
+
+For an authorized local public check, build the clean expected source and run:
+
+```bash
+pnpm prepare:e2e:fixture
+EXPECTED_SOURCE_SHA="$(git rev-parse HEAD)" pnpm verify:deploy
+```
+
+Keep `SKIP_WEB_SERVER` unset. The deploy profile uses production controls and
+checks runtime failures, asset types, worker/WASM conversion, downloads and the
+unchanged cold JS transfer budget. Its output is ignored; preserve it externally
+when used as acceptance evidence. Windows profile inputs and the task-owned
+old-to-new cache/public scenarios are documented in
+[Windows validation](./validation/windows/README.md).
+
+Service-worker assets use one bounded app-owned cache across this update.
+Previously cached entries are body-validated once during admission migration;
+admitted hits need no fetch, clone, write or FIFO enumeration. A removed lazy
+asset that was never cached cannot be reconstructed. The app offers an explicit
+reload after an update or failed asset, disables it during operations and while
+a downloadable result remains, and asks users to download and clear the result
+first. Existing older tabs may show their original conversion error and need a
+manual browser reload; updates never reload them automatically or delete their
+result Blob.
+
 ## Release publication order
 
 The manual release workflow accepts a verified `vX.Y.Z` tag from protected
@@ -150,7 +224,7 @@ published assets stop the retry and require maintainer review. The workflow
 never replaces existing release assets or retargets tags. An intentional rollback
 needs a separate reviewed procedure.
 
-Each new deployment contains `release-state.json` with the version and verified
+Each new release-branch artifact contains `release-state.json` with the version and verified
 tagged commit. The downloadable `metadata.json` records that same identity.
 For the existing branch without `release-state.json`, the guard verifies the
 Latest release's metadata and live tag, checks the published archive digest,

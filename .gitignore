@@ -84,3 +84,6 @@ reports/
 *.backup
 *.mp4
 coverage/
+validation/windows/prior-dist/
+validation/windows/public-target.json
+deployment-verification.json

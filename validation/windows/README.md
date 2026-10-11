@@ -23,6 +23,31 @@ The common Windows acceptance runner reads
 including production `dist/`, deterministic media, output contracts, and
 playback helpers.
 
+The profile also requires two generated, ignored evidence inputs before
+packaging. `validation/windows/prior-dist/` must contain the complete production
+distribution built from the recorded prior source SHA, including `_headers`,
+`service-worker.js`, `index.html`, and `assets/`. Keep its file hashes in the
+external campaign receipt. `validation/windows/public-target.json` has this
+schema when public testing is not authorized or no exact deployment is ready:
+
+```json
+{"schemaVersion":1,"targets":[]}
+```
+
+For an authorized public smoke, populate one or two targets with the canonical
+or immutable Pages URL and the provider-confirmed deployment identity:
+
+```json
+{"schemaVersion":1,"targets":[{"url":"https://wasm-motion-converter.pages.dev/","sourceSha":"<40-hex-source-sha>","deploymentId":"<provider-uuid>"}]}
+```
+
+The target file is bundled and hashed with the test artifact; it is not a
+repository setting. The profile rejects unknown hosts and source mismatches.
+Public checks verify deployment metadata status, MIME, schema, and source;
+compare every listed output byte digest with served bytes; exercise document
+isolation, a real GIF Worker, WebP WASM fallback, downloads, invalid recovery,
+and effective cancellation; and record cold/warm and conversion traffic.
+
 The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
@@ -136,4 +161,14 @@ browser close could not be confirmed. Edge records that case as not run. Physica
 DPI and comprehensive screen-reader behavior require separate source-bound
 observations. VM results must not be used as host-hardware benchmark evidence.
 
-The production service-worker scenario in `offline-recovery.mjs` uses a separate task-owned browser context and loopback origin. It seeds the prior polluted cache, verifies activation removes it while preserving an unrelated cache, loads the app under its controller, visits a text resource, then disables network access and verifies the unchanged application recovery document and settings interaction. It also poisons the current dynamic entry and checks that the validated static document recovers the app. It records before/after document digests and restores online state before closing the context; this is isolated browser evidence rather than a deployed-origin check.
+The production service-worker scenario in `offline-recovery.mjs` uses a separate
+task-owned browser context and loopback origin. It serves the recorded prior
+distribution, creates a downloadable result and caches a prior JS asset, then
+switches the same origin to the candidate distribution. It checks the retained
+tab and result, the prior asset while offline, a removed never-fetched JS
+chunk's 404, polluted asset rejection, and recovery online. It also seeds a
+prior polluted document cache, verifies activation removes it while preserving
+an unrelated cache, and checks offline application recovery and settings. The
+server, contexts, and offline state are restored in `finally`. This is
+isolated browser evidence; public verification uses the separate, optional
+target file above.

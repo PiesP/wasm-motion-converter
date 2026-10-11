@@ -16,6 +16,7 @@ const PROFILE_ID = 'wmc-media';
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
 const CANCELLATION_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 const OUTPUT_CONTRACT = 'validation/windows/output-contract.json';
+const PUBLIC_TARGET = 'validation/windows/public-target.json';
 const CONVERSION_TIMEOUT_MS = 120_000;
 const CANCELLATION_TIMEOUT_MS = 180_000;
 const ZOOM_PROFILE_PREFIX = 'wmc-zoom-chrome-';
@@ -205,6 +206,45 @@ function parseCatchAllHeaders(contents) {
   return headers;
 }
 
+function parseHeaderRules(contents) {
+  const rules = [];
+  let current = null;
+  for (const line of contents.split(/\r?\n/)) {
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (!/^\s/.test(line)) {
+      const pattern = line.trim();
+      assert(pattern.startsWith('/'), `Invalid _headers path: ${pattern}`);
+      current = { pattern, headers: new Map() };
+      rules.push(current);
+      continue;
+    }
+    assert(current, '_headers field has no path rule');
+    const separator = line.indexOf(':');
+    assert(separator > 0, `Invalid _headers field: ${line}`);
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    assert(name && value && !/[\r\n]/.test(value), 'Invalid _headers value');
+    const key = name.toLowerCase();
+    const prior = current.headers.get(key);
+    current.headers.set(key, prior ? `${prior}, ${value}` : value);
+  }
+  return rules;
+}
+
+function matchedHeaders(rules, pathname, catchAllOnly = false) {
+  const headers = new Map();
+  for (const rule of rules) {
+    if (catchAllOnly && rule.pattern !== '/*') continue;
+    const escaped = rule.pattern.replace(/[|\\{}()[\]^$+?.]/g, '\\$&').replaceAll('*', '.*');
+    if (!new RegExp(`^${escaped}$`).test(pathname)) continue;
+    for (const [name, value] of rule.headers) {
+      const prior = headers.get(name.toLowerCase());
+      headers.set(name.toLowerCase(), prior ? `${prior}, ${value}` : value);
+    }
+  }
+  return headers;
+}
+
 function decodeRequestPath(requestUrl) {
   const url = new URL(requestUrl ?? '/', 'http://127.0.0.1');
   let pathname;
@@ -259,12 +299,21 @@ async function resolveStaticFile(distRoot, requestUrl) {
 }
 
 async function startStaticServer(bundleRoot) {
-  const distRoot = await realpath(resolve(bundleRoot, 'dist'));
-  assert(isWithin(bundleRoot, distRoot), 'Bundled dist asset resolved outside the bundle root');
-  assert((await stat(distRoot)).isDirectory(), 'Bundled dist asset is not a directory');
-  const headersFile = await realpath(join(distRoot, '_headers'));
-  assert(isWithin(distRoot, headersFile), 'dist/_headers resolved outside the distribution root');
-  const catchAllHeaders = parseCatchAllHeaders(await readFile(headersFile, 'utf8'));
+  let distRoot;
+  let headerRules;
+  async function setDistribution(relativePath) {
+    const nextRoot = await realpath(resolve(bundleRoot, relativePath));
+    assert(isWithin(bundleRoot, nextRoot), 'Bundled dist asset resolved outside the bundle root');
+    assert((await stat(nextRoot)).isDirectory(), 'Bundled dist asset is not a directory');
+    const headersFile = await realpath(join(nextRoot, '_headers'));
+    assert(isWithin(nextRoot, headersFile), 'dist/_headers resolved outside the distribution root');
+    const headersText = await readFile(headersFile, 'utf8');
+    parseCatchAllHeaders(headersText);
+    const nextHeaders = parseHeaderRules(headersText);
+    distRoot = nextRoot;
+    headerRules = nextHeaders;
+  }
+  await setDistribution('dist');
 
   const server = createServer(async (request, response) => {
     try {
@@ -283,18 +332,13 @@ async function startStaticServer(bundleRoot) {
       }
       const file = await resolveStaticFile(distRoot, request.url);
       const bytes = await readFile(file);
-      for (const [name, value] of catchAllHeaders) response.setHeader(name, value);
+      const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+      for (const [name, value] of matchedHeaders(headerRules, pathname)) response.setHeader(name, value);
       response.setHeader(
         'Content-Type',
         MIME_TYPES.get(extname(file).toLowerCase()) ?? 'application/octet-stream'
       );
       response.setHeader('Content-Length', String(bytes.byteLength));
-      response.setHeader(
-        'Cache-Control',
-        request.url?.startsWith('/assets/') || extname(file).toLowerCase() === '.wasm'
-          ? 'public, max-age=31536000, immutable'
-          : 'no-cache'
-      );
       response.writeHead(200);
       response.end(request.method === 'HEAD' ? undefined : bytes);
     } catch (error) {
@@ -303,7 +347,10 @@ async function startStaticServer(bundleRoot) {
         : error?.code === 'ENOENT'
           ? 404
           : 500;
-      response.writeHead(statusCode, { 'Content-Type': 'text/plain; charset=utf-8' });
+      for (const [name, value] of matchedHeaders(headerRules, '/', true)) response.setHeader(name, value);
+      response.writeHead(statusCode, {
+        'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache',
+      });
       response.end(statusCode === 404 ? 'Not found' : 'Request rejected');
     }
   });
@@ -317,7 +364,7 @@ async function startStaticServer(bundleRoot) {
   });
   const address = server.address();
   assert(address && typeof address === 'object', 'Local acceptance server has no address');
-  return { server, url: `http://127.0.0.1:${address.port}` };
+  return { server, url: `http://127.0.0.1:${address.port}`, setDistribution };
 }
 
 async function closeServer(server) {
@@ -1768,6 +1815,279 @@ async function observeEnvironment(page, browser) {
   };
 }
 
+async function loadPublicTargets(bundleRoot) {
+  const path = await validateBundleFile(bundleRoot, PUBLIC_TARGET);
+  const config = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(config.schemaVersion, 1, 'Unsupported public target schema');
+  assert(Array.isArray(config.targets) && config.targets.length <= 2, 'Expected at most two public targets');
+  for (const target of config.targets) {
+    assert.equal(typeof target.url, 'string');
+    const url = new URL(target.url);
+    assert.equal(url.protocol, 'https:', 'Public target must use HTTPS');
+    assert(url.hostname === 'wasm-motion-converter.pages.dev' ||
+      /^[a-z0-9-]+\.wasm-motion-converter\.pages\.dev$/.test(url.hostname),
+    'Public target is outside the owned Pages project');
+    assert.equal(url.pathname, '/');
+    assert.equal(url.search, '');
+    assert.equal(url.hash, '');
+    assert(/^[a-f0-9]{40}$/.test(target.sourceSha), 'Public target source SHA is invalid');
+    assert(/^[a-f0-9-]{36}$/.test(target.deploymentId), 'Public target deployment ID is invalid');
+  }
+  return config.targets;
+}
+
+async function exercisePublicTarget(browser, target, targetIndex, fixturePath, cancellationFixture, outputRoot, artifacts) {
+  const publicDir = `public-${targetIndex + 1}-${target.deploymentId}`;
+  const publicRoot = join(outputRoot, publicDir);
+  await mkdir(publicRoot, { recursive: true });
+  const publicArtifacts = [];
+  const context = await browser.newContext({
+    acceptDownloads: true, locale: 'en-US', serviceWorkers: 'block',
+    viewport: { width: 1280, height: 900 },
+  });
+  const page = await context.newPage();
+  const errors = { page: [], console: [], request: [], csp: [], uploads: [], external: [] };
+  const assets = new Map();
+  const workers = [];
+  const origin = new URL(target.url).origin;
+  const resourceTiming = (subject) => subject.evaluate(() => performance.getEntriesByType('resource')
+    .filter((entry) => entry instanceof PerformanceResourceTiming)
+    .map((entry) => ({ name: new URL(entry.name).pathname, initiatorType: entry.initiatorType,
+      transferSize: entry.transferSize, encodedBodySize: entry.encodedBodySize,
+      decodedBodySize: entry.decodedBodySize })));
+  const captureAssetRequests = () => {
+    const requests = [];
+    const onRequest = (request) => {
+      const url = new URL(request.url());
+      if (url.origin === origin && /^\/assets\/.*\.(?:js|css|wasm)$/.test(url.pathname)) requests.push(request);
+    };
+    context.on('request', onRequest);
+    return async () => {
+      context.off('request', onRequest);
+      return Promise.all(requests.map(async (request) => {
+        const response = await request.response();
+        assert(response, `Public asset request had no response: ${request.url()}`);
+        return { path: new URL(request.url()).pathname, resourceType: request.resourceType(),
+          status: response.status(), sizes: await request.sizes() };
+      }));
+    };
+  };
+  page.on('worker', (worker) => workers.push(new URL(worker.url()).pathname));
+  page.on('pageerror', (error) => errors.page.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.console.push(message.text());
+  });
+  context.on('requestfailed', (request) => {
+    if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED') return;
+    errors.request.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`);
+  });
+  context.on('request', (request) => {
+    if (!['GET', 'HEAD'].includes(request.method())) errors.uploads.push(`${request.method()} ${request.url()}`);
+    if (!request.url().startsWith('blob:') && new URL(request.url()).origin !== new URL(target.url).origin)
+      errors.external.push(request.url());
+  });
+  context.on('response', (response) => {
+    const path = new URL(response.url()).pathname;
+    if (/^\/assets\/.*\.(?:js|css|wasm)$/.test(path)) assets.set(path, response);
+  });
+  await context.addInitScript(() => {
+    globalThis.__wmcPublicViolations = [];
+    document.addEventListener('securitypolicyviolation', (event) => {
+      globalThis.__wmcPublicViolations.push(`${event.effectiveDirective}: ${event.blockedURI}`);
+    });
+  });
+  try {
+    const metadataResponse = await context.request.get(new URL('/deployment-state.json', target.url).href);
+    assert.equal(metadataResponse.status(), 200, 'Public deployment metadata is unavailable');
+    assert.match(metadataResponse.headers()['content-type'] ?? '', /^application\/json\b/i,
+      'Public deployment metadata has the wrong MIME type');
+    const metadata = await metadataResponse.json();
+    assert.equal(metadata.schemaVersion, 1);
+    assert.equal(metadata.sourceSha, target.sourceSha, 'Public source differs from provider deployment source');
+    assert(/^[a-f0-9]{40}$/.test(metadata.treeSha));
+    assert(/^[a-f0-9]{40}$/.test(metadata.coreSha));
+    assert.equal(metadata.branch, 'master');
+    assert.equal(typeof metadata.version, 'string');
+    assert(Array.isArray(metadata.files) && metadata.files.length > 0);
+    const served = [];
+    for (const file of metadata.files) {
+      assert(typeof file.path === 'string' && !file.path.startsWith('/') &&
+        !file.path.split('/').includes('..'), 'Invalid metadata asset path');
+      assert(Number.isSafeInteger(file.size) && file.size >= 0);
+      assert(/^[a-f0-9]{64}$/.test(file.sha256));
+      const response = await context.request.get(new URL(`/${file.path}`, target.url).href);
+      assert.equal(response.status(), 200, `Public asset ${file.path} did not return 200`);
+      const bytes = await response.body();
+      assert.equal(bytes.byteLength, file.size, `Public asset size differs: ${file.path}`);
+      assert.equal(sha256(bytes), file.sha256, `Public asset bytes differ: ${file.path}`);
+      served.push({ path: file.path, size: bytes.byteLength, sha256: sha256(bytes) });
+    }
+    const representative = metadata.files.find((file) => file.path.endsWith('.js'));
+    assert(representative, 'Public metadata contains no JavaScript asset');
+    const representativeUrl = new URL(`/${representative.path}`, target.url).href;
+    const initialAsset = await context.request.get(representativeUrl);
+    assert.equal(initialAsset.status(), 200);
+    assert.match(initialAsset.headers()['cache-control'] ?? '', /\bimmutable\b/i);
+    const etag = initialAsset.headers().etag;
+    assert(etag, 'Public asset has no ETag for conditional revalidation');
+    const revalidatedAsset = await context.request.get(representativeUrl, {
+      headers: { 'If-None-Match': etag },
+    });
+    assert.equal(revalidatedAsset.status(), 304, 'Public asset did not preserve ETag revalidation');
+    for (const extension of ['js', 'css', 'wasm']) {
+      const missing = await context.request.get(new URL(`/assets/missing-289.${extension}`, target.url).href);
+      assert.equal(missing.status(), 404, `Missing ${extension} asset was not a 404`);
+      assert(!/\bimmutable\b/i.test(missing.headers()['cache-control'] ?? ''),
+        `Missing ${extension} asset received immutable caching`);
+    }
+    const document = await page.goto(target.url);
+    assert.equal(document?.status(), 200);
+    assert.match(document.headers()['content-type'] ?? '', /^text\/html\b/i);
+    assert.equal(document.headers()['cross-origin-opener-policy'], 'same-origin');
+    assert.equal(document.headers()['cross-origin-embedder-policy'], 'require-corp');
+    await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    await page.waitForLoadState('networkidle');
+    assert.equal(await page.evaluate(() => crossOriginIsolated), true);
+    await recordScreenshot(page, publicRoot, 'initial.png', publicArtifacts);
+    const timing = () => page.evaluate(() => performance.getEntriesByType('resource')
+      .filter((entry) => entry instanceof PerformanceResourceTiming && entry.name.endsWith('.js'))
+      .map((entry) => ({ name: new URL(entry.name).pathname, transferSize: entry.transferSize,
+        encodedBodySize: entry.encodedBodySize, decodedBodySize: entry.decodedBodySize })));
+    const cold = await timing();
+    const coldPositive = cold.filter((entry) => entry.transferSize > 0);
+    assert(coldPositive.length > 0, 'Public cold load has no positive JS transfer timing');
+    assert(coldPositive.reduce((sum, entry) => sum + entry.transferSize, 0) < 150_000,
+      'Public cold JS transfer exceeded the unchanged 150000-byte budget');
+    await page.reload();
+    await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    await page.waitForLoadState('networkidle');
+    const warm = await timing();
+
+    await selectFixture(page, fixturePath);
+    await chooseOption(page, 'format', 'gif');
+    await chooseOption(page, 'quality', 'low');
+    await chooseOption(page, 'scale', '0.5');
+    await page.evaluate(() => performance.clearResourceTimings());
+    const finishGifRequests = captureAssetRequests();
+    await page.locator('[data-testid="convert-button"]').click();
+    await proceedIfPrompted(page);
+    await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
+    const [gifDownload] = await Promise.all([
+      page.waitForEvent('download'), page.locator('[data-testid="download-result-button"]').click(),
+    ]);
+    const gifBytes = await readDownload(gifDownload);
+    validateOutput(gifBytes, 'gif');
+    assert(workers.length > 0, 'Public GIF conversion never started a module worker');
+    await page.waitForLoadState('networkidle');
+    const firstGifTraffic = { pageResourceTiming: await resourceTiming(page),
+      networkAssetRequests: await finishGifRequests() };
+    assert(firstGifTraffic.networkAssetRequests.some((request) => workers.includes(request.path)),
+      'Public GIF traffic did not record its module worker request');
+    await recordScreenshot(page, publicRoot, 'gif-result.png', publicArtifacts);
+
+    await loadApplication(page, target.url);
+    const documentIdentity = await page.evaluate(() => performance.timeOrigin);
+    const budgetFixture = makeMp4BudgetFixture(await readFile(fixturePath));
+    await page.locator('[data-testid="file-input"]').setInputFiles({
+      name: 'public-invalid.mp4', mimeType: 'video/mp4', buffer: budgetFixture.bytes,
+    });
+    const metadataError = page.locator('[data-testid="error-display"]');
+    await metadataError.waitFor({ state: 'visible', timeout: 10_000 });
+    assert((await metadataError.textContent())?.includes('ISOBMFF sample metadata'));
+    await page.locator(
+      '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
+    ).click();
+    await page.locator('[data-testid="file-input"]').setInputFiles(fixturePath);
+    await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('[data-testid="convert-button"]').isEnabled(), true);
+    assert.equal(await page.evaluate(() => performance.timeOrigin), documentIdentity,
+      'Public invalid-input recovery reloaded the document');
+    const cancellation = await exerciseCancellation(
+      page, target.url, cancellationFixture, publicRoot, publicArtifacts
+    );
+    assert.equal(cancellation.effective, true, 'Public cancellation did not stop active conversion');
+
+    const wasmPage = await context.newPage();
+    wasmPage.on('pageerror', (error) => errors.page.push(error.message));
+    wasmPage.on('console', (message) => {
+      if (message.type() === 'error') errors.console.push(message.text());
+    });
+    await wasmPage.addInitScript(() => {
+      Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+        configurable: true, value: undefined,
+      });
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        value: class UnavailableWorker {
+          constructor() { throw new DOMException('Force WASM fallback', 'NotSupportedError'); }
+        },
+      });
+    });
+    await loadApplication(wasmPage, target.url);
+    await selectFixture(wasmPage, fixturePath);
+    await chooseOption(wasmPage, 'format', 'webp');
+    await chooseOption(wasmPage, 'quality', 'low');
+    await chooseOption(wasmPage, 'scale', '0.5');
+    await wasmPage.evaluate(() => performance.clearResourceTimings());
+    const finishWebpRequests = captureAssetRequests();
+    await wasmPage.locator('[data-testid="convert-button"]').click();
+    await proceedIfPrompted(wasmPage);
+    await waitForConversionOutcome(wasmPage, CONVERSION_TIMEOUT_MS);
+    const [webpDownload] = await Promise.all([
+      wasmPage.waitForEvent('download'), wasmPage.locator('[data-testid="download-result-button"]').click(),
+    ]);
+    const webpBytes = await readDownload(webpDownload);
+    validateOutput(webpBytes, 'webp');
+    await wasmPage.waitForLoadState('networkidle');
+    await recordScreenshot(wasmPage, publicRoot, 'webp-wasm-result.png', publicArtifacts);
+    const firstWebpTraffic = { pageResourceTiming: await resourceTiming(wasmPage),
+      networkAssetRequests: await finishWebpRequests() };
+    const wasmAssets = [...assets.entries()].filter(([path]) => path.endsWith('.wasm'));
+    assert(wasmAssets.length > 0, 'Public WebP fallback loaded no WASM');
+    assert(firstWebpTraffic.networkAssetRequests.some((request) => request.path.endsWith('.wasm')),
+      'Public WebP traffic did not record its WASM request');
+    for (const [, response] of assets) {
+      assert.equal(response.status(), 200, `Executable ${response.url()} status`);
+      const path = new URL(response.url()).pathname;
+      const type = path.endsWith('.wasm') ? /^application\/wasm\b/i :
+        path.endsWith('.css') ? /^text\/css\b/i : /^(?:text|application)\/javascript\b/i;
+      assert.match(response.headers()['content-type'] ?? '', type, `Executable ${path} MIME`);
+      const bytes = await response.body();
+      assert(bytes.length > 0, `Executable ${path} has no body`);
+      assert(!/^\s*<!doctype html/i.test(bytes.subarray(0, 256).toString('utf8')),
+        `Executable ${path} is an HTML fallback`);
+      if (path.endsWith('.wasm')) {
+        assert.equal(bytes.subarray(0, 4).toString('hex'), '0061736d', 'WASM magic is invalid');
+        await wasmPage.evaluate(async (value) => WebAssembly.compile(new Uint8Array(value)), [...bytes]);
+      }
+    }
+    errors.csp = [
+      ...await page.evaluate(() => globalThis.__wmcPublicViolations),
+      ...await wasmPage.evaluate(() => globalThis.__wmcPublicViolations),
+    ];
+    assert.deepEqual(errors, { page: [], console: [], request: [], csp: [], uploads: [], external: [] });
+    artifacts.push(...publicArtifacts.map((artifact) => ({
+      ...artifact, file: `${publicDir}/${artifact.file}`,
+    })));
+    return { id: 'public-source-bound-smoke', status: 'passed', deploymentId: target.deploymentId,
+      url: target.url, sourceSha: target.sourceSha, metadata: {
+        treeSha: metadata.treeSha, coreSha: metadata.coreSha, version: metadata.version,
+        files: served,
+      },
+      coldJs: cold, warmJs: warm, firstGifTraffic, firstWebpTraffic,
+      workerPaths: workers, wasmPaths: wasmAssets.map(([path]) => path), cancellation,
+      gif: { bytes: gifBytes.length, sha256: sha256(gifBytes) },
+      webp: { bytes: webpBytes.length, sha256: sha256(webpBytes) },
+    };
+  } finally {
+    await writeFile(join(publicRoot, 'diagnostics.json'), JSON.stringify({
+      target: target.url, sourceSha: target.sourceSha, deploymentId: target.deploymentId,
+      errors, observedAssets: [...assets.keys()], workers,
+    }, null, 2)).catch(() => {});
+    await context.close();
+  }
+}
+
 /**
  * Run the WMC Windows stable-browser acceptance profile.
  *
@@ -1784,6 +2104,7 @@ export async function run({ browser, root, output }) {
 
   const bundleRoot = await realpath(resolve(root));
   const smallFixture = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
+  const publicTargets = await loadPublicTargets(bundleRoot);
   const cancellationFixture = await validateBundleFile(bundleRoot, CANCELLATION_FIXTURE);
   const outputContractPath = await validateBundleFile(bundleRoot, OUTPUT_CONTRACT);
   const outputContract = JSON.parse(await readFile(outputContractPath, 'utf8'));
@@ -1843,7 +2164,9 @@ export async function run({ browser, root, output }) {
     assert.equal(appLoad.crossOriginIsolated, true, 'COOP/COEP did not produce a cross-origin-isolated app');
 
     const checks = [{ id: 'app-load', status: 'passed', ...appLoad }];
-    checks.push(await exerciseOfflineRecovery(browser, started.url, outputRoot));
+    checks.push(await exerciseOfflineRecovery(
+      browser, started.url, outputRoot, started.setDistribution, bundleRoot, smallFixture, cancellationFixture
+    ));
     for (const file of ['offline-app-recovery.png', 'offline-static-recovery.png']) {
       const bytes = await readFile(join(outputRoot, file));
       artifacts.push({ kind: 'screenshot', file, bytes: bytes.byteLength, sha256: sha256(bytes) });
@@ -2059,6 +2382,12 @@ export async function run({ browser, root, output }) {
       browser, page, bundleRoot, started.url, smallFixture, outputRoot, artifacts
     ));
 
+    for (const [targetIndex, target] of publicTargets.entries()) {
+      checks.push(await exercisePublicTarget(
+        browser, target, targetIndex, smallFixture, cancellationFixture, outputRoot, artifacts
+      ));
+    }
+
     await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);
     assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(' | ')}`);
@@ -2074,6 +2403,7 @@ export async function run({ browser, root, output }) {
         consoleErrors,
         failedRequests,
         scope: 'functional-and-visual-smoke',
+        publicTargets: publicTargets.length > 0 ? publicTargets.map((target) => target.url) : 'not-run',
         nativeDialogs: 'not-tested',
         explorerIntegration: 'not-tested',
         gpuPerformance: 'not-measured',
