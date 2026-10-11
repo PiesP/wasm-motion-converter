@@ -10,22 +10,28 @@ export interface PresentationInterval {
 /**
  * Select the first source frame at or after each requested presentation boundary.
  * Boundaries stay anchored to the first visible frame, including across VFR gaps.
- * An integer ratio also enforces its source-frame floor when timestamps are dense.
- * Fractional ratios select by time alone so VFR gaps do not skip the first
- * available frame after a due boundary.
+ * Time cadence and an explicitly requested source-frame gap are independent.
+ * A VFR source can have far fewer visible frames than its reported average FPS.
  */
-export function createPresentationSampler(sourceFps: number, decimation: number) {
+export function createPresentationSampler(
+  sourceFps: number,
+  decimation: number,
+  minimumSourceFrameGap = 1
+) {
   const ratio = Number.isFinite(decimation) && decimation > 1 ? decimation : 1;
   const fps = Number.isFinite(sourceFps) && sourceFps > 0 ? sourceFps : 1;
   const periodUs = (ratio * 1_000_000) / fps;
-  const minimumFrameGap = Number.isInteger(ratio) ? ratio : 1;
+  const minimumFrameGap =
+    Number.isSafeInteger(minimumSourceFrameGap) && minimumSourceFrameGap > 0
+      ? minimumSourceFrameGap
+      : 1;
   let anchorUs: number | null = null;
   let nextBoundaryUs = 0;
   let nextBoundaryIndex = 0;
   let lastSelectedFrame = Number.NEGATIVE_INFINITY;
 
   return (startUs: number, frameNumber: number): boolean => {
-    if (ratio === 1) return true;
+    if (ratio === 1 && minimumFrameGap === 1) return true;
     if (anchorUs === null) {
       anchorUs = startUs;
       nextBoundaryIndex = 1;

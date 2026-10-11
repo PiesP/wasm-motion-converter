@@ -83,6 +83,7 @@ export async function encodeWebp(
       width: w,
       height: h,
       frameDecimation,
+      minimumSourceFrameGap: opts.minimumSourceFrameGap,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
       profileOperation: opts.profileOperation,

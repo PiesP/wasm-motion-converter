@@ -12,7 +12,7 @@
 
 import { globalBufferPool } from '@services/buffer-pool';
 import { demuxVideo } from '@services/demuxer-service';
-import { calcAutoDecimation, type EncoderFrameCounts } from '@services/encoder-common';
+import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder-common';
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
@@ -334,11 +334,13 @@ export async function runWorkerPipeline(
     };
 
     if (options.format === 'gif') {
-      const gifDecimation = calcAutoDecimation(
+      const gifCadence = resolveCadencePolicy(
         sourceFps,
         GIF_TARGET_FPS[options.quality],
-        options.forceDecimation
+        options.forceDecimation,
+        options.memoryPressureCadenceRatio
       );
+      const gifDecimation = gifCadence.frameDecimation;
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
       profiler?.setEncoderRoute('gif-worker');
 
@@ -359,6 +361,7 @@ export async function runWorkerPipeline(
           quality: options.quality,
           scale: options.scale,
           frameDecimation: gifDecimation,
+          minimumSourceFrameGap: gifCadence.minimumSourceFrameGap,
           smartFrameSkip: options.smartFrameSkip,
           decimationMemoryCheck,
           onEncodingComplete: recordCompletedFrameCounts,
@@ -374,11 +377,13 @@ export async function runWorkerPipeline(
       );
       output = toExactOutputBuffer(gifResult);
     } else {
-      const webpDecimation = calcAutoDecimation(
+      const webpCadence = resolveCadencePolicy(
         sourceFps,
         WEBP_TARGET_FPS[options.quality],
-        options.forceDecimation
+        options.forceDecimation,
+        options.memoryPressureCadenceRatio
       );
+      const webpDecimation = webpCadence.frameDecimation;
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
       profiler?.setEncoderRoute('webp-wasm');
 
@@ -402,6 +407,7 @@ export async function runWorkerPipeline(
             quality: options.quality,
             scale: options.scale,
             frameDecimation: webpDecimation,
+            minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
             smartFrameSkip: options.smartFrameSkip,
             decimationMemoryCheck,
             onEncodingComplete: recordCompletedFrameCounts,

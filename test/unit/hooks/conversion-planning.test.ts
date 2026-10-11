@@ -6,6 +6,8 @@ import {
   resolveMemoryPressureDecimation,
   serializeConversionInputs,
 } from '@hooks/conversion-handlers/conversion-planning';
+import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
+import { createPresentationSampler } from '@services/presentation-timing';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
 import { describe, expect, it } from 'vitest';
 
@@ -117,6 +119,23 @@ describe('resolveMemoryPressureDecimation', () => {
   it('derives decimation only for critical memory pressure', () => {
     expect(resolveMemoryPressureDecimation(plan, 'critical')).toBe(4);
   });
+
+  it('preserves fractional pressure through the serialized request and consuming sampler', () => {
+    const metadata = { ...defaultMetadata, duration: 1, framerate: 21 };
+    const settings = { ...defaultSettings, quality: 'high' as const };
+    const memoryPlan = buildConversionMemoryPlan(metadata, settings)!;
+    const requested = resolveMemoryPressureDecimation(memoryPlan, 'critical');
+    expect(requested).toBe(1.4);
+    const { serializedOptions } = serializeConversionInputs(metadata, requested, settings);
+    const request = buildConversionRequest(new ArrayBuffer(0), serializedOptions);
+    expect(request.memoryPressureCadenceRatio).toBe(1.4);
+    expect(request.forceDecimation).toBeUndefined();
+    const normal = createPresentationSampler(21, 21 / 20);
+    const critical = createPresentationSampler(21, request.memoryPressureCadenceRatio!);
+    const pts = Array.from({ length: 21 }, (_, i) => Math.round(i * 1_000_000 / 21));
+    expect(pts.filter((timestamp, i) => normal(timestamp, i))).toHaveLength(20);
+    expect(pts.filter((timestamp, i) => critical(timestamp, i))).toHaveLength(15);
+  });
 });
 
 describe('serializeConversionInputs', () => {
@@ -155,7 +174,7 @@ describe('serializeConversionInputs', () => {
         rotation: 270,
       },
       serializedOptions: {
-        forceDecimation: 4,
+        memoryPressureCadenceRatio: 4,
         format: 'gif',
         fps: 60,
         maxFrames: 9000,
@@ -193,7 +212,7 @@ describe('serializeConversionInputs', () => {
     expect(serializeConversionInputs(null, undefined, defaultSettings)).toEqual({
       serializedConfig: null,
       serializedOptions: expect.objectContaining({
-        forceDecimation: undefined,
+        memoryPressureCadenceRatio: undefined,
         fps: 30,
         trimEnd: 0,
         trimStart: 0,
@@ -211,6 +230,14 @@ describe('serializeConversionInputs', () => {
       );
 
       expect(result.serializedOptions.fps).toBe(30);
+    }
+  );
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 0, -1])(
+    'omits an invalid memory pressure ratio (%s) from serialized options',
+    (ratio) => {
+      const result = serializeConversionInputs(defaultMetadata, ratio, defaultSettings);
+      expect(result.serializedOptions.memoryPressureCadenceRatio).toBeUndefined();
     }
   );
 
