@@ -12,6 +12,7 @@
     "scripts/ci/check-pinned-tools.ts",
     "scripts/ci/install-nose.ts",
     "test/unit/**/*.test.{ts,tsx}",
+    "test/native/**/*.test.ts",
     "test/e2e/**/*.spec.ts"
   ],
   "project": [

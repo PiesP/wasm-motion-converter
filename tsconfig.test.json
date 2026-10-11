@@ -11,7 +11,8 @@
   },
   "include": [
     "src/**/*.d.ts",
-    "test/unit"
+    "test/unit",
+    "test/native"
   ],
   "exclude": [
     "test/e2e",
