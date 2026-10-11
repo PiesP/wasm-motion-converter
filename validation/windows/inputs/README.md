@@ -33,8 +33,13 @@ closing its contexts and servers. The original MIME response is also observed
 after 11 real seconds; it may close earlier in Edge than in Node. Build B must
 abort both Fetch signals and close both bodies in each case within 3,000 ms of
 response headers. A pooled idle TCP connection does not count as unfinished body
-work. Invalid responses must produce no update notice; all three cases retain
-page, request and CSP health checks.
+work. Invalid responses must produce no update notice. After both rejected
+responses close, each fixed-build page waits another real 61 seconds and receives
+the original `6d246393` artifact's valid JSON through a third same-origin HTTP
+request. The same observer must then show an update notice without navigating;
+its third Fetch signal remains unaborted and the completed response leaves no
+unfinished work. The original-build cases stop after two rejected responses.
+All three cases retain page, request and CSP health checks.
 
 For the active-conversion cancellation case, prepare the ignored 24-second input
 from the existing three-second high-motion fixture at the repository root:
