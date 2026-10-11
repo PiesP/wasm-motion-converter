@@ -18,9 +18,11 @@
  *   3. Mux into RIFF/WEBP container with VP8X + ANIM + ANMF chunks
  */
 
-import { VP8_FOURCC as SHARED_VP8_FOURCC, VP8L_FOURCC, VP8X_FOURCC } from '@utils/constants';
+import { VP8_FOURCC as SHARED_VP8_FOURCC, VP8X_FOURCC } from '@utils/constants';
+import type { ProfileOperationRecorder } from './conversion-profiler';
 import type { OutputLimitOverrides, OutputLimits } from './output-limits';
 import { OutputLimitError, resolveOutputLimits } from './output-limits';
+import { extractVp8Chunk, validateVp8Frame } from './webp-bitstream';
 
 // ---------------------------------------------------------------------------
 // VP8 bitstream extraction
@@ -33,42 +35,15 @@ import { OutputLimitError, resolveOutputLimits } from './output-limits';
  *   0-3:   "RIFF"
  *   4-7:   file size - 8 (LE)
  *   8-11:  "WEBP"
- *   12-15: "VP8 " or "VP8L"
+ *   12-15: "VP8 " (or "VP8X" followed by an opaque VP8 chunk)
  *   16-19: chunk size (LE)
- *   20+:   raw VP8/VP8L bitstream
+ *   20+:   raw VP8 bitstream for the simple form
  *
- * Uses subarray (zero-copy view) instead of slice.
- * Returns { bitstream, codec } where codec is 'VP8 ' or 'VP8L'.
+ * Returns a borrowed view; the muxer copies it before the encoder reuses the
+ * underlying WASM memory. Unsupported codecs and alpha fail closed.
  */
 export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
-  if (webp.length < 24) {
-    throw new Error(`WebP too small: ${webp.length} bytes (minimum 24)`);
-  }
-
-  const view = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
-
-  // Verify RIFF header (big-endian)
-  if (view.getUint32(0, false) !== StreamingWebpMuxer.RIFF_MAGIC) {
-    throw new Error(`Invalid RIFF header: 0x${view.getUint32(0, false).toString(16)}`);
-  }
-  // Verify WEBP type (big-endian)
-  if (view.getUint32(8, false) !== StreamingWebpMuxer.WEBP_MAGIC) {
-    throw new Error(`Invalid WEBP type: 0x${view.getUint32(8, false).toString(16)}`);
-  }
-
-  // Identify codec (big-endian)
-  const codec = view.getUint32(12, false);
-  if (codec !== SHARED_VP8_FOURCC && codec !== VP8L_FOURCC) {
-    throw new Error(`Unknown WebP codec: 0x${codec.toString(16)}`);
-  }
-
-  const frameSize = view.getUint32(16, true); // chunk size is little-endian
-  if (20 + frameSize > webp.length) {
-    throw new Error(`Frame size ${frameSize} exceeds buffer ${webp.length}`);
-  }
-
-  // Zero-copy subarray — the original webp buffer is retained by the caller
-  return webp.subarray(20, 20 + frameSize);
+  return extractVp8Chunk(webp);
 }
 
 /**
@@ -78,12 +53,10 @@ export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
 /**
  * Streaming animated WebP muxer.
  *
- * Instead of collecting all bitstreams into an array and muxing at the end
- * (O(N) memory for encoded frames), this muxer builds the RIFF container
- * incrementally. Each frame is written to the output buffer immediately,
- * and the intermediate buffer is released after writing.
+ * Builds RIFF incrementally, retaining at most one compressed presentation
+ * frame until its visible hold can be established at the next source PTS.
  *
- * Memory usage: O(1) for frame accumulation + O(N) for final output only.
+ * Memory usage: O(1) for pending frame accumulation + O(N) for final output.
  * Compare to batch mux: O(N) for accumulation + O(N) for final output.
  *
  * Usage:
@@ -94,7 +67,7 @@ export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
  *   const result = muxer.finish();
  */
 export class StreamingWebpMuxer {
-  private presentationStartUs: number | null = null;
+  private pending: { bitstream: Uint8Array; startUs: number } | null = null;
   private static readonly VP8_FOURCC = SHARED_VP8_FOURCC;
   private static readonly VP8X_FOURCC = VP8X_FOURCC;
   private static readonly ANIM_MAGIC = 0x414e494d;
@@ -115,20 +88,40 @@ export class StreamingWebpMuxer {
   private currentOffset = 0;
   private headerWritten = false;
   private readonly limits: OutputLimits;
+  private readonly profileOperation: ProfileOperationRecorder | undefined;
 
   /** Pre-computed header size: RIFF(12) + VP8X(18) + ANIM(6+8) = 44 bytes */
   private static readonly HEADER_SIZE =
     12 + StreamingWebpMuxer.VP8X_OVERHEAD + 8 + StreamingWebpMuxer.ANIM_OVERHEAD;
 
-  constructor(width: number, height: number, limits?: OutputLimitOverrides) {
+  constructor(
+    width: number,
+    height: number,
+    limits?: OutputLimitOverrides,
+    profileOperation?: ProfileOperationRecorder
+  ) {
+    if (
+      !Number.isInteger(width) ||
+      width < 1 ||
+      width > 0x1000000 ||
+      !Number.isInteger(height) ||
+      height < 1 ||
+      height > 0x1000000
+    ) {
+      throw new RangeError('Invalid WebP canvas dimensions');
+    }
     this.width = width;
     this.height = height;
     this.limits = resolveOutputLimits('webp', limits);
+    this.profileOperation = profileOperation;
   }
 
-  /** Total bytes of frame bitstreams added so far (not including overhead). */
+  /** Total retained payload bytes, including the one pending presentation frame. */
   get frameBytes(): number {
-    return this.totalFrameBytes;
+    return (
+      this.totalFrameBytes +
+      (this.pending ? this.pending.bitstream.length + (this.pending.bitstream.length & 1) : 0)
+    );
   }
 
   /** Number of frames added so far. */
@@ -136,7 +129,23 @@ export class StreamingWebpMuxer {
     return this.frameCount;
   }
 
-  /** Consume the borrowed codec view now; finalize its hold at the next source PTS. */
+  private reservePending(bitstream: Uint8Array): void {
+    if (this.frameCount >= this.limits.maxFrames) {
+      throw new OutputLimitError('webp', 'frame', this.limits.maxFrames);
+    }
+    const size =
+      this.currentOffset +
+      (this.headerWritten ? 0 : StreamingWebpMuxer.HEADER_SIZE) +
+      StreamingWebpMuxer.ANMF_HEADER +
+      StreamingWebpMuxer.VP8_CHUNK_OVERHEAD +
+      bitstream.length +
+      (bitstream.length & 1);
+    if (!Number.isSafeInteger(size) || size > this.limits.maxOutputBytes) {
+      throw new OutputLimitError('webp', 'byte', this.limits.maxOutputBytes);
+    }
+  }
+
+  /** Copy the borrowed codec view now; finalize its hold at the next source PTS. */
   addPresentationFrame(bitstream: Uint8Array, timing: { startUs: number; endUs: number }): void {
     if (
       !Number.isSafeInteger(timing.startUs) ||
@@ -146,21 +155,71 @@ export class StreamingWebpMuxer {
     ) {
       throw new RangeError('Invalid WebP presentation interval');
     }
-    if (this.presentationStartUs !== null) this.finishPresentation(timing.startUs);
-    this.addFrame(bitstream, 0);
-    this.presentationStartUs = timing.startUs;
+    validateVp8Frame(bitstream, this.width, this.height);
+    const previous = this.pending;
+    if (previous) {
+      if (timing.startUs <= previous.startUs)
+        throw new RangeError('WebP presentations are out of order');
+      // Exact compressed-frame equality is safe only after validating codec and canvas size.
+      if (
+        bitstream.length === previous.bitstream.length &&
+        bitstream.every((byte, index) => byte === previous.bitstream[index])
+      )
+        return;
+      const durationMs = Math.round(timing.startUs / 1000) - Math.round(previous.startUs / 1000);
+      if (durationMs > 0) {
+        this.emitPending(durationMs);
+      }
+    }
+    this.reservePending(bitstream);
+    this.pending = { bitstream: new Uint8Array(bitstream), startUs: timing.startUs };
   }
 
   /** Round absolute boundaries once, rather than rounding each source duration. */
   finishPresentation(endUs: number): void {
-    if (this.presentationStartUs === null) return;
-    if (!Number.isSafeInteger(endUs) || endUs <= this.presentationStartUs) {
+    if (!this.pending) return;
+    if (!Number.isSafeInteger(endUs) || endUs <= this.pending.startUs) {
       throw new RangeError('Invalid WebP presentation endpoint');
     }
-    const durationMs = Math.round(endUs / 1000) - Math.round(this.presentationStartUs / 1000);
-    if (durationMs < 1) throw new RangeError('WebP presentation interval is below one millisecond');
-    this.setLastFrameDuration(durationMs);
-    this.presentationStartUs = null;
+    const durationMs = Math.round(endUs / 1000) - Math.round(this.pending.startUs / 1000);
+    if (durationMs === 0 && this.frameCount > 0) {
+      this.pending = null;
+      return;
+    }
+    this.emitPending(Math.max(1, durationMs));
+  }
+
+  private emitPending(durationMs: number): void {
+    const pending = this.pending;
+    if (!pending) return;
+    const count = Math.ceil(durationMs / 0xffffff);
+    if (this.frameCount + count > this.limits.maxFrames) {
+      throw new OutputLimitError('webp', 'frame', this.limits.maxFrames);
+    }
+    const frameSize =
+      StreamingWebpMuxer.ANMF_HEADER +
+      StreamingWebpMuxer.VP8_CHUNK_OVERHEAD +
+      pending.bitstream.length +
+      (pending.bitstream.length & 1);
+    const nextSize =
+      this.currentOffset +
+      (this.headerWritten ? 0 : StreamingWebpMuxer.HEADER_SIZE) +
+      count * frameSize;
+    if (!Number.isSafeInteger(nextSize) || nextSize > this.limits.maxOutputBytes) {
+      throw new OutputLimitError('webp', 'byte', this.limits.maxOutputBytes);
+    }
+    this.pending = null;
+    try {
+      let remaining = durationMs;
+      while (remaining > 0) {
+        const hold = Math.min(remaining, 0xffffff);
+        this.addFrame(pending.bitstream, hold);
+        remaining -= hold;
+      }
+    } catch (error) {
+      this.pending = pending;
+      throw error;
+    }
   }
 
   private setLastFrameDuration(durationMs: number): void {
@@ -232,6 +291,8 @@ export class StreamingWebpMuxer {
    * can release the source buffer after this call.
    */
   addFrame(bitstream: Uint8Array, durationMs: number): void {
+    if (this.pending) throw new Error('Cannot mix WebP frame and presentation APIs');
+    const muxStart = this.profileOperation ? performance.now() : null;
     // RIFF spec requires all chunks to be even-length. When the VP8
     // bitstream is odd-length, a 0x00 pad byte must follow the data.
     const needsPadding = (bitstream.length & 1) === 1;
@@ -291,6 +352,7 @@ export class StreamingWebpMuxer {
     this.currentOffset += chunk.length;
     this.totalFrameBytes += paddedBitstreamLen;
     this.frameCount++;
+    if (muxStart !== null) this.profileOperation?.('webpMuxing', performance.now() - muxStart);
   }
 
   /**
@@ -299,6 +361,7 @@ export class StreamingWebpMuxer {
    * to concatenate chunks without an extra O(N) copy into a new buffer.
    */
   async finish(signal?: AbortSignal): Promise<Uint8Array> {
+    if (this.pending) throw new Error('WebP presentation has no endpoint');
     if (this.frameCount === 0) {
       throw new Error('No frames added to muxer');
     }
@@ -316,11 +379,16 @@ export class StreamingWebpMuxer {
     // this path to avoid an extra O(N) copy compared to manual set() loop.
     // Cast through unknown: TS strict mode treats Uint8Array<ArrayBufferLike>
     // as incompatible with BlobPart (ArrayBufferLike includes SharedArrayBuffer).
+    const finalizeStart = this.profileOperation ? performance.now() : null;
     const blob = new Blob(this.chunks as unknown as BlobPart[], { type: 'image/webp' });
     // Release chunk references early — Blob already holds its own references.
     // This reduces peak memory during arrayBuffer() from ~2x to ~1x final size.
     this.chunks.length = 0;
+    if (finalizeStart !== null)
+      this.profileOperation?.('muxFinalization', performance.now() - finalizeStart);
+    const copyStart = this.profileOperation ? performance.now() : null;
     const output = new Uint8Array(await blob.arrayBuffer());
+    if (copyStart !== null) this.profileOperation?.('outputCopy', performance.now() - copyStart);
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
     return output;
