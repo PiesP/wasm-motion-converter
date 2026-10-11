@@ -187,6 +187,97 @@ async function waitForConnectivityEvent(page, fromIndex, event, online) {
   { fromIndex, event, online }, { polling: 100, timeout: 10_000 });
 }
 
+async function installOnlineMetadataTransportGate(page) {
+  await page.evaluate(() => {
+    if (globalThis.__appUpdateMetadataTransportGate?.state.active)
+      throw new Error('Metadata transport gate was already active');
+    const nativeFetch = globalThis.fetch;
+    let open;
+    const restored = new Promise((resolveOpen) => { open = resolveOpen; });
+    const state = { active: true, queued: 0, queuedAtMs: null,
+      releasedAtMs: null, nativeStartedAtMs: null };
+    globalThis.__appUpdateMetadataTransportGate = {
+      state,
+      release() {
+        if (state.active) {
+          globalThis.fetch = nativeFetch;
+          state.active = false;
+          state.releasedAtMs = performance.now();
+          open();
+        }
+        return { ...state };
+      },
+    };
+    globalThis.fetch = function (...args) {
+      const input = args[0];
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      if (url.origin !== location.origin || url.pathname !== '/deployment-state.json')
+        return Reflect.apply(nativeFetch, this, args);
+      state.queued++;
+      state.queuedAtMs = performance.now();
+      const receiver = this;
+      // Retain the original request and signal; only native transport waits for
+      // Playwright to finish restoring the controlling service-worker session.
+      return restored.then(() => {
+        state.nativeStartedAtMs = performance.now();
+        return Reflect.apply(nativeFetch, receiver, args);
+      });
+    };
+  });
+}
+
+async function releaseOnlineMetadataTransportGate(page) {
+  return page.evaluate(() => {
+    const gate = globalThis.__appUpdateMetadataTransportGate;
+    return gate?.state.active ? gate.release() : null;
+  });
+}
+
+async function assertOnlineMetadataTransportStarted(page, record) {
+  const gate = await page.evaluate(() =>
+    ({ ...globalThis.__appUpdateMetadataTransportGate?.state }));
+  assert.equal(record.transportGates.length, 1);
+  assert.equal(gate.queued, 1);
+  assert(gate.nativeStartedAtMs !== null && gate.nativeStartedAtMs >= gate.releasedAtMs,
+    'Native metadata Fetch started before transport restoration completed');
+  record.transportGates[0] = gate;
+}
+
+async function restoreOnlineWithMetadataGate(page, context, record, lifecycleStart) {
+  await installOnlineMetadataTransportGate(page);
+  let released = false;
+  let primaryError;
+  try {
+    await context.setOffline(false);
+    record.offline = false;
+    await waitForConnectivityEvent(page, lifecycleStart, 'online', true);
+    const queued = await page.evaluate(() =>
+      globalThis.__appUpdateMetadataTransportGate.state.queued);
+    assert.equal(queued, 1, 'Online event did not queue exactly one metadata Fetch');
+    const gate = await releaseOnlineMetadataTransportGate(page);
+    released = true;
+    assert(gate, 'Metadata transport gate disappeared before release');
+    record.transportGates.push(gate);
+    assert.equal(gate.queued, 1);
+    assert(gate.queuedAtMs !== null && gate.releasedAtMs !== null,
+      'Metadata transport gate has no request/release timestamps');
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    if (!released) {
+      try {
+        const gate = await releaseOnlineMetadataTransportGate(page);
+        if (gate) record.transportGates.push(gate);
+      } catch (error) {
+        if (primaryError) primaryError.cleanupErrors = [
+          ...(primaryError.cleanupErrors ?? []), `metadata transport gate release: ${String(error)}`];
+        else throw error;
+      }
+    }
+  }
+}
+
 async function assertRuntimeHealth(page, record) {
   assert.deepEqual(record.pageErrors, []);
   assert.deepEqual(record.consoleErrors, []);
@@ -770,7 +861,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     const resultRecord = { origin: new URL(started.url).origin,
       pageErrors: [], consoleErrors: [], failedRequests: [], failedResponses: [], uploads: [], external: [],
       metadataRequests: [], metadataResponses: [], metadataOverflow: false,
-      offlineMetadataFailures: [], offline: false };
+      offlineMetadataFailures: [], transportGates: [], offline: false };
     diagnostics.records.result = resultRecord;
     await instrument(resultPage, resultRecord);
     const firstMetadata = captureResponseWait(resultPage, (response) =>
@@ -805,7 +896,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     const busyRecord = { origin: new URL(started.url).origin,
       pageErrors: [], consoleErrors: [], failedRequests: [], failedResponses: [], uploads: [], external: [],
       metadataRequests: [], metadataResponses: [], metadataOverflow: false,
-      offlineMetadataFailures: [], offline: false };
+      offlineMetadataFailures: [], transportGates: [], offline: false };
     diagnostics.records.busy = busyRecord;
     await instrument(busyPage, busyRecord);
     const busyInitialMetadata = captureResponseWait(busyPage, (response) =>
@@ -850,14 +941,13 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     const bMetadata = captureResponseWait(busyPage, (response) =>
       new URL(response.url()).pathname === METADATA_PATH && response.status() === 200,
     20_000);
-    await busyContext.setOffline(false);
-    busyRecord.offline = false;
-    await waitForConnectivityEvent(busyPage, busyLifecycleStart, 'online', true);
+    await restoreOnlineWithMetadataGate(busyPage, busyContext, busyRecord, busyLifecycleStart);
     assert.deepEqual(busyRecord.offlineMetadataFailures, [],
       'Busy tab fetched deployment metadata while offline');
     assert(await stop.isVisible(), 'Conversion stopped during connectivity recovery');
     assert.equal((await (await requireResponse(bMetadata)).json()).sourceSha, buildB.state.sourceSha,
       'Busy online event did not observe B metadata');
+    await assertOnlineMetadataTransportStarted(busyPage, busyRecord);
     await updateNotice(busyPage).waitFor({ state: 'visible', timeout: 20_000 });
     const busyReload = updateNotice(busyPage).getByRole('button', { name: 'Reload page' });
     assert.equal(await busyReload.isEnabled(), false, 'Reload must be disabled during conversion');
@@ -892,14 +982,14 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     const resultBMetadata = captureResponseWait(resultPage, (response) =>
       new URL(response.url()).pathname === METADATA_PATH && response.status() === 200,
     20_000);
-    await resultContext.setOffline(false);
-    resultRecord.offline = false;
-    await waitForConnectivityEvent(resultPage, resultLifecycleStart, 'online', true);
+    await restoreOnlineWithMetadataGate(resultPage, resultContext, resultRecord,
+      resultLifecycleStart);
     assert.deepEqual(resultRecord.offlineMetadataFailures, [],
       'Result tab fetched deployment metadata while offline');
     assert.equal((await (await requireResponse(resultBMetadata)).json()).sourceSha,
       buildB.state.sourceSha,
       'Result online event did not observe B metadata');
+    await assertOnlineMetadataTransportStarted(resultPage, resultRecord);
     await updateNotice(resultPage).waitFor({ state: 'visible', timeout: 20_000 });
     const resultReload = updateNotice(resultPage).getByRole('button', { name: 'Reload page' });
     assert.equal(await resultReload.isEnabled(), false, 'Reload must be disabled with an existing result');
@@ -1006,6 +1096,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
         busyCount: busyRecord.metadataRequests.length,
         busyResponseBytes: busyMetadata.reduce((sum, entry) => sum + entry.bytes, 0) },
       lifecycle: { result: resultLifecycle, busy: busyLifecycle },
+      transportGates: { result: resultRecord.transportGates, busy: busyRecord.transportGates },
       expectedOfflineMetadataFailures: resultRecord.offlineMetadataFailures,
     }], artifacts };
   } catch (error) {
@@ -1029,6 +1120,10 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
       try { await action(); }
       catch (error) { cleanupErrors.push(`${name}: ${String(error)}`); }
     };
+    if (resultPage) await cleanup('result metadata gate release',
+      () => releaseOnlineMetadataTransportGate(resultPage));
+    if (busyPage) await cleanup('busy metadata gate release',
+      () => releaseOnlineMetadataTransportGate(busyPage));
     if (resultContext) await cleanup('result offline reset', () => resultContext.setOffline(false));
     if (resultContext) await cleanup('result context close', () => resultContext.close());
     if (busyContext) await cleanup('busy context close', () => busyContext.close());
@@ -1040,6 +1135,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
         failedRequests: record.failedRequests, failedResponses: record.failedResponses,
         uploads: record.uploads, external: record.external,
         offlineMetadataFailures: record.offlineMetadataFailures,
+        transportGates: record.transportGates ?? [],
         failurePageState: record.failurePageState ?? null,
         failurePageStateError: record.failurePageStateError ?? null,
         metadataRequests: record.metadataRequests, metadataOverflow: record.metadataOverflow,
