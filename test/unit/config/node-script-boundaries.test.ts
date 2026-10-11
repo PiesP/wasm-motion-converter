@@ -32,7 +32,7 @@ const entries = [
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'wmc node scripts with spaces '));
   roots.push(root);
-  for (const path of [...entries, 'scripts/release/legacy-state.ts']) {
+  for (const path of [...entries, 'scripts/release/legacy-state.ts', 'scripts/build/deployment-state.ts']) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     copyFileSync(join(project, path), join(root, path));
   }
@@ -190,20 +190,25 @@ describe('direct Node script boundaries', () => {
     expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toContain('**Version:** 1.0.0');
   });
 
-  it('sanitizes and deduplicates build output while rejecting inline scripts', () => {
+  it('deduplicates build output and validates references while rejecting inline or external scripts', () => {
     const { root, run } = fixture();
     mkdirSync(join(root, 'dist/assets'), { recursive: true });
-    writeFileSync(join(root, 'dist/index.html'), '<script src="https://static.cloudflareinsights.com/beacon.min.js"></script><script type="module" src="/assets/app.js"></script>');
+    mkdirSync(join(root, 'public'));
+    writeFileSync(join(root, 'public/_headers'), '/*\n  X-Content-Type-Options: nosniff\n');
+    writeFileSync(join(root, 'dist/index.html'), '<script type="module" src="/assets/app.js"></script>');
     writeFileSync(join(root, 'dist/assets/a.wasm'), 'same');
     writeFileSync(join(root, 'dist/assets/b.wasm'), 'same');
     writeFileSync(join(root, 'dist/assets/app.js'), 'fetch("/assets/b.wasm")');
     writeFileSync(join(root, 'dist/test-video-sample.mp4'), 'omit');
     const result = run('scripts/build/postbuild.ts');
     expect(result.status, result.stderr).toBe(0);
-    expect(readFileSync(join(root, 'dist/index.html'), 'utf8')).not.toContain('cloudflareinsights');
     expect(readFileSync(join(root, 'dist/assets/app.js'), 'utf8')).toContain('/assets/a.wasm');
     expect(existsSync(join(root, 'dist/assets/b.wasm'))).toBe(false);
     expect(existsSync(join(root, 'dist/test-video-sample.mp4'))).toBe(false);
+    writeFileSync(join(root, 'dist/index.html'), '<script src="https://static.cloudflareinsights.com/beacon.min.js"></script>');
+    const external = run('scripts/build/postbuild.ts');
+    expect(external.status).not.toBe(0);
+    expect(external.stderr).toContain('External provider/CDN scripts are forbidden');
     writeFileSync(join(root, 'dist/index.html'), '<script>window.bad=true</script>');
     const invalid = run('scripts/build/postbuild.ts');
     expect(invalid.status).not.toBe(0);
