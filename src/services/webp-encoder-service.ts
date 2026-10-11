@@ -66,7 +66,7 @@ export async function encodeWebp(
   let skippedByDecimation = 0;
   let encodeIdx = 0;
 
-  // Dynamic decimation controller — monitors JS heap and skips frames under pressure
+  // Additional sampling policy uses supplied conversion accounting when available.
   const decimationController = createDynamicDecimationController(opts.decimationMemoryCheck);
 
   // Decode frames with streaming callback — each frame is encoded immediately
@@ -74,6 +74,7 @@ export async function encodeWebp(
     totalInputFrames: totalDecoded,
     skippedByDecimation: totalSkipped,
     smartSkipped: totalSmartSkipped,
+    consumedChunks,
     selectedFrames,
     presentationEndUs,
   } = await decodeFrames(
@@ -122,10 +123,7 @@ export async function encodeWebp(
         }
 
         return withPooledBuffer(rgbData, async () => {
-          // Encode this frame immediately via cached wasm-webp singleton.
-          // encodeRGBReuse reuses the same WASM module instance across all
-          // frames, avoiding per-frame instantiation overhead (~16MB WASM
-          // memory alloc + runtime init per frame with the original encodeRGB).
+          // Encode through the cached WASM module; its result is a borrowed view.
           const encodingStart = opts.profileOperation ? performance.now() : null;
           const webpResult = await encodeRGBReuse(rgbData, w, h, quality);
           if (encodingStart !== null)
@@ -141,7 +139,7 @@ export async function encodeWebp(
           // WASM memory lifecycle: the wasm-webp module allocates a single linear memory
           // buffer that grows as needed. encodeRGB writes into this buffer and returns a view
           // that remains valid until the next encodeRGB call or the module is freed.
-          // Since we call addFrame (which copies the data into the muxer) immediately,
+          // addPresentationFrame copies the data into the muxer immediately, so
           // the view is only borrowed and the WASM memory can be safely reused.
           const bitstream = extractVP8Bitstream(webpResult);
 
@@ -180,6 +178,7 @@ export async function encodeWebp(
     totalFrames: Math.max(muxer.frames, totalInputFrames),
   });
   opts.onEncodingComplete?.({
+    consumedChunks,
     decodedFrames: totalInputFrames,
     selectedFrames,
     encodedFrames: encodeIdx,

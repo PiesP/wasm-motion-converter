@@ -23,6 +23,7 @@ vi.mock('@services/decoder-service', () => ({
       tailAccumulatedMs: 0,
       presentationEndUs: 175_000,
       totalInputFrames: 1,
+      consumedChunks: 3,
       selectedFrames: 1,
     };
   }),
@@ -76,7 +77,7 @@ describe('encodeWebp timing', () => {
     expect(onFrameDecoded).toHaveBeenCalledWith(1, 1);
     expect(onFrameEncoded).toHaveBeenCalledWith(1, 1);
     expect(onEncodingComplete).toHaveBeenCalledWith({
-      decodedFrames: 1, selectedFrames: 1, encodedFrames: 1, emittedFrames: 1,
+      consumedChunks: 3, decodedFrames: 1, selectedFrames: 1, encodedFrames: 1, emittedFrames: 1,
     });
   });
 });
