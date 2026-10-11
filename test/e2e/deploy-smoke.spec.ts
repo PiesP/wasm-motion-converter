@@ -10,7 +10,7 @@
 // Environment variables:
 //   DEPLOY_URL — the deployed URL to test (default: https://wasm-motion-converter.pages.dev)
 
-import { test, expect, type Page, type Response } from '@playwright/test';
+import { test, expect, type APIResponse, type Page, type Response } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
@@ -19,6 +19,11 @@ import { assertExecutableBody, assertExecutableResponse } from './lib/deployment
 const DEPLOY_URL = process.env.DEPLOY_URL || 'https://wasm-motion-converter.pages.dev';
 const TEST_VIDEO_PATH =
   process.env.DEPLOY_TEST_VIDEO || resolve(process.cwd(), 'public/test-video-ci-h264.mp4');
+const REVALIDATION = 'public, max-age=0, must-revalidate';
+const IMMUTABLE = 'public, max-age=31536000, immutable';
+const SHA = /^[a-f0-9]{40}$/;
+const DIGEST = /^[a-f0-9]{64}$/;
+const FINGERPRINTED_ASSET = /^assets\/[\w.-]+[.-][\w-]{8}\.(js|css|wasm)$/;
 
 test.use({ serviceWorkers: 'block' });
 test.beforeEach(async ({ page }) => {
@@ -107,6 +112,27 @@ function downloadLink(page: Page) {
   return page.getByRole('link', { name: /^Download (?:GIF|WEBP) file —/ });
 }
 
+function expectSingleHeader(response: APIResponse, name: string, value: string): void {
+  const values = response.headersArray()
+    .filter((header) => header.name.toLowerCase() === name)
+    .map((header) => header.value);
+  expect(values, `${response.url()} ${name} values`).toEqual([value]);
+}
+
+function expectSecurityHeaders(response: APIResponse, csp: string): void {
+  expectSingleHeader(response, 'content-security-policy', csp);
+  expectSingleHeader(response, 'cross-origin-opener-policy', 'same-origin');
+  expectSingleHeader(response, 'cross-origin-embedder-policy', 'require-corp');
+  expectSingleHeader(response, 'x-content-type-options', 'nosniff');
+}
+
+async function expectedCsp(): Promise<string> {
+  const headers = await readFile(resolve(process.cwd(), 'public/_headers'), 'utf8');
+  const policy = /^  Content-Security-Policy: (.+)$/m.exec(headers)?.[1];
+  expect(policy, 'Source _headers must define a CSP').toBeTruthy();
+  return policy!;
+}
+
 // ---------------------------------------------------------------------------
 // 1. Page Load & Health
 // ---------------------------------------------------------------------------
@@ -165,6 +191,76 @@ test.describe('Deployment: Page Load', () => {
       expect(response.headers()['cross-origin-embedder-policy'], extension).toBe('require-corp');
     }
   });
+
+  test('Pages serves one security and cache policy per document, metadata, and fingerprinted asset',
+    async ({ request }) => {
+      const csp = await expectedCsp();
+      const metadataUrl = new URL('/deployment-state.json', DEPLOY_URL).href;
+      const metadataResponse = await request.get(metadataUrl, { maxRedirects: 0, failOnStatusCode: false });
+      expect(metadataResponse.status()).toBe(200);
+      expect(metadataResponse.headers()['content-type']).toMatch(/^application\/json(?:\s*;|$)/i);
+      expectSecurityHeaders(metadataResponse, csp);
+      expectSingleHeader(metadataResponse, 'cache-control', REVALIDATION);
+      const metadata: unknown = await metadataResponse.json();
+      expect(metadata).toEqual(expect.objectContaining({
+        schemaVersion: 1,
+        sourceSha: expect.stringMatching(SHA),
+        treeSha: expect.stringMatching(SHA),
+        coreSha: expect.stringMatching(SHA),
+        version: expect.any(String),
+        branch: expect.any(String),
+        sourceDirty: expect.any(Boolean),
+        headersSha256: expect.stringMatching(DIGEST),
+        files: expect.any(Array),
+      }));
+      const files = (metadata as { files: { path: string; size: number; sha256: string }[] }).files;
+      expect(files.length).toBeGreaterThan(0);
+      expect(files.length).toBeLessThanOrEqual(100);
+      for (const file of files) {
+        expect(file).toEqual({ path: expect.stringMatching(/^[\w.-]+(?:\/[\w.-]+)*$/),
+          size: expect.any(Number), sha256: expect.stringMatching(DIGEST) });
+        expect(Number.isSafeInteger(file.size) && file.size > 0, file.path).toBe(true);
+      }
+      const assetFiles = files.filter((file) => FINGERPRINTED_ASSET.test(file.path));
+      expect(assetFiles.length).toBeGreaterThan(0);
+      expect(new Set(assetFiles.map((file) => file.path)).size).toBe(assetFiles.length);
+      const kinds = new Set(assetFiles.map((file) => file.path.split('.').at(-1)));
+      expect(kinds).toEqual(new Set(['js', 'css', 'wasm']));
+      expect(assetFiles.some((file) => /(?:^|[-.])worker[-.]/.test(basename(file.path))),
+        'Deployment inventory has no fingerprinted Worker script').toBe(true);
+
+      for (const path of ['/', '/service-worker.js']) {
+        const response = await request.get(new URL(path, DEPLOY_URL).href,
+          { maxRedirects: 0, failOnStatusCode: false });
+        expect(response.status(), path).toBe(200);
+        expect(response.headers()['content-type'], path).toMatch(
+          path === '/' ? /^text\/html(?:\s*;|$)/i : /^(?:text|application)\/javascript(?:\s*;|$)/i,
+        );
+        expectSecurityHeaders(response, csp);
+        expectSingleHeader(response, 'cache-control', REVALIDATION);
+      }
+
+      for (const file of assetFiles) {
+        const url = new URL(`/${file.path}`, DEPLOY_URL).href;
+        const response = await request.get(url, { maxRedirects: 0, failOnStatusCode: false });
+        const kind = file.path.endsWith('.wasm') ? 'wasm' : file.path.endsWith('.css') ? 'css' : 'js';
+        assertExecutableBody(kind, response.status(), response.headers()['content-type'] ?? null,
+          await response.body());
+        expectSecurityHeaders(response, csp);
+        expectSingleHeader(response, 'cache-control', IMMUTABLE);
+        const etag = response.headers().etag;
+        if (!etag) throw new Error(`${file.path} has no ETag`);
+        expect(etag, `${file.path} ETag`).toMatch(/^(?:W\/)?"[^\"]+"$/);
+        const revalidated = await request.get(url, {
+          headers: { 'If-None-Match': etag }, maxRedirects: 0, failOnStatusCode: false,
+        });
+        expect(revalidated.status(), `${file.path} conditional status`).toBe(304);
+        expect(revalidated.headers().etag, `${file.path} conditional ETag`).toBe(etag);
+        expect(await revalidated.body(), `${file.path} conditional body`).toHaveLength(0);
+        expectSecurityHeaders(revalidated, csp);
+        expectSingleHeader(revalidated, 'cache-control', IMMUTABLE);
+      }
+    });
 
   test('validator rejects mislabeled HTML and invalid WASM bytes', () => {
     const html = new TextEncoder().encode('<!doctype html><title>fallback</title>');

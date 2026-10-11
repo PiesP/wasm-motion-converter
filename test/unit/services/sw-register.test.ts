@@ -232,13 +232,19 @@ describe('registerServiceWorker', () => {
     const onAssetUnavailable = vi.fn();
     const { registerServiceWorker } = await import('@/sw-register');
     const result = await registerServiceWorker({ onAssetUnavailable });
-    const listener = vi.mocked(navigator.serviceWorker.addEventListener).mock.calls.find(([type]) => type === 'message')?.[1] as (event: { source: unknown; data: unknown }) => void;
+    const listener = vi.mocked(navigator.serviceWorker.addEventListener).mock.calls.find(([type]) => type === 'message')?.[1];
+    if (typeof listener !== 'function') throw new Error('Message listener was not registered');
+    const dispatch = (source: unknown, data: unknown): void => {
+      const event = new Event('message');
+      Object.assign(event, { source, data });
+      listener(event);
+    };
     const data = { type: 'dropconvert:asset-unavailable', path: '/assets/codec.ABCDef12.js', status: 404 };
-    listener({ source: {}, data });
-    listener({ source: controller, data: { ...data, path: '/private.mp4' } });
-    listener({ source: controller, data: { ...data, status: -1 } });
+    dispatch({}, data);
+    dispatch(controller, { ...data, path: '/private.mp4' });
+    dispatch(controller, { ...data, status: -1 });
     expect(onAssetUnavailable).not.toHaveBeenCalled();
-    listener({ source: controller, data });
+    dispatch(controller, data);
     expect(onAssetUnavailable).toHaveBeenCalledTimes(1);
     result.cleanup?.();
     expect(navigator.serviceWorker.removeEventListener).toHaveBeenCalledWith('message', listener);

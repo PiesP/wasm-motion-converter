@@ -188,6 +188,14 @@ describe('direct Node script boundaries', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toContain('### sample');
     expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toContain('**Version:** 1.0.0');
+    const generated = readFileSync(join(root, 'public/LICENSES.md'), 'utf8');
+    const clock = join(root, 'clock.mjs');
+    for (const instant of ['2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z']) {
+      writeFileSync(clock, `globalThis.Date = class extends Date { constructor() { super('${instant}'); } };`);
+      const dated = spawnSync(process.execPath, ['--import', clock, '--experimental-strip-types', join(root, 'scripts/build/generate-licenses.ts')], { cwd: root, encoding: 'utf8' });
+      expect(dated.status, dated.stderr).toBe(0);
+      expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toBe(generated);
+    }
   });
 
   it('deduplicates build output and validates references while rejecting inline or external scripts', () => {
