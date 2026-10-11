@@ -152,17 +152,20 @@ describe('resolveCadencePolicy', () => {
     expect(resolveCadencePolicy(60, 30)).toEqual({
       frameDecimation: 2,
       minimumSourceFrameGap: 1,
+      pressureCadenceRatio: undefined,
     });
   });
 
   it('preserves a fractional critical-memory restriction independently of the preset', () => {
     expect(resolveCadencePolicy(21, 20, undefined, 1.4)).toEqual({
-      frameDecimation: 1.4,
+      frameDecimation: 1.05,
       minimumSourceFrameGap: 1,
+      pressureCadenceRatio: 1.4,
     });
     expect(resolveCadencePolicy(60, 8, undefined, 4)).toEqual({
       frameDecimation: 7.5,
       minimumSourceFrameGap: 1,
+      pressureCadenceRatio: undefined,
     });
   });
 
@@ -170,10 +173,12 @@ describe('resolveCadencePolicy', () => {
     expect(resolveCadencePolicy(60, 30, 3)).toEqual({
       frameDecimation: 3,
       minimumSourceFrameGap: 3,
+      pressureCadenceRatio: undefined,
     });
     expect(resolveCadencePolicy(60, 30, 2, 4)).toEqual({
-      frameDecimation: 4,
+      frameDecimation: 2,
       minimumSourceFrameGap: 2,
+      pressureCadenceRatio: 4,
     });
   });
 
@@ -183,6 +188,7 @@ describe('resolveCadencePolicy', () => {
       expect(resolveCadencePolicy(21, 20, undefined, invalid)).toEqual({
         frameDecimation: 1.05,
         minimumSourceFrameGap: 1,
+        pressureCadenceRatio: undefined,
       });
     }
   );
@@ -191,8 +197,9 @@ describe('resolveCadencePolicy', () => {
     'does not round a valid pressure time ratio %s across a half/integer boundary',
     (pressureRatio) => {
       expect(resolveCadencePolicy(30, 30, undefined, pressureRatio)).toEqual({
-        frameDecimation: pressureRatio,
+        frameDecimation: 1,
         minimumSourceFrameGap: 1,
+        pressureCadenceRatio: pressureRatio,
       });
     }
   );

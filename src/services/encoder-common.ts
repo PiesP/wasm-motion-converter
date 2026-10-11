@@ -37,6 +37,8 @@ export interface BaseEncoderOptions {
   frameDecimation?: number | undefined;
   /** Explicit minimum source-frame gap; never inferred from the cadence ratio. */
   minimumSourceFrameGap?: number | undefined;
+  /** Additional critical-memory time cadence applied after normal frame selection. */
+  pressureCadenceRatio?: number | undefined;
   /** Callback fired after each frame is decoded */
   onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /**
@@ -117,13 +119,17 @@ export function calcMemoryPressureDecimation(sourceFps: number, targetFps: numbe
   );
 }
 
-/** Keep preset/pressure time cadence separate from an explicit source-frame gap. */
+/** Keep the normal selection grid, pressure filter, and explicit source gap separate. */
 export function resolveCadencePolicy(
   sourceFps: number,
   targetFps: number,
   forceDecimation?: number,
   memoryPressureCadenceRatio?: number
-): { frameDecimation: number; minimumSourceFrameGap: number } {
+): {
+  frameDecimation: number;
+  minimumSourceFrameGap: number;
+  pressureCadenceRatio: number | undefined;
+} {
   const explicitGap =
     forceDecimation !== undefined && Number.isFinite(forceDecimation) && forceDecimation > 0
       ? Math.max(1, Math.round(forceDecimation))
@@ -134,11 +140,10 @@ export function resolveCadencePolicy(
     memoryPressureCadenceRatio > 0
       ? Math.max(1, memoryPressureCadenceRatio)
       : 1;
+  const frameDecimation = calcAutoDecimation(sourceFps, targetFps, forceDecimation);
   return {
-    frameDecimation: Math.max(
-      calcAutoDecimation(sourceFps, targetFps, forceDecimation),
-      pressureRatio
-    ),
+    frameDecimation,
     minimumSourceFrameGap: explicitGap,
+    pressureCadenceRatio: pressureRatio > frameDecimation ? pressureRatio : undefined,
   };
 }

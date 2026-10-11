@@ -98,6 +98,30 @@ afterEach(() => {
 });
 
 describe('main conversion pipeline encoder options', () => {
+  it.each(['gif', 'webp-wasm', 'webp-canvas'] as const)(
+    'forwards independent normal, pressure, and explicit-gap policies to %s',
+    async (route) => {
+      if (route === 'webp-canvas') {
+        stubCanvasWebpSupport();
+        vi.stubGlobal('Worker', undefined);
+      }
+      await runConversionPipeline({
+        ...baseRequest,
+        format: route === 'gif' ? 'gif' : 'webp',
+        forceDecimation: 2,
+        memoryPressureCadenceRatio: 4.2,
+      }, vi.fn());
+      const encoder = route === 'gif'
+        ? mocks.encodeGif
+        : route === 'webp-canvas' ? mocks.encodeWebpOffscreen : mocks.encodeWebp;
+      expect(encoder).toHaveBeenCalledOnce();
+      expect(encoder.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+        frameDecimation: 2,
+        minimumSourceFrameGap: 2,
+        pressureCadenceRatio: 4.2,
+      }));
+    }
+  );
   it('retains the latest completed development profile for diagnostics', async () => {
     await runConversionPipeline(baseRequest, vi.fn());
 

@@ -84,6 +84,7 @@ export async function encodeWebp(
       height: h,
       frameDecimation,
       minimumSourceFrameGap: opts.minimumSourceFrameGap,
+      pressureCadenceRatio: opts.pressureCadenceRatio,
       hwAccel: 'prefer-hardware',
       smartFrameSkip: opts.smartFrameSkip,
       profileOperation: opts.profileOperation,
