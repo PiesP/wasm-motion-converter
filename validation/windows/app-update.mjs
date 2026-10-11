@@ -111,7 +111,7 @@ async function instrument(page, record) {
         record.metadataOverflow = true;
         return;
       }
-      record.metadataResponses.push({ response,
+      record.metadataResponses.push({ status: response.status(), path: url.pathname,
         body: response.body().then((bytes) => ({ bytes }), (error) => ({ error: String(error) })),
         atMs: performance.now() });
     } else if (response.status() >= 400) {
@@ -146,14 +146,14 @@ async function assertRuntimeHealth(page, record) {
 }
 
 async function metadataObservation(record) {
-  return Promise.all(record.metadataResponses.map(async ({ response, body, atMs }) => {
+  return Promise.all(record.metadataResponses.map(async ({ status, path, body, atMs }) => {
     const captured = await body;
-    assert(!captured.error, `Metadata response body capture failed: ${captured.error}`);
+    assert(!captured.error, `Metadata response body capture failed for ${path}: ${captured.error}`);
     const { bytes } = captured;
     assert(bytes.length <= MAX_METADATA_BYTES, 'Observed metadata exceeds 64KiB');
     let sourceSha = null;
-    if (response.status() === 200) sourceSha = JSON.parse(bytes.toString('utf8')).sourceSha;
-    return { atMs, status: response.status(), bytes: bytes.length, sourceSha };
+    if (status === 200) sourceSha = JSON.parse(bytes.toString('utf8')).sourceSha;
+    return { atMs, status, bytes: bytes.length, sourceSha };
   }));
 }
 
@@ -185,25 +185,41 @@ async function workerEvents(page) {
   return page.evaluate(() => globalThis.__appUpdateWorkerEvents ?? []);
 }
 
-async function measureColdJs(browser, started, buildA) {
+async function measureColdTransfer(browser, started, build) {
   const context = await browser.newContext({ serviceWorkers: 'block', locale: 'en-US' });
   try {
     const page = await context.newPage();
+    const metadataResponse = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === METADATA_PATH, { timeout: 20_000 });
     const document = await page.goto(started.url);
     assert.equal(document?.status(), 200);
-    assert.equal(sha256(await document.body()), buildA.indexSha256,
-      'Cold tab did not load A HTML');
+    assert.equal(sha256(await document.body()), build.indexSha256,
+      'Cold tab did not load expected HTML');
+    const metadata = await metadataResponse;
+    assert.equal(metadata.status(), 200, 'Cold metadata request failed');
+    const metadataBytes = await metadata.body();
+    assert.equal(JSON.parse(metadataBytes.toString('utf8')).sourceSha, build.state.sourceSha,
+      'Cold metadata differs from served build');
     await page.waitForLoadState('networkidle');
-    const js = await page.evaluate(() => performance.getEntriesByType('resource')
-      .filter((entry) => entry instanceof PerformanceResourceTiming &&
-        new URL(entry.name).pathname.endsWith('.js'))
-      .map((entry) => ({ path: new URL(entry.name).pathname, transferSize: entry.transferSize,
-        encodedBodySize: entry.encodedBodySize, decodedBodySize: entry.decodedBodySize })));
+    const resources = await page.evaluate(() => performance.getEntriesByType('resource')
+      .filter((entry) => entry instanceof PerformanceResourceTiming)
+      .map((entry) => ({ path: new URL(entry.name).pathname,
+        transferSize: entry.transferSize, encodedBodySize: entry.encodedBodySize,
+        decodedBodySize: entry.decodedBodySize })));
+    const js = resources.filter((entry) => entry.path.endsWith('.js'));
     const positive = js.filter((entry) => entry.transferSize > 0);
     const positiveBytes = positive.reduce((sum, entry) => sum + entry.transferSize, 0);
     assert(positive.length > 0 && positiveBytes > 0 && positiveBytes < 150_000,
       `Cold initial JS transfer ${positiveBytes} must be positive and below 150000 bytes`);
-    return { js, positiveBytes };
+    const metadataTimings = resources.filter((entry) => entry.path === METADATA_PATH);
+    assert.equal(metadataTimings.length, 1, 'Cold context must request metadata exactly once');
+    assert(metadataTimings[0].transferSize > 0 && metadataTimings[0].encodedBodySize > 0,
+      'Cold metadata has no positive network transfer');
+    assert.equal(metadataTimings[0].decodedBodySize, metadataBytes.length,
+      'Cold metadata decoded transfer differs from response body');
+    return { sourceSha: build.state.sourceSha, js, positiveBytes,
+      metadata: { count: metadataTimings.length, ...metadataTimings[0],
+        responseBytes: metadataBytes.length } };
   } finally {
     await context.close();
   }
@@ -328,6 +344,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
   let started;
   let resultContext;
   let busyContext;
+  let primaryError;
   try {
     const [buildA, buildB, smallFixture, highMotionFixture] = await Promise.all([
       readBuild(bundleRoot, config.buildA, validateBundleFile),
@@ -346,7 +363,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     assert.notEqual(buildA.indexSha256, buildB.indexSha256,
       'A and B HTML must identify distinct application entries');
 
-    started = await startStaticServer(bundleRoot);
+    started = await startStaticServer(bundleRoot, { gzipAssets: true });
     diagnostics.phase = 'before-fix';
     const baseline = await baselineBeforeFix(browser, started, bundleRoot, config,
       validateBundleFile, outputRoot, artifacts);
@@ -359,7 +376,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
 
     diagnostics.phase = 'equal-identity';
     await started.setDistribution(config.buildA);
-    const cold = await measureColdJs(browser, started, buildA);
+    const coldA = await measureColdTransfer(browser, started, buildA);
     resultContext = await browser.newContext({ acceptDownloads: true, locale: 'en-US',
       viewport: { width: 1280, height: 800 } });
     const resultPage = await resultContext.newPage();
@@ -536,6 +553,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     assert.equal(await updateNotice(resultPage).isVisible(), false,
       'B falsely announced an update against its own metadata');
     await screenshot(resultPage, outputRoot, 'app-update-reloaded-b.png', artifacts);
+    const coldB = await measureColdTransfer(browser, started, buildB);
 
     const resultMetadata = await metadataObservation(resultRecord);
     const busyMetadata = await metadataObservation(busyRecord);
@@ -557,7 +575,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
       sourceA: buildA.state.sourceSha, sourceB: buildB.state.sourceSha,
       version: buildA.state.version, workerSha256: buildA.workerSha256,
       baseline, firstInstallNotice: false, equalIdentityNotice: false,
-      coldJs: cold.js, coldPositiveBytes: cold.positiveBytes,
+      cold: { buildA: coldA, buildB: coldB },
       quietWindowMs: 61_000, equalCadenceMs, busyCadenceMs,
       heldFirst, busyNotice: true, busyReloadDisabled: true,
       busyDocumentRetained: true, cancellationReselection: true,
@@ -577,7 +595,19 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
       lifecycle: { result: resultLifecycle, busy: busyLifecycle },
       expectedOfflineMetadataFailures: resultRecord.offlineMetadataFailures,
     }], artifacts };
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
+    const cleanupErrors = [];
+    const cleanup = async (name, action) => {
+      try { await action(); }
+      catch (error) { cleanupErrors.push(`${name}: ${String(error)}`); }
+    };
+    if (resultContext) await cleanup('result offline reset', () => resultContext.setOffline(false));
+    if (resultContext) await cleanup('result context close', () => resultContext.close());
+    if (busyContext) await cleanup('busy context close', () => busyContext.close());
+    if (started) await cleanup('server close', () => closeServer(started.server));
     const safeRecords = {};
     for (const [name, record] of Object.entries(diagnostics.records)) {
       safeRecords[name] = {
@@ -586,18 +616,18 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
         uploads: record.uploads, external: record.external,
         offlineMetadataFailures: record.offlineMetadataFailures,
         metadataRequests: record.metadataRequests, metadataOverflow: record.metadataOverflow,
-        metadataResponses: record.metadataResponses.map(({ response, atMs }) => ({
-          atMs, status: response.status(), path: new URL(response.url()).pathname,
+        metadataResponses: await Promise.all(record.metadataResponses.map(async ({
+          status, path, body, atMs,
+        }) => {
+          const captured = await body;
+          return { atMs, status, path,
+            bodyBytes: captured.bytes?.length ?? null, bodyError: captured.error ?? null };
         })),
       };
     }
-    await writeFile(join(outputRoot, 'app-update-diagnostics.json'),
-      JSON.stringify({ ...diagnostics, records: safeRecords }, null, 2));
-    if (resultContext) {
-      await resultContext.setOffline(false);
-      await resultContext.close();
-    }
-    if (busyContext) await busyContext.close();
-    if (started) await closeServer(started.server);
+    await cleanup('diagnostics write', () => writeFile(join(outputRoot, 'app-update-diagnostics.json'),
+      JSON.stringify({ ...diagnostics, primaryError: primaryError && String(primaryError),
+        cleanupErrors, records: safeRecords }, null, 2)));
+    if (!primaryError && cleanupErrors.length) throw new Error(cleanupErrors.join('; '));
   }
 }

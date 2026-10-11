@@ -300,7 +300,7 @@ async function resolveStaticFile(distRoot, requestUrl) {
   return resolvedFile;
 }
 
-async function startStaticServer(bundleRoot) {
+async function startStaticServer(bundleRoot, { gzipAssets = false } = {}) {
   let distRoot;
   let headerRules;
   async function setDistribution(relativePath) {
@@ -340,7 +340,8 @@ async function startStaticServer(bundleRoot) {
         'Content-Type',
         MIME_TYPES.get(extname(file).toLowerCase()) ?? 'application/octet-stream'
       );
-      const compressible = ['.js', '.css', '.json'].includes(extname(file).toLowerCase());
+      const compressible = gzipAssets &&
+        ['.js', '.css', '.json'].includes(extname(file).toLowerCase());
       const acceptsGzip = /(?:^|,)\s*gzip\s*(?:;|,|$)/i.test(request.headers['accept-encoding'] ?? '');
       const wireBytes = compressible && acceptsGzip ? gzipSync(bytes) : bytes;
       if (compressible) response.setHeader('Vary', 'Accept-Encoding');
