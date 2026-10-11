@@ -107,6 +107,24 @@ afterEach(() => {
 });
 
 describe('worker pipeline smart frame skip forwarding', () => {
+  it.each(['gif', 'webp'] as const)(
+    'forwards independent normal, pressure, and explicit-gap policies to %s',
+    async (format) => {
+      await runWorkerPipeline(new ArrayBuffer(8), {
+        ...baseOptions,
+        format,
+        forceDecimation: 2,
+        memoryPressureCadenceRatio: 4.2,
+      }, vi.fn(), 'cadence-policy');
+      const encoder = format === 'gif' ? mocks.encodeGif : mocks.encodeWebp;
+      expect(encoder).toHaveBeenCalledOnce();
+      expect(encoder.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+        frameDecimation: 2,
+        minimumSourceFrameGap: 2,
+        pressureCadenceRatio: 4.2,
+      }));
+    }
+  );
   it('passes Blob input to demux without reading the whole file first', async () => {
     const input = new Blob(['video']);
     const readWholeFile = vi.fn().mockRejectedValue(new Error('Unexpected full-file read'));

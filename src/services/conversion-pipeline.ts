@@ -348,7 +348,12 @@ async function _runPipelineInner(
         request.memoryPressureCadenceRatio
       );
       const gifDecimation = gifCadence.frameDecimation;
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
+      estimatedOutputFrames = Math.max(
+        1,
+        Math.ceil(
+          demuxResult.totalFrames / Math.max(gifDecimation, gifCadence.pressureCadenceRatio ?? 1)
+        )
+      );
 
       logger.info('conversion', '  ├─ Branch: GIF encoder (streaming decode→encode)', {
         codec: demuxResult.config.codec,
@@ -371,6 +376,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: gifDecimation,
                 minimumSourceFrameGap: gifCadence.minimumSourceFrameGap,
+                pressureCadenceRatio: gifCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
@@ -399,7 +405,12 @@ async function _runPipelineInner(
         request.memoryPressureCadenceRatio
       );
       const webpDecimation = webpCadence.frameDecimation;
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
+      estimatedOutputFrames = Math.max(
+        1,
+        Math.ceil(
+          demuxResult.totalFrames / Math.max(webpDecimation, webpCadence.pressureCadenceRatio ?? 1)
+        )
+      );
 
       // Use the parallel Worker-based encoder when its complete resource model fits.
       // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
@@ -499,6 +510,7 @@ async function _runPipelineInner(
                 height: h,
                 frameDecimation: webpDecimation,
                 minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
+                pressureCadenceRatio: webpCadence.pressureCadenceRatio,
                 hwAccel: 'prefer-hardware',
                 smartFrameSkip: request.smartFrameSkip,
                 pixelFormat: 'rgba',
@@ -582,6 +594,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
+                pressureCadenceRatio: webpCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
@@ -622,6 +635,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
+                pressureCadenceRatio: webpCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,

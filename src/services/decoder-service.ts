@@ -72,6 +72,8 @@ export interface DecodeOptions {
   frameDecimation?: number | undefined;
   /** Explicit source-frame restriction, independent of presentation-time cadence. */
   minimumSourceFrameGap?: number | undefined;
+  /** Additional time cadence applied only to frames admitted by normal selection. */
+  pressureCadenceRatio?: number | undefined;
   /** CPU pixel layout delivered to onFrameAvailable. */
   pixelFormat?: CpuPixelFormat | undefined;
   /** Hardware acceleration policy */
@@ -194,6 +196,7 @@ export async function decodeFrames(
     height,
     frameDecimation = 1,
     minimumSourceFrameGap = 1,
+    pressureCadenceRatio,
     pixelFormat = 'rgb',
     hwAccel = 'prefer-software',
     onFrameDecoded,
@@ -473,6 +476,12 @@ export async function decodeFrames(
     requestedDecimation,
     requestedFrameFloor
   );
+  const selectPressureFrame =
+    pressureCadenceRatio !== undefined &&
+    Number.isFinite(pressureCadenceRatio) &&
+    pressureCadenceRatio > 1
+      ? createPresentationSampler(sourceFps, pressureCadenceRatio)
+      : null;
   const canRunAdaptiveAnalysis =
     isAdaptive && streaming && typeof onVideoFrameAvailable !== 'function';
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
@@ -867,6 +876,21 @@ export async function decodeFrames(
           skippedByDecimation++;
           return;
         }
+        // With no CPU smart selection, a pressure rejection can avoid a frame
+        // copy. Otherwise wait until the normal smart/adaptive decision has
+        // updated its independent history before applying the pressure filter.
+        const pressureBeforeCopy =
+          !canRunAdaptiveAnalysis &&
+          (!streaming || skipThreshold < 0 || typeof onVideoFrameAvailable === 'function');
+        if (
+          pressureBeforeCopy &&
+          selectPressureFrame &&
+          !selectPressureFrame(presentation.startUs, frameNum)
+        ) {
+          frame.close();
+          skippedByDecimation++;
+          return;
+        }
 
         let sourceReservationBytes = 0;
         let sourceReservationActive = false;
@@ -1200,6 +1224,17 @@ export async function decodeFrames(
               lastAdaptiveKeptFrame = frameNum;
               consecutiveSkipMs = 0;
               lastRetainedStartUs = presentation.startUs;
+            }
+
+            if (
+              !pressureBeforeCopy &&
+              selectPressureFrame &&
+              !selectPressureFrame(presentation.startUs, frameNum)
+            ) {
+              skippedByDecimation++;
+              globalBufferPool.release(pixelData);
+              recordMotionDecision();
+              return;
             }
 
             recordMotionDecision();

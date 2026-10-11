@@ -166,7 +166,7 @@ afterEach(() => {
   globalBufferPool.clear();
 });
 
-describe('source presentation boundaries (issue #285)', () => {
+describe('source presentation boundaries (issues #285 and #287)', () => {
   it.each([2, 3, 4])('admits overdue VFR scenes through decodeFrames at automatic ratio %i', async (ratio) => {
     const source = [colorA, colorB, [32, 32, 32] as const].map((rgb, index) => ({
       timestamp: index * 1_000_000,
@@ -258,6 +258,7 @@ describe('source presentation boundaries (issue #285)', () => {
         width: 8, height: 8,
         frameDecimation: policy.frameDecimation,
         minimumSourceFrameGap: policy.minimumSourceFrameGap,
+        pressureCadenceRatio: policy.pressureCadenceRatio,
         smartFrameSkip,
         mode: 'stream',
         onFrameAvailable: (pixels, _duration, frameNumber) => {
@@ -272,7 +273,11 @@ describe('source presentation boundaries (issue #285)', () => {
     const selected = await admit(cadence);
     expect(pressureRatio).toBe(1.4);
     expect(request.memoryPressureCadenceRatio).toBe(1.4);
-    expect(cadence).toEqual({ frameDecimation: 1.4, minimumSourceFrameGap: 1 });
+    expect(cadence).toEqual({
+      frameDecimation: 21 / 20,
+      minimumSourceFrameGap: 1,
+      pressureCadenceRatio: 1.4,
+    });
     expect(normal).toHaveLength(20);
     expect(selected).toHaveLength(15);
     expect(selected.length).toBeLessThanOrEqual(normal.length);
@@ -281,6 +286,63 @@ describe('source presentation boundaries (issue #285)', () => {
       const criticalApproximate = await admit(cadence, smartFrameSkip);
       expect(criticalApproximate.length).toBeLessThanOrEqual(normalApproximate.length);
     }
+  });
+
+  it('keeps critical VFR admission within the normal timestamp grid', async () => {
+    const pts = [0, 100_000, 140_000, 201_000, 270_000];
+    const source = pts.map((timestamp, index) => ({
+      timestamp,
+      duration: (pts[index + 1] ?? 300_000) - timestamp,
+      rgb: [index * 40, index * 40, index * 40] as [number, number, number],
+    }));
+    const admit = async (pressureCadenceRatio?: number) => {
+      const policy = resolveCadencePolicy(30, 20, undefined, pressureCadenceRatio);
+      const selected: number[] = [];
+      await decodeFrames(installDecoder(source, 8, 30), {
+        width: 8, height: 8, mode: 'stream',
+        ...policy,
+        onFrameAvailable: (pixels, _duration, frameNumber) => {
+          selected.push(frameNumber);
+          globalBufferPool.release(pixels);
+        },
+      });
+      return selected;
+    };
+    const normal = await admit();
+    const critical = await admit(2);
+    expect(normal).toEqual([0, 1, 3, 4]);
+    expect(critical.every((frameNumber) => normal.includes(frameNumber))).toBe(true);
+    expect(critical.length).toBeLessThanOrEqual(normal.length);
+  });
+
+  it('keeps normal smart-skip history independent of critical pressure rejection', async () => {
+    const source = Array.from({ length: 21 }, (_, index) => {
+      const value = index < 4 ? 0 : index === 4 ? 10 : index === 5 ? 7 : 14;
+      return {
+        timestamp: Math.round(index * 1_000_000 / 21),
+        duration: Math.round((index + 1) * 1_000_000 / 21) - Math.round(index * 1_000_000 / 21),
+        rgb: [value, value, value] as [number, number, number],
+      };
+    });
+    const admit = async (pressureCadenceRatio?: number) => {
+      const policy = resolveCadencePolicy(21, 20, undefined, pressureCadenceRatio);
+      const selected: number[] = [];
+      await decodeFrames(installDecoder(source, 8, 21), {
+        width: 8, height: 8, mode: 'stream', smartFrameSkip: 'high',
+        ...policy,
+        onFrameAvailable: (pixels, _duration, frameNumber) => {
+          selected.push(frameNumber);
+          globalBufferPool.release(pixels);
+        },
+      });
+      return selected;
+    };
+    const normal = await admit();
+    const critical = await admit(1.4);
+    expect(normal).toContain(4);
+    expect(normal).not.toContain(5);
+    expect(critical.every((frameNumber) => normal.includes(frameNumber))).toBe(true);
+    expect(critical.length).toBeLessThanOrEqual(normal.length);
   });
   describe('fixed batch cadence', () => {
     let frames: Awaited<ReturnType<typeof decodeFrames>>['frames'] = [];

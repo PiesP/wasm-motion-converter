@@ -341,7 +341,12 @@ export async function runWorkerPipeline(
         options.memoryPressureCadenceRatio
       );
       const gifDecimation = gifCadence.frameDecimation;
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
+      estimatedOutputFrames = Math.max(
+        1,
+        Math.ceil(
+          demuxResult.totalFrames / Math.max(gifDecimation, gifCadence.pressureCadenceRatio ?? 1)
+        )
+      );
       profiler?.setEncoderRoute('gif-worker');
 
       relayLog('info', 'encoders', '├─ GIF encoder (streaming decode→encode)', {
@@ -362,6 +367,7 @@ export async function runWorkerPipeline(
           scale: options.scale,
           frameDecimation: gifDecimation,
           minimumSourceFrameGap: gifCadence.minimumSourceFrameGap,
+          pressureCadenceRatio: gifCadence.pressureCadenceRatio,
           smartFrameSkip: options.smartFrameSkip,
           decimationMemoryCheck,
           onEncodingComplete: recordCompletedFrameCounts,
@@ -384,7 +390,12 @@ export async function runWorkerPipeline(
         options.memoryPressureCadenceRatio
       );
       const webpDecimation = webpCadence.frameDecimation;
-      estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
+      estimatedOutputFrames = Math.max(
+        1,
+        Math.ceil(
+          demuxResult.totalFrames / Math.max(webpDecimation, webpCadence.pressureCadenceRatio ?? 1)
+        )
+      );
       profiler?.setEncoderRoute('webp-wasm');
 
       // This Worker helper retains its WASM route. The UI WebP request uses
@@ -408,6 +419,7 @@ export async function runWorkerPipeline(
             scale: options.scale,
             frameDecimation: webpDecimation,
             minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
+            pressureCadenceRatio: webpCadence.pressureCadenceRatio,
             smartFrameSkip: options.smartFrameSkip,
             decimationMemoryCheck,
             onEncodingComplete: recordCompletedFrameCounts,
