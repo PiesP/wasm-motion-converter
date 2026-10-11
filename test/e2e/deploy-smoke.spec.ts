@@ -241,14 +241,12 @@ test.describe('Deployment: Page Load', () => {
       }
 
       const conditionalObservations = [];
-      const target = new URL(DEPLOY_URL);
-      const localWrangler = target.protocol === 'http:' && target.hostname === '127.0.0.1';
       for (const file of assetFiles) {
         const url = new URL(`/${file.path}`, DEPLOY_URL).href;
         const response = await request.get(url, { maxRedirects: 0, failOnStatusCode: false });
         const kind = file.path.endsWith('.wasm') ? 'wasm' : file.path.endsWith('.css') ? 'css' : 'js';
-        assertExecutableBody(kind, response.status(), response.headers()['content-type'] ?? null,
-          await response.body());
+        const body = await response.body();
+        assertExecutableBody(kind, response.status(), response.headers()['content-type'] ?? null, body);
         expectSecurityHeaders(response, csp);
         expectSingleHeader(response, 'cache-control', IMMUTABLE);
         const etag = response.headers().etag;
@@ -259,16 +257,25 @@ test.describe('Deployment: Page Load', () => {
         });
         expect(revalidated.status(), `${file.path} conditional status`).toBe(304);
         const conditionalEtag = revalidated.headers().etag;
-        // Wrangler 4.149.0 omits ETag on its local 304 response. Public Pages
-        // must still return it; this exception never applies to HTTPS targets.
-        if (!localWrangler || conditionalEtag !== undefined) {
+        // Both Pages and Wrangler may omit ETag on 304; the 200 validator must
+        // still select an empty 304, and an unmatched validator must select 200.
+        if (conditionalEtag !== undefined) {
           expect(conditionalEtag, `${file.path} conditional ETag`).toBe(etag);
         }
-        conditionalObservations.push({ path: file.path, etag, conditionalEtag: conditionalEtag ?? null,
-          status: revalidated.status(), localWrangler });
         expect(await revalidated.body(), `${file.path} conditional body`).toHaveLength(0);
         expectSecurityHeaders(revalidated, csp);
         expectSingleHeader(revalidated, 'cache-control', IMMUTABLE);
+        const unmatched = await request.get(url, {
+          headers: { 'If-None-Match': '"wmc-unmatched-validator"' },
+          maxRedirects: 0, failOnStatusCode: false,
+        });
+        expect(unmatched.status(), `${file.path} unmatched conditional status`).toBe(200);
+        expect(await unmatched.body(), `${file.path} unmatched conditional bytes`).toEqual(body);
+        expect(unmatched.headers().etag, `${file.path} unmatched conditional ETag`).toBe(etag);
+        expectSecurityHeaders(unmatched, csp);
+        expectSingleHeader(unmatched, 'cache-control', IMMUTABLE);
+        conditionalObservations.push({ path: file.path, etag, conditionalEtag: conditionalEtag ?? null,
+          status: revalidated.status(), unmatchedStatus: unmatched.status() });
       }
       await testInfo.attach('conditional-header-observations', {
         body: JSON.stringify(conditionalObservations, null, 2), contentType: 'application/json',
