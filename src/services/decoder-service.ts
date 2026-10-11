@@ -51,13 +51,14 @@ import {
   type WebpFrameMemoryBudget,
 } from './frame-memory';
 import {
-  compute8x8Grayscale,
-  computeMAD,
+  compareMotionSignatures,
+  computeMotionSignature,
   copyFrameToPixels,
   createFrameProcessingContext,
   type FrameProcessingContext,
   getFrameDurationMs,
   getSkipThreshold,
+  type MotionSignature,
 } from './frame-utils';
 
 export interface DecodeOptions {
@@ -240,7 +241,7 @@ export async function decodeFrames(
       ? Math.min(demux.framerate, FPS_CLAMP_MAX)
       : DEFAULT_FPS;
   const fallbackFrameDurationMs = 1000 / sourceFps;
-  let prevGray: Uint8Array | null = null;
+  let previousMotion: MotionSignature | null = null;
   let consecutiveSkipMs = 0; // accumulated duration of skipped frames
 
   // ── Backpressure for pendingConversions (RES-H2) ──
@@ -853,7 +854,7 @@ export async function decodeFrames(
           };
           try {
             // ── GPU-only path: pass VideoFrame directly to encoder ──
-            // Skips the GPU→CPU pixel read and all grayscale-based processing.
+            // Skips the GPU→CPU pixel read and all pixel-motion processing.
             // Used by VP8 VideoEncoder path for zero-copy GPU encoding.
             // Smart frame skip and adaptive mode are disabled (require CPU pixels).
             if (typeof onVideoFrameAvailable === 'function') {
@@ -923,11 +924,13 @@ export async function decodeFrames(
             const shouldMeasureMotion = streaming && (skipThreshold >= 0 || isAdaptive);
             const motionFeatureStart =
               profileOperation && shouldMeasureMotion ? performance.now() : null;
-            const gray = shouldMeasureMotion
-              ? compute8x8Grayscale(pixelData, width, height, pixelFormat === 'rgba' ? 4 : 3)
+            const signature = shouldMeasureMotion
+              ? computeMotionSignature(pixelData, width, height, pixelFormat === 'rgba' ? 4 : 3)
               : null;
             const frameDistance =
-              gray !== null && prevGray !== null ? computeMAD(gray, prevGray) : null;
+              signature !== null && previousMotion !== null
+                ? compareMotionSignatures(signature, previousMotion).distance
+                : null;
             if (motionFeatureStart !== null) {
               profileOperation?.(
                 'motionFeatures',
@@ -954,7 +957,7 @@ export async function decodeFrames(
             }
 
             // ── Smart frame skip: similarity-based deduplication ──
-            if (streaming && skipThreshold >= 0 && gray !== null) {
+            if (streaming && skipThreshold >= 0 && signature !== null) {
               if (frameDistance !== null) {
                 // Skip if similar AND consecutive skip time < 500ms
                 // Use max of user threshold and noise-adapted floor
@@ -969,7 +972,7 @@ export async function decodeFrames(
                 }
               }
 
-              prevGray = gray;
+              previousMotion = signature;
               // Transfer accumulated consecutive skip durations to this frame
               smartCarryoverMs = consecutiveSkipMs;
               consecutiveSkipMs = 0;
@@ -978,25 +981,22 @@ export async function decodeFrames(
             // ── Adaptive motion-classified decimation ──
             // Instead of fixed decimation, classify each frame's motion level
             // and apply variable decimation: static scenes get aggressive skip,
-            // while fast motion uses the preset/memory decimation floor. Uses 8×8
-            // grayscale + MAD for comparison.
+            // while fast motion uses the preset/memory decimation floor. Uses bounded RGB tile statistics
+            // and a local-change safeguard for comparison.
             //
             // NOTE: This block is NEVER entered when onVideoFrameAvailable is active
             // (GPU-only path) because that path skips copyFrameToPixels entirely, meaning
-            // no CPU pixel data/grayscale/MAD is available. See the GPU-only early return
+            // no CPU pixel data/motion statistics is available. See the GPU-only early return
             // earlier in this function (onVideoFrameAvailable check).
             //
             // NOTE: The first frame is always classified as adaptLastMotionClass
-            // (initially 'normal') because prevGray is null until at least two frames
+            // (initially 'normal') because previousMotion is null until at least two frames
             // have been processed. This initial misclassification is expected and has
             // negligible impact — only one frame's decimation is affected.
-            if (canRunAdaptiveAnalysis && gray !== null) {
+            if (canRunAdaptiveAnalysis && signature !== null) {
               let motionClass: AdaptiveMotionClass = adaptLastMotionClass;
 
-              if (
-                frameDistance !== null &&
-                noiseFloorSamples.length >= ADAPTIVE_NOISE_SAMPLE_COUNT
-              ) {
+              if (frameDistance !== null) {
                 // Classify motion level using noise-floor-adapted thresholds.
                 // Lower-noise videos get tighter thresholds (more aggressive skip),
                 // noisier videos get wider thresholds (conservative skip).
@@ -1014,7 +1014,7 @@ export async function decodeFrames(
                 adaptLastMotionClass = motionClass;
               }
 
-              prevGray = gray;
+              previousMotion = signature;
 
               const decimation = calculateAdaptiveDecimation(
                 motionClass,

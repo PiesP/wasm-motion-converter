@@ -7,7 +7,6 @@ import {
   clearCanvasCache,
   compareMotionSignatures,
   copyFrameToPixels,
-  compute8x8Grayscale,
   computeMotionSignature,
   convertRGBAToRGB,
   getFrameDurationMs,
@@ -476,7 +475,7 @@ describe('opaque RGBA frame copying', () => {
       rgba.set([value, value + 1, value + 2, 255], index * 4);
     }
 
-    expect(compute8x8Grayscale(rgba, 8, 8, 4)).toEqual(compute8x8Grayscale(rgb, 8, 8, 3));
+    expect(computeMotionSignature(rgba, 8, 8, 4)).toEqual(computeMotionSignature(rgb, 8, 8, 3));
   });
 });
 

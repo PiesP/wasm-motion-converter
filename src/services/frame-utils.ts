@@ -581,55 +581,8 @@ export function compareMotionSignatures(
   return { globalDistance, localDistance, distance: Math.max(globalDistance, localDistance) };
 }
 
-// ─── Legacy MAD (Mean Absolute Difference) comparison ─────────────
-
 /**
- * Extract 8×8 grayscale samples from RGB frame data.
- * Uses center-sampling within each grid cell, matching dHash sampling positions.
- * Returns 64-byte Uint8Array with grayscale values 0-255.
- */
-export function compute8x8Grayscale(
-  pixelData: Uint8Array,
-  width: number,
-  height: number,
-  pixelStride: 3 | 4 = 3
-): Uint8Array {
-  const gray = new Uint8Array(64);
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 8; x++) {
-      const srcX = Math.floor(((x + 0.5) * width) / 8);
-      const srcY = Math.floor(((y + 0.5) * height) / 8);
-      const idx = (srcY * width + srcX) * pixelStride;
-      gray[y * 8 + x] =
-        ((pixelData[idx] ?? 0) + (pixelData[idx + 1] ?? 0) + (pixelData[idx + 2] ?? 0)) / 3;
-    }
-  }
-  return gray;
-}
-
-/**
- * Compute Mean Absolute Difference between two 8×8 grayscale arrays.
- *
- * Lower = more similar. Unlike dHash (which is sensitive to compression noise
- * in gradient comparisons), MAD directly compares per-pixel intensity and
- * correlates better with human perception of frame similarity.
- *
- * Interpretation:
- * - 0.0-1.5: Nearly identical (noise only)
- * - 1.5-3.0: Very similar (tiny motion or lighting change)
- * - 3.0-6.0: Moderate change
- * - 6.0+: Significant change (different scene)
- */
-export function computeMAD(current: Uint8Array, previous: Uint8Array): number {
-  let sum = 0;
-  for (let i = 0; i < 64; i++) {
-    sum += Math.abs((current[i] ?? 0) - (previous[i] ?? 0));
-  }
-  return sum / 64;
-}
-
-/**
- * Get the MAD threshold for a given smart skip mode.
+ * Get the approximate motion threshold for a given smart skip mode.
  * Returns -1 for 'off' (never skip).*/
 export function getSkipThreshold(mode: 'off' | 'low' | 'medium' | 'high' | 'adaptive'): number {
   switch (mode) {

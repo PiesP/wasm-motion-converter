@@ -801,9 +801,12 @@ describe('decoder-service', () => {
       const delivered = await decodeAdaptive(intensities, 5);
       const gaps = delivered.slice(1).map((frame, index) => frame - delivered[index]!);
 
-      expect(delivered).toHaveLength(8);
+      // Static motion is recognized before calibration, using the bounded 8-frame
+      // cadence. Once movement begins, the requested 5-frame floor applies.
+      expect(delivered).toEqual([0, 8, 16, 21, 26, 31, 36]);
       expect(delivered).toContain(16); // scene change remains visible
-      expect(Math.max(...gaps)).toBeLessThanOrEqual(6);
+      expect(Math.min(...gaps)).toBeGreaterThanOrEqual(5);
+      expect(Math.max(...gaps)).toBeLessThanOrEqual(8);
     });
 
     it('enforces preset decimation for fast adaptive motion without degrading uncapped motion', async () => {

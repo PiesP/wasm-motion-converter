@@ -158,7 +158,7 @@ describe('source presentation boundaries (issue #285 baseline defects)', () => {
     }
   });
 
-  it.fails('keeps primary-color changes before short-clip noise calibration', async () => {
+  it('keeps primary-color changes before short-clip noise calibration', async () => {
     const colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255]] as const;
     const selected: number[][] = [];
     await decodeFrames(installDecoder(colors.map((rgb, index) => ({
