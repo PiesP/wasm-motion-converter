@@ -5,8 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { globalBufferPool } from '@services/buffer-pool';
 import {
   clearCanvasCache,
+  compareMotionSignatures,
   copyFrameToPixels,
   compute8x8Grayscale,
+  computeMotionSignature,
   convertRGBAToRGB,
   getFrameDurationMs,
   resolveVideoDimensions,
@@ -16,6 +18,81 @@ import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 afterEach(() => {
   clearCanvasCache();
   vi.unstubAllGlobals();
+});
+
+describe('bounded color-aware motion signatures', () => {
+  const width = 128;
+  const height = 128;
+  const solid = (red: number, green: number, blue: number): Uint8Array => {
+    const pixels = new Uint8Array(width * height * 3);
+    for (let offset = 0; offset < pixels.length; offset += 3) {
+      pixels.set([red, green, blue], offset);
+    }
+    return pixels;
+  };
+  const paint = (pixels: Uint8Array, x: number, y: number, color: readonly number[]): void => {
+    pixels.set(color, (y * width + x) * 3);
+  };
+  const compare = (a: Uint8Array, b: Uint8Array) =>
+    compareMotionSignatures(
+      computeMotionSignature(a, width, height),
+      computeMotionSignature(b, width, height)
+    );
+
+  it('retains primary and approximately equal-luminance hue changes', () => {
+    const red = solid(255, 0, 0);
+    const green = solid(0, 255, 0);
+    const blue = solid(0, 0, 255);
+    expect(compare(red, green).distance).toBeGreaterThan(100);
+    expect(compare(green, blue).distance).toBeGreaterThan(100);
+    // Rec. 709 luminance of these colors is about 54 in both cases.
+    expect(compare(red, solid(0, 76, 0)).distance).toBeGreaterThan(100);
+  });
+
+  it('catches a local cursor or text pixel between former center samples', () => {
+    const background = solid(0, 0, 0);
+    const cursor = background.slice();
+    paint(cursor, 1, 1, [255, 255, 255]);
+    const comparison = compare(background, cursor);
+    expect(comparison.globalDistance).toBeLessThan(1);
+    expect(comparison.localDistance).toBeGreaterThan(100);
+    expect(comparison.distance).toBe(comparison.localDistance);
+  });
+
+  it('detects scene cuts and gradual motion while tolerating small compression noise', () => {
+    const background = solid(30, 50, 70);
+    const noisy = background.slice();
+    for (let index = 0; index < noisy.length; index += 3) {
+      noisy[index] = index % 2 === 0 ? 31 : 29;
+    }
+    expect(compare(background, noisy).distance).toBeLessThanOrEqual(2);
+    expect(compare(background, solid(160, 100, 40)).distance).toBeGreaterThan(50);
+
+    const first = background.slice();
+    const second = background.slice();
+    paint(first, 7, 7, [255, 255, 255]);
+    paint(second, 8, 7, [255, 255, 255]);
+    expect(compare(first, second).distance).toBeGreaterThan(6);
+  });
+
+  it('ignores opaque alpha and validates the bounded input and frame geometry', () => {
+    const rgb = solid(12, 34, 56);
+    const rgba = new Uint8Array(width * height * 4);
+    for (let pixel = 0; pixel < width * height; pixel++) {
+      rgba.set([12, 34, 56, pixel % 2], pixel * 4);
+    }
+    expect(computeMotionSignature(rgb, width, height)).toEqual(
+      computeMotionSignature(rgba, width, height, 4)
+    );
+    expect(() => computeMotionSignature(rgb, width, height + 1)).toThrow(RangeError);
+    expect(() => computeMotionSignature(rgb, MAX_FRAME_PIXEL_COUNT + 1, 1)).toThrow(RangeError);
+    expect(() =>
+      compareMotionSignatures(
+        computeMotionSignature(rgb, width, height),
+        computeMotionSignature(rgb.subarray(0, 3), 1, 1)
+      )
+    ).toThrow(RangeError);
+  });
 });
 
 describe('resolveVideoDimensions', () => {
