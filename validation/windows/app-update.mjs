@@ -19,7 +19,8 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function readBuild(bundleRoot, relativePath, validateBundleFile) {
+async function readBuild(bundleRoot, relativePath, validateBundleFile,
+  { requireCompiledSource = true, verifyInventory = false } = {}) {
   const path = await validateBundleFile(bundleRoot, `${relativePath}/deployment-state.json`);
   const bytes = await readFile(path);
   assert(bytes.length > 0 && bytes.length <= MAX_METADATA_BYTES, `${relativePath} metadata size`);
@@ -32,11 +33,31 @@ async function readBuild(bundleRoot, relativePath, validateBundleFile) {
   assert.equal(state.sourceDirty, false, `${relativePath} must be built from clean source`);
   assert.match(state.version, /^\d+\.\d+\.\d+/);
   assert(Array.isArray(state.files) && state.files.length > 0 && state.files.length <= 100);
+  if (verifyInventory) {
+    const seen = new Set();
+    for (const file of state.files) {
+      assert(typeof file.path === 'string' && file.path.length > 0 &&
+        !file.path.startsWith('/') && !file.path.includes('\\') &&
+        file.path.split('/').every((part) => part && part !== '.' && part !== '..'),
+      `${relativePath} has unsafe inventory path`);
+      assert(!seen.has(file.path), `${relativePath} has duplicate inventory path ${file.path}`);
+      seen.add(file.path);
+      assert(Number.isSafeInteger(file.size) && file.size >= 0 && DIGEST.test(file.sha256),
+        `${relativePath} invalid inventory entry ${file.path}`);
+      const fileBytes = await readFile(await validateBundleFile(bundleRoot,
+        `${relativePath}/${file.path}`));
+      assert.equal(fileBytes.length, file.size, `${relativePath}/${file.path} size differs`);
+      assert.equal(sha256(fileBytes), file.sha256, `${relativePath}/${file.path} hash differs`);
+    }
+    const headers = await readFile(await validateBundleFile(bundleRoot, `${relativePath}/_headers`));
+    assert.equal(sha256(headers), state.headersSha256, `${relativePath} _headers hash differs`);
+  }
   const main = state.files.find((file) => /^assets\/index\.[\w-]{8}\.js$/.test(file.path));
   assert(main && DIGEST.test(main.sha256), `${relativePath} has no source-bound app entry`);
   const mainBytes = await readFile(await validateBundleFile(bundleRoot, `${relativePath}/${main.path}`));
   assert.equal(sha256(mainBytes), main.sha256, `${relativePath} app entry differs from inventory`);
-  assert(mainBytes.includes(state.sourceSha), `${relativePath} app entry has no compiled source identity`);
+  if (requireCompiledSource) assert(mainBytes.includes(state.sourceSha),
+    `${relativePath} app entry has no compiled source identity`);
   const index = await readFile(await validateBundleFile(bundleRoot, `${relativePath}/index.html`));
   const worker = await readFile(await validateBundleFile(bundleRoot, `${relativePath}/service-worker.js`));
   assert(index.toString('utf8').includes(`/${main.path}`), `${relativePath} HTML does not load its app entry`);
@@ -186,8 +207,10 @@ async function workerEvents(page) {
 }
 
 async function measureColdTransfer(browser, started, build) {
-  const context = await browser.newContext({ serviceWorkers: 'block', locale: 'en-US' });
+  let context;
+  let primaryError;
   try {
+    context = await browser.newContext({ serviceWorkers: 'block', locale: 'en-US' });
     const page = await context.newPage();
     const metadataResponse = page.waitForResponse((response) =>
       new URL(response.url()).pathname === METADATA_PATH, { timeout: 20_000 });
@@ -220,27 +243,41 @@ async function measureColdTransfer(browser, started, build) {
     return { sourceSha: build.state.sourceSha, js, positiveBytes,
       metadata: { count: metadataTimings.length, ...metadataTimings[0],
         responseBytes: metadataBytes.length } };
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    await context.close();
+    if (context) {
+      try { await context.close(); }
+      catch (error) {
+        if (primaryError) primaryError.cleanupErrors = [
+          ...(primaryError.cleanupErrors ?? []), `cold context close: ${String(error)}`];
+        else throw error;
+      }
+    }
   }
 }
 
 async function baselineBeforeFix(browser, started, bundleRoot, config, validateBundleFile,
   outputRoot, artifacts) {
+  const baselineBuild = await readBuild(bundleRoot, config.baseline, validateBundleFile,
+    { requireCompiledSource: false, verifyInventory: true });
+  assert.equal(baselineBuild.state.sourceSha, config.baselineSourceSha,
+    'Before-fix baseline source differs from selected baseline commit');
+  assert.equal(baselineBuild.state.treeSha, config.baselineTreeSha,
+    'Before-fix baseline tree differs from selected baseline commit');
   const baselineIndex = await readFile(await validateBundleFile(bundleRoot, `${config.baseline}/index.html`));
   const baselineWorker = await readFile(await validateBundleFile(bundleRoot, `${config.baseline}/service-worker.js`));
-  const baselineMetadata = JSON.parse(await readFile(await validateBundleFile(bundleRoot,
-    `${config.baseline}/deployment-state.json`), 'utf8'));
-  assert.match(baselineMetadata.sourceSha, SHA);
-  assert.match(baselineMetadata.treeSha, SHA);
-  const context = await browser.newContext({ locale: 'en-US' });
-  const page = await context.newPage();
+  let context;
+  let primaryError;
   const record = { origin: new URL(started.url).origin,
     pageErrors: [], consoleErrors: [], failedRequests: [], failedResponses: [], uploads: [], external: [],
     metadataRequests: [], metadataResponses: [], metadataOverflow: false,
     offlineMetadataFailures: [], offline: false };
-  await instrument(page, record);
   try {
+    context = await browser.newContext({ locale: 'en-US' });
+    const page = await context.newPage();
+    await instrument(page, record);
     await started.setDistribution(config.baseline);
     const document = await page.goto(started.url);
     assert.equal(document?.status(), 200);
@@ -269,31 +306,45 @@ async function baselineBeforeFix(browser, started, bundleRoot, config, validateB
       initialWorker.controller, 'Before-fix worker controller changed');
     await assertRuntimeHealth(page, record);
     await screenshot(page, outputRoot, 'app-update-before-fix.png', artifacts);
-    return { source: 'prior-dist', sourceSha: baselineMetadata.sourceSha,
-      treeSha: baselineMetadata.treeSha, indexSha256: sha256(baselineIndex),
+    return { source: 'prior-dist', sourceSha: baselineBuild.state.sourceSha,
+      treeSha: baselineBuild.state.treeSha, inventoryFiles: baselineBuild.state.files.length,
+      headersSha256: baselineBuild.state.headersSha256, indexSha256: sha256(baselineIndex),
       workerSha256: sha256(baselineWorker), initialWorker, workerUpdates,
       notice: false, metadataRequests: 0, documentRetained: true };
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    await context.setOffline(false);
-    await context.close();
+    const cleanupErrors = [];
+    if (context) {
+      try { await context.setOffline(false); }
+      catch (error) { cleanupErrors.push(`baseline offline reset: ${String(error)}`); }
+      try { await context.close(); }
+      catch (error) { cleanupErrors.push(`baseline context close: ${String(error)}`); }
+    }
+    if (primaryError && cleanupErrors.length) primaryError.cleanupErrors = [
+      ...(primaryError.cleanupErrors ?? []), ...cleanupErrors];
+    if (!primaryError && cleanupErrors.length) throw new Error(cleanupErrors.join('; '));
   }
 }
 
 async function heldFirstMetadata(browser, started, buildA, buildB, outputRoot, artifacts) {
   await started.setDistribution(buildA.relativePath);
-  const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1280, height: 800 } });
-  const page = await context.newPage();
+  let context;
+  let primaryError;
   const record = { origin: new URL(started.url).origin,
     pageErrors: [], consoleErrors: [], failedRequests: [], failedResponses: [], uploads: [], external: [],
     metadataRequests: [], metadataResponses: [], metadataOverflow: false,
     offlineMetadataFailures: [], offline: false };
-  await instrument(page, record);
   let release;
   const releaseGate = new Promise((resolveRelease) => { release = resolveRelease; });
   let markHeld;
   const held = new Promise((resolveHeld) => { markHeld = resolveHeld; });
   let interceptions = 0;
   try {
+    context = await browser.newContext({ locale: 'en-US', viewport: { width: 1280, height: 800 } });
+    const page = await context.newPage();
+    await instrument(page, record);
     await page.route(`**${METADATA_PATH}`, async (route) => {
       interceptions++;
       if (interceptions === 1) {
@@ -330,9 +381,19 @@ async function heldFirstMetadata(browser, started, buildA, buildB, outputRoot, a
     return { sourceA: buildA.state.sourceSha, observedB: buildB.state.sourceSha,
       firstRequestCompletedAfterDeploymentB: true, noAutomaticReload: true,
       metadata: await metadataObservation(record) };
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
     release?.();
-    await context.close();
+    if (context) {
+      try { await context.close(); }
+      catch (error) {
+        if (primaryError) primaryError.cleanupErrors = [
+          ...(primaryError.cleanupErrors ?? []), `held-first context close: ${String(error)}`];
+        else throw error;
+      }
+    }
   }
 }
 
@@ -627,6 +688,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     }
     await cleanup('diagnostics write', () => writeFile(join(outputRoot, 'app-update-diagnostics.json'),
       JSON.stringify({ ...diagnostics, primaryError: primaryError && String(primaryError),
+        helperCleanupErrors: primaryError?.cleanupErrors ?? [],
         cleanupErrors, records: safeRecords }, null, 2)));
     if (!primaryError && cleanupErrors.length) throw new Error(cleanupErrors.join('; '));
   }

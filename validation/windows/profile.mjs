@@ -2156,12 +2156,15 @@ export async function run({ browser, root, output }) {
   if (appUpdatePresent) {
     const configPath = await validateBundleFile(bundleRoot, appUpdateConfig);
     const config = JSON.parse(await readFile(configPath, 'utf8'));
-    assert.deepEqual(config, {
-      schemaVersion: 1,
-      mode: 'application-update',
-      buildA: 'validation/windows/inputs/deployment-a',
-      baseline: 'validation/windows/prior-dist',
-    }, 'Invalid application-update bundle configuration');
+    assert.deepEqual(Object.keys(config).sort(), [
+      'schemaVersion', 'mode', 'buildA', 'baseline', 'baselineSourceSha', 'baselineTreeSha',
+    ].sort(), 'Invalid application-update bundle configuration keys');
+    assert.equal(config.schemaVersion, 1);
+    assert.equal(config.mode, 'application-update');
+    assert.equal(config.buildA, 'validation/windows/inputs/deployment-a');
+    assert.equal(config.baseline, 'validation/windows/prior-dist');
+    assert.match(config.baselineSourceSha, /^[a-f0-9]{40}$/);
+    assert.match(config.baselineTreeSha, /^[a-f0-9]{40}$/);
     const outputRoot = resolve(output);
     await mkdir(outputRoot, { recursive: true });
     return runAppUpdate({ browser, bundleRoot, outputRoot, config,
