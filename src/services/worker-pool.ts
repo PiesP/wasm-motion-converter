@@ -36,6 +36,7 @@ export interface EncodeTask {
 export interface EncodeTaskResult {
   id: number;
   bitstream: Uint8Array;
+  iccProfile?: Uint8Array | null;
 }
 
 interface PendingTask {
@@ -223,7 +224,20 @@ export class WebpWorkerPool {
       return;
     }
 
-    pending.resolve({ id: task.id, bitstream: data.bitstream });
+    if (
+      data.iccProfile !== undefined &&
+      data.iccProfile !== null &&
+      (!(data.iccProfile instanceof Uint8Array) || data.iccProfile.byteLength === 0)
+    ) {
+      this.rejectInvalidWorkerResponse(worker, pending, task.id);
+      return;
+    }
+
+    pending.resolve(
+      data.iccProfile === undefined
+        ? { id: task.id, bitstream: data.bitstream }
+        : { id: task.id, bitstream: data.bitstream, iccProfile: data.iccProfile ?? null }
+    );
     this.releaseWorker(worker);
   }
 

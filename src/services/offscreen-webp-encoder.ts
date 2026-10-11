@@ -24,7 +24,7 @@ import { createDynamicDecimationController } from './dynamic-decimation-controll
 import type { BaseEncoderOptions } from './encoder-common';
 import { withPooledBuffer } from './pooled-buffer';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
-import { extractAndNormalizeCanvasVp8 } from './webp-bitstream';
+import { extractCanvasWebp } from './webp-bitstream';
 
 /**
  * Check if OffscreenCanvas is available in the current context.
@@ -173,9 +173,9 @@ export async function encodeWebpOffscreen(
           // Extract VP8 bitstream from the single-frame WebP.
           // Always use the full parser — convertToBlob may produce VP8X
           // format for any frame, not just the first.
-          const bitstream = extractAndNormalizeCanvasVp8(webpBuffer);
+          const { bitstream, iccProfile } = extractCanvasWebp(webpBuffer);
 
-          muxer.addPresentationFrame(bitstream, timing);
+          muxer.addPresentationFrame(bitstream, timing, iccProfile);
           encodeIdx++;
           opts.onFrameEncoded?.(encodeIdx, demux.totalFrames);
         });

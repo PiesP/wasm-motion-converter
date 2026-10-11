@@ -88,12 +88,38 @@ export class StreamingWebpMuxer {
   private chunks: Uint8Array[] = [];
   private currentOffset = 0;
   private headerWritten = false;
+  private iccProfile: Uint8Array | null | undefined;
   private readonly limits: OutputLimits;
   private readonly profileOperation: ProfileOperationRecorder | undefined;
 
   /** Pre-computed header size: RIFF(12) + VP8X(18) + ANIM(6+8) = 44 bytes */
   private static readonly HEADER_SIZE =
     12 + StreamingWebpMuxer.VP8X_OVERHEAD + 8 + StreamingWebpMuxer.ANIM_OVERHEAD;
+
+  private headerSize(profile = this.iccProfile): number {
+    return (
+      StreamingWebpMuxer.HEADER_SIZE + (profile ? 8 + profile.length + (profile.length & 1) : 0)
+    );
+  }
+
+  private checkProfile(profile: Uint8Array | null): void {
+    if (profile && (profile.length === 0 || profile.length > 0xffffffff))
+      throw new Error('Invalid WebP ICC profile');
+    if (this.iccProfile === undefined) return;
+    const previous = this.iccProfile;
+    if (previous === null && profile === null) return;
+    if (
+      !previous ||
+      !profile ||
+      previous.length !== profile.length ||
+      !profile.every((byte, index) => byte === previous[index])
+    )
+      throw new Error('WebP frames have inconsistent ICC profiles');
+  }
+
+  private retainProfile(profile: Uint8Array | null): void {
+    if (this.iccProfile === undefined) this.iccProfile = profile ? new Uint8Array(profile) : null;
+  }
 
   constructor(
     width: number,
@@ -130,16 +156,22 @@ export class StreamingWebpMuxer {
     return this.frameCount;
   }
 
-  private reservePending(bitstream: Uint8Array, previousBytes: number): void {
+  private reservePending(
+    bitstream: Uint8Array,
+    previousBytes: number,
+    profile: Uint8Array | null
+  ): void {
     const size =
       this.currentOffset +
-      (this.headerWritten ? 0 : StreamingWebpMuxer.HEADER_SIZE) +
+      (this.headerWritten ? 0 : this.headerSize(profile)) +
       StreamingWebpMuxer.ANMF_HEADER +
       StreamingWebpMuxer.VP8_CHUNK_OVERHEAD +
       bitstream.length +
-      (bitstream.length & 1);
+      (bitstream.length & 1) +
+      (profile?.length ?? 0); // Retained profile in addition to its output chunk.
     // The previous compressed view can remain live while its replacement is copied.
-    const copyPeakBytes = this.currentOffset + previousBytes + bitstream.length;
+    const copyPeakBytes =
+      this.currentOffset + previousBytes + bitstream.length + (profile?.length ?? 0);
     if (
       !Number.isSafeInteger(size) ||
       !Number.isSafeInteger(copyPeakBytes) ||
@@ -150,7 +182,11 @@ export class StreamingWebpMuxer {
   }
 
   /** Copy the borrowed codec view now; finalize its hold at the next source PTS. */
-  addPresentationFrame(bitstream: Uint8Array, timing: { startUs: number; endUs: number }): void {
+  addPresentationFrame(
+    bitstream: Uint8Array,
+    timing: { startUs: number; endUs: number },
+    iccProfile: Uint8Array | null = null
+  ): void {
     if (
       !Number.isSafeInteger(timing.startUs) ||
       timing.startUs < 0 ||
@@ -160,6 +196,7 @@ export class StreamingWebpMuxer {
       throw new RangeError('Invalid WebP presentation interval');
     }
     validateVp8Frame(bitstream, this.width, this.height);
+    this.checkProfile(iccProfile);
     if (this.lastPresentationStartUs !== null && timing.startUs <= this.lastPresentationStartUs) {
       throw new RangeError('WebP presentations are out of order');
     }
@@ -179,7 +216,8 @@ export class StreamingWebpMuxer {
         this.emitPending(durationMs);
       }
     }
-    this.reservePending(bitstream, previous?.bitstream.length ?? 0);
+    this.reservePending(bitstream, previous?.bitstream.length ?? 0, iccProfile);
+    this.retainProfile(iccProfile);
     this.pending = { bitstream: new Uint8Array(bitstream), startUs: timing.startUs };
   }
 
@@ -211,8 +249,9 @@ export class StreamingWebpMuxer {
       (pending.bitstream.length & 1);
     const nextSize =
       this.currentOffset +
-      (this.headerWritten ? 0 : StreamingWebpMuxer.HEADER_SIZE) +
-      count * frameSize;
+      (this.headerWritten ? 0 : this.headerSize()) +
+      count * frameSize +
+      (this.iccProfile?.length ?? 0);
     if (!Number.isSafeInteger(nextSize) || nextSize > this.limits.maxOutputBytes) {
       throw new OutputLimitError('webp', 'byte', this.limits.maxOutputBytes);
     }
@@ -221,7 +260,7 @@ export class StreamingWebpMuxer {
       let remaining = durationMs;
       while (remaining > 0) {
         const hold = Math.min(remaining, 0xffffff);
-        this.addFrame(pending.bitstream, hold);
+        this.addFrame(pending.bitstream, hold, this.iccProfile);
         remaining -= hold;
       }
     } catch (error) {
@@ -242,7 +281,7 @@ export class StreamingWebpMuxer {
     let remainingMs = durationMs - 0xffffff;
     while (remainingMs > 0) {
       const hold = Math.min(remainingMs, 0xffffff);
-      this.addFrame(payload, hold);
+      this.addFrame(payload, hold, this.iccProfile);
       remainingMs -= hold;
     }
   }
@@ -255,7 +294,7 @@ export class StreamingWebpMuxer {
     if (this.headerWritten) return;
     this.headerWritten = true;
 
-    const header = new Uint8Array(StreamingWebpMuxer.HEADER_SIZE);
+    const header = new Uint8Array(this.headerSize());
     const view = new DataView(header.buffer);
     let off = 0;
 
@@ -272,12 +311,21 @@ export class StreamingWebpMuxer {
     off += 4;
     view.setUint32(off, StreamingWebpMuxer.VP8X_OVERHEAD - 8, true);
     off += 4;
-    header[off++] = 0x02; // Animation flag
+    header[off++] = 0x02 | (this.iccProfile ? 0x20 : 0); // Animation and ICC flags
     header[off++] = 0x00;
     header[off++] = 0x00;
     header[off++] = 0x00;
     off = StreamingWebpMuxer.writeUint24(header, off, this.width - 1);
     off = StreamingWebpMuxer.writeUint24(header, off, this.height - 1);
+
+    if (this.iccProfile) {
+      view.setUint32(off, 0x49434350, false); // ICCP
+      off += 4;
+      view.setUint32(off, this.iccProfile.length, true);
+      off += 4;
+      header.set(this.iccProfile, off);
+      off += this.iccProfile.length + (this.iccProfile.length & 1);
+    }
 
     // ANIM chunk
     view.setUint32(off, StreamingWebpMuxer.ANIM_MAGIC, false);
@@ -298,8 +346,9 @@ export class StreamingWebpMuxer {
    * The bitstream is copied into the output buffer immediately — the caller
    * can release the source buffer after this call.
    */
-  addFrame(bitstream: Uint8Array, durationMs: number): void {
+  addFrame(bitstream: Uint8Array, durationMs: number, iccProfile?: Uint8Array | null): void {
     if (this.pending) throw new Error('Cannot mix WebP frame and presentation APIs');
+    this.checkProfile(iccProfile ?? null);
     const muxStart = this.profileOperation ? performance.now() : null;
     // RIFF spec requires all chunks to be even-length. When the VP8
     // bitstream is odd-length, a 0x00 pad byte must follow the data.
@@ -312,12 +361,17 @@ export class StreamingWebpMuxer {
     if (this.frameCount >= this.limits.maxFrames) {
       throw new OutputLimitError('webp', 'frame', this.limits.maxFrames);
     }
-    const headerBytes = this.headerWritten ? 0 : StreamingWebpMuxer.HEADER_SIZE;
-    const nextOffset = this.currentOffset + headerBytes + anmfTotalSize;
+    const headerBytes = this.headerWritten ? 0 : this.headerSize(iccProfile ?? null);
+    const nextOffset =
+      this.currentOffset +
+      headerBytes +
+      anmfTotalSize +
+      (this.iccProfile?.length ?? iccProfile?.length ?? 0);
     if (!Number.isSafeInteger(nextOffset) || nextOffset > this.limits.maxOutputBytes) {
       throw new OutputLimitError('webp', 'byte', this.limits.maxOutputBytes);
     }
 
+    this.retainProfile(iccProfile ?? null);
     this.writeHeader();
 
     const chunk = new Uint8Array(anmfTotalSize);
