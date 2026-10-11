@@ -1232,10 +1232,145 @@ describe('decoder-service', () => {
       for (const frame of FakeVideoFrame.instances) expect(frame.close).toHaveBeenCalledOnce();
     });
 
-    it('reports input frame progress after fixed decimation', async () => {
+    it('reports visible decoded frames independently of fixed selection', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const clock = vi.spyOn(performance, 'now').mockReturnValue(0);
       const progress: number[] = [];
-      const result = await decodeFrames(
+      let result: DecodeResult;
+      try {
+        result = await decodeFrames(
+          {
+            chunks: Array.from({ length: 12 }, (_, index) => fixtureChunk(index * 100_000, index)),
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 1.2,
+            framerate: 10,
+            sourceTotalMs: 1_200,
+            totalFrames: 12,
+          },
+          {
+            width: 8,
+            height: 8,
+            frameDecimation: 3,
+            mode: 'stream',
+            onFrameDecoded: (count) => progress.push(count),
+            onFrameAvailable: (pixels) => globalBufferPool.release(pixels),
+          }
+        );
+      } finally {
+        clock.mockRestore();
+      }
+      expect(result.decodedFrames).toBe(12);
+      expect(result.selectedFrames).toBe(4);
+      expect(progress).toEqual([1, 11, 12]);
+    });
+
+    it.each([2, 3, 4, 6, 1.5] as const)(
+      'reports bounded intermediate decode progress for cadence ratio %s',
+      async (ratio) => {
+        let elapsedMs = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsedMs);
+        try {
+          class TimedVideoDecoder extends FakeVideoDecoder {
+            override decode(chunk: EncodedVideoChunk): void {
+              elapsedMs += 25;
+              super.decode(chunk);
+            }
+          }
+          vi.stubGlobal('VideoDecoder', TimedVideoDecoder);
+          const observations: number[] = [];
+          const result = await decodeFrames(
+            {
+              chunks: Array.from({ length: 121 }, (_, index) =>
+                fixtureChunk(Math.round((index * 1_000_000) / 120), index)
+              ),
+              config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+              duration: 121 / 120,
+              framerate: 120,
+              sourceTotalMs: Math.round((121 / 120) * 1000),
+              totalFrames: 121,
+            },
+            {
+              width: 8,
+              height: 8,
+              frameDecimation: ratio,
+              mode: 'stream',
+              onFrameDecoded: (count) => observations.push(count),
+              onFrameAvailable: (pixels) => globalBufferPool.release(pixels),
+            }
+          );
+          expect(result.decodedFrames).toBe(121);
+          expect(result.selectedFrames).toBeLessThan(121);
+          expect(observations[0]).toBeLessThan(121);
+          expect(observations.at(-1)).toBe(121);
+          expect(observations.length).toBeGreaterThan(3);
+          expect(observations.length).toBeLessThanOrEqual(35);
+          expect(
+            observations.every((count, index) => index === 0 || count >= observations[index - 1]!)
+          ).toBe(true);
+        } finally {
+          clock.mockRestore();
+        }
+      }
+    );
+
+    it.each(['off', 'low', 'adaptive'] as const)(
+      'reports long identical holds with %s smart selection',
+      async (smartFrameSkip) => {
+        let elapsedMs = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsedMs);
+        try {
+          class TimedVideoDecoder extends FakeVideoDecoder {
+            override decode(chunk: EncodedVideoChunk): void {
+              elapsedMs += 25;
+              super.decode(chunk);
+            }
+          }
+          vi.stubGlobal('VideoDecoder', TimedVideoDecoder);
+          const observations: number[] = [];
+          const result = await decodeFrames(
+            {
+              chunks: Array.from({ length: 81 }, (_, index) =>
+                fixtureChunk(Math.round((index * 1_000_000) / 60), 0)
+              ),
+              config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+              duration: 81 / 60,
+              framerate: 60,
+              sourceTotalMs: 1_350,
+              totalFrames: 81,
+            },
+            {
+              width: 8,
+              height: 8,
+              frameDecimation: 2,
+              mode: 'stream',
+              smartFrameSkip,
+              onFrameDecoded: (count) => observations.push(count),
+              onFrameAvailable: (pixels) => globalBufferPool.release(pixels),
+            }
+          );
+          expect(result.decodedFrames).toBe(81);
+          if (smartFrameSkip !== 'off') expect(result.smartSkipped).toBeGreaterThan(0);
+          expect(observations[0]).toBeLessThan(81);
+          expect(observations.at(-1)).toBe(81);
+          expect(observations.length).toBeGreaterThan(3);
+          expect(observations.length).toBeLessThanOrEqual(24);
+          expect(
+            observations.every((count, index) => index === 0 || count >= observations[index - 1]!)
+          ).toBe(true);
+        } finally {
+          clock.mockRestore();
+        }
+      }
+    );
+
+    it('reports decode observations before a slow downstream delivery finishes', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      let finishDelivery!: () => void;
+      const delivery = new Promise<void>((resolve) => {
+        finishDelivery = resolve;
+      });
+      const observations: number[] = [];
+      const decoding = decodeFrames(
         {
           chunks: Array.from({ length: 12 }, (_, index) => fixtureChunk(index * 100_000, index)),
           config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
@@ -1247,15 +1382,106 @@ describe('decoder-service', () => {
         {
           width: 8,
           height: 8,
-          frameDecimation: 3,
           mode: 'stream',
-          onFrameDecoded: (count) => progress.push(count),
-          onFrameAvailable: (pixels) => globalBufferPool.release(pixels),
+          onFrameDecoded: (count) => observations.push(count),
+          onFrameAvailable: async (pixels, _duration, frameNumber) => {
+            try {
+              if (frameNumber === 0) await delivery;
+            } finally {
+              globalBufferPool.release(pixels);
+            }
+          },
         }
       );
-      expect(result.decodedFrames).toBe(12);
-      expect(result.selectedFrames).toBe(4);
-      expect(progress).toEqual([10]);
+      try {
+        await vi.waitFor(() => expect(observations[0]).toBe(1));
+        expect(observations.at(-1)).not.toBe(12);
+      } finally {
+        finishDelivery();
+      }
+      const result = await decoding;
+      expect(observations.at(-1)).toBe(result.decodedFrames);
+    });
+
+    it.each(['cancel', 'processing'] as const)(
+      'stops %s progress and starts the next decode with fresh counts',
+      async (failure) => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const cancellation = new AbortController();
+        const processing = new AbortController();
+        const failedObservations: number[] = [];
+        const demux = () => ({
+          chunks: Array.from({ length: 13 }, (_, index) => fixtureChunk(index * 100_000, index)),
+          config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+          duration: 1.3,
+          framerate: 10,
+          sourceTotalMs: 1_300,
+          totalFrames: 13,
+        });
+        await expect(
+          decodeFrames(
+            demux(),
+            {
+              width: 8,
+              height: 8,
+              frameDecimation: 2,
+              mode: 'stream',
+              processingFailureSignal: processing.signal,
+              onFrameDecoded: (count) => {
+                failedObservations.push(count);
+                if (count === 1) {
+                  if (failure === 'cancel') cancellation.abort();
+                  else processing.abort(new Error('fixture downstream failure'));
+                }
+              },
+              onFrameAvailable: (pixels) => globalBufferPool.release(pixels),
+            },
+            cancellation.signal
+          )
+        ).rejects.toThrow(failure === 'cancel' ? 'Cancelled' : 'fixture downstream failure');
+        expect(failedObservations).toEqual([1]);
+
+        const nextObservations: number[] = [];
+        const next = await decodeFrames(demux(), {
+          width: 8,
+          height: 8,
+          frameDecimation: 2,
+          mode: 'stream',
+          onFrameDecoded: (count) => nextObservations.push(count),
+          onFrameAvailable: (pixels) => globalBufferPool.release(pixels),
+        });
+        expect(next.decodedFrames).toBe(13);
+        expect(nextObservations[0]).toBe(1);
+        expect(nextObservations.at(-1)).toBe(13);
+      }
+    );
+
+    it('preserves a progress-observer failure without leaking the source frame', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const deliver = vi.fn();
+      await expect(
+        decodeFrames(
+          {
+            chunks: [fixtureChunk(0, 10)],
+            config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+            duration: 0.1,
+            framerate: 10,
+            sourceTotalMs: 100,
+            totalFrames: 1,
+          },
+          {
+            width: 8,
+            height: 8,
+            mode: 'stream',
+            onFrameDecoded: () => {
+              throw new Error('fixture progress observer failure');
+            },
+            onFrameAvailable: deliver,
+          }
+        )
+      ).rejects.toThrow('Frame processing failed: fixture progress observer failure');
+      expect(deliver).not.toHaveBeenCalled();
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
     });
 
     it('does not retain an FPS fallback past a later known PTS and duration', async () => {
@@ -1293,6 +1519,7 @@ describe('decoder-service', () => {
 
     it('deduplicates equal source PTS before resolving an unknown interval', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const progress: number[] = [];
       const result = await decodeFrames(
         {
           chunks: [
@@ -1306,11 +1533,17 @@ describe('decoder-service', () => {
           sourceTotalMs: 0,
           totalFrames: 3,
         },
-        { width: 8, height: 8, mode: 'batch' }
+        {
+          width: 8,
+          height: 8,
+          mode: 'batch',
+          onFrameDecoded: (count) => progress.push(count),
+        }
       );
       expect(result.frames.map((frame) => frame.data[0])).toEqual([10, 100]);
       expect(result.frames.map((frame) => frame.duration)).toEqual([250, 100]);
       expect(result.decodedFrames).toBe(3);
+      expect(progress).toEqual([2, 3]);
       expect(result.duplicateTimestamps).toBe(1);
       expect(result.selectedFrames).toBe(2);
       expect(FakeVideoFrame.copyStarts).toEqual([0, 250_000]);
@@ -3662,8 +3895,9 @@ describe('decoder-service', () => {
       FakeVideoFrame.frameDuration = 1_000;
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       const delivered: number[] = [];
+      const progress: number[] = [];
 
-      await decodeFrames(
+      const result = await decodeFrames(
         {
           chunks: [
             { timestamp: 4_000 } as EncodedVideoChunk,
@@ -3680,6 +3914,7 @@ describe('decoder-service', () => {
           width: 8,
           height: 8,
           mode: 'stream',
+          onFrameDecoded: (count) => progress.push(count),
           onFrameAvailable: (rgbData, _durationMs, frameNumber) => {
             delivered.push(frameNumber);
             globalBufferPool.release(rgbData);
@@ -3688,6 +3923,9 @@ describe('decoder-service', () => {
       );
 
       expect(delivered).toEqual([0]);
+      expect(result.consumedChunks).toBe(2);
+      expect(result.decodedFrames).toBe(1);
+      expect(progress).toEqual([1, 1]);
     });
 
     it('clips frame durations to the requested half-open trim interval', async () => {

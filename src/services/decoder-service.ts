@@ -74,7 +74,7 @@ export interface DecodeOptions {
   pixelFormat?: CpuPixelFormat | undefined;
   /** Hardware acceleration policy */
   hwAccel?: ('prefer-hardware' | 'prefer-software') | undefined;
-  /** Callback fired after each frame is decoded (for progress tracking) */
+  /** Throttled visible-decoded count, with an exact final observation on success. */
   onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /** Development-only observer for operation wall time; operation totals can overlap. */
   profileOperation?: ProfileOperationRecorder | undefined;
@@ -513,6 +513,39 @@ export async function decodeFrames(
     return firstConversionError !== null;
   };
 
+  let lastDecodedProgressCount = 0;
+  let lastDecodedProgressTime = 0;
+  const reportDecodedProgress = (count: number, terminal = false): void => {
+    if (
+      !onFrameDecoded ||
+      signal?.aborted ||
+      processingFailureSignal?.aborted ||
+      firstPipelineFailure
+    ) {
+      return;
+    }
+    if (!terminal && count <= lastDecodedProgressCount) return;
+    const now = performance.now();
+    const advanced = count - lastDecodedProgressCount;
+    // Time-based updates cover sparse decodes, while count advancement also
+    // covers fast bursts. Both paths cap callbacks independently of selection.
+    if (
+      !terminal &&
+      lastDecodedProgressCount > 0 &&
+      advanced < 10 &&
+      (advanced < 2 || now - lastDecodedProgressTime < 100)
+    ) {
+      return;
+    }
+    lastDecodedProgressCount = count;
+    lastDecodedProgressTime = now;
+    try {
+      onFrameDecoded(count, demux.totalFrames);
+    } catch (error) {
+      recordConversionError(error);
+    }
+  };
+
   const handleProcessingFailure = (): void => {
     recordConversionError(processingFailureSignal?.reason);
   };
@@ -840,12 +873,17 @@ export async function decodeFrames(
           // and count/close later native outputs before pixel admission.
           duplicateTimestamps++;
           frame.close();
+          reportDecodedProgress(inputFrameCount);
           return;
         }
         inputFrameCount += deferredDuplicateCount;
         duplicateTimestamps += deferredDuplicateCount;
         lastVisibleSourceStartUs = sourceStartUs;
-        const decodedInputCount = inputFrameCount;
+        reportDecodedProgress(inputFrameCount);
+        if (firstPipelineFailure || signal?.aborted) {
+          frame.close();
+          return;
+        }
         const frameDuration = Math.max(1, Math.round((overlapEndUs - overlapStartUs) / 1000));
 
         // Select at source presentation boundaries, preserving fractional
@@ -1225,21 +1263,6 @@ export async function decodeFrames(
               batchFrames.push({ data: pixelData, duration: frameDuration });
               lastBatchStartUs = presentation.startUs;
             }
-
-            // Report decoding progress — throttle to every 10 frames.
-            // The modulo check has negligible overhead (~1ns per frame) and
-            // avoids excessive callback invocations that would flood the
-            // progress store and trigger unnecessary SolidJS re-renders.
-            // At 60fps source, this fires ~6 times/second — smooth enough
-            // for the UI progress bar without overwhelming the reactive system.
-            if (
-              onFrameDecoded &&
-              (streaming
-                ? decodedInputCount % 10 === 0
-                : batchFrames.length % 10 === 0 || batchFrames.length === 1)
-            ) {
-              onFrameDecoded(decodedInputCount, demux.totalFrames);
-            }
           } catch (error) {
             recordConversionError(error);
           } finally {
@@ -1617,6 +1640,9 @@ export async function decodeFrames(
   }
   const cleanupFailure = await cleanupDecoderLifecycle(primaryFailure);
   if (cleanupFailure) throw cleanupFailure;
+  reportDecodedProgress(inputFrameCount, true);
+  const progressFailure = getLatchedFailureError();
+  if (progressFailure) throw progressFailure;
   return decodeResult as DecodeResult;
 }
 
