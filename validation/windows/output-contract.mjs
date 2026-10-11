@@ -161,10 +161,130 @@ export async function verifyAnimatedOutput(page, bytes, contract, markers) {
   );
 }
 
+/** Prove that the first GIF image replaces the entire opaque logical screen at each loop. */
+function gifLoopStartGeometry(bytes, label) {
+  const fail = () => {
+    throw new Error(`${label} GIF loop start is unsupported or incomplete`);
+  };
+  const u16 = (offset) => bytes[offset] | (bytes[offset + 1] << 8);
+  if (
+    bytes.length < 13 ||
+    String.fromCharCode(...bytes.subarray(0, 3)) !== 'GIF' ||
+    !['87a', '89a'].includes(String.fromCharCode(...bytes.subarray(3, 6)))
+  )
+    fail();
+  const width = u16(6);
+  const height = u16(8);
+  if (width < 1 || height < 1) fail();
+  const packed = bytes[10];
+  let offset = 13 + (packed & 0x80 ? 3 * (1 << ((packed & 7) + 1)) : 0);
+  if (offset > bytes.length) fail();
+  let transparent = false;
+  let sawControl = false;
+  while (offset < bytes.length) {
+    const block = bytes[offset++];
+    if (block === 0x2c) {
+      if (offset + 9 > bytes.length) fail();
+      if (
+        u16(offset) !== 0 ||
+        u16(offset + 2) !== 0 ||
+        u16(offset + 4) !== width ||
+        u16(offset + 6) !== height ||
+        transparent
+      )
+        fail();
+      return { width, height };
+    }
+    if (block !== 0x21 || offset >= bytes.length) fail();
+    const extension = bytes[offset++];
+    if (extension === 0xf9) {
+      if (sawControl || offset + 6 > bytes.length || bytes[offset] !== 4 || bytes[offset + 5] !== 0)
+        fail();
+      transparent = (bytes[offset + 1] & 1) !== 0;
+      sawControl = true;
+      offset += 6;
+      continue;
+    }
+    // Plain text is a graphic-rendering block and can consume a control extension.
+    if (extension !== 0xff && extension !== 0xfe) fail();
+    while (true) {
+      if (offset >= bytes.length) fail();
+      const length = bytes[offset++];
+      if (length === 0) break;
+      if (offset + length > bytes.length) fail();
+      offset += length;
+    }
+  }
+  fail();
+}
+
+/** Prove the first WebP ANMF covers its canvas without depending on prior pixels. */
+function webpLoopStartGeometry(bytes, label) {
+  const fail = () => {
+    throw new Error(`${label} WebP loop start is unsupported or incomplete`);
+  };
+  const tag = (offset) => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  const u24 = (offset) => bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+  const u32 = (offset) =>
+    bytes[offset] +
+    bytes[offset + 1] * 256 +
+    bytes[offset + 2] * 65536 +
+    bytes[offset + 3] * 16777216;
+  if (bytes.length < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WEBP' || u32(4) + 8 !== bytes.length)
+    fail();
+  let offset = 12;
+  let canvas = null;
+  let sawAnimation = false;
+  while (offset + 8 <= bytes.length) {
+    const fourcc = tag(offset);
+    const size = u32(offset + 4);
+    const start = offset + 8;
+    const end = start + size;
+    if (end + (size & 1) > bytes.length) fail();
+    if (fourcc === 'VP8X') {
+      if (canvas || sawAnimation || size < 10 || !(bytes[start] & 0x02)) fail();
+      canvas = { width: u24(start + 4) + 1, height: u24(start + 7) + 1 };
+    } else if (fourcc === 'ANIM') {
+      if (!canvas || sawAnimation || size < 6) fail();
+      sawAnimation = true;
+    } else if (fourcc === 'ANMF') {
+      if (!canvas || !sawAnimation || size < 16) fail();
+      if (
+        u24(start) !== 0 ||
+        u24(start + 3) !== 0 ||
+        u24(start + 6) + 1 !== canvas.width ||
+        u24(start + 9) + 1 !== canvas.height
+      )
+        fail();
+      // B=0 is safe only for an opaque VP8 image with no ALPH subchunk.
+      // B=1 overwrites the full rectangle regardless of previous canvas state.
+      if ((bytes[start + 15] & 0x02) === 0) {
+        let child = start + 16;
+        let sawVp8 = false;
+        while (child + 8 <= end) {
+          const childTag = tag(child);
+          const childSize = u32(child + 4);
+          const childEnd = child + 8 + childSize;
+          if (childEnd + (childSize & 1) > end || childTag === 'ALPH' || childTag === 'VP8L')
+            fail();
+          if (childTag === 'VP8 ') sawVp8 = true;
+          child = childEnd + (childSize & 1);
+        }
+        if (!sawVp8 || child !== end) fail();
+      }
+      return canvas;
+    }
+    offset = end + (size & 1);
+  }
+  fail();
+}
+
 /**
  * Compare decoded, fully composited output at every presentation change. This is
  * deliberately separate from the source-to-output marker tolerance above.
  * Duplicate frames, frame rectangles, palettes, and compressed bytes may differ.
+ * The loop check is limited to opaque outputs whose first encoded frame fully
+ * covers the canvas and cannot depend on the previous loop's pixels.
  */
 export async function compareAnimatedOutputExact(
   page,
@@ -185,9 +305,22 @@ export async function compareAnimatedOutputExact(
   if (!['gif', 'webp'].includes(referenceFormat) || !['gif', 'webp'].includes(candidateFormat)) {
     throw new Error('Unsupported exact output comparison format');
   }
+  const referenceGeometry = (
+    referenceFormat === 'gif' ? gifLoopStartGeometry : webpLoopStartGeometry
+  )(referenceBytes, 'Reference');
+  const candidateGeometry = (
+    candidateFormat === 'gif' ? gifLoopStartGeometry : webpLoopStartGeometry
+  )(candidateBytes, 'Candidate');
 
   return page.evaluate(
-    async ({ reference, candidate, referenceMimeType, candidateMimeType }) => {
+    async ({
+      reference,
+      candidate,
+      referenceMimeType,
+      candidateMimeType,
+      referenceGeometry,
+      candidateGeometry,
+    }) => {
       const maxFrames = 240;
       const maxPixels = 1024 * 1024;
       const maxDecodedPixels = 32 * 1024 * 1024;
@@ -197,7 +330,7 @@ export async function compareAnimatedOutputExact(
       }
 
       const decoders = [];
-      const open = async (bytes, mimeType, label) => {
+      const open = async (bytes, mimeType, geometry, label) => {
         const decoder = new ImageDecoder({
           data: new Uint8Array(bytes),
           type: mimeType,
@@ -218,6 +351,7 @@ export async function compareAnimatedOutputExact(
           decoder,
           track,
           label,
+          geometry,
           nextIndex: 0,
           endUs: 0,
           decodedPixels: 0,
@@ -228,8 +362,8 @@ export async function compareAnimatedOutputExact(
       };
 
       try {
-        const left = await open(reference, referenceMimeType, 'Reference');
-        const right = await open(candidate, candidateMimeType, 'Candidate');
+        const left = await open(reference, referenceMimeType, referenceGeometry, 'Reference');
+        const right = await open(candidate, candidateMimeType, candidateGeometry, 'Candidate');
         if (!Object.is(left.track.repetitionCount, right.track.repetitionCount)) {
           throw new Error('Animated output loop count differs');
         }
@@ -251,6 +385,9 @@ export async function compareAnimatedOutputExact(
               width * height > maxPixels
             ) {
               throw new Error(`${side.label} dimensions exceed the exact comparison budget`);
+            }
+            if (width !== side.geometry.width || height !== side.geometry.height) {
+              throw new Error(`${side.label} decoded dimensions differ from its container`);
             }
             if (
               !Number.isSafeInteger(duration) ||
@@ -354,6 +491,8 @@ export async function compareAnimatedOutputExact(
       candidate: [...candidateBytes],
       referenceMimeType: referenceFormat === 'gif' ? 'image/gif' : 'image/webp',
       candidateMimeType: candidateFormat === 'gif' ? 'image/gif' : 'image/webp',
+      referenceGeometry,
+      candidateGeometry,
     }
   );
 }
