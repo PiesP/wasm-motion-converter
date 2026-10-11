@@ -133,26 +133,14 @@ function bayerDitherRgba(rgba: Uint8Array, width: number, height: number, streng
   }
 }
 
-/**
- * Quantize streaming frame delays to GIF centiseconds without accumulating
- * per-frame rounding error. The returned value is the next encoded delay in
- * centiseconds; callers skip a continuation frame when it is zero.
- */
-export function createGifDelayQuantizer(): (delayMs: number) => number {
-  let scheduledDurationUs = 0;
-  let emittedDurationCs = 0;
+const GIF_MIN_FRAME_DELAY_CS = GIF_MIN_FRAME_DELAY_MS / 10;
 
-  return (delayMs: number): number => {
-    const delayUs = Math.round(Math.max(0, delayMs) * 1000);
-    if (!Number.isSafeInteger(delayUs) || !Number.isSafeInteger(scheduledDurationUs + delayUs)) {
-      throw new RangeError('GIF presentation duration exceeds integer range');
-    }
-    scheduledDurationUs += delayUs;
-    const targetDurationCs = Math.max(emittedDurationCs, Math.round(scheduledDurationUs / 10_000));
-    const nextDelayCs = targetDurationCs - emittedDurationCs;
-    emittedDurationCs = targetDurationCs;
-    return nextDelayCs;
-  };
+/** Quantize absolute source time once, so frame-by-frame rounding cannot drift. */
+function gifTimeCs(presentationUs: number): number {
+  if (!Number.isSafeInteger(presentationUs) || presentationUs < 0) {
+    throw new RangeError('GIF presentation time exceeds integer range');
+  }
+  return Math.round(presentationUs / 10_000);
 }
 
 function packedGifColor(color: number[]): number {
@@ -372,7 +360,6 @@ export async function encodeGif(
   let globalPalette: number[][] | null = null;
   let lastColorHash = 0;
   let outputTotalDelay = 0;
-  const quantizeDelay = createGifDelayQuantizer();
   let encodeIdx = 0;
   let outputFrames = 0;
   let splitFrames = 0;
@@ -384,6 +371,7 @@ export async function encodeGif(
   let sourceTotalMs = demux.sourceTotalMs;
 
   let pendingStartUs: number | null = null;
+  let pendingStartCs: number | null = null;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController(opts.decimationMemoryCheck);
@@ -400,6 +388,13 @@ export async function encodeGif(
     palette: number[][],
     useGlobalPalette: boolean
   ): void {
+    if (
+      !Number.isInteger(delay) ||
+      delay < GIF_MIN_FRAME_DELAY_MS ||
+      delay > GIF_MAX_FRAME_DELAY_CS * 10
+    ) {
+      throw new RangeError('GIF frame delay violates the viewer-safe schedule');
+    }
     assertCanWriteOutputFrame();
     const writeStart = opts.profileOperation ? performance.now() : null;
     encoder.writeFrame(indexed, w, h, {
@@ -413,19 +408,6 @@ export async function encodeGif(
       opts.profileOperation?.('gifFrameWrite', Math.max(0, performance.now() - writeStart));
     }
     outputFrames++;
-  }
-
-  function writeQuantizedFrame(
-    indexed: Uint8Array,
-    delayMs: number,
-    palette: number[][],
-    useGlobalPalette: boolean
-  ): boolean {
-    const delayCs = quantizeDelay(delayMs);
-    if (delayCs <= 0) return false;
-    writeIndexedFrame(indexed, delayCs * 10, palette, useGlobalPalette);
-    outputTotalDelay += delayCs;
-    return true;
   }
 
   function prepareIndexedFrame(
@@ -462,34 +444,36 @@ export async function encodeGif(
     return { indexed, ...compact, indexedBytes };
   }
 
-  async function flushPending(delayMs: number): Promise<void> {
+  async function flushPending(endCs: number): Promise<void> {
     if (!lastIndexedData || !lastPalette) return;
-    if (!Number.isFinite(delayMs) || delayMs < 0) {
+    if (!Number.isSafeInteger(endCs) || endCs - pendingStartCs! < GIF_MIN_FRAME_DELAY_CS) {
       throw new RangeError('Invalid GIF presentation duration');
     }
-    // gifenc expects milliseconds and rounds internally to centiseconds. Each
-    // bounded continuation uses the same index and palette, while cumulative
-    // quantization prevents a one-centisecond error on every source frame.
+    // This is a representable source interval, established before comparing
+    // indexed colors. Duplicate/palette optimization must preserve its timing.
     let useGlobalPalette =
       globalPalette !== null &&
       remapToGifGlobalPalette(lastIndexedData, lastPalette, globalPalette);
-    let remainingMs = delayMs;
-    while (remainingMs > 0) {
+    let remainingCs = endCs - pendingStartCs!;
+    while (remainingCs > 0) {
       if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
-      const chunk = Math.min(remainingMs, GIF_MAX_FRAME_DELAY_CS * 10);
-      writeQuantizedFrame(lastIndexedData, chunk, lastPalette, useGlobalPalette);
+      let chunkCs = Math.min(remainingCs, GIF_MAX_FRAME_DELAY_CS);
+      if (remainingCs - chunkCs === 1) chunkCs--;
+      writeIndexedFrame(lastIndexedData, chunkCs * 10, lastPalette, useGlobalPalette);
+      outputTotalDelay += chunkCs;
       // The first emitted frame established the global palette. Its own
       // continuation can omit a redundant local table.
       if (globalPalette === lastPalette) useGlobalPalette = true;
-      remainingMs -= chunk;
-      if (remainingMs > 0) splitFrames++;
-      if ((splitFrames & 63) === 0 && remainingMs > 0) await yieldToMain();
+      remainingCs -= chunkCs;
+      if (remainingCs > 0) splitFrames++;
+      if ((splitFrames & 63) === 0 && remainingCs > 0) await yieldToMain();
     }
     lastIndexedData = null;
     lastPalette = null;
     lastColorHash = 0;
     liveIndexedBytes = 0;
     pendingStartUs = null;
+    pendingStartCs = null;
   }
 
   try {
@@ -570,11 +554,18 @@ export async function encodeGif(
             return;
           }
 
+          const frameStartCs = gifTimeCs(presentation.startUs);
+          // A new distinct image cannot be displayed for less than 2cs. Keep
+          // the pending image and omit this source sample; a later sample may
+          // still be admitted at its own timestamp. Rounded absolute starts
+          // shift admitted boundaries by at most 5ms without cumulative drift.
+          if (pendingStartCs !== null && frameStartCs - pendingStartCs < GIF_MIN_FRAME_DELAY_CS) {
+            globalBufferPool.release(rgbaData);
+            return;
+          }
+
           let rgbaReleased = false;
           try {
-            const precedingDelayMs = lastIndexedData
-              ? (presentation.startUs - pendingStartUs!) / 1000
-              : 0;
             if (lastIndexedData) {
               // A second index is optional. If the aggregate guard cannot
               // admit it, flush first and take the original one-index path.
@@ -586,7 +577,7 @@ export async function encodeGif(
                 );
               } catch (error) {
                 if (!(error instanceof Error) || !/memory/i.test(error.message)) throw error;
-                await flushPending(precedingDelayMs);
+                await flushPending(frameStartCs);
               }
             }
             if (!lastIndexedData) assertCanWriteOutputFrame();
@@ -647,13 +638,14 @@ export async function encodeGif(
               liveIndexedBytes = precedingIndexedBytes;
               comparisonWorkingBytes = 0;
             } else {
-              if (lastIndexedData) await flushPending(precedingDelayMs);
+              if (lastIndexedData) await flushPending(frameStartCs);
               lastIndexedData = candidate.indexed;
               lastPalette = candidate.palette;
               lastColorHash = candidate.colorHash;
               liveIndexedBytes = candidate.indexedBytes;
               comparisonWorkingBytes = 0;
               pendingStartUs = presentation.startUs;
+              pendingStartCs = frameStartCs;
             }
           } finally {
             if (!rgbaReleased) globalBufferPool.release(rgbaData);
@@ -684,13 +676,14 @@ export async function encodeGif(
       if (!Number.isSafeInteger(presentationEndUs)) {
         throw new RangeError('Missing GIF presentation end');
       }
-      const finalDelayMs = (presentationEndUs - pendingStartUs!) / 1000;
-      // Only a whole clip shorter than 20 ms needs the GIF viewer floor.
-      const wholeClipMs = presentationEndUs / 1000;
+      if (presentationEndUs < pendingStartUs!) {
+        throw new RangeError('Invalid GIF presentation end');
+      }
+      // Extend only the final hold when its quantized tail is unrepresentable.
+      // This adds at most 20ms beyond the rounded endpoint (itself within 5ms
+      // of source time), rather than adding a minimum to every input frame.
       await flushPending(
-        wholeClipMs < GIF_MIN_FRAME_DELAY_MS
-          ? Math.max(finalDelayMs, GIF_MIN_FRAME_DELAY_MS - outputTotalDelay * 10)
-          : finalDelayMs
+        Math.max(gifTimeCs(presentationEndUs), pendingStartCs! + GIF_MIN_FRAME_DELAY_CS)
       );
     }
 

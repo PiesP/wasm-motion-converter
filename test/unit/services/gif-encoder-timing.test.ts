@@ -204,7 +204,7 @@ describe('encodeGif timing', () => {
     const delays = mocks.writeFrame.mock.calls.map((call) => call[3]?.delay as number);
     expect(delays.length).toBeLessThanOrEqual(100);
     expect(delays.reduce((total, delay) => total + delay, 0)).toBe(1000);
-    expect(delays.every((delay) => delay >= 10)).toBe(true);
+    expect(delays.every((delay) => delay >= 20)).toBe(true);
   });
 
   it('splits a long final hold within the configured GIF frame-delay limit', async () => {
@@ -230,7 +230,7 @@ describe('encodeGif timing', () => {
     ]);
   });
 
-  it('applies the 20 ms viewer floor only to a whole clip shorter than 20 ms', async () => {
+  it('applies the 20 ms viewer floor to a whole clip shorter than 20 ms', async () => {
     mocks.timedFrames = [{ startUs: 0, endUs: 12_000, color: 1 }];
     mocks.presentationEndUs = 12_000;
 
