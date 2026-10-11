@@ -14,6 +14,16 @@ const NOTICE_TEXT = 'The app has changed. Reload when you are ready.';
 const MAX_METADATA_BYTES = 64 * 1024;
 const SHA = /^[a-f0-9]{40}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
+const CLEANUP_RELEASE_MS = 3_000;
+const CLEANUP_SECOND_ATTEMPT_MS = 61_000;
+const BASELINE_MIME_OBSERVATION_MS = 11_000;
+
+const CLEANUP_CASES = [
+  { id: 'mime', status: 200, contentType: 'text/html', prefix: '<html>' },
+  { id: 'length', status: 200, contentType: 'application/json',
+    contentLength: 65_537, prefix: '{"partial":' },
+  { id: 'status', status: 503, contentType: 'application/json', prefix: '{"unavailable":' },
+];
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -350,6 +360,244 @@ async function baselineBeforeFix(browser, started, bundleRoot, config, validateB
   }
 }
 
+function waitForResponseNumber(records, waiters, number) {
+  if (records.length >= number) return Promise.resolve({ record: records[number - 1] });
+  return new Promise((resolveWait) => {
+    const waiter = { number, resolve: resolveWait };
+    waiter.timer = setTimeout(() => {
+      waiters.splice(waiters.indexOf(waiter), 1);
+      resolveWait({ error: `Metadata response ${number} did not start within 20 seconds` });
+    }, 20_000);
+    waiters.push(waiter);
+  });
+}
+
+async function requireRecord(waiter) {
+  const outcome = await waiter;
+  if (outcome.error) throw new Error(outcome.error);
+  return outcome.record;
+}
+
+async function waitForClosedResponse(record) {
+  if (record.closedAtMs !== null) return true;
+  let timer;
+  const closed = await Promise.race([
+    record.closed.then(() => true),
+    new Promise((resolveWait) => { timer = setTimeout(() => resolveWait(false), CLEANUP_RELEASE_MS); }),
+  ]);
+  clearTimeout(timer);
+  return closed;
+}
+
+function responseSnapshot(record) {
+  return { status: record.status, startedAtMs: record.startedAtMs,
+    closedAtMs: record.closedAtMs, finishedAtMs: record.finishedAtMs,
+    releaseMs: record.closedAtMs === null ? null : record.closedAtMs - record.startedAtMs };
+}
+
+async function observeCleanupCase({ browser, bundleRoot, build, caseSpec, fixed,
+  startStaticServer, closeServer, diagnostics }) {
+  const records = [];
+  const waiters = [];
+  const pageErrors = [];
+  const consoleErrors = [];
+  const failedRequests = [];
+  const failedResponses = [];
+  let started;
+  let context;
+  let page;
+  let primaryError;
+  const result = { build: fixed ? 'fixed' : 'original', case: caseSpec.id,
+    responseBodies: [], signalEvents: [], pageErrors, consoleErrors,
+    failedRequests, failedResponses, cleanupErrors: [] };
+  diagnostics.push(result);
+  try {
+    started = await startStaticServer(bundleRoot, {
+      metadataHandler(request, response) {
+        assert.equal(request.method, 'GET', 'Metadata check changed HTTP method');
+        assert(records.length < 2, 'Unexpected third metadata request');
+        const record = { status: caseSpec.status, startedAtMs: performance.now(),
+          closedAtMs: null, finishedAtMs: null, response };
+        record.closed = new Promise((resolveClose) => {
+          response.once('close', () => { record.closedAtMs = performance.now(); resolveClose(); });
+        });
+        response.once('finish', () => { record.finishedAtMs = performance.now(); });
+        records.push(record);
+        response.writeHead(caseSpec.status, {
+          'Content-Type': caseSpec.contentType,
+          'Cache-Control': 'no-store',
+          ...(caseSpec.contentLength ? { 'Content-Length': String(caseSpec.contentLength) } : {}),
+        });
+        response.write(caseSpec.prefix);
+        for (const waiter of [...waiters]) {
+          if (records.length < waiter.number) continue;
+          clearTimeout(waiter.timer);
+          waiters.splice(waiters.indexOf(waiter), 1);
+          waiter.resolve({ record: records[waiter.number - 1] });
+        }
+      },
+    });
+    await started.setDistribution(build.relativePath);
+    context = await browser.newContext({ locale: 'en-US', serviceWorkers: 'block' });
+    page = await context.newPage();
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('console', (message) => {
+      if (message.type() !== 'error') return;
+      const location = message.location().url;
+      if (caseSpec.id === 'status' && message.text().includes('503') &&
+        (!location || new URL(location).pathname === METADATA_PATH)) return;
+      consoleErrors.push({ text: message.text(), location });
+    });
+    page.on('requestfailed', (request) => {
+      const path = new URL(request.url()).pathname;
+      const error = request.failure()?.errorText ?? 'unknown';
+      if (path === METADATA_PATH && error === 'net::ERR_ABORTED') return;
+      failedRequests.push({ path, error });
+    });
+    page.on('response', (response) => {
+      const path = new URL(response.url()).pathname;
+      if (path === METADATA_PATH && response.status() === caseSpec.status) return;
+      if (response.status() >= 400) failedResponses.push({ path, status: response.status() });
+    });
+    await page.addInitScript(() => {
+      localStorage.setItem('dropconvert.locale', 'en');
+      globalThis.__cleanupFetchSignals = [];
+      globalThis.__cleanupFetchOverflow = false;
+      globalThis.__cleanupCspViolations = [];
+      document.addEventListener('securitypolicyviolation', (event) => {
+        globalThis.__cleanupCspViolations.push(
+          `${event.effectiveDirective}: ${event.blockedURI}`);
+      });
+      const nativeFetch = globalThis.fetch;
+      globalThis.fetch = function (...args) {
+        const input = args[0];
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+        if (url.pathname === '/deployment-state.json') {
+          const signal = args[1]?.signal ?? (input instanceof Request ? input.signal : null);
+          const entry = { startedAtMs: performance.now(), abortedAtMs: null };
+          if (globalThis.__cleanupFetchSignals.length < 8)
+            globalThis.__cleanupFetchSignals.push(entry);
+          else globalThis.__cleanupFetchOverflow = true;
+          signal?.addEventListener('abort', () => { entry.abortedAtMs = performance.now(); },
+            { once: true });
+        }
+        return Reflect.apply(nativeFetch, this, args);
+      };
+    });
+    const firstWait = waitForResponseNumber(records, waiters, 1);
+    const document = await page.goto(started.url, { waitUntil: 'domcontentloaded' });
+    assert.equal(document?.status(), 200);
+    assert.equal(sha256(await document.body()), build.indexSha256,
+      'Cleanup scenario loaded the wrong application artifact');
+    const first = await requireRecord(firstWait);
+    assert.equal(await anyUpdateNotice(page).isVisible(), false,
+      'Rejected metadata announced an update');
+    if (fixed) {
+      assert(await waitForClosedResponse(first),
+        `${caseSpec.id} first rejected metadata body stayed open beyond ${CLEANUP_RELEASE_MS} ms`);
+      assert(first.closedAtMs - first.startedAtMs <= CLEANUP_RELEASE_MS,
+        `${caseSpec.id} first rejected metadata release exceeded ${CLEANUP_RELEASE_MS} ms`);
+      assert.equal(first.finishedAtMs, null, 'Rejected metadata response finished normally');
+    } else if (caseSpec.id === 'mime') {
+      await page.waitForTimeout(Math.max(0,
+        BASELINE_MIME_OBSERVATION_MS - (performance.now() - first.startedAtMs)));
+      result.firstMIMEObservedAfterMs = performance.now() - first.startedAtMs;
+      result.firstMIMEStillOpenAfterDeadline = first.closedAtMs === null;
+    }
+    await page.waitForTimeout(Math.max(0,
+      CLEANUP_SECOND_ATTEMPT_MS - (performance.now() - first.startedAtMs)));
+    assert.equal(records.length, 1, 'Metadata polling occurred without a lifecycle event');
+    const secondWait = waitForResponseNumber(records, waiters, 2);
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    const second = await requireRecord(secondWait);
+    if (fixed) {
+      assert(await waitForClosedResponse(second),
+        `${caseSpec.id} second rejected metadata body stayed open beyond ${CLEANUP_RELEASE_MS} ms`);
+      assert(second.closedAtMs - second.startedAtMs <= CLEANUP_RELEASE_MS,
+        `${caseSpec.id} second rejected metadata release exceeded ${CLEANUP_RELEASE_MS} ms`);
+      assert.equal(second.finishedAtMs, null, 'Rejected metadata response finished normally');
+    } else {
+      await page.waitForTimeout(300);
+    }
+    assert.equal(records.length, 2, 'Lifecycle event did not produce exactly one second request');
+    assert.equal(await anyUpdateNotice(page).isVisible(), false,
+      'Rejected metadata produced an update notice');
+    result.signalEvents = await page.evaluate(() => globalThis.__cleanupFetchSignals);
+    assert.equal(await page.evaluate(() => globalThis.__cleanupFetchOverflow), false);
+    assert.equal(result.signalEvents.length, 2, 'Observed metadata Fetch count differs');
+    if (fixed) assert(result.signalEvents.every((entry) => entry.abortedAtMs !== null),
+      'Fixed app did not abort both rejected metadata Fetch signals');
+    assert.deepEqual(await page.evaluate(() => globalThis.__cleanupCspViolations), []);
+    assert.deepEqual(pageErrors, []);
+    assert.deepEqual(consoleErrors, []);
+    assert.deepEqual(failedRequests, []);
+    assert.deepEqual(failedResponses, []);
+    result.status = 'passed';
+    return result;
+  } catch (error) {
+    primaryError = error;
+    result.error = String(error);
+    throw error;
+  } finally {
+    // The evidence snapshot precedes all cleanup that could close an abandoned body.
+    result.observedAtMs = performance.now();
+    result.responseBodies = records.map(responseSnapshot);
+    result.unfinishedBeforeTeardown = records.filter((record) => record.closedAtMs === null).length;
+    if (page && !result.signalEvents.length) {
+      try { result.signalEvents = await page.evaluate(() => globalThis.__cleanupFetchSignals ?? []); }
+      catch (error) { result.signalCaptureError = String(error); }
+    }
+    if (context) {
+      try { await context.close(); }
+      catch (error) { result.cleanupErrors.push(`context close: ${String(error)}`); }
+    }
+    for (const record of records) {
+      if (!record.response.destroyed) record.response.destroy();
+    }
+    if (started) {
+      try { await closeServer(started.server); }
+      catch (error) { result.cleanupErrors.push(`server close: ${String(error)}`); }
+    }
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve({ error: 'Cleanup scenario ended before response arrived' });
+    }
+    if (primaryError && result.cleanupErrors.length) primaryError.cleanupErrors = [
+      ...(primaryError.cleanupErrors ?? []), ...result.cleanupErrors];
+    if (!primaryError && result.cleanupErrors.length) throw new Error(result.cleanupErrors.join('; '));
+  }
+}
+
+async function observeMetadataCleanup({ browser, bundleRoot, config, buildB,
+  startStaticServer, closeServer, validateBundleFile, diagnostics }) {
+  const original = await readBuild(bundleRoot, config.cleanupBaseline, validateBundleFile,
+    { verifyInventory: true });
+  assert.equal(original.state.sourceSha, config.cleanupBaselineSourceSha,
+    'Cleanup baseline source differs from issue #295 original');
+  assert.equal(original.state.treeSha, config.cleanupBaselineTreeSha,
+    'Cleanup baseline tree differs from issue #295 original');
+  assert.notEqual(original.state.sourceSha, buildB.state.sourceSha,
+    'Cleanup comparison must use distinct original and fixed sources');
+  assert.equal(original.state.version, buildB.state.version);
+  assert.equal(original.workerSha256, buildB.workerSha256,
+    'Cleanup comparison changed service-worker bytes');
+  const observations = [];
+  diagnostics.cleanupResponses = observations;
+  for (const [build, fixed] of [[original, false], [buildB, true]]) {
+    const cases = await Promise.allSettled(CLEANUP_CASES.map((caseSpec) => observeCleanupCase({
+      browser, bundleRoot, build, caseSpec, fixed, startStaticServer, closeServer,
+      diagnostics: observations,
+    })));
+    const failure = cases.find((outcome) => outcome.status === 'rejected');
+    if (failure) throw failure.reason;
+  }
+  return { originalSourceSha: original.state.sourceSha, originalTreeSha: original.state.treeSha,
+    fixedSourceSha: buildB.state.sourceSha, releaseLimitMs: CLEANUP_RELEASE_MS,
+    secondAttemptAfterMs: CLEANUP_SECOND_ATTEMPT_MS,
+    originalMIMEObservationAfterMs: BASELINE_MIME_OBSERVATION_MS,
+    cases: observations };
+}
+
 async function heldFirstMetadata(browser, started, buildA, buildB, outputRoot, artifacts) {
   await started.setDistribution(buildA.relativePath);
   let context;
@@ -458,6 +706,10 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     diagnostics.phase = 'held-first-metadata';
     const heldFirst = await heldFirstMetadata(browser, started, buildA, buildB,
       outputRoot, artifacts);
+
+    diagnostics.phase = 'metadata-cleanup';
+    const metadataCleanup = await observeMetadataCleanup({ browser, bundleRoot, config, buildB,
+      startStaticServer, closeServer, validateBundleFile, diagnostics });
 
     diagnostics.phase = 'equal-identity';
     await started.setDistribution(config.buildA);
@@ -684,6 +936,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
       sourceA: buildA.state.sourceSha, sourceB: buildB.state.sourceSha,
       version: buildA.state.version, workerSha256: buildA.workerSha256,
       baseline, firstInstallNotice: false, equalIdentityNotice: false,
+      metadataCleanup,
       cold: { buildA: coldA, buildB: coldB },
       quietWindowMs: 61_000, equalCadenceMs, busyCadenceMs,
       heldFirst, busyTrigger: 'observed-offline-online', busyNotice: true,
