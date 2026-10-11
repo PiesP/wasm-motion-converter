@@ -242,8 +242,8 @@ async function _runPipelineInner(
     let encodeResult: { outputBytes: number } | null = null;
 
     // Track frame times for FPS calculation
-    // Progress callback fires every ~10 frames (throttled in decoder-service),
-    // so we count actual frames and compute FPS over the interval.
+    // The decoder reports bounded native counts independently of frame selection;
+    // compute rate from observed count advancement over the elapsed interval.
     const fpsTracker = { current: 0, lastTime: performance.now(), lastFrame: 0 };
 
     // estimatedOutputFrames is computed after decimationRatio is determined
@@ -274,8 +274,8 @@ async function _runPipelineInner(
         progress: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
         fps: fpsTracker.current,
         etaSeconds:
-          fpsTracker.current > 0
-            ? Math.max(0, Math.round((demuxResult.totalFrames - frameIdx) / fpsTracker.current))
+          fpsTracker.current > 0 && demuxResult.totalFrames > frameIdx
+            ? Math.ceil((demuxResult.totalFrames - frameIdx) / fpsTracker.current)
             : null,
         memoryMB: sampleMemory(),
         accountedMemoryMB: sampleAccountedMemoryMB(),

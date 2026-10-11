@@ -98,6 +98,113 @@ afterEach(() => {
 });
 
 describe('main conversion pipeline encoder options', () => {
+  it('keeps decode ETA unknown when a measurable stream has no total-frame estimate', async () => {
+    let elapsedMs = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsedMs);
+    mocks.demuxVideo.mockResolvedValueOnce({ ...demuxResult, totalFrames: 0 });
+    mocks.encodeGif.mockImplementationOnce(async (_demux, options) => {
+      elapsedMs = 1_000;
+      options.onFrameDecoded?.(1, 0);
+      options.onEncodingComplete?.({
+        consumedChunks: 1,
+        decodedFrames: 1,
+        selectedFrames: 1,
+        encodedFrames: 1,
+        emittedFrames: 1,
+      });
+      return new Uint8Array([1, 2, 3]);
+    });
+    const onProgress = vi.fn();
+    try {
+      await runConversionPipeline(baseRequest, onProgress);
+      const progress = onProgress.mock.calls.map(([update]) => update);
+      const decoding = progress.find((update) => update.phase === 'decoding');
+      expect(decoding).toMatchObject({
+        decodedFrames: 1,
+        currentFrame: 1,
+        totalFrames: 0,
+        etaSeconds: null,
+      });
+      expect(decoding.fps).toBeGreaterThan(0);
+      expect(Number.isFinite(decoding.fps)).toBe(true);
+      expect(decoding.progress).toBeLessThan(100);
+      expect(progress.at(-1)).toMatchObject({
+        phase: 'assembling',
+        progress: 100,
+        decodedFrames: 1,
+        emittedFrames: 1,
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each(['gif-main', 'webp-serial-canvas', 'webp-wasm'] as const)(
+    'reports finite decode rates and exact terminal counters on %s',
+    async (route) => {
+      if (route === 'webp-serial-canvas') {
+        stubCanvasWebpSupport();
+        vi.stubGlobal('Worker', undefined);
+      } else if (route === 'webp-wasm') {
+        vi.stubGlobal('OffscreenCanvas', undefined);
+        vi.stubGlobal('Worker', undefined);
+      }
+      let elapsedMs = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsedMs);
+      mocks.demuxVideo.mockResolvedValueOnce({ ...demuxResult, totalFrames: 13 });
+      const encoder = route === 'gif-main'
+        ? mocks.encodeGif
+        : route === 'webp-serial-canvas' ? mocks.encodeWebpOffscreen : mocks.encodeWebp;
+      encoder.mockImplementationOnce(async (_demux, options) => {
+        for (const [time, count] of [[100, 1], [250, 7], [450, 13]] as const) {
+          elapsedMs = time;
+          options.onFrameDecoded?.(count, 13);
+        }
+        options.onEncodingComplete?.({
+          consumedChunks: 13,
+          decodedFrames: 13,
+          selectedFrames: 5,
+          encodedFrames: 3,
+          emittedFrames: 2,
+        });
+        return new Uint8Array([1, 2, 3]);
+      });
+      const onProgress = vi.fn();
+      try {
+        await runConversionPipeline(
+          { ...baseRequest, format: route === 'gif-main' ? 'gif' : 'webp' },
+          onProgress
+        );
+        const progress = onProgress.mock.calls.map(([update]) => update);
+        const decoding = progress.filter((update) => update.phase === 'decoding');
+        expect(decoding.map((update) => update.decodedFrames)).toEqual([1, 7, 13]);
+        expect(decoding.at(-1)?.etaSeconds).toBeNull();
+        for (const update of decoding.slice(0, -1)) {
+          expect(Number.isFinite(update.etaSeconds)).toBe(true);
+          expect(update.etaSeconds).toBeGreaterThan(0);
+        }
+        for (const update of decoding) {
+          expect(Number.isFinite(update.fps)).toBe(true);
+          expect(update.fps).toBeGreaterThan(0);
+          expect(update.progress).toBeLessThan(100);
+        }
+        expect(progress.at(-1)).toMatchObject({
+          phase: 'assembling',
+          progress: 100,
+          decodedFrames: 13,
+          selectedFrames: 5,
+          encodedFrames: 3,
+          emittedFrames: 2,
+          currentFrame: 13,
+          outputFrames: 2,
+        });
+        expect(getLastConversionProfileReport()?.encoderRoute).toBe(route);
+      } finally {
+        clock.mockRestore();
+      }
+    }
+  );
+
   it('retains the latest completed development profile for diagnostics', async () => {
     await runConversionPipeline(baseRequest, vi.fn());
 

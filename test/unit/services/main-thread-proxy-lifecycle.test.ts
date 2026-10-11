@@ -327,6 +327,76 @@ describe('runPipelineViaWorker lifecycle', () => {
     });
   });
 
+  it.each(['complete', 'error', 'cancel'] as const)(
+    'ignores late %s progress during the next Worker conversion',
+    async (ending) => {
+      const workerProgress = (decodedFrames: number) => ({
+        type: 'progress' as const,
+        requestId: 'request-1',
+        phase: 'decoding' as const,
+        percent: 30,
+        fps: 10,
+        etaSeconds: 1,
+        memoryMB: null,
+        accountedMemoryMB: 12,
+        decodedFrames,
+        currentFrame: decodedFrames,
+        totalFrames: 13,
+      });
+      const firstOutput = new ArrayBuffer(4);
+      ThrowingWorker.response = [
+        workerProgress(3),
+        ...(ending === 'complete'
+          ? [{ type: 'complete', requestId: 'request-1', outputBuffer: firstOutput, durationMs: 10 }]
+          : ending === 'error'
+            ? [{ type: 'error', requestId: 'request-1', message: 'fixture failure', code: 'DECODER_ERROR' }]
+            : []),
+      ];
+      const firstProgress = vi.fn();
+      const controller = new AbortController();
+      const first = runPipelineViaWorker(
+        new ArrayBuffer(8), validDecoderConfig, validOptions, firstProgress, controller.signal
+      );
+      const priorWorker = ThrowingWorker.instance!;
+      if (ending === 'cancel') {
+        await vi.waitFor(() => expect(firstProgress).toHaveBeenCalledOnce());
+        controller.abort();
+        await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+      } else if (ending === 'error') {
+        await expect(first).rejects.toThrow('Worker error: fixture failure');
+      } else {
+        await expect(first).resolves.toBe(firstOutput);
+      }
+      expect(firstProgress).toHaveBeenCalledOnce();
+
+      const nextOutput = new ArrayBuffer(4);
+      ThrowingWorker.response = [
+        workerProgress(1),
+        {
+          type: 'progress', requestId: 'request-1', phase: 'assembling', percent: 100,
+          fps: 0, etaSeconds: 0, memoryMB: null, accountedMemoryMB: 14,
+          decodedFrames: 13, selectedFrames: 5, emittedFrames: 2, outputFrames: 2,
+        },
+        { type: 'complete', requestId: 'request-1', outputBuffer: nextOutput, durationMs: 10 },
+      ];
+      const nextProgress = vi.fn();
+      const next = runPipelineViaWorker(
+        new ArrayBuffer(8), validDecoderConfig, validOptions, nextProgress
+      );
+      priorWorker.onmessage?.(new MessageEvent('message', { data: workerProgress(99) }));
+      await expect(next).resolves.toBe(nextOutput);
+      expect(firstProgress).toHaveBeenCalledOnce();
+      expect(nextProgress.mock.calls.map(([progress]) => progress.decodedFrames)).toEqual([1, 13]);
+      expect(nextProgress.mock.calls.at(-1)?.[0]).toMatchObject({
+        progress: 100,
+        decodedFrames: 13,
+        selectedFrames: 5,
+        emittedFrames: 2,
+        outputFrames: 2,
+      });
+    }
+  );
+
   it('ignores worker diagnostics that do not belong to the current request', async () => {
     const outputBuffer = new ArrayBuffer(4);
     ThrowingWorker.response = [
