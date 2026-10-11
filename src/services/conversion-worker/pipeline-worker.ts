@@ -382,15 +382,8 @@ export async function runWorkerPipeline(
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
       profiler?.setEncoderRoute('webp-wasm');
 
-      // ── wasm-webp encodeRGB path (primary, most compatible) ──
-      // Uses encodeWebp from webp-encoder-service which invokes
-      // wasm-webp's encodeRGB for each frame, then muxes via
-      // StreamingWebpMuxer. Proven reliable across all quality/scale
-      // combinations.
-      //
-      // NOTE: OffscreenCanvas path (encodeWebpOffscreen) is available
-      // as fallback but disabled by default due to VP8 coded-size vs
-      // ANMF canvas mismatch on certain quality settings.
+      // This Worker helper retains its WASM route. The UI WebP request uses
+      // the main pipeline's probed parallel/serial Canvas and WASM selection.
       if (!output) {
         relayLog('info', 'encoders', '├─ WebP encoder (wasm-webp encodeRGB + mux)', {
           codec: demuxResult.config.codec,

@@ -68,6 +68,7 @@ export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
  */
 export class StreamingWebpMuxer {
   private pending: { bitstream: Uint8Array; startUs: number } | null = null;
+  private lastPresentationStartUs: number | null = null;
   private static readonly VP8_FOURCC = SHARED_VP8_FOURCC;
   private static readonly VP8X_FOURCC = VP8X_FOURCC;
   private static readonly ANIM_MAGIC = 0x414e494d;
@@ -129,10 +130,7 @@ export class StreamingWebpMuxer {
     return this.frameCount;
   }
 
-  private reservePending(bitstream: Uint8Array): void {
-    if (this.frameCount >= this.limits.maxFrames) {
-      throw new OutputLimitError('webp', 'frame', this.limits.maxFrames);
-    }
+  private reservePending(bitstream: Uint8Array, previousBytes: number): void {
     const size =
       this.currentOffset +
       (this.headerWritten ? 0 : StreamingWebpMuxer.HEADER_SIZE) +
@@ -140,7 +138,13 @@ export class StreamingWebpMuxer {
       StreamingWebpMuxer.VP8_CHUNK_OVERHEAD +
       bitstream.length +
       (bitstream.length & 1);
-    if (!Number.isSafeInteger(size) || size > this.limits.maxOutputBytes) {
+    // The previous compressed view can remain live while its replacement is copied.
+    const copyPeakBytes = this.currentOffset + previousBytes + bitstream.length;
+    if (
+      !Number.isSafeInteger(size) ||
+      !Number.isSafeInteger(copyPeakBytes) ||
+      Math.max(size, copyPeakBytes) > this.limits.maxOutputBytes
+    ) {
       throw new OutputLimitError('webp', 'byte', this.limits.maxOutputBytes);
     }
   }
@@ -156,6 +160,10 @@ export class StreamingWebpMuxer {
       throw new RangeError('Invalid WebP presentation interval');
     }
     validateVp8Frame(bitstream, this.width, this.height);
+    if (this.lastPresentationStartUs !== null && timing.startUs <= this.lastPresentationStartUs) {
+      throw new RangeError('WebP presentations are out of order');
+    }
+    this.lastPresentationStartUs = timing.startUs;
     const previous = this.pending;
     if (previous) {
       if (timing.startUs <= previous.startUs)
@@ -171,7 +179,7 @@ export class StreamingWebpMuxer {
         this.emitPending(durationMs);
       }
     }
-    this.reservePending(bitstream);
+    this.reservePending(bitstream, previous?.bitstream.length ?? 0);
     this.pending = { bitstream: new Uint8Array(bitstream), startUs: timing.startUs };
   }
 
@@ -375,14 +383,12 @@ export class StreamingWebpMuxer {
     const view = new DataView(header.buffer, header.byteOffset, header.length);
     view.setUint32(4, riffSize, true);
 
-    // Use Blob constructor to concatenate chunks — browsers optimize
-    // this path to avoid an extra O(N) copy compared to manual set() loop.
+    // Concatenate the owned chunks without assuming a browser-specific copy strategy.
     // Cast through unknown: TS strict mode treats Uint8Array<ArrayBufferLike>
     // as incompatible with BlobPart (ArrayBufferLike includes SharedArrayBuffer).
     const finalizeStart = this.profileOperation ? performance.now() : null;
     const blob = new Blob(this.chunks as unknown as BlobPart[], { type: 'image/webp' });
-    // Release chunk references early — Blob already holds its own references.
-    // This reduces peak memory during arrayBuffer() from ~2x to ~1x final size.
+    // The Blob owns the bytes now; the final allocation guard accounts for both forms.
     this.chunks.length = 0;
     if (finalizeStart !== null)
       this.profileOperation?.('muxFinalization', performance.now() - finalizeStart);
@@ -399,8 +405,8 @@ export class StreamingWebpMuxer {
    *
    * Used when dynamic decimation skips frames at the end of the video:
    * their accumulated duration would otherwise be lost. Reads the existing
-   * ANMF duration (3-byte LE at offset 20), adds `extraMs`, clamps to
-   * 24-bit max (16,777,215 ms), and writes it back in-place.
+   * ANMF duration (3-byte LE at offset 20), adds `extraMs`, and splits
+   * continuations at the 24-bit maximum under the existing output limits.
    */
   padLastFrameDuration(extraMs: number): void {
     if (this.frameCount === 0 || extraMs <= 0) return;
