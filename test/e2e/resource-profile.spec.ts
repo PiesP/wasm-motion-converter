@@ -480,8 +480,8 @@ test.describe('opt-in Chromium resource profile', () => {
     }) => {
       test.slow();
       if (workload.pressure) {
-        // Control only preflight input; Runtime.getHeapUsage/PSS/RSS still measure
-        // the real processes, not this injected performance.memory value.
+        // Control the policy heap input; CDP/PSS/RSS measure the real processes.
+        // Embedded profiler heap fields retain the controlled value.
         await page.addInitScript((pressure) => {
           Object.defineProperty(performance, 'memory', { configurable: true,
             value: { usedJSHeapSize: 8 * 1024 * 1024, totalJSHeapSize: 16 * 1024 * 1024,

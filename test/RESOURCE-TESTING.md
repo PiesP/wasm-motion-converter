@@ -29,7 +29,9 @@ disables Canvas WebP encoding while retaining Canvas pixel-copy support.
 
 Two additional 21-fps GIF workloads compare normal and critical preflight
 pressure with identical input and settings. The injected `performance.memory`
-values select the policy only; each result records those values separately and
+values select the policy and appear in embedded profiler heap fields; the CDP
+resource sampler measures actual renderer heap separately. Each result records
+the controlled values and
 asserts 21 native decoded frames and 20/15 admitted frames. These scenarios
 exercise approximate memory-driven sampling, not representation compression.
 
