@@ -27,6 +27,15 @@ ffmpeg -stream_loop 7 -i public/test-video-ci-high-motion-120fps.mp4 -map 0:v:0 
 The focused profile validates and bundles this task-owned input. It reuses the
 existing video stream without adding a published fixture or dependency.
 
+The focused scenario observes real offline/online events after a 61-second
+quiet period while A tabs remain open and the owned loopback server switches
+to B. It checks the notice during conversion and with a retained download,
+uses normal cancellation and reselection controls, and clicks **Clear result**
+before an explicit reload to B. Both input builds must include that control.
+Cold JavaScript transfer must be positive and below 150,000 bytes in fresh
+service-worker-blocked contexts; metadata request counts and bytes are recorded
+separately.
+
 The Windows packager copies and hashes this whole directory through
 `profile.json`. Keep input source SHAs and distribution digests in the external
 campaign receipt. Do not commit generated distributions or the selector file.
