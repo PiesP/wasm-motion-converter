@@ -12,7 +12,7 @@
 
 import { globalBufferPool } from '@services/buffer-pool';
 import { demuxVideo } from '@services/demuxer-service';
-import { calcAutoDecimation } from '@services/encoder-common';
+import { calcAutoDecimation, type EncoderFrameCounts } from '@services/encoder-common';
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
@@ -33,21 +33,48 @@ import { buildConversionRequest } from './build-conversion-request';
 import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
 import { createWorkerLogRelay } from './worker-log-relay';
 
-// Aligned progress ranges matching main-thread conversion-pipeline.ts
-// demux: 0~3%   decode: 3~73%   encode: 73~93%   assembly: 93~100%
-const { DEMUX_MAX, DECODE_MAX, ENCODE_MAX } = PROGRESS_PHASE;
+// Decode and encode overlap in this streaming route. Their bounded weighted
+// completion fractions share 3~93%; final assembly owns the terminal 100%.
+const { DEMUX_MAX, ENCODE_MAX } = PROGRESS_PHASE;
 const { DECODE_RANGE, ENCODE_RANGE } = PROGRESS_PHASE_RANGES;
+
+interface WorkerRateTracker {
+  current: number;
+  lastTime: number;
+  lastCount: number;
+}
 
 interface WorkerProgressState {
   lastPostTime: number;
-  fpsTracker: { current: number; lastTime: number; lastFrame: number };
+  lastPercent: number;
+  decodeRate: WorkerRateTracker;
+  encodeRate: WorkerRateTracker;
 }
 
+type ObservedFrameCounts = Partial<Record<keyof EncoderFrameCounts, number>>;
+
 function createWorkerProgressTracker(): WorkerProgressState {
+  const now = performance.now();
   return {
-    lastPostTime: 0,
-    fpsTracker: { current: 0, lastTime: performance.now(), lastFrame: 0 },
+    lastPostTime: Number.NEGATIVE_INFINITY,
+    lastPercent: 0,
+    decodeRate: { current: 0, lastTime: now, lastCount: 0 },
+    encodeRate: { current: 0, lastTime: now, lastCount: 0 },
   };
+}
+
+function observeRate(rate: WorkerRateTracker, count: number, now: number): void {
+  const elapsedMs = now - rate.lastTime;
+  const advanced = count - rate.lastCount;
+  if (elapsedMs < 100 || advanced <= 0) return;
+  rate.current = Math.round(((advanced * 1000) / elapsedMs) * 10) / 10;
+  rate.lastTime = now;
+  rate.lastCount = count;
+}
+
+function estimateEta(count: number | undefined, total: number, fps: number): number | null {
+  if (count === undefined || total <= count || fps <= 0) return null;
+  return Math.max(0, Math.ceil((total - count) / fps));
 }
 
 /**
@@ -122,6 +149,101 @@ export async function runWorkerPipeline(
     return memoryMB;
   };
 
+  // This accounts for owned buffers; it is a lower bound, not a heap reading.
+  const decimationMemoryCheck = () => ({
+    usagePercentage: Math.min(100, (sampleMemoryMB() / maxMemoryMB) * 100),
+  });
+  let sourceTotalFrames = 0;
+  let estimatedOutputFrames = 0;
+  let observedCounts: ObservedFrameCounts = {};
+
+  const postProgress = (
+    requestedPhase: 'demuxing' | 'decoding' | 'encoding' | 'assembling',
+    force = false,
+    additionalBytes = 0
+  ): void => {
+    const now = performance.now();
+    if (!force && now - progressState.lastPostTime < 100) return;
+
+    const accountedMemoryMB = assertMemoryBudget(additionalBytes);
+    const decodedFraction =
+      sourceTotalFrames > 0 && observedCounts.decodedFrames !== undefined
+        ? Math.min(1, observedCounts.decodedFrames / sourceTotalFrames)
+        : 0;
+    const encodedFraction =
+      estimatedOutputFrames > 0 && observedCounts.encodedFrames !== undefined
+        ? Math.min(1, observedCounts.encodedFrames / estimatedOutputFrames)
+        : 0;
+    const weightedPercent = Math.min(
+      ENCODE_MAX,
+      DEMUX_MAX + Math.round(decodedFraction * DECODE_RANGE + encodedFraction * ENCODE_RANGE)
+    );
+    const percent =
+      requestedPhase === 'assembling'
+        ? 100
+        : Math.max(
+            progressState.lastPercent,
+            requestedPhase === 'demuxing' ? DEMUX_MAX : weightedPercent
+          );
+    const phase =
+      requestedPhase === 'assembling' || requestedPhase === 'demuxing'
+        ? requestedPhase
+        : observedCounts.encodedFrames === undefined
+          ? 'decoding'
+          : 'encoding';
+    const rate = phase === 'decoding' ? progressState.decodeRate : progressState.encodeRate;
+    const currentFrame =
+      phase === 'encoding' ? observedCounts.encodedFrames : observedCounts.decodedFrames;
+    const totalFrames = phase === 'encoding' ? estimatedOutputFrames : sourceTotalFrames;
+    const etaSeconds =
+      phase === 'assembling'
+        ? 0
+        : phase === 'demuxing'
+          ? null
+          : estimateEta(currentFrame, totalFrames, rate.current);
+
+    progressState.lastPostTime = now;
+    progressState.lastPercent = percent;
+    postMessage({
+      type: 'progress',
+      requestId,
+      phase,
+      percent,
+      fps: phase === 'assembling' || phase === 'demuxing' ? 0 : rate.current,
+      etaSeconds,
+      memoryMB: null,
+      accountedMemoryMB,
+      ...observedCounts,
+      ...(currentFrame !== undefined ? { currentFrame } : {}),
+      ...(totalFrames > 0 ? { totalFrames } : {}),
+      ...(observedCounts.emittedFrames !== undefined
+        ? { outputFrames: observedCounts.emittedFrames }
+        : {}),
+      ...(phase === 'assembling' ? { elapsedMs: Math.round(now - pipelineStart) } : {}),
+    });
+  };
+
+  const toExactOutputBuffer = (bytes: Uint8Array): ArrayBuffer => {
+    if (
+      bytes.buffer instanceof ArrayBuffer &&
+      bytes.byteOffset === 0 &&
+      bytes.byteLength === bytes.buffer.byteLength
+    ) {
+      assertMemoryBudget(bytes.byteLength);
+      return bytes.buffer;
+    }
+
+    // A subarray can retain unrelated output capacity or borrowed WASM memory.
+    // Account for both live views before taking an exact transferable copy.
+    assertMemoryBudget(bytes.buffer.byteLength + bytes.byteLength);
+    const copyStart = profileOperation ? performance.now() : null;
+    const exact = bytes.slice().buffer;
+    if (copyStart !== null) {
+      profileOperation?.('outputCopy', Math.max(0, performance.now() - copyStart));
+    }
+    return exact;
+  };
+
   let demuxSession: Awaited<ReturnType<typeof demuxVideo>> | undefined;
 
   try {
@@ -163,29 +285,15 @@ export async function runWorkerPipeline(
     const demuxResult = await demuxVideo(
       request,
       preComputedMetadata,
-      (estimatedTotalFrames) => {
-        demuxSpan?.update({ frames: estimatedTotalFrames });
-        const now = performance.now();
-        if (now - progressState.lastPostTime >= 100) {
-          progressState.lastPostTime = now;
-          const memoryMB = assertMemoryBudget();
-          postMessage({
-            type: 'progress',
-            requestId,
-            phase: 'demuxing',
-            percent: DEMUX_MAX,
-            fps: 0,
-            etaSeconds: 0,
-            memoryMB,
-            currentFrame: estimatedTotalFrames,
-            totalFrames: estimatedTotalFrames,
-          });
-        }
+      (_estimatedTotalFrames) => {
+        // Media metadata is an estimate, not a count of consumed chunks.
+        postProgress('demuxing');
       },
       signal
     );
     demuxSession = demuxResult;
-    demuxSpan?.end({ frames: demuxResult.totalFrames });
+    sourceTotalFrames = demuxResult.totalFrames;
+    demuxSpan?.end();
 
     const cfg = demuxResult.config;
     const dims = resolveVideoDimensions({ ...cfg, rotation: demuxResult.rotation });
@@ -201,56 +309,28 @@ export async function runWorkerPipeline(
         ? demuxResult.framerate
         : DEFAULT_FPS;
 
-    // estimatedOutputFrames is computed after decimation is determined
-    let estimatedOutputFrames = 1;
-    let observedDecodedFrames = 0;
-    let observedEncodedFrames = 0;
-
-    const decodeProgressCb = (frameIdx: number, _totalFrames: number) => {
-      observedDecodedFrames = Math.max(observedDecodedFrames, frameIdx);
-      transcodeSpan?.update({ decodedFrames: frameIdx });
-      const now = performance.now();
-      const deltaMs = now - progressState.fpsTracker.lastTime;
-      const framesDelta = frameIdx - progressState.fpsTracker.lastFrame;
-      progressState.fpsTracker.current =
-        deltaMs > 0 && framesDelta > 0 ? Math.round(((framesDelta * 1000) / deltaMs) * 10) / 10 : 0;
-      progressState.fpsTracker.lastTime = now;
-      progressState.fpsTracker.lastFrame = frameIdx;
-
-      // Throttle progress posts to ~100ms
-      if (now - progressState.lastPostTime >= 100) {
-        progressState.lastPostTime = now;
-        const memoryMB = assertMemoryBudget();
-        const decodePct =
-          estimatedOutputFrames > 0
-            ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)
-            : 0;
-        postMessage({
-          type: 'progress',
-          requestId,
-          phase: 'decoding',
-          percent: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
-          fps: progressState.fpsTracker.current,
-          etaSeconds:
-            progressState.fpsTracker.current > 0
-              ? Math.round((estimatedOutputFrames - frameIdx) / progressState.fpsTracker.current)
-              : 0,
-          memoryMB,
-          currentFrame: frameIdx,
-          totalFrames: estimatedOutputFrames,
-          outputFrames: estimatedOutputFrames,
-        });
-      }
-    };
-
     const transcodeSpan = profiler?.begin('transcoding');
-    const recordCompletedFrameCounts = (counts: {
-      decodedFrames: number;
-      encodedFrames: number;
-    }): void => {
-      observedDecodedFrames = counts.decodedFrames;
-      observedEncodedFrames = counts.encodedFrames;
-      transcodeSpan?.update(counts);
+    const decodeProgressCb = (decodedFrames: number, _totalFrames: number): void => {
+      observedCounts.decodedFrames = decodedFrames;
+      transcodeSpan?.update({ decodedFrames });
+      observeRate(progressState.decodeRate, decodedFrames, performance.now());
+      postProgress('decoding');
+    };
+    const encodedProgressCb = (encodedFrames: number): void => {
+      observedCounts.encodedFrames = encodedFrames;
+      transcodeSpan?.update({ encodedFrames });
+      observeRate(progressState.encodeRate, encodedFrames, performance.now());
+      postProgress('encoding');
+    };
+    const recordCompletedFrameCounts = (counts: EncoderFrameCounts): void => {
+      observedCounts = {
+        decodedFrames: counts.decodedFrames,
+        encodedFrames: counts.encodedFrames,
+        ...(counts.consumedChunks !== undefined ? { consumedChunks: counts.consumedChunks } : {}),
+        ...(counts.selectedFrames !== undefined ? { selectedFrames: counts.selectedFrames } : {}),
+        ...(counts.emittedFrames !== undefined ? { emittedFrames: counts.emittedFrames } : {}),
+      };
+      transcodeSpan?.update(observedCounts);
     };
 
     if (options.format === 'gif') {
@@ -260,6 +340,7 @@ export async function runWorkerPipeline(
         options.forceDecimation
       );
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / gifDecimation));
+      profiler?.setEncoderRoute('gif-worker');
 
       relayLog('info', 'encoders', '├─ GIF encoder (streaming decode→encode)', {
         codec: demuxResult.config.codec,
@@ -279,6 +360,7 @@ export async function runWorkerPipeline(
           scale: options.scale,
           frameDecimation: gifDecimation,
           smartFrameSkip: options.smartFrameSkip,
+          decimationMemoryCheck,
           onEncodingComplete: recordCompletedFrameCounts,
           profileOperation,
           profileCopyPath,
@@ -286,41 +368,11 @@ export async function runWorkerPipeline(
           maxOutputBytes: request.maxOutputBytes,
           assertAdditionalMemoryBytes: assertMemoryBudget,
           onFrameDecoded: decodeProgressCb,
-          onFrameEncoded: (encodedFrameCount: number, _totalFrames: number) => {
-            observedEncodedFrames = Math.max(observedEncodedFrames, encodedFrameCount);
-            transcodeSpan?.update({ encodedFrames: encodedFrameCount });
-            const now = performance.now();
-            if (now - progressState.lastPostTime >= 100) {
-              progressState.lastPostTime = now;
-              const memoryMB = assertMemoryBudget();
-              const encodePct =
-                estimatedOutputFrames > 0
-                  ? Math.round((encodedFrameCount / estimatedOutputFrames) * ENCODE_RANGE)
-                  : 0;
-              postMessage({
-                type: 'progress',
-                requestId,
-                phase: 'encoding',
-                percent: DECODE_MAX + Math.min(ENCODE_RANGE, encodePct),
-                fps: progressState.fpsTracker.current,
-                etaSeconds:
-                  progressState.fpsTracker.current > 0
-                    ? Math.round(
-                        (estimatedOutputFrames - encodedFrameCount) /
-                          progressState.fpsTracker.current
-                      )
-                    : 0,
-                memoryMB,
-                currentFrame: encodedFrameCount,
-                totalFrames: estimatedOutputFrames,
-                outputFrames: estimatedOutputFrames,
-              });
-            }
-          },
+          onFrameEncoded: encodedProgressCb,
         },
         signal
       );
-      output = gifResult.buffer as ArrayBuffer;
+      output = toExactOutputBuffer(gifResult);
     } else {
       const webpDecimation = calcAutoDecimation(
         sourceFps,
@@ -328,6 +380,7 @@ export async function runWorkerPipeline(
         options.forceDecimation
       );
       estimatedOutputFrames = Math.max(1, Math.ceil(demuxResult.totalFrames / webpDecimation));
+      profiler?.setEncoderRoute('webp-wasm');
 
       // ── wasm-webp encodeRGB path (primary, most compatible) ──
       // Uses encodeWebp from webp-encoder-service which invokes
@@ -357,52 +410,26 @@ export async function runWorkerPipeline(
             scale: options.scale,
             frameDecimation: webpDecimation,
             smartFrameSkip: options.smartFrameSkip,
+            decimationMemoryCheck,
             onEncodingComplete: recordCompletedFrameCounts,
             profileOperation,
             profileCopyPath,
             maxFrames: request.maxFrames,
             maxOutputBytes: request.maxOutputBytes,
             onFrameDecoded: decodeProgressCb,
+            onFrameEncoded: encodedProgressCb,
           },
-          (p) => {
-            observedEncodedFrames = Math.max(observedEncodedFrames, p.currentFrame ?? 0);
-            transcodeSpan?.update({ encodedFrames: p.currentFrame ?? 0 });
-            const now = performance.now();
-            if (now - progressState.lastPostTime >= 100) {
-              progressState.lastPostTime = now;
-              const memoryMB = assertMemoryBudget();
-              const encodePct =
-                estimatedOutputFrames > 0
-                  ? Math.round(((p.currentFrame ?? 0) / estimatedOutputFrames) * ENCODE_RANGE)
-                  : 0;
-              postMessage({
-                type: 'progress',
-                requestId,
-                phase: 'encoding',
-                percent: Math.min(ENCODE_MAX, DECODE_MAX + encodePct),
-                fps: progressState.fpsTracker.current,
-                etaSeconds:
-                  progressState.fpsTracker.current > 0 && p.currentFrame != null
-                    ? Math.round(
-                        (estimatedOutputFrames - p.currentFrame) / progressState.fpsTracker.current
-                      )
-                    : 0,
-                memoryMB,
-                currentFrame: p.currentFrame ?? 0,
-                totalFrames: estimatedOutputFrames,
-                outputFrames: estimatedOutputFrames,
-              });
-            }
-          },
+          // The legacy encoder progress count can represent muxed frames after
+          // hold splitting, so only its explicit producer callback is counted.
+          () => undefined,
           signal
         );
-        output = webpResult.buffer as ArrayBuffer;
+        output = toExactOutputBuffer(webpResult);
       }
     }
 
     transcodeSpan?.end({
-      decodedFrames: Math.max(observedDecodedFrames, observedEncodedFrames),
-      encodedFrames: observedEncodedFrames,
+      ...observedCounts,
       outputBytes: output?.byteLength ?? 0,
     });
 
@@ -415,21 +442,7 @@ export async function runWorkerPipeline(
       throw new Error('Worker pipeline completed without producing output');
     }
 
-    const totalElapsedMs = Math.round(performance.now() - pipelineStart);
-    const memoryMB = assertMemoryBudget(output.byteLength);
-    postMessage({
-      type: 'progress',
-      requestId,
-      phase: 'assembling',
-      percent: 100,
-      fps: 0,
-      etaSeconds: 0,
-      memoryMB,
-      currentFrame: demuxResult.totalFrames,
-      totalFrames: demuxResult.totalFrames,
-      outputFrames: estimatedOutputFrames,
-      elapsedMs: totalElapsedMs,
-    });
+    postProgress('assembling', true, output.byteLength);
 
     finalizationSpan?.end();
     const profile = profiler?.finish();

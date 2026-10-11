@@ -184,7 +184,12 @@ describe('isWorkerResponse', () => {
     phase: 'encoding',
     percent: 50,
     fps: 24,
-    memoryMB: 256,
+    memoryMB: null,
+    accountedMemoryMB: 256,
+    consumedChunks: 30,
+    decodedFrames: 28,
+    selectedFrames: 10,
+    encodedFrames: 9,
     etaSeconds: 10,
   };
 
@@ -196,22 +201,43 @@ describe('isWorkerResponse', () => {
   };
 
   const validProfile = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     totalDurationMs: 5000,
-    heapStartMB: 0,
-    heapEndMB: 0,
-    heapPeakMB: 0,
+    heapStartMB: null,
+    heapEndMB: null,
+    heapPeakMB: null,
+    encoderRoute: 'gif-worker',
     stages: [
       {
         stage: 'demuxing',
         startMs: 0,
         endMs: 10,
         durationMs: 10,
-        heapStartMB: 0,
-        heapEndMB: 0,
-        heapPeakMB: 0,
-        framesProcessed: 30,
-        fps: 3000,
+        heapStartMB: null,
+        heapEndMB: null,
+        heapPeakMB: null,
+        framesProcessed: null,
+        fps: null,
+      },
+      {
+        stage: 'transcoding',
+        startMs: 10,
+        endMs: 4000,
+        durationMs: 3990,
+        heapStartMB: null,
+        heapEndMB: null,
+        heapPeakMB: null,
+        mode: 'streaming-decode-encode',
+        attribution: 'combined',
+        consumedChunks: 30,
+        decodedFrames: 28,
+        selectedFrames: 10,
+        encodedFrames: 9,
+        emittedFrames: 8,
+        decodeFps: 7,
+        encodeFps: 2,
+        outputBytes: 1024,
+        throughputMBps: 0.25,
       },
     ],
     operationTotals: {
@@ -222,10 +248,15 @@ describe('isWorkerResponse', () => {
       gifQuantization: { wallMs: 0, samples: 0 },
       gifPaletteMapping: { wallMs: 0, samples: 0 },
       gifFrameWrite: { wallMs: 0, samples: 0 },
+      webpEncoding: { wallMs: 0, samples: 0 },
+      encoderQueueWait: { wallMs: 0, samples: 0 },
+      webpMuxing: { wallMs: 0, samples: 0 },
+      muxFinalization: { wallMs: 0, samples: 0 },
+      outputCopy: { wallMs: 0, samples: 0 },
     },
     copyPathCounts: { RGBX: 0, RGBA: 0, BGRA: 0, BGRX: 0, canvas: 0, unknown: 0 },
-    stageWallTimePct: { demuxing: 0.2, transcoding: 0, finalizing: 0 },
-    dominantStage: 'demuxing',
+    stageWallTimePct: { demuxing: 0.2, transcoding: 79.8, finalizing: 0 },
+    dominantStage: 'transcoding',
     summary: '[5000ms total]',
   };
 
@@ -246,6 +277,18 @@ describe('isWorkerResponse', () => {
 
   it('accepts valid progress message', () => {
     expect(isWorkerResponse(validProgress)).toBe(true);
+    expect(isWorkerResponse({ ...validProgress, etaSeconds: null })).toBe(true);
+  });
+
+  it('rejects invalid progress phases, bounds, and optional counts', () => {
+    expect(isWorkerResponse({ ...validProgress, phase: 'uploading' })).toBe(false);
+    expect(isWorkerResponse({ ...validProgress, percent: -1 })).toBe(false);
+    expect(isWorkerResponse({ ...validProgress, percent: 101 })).toBe(false);
+    expect(isWorkerResponse({ ...validProgress, etaSeconds: -1 })).toBe(false);
+    expect(isWorkerResponse({ ...validProgress, accountedMemoryMB: Number.NaN })).toBe(false);
+    expect(isWorkerResponse({ ...validProgress, decodedFrames: 2.5 })).toBe(false);
+    expect(isWorkerResponse({ ...validProgress, emittedFrames: -1 })).toBe(false);
+    expect(isWorkerResponse({ ...validProgress, elapsedMs: Number.POSITIVE_INFINITY })).toBe(false);
   });
 
   it('accepts valid complete message', () => {
@@ -333,6 +376,39 @@ describe('isWorkerResponse', () => {
       isWorkerResponse({
         ...validComplete,
         profile: { ...validProfile, dominantStage: 'decoding' },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: { ...validProfile, encoderRoute: 'webp-unknown' },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: { ...validProfile, heapPeakMB: Number.NaN },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: {
+          ...validProfile,
+          stages: [
+            validProfile.stages[0],
+            { ...validProfile.stages[1], consumedChunks: 2.5 },
+          ],
+        },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        ...validComplete,
+        profile: {
+          ...validProfile,
+          stages: [validProfile.stages[0], { ...validProfile.stages[1], outputBytes: -1 }],
+        },
       })
     ).toBe(false);
     expect(

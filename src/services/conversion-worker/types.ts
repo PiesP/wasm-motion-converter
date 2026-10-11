@@ -39,8 +39,11 @@ export type WorkerResponse =
       requestId: string;
       phase: 'demuxing' | 'decoding' | 'encoding' | 'assembling';
       percent: number;
+      /** Rate for the currently reported decode or encode count. */
       fps: number;
+      /** Measured JS heap is unavailable inside this Worker. */
       memoryMB: number | null;
+      /** Conversion-owned input, pool, and output estimate, separate from JS heap. */
       accountedMemoryMB?: number;
       consumedChunks?: number;
       decodedFrames?: number;
@@ -48,7 +51,9 @@ export type WorkerResponse =
       encodedFrames?: number;
       emittedFrames?: number;
       currentFrame?: number;
+      /** Source or output planning denominator; VFR media may differ. */
       totalFrames?: number;
+      /** Physical emitted frames, only after an encoder reports the exact count. */
       outputFrames?: number | undefined;
       etaSeconds: number | null;
       elapsedMs?: number | undefined;
