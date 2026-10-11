@@ -79,6 +79,15 @@ async function readMetadata(response: Response, expectedUrl: string): Promise<st
   return metadata.sourceSha as string;
 }
 
+function releaseResponse(response: Response): void {
+  if (!response.body || response.body.locked) return;
+  try {
+    void response.body.cancel().catch(() => {});
+  } catch {
+    /* Cleanup must not replace the metadata failure. */
+  }
+}
+
 /** Observe the current deployment at bounded, user-driven page lifecycle points. */
 export function observeDeploymentUpdates({
   sourceSha,
@@ -135,7 +144,17 @@ export function observeDeploymentUpdates({
         redirect: 'error',
         mode: 'same-origin',
         signal: requestController.signal,
-      }).then((response) => readMetadata(response, url.href));
+      }).then(async (response) => {
+        try {
+          if (requestController.signal.aborted)
+            throw new Error('Deployment metadata request was cancelled');
+          return await readMetadata(response, url.href);
+        } catch (error) {
+          requestController.abort();
+          releaseResponse(response);
+          throw error;
+        }
+      });
     } catch (error) {
       request = Promise.reject(error);
     }
@@ -152,6 +171,7 @@ export function observeDeploymentUpdates({
       })
       .catch(() => {
         /* Offline, malformed, and unavailable metadata are unknown. */
+        requestController.abort();
       })
       .finally(() => {
         if (token !== generation) return;
