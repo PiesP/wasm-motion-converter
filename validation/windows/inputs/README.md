@@ -17,6 +17,16 @@ service workers before running the browser scenario. It also verifies the
 baseline source and tree identities, every listed inventory file's size and
 hash, and the `_headers` digest.
 
+For the active-conversion cancellation case, prepare the ignored 24-second input
+from the existing three-second high-motion fixture at the repository root:
+
+```sh
+ffmpeg -stream_loop 7 -i public/test-video-ci-high-motion-120fps.mp4 -map 0:v:0 -c:v copy -an -movflags +faststart validation/windows/inputs/cancel-high-motion.mp4
+```
+
+The focused profile validates and bundles this task-owned input. It reuses the
+existing video stream without adding a published fixture or dependency.
+
 The Windows packager copies and hashes this whole directory through
 `profile.json`. Keep input source SHAs and distribution digests in the external
 campaign receipt. Do not commit generated distributions or the selector file.

@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
-const HIGH_MOTION_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
+const HIGH_MOTION_FIXTURE = 'validation/windows/inputs/cancel-high-motion.mp4';
 const METADATA_PATH = '/deployment-state.json';
 const NOTICE_TEXT = 'The app has changed. Reload when you are ready.';
 const MAX_METADATA_BYTES = 64 * 1024;
