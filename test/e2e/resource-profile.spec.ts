@@ -327,7 +327,13 @@ async function runMeasuredConversion(
   ).toBe(profile!.operationTotals.pixelCopy.samples);
   const transcoding = profile!.stages.find((stage) => stage.stage === 'transcoding') ?? null;
   expect(transcoding).not.toBeNull();
-  for (const count of ['consumedChunks', 'decodedFrames', 'selectedFrames', 'encodedFrames', 'emittedFrames'] as const) {
+  if (profile!.encoderRoute === 'webp-serial-canvas') {
+    expect(transcoding!.consumedChunks).toBeNull();
+  } else {
+    expect(Number.isSafeInteger(transcoding!.consumedChunks)).toBe(true);
+    expect(transcoding!.consumedChunks).toBeGreaterThan(0);
+  }
+  for (const count of ['decodedFrames', 'selectedFrames', 'encodedFrames', 'emittedFrames'] as const) {
     expect(Number.isSafeInteger(transcoding![count])).toBe(true);
     expect(transcoding![count]).toBeGreaterThan(0);
   }
@@ -449,9 +455,15 @@ test.describe('opt-in Chromium resource profile', () => {
       test.slow();
       if (workload.backend) {
         await page.addInitScript((backend) => {
-          Object.defineProperty(globalThis, backend === 'wasm' ? 'OffscreenCanvas' : 'Worker', {
-            configurable: true, value: undefined,
-          });
+          if (backend === 'wasm') {
+            Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+              configurable: true, value: undefined,
+            });
+          } else {
+            Object.defineProperty(globalThis, 'Worker', {
+              configurable: true, value: undefined,
+            });
+          }
         }, workload.backend);
       }
       await page.goto('/');

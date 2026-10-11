@@ -20,10 +20,12 @@ cadence contract.
 
 The profile also measures GIF/WebP high-motion workloads and small VFR WebP
 conversions through automatic routing, serial Canvas, and WASM. Each record
-retains the observed encoder route and exact consumed packet, decoded, selected,
-encoded, and emitted frame counts. Backend overrides belong only to the two
+retains the observed encoder route and exact decoded, selected, encoded, and
+emitted frame counts. Consumed packet counts remain null when the serial Canvas
+decoder does not expose them. Backend overrides belong only to the two
 explicit fallback measurements. Cold initialization is recorded separately from
-the five warmed conversions; it is excluded from leak slopes.
+the five warmed conversions; it is excluded from leak slopes. The WASM override
+disables Canvas WebP encoding while retaining Canvas pixel-copy support.
 
 `cfr-trim-gif` remains a separate output-contract test; it is not the current
 resource-profile workload. Measurements from the older `cfr-trim-gif` profile
