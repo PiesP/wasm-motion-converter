@@ -171,7 +171,10 @@ registration script and source metadata revalidate. A top-level `404.html`
 prevents missing JavaScript/CSS/WASM URLs becoming successful SPA documents.
 Static `_headers` supplies CSP and isolation without a global Pages Function;
 check document, redirects, errors, both workers, WASM and offline recovery when
-changing it. Pages Web Analytics injection is disabled at the project: build
+changing it. Pages may omit ETag on a 304 response. Deployment checks require
+the 200 validator, a matching empty 304, an unmatched 200 with identical bytes,
+and the security/cache policy on each response; a returned 304 ETag must match.
+Pages Web Analytics injection is disabled at the project: build
 processing cannot remove scripts injected later. The application does not ship
 inline scripts or load external runtime code. Legacy provider CSP hashes are
 retained until their original script is identified and removal is separately

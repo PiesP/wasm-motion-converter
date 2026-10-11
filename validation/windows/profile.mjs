@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.mjs';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
@@ -1839,14 +1839,12 @@ async function loadPublicTargets(bundleRoot) {
 async function exercisePublicTarget(browser, target, targetIndex, fixturePath, cancellationFixture, outputRoot, artifacts) {
   const publicDir = `public-${targetIndex + 1}-${target.deploymentId}`;
   const publicRoot = join(outputRoot, publicDir);
-  await mkdir(publicRoot, { recursive: true });
   const publicArtifacts = [];
-  const context = await browser.newContext({
-    acceptDownloads: true, locale: 'en-US', serviceWorkers: 'block',
-    viewport: { width: 1280, height: 900 },
-  });
-  const page = await context.newPage();
+  let context;
+  let primaryFailure;
+  let closeFailure;
   const errors = { page: [], console: [], request: [], csp: [], uploads: [], external: [] };
+  const browserInternalRequests = [];
   const assets = new Map();
   const workers = [];
   const origin = new URL(target.url).origin;
@@ -1872,31 +1870,49 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
       }));
     };
   };
-  page.on('worker', (worker) => workers.push(new URL(worker.url()).pathname));
-  page.on('pageerror', (error) => errors.page.push(error.message));
-  page.on('console', (message) => {
-    if (message.type() === 'error') errors.console.push(message.text());
-  });
-  context.on('requestfailed', (request) => {
-    if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED') return;
-    errors.request.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`);
-  });
-  context.on('request', (request) => {
-    if (!['GET', 'HEAD'].includes(request.method())) errors.uploads.push(`${request.method()} ${request.url()}`);
-    if (!request.url().startsWith('blob:') && new URL(request.url()).origin !== new URL(target.url).origin)
-      errors.external.push(request.url());
-  });
-  context.on('response', (response) => {
-    const path = new URL(response.url()).pathname;
-    if (/^\/assets\/.*\.(?:js|css|wasm)$/.test(path)) assets.set(path, response);
-  });
-  await context.addInitScript(() => {
-    globalThis.__wmcPublicViolations = [];
-    document.addEventListener('securitypolicyviolation', (event) => {
-      globalThis.__wmcPublicViolations.push(`${event.effectiveDirective}: ${event.blockedURI}`);
-    });
-  });
   try {
+    await mkdir(publicRoot, { recursive: true });
+    context = await browser.newContext({
+      acceptDownloads: true, locale: 'en-US', serviceWorkers: 'block',
+      viewport: { width: 1280, height: 900 },
+    });
+    const page = await context.newPage();
+    page.on('worker', (worker) => workers.push(new URL(worker.url()).pathname));
+    page.on('pageerror', (error) => errors.page.push(error.message));
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.console.push(message.text());
+    });
+    context.on('requestfailed', (request) => {
+      if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED') return;
+      errors.request.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`);
+    });
+    context.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.protocol === 'edge:' && ['downloads-hub', 'resources', 'fileicon'].includes(url.hostname)) {
+        browserInternalRequests.push(`${url.protocol}//${url.hostname}${url.pathname}`);
+        return;
+      }
+      if (!['GET', 'HEAD'].includes(request.method())) errors.uploads.push(`${request.method()} ${request.url()}`);
+      if (!request.url().startsWith('blob:') && url.origin !== origin)
+        errors.external.push(request.url());
+    });
+    context.on('response', (response) => {
+      const path = new URL(response.url()).pathname;
+      if (/^\/assets\/.*\.(?:js|css|wasm)$/.test(path)) {
+        const snapshot = { url: response.url(), status: response.status(), headers: response.headers() };
+        // Preserve bodies before later navigation invalidates their CDP request IDs.
+        assets.set(path, response.body().then(
+          (bytes) => ({ ...snapshot, bytes }),
+          (error) => ({ ...snapshot, error: String(error) })
+        ));
+      }
+    });
+    await context.addInitScript(() => {
+      globalThis.__wmcPublicViolations = [];
+      document.addEventListener('securitypolicyviolation', (event) => {
+        globalThis.__wmcPublicViolations.push(`${event.effectiveDirective}: ${event.blockedURI}`);
+      });
+    });
     const metadataResponse = await context.request.get(new URL('/deployment-state.json', target.url).href,
       { maxRedirects: 0 });
     assert.equal(metadataResponse.status(), 200, 'Public deployment metadata is unavailable');
@@ -2048,13 +2064,14 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     assert(wasmAssets.length > 0, 'Public WebP fallback loaded no WASM');
     assert(firstWebpTraffic.networkAssetRequests.some((request) => request.path.endsWith('.wasm')),
       'Public WebP traffic did not record its WASM request');
-    for (const [, response] of assets) {
-      assert.equal(response.status(), 200, `Executable ${response.url()} status`);
-      const path = new URL(response.url()).pathname;
+    for (const [path, pending] of assets) {
+      const response = await pending;
+      assert(!response.error, `Executable ${path} body capture failed: ${response.error}`);
+      assert.equal(response.status, 200, `Executable ${response.url} status`);
       const type = path.endsWith('.wasm') ? /^application\/wasm\b/i :
         path.endsWith('.css') ? /^text\/css\b/i : /^(?:text|application)\/javascript\b/i;
-      assert.match(response.headers()['content-type'] ?? '', type, `Executable ${path} MIME`);
-      const bytes = await response.body();
+      assert.match(response.headers['content-type'] ?? '', type, `Executable ${path} MIME`);
+      const bytes = response.bytes;
       assert(bytes.length > 0, `Executable ${path} has no body`);
       assert(!/^\s*<!doctype html/i.test(bytes.subarray(0, 256).toString('utf8')),
         `Executable ${path} is an HTML fallback`);
@@ -2069,7 +2086,7 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     ];
     assert.deepEqual(errors, { page: [], console: [], request: [], csp: [], uploads: [], external: [] });
     artifacts.push(...publicArtifacts.map((artifact) => ({
-      ...artifact, file: `${publicDir}/${artifact.file}`,
+      ...artifact, file: `${publicDir}-${artifact.file}`,
     })));
     return { id: 'public-source-bound-smoke', status: 'passed', deploymentId: target.deploymentId,
       url: target.url, sourceSha: target.sourceSha, metadata: {
@@ -2080,13 +2097,29 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
       workerPaths: workers, wasmPaths: wasmAssets.map(([path]) => path), cancellation,
       gif: { bytes: gifBytes.length, sha256: sha256(gifBytes) },
       webp: { bytes: webpBytes.length, sha256: sha256(webpBytes) },
+      browserInternalRequests,
     };
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
+    try { await context?.close(); }
+    catch (error) { closeFailure = error; }
     await writeFile(join(publicRoot, 'diagnostics.json'), JSON.stringify({
       target: target.url, sourceSha: target.sourceSha, deploymentId: target.deploymentId,
-      errors, observedAssets: [...assets.keys()], workers,
+      errors, observedAssets: [...assets.keys()], workers, browserInternalRequests,
+      failure: primaryFailure ? String(primaryFailure) : null,
+      cleanupErrors: closeFailure ? [String(closeFailure)] : [],
     }, null, 2)).catch(() => {});
-    await context.close();
+    // The shared guest collector reads flat output files, including failures.
+    // Keep each target's namespace while preserving every generated byte.
+    const files = await readdir(publicRoot, { withFileTypes: true });
+    assert(files.every((file) => file.isFile()), 'Public evidence contains a nested directory');
+    for (const file of files) {
+      await rename(join(publicRoot, file.name), join(outputRoot, `${publicDir}-${file.name}`));
+    }
+    await rmdir(publicRoot);
+    if (closeFailure && !primaryFailure) throw closeFailure;
   }
 }
 
