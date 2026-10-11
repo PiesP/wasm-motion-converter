@@ -74,6 +74,20 @@ function anyUpdateNotice(page) {
   });
 }
 
+// Attach both outcomes immediately: an earlier assertion may close the page
+// before the awaited response arrives.
+export function captureResponseWait(page, predicate, timeout) {
+  return page.waitForResponse(predicate, { timeout }).then(
+    (response) => ({ response }), (error) => ({ error })
+  );
+}
+
+async function requireResponse(waiter) {
+  const outcome = await waiter;
+  if (outcome.error) throw outcome.error;
+  return outcome.response;
+}
+
 async function startGif(page, fixture, { highMotion = false } = {}) {
   await page.locator('#file-upload').setInputFiles(fixture);
   await page.getByRole('radiogroup', { name: 'Output Format' })
@@ -212,13 +226,13 @@ async function measureColdTransfer(browser, started, build) {
   try {
     context = await browser.newContext({ serviceWorkers: 'block', locale: 'en-US' });
     const page = await context.newPage();
-    const metadataResponse = page.waitForResponse((response) =>
-      new URL(response.url()).pathname === METADATA_PATH, { timeout: 20_000 });
+    const metadataResponse = captureResponseWait(page, (response) =>
+      new URL(response.url()).pathname === METADATA_PATH, 20_000);
     const document = await page.goto(started.url);
     assert.equal(document?.status(), 200);
     assert.equal(sha256(await document.body()), build.indexSha256,
       'Cold tab did not load expected HTML');
-    const metadata = await metadataResponse;
+    const metadata = await requireResponse(metadataResponse);
     assert.equal(metadata.status(), 200, 'Cold metadata request failed');
     const metadataBytes = await metadata.body();
     assert.equal(JSON.parse(metadataBytes.toString('utf8')).sourceSha, build.state.sourceSha,
@@ -364,12 +378,12 @@ async function heldFirstMetadata(browser, started, buildA, buildB, outputRoot, a
       'A first install announced an update before receiving metadata');
     const before = await page.evaluate(() => performance.timeOrigin);
     await started.setDistribution('dist');
-    const metadata = page.waitForResponse((response) =>
+    const metadata = captureResponseWait(page, (response) =>
       new URL(response.url()).pathname === METADATA_PATH && response.status() === 200,
-    { timeout: 10_000 });
+    10_000);
     release();
     release = undefined;
-    assert.equal((await (await metadata).json()).sourceSha, buildB.state.sourceSha,
+    assert.equal((await (await requireResponse(metadata)).json()).sourceSha, buildB.state.sourceSha,
       'Held first request did not receive B metadata');
     await updateNotice(page).waitFor({ state: 'visible', timeout: 10_000 });
     assert.equal(await page.evaluate(() => performance.timeOrigin), before,
@@ -405,6 +419,8 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
   let started;
   let resultContext;
   let busyContext;
+  let resultPage;
+  let busyPage;
   let primaryError;
   try {
     const [buildA, buildB, smallFixture, highMotionFixture] = await Promise.all([
@@ -440,20 +456,20 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     const coldA = await measureColdTransfer(browser, started, buildA);
     resultContext = await browser.newContext({ acceptDownloads: true, locale: 'en-US',
       viewport: { width: 1280, height: 800 } });
-    const resultPage = await resultContext.newPage();
+    resultPage = await resultContext.newPage();
     const resultRecord = { origin: new URL(started.url).origin,
       pageErrors: [], consoleErrors: [], failedRequests: [], failedResponses: [], uploads: [], external: [],
       metadataRequests: [], metadataResponses: [], metadataOverflow: false,
       offlineMetadataFailures: [], offline: false };
     diagnostics.records.result = resultRecord;
     await instrument(resultPage, resultRecord);
-    const firstMetadata = resultPage.waitForResponse((response) =>
-      new URL(response.url()).pathname === METADATA_PATH, { timeout: 20_000 });
+    const firstMetadata = captureResponseWait(resultPage, (response) =>
+      new URL(response.url()).pathname === METADATA_PATH, 20_000);
     const firstDocument = await resultPage.goto(started.url);
     assert.equal(firstDocument?.status(), 200);
     assert.equal(sha256(await firstDocument.body()), buildA.indexSha256, 'Initial tab did not load A HTML');
     await resultPage.locator('#file-upload').waitFor({ state: 'attached' });
-    assert.equal((await firstMetadata).status(), 200, 'A initial metadata request failed');
+    assert.equal((await requireResponse(firstMetadata)).status(), 200, 'A initial metadata request failed');
     await resultPage.waitForLoadState('networkidle');
     await resultPage.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
     const initialWorker = await watchRegistration(resultPage);
@@ -475,20 +491,21 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
 
     diagnostics.phase = 'busy-a-initial';
     busyContext = await browser.newContext({ locale: 'en-US', viewport: { width: 1280, height: 800 } });
-    const busyPage = await busyContext.newPage();
+    busyPage = await busyContext.newPage();
     const busyRecord = { origin: new URL(started.url).origin,
       pageErrors: [], consoleErrors: [], failedRequests: [], failedResponses: [], uploads: [], external: [],
       metadataRequests: [], metadataResponses: [], metadataOverflow: false,
       offlineMetadataFailures: [], offline: false };
     diagnostics.records.busy = busyRecord;
     await instrument(busyPage, busyRecord);
-    const busyInitialMetadata = busyPage.waitForResponse((response) =>
-      new URL(response.url()).pathname === METADATA_PATH, { timeout: 20_000 });
+    const busyInitialMetadata = captureResponseWait(busyPage, (response) =>
+      new URL(response.url()).pathname === METADATA_PATH, 20_000);
     const busyDocument = await busyPage.goto(started.url);
     assert.equal(busyDocument?.status(), 200);
     assert.equal(sha256(await busyDocument.body()), buildA.indexSha256,
       'Busy tab did not load A HTML');
-    assert.equal((await busyInitialMetadata).status(), 200, 'Busy A initial metadata failed');
+    assert.equal((await requireResponse(busyInitialMetadata)).status(), 200,
+      'Busy A initial metadata failed');
     await busyPage.waitForLoadState('networkidle');
     await busyPage.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
     const busyWorker = await watchRegistration(busyPage);
@@ -515,9 +532,9 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     undefined, { timeout: 120_000 });
     const busyTimeOrigin = await busyPage.evaluate(() => performance.timeOrigin);
     await started.setDistribution('dist');
-    const bMetadata = busyPage.waitForResponse((response) =>
+    const bMetadata = captureResponseWait(busyPage, (response) =>
       new URL(response.url()).pathname === METADATA_PATH && response.status() === 200,
-    { timeout: 20_000 });
+    20_000);
     const coverPage = await busyContext.newPage();
     try {
       await coverPage.goto('about:blank');
@@ -528,7 +545,7 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     }
     assert((await busyPage.evaluate(() => globalThis.__appUpdateLifecycle))
       .includes('visibility:visible'), 'Busy tab did not exercise a visible-page event');
-    assert.equal((await (await bMetadata).json()).sourceSha, buildB.state.sourceSha,
+    assert.equal((await (await requireResponse(bMetadata)).json()).sourceSha, buildB.state.sourceSha,
       'Busy visible event did not observe B metadata');
     await updateNotice(busyPage).waitFor({ state: 'visible', timeout: 20_000 });
     const busyReload = updateNotice(busyPage).getByRole('button', { name: 'Reload page' });
@@ -546,15 +563,16 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
       'Cancellation and reselection navigated the document');
 
     diagnostics.phase = 'result-notice';
-    const resultBMetadata = resultPage.waitForResponse((response) =>
+    const resultBMetadata = captureResponseWait(resultPage, (response) =>
       new URL(response.url()).pathname === METADATA_PATH && response.status() === 200,
-    { timeout: 20_000 });
+    20_000);
     resultRecord.offline = true;
     await resultContext.setOffline(true);
     await resultContext.setOffline(false);
     resultRecord.offline = false;
     await resultPage.bringToFront();
-    assert.equal((await (await resultBMetadata).json()).sourceSha, buildB.state.sourceSha,
+    assert.equal((await (await requireResponse(resultBMetadata)).json()).sourceSha,
+      buildB.state.sourceSha,
       'Result online event did not observe B metadata');
     await updateNotice(resultPage).waitFor({ state: 'visible', timeout: 20_000 });
     const resultReload = updateNotice(resultPage).getByRole('button', { name: 'Reload page' });
@@ -658,6 +676,18 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     }], artifacts };
   } catch (error) {
     primaryError = error;
+    for (const [name, page] of [['result', resultPage], ['busy', busyPage]]) {
+      if (!page || !diagnostics.records[name]) continue;
+      try {
+        diagnostics.records[name].failurePageState = await page.evaluate(() => ({
+          lifecycle: globalThis.__appUpdateLifecycle ?? [],
+          visibility: document.visibilityState, online: navigator.onLine,
+          timeOrigin: performance.timeOrigin,
+        }));
+      } catch (captureError) {
+        diagnostics.records[name].failurePageStateError = String(captureError);
+      }
+    }
     throw error;
   } finally {
     const cleanupErrors = [];
@@ -676,6 +706,8 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
         failedRequests: record.failedRequests, failedResponses: record.failedResponses,
         uploads: record.uploads, external: record.external,
         offlineMetadataFailures: record.offlineMetadataFailures,
+        failurePageState: record.failurePageState ?? null,
+        failurePageStateError: record.failurePageStateError ?? null,
         metadataRequests: record.metadataRequests, metadataOverflow: record.metadataOverflow,
         metadataResponses: await Promise.all(record.metadataResponses.map(async ({
           status, path, body, atMs,
