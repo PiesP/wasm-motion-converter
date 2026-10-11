@@ -56,16 +56,18 @@ import {
   copyFrameToPixels,
   createFrameProcessingContext,
   type FrameProcessingContext,
-  getFrameDurationMs,
   getSkipThreshold,
   MOTION_SIGNATURE_PEAK_BYTES,
   type MotionSignature,
 } from './frame-utils';
+import { createPresentationSampler, type PresentationInterval } from './presentation-timing';
+
+export type { PresentationInterval } from './presentation-timing';
 
 export interface DecodeOptions {
   width: number;
   height: number;
-  /** Frame decimation: keep every Nth frame (1 = keep all) */
+  /** Source/target FPS ratio; integer values also enforce a source-frame floor. */
   frameDecimation?: number | undefined;
   /** CPU pixel layout delivered to onFrameAvailable. */
   pixelFormat?: CpuPixelFormat | undefined;
@@ -88,7 +90,8 @@ export interface DecodeOptions {
         pixelData: Uint8Array,
         durationMs: number,
         frameNum: number,
-        memoryHandoff?: FrameMemoryHandoff
+        memoryHandoff: FrameMemoryHandoff | undefined,
+        presentation: PresentationInterval
       ) => Promise<void> | void)
     | undefined;
   /**
@@ -99,7 +102,12 @@ export interface DecodeOptions {
    * The caller OWNS the VideoFrame and MUST call frame.close().
    */
   onVideoFrameAvailable?:
-    | ((frame: VideoFrame, durationMs: number, frameNum: number) => Promise<void> | void)
+    | ((
+        frame: VideoFrame,
+        durationMs: number,
+        frameNum: number,
+        presentation: PresentationInterval
+      ) => Promise<void> | void)
     | undefined;
   /**
    * Explicit decode mode. When 'stream', frames are passed to onFrameAvailable
@@ -110,7 +118,7 @@ export interface DecodeOptions {
   /**
    * Smart frame skip mode — enables similarity-based frame deduplication.
    * When enabled, consecutive similar frames are skipped and their durations
-   * are accumulated into the next kept frame.
+   * are represented by the retained frames' presentation intervals.
    * @default 'off'
    */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
@@ -138,6 +146,14 @@ export interface DecodedFrame {
 export interface DecodeResult {
   frames: DecodedFrame[];
   totalInputFrames: number;
+  /** Number of compressed packets fed to VideoDecoder. */
+  consumedChunks: number;
+  /** Number of visible decoded frames before selection. */
+  decodedFrames: number;
+  /** Number of frames passed to the encoder or returned in the batch. */
+  selectedFrames: number;
+  /** End of the visible presentation interval, relative to its first frame. */
+  presentationEndUs: number;
   /** Frames skipped by the fixed frame-decimation ratio. */
   skippedByDecimation: number;
   /** Frames skipped by similarity-based or adaptive smart frame skipping. */
@@ -147,14 +163,8 @@ export interface DecodeResult {
   /** Total output duration in milliseconds (sum of all frame durations) */
   outputTotalMs: number;
   /**
-   * Remaining accumulated duration after the last kept frame.
-   * Only meaningful in streaming mode — batch mode already adds
-   * this to the last frame (see !streaming branch below).
-   * In streaming mode, frames skipped after the last kept frame
-   * have their durations accumulated but never consumed, causing
-   * the output to play faster than the source. Encoders should
-   * add this tail duration to the output (e.g., as extra delay
-   * on the last frame).
+   * Legacy field. Timestamp-aware callers use presentationEndUs to close the
+   * final retained hold, including any skipped trailing source frames.
    */
   tailAccumulatedMs: number;
 }
@@ -246,7 +256,8 @@ export async function decodeFrames(
       : DEFAULT_FPS;
   const fallbackFrameDurationMs = 1000 / sourceFps;
   let previousMotion: MotionSignature | null = null;
-  let consecutiveSkipMs = 0; // accumulated duration of skipped frames
+  let consecutiveSkipMs = 0; // bounded smart/adaptive hold since last retained frame
+  let lastRetainedStartUs: number | null = null;
 
   // ── Backpressure for pendingConversions (RES-H2) ──
   const hasConfiguredSourceDimensions =
@@ -413,7 +424,9 @@ export async function decodeFrames(
   let inputFrameCount = 0;
   let inputChunkCount = 0;
   let keptFrameCount = 0;
-  let accumulatedDuration = 0;
+  let presentationOriginUs: number | null = null;
+  let presentationEndUs = 0;
+  let lastBatchStartUs: number | null = null;
   let trimEndReached = false;
   let skippedByDecimation = 0;
   let smartSkippedCount = 0;
@@ -426,9 +439,9 @@ export async function decodeFrames(
   let adaptFrameCounter = 0;
   let lastAdaptiveKeptFrame = Number.NEGATIVE_INFINITY;
   const requestedDecimation =
-    Number.isFinite(frameDecimation) && frameDecimation > 0
-      ? Math.max(1, Math.round(frameDecimation))
-      : 1;
+    Number.isFinite(frameDecimation) && frameDecimation > 0 ? Math.max(1, frameDecimation) : 1;
+  const selectFixedFrame = createPresentationSampler(sourceFps, requestedDecimation);
+  const requestedFrameFloor = Math.max(1, Math.floor(requestedDecimation));
   const canRunAdaptiveAnalysis =
     isAdaptive && streaming && typeof onVideoFrameAvailable !== 'function';
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
@@ -581,7 +594,7 @@ export async function decodeFrames(
     throw (await cleanupDecoderLifecycle(primaryFailure)) ?? primaryFailure;
   }
 
-  // Create per-conversion frame processing context (duration carry + copy path cache)
+  // Create per-conversion frame processing context for the pixel-copy path cache.
   const frameCtx: FrameProcessingContext = createFrameProcessingContext();
 
   // Presentation decisions and encoder delivery remain ordered. WebP callers
@@ -688,11 +701,25 @@ export async function decodeFrames(
           frame.close();
           return;
         }
-        const fallbackDurationUs = fallbackFrameDurationMs * 1000;
+        const fallbackDurationUs = Math.max(1, Math.round(fallbackFrameDurationMs * 1000));
         const sourceDurationUs =
-          frame.duration != null && frame.duration > 0 ? frame.duration : fallbackDurationUs;
+          frame.duration != null && Number.isSafeInteger(frame.duration) && frame.duration > 0
+            ? frame.duration
+            : fallbackDurationUs;
+        if (!Number.isSafeInteger(frame.timestamp)) {
+          recordDecoderError(new Error('Decoded frame has an invalid presentation timestamp'));
+          frame.close();
+          return;
+        }
         const sourceStartUs = frame.timestamp;
         const sourceEndUs = sourceStartUs + sourceDurationUs;
+        if (!Number.isSafeInteger(sourceEndUs)) {
+          recordDecoderError(
+            new Error('Decoded frame presentation interval exceeds integer range')
+          );
+          frame.close();
+          return;
+        }
         const trimStartUs = Math.max(0, demux.trimStartUs ?? 0);
         const trimEndUs = demux.trimEndUs;
         const overlapStartUs = Math.max(sourceStartUs, trimStartUs);
@@ -702,24 +729,20 @@ export async function decodeFrames(
           frame.close();
           return;
         }
-        const { durationMs: frameDuration, ctx: nextFrameCtx } = getFrameDurationMs(
-          frame,
-          frameCtx,
-          fallbackFrameDurationMs,
-          overlapEndUs - overlapStartUs
-        );
-        // Mutable update — avoid Object.assign spread allocation per frame
-        frameCtx.durationCarryUs = nextFrameCtx.durationCarryUs;
-        frameCtx.copyPath = nextFrameCtx.copyPath;
+        presentationOriginUs ??= overlapStartUs;
+        const presentation: PresentationInterval = {
+          startUs: overlapStartUs - presentationOriginUs,
+          endUs: overlapEndUs - presentationOriginUs,
+        };
+        presentationEndUs = Math.max(presentationEndUs, presentation.endUs);
+        const frameDuration = Math.max(1, Math.round((overlapEndUs - overlapStartUs) / 1000));
         const frameNum = inputFrameCount++;
 
-        // Frame decimation: skip every Nth frame
-        if (
-          !canRunAdaptiveAnalysis &&
-          requestedDecimation > 1 &&
-          frameNum % requestedDecimation !== 0
-        ) {
-          accumulatedDuration += frameDuration;
+        // Select at source presentation boundaries, preserving fractional
+        // source/target FPS ratios and never anticipating the next frame.
+        const cadenceEligible =
+          canRunAdaptiveAnalysis || selectFixedFrame(presentation.startUs, frameNum);
+        if (!canRunAdaptiveAnalysis && !cadenceEligible) {
           frame.close();
           skippedByDecimation++;
           return;
@@ -810,16 +833,6 @@ export async function decodeFrames(
           outputSlotActive = true;
         }
 
-        const totalDuration = frameDuration + accumulatedDuration;
-        accumulatedDuration = 0;
-
-        // Carry-over from smart frame skip: when consecutive similar frames
-        // are skipped, their durations are accumulated in consecutiveSkipMs.
-        // When a frame is finally kept, those accumulated durations must be
-        // added to totalDuration to preserve total playback time.
-        // Without this, smart-skipped frame durations are permanently lost.
-        let smartCarryoverMs = 0;
-
         const previousProcessing = orderedProcessingTail;
         let releaseProcessing!: () => void;
         orderedProcessingTail = new Promise<void>((resolve) => {
@@ -875,12 +888,9 @@ export async function decodeFrames(
               await previousProcessing;
               enteredOrderedProcessing = true;
               if (signal?.aborted || decodeError || hasProcessingFailure()) return;
-              // Transfer accumulated frame durations (decimation + smart skip carryover)
-              const totalDur = totalDuration + smartCarryoverMs;
-              smartCarryoverMs = 0;
               keptFrameCount++;
               sourceFrameTransferred = true;
-              await onVideoFrameAvailable(frame, totalDur, frameNum);
+              await onVideoFrameAvailable(frame, frameDuration, frameNum, presentation);
               // Caller owns frame and MUST call frame.close()
               return;
             }
@@ -976,9 +986,16 @@ export async function decodeFrames(
                 // Skip if similar AND consecutive skip time < 500ms
                 // Use max of user threshold and noise-adapted floor
                 const effectiveThreshold = Math.max(skipThreshold, noiseFloor);
-                if (frameDistance <= effectiveThreshold && consecutiveSkipMs < 500) {
+                const elapsedSinceRetainedMs =
+                  lastRetainedStartUs === null
+                    ? 0
+                    : (presentation.startUs - lastRetainedStartUs) / 1000;
+                if (
+                  frameDistance <= effectiveThreshold &&
+                  Math.max(consecutiveSkipMs, elapsedSinceRetainedMs) < 500
+                ) {
                   // Skip this frame: accumulate duration, release buffer, return
-                  consecutiveSkipMs += totalDuration;
+                  consecutiveSkipMs += frameDuration;
                   smartSkippedCount++;
                   globalBufferPool.release(pixelData);
                   recordMotionDecision();
@@ -987,9 +1004,8 @@ export async function decodeFrames(
               }
 
               previousMotion = signature;
-              // Transfer accumulated consecutive skip durations to this frame
-              smartCarryoverMs = consecutiveSkipMs;
               consecutiveSkipMs = 0;
+              lastRetainedStartUs = presentation.startUs;
             }
 
             // ── Adaptive motion-classified decimation ──
@@ -1021,7 +1037,7 @@ export async function decodeFrames(
                 // preset or memory floor allows another frame.
                 if (
                   isSignificantMotionIncrease(motionClass, adaptLastMotionClass) &&
-                  frameNum - lastAdaptiveKeptFrame >= requestedDecimation
+                  frameNum - lastAdaptiveKeptFrame >= requestedFrameFloor
                 ) {
                   adaptFrameCounter = 0; // force keep on significant motion increase
                 }
@@ -1032,39 +1048,44 @@ export async function decodeFrames(
 
               const decimation = calculateAdaptiveDecimation(
                 motionClass,
-                requestedDecimation,
+                requestedFrameFloor,
                 maxAdaptiveDecimation
               );
               const shouldSkip = shouldSkipAdaptiveFrame({
                 frameNum,
                 lastKeptFrame: lastAdaptiveKeptFrame,
-                requestedDecimation,
+                requestedDecimation: requestedFrameFloor,
                 frameCounter: adaptFrameCounter,
                 decimation,
-                consecutiveSkipMs,
+                consecutiveSkipMs: Math.max(
+                  consecutiveSkipMs,
+                  lastRetainedStartUs === null
+                    ? 0
+                    : (presentation.startUs - lastRetainedStartUs) / 1000
+                ),
               });
 
               adaptFrameCounter++;
 
-              if (shouldSkip) {
-                consecutiveSkipMs += totalDuration;
+              if (shouldSkip || !selectFixedFrame(presentation.startUs, frameNum)) {
+                consecutiveSkipMs += frameDuration;
                 smartSkippedCount++;
                 globalBufferPool.release(pixelData);
                 recordMotionDecision();
                 return;
               }
 
-              // Frame kept: reset counters, transfer accumulated duration
+              // Frame kept: reset the bounded consecutive-skip counter.
               lastAdaptiveKeptFrame = frameNum;
-              smartCarryoverMs = consecutiveSkipMs;
               consecutiveSkipMs = 0;
+              lastRetainedStartUs = presentation.startUs;
             }
 
             recordMotionDecision();
 
             if (streaming) {
               // Streaming mode: pass frame to callback for immediate processing.
-              // Include smart-skip carryover to preserve total playback time.
+              // The next retained timestamp determines this frame's final hold.
               keptFrameCount++;
               if (!frameAvailable) {
                 throw new Error('Streaming decode requires an onFrameAvailable callback');
@@ -1073,19 +1094,26 @@ export async function decodeFrames(
               try {
                 delivery = frameAvailable(
                   pixelData,
-                  totalDuration + smartCarryoverMs,
+                  frameDuration,
                   frameNum,
-                  targetMemoryHandoff
+                  targetMemoryHandoff,
+                  presentation
                 );
               } finally {
                 releaseStagedCopy();
               }
               await delivery;
-              smartCarryoverMs = 0;
               // Note: onFrameAvailable is responsible for releasing pixelData
             } else {
               // Batch mode: collect into array (existing behavior for WebP)
-              batchFrames.push({ data: pixelData, duration: totalDuration });
+              if (lastBatchStartUs !== null) {
+                const previous = batchFrames[batchFrames.length - 1];
+                if (previous) {
+                  previous.duration = Math.max(0, (presentation.startUs - lastBatchStartUs) / 1000);
+                }
+              }
+              batchFrames.push({ data: pixelData, duration: frameDuration });
+              lastBatchStartUs = presentation.startUs;
             }
 
             // Report decoding progress — throttle to every 10 frames.
@@ -1282,10 +1310,10 @@ export async function decodeFrames(
     const pipelineFailure = getLatchedFailureError();
     if (pipelineFailure) throw pipelineFailure;
 
-    // Add any remaining accumulated duration to the last frame (batch mode only)
-    if (!streaming && accumulatedDuration > 0 && batchFrames.length > 0) {
+    // The last batch frame owns the visible tail, including skipped frames.
+    if (!streaming && lastBatchStartUs !== null && batchFrames.length > 0) {
       const last = batchFrames[batchFrames.length - 1];
-      if (last) last.duration += accumulatedDuration;
+      if (last) last.duration = Math.max(0, (presentationEndUs - lastBatchStartUs) / 1000);
     }
 
     // Compute timing summary
@@ -1310,11 +1338,15 @@ export async function decodeFrames(
     decodeResult = {
       frames: batchFrames,
       totalInputFrames: inputFrameCount,
+      consumedChunks: inputChunkCount,
+      decodedFrames: inputFrameCount,
+      selectedFrames: streaming ? keptFrameCount : batchFrames.length,
+      presentationEndUs,
       skippedByDecimation,
       smartSkipped: smartSkippedCount,
       sourceTotalMs,
       outputTotalMs,
-      tailAccumulatedMs: streaming ? accumulatedDuration + consecutiveSkipMs : 0,
+      tailAccumulatedMs: 0,
     };
   } catch (error) {
     primaryFailure = normalizeFailure(error);

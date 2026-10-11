@@ -33,23 +33,20 @@ describe('calcAutoDecimation', () => {
   });
 
   it('decimates 60fps to ~8fps (targetFps=8, GIF low)', () => {
-    // 60/8 ≈ 7.5 → round=8 → keep every 8th frame = 7.5fps output
-    expect(calcAutoDecimation(60, 8)).toBe(8);
+    // Retain the 7.5 ratio so timestamp sampling averages 8fps.
+    expect(calcAutoDecimation(60, 8)).toBe(7.5);
   });
 
   it('decimates 30fps to ~12fps (targetFps=12)', () => {
-    // 30/12 ≈ 2.5 → round=3 → keep every 3rd frame = 10fps output
-    expect(calcAutoDecimation(30, 12)).toBe(3);
+    expect(calcAutoDecimation(30, 12)).toBe(2.5);
   });
 
   it('decimates 30fps to ~18fps (targetFps=18, WebP medium)', () => {
-    // 30/18 ≈ 1.67 → round=2 → keep every 2nd frame = 15fps output
-    expect(calcAutoDecimation(30, 18)).toBe(2);
+    expect(calcAutoDecimation(30, 18)).toBeCloseTo(30 / 18);
   });
 
-  it('rounds fractional decimation to nearest integer', () => {
-    // 25/15 ≈ 1.667 → round=2
-    expect(calcAutoDecimation(25, 15)).toBe(2);
+  it('preserves fractional source/target cadence', () => {
+    expect(calcAutoDecimation(25, 15)).toBeCloseTo(25 / 15);
   });
 
   // ── Source FPS clamping ────────────────────────────────────
@@ -122,13 +119,11 @@ describe('calcAutoDecimation', () => {
   });
 
   it('handles 50fps source with 30fps target', () => {
-    // 50/30 ≈ 1.67 → round=2
-    expect(calcAutoDecimation(50, 30)).toBe(2);
+    expect(calcAutoDecimation(50, 30)).toBeCloseTo(50 / 30);
   });
 
   it('handles 30fps source with 8fps target', () => {
-    // 30/8 ≈ 3.75 → round=4 → output=7.5fps
-    expect(calcAutoDecimation(30, 8)).toBe(4);
+    expect(calcAutoDecimation(30, 8)).toBe(3.75);
   });
 
   it('always returns at least 1', () => {
@@ -139,7 +134,7 @@ describe('calcAutoDecimation', () => {
 
 describe('calcMemoryPressureDecimation', () => {
   it('never keeps more frames than the selected quality preset', () => {
-    expect(calcMemoryPressureDecimation(60, 8)).toBe(8);
+    expect(calcMemoryPressureDecimation(60, 8)).toBe(7.5);
   });
 
   it('reduces a smooth preset to at most 15fps under critical pressure', () => {
