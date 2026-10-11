@@ -1919,7 +1919,8 @@ export async function run({ browser, root, output }) {
       workerAttempts: globalThis.__wmcWorkerConstructionAttempts,
       nativeWebpAvailable: typeof OffscreenCanvas.prototype.convertToBlob === 'function',
     }));
-    assert(fallback.workerAttempts > 0, 'WASM fallback did not attempt its preferred Worker path');
+    assert.equal(fallback.workerAttempts, 0,
+      'Rejected native WebP capability must select WASM before creating a Worker pool');
     assert.equal(fallback.nativeWebpAvailable, false);
     checks.push({ ...wasmCheck, fallback });
     checks.push(await exerciseLongLocaleResult(page, outputRoot, artifacts));
