@@ -8,7 +8,7 @@ const testDir = resolve(__dirname, 'test');
 const srcDir = resolve(__dirname, 'src');
 
 export default defineConfig({
-  define: { __DEV__: true },
+  define: { __DEV__: true, __APP_SOURCE_SHA__: null },
   plugins: [solid()],
   test: {
     globals: true,

@@ -15,6 +15,7 @@ import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { assertExecutableBody, assertExecutableResponse } from './lib/deployment-responses';
+import { conditionalEtagObservation } from './lib/conditional-etag';
 
 const DEPLOY_URL = process.env.DEPLOY_URL || 'https://wasm-motion-converter.pages.dev';
 const TEST_VIDEO_PATH =
@@ -257,11 +258,11 @@ test.describe('Deployment: Page Load', () => {
         });
         expect(revalidated.status(), `${file.path} conditional status`).toBe(304);
         const conditionalEtag = revalidated.headers().etag;
-        // Both Pages and Wrangler may omit ETag on 304; the 200 validator must
-        // still select an empty 304, and an unmatched validator must select 200.
-        if (conditionalEtag !== undefined) {
-          expect(conditionalEtag, `${file.path} conditional ETag`).toBe(etag);
-        }
+        // RFC 9110 15.4.5 requires the 200 ETag on this 304. Pages/Wrangler
+        // omissions are an explicitly reported integration exception (#289/#292).
+        const etagObservation = conditionalEtagObservation(
+          url, etag, conditionalEtag, process.env.PLAYWRIGHT_TEST_PROFILE === 'deploy'
+        );
         expect(await revalidated.body(), `${file.path} conditional body`).toHaveLength(0);
         expectSecurityHeaders(revalidated, csp);
         expectSingleHeader(revalidated, 'cache-control', IMMUTABLE);
@@ -274,7 +275,7 @@ test.describe('Deployment: Page Load', () => {
         expect(unmatched.headers().etag, `${file.path} unmatched conditional ETag`).toBe(etag);
         expectSecurityHeaders(unmatched, csp);
         expectSingleHeader(unmatched, 'cache-control', IMMUTABLE);
-        conditionalObservations.push({ path: file.path, etag, conditionalEtag: conditionalEtag ?? null,
+        conditionalObservations.push({ path: file.path, etag, ...etagObservation,
           status: revalidated.status(), unmatchedStatus: unmatched.status() });
       }
       await testInfo.attach('conditional-header-observations', {

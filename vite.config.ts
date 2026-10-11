@@ -1,11 +1,12 @@
 import { visualizer } from 'rollup-plugin-visualizer';
 import type { PluginOption } from 'vite';
 import { defineConfig, loadEnv, mergeConfig } from 'vite';
+import { applicationSourceSha } from './scripts/build/deployment-state.ts';
 import { stripDataTestIdPlugin } from './tooling/vite/plugins/strip-data-testid.ts';
 import basePreset from './tooling/vite/presets/base.ts';
 import browserAppPreset from './tooling/vite/presets/browser-app.ts';
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   // Solid applies reactive width and position style attributes at runtime, and
@@ -39,6 +40,11 @@ export default defineConfig(({ mode }) => {
   ];
 
   const modeConfig = {
+    define: {
+      __APP_SOURCE_SHA__: JSON.stringify(
+        command === 'build' ? applicationSourceSha(process.cwd()) : null
+      ),
+    },
     plugins: commonPlugins,
     server: {
       headers: {

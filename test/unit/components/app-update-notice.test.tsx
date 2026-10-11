@@ -4,7 +4,11 @@ import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, expect, it, vi } from 'vitest';
 
-const registration = vi.hoisted(() => ({ options: {} as SWRegisterOptions, cleanup: vi.fn() }));
+const registration = vi.hoisted(() => ({ options: {} as SWRegisterOptions, cleanup: vi.fn(), deploymentUpdate: () => {}, deploymentCleanup: vi.fn() }));
+vi.mock('@/deployment-update', () => ({ observeDeploymentUpdates: vi.fn((options: { onUpdate: () => void }) => {
+  registration.deploymentUpdate = options.onUpdate;
+  return registration.deploymentCleanup;
+}) }));
 vi.mock('@/sw-register', () => ({ registerServiceWorker: vi.fn(async (options: SWRegisterOptions) => {
   registration.options = options;
   return { cleanup: registration.cleanup };
@@ -34,6 +38,27 @@ it('keeps reload explicit and disabled throughout an operation and while a downl
   dispose?.();
   dispose = undefined;
   expect(registration.cleanup).toHaveBeenCalledTimes(1);
+  expect(registration.deploymentCleanup).toHaveBeenCalledTimes(1);
+});
+
+it('coalesces worker and deployment updates while preserving a distinct unavailable warning', async () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  dispose = render(() => <AppUpdateNotice busy={false} hasResults={false} t={(key) => key} />, container);
+  await Promise.resolve();
+  registration.deploymentUpdate();
+  registration.options.onUpdate?.();
+  expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+  expect(container.textContent).toContain('update.available');
+  registration.options.onAssetUnavailable?.();
+  registration.deploymentUpdate();
+  registration.options.onUpdate?.();
+  expect(container.textContent).toContain('update.unavailable');
+  expect(container.textContent).not.toContain('update.available');
+  dispose(); dispose = undefined;
+  registration.deploymentUpdate();
+  registration.options.onAssetUnavailable?.();
+  expect(container.childNodes).toHaveLength(0);
 });
 
 it('cleans up a registration that resolves after its owner is disposed', async () => {

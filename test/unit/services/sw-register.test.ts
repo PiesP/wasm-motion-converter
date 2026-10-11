@@ -10,7 +10,7 @@
 // cannot be reliably mocked at the module level in vitest — the production
 // logic is the meaningful code path under test.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // ServiceWorker mocks
@@ -66,6 +66,10 @@ function setupNavigator(withSw: boolean): void {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.resetModules();
+});
+afterEach(() => {
+  window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false }));
+  vi.restoreAllMocks();
 });
 
 describe('registerServiceWorker', () => {
@@ -252,6 +256,46 @@ describe('registerServiceWorker', () => {
   });
 
   // ── Error handling ───────────────────────────────────────────────
+
+  it('keeps the observer through BFCache restoration and removes it on final departure', async () => {
+    setupNavigator(true);
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    const { registerServiceWorker } = await import('@/sw-register');
+    await registerServiceWorker();
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    expect(mockRegistration.removeEventListener).not.toHaveBeenCalled();
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    expect(mockRegistration.update).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false }));
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(mockRegistration.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('observes an installation already in progress once and distinguishes first activation from an update', async () => {
+    setupNavigator(true);
+    const worker = new EventTarget();
+    Object.assign(worker, { state: 'installing' });
+    mockRegistration.installing = worker as ServiceWorker;
+    const onUpdate = vi.fn();
+    const onOfflineReady = vi.fn();
+    const { registerServiceWorker } = await import('@/sw-register');
+    const registration = await registerServiceWorker({ onUpdate, onOfflineReady });
+    const updatefound = mockRegistration.addEventListener.mock.calls.find(([type]) => type === 'updatefound')?.[1];
+    updatefound(); updatefound();
+    Object.assign(worker, { state: 'activated' });
+    worker.dispatchEvent(new Event('statechange'));
+    worker.dispatchEvent(new Event('statechange'));
+    expect(onOfflineReady).toHaveBeenCalledTimes(1);
+    expect(onUpdate).not.toHaveBeenCalled();
+    const nextWorker = new EventTarget();
+    Object.assign(nextWorker, { state: 'installing' });
+    mockRegistration.installing = nextWorker as ServiceWorker;
+    updatefound();
+    Object.assign(nextWorker, { state: 'activated' });
+    nextWorker.dispatchEvent(new Event('statechange'));
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    registration.cleanup?.();
+  });
 
   it('returns {supported: true, registered: false} when registration throws', async () => {
     setupNavigator(true);
