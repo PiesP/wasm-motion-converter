@@ -117,6 +117,26 @@ async function exerciseBuildUpgrade(browser, baseUrl, bundleRoot, smallFixture, 
       !(await activePage.locator('[data-testid="error-display"]').isVisible()),
     'High-motion conversion completed or failed before the upgrade could begin');
     const activeDocumentTimeOrigin = await activePage.evaluate(() => performance.timeOrigin);
+    // Capture DOM state synchronously at controllerchange. A later completed
+    // result cannot prove that conversion was still active when the new worker
+    // actually took control of this old-build tab.
+    await activePage.evaluate(() => {
+      globalThis.__wmcUpgradeControllerObservation = null;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        const visible = (selector) => {
+          const element = document.querySelector(selector);
+          return element instanceof HTMLElement && element.getClientRects().length > 0;
+        };
+        globalThis.__wmcUpgradeControllerObservation = {
+          timeOrigin: performance.timeOrigin,
+          progress: Number(document.querySelector('[data-testid="dropzone"] [role="progressbar"]')
+            ?.getAttribute('data-progress')),
+          stopVisible: visible('[data-testid="stop-conversion-button"]'),
+          resultVisible: visible('[data-testid="result-section"]'),
+          errorVisible: visible('[data-testid="error-display"]'),
+        };
+      }, { once: true });
+    });
 
     await setDistribution('dist');
     assert(await activePage.locator('[data-testid="stop-conversion-button"]').isVisible(),
@@ -138,6 +158,16 @@ async function exerciseBuildUpgrade(browser, baseUrl, bundleRoot, smallFixture, 
         if (!value) throw new Error('Prior service worker registration disappeared');
       }
     });
+    await activePage.waitForFunction(() => Boolean(globalThis.__wmcUpgradeControllerObservation),
+      undefined, { timeout: 15_000 });
+    const atControllerChange = await activePage.evaluate(() =>
+      globalThis.__wmcUpgradeControllerObservation);
+    assert.equal(atControllerChange.timeOrigin, activeDocumentTimeOrigin,
+      'The active tab reloaded before controllerchange was observed');
+    assert(atControllerChange.progress > 0 && atControllerChange.progress < 100 &&
+      atControllerChange.stopVisible && !atControllerChange.resultVisible &&
+      !atControllerChange.errorVisible,
+    `Conversion was not active at controllerchange: ${JSON.stringify(atControllerChange)}`);
     assert.equal(await page.evaluate(() => performance.timeOrigin), oldDocumentTimeOrigin,
       'Service worker upgrade reloaded the retained result tab');
     assert.equal(await page.locator('[data-testid="download-result-button"]').getAttribute('href'), oldDownloadHref,
@@ -254,6 +284,7 @@ async function exerciseBuildUpgrade(browser, baseUrl, bundleRoot, smallFixture, 
       retainedResultDownload: true, retainedResultSha256: priorResultSha256,
       retainedResultBytes: priorResultBytes.length, retainedDownloadAfterMissing: true,
       retainedDocument: true, activeConversionProgressAtSwitch: activeProgressAtSwitch,
+      activeConversionAtControllerChange: atControllerChange,
       activeConversionCompletedWithoutReload: true,
       missingChunkStatus: missingAtOrigin.status(), missingChunkRequestFailure: requestFailure,
       missingChunkWorkerMessage: workerMessage, messageObservedByHarnessOnly: true,
