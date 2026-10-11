@@ -562,9 +562,18 @@ export async function runAppUpdate({ browser, bundleRoot, outputRoot, config,
     assert.equal(await busyPage.evaluate(() => performance.timeOrigin), busyTimeOrigin,
       'Update notice automatically navigated an active conversion');
     await screenshot(busyPage, outputRoot, 'app-update-busy-notice.png', artifacts);
-    await stop.click();
+    const cancel = busyPage.getByTestId('dropzone-cancel-button');
+    assert.equal(await cancel.getAttribute('aria-label'), 'Cancel conversion');
+    assert(await cancel.isEnabled(), 'In-viewport conversion cancel control is disabled');
+    assert(await busyPage.evaluate(() => [...document.querySelectorAll('[role="progressbar"]')]
+      .some((element) => Number(element.getAttribute('aria-valuenow')) > 0)),
+    'Conversion completed before cancellation could be exercised');
+    await cancel.click({ timeout: 5_000 });
     await busyPage.getByRole('button', { name: 'Convert', exact: true })
       .waitFor({ state: 'visible', timeout: 30_000 });
+    assert.equal(await busyPage.getByTestId('result-section').count(), 0,
+      'A completed conversion was mistaken for cancellation');
+    assert(await busyReload.isEnabled(), 'Reload did not enable after cancellation completed');
     await busyPage.getByRole('button', { name: 'Change', exact: true }).click();
     await busyPage.locator('#file-upload').setInputFiles(smallFixture);
     await busyPage.getByRole('button', { name: 'Convert', exact: true }).click({ trial: true });
