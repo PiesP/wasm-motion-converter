@@ -14,7 +14,11 @@ import {
 import { clearCanvasCache } from '@services/frame-utils';
 import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
 import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from '@services/worker-pool';
-import { FRAME_PIPELINE_MEMORY_BUDGET_BYTES, MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
+import {
+  FRAME_PIPELINE_MEMORY_BUDGET_BYTES,
+  MAX_FRAME_PIXEL_COUNT,
+  STALL_DETECTION_TIMEOUT_MS,
+} from '@utils/constants';
 
 const { logger } = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -206,6 +210,71 @@ describe('decoder-service', () => {
       async flush(): Promise<void> {}
     }
 
+    class QueuedEventDecoder extends EventTarget {
+      static instance: QueuedEventDecoder | null = null;
+      static onDequeueListenerAdded: (() => void) | null = null;
+
+      static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+        return { config, supported: true };
+      }
+
+      decodeQueueSize = 9;
+      dequeueAdds = 0;
+      dequeueRemoves = 0;
+      readonly decode = vi.fn();
+      readonly close = vi.fn();
+      readonly reset = vi.fn();
+      readonly flush = vi.fn(async () => {});
+      private readonly onError: VideoDecoderInit['error'];
+
+      constructor(init: VideoDecoderInit) {
+        super();
+        this.onError = init.error;
+        QueuedEventDecoder.instance = this;
+      }
+
+      configure(): void {}
+
+      override addEventListener(
+        type: string,
+        callback: EventListenerOrEventListenerObject | null,
+        options?: boolean | AddEventListenerOptions
+      ): void {
+        super.addEventListener(type, callback, options);
+        if (type === 'dequeue') {
+          this.dequeueAdds++;
+          QueuedEventDecoder.onDequeueListenerAdded?.();
+        }
+      }
+
+      override removeEventListener(
+        type: string,
+        callback: EventListenerOrEventListenerObject | null,
+        options?: boolean | EventListenerOptions
+      ): void {
+        super.removeEventListener(type, callback, options);
+        if (type === 'dequeue') this.dequeueRemoves++;
+      }
+
+      releaseCapacity(): void {
+        this.decodeQueueSize = 0;
+        this.dispatchEvent(new Event('dequeue'));
+      }
+
+      fail(error: DOMException): void {
+        this.onError(error);
+      }
+    }
+
+    const queuedEventDemux = () => ({
+      chunks: [fixtureChunk(0)],
+      config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+      duration: 0.1,
+      framerate: 10,
+      sourceTotalMs: 100,
+      totalFrames: 1,
+    });
+
     function createFlushBurstVideoDecoder(
       frameCount: number,
       sourceWidth = 3840,
@@ -320,6 +389,137 @@ describe('decoder-service', () => {
       FakeVideoFrame.instances.length = 0;
       FakeVideoFrame.copyResolvers.clear();
       FakeVideoFrame.copyStarts.length = 0;
+      QueuedEventDecoder.instance = null;
+      QueuedEventDecoder.onDequeueListenerAdded = null;
+    });
+
+    it('waits for dequeue without zero-delay polling and removes the capacity listener', async () => {
+      vi.stubGlobal('VideoDecoder', QueuedEventDecoder);
+      const originalSetTimeout = globalThis.setTimeout;
+      const originalClearTimeout = globalThis.clearTimeout;
+      const zeroDelayTimers = vi.fn();
+      const capacityTimers: number[] = [];
+      const clearedTimers: number[] = [];
+      vi.stubGlobal('clearTimeout', ((timer: number) => {
+        clearedTimers.push(timer);
+        originalClearTimeout(timer);
+      }) as typeof clearTimeout);
+      vi.stubGlobal('setTimeout', ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+        if (delay === 0) zeroDelayTimers();
+        const timer = originalSetTimeout(callback, delay, ...args);
+        if (delay === STALL_DETECTION_TIMEOUT_MS) capacityTimers.push(timer);
+        return timer;
+      }) as typeof setTimeout);
+      const decoding = decodeFrames(queuedEventDemux(), { width: 8, height: 8, mode: 'batch' });
+      for (let attempt = 0; attempt < 20 && !QueuedEventDecoder.instance?.dequeueAdds; attempt++) {
+        await Promise.resolve();
+      }
+      const decoder = QueuedEventDecoder.instance!;
+      expect(decoder.dequeueAdds).toBe(1);
+      expect(decoder.decode).not.toHaveBeenCalled();
+      decoder.releaseCapacity();
+      const result = await decoding;
+      expect(result.consumedChunks).toBe(1);
+      expect(decoder.decode).toHaveBeenCalledOnce();
+      expect(decoder.dequeueRemoves).toBe(1);
+      expect(decoder.close).toHaveBeenCalledOnce();
+      expect(zeroDelayTimers).not.toHaveBeenCalled();
+      expect(capacityTimers).toHaveLength(1);
+      expect(clearedTimers).toContain(capacityTimers[0]);
+    });
+
+    it('rechecks capacity after installing the dequeue listener', async () => {
+      vi.stubGlobal('VideoDecoder', QueuedEventDecoder);
+      QueuedEventDecoder.onDequeueListenerAdded = () => {
+        QueuedEventDecoder.instance!.decodeQueueSize = 0;
+      };
+      const result = await decodeFrames(queuedEventDemux(), {
+        width: 8,
+        height: 8,
+        mode: 'batch',
+      });
+      expect(result.consumedChunks).toBe(1);
+      expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(1);
+      expect(QueuedEventDecoder.instance?.dequeueRemoves).toBe(1);
+    });
+
+    it('uses a bounded retry only when the decoder lacks EventTarget support', async () => {
+      class LegacyQueuedDecoder {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
+          return { config, supported: true };
+        }
+
+        decodeQueueSize = 9;
+        readonly decode = vi.fn();
+        readonly close = vi.fn();
+
+        constructor() {
+          setTimeout(() => {
+            this.decodeQueueSize = 0;
+          }, 1);
+        }
+
+        configure(): void {}
+        async flush(): Promise<void> {}
+      }
+      vi.stubGlobal('VideoDecoder', LegacyQueuedDecoder);
+      const result = await decodeFrames(queuedEventDemux(), {
+        width: 8,
+        height: 8,
+        mode: 'batch',
+      });
+      expect(result.consumedChunks).toBe(1);
+    });
+
+    it.each(['cancel', 'decoder', 'processing'] as const)(
+      'wakes and cleans a dequeue wait on %s failure',
+      async (failure) => {
+        vi.stubGlobal('VideoDecoder', QueuedEventDecoder);
+        const cancellation = new AbortController();
+        const processing = new AbortController();
+        const decoding = decodeFrames(
+          queuedEventDemux(),
+          {
+            width: 8,
+            height: 8,
+            mode: 'batch',
+            processingFailureSignal: processing.signal,
+          },
+          cancellation.signal
+        );
+        await vi.waitFor(() => expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(1));
+        const decoder = QueuedEventDecoder.instance!;
+        if (failure === 'cancel') cancellation.abort();
+        else if (failure === 'decoder') decoder.fail(new DOMException('fixture decoder failure'));
+        else processing.abort(new Error('fixture downstream failure'));
+        await expect(decoding).rejects.toThrow(
+          failure === 'cancel'
+            ? 'Cancelled'
+            : failure === 'decoder'
+              ? 'fixture decoder failure'
+              : 'fixture downstream failure'
+        );
+        expect(decoder.decode).not.toHaveBeenCalled();
+        expect(decoder.dequeueRemoves).toBe(1);
+        expect(decoder.close).toHaveBeenCalledOnce();
+      }
+    );
+
+    it('times out a stalled dequeue wait and removes its listener', async () => {
+      vi.stubGlobal('VideoDecoder', QueuedEventDecoder);
+      vi.useFakeTimers();
+      try {
+        const decoding = decodeFrames(queuedEventDemux(), { width: 8, height: 8, mode: 'batch' });
+        await vi.waitFor(() => expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(1));
+        const decoder = QueuedEventDecoder.instance!;
+        const rejected = expect(decoding).rejects.toThrow('queue stalled');
+        await vi.advanceTimersByTimeAsync(STALL_DETECTION_TIMEOUT_MS);
+        await rejected;
+        expect(decoder.dequeueRemoves).toBe(1);
+        expect(decoder.close).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('assigns skipped fixed-frame holds to the preceding batch frame', async () => {

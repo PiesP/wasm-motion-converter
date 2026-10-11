@@ -25,6 +25,7 @@ import {
   MAX_DECODE_INPUT_CHUNKS,
   MAX_FRAME_PIXEL_COUNT,
   MIN_OUTPUT_FPS,
+  STALL_DETECTION_TIMEOUT_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 import {
@@ -433,6 +434,7 @@ export async function decodeFrames(
   let lastVisibleSourceStartUs: number | null = null;
   let lastBatchStartUs: number | null = null;
   let trimEndReached = false;
+  let wakeDecodeCapacityWait: (() => void) | null = null;
   let skippedByDecimation = 0;
   let smartSkippedCount = 0;
   interface PendingPresentationFrame {
@@ -478,6 +480,7 @@ export async function decodeFrames(
     closeStagedTargetGate();
     frameMemoryBudget?.closeTargetGate(normalized);
     firstPipelineFailure ??= { error: normalized, origin: 'decoder' };
+    wakeDecodeCapacityWait?.();
   };
 
   const recordCancellation = (): void => {
@@ -490,6 +493,7 @@ export async function decodeFrames(
       error: cancellation,
       origin: 'cancellation',
     };
+    wakeDecodeCapacityWait?.();
   };
 
   const recordConversionError = (error: unknown): void => {
@@ -499,6 +503,7 @@ export async function decodeFrames(
     closeStagedTargetGate();
     frameMemoryBudget?.closeTargetGate(normalized);
     firstPipelineFailure ??= { error: normalized, origin: 'processing' };
+    wakeDecodeCapacityWait?.();
   };
 
   const hasProcessingFailure = (): boolean => {
@@ -817,6 +822,7 @@ export async function decodeFrames(
         const duplicate = lastVisibleSourceStartUs === sourceStartUs;
         if (!duplicate && trimEndUs !== undefined && sourceEndUs >= trimEndUs) {
           trimEndReached = true;
+          wakeDecodeCapacityWait?.();
         }
         if (overlapEndUs <= overlapStartUs) {
           frame.close();
@@ -1385,6 +1391,54 @@ export async function decodeFrames(
   }
   const activeDecoder = decoder;
 
+  const supportsDequeueEvent =
+    typeof activeDecoder.addEventListener === 'function' &&
+    typeof activeDecoder.removeEventListener === 'function';
+  const waitForDecodeCapacity = async (): Promise<void> => {
+    if (!supportsDequeueEvent) {
+      // Older implementations without EventTarget support need a bounded retry.
+      await new Promise<void>((resolve) => setTimeout(resolve, 16));
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      let ready = false;
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        activeDecoder.removeEventListener('dequeue', checkCapacity);
+        signal?.removeEventListener('abort', checkCapacity);
+        processingFailureSignal?.removeEventListener('abort', checkCapacity);
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        if (wakeDecodeCapacityWait === checkCapacity) wakeDecodeCapacityWait = null;
+        resolve();
+      };
+      const checkCapacity = (): void => {
+        if (!ready) return;
+        if (
+          activeDecoder.decodeQueueSize <= MAX_DECODE_QUEUE ||
+          signal?.aborted ||
+          decodeError ||
+          trimEndReached ||
+          hasProcessingFailure()
+        ) {
+          finish();
+        }
+      };
+      activeDecoder.addEventListener('dequeue', checkCapacity);
+      signal?.addEventListener('abort', checkCapacity);
+      processingFailureSignal?.addEventListener('abort', checkCapacity);
+      wakeDecodeCapacityWait = checkCapacity;
+      timeoutId = setTimeout(() => {
+        recordDecoderError(new Error('Video decoder queue stalled while waiting for capacity'));
+      }, STALL_DETECTION_TIMEOUT_MS);
+      // The queue may have drained while the listeners were being attached.
+      ready = true;
+      checkCapacity();
+    });
+  };
+
   let streamedSourceDurationUs = 0;
   chunkStream = (async function* iterateChunks(): AsyncGenerator<EncodedVideoChunk> {
     yield* demux.chunks;
@@ -1407,10 +1461,8 @@ export async function decodeFrames(
       }
       if (decodeError || hasProcessingFailure() || trimEndReached) break;
 
-      // Backpressure: wait if decode queue is full.
-      // Use setTimeout(0) as primary yield mechanism because
-      // requestAnimationFrame pauses in background tabs, causing deadlock
-      // when the decoder still queues frames but rAF never fires.
+      // Backpressure: wait for native dequeue notifications when available.
+      const capacityWaitDeadline = Date.now() + STALL_DETECTION_TIMEOUT_MS;
       while (
         activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE &&
         !signal?.aborted &&
@@ -1418,9 +1470,11 @@ export async function decodeFrames(
         !trimEndReached &&
         !hasProcessingFailure()
       ) {
-        await new Promise<void>((resolve) => {
-          setTimeout(() => resolve(), 0);
-        });
+        if (!supportsDequeueEvent && Date.now() >= capacityWaitDeadline) {
+          recordDecoderError(new Error('Video decoder queue stalled while waiting for capacity'));
+          break;
+        }
+        await waitForDecodeCapacity();
       }
 
       // Backpressure on output processing (RES-H2): wait if too many
