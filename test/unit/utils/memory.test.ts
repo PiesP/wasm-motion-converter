@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getMemoryInfo } from '@utils/memory-info';
+import { getEstimatedHeapLimitBytes, getMemoryInfo } from '@utils/memory-info';
 
 const setPerformanceMemory = (memory: object | undefined) => {
   if (memory === undefined) {
@@ -48,6 +48,7 @@ describe('getMemoryInfo', () => {
     setPerformanceMemory(undefined);
     vi.stubGlobal('navigator', { deviceMemory: 4 });
     expect(getMemoryInfo()).toBeNull();
+    expect(getEstimatedHeapLimitBytes()).toBe(1024 * 1024 * 1024);
   });
 
   it.each([
@@ -74,4 +75,21 @@ describe('getMemoryInfo', () => {
     vi.stubGlobal('navigator', { deviceMemory: 0 });
     expect(getMemoryInfo()).toBeNull();
   });
+});
+
+describe('getEstimatedHeapLimitBytes', () => {
+  it('derives a conservative cap from device RAM independently of heap measurement', () => {
+    setPerformanceMemory(undefined);
+    vi.stubGlobal('navigator', { deviceMemory: 1 });
+    expect(getEstimatedHeapLimitBytes()).toBe(256 * 1024 * 1024);
+    expect(getMemoryInfo()).toBeNull();
+  });
+
+  it.each([undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1e30])(
+    'rejects absent or invalid device memory %s',
+    (deviceMemory) => {
+      vi.stubGlobal('navigator', { deviceMemory });
+      expect(getEstimatedHeapLimitBytes()).toBeNull();
+    }
+  );
 });

@@ -10,12 +10,33 @@
  * browser memory information.
  */
 
+import { BYTES_PER_KB, BYTES_PER_MB, DEVICE_MEMORY_HEAP_RATIO } from './constants.js';
+
 export interface MemoryInfo {
   usedJSHeapSize: number;
   totalJSHeapSize: number;
   jsHeapSizeLimit: number;
   usagePercentage: number;
   deviceMemoryGB?: number | undefined;
+}
+
+/**
+ * A device-RAM heuristic for resource caps, never a measured JS heap value.
+ * Callers must label it as an estimate and must not infer current heap usage.
+ */
+export function getEstimatedHeapLimitBytes(): number | null {
+  const deviceMemoryGB = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  if (
+    typeof deviceMemoryGB !== 'number' ||
+    !Number.isFinite(deviceMemoryGB) ||
+    deviceMemoryGB <= 0
+  ) {
+    return null;
+  }
+  const estimate = Math.floor(
+    deviceMemoryGB * BYTES_PER_KB * BYTES_PER_MB * DEVICE_MEMORY_HEAP_RATIO
+  );
+  return Number.isSafeInteger(estimate) && estimate > 0 ? estimate : null;
 }
 
 /**
