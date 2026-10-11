@@ -330,6 +330,7 @@ export function analyzeGifPlaybackCycles(frames) {
       (precedingReturn.marker === 'lime' || precedingReturn.marker === 'blue')
       ? start.startMs - precedingReturn.lastMs : null;
     let redToLimeMs = null;
+    let redToBlueMs = null;
     let returnToRedMs = null;
     if (startReturnToRedMs === null) {
       reasons.push('Start red return was not observed');
@@ -342,6 +343,14 @@ export function analyzeGifPlaybackCycles(frames) {
     if (!validOrder) {
       const hasUnclassified = middle.some((run) => run.marker === null);
       const hasLime = middle.some((run) => run.marker === 'lime');
+      if (middle.length === 1 && middle[0].marker === 'blue') {
+        redToBlueMs = middle[0].startMs - start.lastMs;
+        // This fixed GIF holds lime for 50ms. A blue sample within 35ms
+        // of the last red sample cannot have skipped that mandatory scene.
+        if (redToBlueMs >= 0 && redToBlueMs <= MAX_SAMPLE_GAP_MS) {
+          errors.push(`Mandatory lime scene omitted between red and blue at frame ${middle[0].firstSequence}`);
+        }
+      }
       reasons.push(hasUnclassified ? 'Unclassified sample in cycle' :
         hasLime ? 'Observed colors are out of order' : 'Lime transition was not observed');
       if (hasLime && !hasUnclassified) {
@@ -370,6 +379,7 @@ export function analyzeGifPlaybackCycles(frames) {
       bracketsMs: {
         startReturnToRed: startReturnToRedMs,
         redToLime: redToLimeMs,
+        redToBlue: redToBlueMs,
         returnToRed: returnToRedMs,
       },
       blue: { observed: blueObserved, holdMs: null, holdKnown: false },

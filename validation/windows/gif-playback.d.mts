@@ -64,6 +64,7 @@ export interface GifPlaybackCycleAnalysis {
     bracketsMs: {
       startReturnToRed: number | null;
       redToLime: number | null;
+      redToBlue: number | null;
       returnToRed: number | null;
     };
     blue: { observed: boolean; holdMs: null; holdKnown: false };
