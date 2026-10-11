@@ -47,6 +47,9 @@ vi.mock('@services/decoder-service', () => ({
         sourceTotalMs: mocks.presentationEndUs / 1000,
         tailAccumulatedMs: 0,
         totalInputFrames: mocks.timedFrames.length,
+        consumedChunks: mocks.timedFrames.length,
+        decodedFrames: mocks.timedFrames.length,
+        selectedFrames: mocks.timedFrames.length,
         presentationEndUs: mocks.presentationEndUs,
       };
     }
@@ -61,6 +64,9 @@ vi.mock('@services/decoder-service', () => ({
       tailAccumulatedMs: 0,
       presentationEndUs: 200_000,
       totalInputFrames: 2,
+      consumedChunks: 2,
+      decodedFrames: 2,
+      selectedFrames: 2,
     };
   }),
 }));
@@ -115,7 +121,13 @@ describe('encodeGif timing', () => {
       expect.objectContaining({ palette: [[1, 1, 1]] })
     );
     expect(onFrameEncoded).toHaveBeenCalledWith(1, expect.any(Number));
-    expect(onEncodingComplete).toHaveBeenCalledWith({ decodedFrames: 2, encodedFrames: 1 });
+    expect(onEncodingComplete).toHaveBeenCalledWith({
+      consumedChunks: 2,
+      decodedFrames: 2,
+      selectedFrames: 2,
+      encodedFrames: 1,
+      emittedFrames: 1,
+    });
   });
 
   it('writes each changed frame with the source tail included in its hold', async () => {

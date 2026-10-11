@@ -386,7 +386,7 @@ export async function encodeGif(
   let pendingStartUs: number | null = null;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
-  const decimationController = createDynamicDecimationController();
+  const decimationController = createDynamicDecimationController(opts.decimationMemoryCheck);
 
   function assertCanWriteOutputFrame(): void {
     if (outputFrames >= outputLimits.maxFrames) {
@@ -500,6 +500,9 @@ export async function encodeGif(
       smartSkipped: decoderSmartSkipped,
       sourceTotalMs: decodedSourceTotalMs,
       presentationEndUs,
+      consumedChunks,
+      decodedFrames,
+      selectedFrames,
     } = await decodeFrames(
       demux,
       {
@@ -511,12 +514,10 @@ export async function encodeGif(
         pixelFormat: 'rgba',
         profileOperation: opts.profileOperation,
         profileCopyPath: opts.profileCopyPath,
-        onFrameDecoded: (_frameNum, total) => {
+        onFrameDecoded: (nativeFrameCount, total) => {
           estimatedTotalFrames = total;
           // Report decoding progress — throttle to every 10 frames
-          if (opts.onFrameDecoded && (encodeIdx % 10 === 0 || encodeIdx === 0)) {
-            opts.onFrameDecoded(encodeIdx, total);
-          }
+          opts.onFrameDecoded?.(nativeFrameCount, total);
         },
         // Streaming callback: index each selected frame after flushing its predecessor.
         onFrameAvailable: async (
@@ -699,7 +700,10 @@ export async function encodeGif(
     lastIndexedData = null;
     liveIndexedBytes = 0;
     comparisonWorkingBytes = 0;
+    const finalizationStart = opts.profileOperation ? performance.now() : null;
     encoder.finish();
+    if (finalizationStart !== null)
+      opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
     const streamCapacity = encoder.stream.buffer.byteLength;
     const finalCopyPeakBytes = streamCapacity + streamBytes;
     if (
@@ -709,11 +713,16 @@ export async function encodeGif(
       throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
     }
     opts.assertAdditionalMemoryBytes?.(finalCopyPeakBytes);
+    const copyStart = opts.profileOperation ? performance.now() : null;
     const rawBytes = encoder.bytes();
+    if (copyStart !== null) opts.profileOperation?.('outputCopy', performance.now() - copyStart);
     const totalElapsed = (performance.now() - startTime) / 1000;
     opts.onEncodingComplete?.({
-      decodedFrames: totalInputFrames,
+      consumedChunks,
+      decodedFrames,
+      selectedFrames,
       encodedFrames: encodeIdx,
+      emittedFrames: outputFrames,
     });
 
     logger.info('encoders', 'GIF encoding complete', {

@@ -159,7 +159,7 @@ export class ConversionRuntimeController {
     this.progress.updateStatus(message);
   }
 
-  updateMemoryUsage(memoryMB: number): void {
+  updateMemoryUsage(memoryMB: number | null): void {
     this.progress.updateMemoryUsage(memoryMB);
   }
 

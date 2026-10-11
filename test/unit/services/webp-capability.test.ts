@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { probeCanvasWebpCapability } from '@services/webp-capability';
 
-function webp(width: number, height: number): Uint8Array {
+function webp(width: number, height: number): Uint8Array<ArrayBuffer> {
   const frame = new Uint8Array([0x10, 0, 0, 0x9d, 0x01, 0x2a, width, 0, height, 0]);
   const bytes = new Uint8Array(20 + frame.length);
   bytes.set([0x52, 0x49, 0x46, 0x46], 0);

@@ -16,11 +16,11 @@ import type { ProfileCopyPathRecorder, ProfileOperationRecorder } from './conver
 
 /** Exact observations at the native decoder, encoder, and container boundaries. */
 export interface EncoderFrameCounts {
-  consumedChunks?: number | undefined;
+  consumedChunks?: number;
   decodedFrames: number;
-  selectedFrames?: number | undefined;
+  selectedFrames?: number;
   encodedFrames: number;
-  emittedFrames?: number | undefined;
+  emittedFrames?: number;
 }
 
 /** Base options shared by all format encoders */

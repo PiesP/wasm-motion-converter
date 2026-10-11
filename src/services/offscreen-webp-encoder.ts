@@ -200,7 +200,10 @@ export async function encodeWebpOffscreen(
     fps: 0,
     etaSeconds: 0,
     memoryMB: null,
-    currentFrame: muxer.frames,
+    currentFrame: encodeIdx,
+    encodedFrames: encodeIdx,
+    emittedFrames: muxer.frames,
+    outputFrames: muxer.frames,
     totalFrames: Math.max(muxer.frames, totalDecoded),
   });
   opts.onEncodingComplete?.({
