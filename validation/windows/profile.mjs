@@ -1836,8 +1836,8 @@ async function loadPublicTargets(bundleRoot) {
   return config.targets;
 }
 
-async function exercisePublicTarget(browser, target, fixturePath, cancellationFixture, outputRoot, artifacts) {
-  const publicDir = `public-${target.deploymentId}`;
+async function exercisePublicTarget(browser, target, targetIndex, fixturePath, cancellationFixture, outputRoot, artifacts) {
+  const publicDir = `public-${targetIndex + 1}-${target.deploymentId}`;
   const publicRoot = join(outputRoot, publicDir);
   await mkdir(publicRoot, { recursive: true });
   const publicArtifacts = [];
@@ -1849,6 +1849,29 @@ async function exercisePublicTarget(browser, target, fixturePath, cancellationFi
   const errors = { page: [], console: [], request: [], csp: [], uploads: [], external: [] };
   const assets = new Map();
   const workers = [];
+  const origin = new URL(target.url).origin;
+  const resourceTiming = (subject) => subject.evaluate(() => performance.getEntriesByType('resource')
+    .filter((entry) => entry instanceof PerformanceResourceTiming)
+    .map((entry) => ({ name: new URL(entry.name).pathname, initiatorType: entry.initiatorType,
+      transferSize: entry.transferSize, encodedBodySize: entry.encodedBodySize,
+      decodedBodySize: entry.decodedBodySize })));
+  const captureAssetRequests = () => {
+    const requests = [];
+    const onRequest = (request) => {
+      const url = new URL(request.url());
+      if (url.origin === origin && /^\/assets\/.*\.(?:js|css|wasm)$/.test(url.pathname)) requests.push(request);
+    };
+    context.on('request', onRequest);
+    return async () => {
+      context.off('request', onRequest);
+      return Promise.all(requests.map(async (request) => {
+        const response = await request.response();
+        assert(response, `Public asset request had no response: ${request.url()}`);
+        return { path: new URL(request.url()).pathname, resourceType: request.resourceType(),
+          status: response.status(), sizes: await request.sizes() };
+      }));
+    };
+  };
   page.on('worker', (worker) => workers.push(new URL(worker.url()).pathname));
   page.on('pageerror', (error) => errors.page.push(error.message));
   page.on('console', (message) => {
@@ -1923,6 +1946,7 @@ async function exercisePublicTarget(browser, target, fixturePath, cancellationFi
     assert.equal(document.headers()['cross-origin-opener-policy'], 'same-origin');
     assert.equal(document.headers()['cross-origin-embedder-policy'], 'require-corp');
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    await page.waitForLoadState('networkidle');
     assert.equal(await page.evaluate(() => crossOriginIsolated), true);
     await recordScreenshot(page, publicRoot, 'initial.png', publicArtifacts);
     const timing = () => page.evaluate(() => performance.getEntriesByType('resource')
@@ -1936,12 +1960,15 @@ async function exercisePublicTarget(browser, target, fixturePath, cancellationFi
       'Public cold JS transfer exceeded the unchanged 150000-byte budget');
     await page.reload();
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    await page.waitForLoadState('networkidle');
     const warm = await timing();
 
     await selectFixture(page, fixturePath);
     await chooseOption(page, 'format', 'gif');
     await chooseOption(page, 'quality', 'low');
     await chooseOption(page, 'scale', '0.5');
+    await page.evaluate(() => performance.clearResourceTimings());
+    const finishGifRequests = captureAssetRequests();
     await page.locator('[data-testid="convert-button"]').click();
     await proceedIfPrompted(page);
     await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
@@ -1951,7 +1978,11 @@ async function exercisePublicTarget(browser, target, fixturePath, cancellationFi
     const gifBytes = await readDownload(gifDownload);
     validateOutput(gifBytes, 'gif');
     assert(workers.length > 0, 'Public GIF conversion never started a module worker');
-    const firstGifTraffic = await timing();
+    await page.waitForLoadState('networkidle');
+    const firstGifTraffic = { pageResourceTiming: await resourceTiming(page),
+      networkAssetRequests: await finishGifRequests() };
+    assert(firstGifTraffic.networkAssetRequests.some((request) => workers.includes(request.path)),
+      'Public GIF traffic did not record its module worker request');
     await recordScreenshot(page, publicRoot, 'gif-result.png', publicArtifacts);
 
     await loadApplication(page, target.url);
@@ -1997,6 +2028,8 @@ async function exercisePublicTarget(browser, target, fixturePath, cancellationFi
     await chooseOption(wasmPage, 'format', 'webp');
     await chooseOption(wasmPage, 'quality', 'low');
     await chooseOption(wasmPage, 'scale', '0.5');
+    await wasmPage.evaluate(() => performance.clearResourceTimings());
+    const finishWebpRequests = captureAssetRequests();
     await wasmPage.locator('[data-testid="convert-button"]').click();
     await proceedIfPrompted(wasmPage);
     await waitForConversionOutcome(wasmPage, CONVERSION_TIMEOUT_MS);
@@ -2005,12 +2038,14 @@ async function exercisePublicTarget(browser, target, fixturePath, cancellationFi
     ]);
     const webpBytes = await readDownload(webpDownload);
     validateOutput(webpBytes, 'webp');
+    await wasmPage.waitForLoadState('networkidle');
     await recordScreenshot(wasmPage, publicRoot, 'webp-wasm-result.png', publicArtifacts);
-    const firstWebpTraffic = await wasmPage.evaluate(() => performance.getEntriesByType('resource')
-      .filter((entry) => entry instanceof PerformanceResourceTiming)
-      .map((entry) => ({ name: new URL(entry.name).pathname, transferSize: entry.transferSize })));
+    const firstWebpTraffic = { pageResourceTiming: await resourceTiming(wasmPage),
+      networkAssetRequests: await finishWebpRequests() };
     const wasmAssets = [...assets.entries()].filter(([path]) => path.endsWith('.wasm'));
     assert(wasmAssets.length > 0, 'Public WebP fallback loaded no WASM');
+    assert(firstWebpTraffic.networkAssetRequests.some((request) => request.path.endsWith('.wasm')),
+      'Public WebP traffic did not record its WASM request');
     for (const [, response] of assets) {
       assert.equal(response.status(), 200, `Executable ${response.url()} status`);
       const path = new URL(response.url()).pathname;
@@ -2130,7 +2165,7 @@ export async function run({ browser, root, output }) {
 
     const checks = [{ id: 'app-load', status: 'passed', ...appLoad }];
     checks.push(await exerciseOfflineRecovery(
-      browser, started.url, outputRoot, started.setDistribution, bundleRoot, smallFixture
+      browser, started.url, outputRoot, started.setDistribution, bundleRoot, smallFixture, cancellationFixture
     ));
     for (const file of ['offline-app-recovery.png', 'offline-static-recovery.png']) {
       const bytes = await readFile(join(outputRoot, file));
@@ -2347,9 +2382,9 @@ export async function run({ browser, root, output }) {
       browser, page, bundleRoot, started.url, smallFixture, outputRoot, artifacts
     ));
 
-    for (const target of publicTargets) {
+    for (const [targetIndex, target] of publicTargets.entries()) {
       checks.push(await exercisePublicTarget(
-        browser, target, smallFixture, cancellationFixture, outputRoot, artifacts
+        browser, target, targetIndex, smallFixture, cancellationFixture, outputRoot, artifacts
       ));
     }
 
