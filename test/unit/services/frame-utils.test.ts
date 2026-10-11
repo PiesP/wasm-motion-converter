@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { globalBufferPool } from '@services/buffer-pool';
 import {
   clearCanvasCache,
+  compareMotionSignatures,
   copyFrameToPixels,
-  compute8x8Grayscale,
+  computeMotionSignature,
   convertRGBAToRGB,
-  getFrameDurationMs,
   resolveVideoDimensions,
 } from '@services/frame-utils';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
@@ -16,6 +16,110 @@ import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 afterEach(() => {
   clearCanvasCache();
   vi.unstubAllGlobals();
+});
+
+describe('bounded color-aware motion signatures', () => {
+  const width = 128;
+  const height = 128;
+  const solid = (red: number, green: number, blue: number): Uint8Array => {
+    const pixels = new Uint8Array(width * height * 3);
+    for (let offset = 0; offset < pixels.length; offset += 3) {
+      pixels.set([red, green, blue], offset);
+    }
+    return pixels;
+  };
+  const paint = (pixels: Uint8Array, x: number, y: number, color: readonly number[]): void => {
+    pixels.set(color, (y * width + x) * 3);
+  };
+  const compare = (a: Uint8Array, b: Uint8Array) =>
+    compareMotionSignatures(
+      computeMotionSignature(a, width, height),
+      computeMotionSignature(b, width, height)
+    );
+
+  it('retains primary and approximately equal-luminance hue changes', () => {
+    const red = solid(255, 0, 0);
+    const green = solid(0, 255, 0);
+    const blue = solid(0, 0, 255);
+    expect(compare(red, green).distance).toBeGreaterThan(100);
+    expect(compare(green, blue).distance).toBeGreaterThan(100);
+    // Rec. 709 luminance of these colors is about 54 in both cases.
+    expect(compare(red, solid(0, 76, 0)).distance).toBeGreaterThan(100);
+  });
+
+  it('catches a local cursor or text pixel between former center samples', () => {
+    const background = solid(0, 0, 0);
+    const cursor = background.slice();
+    paint(cursor, 1, 1, [255, 255, 255]);
+    const comparison = compare(background, cursor);
+    expect(comparison.globalDistance).toBeLessThan(1);
+    expect(comparison.localDistance).toBeGreaterThan(100);
+    expect(comparison.distance).toBe(comparison.localDistance);
+  });
+
+  it('retains a one-pixel cursor move within the same large tile', () => {
+    const screenWidth = 1920;
+    const screenHeight = 1080;
+    const before = new Uint8Array(screenWidth * screenHeight * 3);
+    const after = before.slice();
+    before.set([255, 255, 255], (screenWidth + 1) * 3);
+    after.set([255, 255, 255], (screenWidth + 2) * 3);
+    const result = compareMotionSignatures(
+      computeMotionSignature(before, screenWidth, screenHeight),
+      computeMotionSignature(after, screenWidth, screenHeight)
+    );
+    expect(result.globalDistance).toBe(0);
+    expect(result.distance).toBeGreaterThan(6); // strongest smart-skip preset
+  });
+
+  it('distinguishes high-contrast cursor appearance from a one-level codec fluctuation', () => {
+    const screenWidth = 1920;
+    const screenHeight = 1080;
+    const background = new Uint8Array(screenWidth * screenHeight * 3);
+    background.set([255, 255, 255], (screenWidth + 20) * 3);
+    const noise = background.slice();
+    noise.set([1, 1, 1], (screenWidth + 1) * 3);
+    const cursor = background.slice();
+    cursor.set([255, 255, 255], (screenWidth + 1) * 3);
+    const baseline = computeMotionSignature(background, screenWidth, screenHeight);
+    expect(compareMotionSignatures(computeMotionSignature(noise, screenWidth, screenHeight), baseline).distance).toBeLessThanOrEqual(1.5);
+    expect(compareMotionSignatures(computeMotionSignature(cursor, screenWidth, screenHeight), baseline).distance).toBeGreaterThan(6);
+  });
+
+  it('detects scene cuts and gradual motion while tolerating small compression noise', () => {
+    const background = solid(30, 50, 70);
+    const noisy = background.slice();
+    for (let index = 0; index < noisy.length; index += 3) {
+      noisy[index] = index % 2 === 0 ? 31 : 29;
+    }
+    expect(compare(background, noisy).distance).toBeLessThanOrEqual(2);
+    expect(compare(background, solid(160, 100, 40)).distance).toBeGreaterThan(50);
+
+    const first = background.slice();
+    const second = background.slice();
+    paint(first, 7, 7, [255, 255, 255]);
+    paint(second, 8, 7, [255, 255, 255]);
+    expect(compare(first, second).distance).toBeGreaterThan(6);
+  });
+
+  it('ignores opaque alpha and validates the bounded input and frame geometry', () => {
+    const rgb = solid(12, 34, 56);
+    const rgba = new Uint8Array(width * height * 4);
+    for (let pixel = 0; pixel < width * height; pixel++) {
+      rgba.set([12, 34, 56, pixel % 2], pixel * 4);
+    }
+    expect(computeMotionSignature(rgb, width, height)).toEqual(
+      computeMotionSignature(rgba, width, height, 4)
+    );
+    expect(() => computeMotionSignature(rgb, width, height + 1)).toThrow(RangeError);
+    expect(() => computeMotionSignature(rgb, MAX_FRAME_PIXEL_COUNT + 1, 1)).toThrow(RangeError);
+    expect(() =>
+      compareMotionSignatures(
+        computeMotionSignature(rgb, width, height),
+        computeMotionSignature(rgb.subarray(0, 3), 1, 1)
+      )
+    ).toThrow(RangeError);
+  });
 });
 
 describe('resolveVideoDimensions', () => {
@@ -147,7 +251,7 @@ describe('clearCanvasCache', () => {
       frame,
       2,
       2,
-      { durationCarryUs: 0, copyPath: null },
+      { copyPath: null },
       'rgb'
     );
 
@@ -196,7 +300,7 @@ describe('opaque RGBA frame copying', () => {
       frame,
       48,
       80,
-      { durationCarryUs: 0, copyPath: null },
+      { copyPath: null },
       'rgba',
       270
     );
@@ -224,7 +328,7 @@ describe('opaque RGBA frame copying', () => {
       displayHeight: 1,
       displayWidth: 2,
     } as unknown as VideoFrame;
-    const context = { durationCarryUs: 0, copyPath: null };
+    const context = { copyPath: null };
 
     const first = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
     const second = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
@@ -255,7 +359,7 @@ describe('opaque RGBA frame copying', () => {
       displayHeight: 1,
       displayWidth: 1,
     } as unknown as VideoFrame;
-    const context = { durationCarryUs: 0, copyPath: null };
+    const context = { copyPath: null };
 
     const first = await copyFrameToPixels(frame, 1, 1, context, 'rgba');
     attemptedFormats.length = 0;
@@ -293,7 +397,7 @@ describe('opaque RGBA frame copying', () => {
       displayHeight: 1,
       displayWidth: 1,
     } as unknown as VideoFrame;
-    const context = { durationCarryUs: 0, copyPath: null };
+    const context = { copyPath: null };
 
     const first = await copyFrameToPixels(frame, 1, 1, context, 'rgba');
     frameNumber = 1;
@@ -335,7 +439,7 @@ describe('opaque RGBA frame copying', () => {
       displayHeight: 2,
       displayWidth: 2,
     } as unknown as VideoFrame;
-    const context = { durationCarryUs: 0, copyPath: null };
+    const context = { copyPath: null };
 
     const scaled = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
     const cached = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
@@ -380,7 +484,7 @@ describe('opaque RGBA frame copying', () => {
       frame,
       1,
       1,
-      { durationCarryUs: 0, copyPath: null },
+      { copyPath: null },
       'rgba'
     );
 
@@ -399,7 +503,7 @@ describe('opaque RGBA frame copying', () => {
       rgba.set([value, value + 1, value + 2, 255], index * 4);
     }
 
-    expect(compute8x8Grayscale(rgba, 8, 8, 4)).toEqual(compute8x8Grayscale(rgb, 8, 8, 3));
+    expect(computeMotionSignature(rgba, 8, 8, 4)).toEqual(computeMotionSignature(rgb, 8, 8, 3));
   });
 });
 
@@ -478,45 +582,5 @@ describe('convertRGBAToRGB', () => {
     // Actually needsBytes = 0*4 = 0, so the bounds check passes, and acquire(0) returns a 1-byte buffer
     // The function should not throw for zero dimensions
     expect(() => convertRGBAToRGB(rgba, 0, 0, 'RGBA')).not.toThrow();
-  });
-});
-
-describe('getFrameDurationMs', () => {
-  it('returns duration in milliseconds from centisecond delay', () => {
-    // 100 centiseconds = 1000ms
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    const result = getFrameDurationMs({ duration: 1000000 } as any, ctx);
-    expect(result.durationMs).toBe(1000);
-  });
-
-  it('returns integer milliseconds', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    expect(getFrameDurationMs({ duration: 500000 } as any, ctx).durationMs).toBe(500);
-    expect(getFrameDurationMs({ duration: 330000 } as any, ctx).durationMs).toBe(330);
-  });
-
-  it('handles null duration by returning fallbackMs', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    expect(getFrameDurationMs({ duration: null } as any, ctx).durationMs).toBe(100);
-  });
-  it('handles zero delay (returns fallbackMs=100)', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    // duration=0 → raw<=0 → returns fallbackMs=100 (default)
-    const result = getFrameDurationMs({ duration: 0 } as any, ctx);
-    expect(result.durationMs).toBe(100);
-  });
-
-  it('handles positive carry across frames', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    // 333333us: rounds to 333ms, carry = 333333 - 333*1000 = 333us
-    const r1 = getFrameDurationMs({ duration: 333333 } as any, ctx);
-    expect(r1.durationMs).toBe(333);
-    expect(r1.ctx.durationCarryUs).toBe(333);
-  });
-
-  it('uses fallbackMs when duration is null', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    const result = getFrameDurationMs({ duration: null } as any, ctx, 50);
-    expect(result.durationMs).toBe(50);
   });
 });

@@ -22,6 +22,7 @@ export function createThrottledProgress(
   let scheduled = false;
   let timerId: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+  let highestProgress = 0;
 
   const flush = () => {
     if (disposed) return;
@@ -48,17 +49,23 @@ export function createThrottledProgress(
 
   const callback = (update: ConversionProgress) => {
     if (disposed) return;
+    highestProgress = Math.max(highestProgress, Math.min(100, Math.max(0, update.progress)));
+    const current = { ...update, progress: highestProgress };
     const now = performance.now();
     const elapsed = now - lastCallTime;
 
     if (elapsed >= minIntervalMs) {
+      pendingCall = null;
+      if (timerId !== null) clearTimeout(timerId);
+      timerId = null;
+      scheduled = false;
       lastCallTime = now;
-      onProgress(update);
+      onProgress(current);
     } else {
       // Schedule a trailing call so the final state is not lost
       pendingCall = () => {
         lastCallTime = performance.now();
-        onProgress(update);
+        onProgress(current);
       };
       if (!scheduled) {
         scheduled = true;

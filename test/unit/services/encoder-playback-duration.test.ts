@@ -13,16 +13,20 @@ vi.mock('@services/decoder-service', () => ({
       options.pixelFormat === 'rgba'
         ? new Uint8Array([0x30, 0x50, 0x70, 0xff])
         : new Uint8Array([0x30, 0x50, 0x70]);
-    await options.onFrameAvailable(first, 100, 0);
-    await options.onFrameAvailable(second, 40, 1);
+    await options.onFrameAvailable(first, 100, 0, undefined, { startUs: 0, endUs: 100000 });
+    await options.onFrameAvailable(second, 40, 1, undefined, { startUs: 100000, endUs: 140000 });
     return {
       frames: [],
       outputTotalMs: 0,
       skippedByDecimation: 0,
       smartSkipped: 0,
       sourceTotalMs: 200,
-      tailAccumulatedMs: 60,
+      tailAccumulatedMs: 0,
       totalInputFrames: 2,
+      presentationEndUs: 200000,
+      consumedChunks: 2,
+      decodedFrames: 2,
+      selectedFrames: 2,
     };
   }),
 }));
@@ -42,7 +46,7 @@ vi.mock('@services/streaming-webp-encoder', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@services/streaming-webp-encoder')>();
   return {
     ...actual,
-    extractVP8Bitstream: () => new Uint8Array(8),
+    extractVP8Bitstream: () => new Uint8Array([0x10, 0, 0, 0x9d, 1, 0x2a, 1, 0, 1, 0]),
   };
 });
 
@@ -117,6 +121,6 @@ describe('encoder final playback duration', () => {
     expect(onProgress).toHaveBeenLastCalledWith(
       expect.objectContaining({ phase: 'encoding', currentFrame: 1, totalFrames: 2 })
     );
-    expect(onEncodingComplete).toHaveBeenCalledWith({ decodedFrames: 2, encodedFrames: 1 });
+    expect(onEncodingComplete).toHaveBeenCalledWith(expect.objectContaining({ decodedFrames: 2, encodedFrames: 1 }));
   });
 });

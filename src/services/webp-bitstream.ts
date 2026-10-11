@@ -5,77 +5,107 @@ import { VP8_FOURCC, VP8X_FOURCC } from '@utils/constants';
 
 const RIFF_MAGIC = 0x52494646;
 const WEBP_MAGIC = 0x57454250;
+const ICCP_FOURCC = 0x49434350;
 
-function extractVp8Chunk(webpBuffer: Uint8Array): Uint8Array {
-  if (webpBuffer.length < 24) {
-    throw new Error(`WebP too small: ${webpBuffer.length} bytes (minimum 24)`);
-  }
-
-  const view = new DataView(webpBuffer.buffer, webpBuffer.byteOffset, webpBuffer.byteLength);
-  if (view.getUint32(0, false) !== RIFF_MAGIC) {
-    throw new Error(`Invalid RIFF header: 0x${view.getUint32(0, false).toString(16)}`);
-  }
-  if (view.getUint32(8, false) !== WEBP_MAGIC) {
-    throw new Error(`Invalid WEBP type: 0x${view.getUint32(8, false).toString(16)}`);
-  }
-
-  const fourCC = view.getUint32(12, false);
-  if (fourCC === VP8_FOURCC) {
-    const frameSize = view.getUint32(16, true);
-    if (20 + frameSize > webpBuffer.length) {
-      throw new Error(`Frame size ${frameSize} exceeds buffer ${webpBuffer.length}`);
-    }
-    return webpBuffer.subarray(20, 20 + frameSize);
-  }
-
-  if (fourCC === VP8X_FOURCC) {
-    const vp8xSize = view.getUint32(16, true);
-    let offset = 20 + vp8xSize;
-    while (offset + 8 <= webpBuffer.length) {
-      const chunkFourCC = view.getUint32(offset, false);
-      const chunkSize = view.getUint32(offset + 4, true);
-      if (chunkFourCC === VP8_FOURCC) {
-        if (offset + 8 + chunkSize > webpBuffer.length) {
-          throw new Error(`VP8 chunk size ${chunkSize} exceeds buffer ${webpBuffer.length}`);
-        }
-        return webpBuffer.subarray(offset + 8, offset + 8 + chunkSize);
-      }
-      offset += 8 + chunkSize + (chunkSize % 2);
-    }
-    throw new Error('VP8X container does not contain a VP8 chunk');
-  }
-
-  const codec = String.fromCharCode(
-    webpBuffer[12]!,
-    webpBuffer[13]!,
-    webpBuffer[14]!,
-    webpBuffer[15]!
-  );
-  throw new Error(`Unknown WebP format: "${codec}" (0x${fourCC.toString(16)})`);
+export interface CanvasWebpFrame {
+  bitstream: Uint8Array;
+  iccProfile: Uint8Array | null;
 }
 
-/**
- * Extract a Canvas-produced VP8 frame and ensure the display flag in its
- * three-byte frame tag is set for use in an animated WebP ANMF chunk.
- * The encoder profile, partition size, and coded dimensions are preserved.
- */
-export function extractAndNormalizeCanvasVp8(webpBuffer: Uint8Array): Uint8Array {
-  const vp8Data = extractVp8Chunk(webpBuffer);
-  let tagOffset = -1;
-  for (let index = 0; index < Math.min(vp8Data.length - 2, 16); index++) {
-    if (vp8Data[index] === 0x9d && vp8Data[index + 1] === 0x01 && vp8Data[index + 2] === 0x2a) {
-      tagOffset = index;
-      break;
+/** Validate an opaque, full-canvas VP8 keyframe before placing it in ANMF. */
+export function validateVp8Frame(frame: Uint8Array, width: number, height: number): void {
+  if (
+    frame.length < 10 ||
+    (frame[0]! & 1) !== 0 ||
+    frame[3] !== 0x9d ||
+    frame[4] !== 0x01 ||
+    frame[5] !== 0x2a
+  ) {
+    throw new Error('WebP frame is not a VP8 keyframe');
+  }
+  const codedWidth = (frame[6]! | (frame[7]! << 8)) & 0x3fff;
+  const codedHeight = (frame[8]! | (frame[9]! << 8)) & 0x3fff;
+  if (codedWidth !== width || codedHeight !== height) {
+    throw new Error(
+      `WebP VP8 dimensions ${codedWidth}x${codedHeight} do not match ${width}x${height}`
+    );
+  }
+}
+
+/** Return a borrowed VP8 payload only from a complete, opaque WebP container. */
+function parseVp8Chunk(webp: Uint8Array, allowIcc: boolean): CanvasWebpFrame {
+  if (webp.length < 30) throw new Error('WebP container is too small');
+  const view = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
+  if (view.getUint32(0, false) !== RIFF_MAGIC || view.getUint32(8, false) !== WEBP_MAGIC) {
+    throw new Error('Invalid RIFF/WEBP header');
+  }
+  if (view.getUint32(4, true) + 8 !== webp.length) throw new Error('Invalid WebP RIFF size');
+  let offset = 12;
+  let extended = false;
+  let vp8: Uint8Array | null = null;
+  let iccProfile: Uint8Array | null = null;
+  let iccFlag = false;
+  let vp8xWidth: number | null = null;
+  let vp8xHeight: number | null = null;
+  while (offset < webp.length) {
+    if (offset + 8 > webp.length) throw new Error('Truncated WebP chunk header');
+    const fourCC = view.getUint32(offset, false);
+    const size = view.getUint32(offset + 4, true);
+    const end = offset + 8 + size;
+    const paddedEnd = end + (size & 1);
+    if (!Number.isSafeInteger(paddedEnd) || paddedEnd > webp.length) {
+      throw new Error('WebP chunk exceeds RIFF bounds');
     }
+    if (size & 1 && webp[end] !== 0) throw new Error('Invalid WebP chunk padding');
+    if (fourCC === VP8X_FOURCC) {
+      if (offset !== 12 || size !== 10 || extended) throw new Error('Invalid WebP VP8X chunk');
+      extended = true;
+      const flags = webp[offset + 8]!;
+      if (
+        (allowIcc ? flags !== 0 && flags !== 0x20 : flags !== 0) ||
+        webp[offset + 9] !== 0 ||
+        webp[offset + 10] !== 0 ||
+        webp[offset + 11] !== 0
+      )
+        throw new Error('WebP VP8X has unsupported features');
+      iccFlag = flags === 0x20;
+      vp8xWidth = 1 + webp[offset + 12]! + (webp[offset + 13]! << 8) + (webp[offset + 14]! << 16);
+      vp8xHeight = 1 + webp[offset + 15]! + (webp[offset + 16]! << 8) + (webp[offset + 17]! << 16);
+    } else if (fourCC === ICCP_FOURCC && allowIcc) {
+      if (!extended || !iccFlag || iccProfile || vp8 || size === 0)
+        throw new Error('Invalid WebP ICCP chunk');
+      iccProfile = webp.subarray(offset + 8, end);
+    } else if (fourCC === VP8_FOURCC) {
+      if (vp8 || (extended && iccFlag !== (iccProfile !== null)))
+        throw new Error('Invalid WebP VP8 chunk order');
+      vp8 = webp.subarray(offset + 8, end);
+    } else {
+      // Canvas preserves ICC explicitly; other metadata and alpha are unsupported.
+      throw new Error('Unsupported WebP chunk or codec');
+    }
+    offset = paddedEnd;
   }
-
-  if (tagOffset < 3) return vp8Data;
-
-  const frame = new Uint8Array(vp8Data);
-  const frameTagIndex = tagOffset - 3;
-  const frameTagByte = frame[frameTagIndex];
-  if (frameTagByte !== undefined) {
-    frame[frameTagIndex] = frameTagByte | 0x10;
+  if (!vp8) throw new Error('WebP container has no VP8 chunk');
+  if (extended && iccFlag !== (iccProfile !== null))
+    throw new Error('WebP ICCP flag does not match profile');
+  if (!extended && view.getUint32(12, false) !== VP8_FOURCC) {
+    throw new Error('Invalid simple WebP chunk order');
   }
-  return frame;
+  const codedWidth = (vp8[6]! | (vp8[7]! << 8)) & 0x3fff;
+  const codedHeight = (vp8[8]! | (vp8[9]! << 8)) & 0x3fff;
+  validateVp8Frame(vp8, vp8xWidth ?? codedWidth, vp8xHeight ?? codedHeight);
+  return { bitstream: vp8, iccProfile };
+}
+
+/** Strict WASM codec path: metadata cannot be discarded. */
+export function extractVp8Chunk(webp: Uint8Array): Uint8Array {
+  return parseVp8Chunk(webp, false).bitstream;
+}
+
+/** Parse the supported Canvas VP8 + optional ICC profile combination. */
+export function extractCanvasWebp(webp: Uint8Array): CanvasWebpFrame {
+  const parsed = parseVp8Chunk(webp, true);
+  const bitstream = new Uint8Array(parsed.bitstream);
+  bitstream[0] = bitstream[0]! | 0x10;
+  return { bitstream, iccProfile: parsed.iccProfile };
 }

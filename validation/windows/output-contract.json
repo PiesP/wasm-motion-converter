@@ -84,15 +84,32 @@
         "width": 320,
         "height": 180,
         "markers": [
-          "red", "red", "lime", "lime", "blue", "blue", "yellow", "yellow",
-          "red", "red", "lime", "lime", "blue", "blue", "yellow", "yellow",
-          "red", "red", "lime", "lime", "blue", "blue", "yellow", "yellow", "yellow"
+          "red",
+          "lime",
+          "blue",
+          "yellow",
+          "red",
+          "lime",
+          "blue",
+          "yellow",
+          "red",
+          "lime",
+          "blue",
+          "yellow"
         ],
         "durationsMs": [
-          20, 50, 50, 50, 50, 50, 50, 50,
-          50, 50, 50, 50, 50, 50, 50, 50,
-          50, 50, 50, 50, 50, 50, 50, 50,
-          40
+          100,
+          100,
+          100,
+          100,
+          100,
+          100,
+          100,
+          100,
+          100,
+          100,
+          100,
+          100
         ],
         "durationToleranceMs": 20,
         "maxColorDistance": 96

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { verifyAnimatedOutput } from './output-contract.mjs';
+import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.mjs';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
 import { exerciseOfflineRecovery } from './offline-recovery.mjs';
 
@@ -957,12 +957,16 @@ async function convertOutputContract(
   });
   validateOutput(bytes, contract.format, contract.expected.width, contract.expected.height);
   const decoded = await verifyAnimatedOutput(page, bytes, contract, markers);
+  const exactOracle = contract.id === 'cfr-trim-gif'
+    ? await compareAnimatedOutputExact(page, bytes, bytes, contract.format)
+    : null;
   return {
     id: `output-contract-${contract.id}`,
     status: 'passed',
     fixture: contract.fixture,
     format: contract.format,
     decoded,
+    exactOracle,
     output: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) },
   };
 }
@@ -1915,7 +1919,8 @@ export async function run({ browser, root, output }) {
       workerAttempts: globalThis.__wmcWorkerConstructionAttempts,
       nativeWebpAvailable: typeof OffscreenCanvas.prototype.convertToBlob === 'function',
     }));
-    assert(fallback.workerAttempts > 0, 'WASM fallback did not attempt its preferred Worker path');
+    assert.equal(fallback.workerAttempts, 0,
+      'Rejected native WebP capability must select WASM before creating a Worker pool');
     assert.equal(fallback.nativeWebpAvailable, false);
     checks.push({ ...wasmCheck, fallback });
     checks.push(await exerciseLongLocaleResult(page, outputRoot, artifacts));

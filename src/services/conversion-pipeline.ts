@@ -25,11 +25,13 @@ import type {
 import {
   BYTES_PER_MB,
   DEFAULT_FPS,
+  FRAME_PIPELINE_MEMORY_BUDGET_BYTES,
   GIF_TARGET_FPS,
   MEMORY_CRITICAL_RATIO,
   PROGRESS_PHASE,
   PROGRESS_PHASE_RANGES,
   PROGRESS_THROTTLE_MS,
+  WEBP_QUALITY_PERCENT,
   WEBP_TARGET_FPS,
   WORKER_MAX_MEMORY_MB,
   WORKER_MIN_MEMORY_MB,
@@ -47,13 +49,18 @@ import { buildEncodingProgress } from './conversion-progress';
 import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
-import { calcAutoDecimation } from './encoder-common';
+import { calcAutoDecimation, type EncoderFrameCounts } from './encoder-common';
 import { calculateWebpWorkerCountForBudget, WebpFrameMemoryBudget } from './frame-memory';
-import { clearCanvasCache, resolveVideoDimensions } from './frame-utils';
+import {
+  clearCanvasCache,
+  MOTION_SIGNATURE_PEAK_BYTES,
+  resolveVideoDimensions,
+} from './frame-utils';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { resolveOutputLimits } from './output-limits';
 import { createStreamingWebpEncoder, type StreamingWebpEncoder } from './parallel-webp-encoder';
+import { probeCanvasWebpCapability } from './webp-capability';
 import { encodeWebp } from './webp-encoder-service';
 import { createWorkerPool, disposeWorkerPool, WebpWorkerPool } from './worker-pool';
 
@@ -141,12 +148,12 @@ async function _runPipelineInner(
     // getMemoryUsageMB() reads performance.memory which is expensive.
     // Sample at most once per second instead of every progress callback.
     let lastMemSampleTime = 0;
-    let lastMemMB = 0;
-    const sampleMemory = (): number => {
+    let lastMemMB: number | null = null;
+    const sampleMemory = (): number | null => {
       const now = performance.now();
       if (now - lastMemSampleTime >= 1000) {
         lastMemSampleTime = now;
-        lastMemMB = getMemoryUsageMB() ?? 0;
+        lastMemMB = getMemoryUsageMB();
       }
       return lastMemMB;
     };
@@ -158,6 +165,13 @@ async function _runPipelineInner(
       Math.max(WORKER_MIN_MEMORY_MB, configuredMaxMemoryMB)
     );
     const retainedInputBytes = request.inputBuffer?.byteLength ?? 0;
+    const sampleAccountedMemoryMB = (additionalBytes = 0): number =>
+      Math.ceil(
+        (retainedInputBytes + globalBufferPool.totalRetainedMemory + additionalBytes) / BYTES_PER_MB
+      );
+    const decimationMemoryCheck = () => ({
+      usagePercentage: Math.min(100, (sampleAccountedMemoryMB() / maxMemoryMB) * 100),
+    });
     const assertMemoryBudget = (additionalBytes = 0): void => {
       const estimatedBytes =
         retainedInputBytes + globalBufferPool.totalRetainedMemory + additionalBytes;
@@ -225,7 +239,7 @@ async function _runPipelineInner(
 
     // ── Decode + Encode Phase (10~90%) ──
     let output: ArrayBuffer | undefined;
-    let encodeResult: { frames: number; outputBytes: number } | null = null;
+    let encodeResult: { outputBytes: number } | null = null;
 
     // Track frame times for FPS calculation
     // Progress callback fires every ~10 frames (throttled in decoder-service),
@@ -234,11 +248,10 @@ async function _runPipelineInner(
 
     // estimatedOutputFrames is computed after decimationRatio is determined
     let estimatedOutputFrames = 1;
-    let observedDecodedFrames = 0;
-    let observedEncodedFrames = 0;
+    let observedCounts: EncoderFrameCounts = { decodedFrames: 0, encodedFrames: 0 };
 
     const decodeProgressCb = (frameIdx: number, _totalFrames: number) => {
-      observedDecodedFrames = Math.max(observedDecodedFrames, frameIdx);
+      observedCounts.decodedFrames = Math.max(observedCounts.decodedFrames, frameIdx);
       transcodeSpan?.update({ decodedFrames: frameIdx });
       const now = performance.now();
       const deltaMs = now - fpsTracker.lastTime;
@@ -253,8 +266,8 @@ async function _runPipelineInner(
       fpsTracker.lastTime = now;
       fpsTracker.lastFrame = frameIdx;
       const decodePct =
-        estimatedOutputFrames > 0
-          ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)
+        demuxResult.totalFrames > 0
+          ? Math.round((frameIdx / demuxResult.totalFrames) * DECODE_RANGE)
           : 0;
       throttled.callback({
         phase: 'decoding',
@@ -262,21 +275,36 @@ async function _runPipelineInner(
         fps: fpsTracker.current,
         etaSeconds:
           fpsTracker.current > 0
-            ? Math.round((estimatedOutputFrames - frameIdx) / fpsTracker.current)
+            ? Math.max(0, Math.round((demuxResult.totalFrames - frameIdx) / fpsTracker.current))
             : null,
         memoryMB: sampleMemory(),
+        accountedMemoryMB: sampleAccountedMemoryMB(),
         currentFrame: frameIdx,
-        totalFrames: estimatedOutputFrames,
+        decodedFrames: frameIdx,
+        totalFrames: demuxResult.totalFrames,
         elapsedMs: Math.round(now - pipelineStart),
       });
     };
 
+    const encodingFpsTracker = { current: 0, lastTime: performance.now(), lastFrame: 0 };
     const reportEncodingProgress = (
       progressFrame: number,
       currentFrame: number,
       etaFrame: number | null
     ): void => {
-      observedEncodedFrames = Math.max(observedEncodedFrames, currentFrame);
+      const now = performance.now();
+      const elapsed = now - encodingFpsTracker.lastTime;
+      const completed = currentFrame - encodingFpsTracker.lastFrame;
+      if (elapsed > 0 && completed > 0) {
+        const instantaneous = (completed * 1000) / elapsed;
+        encodingFpsTracker.current =
+          encodingFpsTracker.current === 0
+            ? instantaneous
+            : encodingFpsTracker.current * 0.7 + instantaneous * 0.3;
+        encodingFpsTracker.lastTime = now;
+        encodingFpsTracker.lastFrame = currentFrame;
+      }
+      observedCounts.encodedFrames = Math.max(observedCounts.encodedFrames, currentFrame);
       transcodeSpan?.update({ encodedFrames: currentFrame });
       throttled.callback(
         buildEncodingProgress({
@@ -284,8 +312,9 @@ async function _runPipelineInner(
           currentFrame,
           etaFrame,
           totalFrames: estimatedOutputFrames,
-          fps: fpsTracker.current,
+          fps: Math.round(encodingFpsTracker.current * 10) / 10,
           memoryMB: sampleMemory(),
+          accountedMemoryMB: sampleAccountedMemoryMB(),
           elapsedMs: Math.round(performance.now() - pipelineStart),
         })
       );
@@ -300,12 +329,8 @@ async function _runPipelineInner(
     };
 
     const transcodeSpan = profiler?.begin('transcoding');
-    const recordCompletedFrameCounts = (counts: {
-      decodedFrames: number;
-      encodedFrames: number;
-    }): void => {
-      observedDecodedFrames = counts.decodedFrames;
-      observedEncodedFrames = counts.encodedFrames;
+    const recordCompletedFrameCounts = (counts: EncoderFrameCounts): void => {
+      observedCounts = counts;
       transcodeSpan?.update(counts);
     };
 
@@ -315,6 +340,7 @@ async function _runPipelineInner(
         : DEFAULT_FPS;
 
     if (request.format === 'gif') {
+      profiler?.setEncoderRoute('gif-main');
       const gifDecimation = calcAutoDecimation(
         sourceFps,
         GIF_TARGET_FPS[request.quality],
@@ -331,7 +357,6 @@ async function _runPipelineInner(
         gifDecimation,
       });
 
-      let gifEncodeFrames = 0;
       output = toOwnedArrayBuffer(
         await scheduleTask(
           () =>
@@ -344,6 +369,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: gifDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
                 profileOperation,
                 profileCopyPath,
@@ -351,7 +377,6 @@ async function _runPipelineInner(
                 assertAdditionalMemoryBytes: assertMemoryBudget,
                 onFrameDecoded: decodeProgressCb,
                 onFrameEncoded: (encodedFrameCount: number, _totalFrames: number) => {
-                  gifEncodeFrames = encodedFrameCount;
                   reportEncodingProgress(encodedFrameCount, encodedFrameCount, encodedFrameCount);
                 },
               },
@@ -361,7 +386,6 @@ async function _runPipelineInner(
         )
       );
       encodeResult = {
-        frames: gifEncodeFrames,
         outputBytes: output.byteLength,
       };
     } else {
@@ -387,34 +411,29 @@ async function _runPipelineInner(
         targetWidth: w,
         targetHeight: h,
         requestedWorkers: desiredWorkerCount,
+        analysisBytes:
+          request.smartFrameSkip && request.smartFrameSkip !== 'off'
+            ? MOTION_SIGNATURE_PEAK_BYTES
+            : 0,
       });
-      workerPool = memorySafeWorkerCount > 0 ? createWorkerPool(memorySafeWorkerCount) : null;
+      const offscreenOk = await probeCanvasWebpCapability(
+        WEBP_QUALITY_PERCENT[request.quality] / 100
+      );
+      workerPool =
+        offscreenOk && typeof Worker !== 'undefined' && memorySafeWorkerCount > 0
+          ? createWorkerPool(memorySafeWorkerCount)
+          : null;
       if (signal?.aborted) {
         terminateWorkerPool();
         signal.throwIfAborted();
       }
       const pool = workerPool;
 
-      // Verify actual capability, not just typeof — some browsers expose
-      // OffscreenCanvas but fail on getContext('2d') or lack convertToBlob.
-      let offscreenOk = false;
-      if (typeof OffscreenCanvas !== 'undefined') {
-        try {
-          const testCanvas = new OffscreenCanvas(1, 1);
-          const ctx = testCanvas.getContext('2d');
-          offscreenOk =
-            ctx !== null &&
-            typeof (testCanvas as OffscreenCanvas & { convertToBlob?: unknown }).convertToBlob ===
-              'function';
-        } catch {
-          // getContext may throw in some environments (e.g., GPU process crash)
-        }
-      }
-
       const useParallelEncoder =
         offscreenOk && typeof Worker !== 'undefined' && pool !== null && pool.activeWorkers > 0;
 
       if (useParallelEncoder) {
+        profiler?.setEncoderRoute('webp-parallel-canvas');
         logger.info(
           'conversion',
           '  ├─ Branch: WebP encoder (parallel Worker pool + OffscreenCanvas)',
@@ -429,7 +448,12 @@ async function _runPipelineInner(
         );
 
         // Decode outside the encoding pool and stream frames directly to its Workers.
-        const decimationController = createDynamicDecimationController();
+        const decimationController = createDynamicDecimationController(() => ({
+          usagePercentage: Math.min(
+            100,
+            (frameMemoryBudget.usage.totalBytes / FRAME_PIPELINE_MEMORY_BUDGET_BYTES) * 100
+          ),
+        }));
 
         const frameMemoryBudget = new WebpFrameMemoryBudget({
           codedWidth: demuxResult.config.codedWidth ?? codedWidth,
@@ -453,13 +477,13 @@ async function _runPipelineInner(
           },
           outputLimits,
           signal,
-          frameMemoryBudget
+          frameMemoryBudget,
+          profileOperation
         );
         streamingWebpEncoder = streamingEncoder;
 
-        // Accumulate durations from dynamically skipped frames (see offscreen-webp-encoder).
-        let dynamicAccumulatedMs = 0;
-        let tailAccumulatedMs = 0;
+        // Original presentation boundaries preserve holds across dynamic skips.
+        let presentationEndUs: number | undefined;
 
         await scheduleTask(
           () =>
@@ -477,32 +501,13 @@ async function _runPipelineInner(
                 stagedCopyLookahead: true,
                 frameMemoryBudget,
                 processingFailureSignal: streamingEncoder.failureSignal,
-                onFrameDecoded: (frameIdx, _total) => {
-                  observedDecodedFrames = Math.max(observedDecodedFrames, frameIdx);
-                  transcodeSpan?.update({ decodedFrames: frameIdx });
-                  const decodePct =
-                    estimatedOutputFrames > 0
-                      ? Math.round((frameIdx / estimatedOutputFrames) * DECODE_RANGE)
-                      : 0;
-                  throttled.callback({
-                    phase: 'decoding',
-                    progress: DEMUX_MAX + Math.min(DECODE_RANGE, decodePct),
-                    fps: fpsTracker.current,
-                    etaSeconds:
-                      fpsTracker.current > 0
-                        ? Math.round((estimatedOutputFrames - frameIdx) / fpsTracker.current)
-                        : null,
-                    memoryMB: sampleMemory(),
-                    currentFrame: frameIdx,
-                    totalFrames: estimatedOutputFrames,
-                    elapsedMs: Math.round(performance.now() - pipelineStart),
-                  });
-                },
+                onFrameDecoded: decodeProgressCb,
                 onFrameAvailable: async (
                   rgbaData: Uint8Array,
                   frameDurationMs: number,
                   frameNum: number,
-                  memoryHandoff
+                  memoryHandoff,
+                  timing
                 ) => {
                   if (signal?.aborted) {
                     globalBufferPool.release(rgbaData);
@@ -510,40 +515,42 @@ async function _runPipelineInner(
                   }
                   const shouldSkip = decimationController.shouldSkip(frameNum);
                   if (shouldSkip) {
-                    dynamicAccumulatedMs += frameDurationMs;
                     globalBufferPool.release(rgbaData);
                     return;
                   }
-                  const totalDuration = frameDurationMs + dynamicAccumulatedMs;
-                  dynamicAccumulatedMs = 0;
-                  await streamingEncoder.submit(rgbaData, totalDuration, memoryHandoff);
+                  await streamingEncoder.submit(rgbaData, frameDurationMs, memoryHandoff, timing);
                   // buffer ownership transferred to worker via postMessage — do NOT release
                 },
               },
               signal
             ).then((result) => {
-              observedDecodedFrames = Math.max(observedDecodedFrames, result.totalInputFrames);
-              transcodeSpan?.update({ decodedFrames: observedDecodedFrames });
-              tailAccumulatedMs = result.tailAccumulatedMs;
+              observedCounts = {
+                consumedChunks: result.consumedChunks,
+                decodedFrames: result.decodedFrames,
+                selectedFrames: result.selectedFrames,
+                encodedFrames: observedCounts.encodedFrames,
+              };
+              transcodeSpan?.update(observedCounts);
+              presentationEndUs = result.presentationEndUs;
             }),
           { priority: 'user-blocking' }
         );
 
-        // Apply tail accumulated duration from decode (decimation leftovers)
-        // plus dynamic decimation leftovers to the last frame.
-        const totalTail = tailAccumulatedMs + dynamicAccumulatedMs;
-        if (totalTail > 0) {
-          streamingEncoder.padLastFrame(totalTail);
-        }
-
         output = toOwnedArrayBuffer(
-          await scheduleTask(() => streamingEncoder.finish(), { priority: 'user-visible' })
+          await scheduleTask(() => streamingEncoder.finish(presentationEndUs), {
+            priority: 'user-visible',
+          })
         );
+        recordCompletedFrameCounts({
+          ...observedCounts,
+          encodedFrames: streamingEncoder.encodedFrames,
+          emittedFrames: streamingEncoder.emittedFrames,
+        });
         encodeResult = {
-          frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
         };
       } else if (offscreenOk) {
+        profiler?.setEncoderRoute('webp-serial-canvas');
         logger.info(
           'conversion',
           '  ├─ Branch: WebP encoder (OffscreenCanvas convertToBlob + mux)',
@@ -569,6 +576,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
                 profileOperation,
                 profileCopyPath,
@@ -582,10 +590,10 @@ async function _runPipelineInner(
         );
         output = toOwnedArrayBuffer(encoded);
         encodeResult = {
-          frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
         };
       } else {
+        profiler?.setEncoderRoute('webp-wasm');
         logger.info('conversion', '  ├─ Branch: WebP encoder (streaming encodeRGB + mux)', {
           codec: demuxResult.config.codec,
           codedWidth: demuxResult.config.codedWidth,
@@ -607,6 +615,7 @@ async function _runPipelineInner(
                 scale: request.scale,
                 frameDecimation: webpDecimation,
                 smartFrameSkip: request.smartFrameSkip,
+                decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
                 profileOperation,
                 profileCopyPath,
@@ -620,7 +629,6 @@ async function _runPipelineInner(
         );
         output = toOwnedArrayBuffer(encoded);
         encodeResult = {
-          frames: estimatedOutputFrames,
           outputBytes: output.byteLength,
         };
       }
@@ -629,8 +637,7 @@ async function _runPipelineInner(
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 
     transcodeSpan?.end({
-      decodedFrames: Math.max(observedDecodedFrames, observedEncodedFrames),
-      encodedFrames: observedEncodedFrames,
+      ...observedCounts,
       outputBytes: encodeResult?.outputBytes ?? 0,
     });
 
@@ -649,9 +656,10 @@ async function _runPipelineInner(
       fps: 0,
       etaSeconds: 0,
       memoryMB: memMB,
-      currentFrame: demuxResult.totalFrames,
-      totalFrames: demuxResult.totalFrames,
-      outputFrames: estimatedOutputFrames,
+      ...observedCounts,
+      currentFrame: observedCounts.decodedFrames,
+      totalFrames: observedCounts.decodedFrames,
+      outputFrames: observedCounts.emittedFrames,
       elapsedMs: totalElapsedMs,
     });
     throttled.callback({
@@ -660,9 +668,10 @@ async function _runPipelineInner(
       fps: 0,
       etaSeconds: 0,
       memoryMB: memMB,
-      currentFrame: demuxResult.totalFrames,
-      totalFrames: demuxResult.totalFrames,
-      outputFrames: estimatedOutputFrames,
+      ...observedCounts,
+      currentFrame: observedCounts.decodedFrames,
+      totalFrames: observedCounts.decodedFrames,
+      outputFrames: observedCounts.emittedFrames,
       elapsedMs: totalElapsedMs,
     });
     // Deliver the terminal state before cleanup cancels any trailing throttle timer.

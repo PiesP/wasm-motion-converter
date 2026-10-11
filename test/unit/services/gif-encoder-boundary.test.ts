@@ -15,14 +15,15 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     mocks.pixelFormats.push(options.pixelFormat);
-    await options.onFrameAvailable(mocks.frameFactory(), 100, 0);
+    await options.onFrameAvailable(mocks.frameFactory(), 100, 0, undefined, { startUs: 0, endUs: 100_000 });
     return {
       frames: [],
       outputTotalMs: 0,
       skippedByDecimation: 0,
       smartSkipped: 0,
       sourceTotalMs: 140,
-      tailAccumulatedMs: 40,
+      tailAccumulatedMs: 0,
+      presentationEndUs: 140_000,
       totalInputFrames: 1,
     };
   }),
@@ -138,9 +139,8 @@ describe('GIF exact pixel boundaries', () => {
     }
     expect(mocks.applyResults[0]?.byteLength).toBe(width * height);
     expect(mocks.applyResults[0]?.buffer.byteLength).toBe(width * height);
-    expect(mocks.writeInputs).toHaveLength(2);
+    expect(mocks.writeInputs).toHaveLength(1);
     expect(mocks.writeInputs[0]).toBe(mocks.applyResults[0]);
-    expect(mocks.writeInputs[1]).toBe(mocks.applyResults[0]);
     expect(memoryChecks.some((bytes) => bytes >= 4096 + exactRgbaBytes + width * height)).toBe(
       true
     );

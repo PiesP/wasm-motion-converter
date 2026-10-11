@@ -15,8 +15,17 @@ measures cancellation latency and recovery. Its contract workload is
 `motion-cadence-gif`: the 320×180
 `test-video-contract-motion-120fps.mp4` fixture is converted to GIF at high
 quality, full duration, 100% scale, with smart frame skipping off. The decoded
-output is checked against the shared color order, frame count, geometry, and
+output is checked against the shared color order, visible scene holds, geometry, and
 cadence contract.
+
+The profile also measures GIF/WebP high-motion workloads and small VFR WebP
+conversions through automatic routing, serial Canvas, and WASM. Each record
+retains the observed encoder route and exact decoded, selected, encoded, and
+emitted frame counts. Consumed packet counts remain null when the serial Canvas
+decoder does not expose them. Backend overrides belong only to the two
+explicit fallback measurements. Cold initialization is recorded separately from
+the five warmed conversions; it is excluded from leak slopes. The WASM override
+disables Canvas WebP encoding while retaining Canvas pixel-copy support.
 
 `cfr-trim-gif` remains a separate output-contract test; it is not the current
 resource-profile workload. Measurements from the older `cfr-trim-gif` profile
@@ -66,6 +75,12 @@ interpret them as stage percentages. `transcodingWallMs` is the combined
 decode/encode stage duration. `elapsedMs` spans the UI conversion request
 through observed completion and includes resource sampling and completion
 detection, so it is not encoder-only time.
+
+Unavailable heap measurements remain null. Conversion-owned admission estimates
+are separate from heap and process memory. Fixed frame/task backpressure remains
+the primary bound; additional memory-driven frame skipping changes sampling and
+is not lossless compression. WebP encoding, queue wait, muxing, finalization,
+and output copying are overlapping operation observations.
 
 The equal-size, non-rotated Canvas copy shortcut avoids creating an intermediate
 `ImageBitmap` for that path. It still calls `drawImage()`, reads pixels with

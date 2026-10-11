@@ -61,21 +61,22 @@ export async function encodeWebp(
   const startTime = performance.now();
 
   // Streaming encode state — use incremental muxer to avoid O(N) memory accumulation
-  const muxer = new StreamingWebpMuxer(w, h, opts);
+  const muxer = new StreamingWebpMuxer(w, h, opts, opts.profileOperation);
   let totalInputFrames = 0;
   let skippedByDecimation = 0;
   let encodeIdx = 0;
-  let accumulatedDuration = 0;
 
-  // Dynamic decimation controller — monitors JS heap and skips frames under pressure
-  const decimationController = createDynamicDecimationController();
+  // Additional sampling policy uses supplied conversion accounting when available.
+  const decimationController = createDynamicDecimationController(opts.decimationMemoryCheck);
 
   // Decode frames with streaming callback — each frame is encoded immediately
   const {
     totalInputFrames: totalDecoded,
     skippedByDecimation: totalSkipped,
     smartSkipped: totalSmartSkipped,
-    tailAccumulatedMs,
+    consumedChunks,
+    selectedFrames,
+    presentationEndUs,
   } = await decodeFrames(
     demux,
     {
@@ -87,7 +88,8 @@ export async function encodeWebp(
       profileOperation: opts.profileOperation,
       profileCopyPath: opts.profileCopyPath,
       stagedCopyLookahead: true,
-      onFrameDecoded: (_frameNum, total) => {
+      onFrameDecoded: (frameNum, total) => {
+        opts.onFrameDecoded?.(frameNum, total);
         totalInputFrames = total;
         // Report encoding progress during streaming (onFrameDecoded is already
         // called by decodeFrames internally — no duplicate call here)
@@ -98,14 +100,14 @@ export async function encodeWebp(
             progress: 50 + Math.min(40, encodePct),
             fps: 0,
             etaSeconds: null,
-            memoryMB: 0,
+            memoryMB: null,
             currentFrame: encodeIdx,
             totalFrames: total,
           });
         }
       },
       // Streaming callback: encode each frame immediately upon decoding
-      onFrameAvailable: async (rgbData: Uint8Array, frameDurationMs: number, _frameNum: number) => {
+      onFrameAvailable: async (rgbData, _frameDurationMs, _frameNum, _memoryHandoff, timing) => {
         if (signal?.aborted) {
           globalBufferPool.release(rgbData);
           throw new DOMException('Cancelled', 'AbortError');
@@ -115,19 +117,17 @@ export async function encodeWebp(
         const shouldSkip = decimationController.shouldSkip(_frameNum);
 
         if (shouldSkip) {
-          // Accumulate skipped frame duration to avoid timing drift
-          accumulatedDuration += frameDurationMs;
           // Release buffer and skip encoding
           globalBufferPool.release(rgbData);
           return;
         }
 
         return withPooledBuffer(rgbData, async () => {
-          // Encode this frame immediately via cached wasm-webp singleton.
-          // encodeRGBReuse reuses the same WASM module instance across all
-          // frames, avoiding per-frame instantiation overhead (~16MB WASM
-          // memory alloc + runtime init per frame with the original encodeRGB).
+          // Encode through the cached WASM module; its result is a borrowed view.
+          const encodingStart = opts.profileOperation ? performance.now() : null;
           const webpResult = await encodeRGBReuse(rgbData, w, h, quality);
+          if (encodingStart !== null)
+            opts.profileOperation?.('webpEncoding', performance.now() - encodingStart);
           if (!webpResult || webpResult.length === 0) {
             throw new Error(
               `encodeRGBReuse returned ${webpResult ? 'empty' : 'null'} for frame ${encodeIdx}`
@@ -139,14 +139,13 @@ export async function encodeWebp(
           // WASM memory lifecycle: the wasm-webp module allocates a single linear memory
           // buffer that grows as needed. encodeRGB writes into this buffer and returns a view
           // that remains valid until the next encodeRGB call or the module is freed.
-          // Since we call addFrame (which copies the data into the muxer) immediately,
+          // addPresentationFrame copies the data into the muxer immediately, so
           // the view is only borrowed and the WASM memory can be safely reused.
           const bitstream = extractVP8Bitstream(webpResult);
 
-          const totalDuration = frameDurationMs + accumulatedDuration;
-          accumulatedDuration = 0;
-          muxer.addFrame(bitstream, totalDuration);
+          muxer.addPresentationFrame(bitstream, timing);
           encodeIdx++;
+          opts.onFrameEncoded?.(encodeIdx, demux.totalFrames);
         });
       },
     },
@@ -156,21 +155,11 @@ export async function encodeWebp(
   totalInputFrames = totalDecoded;
   skippedByDecimation = totalSkipped;
 
-  if (muxer.frames === 0) {
+  if (encodeIdx === 0) {
     throw new Error('No frames decoded for WebP encoding');
   }
 
-  // ── Tail accumulated duration fix ──
-  // When dynamic decimation skips frames after the last kept frame, their
-  // accumulated duration is never consumed by any subsequent encoding call.
-  // Pad the last ANMF chunk's duration to preserve total playback time.
-  const totalTailDuration = accumulatedDuration + tailAccumulatedMs;
-  if (totalTailDuration > 0) {
-    muxer.padLastFrameDuration(totalTailDuration);
-    logger.info('encoders', 'WebP tail duration padded', {
-      tailMs: Math.round(totalTailDuration),
-    });
-  }
+  muxer.finishPresentation(presentationEndUs);
 
   // Mux all encoded frames into animated WebP container
   const result = await muxer.finish(signal);
@@ -181,13 +170,19 @@ export async function encodeWebp(
     progress: 90,
     fps: 0,
     etaSeconds: 0,
-    memoryMB: 0,
-    currentFrame: muxer.frames,
+    memoryMB: null,
+    currentFrame: encodeIdx,
+    encodedFrames: encodeIdx,
+    emittedFrames: muxer.frames,
+    outputFrames: muxer.frames,
     totalFrames: Math.max(muxer.frames, totalInputFrames),
   });
   opts.onEncodingComplete?.({
+    consumedChunks,
     decodedFrames: totalInputFrames,
-    encodedFrames: muxer.frames,
+    selectedFrames,
+    encodedFrames: encodeIdx,
+    emittedFrames: muxer.frames,
   });
 
   logger.info('encoders', 'WebP encoding complete', {

@@ -390,18 +390,9 @@ export function convertRGBAToRGB(
   return dst;
 }
 
-// ─── Duration accumulation state ──────────────────────────────────
-// Track fractional duration remainders to prevent rounding drift.
-// E.g., at 30fps each frame is ~33.33ms. Rounding to 33ms loses 0.33ms/frame,
-// which accumulates to ~500ms over 1500 frames. We carry the fractional
-// remainder across frames so total timing matches source.
-//
-// Per-conversion context — must be created fresh for each decodeFrames call
-// to prevent concurrent conversions from bleeding carry state.
+// ─── Per-conversion pixel-copy state ───────────────────────────────
 
 export interface FrameProcessingContext {
-  /** Fractional duration remainder in microseconds */
-  durationCarryUs: number;
   /** Exact successful copy strategy, detected once per conversion. */
   copyPath: FrameCopyStrategy | null;
 }
@@ -412,96 +403,194 @@ export interface FrameProcessingContext {
  */
 export function createFrameProcessingContext(): FrameProcessingContext {
   return {
-    durationCarryUs: 0,
     copyPath: null,
   };
 }
 
+// ─── Bounded, approximate frame-motion comparison ──────────────────
+
+const MOTION_TILE_COLUMNS = 16;
+const MOTION_TILE_COUNT = MOTION_TILE_COLUMNS * MOTION_TILE_COLUMNS;
+const MOTION_CHANNELS = 3;
+
+/** Two ordered signatures, including all typed-array backing storage. */
+export const MOTION_SIGNATURE_PEAK_BYTES =
+  2 * MOTION_TILE_COUNT * (MOTION_CHANNELS * (3 + 4 + 8 + 8) + 4);
+
 /**
- * Get frame duration in milliseconds — preserves original timing by
- * accumulating fractional remainders across frames to prevent drift.
- *
- * Returns a new context instead of mutating the input, preserving
- * referential transparency and pure function semantics.
- *
- * No clamping: the original video frame duration is used as-is to maintain
- * accurate playback speed. Clamping is applied only at the output stage
- * when writing frames (see writeFrameWithDelay in gif-encoder-service).
- *
- * @param frame - The VideoFrame to extract duration from
- * @param ctx - Per-conversion context for carry state
- * @returns An object with the duration in ms and an updated context
+ * RGB area statistics for a fixed spatial grid. Every source pixel contributes
+ * to one tile. Color sums and first spatial moments retain cursor position
+ * within tiles; each retained signature owns 18,688 bytes at any frame size.
+ * This is an approximation: different images can have equal tile statistics,
+ * including rearrangements that preserve all first moments and color extrema.
  */
-export function getFrameDurationMs(
-  frame: VideoFrame,
-  ctx: FrameProcessingContext,
-  fallbackMs?: number,
-  durationUs?: number
-): { durationMs: number; ctx: FrameProcessingContext } {
-  const raw = durationUs ?? frame.duration;
-  if (raw == null || raw <= 0) {
-    return { durationMs: fallbackMs ?? 100, ctx };
-  }
-  // Add any fractional remainder from previous frames
-  const totalUs = raw + ctx.durationCarryUs;
-  const ms = Math.round(totalUs / 1000);
-  // Save the sub-millisecond remainder for next frame in new context
-  const newCarry = totalUs - ms * 1000;
-  return {
-    durationMs: Math.max(1, ms),
-    ctx: { ...ctx, durationCarryUs: newCarry },
-  };
+export interface MotionSignature {
+  readonly width: number;
+  readonly height: number;
+  readonly means: Uint8Array;
+  readonly colorSums: Uint32Array;
+  readonly minima: Uint8Array;
+  readonly maxima: Uint8Array;
+  readonly counts: Uint32Array;
+  readonly horizontalMoments: Float64Array;
+  readonly verticalMoments: Float64Array;
 }
 
-// ─── MAD (Mean Absolute Difference) for Frame Similarity ──────────
+export interface MotionComparison {
+  /** Area-weighted mean of RGB tile differences, in the 0–255 range. */
+  readonly globalDistance: number;
+  /** Strongest tile change, including a guarded color-extrema change. */
+  readonly localDistance: number;
+  /** Conservative motion score suitable for existing skip thresholds. */
+  readonly distance: number;
+}
 
-/**
- * Extract 8×8 grayscale samples from RGB frame data.
- * Uses center-sampling within each grid cell, matching dHash sampling positions.
- * Returns 64-byte Uint8Array with grayscale values 0-255.
- */
-export function compute8x8Grayscale(
+export function computeMotionSignature(
   pixelData: Uint8Array,
   width: number,
   height: number,
   pixelStride: 3 | 4 = 3
-): Uint8Array {
-  const gray = new Uint8Array(64);
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 8; x++) {
-      const srcX = Math.floor(((x + 0.5) * width) / 8);
-      const srcY = Math.floor(((y + 0.5) * height) / 8);
-      const idx = (srcY * width + srcX) * pixelStride;
-      gray[y * 8 + x] =
-        ((pixelData[idx] ?? 0) + (pixelData[idx + 1] ?? 0) + (pixelData[idx + 2] ?? 0)) / 3;
+): MotionSignature {
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    width > MAX_FRAME_PIXEL_COUNT / height ||
+    pixelData.byteLength < width * height * pixelStride
+  ) {
+    throw new RangeError('Invalid motion signature frame dimensions or pixels');
+  }
+
+  const sums = new Uint32Array(MOTION_TILE_COUNT * MOTION_CHANNELS);
+  const counts = new Uint32Array(MOTION_TILE_COUNT);
+  // Keep unrounded integer sums. At the hard pixel ceiling, tile-relative
+  // coordinates keep every weighted sum below Number.MAX_SAFE_INTEGER.
+  const horizontalMoments = new Float64Array(sums.length);
+  const verticalMoments = new Float64Array(sums.length);
+  const minima = new Uint8Array(sums.length);
+  const maxima = new Uint8Array(sums.length);
+  minima.fill(255);
+
+  for (let y = 0; y < height; y++) {
+    const tileRow = Math.min(
+      MOTION_TILE_COLUMNS - 1,
+      Math.floor((y * MOTION_TILE_COLUMNS) / height)
+    );
+    for (let x = 0; x < width; x++) {
+      const tileColumn = Math.min(
+        MOTION_TILE_COLUMNS - 1,
+        Math.floor((x * MOTION_TILE_COLUMNS) / width)
+      );
+      const tile = tileRow * MOTION_TILE_COLUMNS + tileColumn;
+      const tileOffset = tile * MOTION_CHANNELS;
+      const localX = x - Math.ceil((tileColumn * width) / MOTION_TILE_COLUMNS);
+      const localY = y - Math.ceil((tileRow * height) / MOTION_TILE_COLUMNS);
+      const pixelOffset = (y * width + x) * pixelStride;
+      counts[tile]!++;
+      for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
+        const value = pixelData[pixelOffset + channel]!;
+        const offset = tileOffset + channel;
+        sums[offset] = sums[offset]! + value;
+        horizontalMoments[offset] = horizontalMoments[offset]! + value * localX;
+        verticalMoments[offset] = verticalMoments[offset]! + value * localY;
+        if (value < minima[offset]!) minima[offset] = value;
+        if (value > maxima[offset]!) maxima[offset] = value;
+      }
     }
   }
-  return gray;
-}
 
-/**
- * Compute Mean Absolute Difference between two 8×8 grayscale arrays.
- *
- * Lower = more similar. Unlike dHash (which is sensitive to compression noise
- * in gradient comparisons), MAD directly compares per-pixel intensity and
- * correlates better with human perception of frame similarity.
- *
- * Interpretation:
- * - 0.0-1.5: Nearly identical (noise only)
- * - 1.5-3.0: Very similar (tiny motion or lighting change)
- * - 3.0-6.0: Moderate change
- * - 6.0+: Significant change (different scene)
- */
-export function computeMAD(current: Uint8Array, previous: Uint8Array): number {
-  let sum = 0;
-  for (let i = 0; i < 64; i++) {
-    sum += Math.abs((current[i] ?? 0) - (previous[i] ?? 0));
+  const means = new Uint8Array(sums.length);
+  for (let tile = 0; tile < MOTION_TILE_COUNT; tile++) {
+    const count = counts[tile]!;
+    if (count === 0) continue;
+    for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
+      const offset = tile * MOTION_CHANNELS + channel;
+      means[offset] = Math.round(sums[offset]! / count);
+    }
   }
-  return sum / 64;
+  return {
+    width,
+    height,
+    means,
+    colorSums: sums,
+    minima,
+    maxima,
+    counts,
+    horizontalMoments,
+    verticalMoments,
+  };
+}
+
+export function compareMotionSignatures(
+  current: MotionSignature,
+  previous: MotionSignature
+): MotionComparison {
+  if (current.width !== previous.width || current.height !== previous.height) {
+    throw new RangeError('Motion signatures must have matching dimensions');
+  }
+
+  let weightedDistance = 0;
+  let localDistance = 0;
+  for (let tile = 0; tile < MOTION_TILE_COUNT; tile++) {
+    const count = current.counts[tile]!;
+    if (count === 0) continue;
+    let meanDifference = 0;
+    let extremaDifference = 0;
+    let spatialChange = false;
+    let appearanceChange = false;
+    let colorRange = 0;
+    for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
+      const offset = tile * MOTION_CHANNELS + channel;
+      meanDifference += Math.abs(current.means[offset]! - previous.means[offset]!);
+      const channelRange = Math.max(
+        current.maxima[offset]! - current.minima[offset]!,
+        previous.maxima[offset]! - previous.minima[offset]!
+      );
+      spatialChange ||=
+        channelRange >= 64 &&
+        current.colorSums[offset] === previous.colorSums[offset] &&
+        Math.max(
+          Math.abs(current.horizontalMoments[offset]! - previous.horizontalMoments[offset]!),
+          Math.abs(current.verticalMoments[offset]! - previous.verticalMoments[offset]!)
+        ) >= channelRange;
+      appearanceChange ||=
+        Math.abs(current.colorSums[offset]! - previous.colorSums[offset]!) >= 64 &&
+        channelRange >= 64;
+      colorRange = Math.max(
+        colorRange,
+        current.maxima[offset]! - current.minima[offset]!,
+        previous.maxima[offset]! - previous.minima[offset]!
+      );
+      extremaDifference = Math.max(
+        extremaDifference,
+        Math.abs(current.minima[offset]! - previous.minima[offset]!),
+        Math.abs(current.maxima[offset]! - previous.maxima[offset]!)
+      );
+    }
+    const tileDistance = meanDifference / MOTION_CHANNELS;
+    weightedDistance += tileDistance * count;
+    // A single changed codec-noise pixel should not dominate an otherwise
+    // unchanged tile. Strong extrema count only when its area mean moved too.
+    const safeguardedDistance =
+      tileDistance >= 1 && extremaDifference >= 32
+        ? Math.max(tileDistance, extremaDifference)
+        : tileDistance;
+    // A high-contrast cursor/text change must survive dilution in a large tile.
+    // Require stable unrounded channel sums and a contrast-sized displacement
+    // so a one-level codec fluctuation cannot alone trigger the safeguard.
+    // Balanced textured noise may still be retained; this is approximate motion
+    // detection, never a lossless equality decision.
+    const spatialSafeguard = (spatialChange && colorRange >= 64) || appearanceChange ? 7 : 0;
+    localDistance = Math.max(localDistance, safeguardedDistance, spatialSafeguard);
+  }
+
+  const globalDistance = weightedDistance / (current.width * current.height);
+  return { globalDistance, localDistance, distance: Math.max(globalDistance, localDistance) };
 }
 
 /**
- * Get the MAD threshold for a given smart skip mode.
+ * Get the approximate motion threshold for a given smart skip mode.
  * Returns -1 for 'off' (never skip).*/
 export function getSkipThreshold(mode: 'off' | 'low' | 'medium' | 'high' | 'adaptive'): number {
   switch (mode) {

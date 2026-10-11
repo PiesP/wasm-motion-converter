@@ -14,6 +14,15 @@ import type { SmartFrameSkipMode } from '@t/conversion-types';
 import { FPS_CLAMP_MAX, MEMORY_PRESSURE_TARGET_FPS, MIN_OUTPUT_FPS } from '@utils/constants';
 import type { ProfileCopyPathRecorder, ProfileOperationRecorder } from './conversion-profiler';
 
+/** Exact observations at the native decoder, encoder, and container boundaries. */
+export interface EncoderFrameCounts {
+  consumedChunks?: number;
+  decodedFrames: number;
+  selectedFrames?: number;
+  encodedFrames: number;
+  emittedFrames?: number;
+}
+
 /** Base options shared by all format encoders */
 export interface BaseEncoderOptions {
   width: number;
@@ -24,21 +33,20 @@ export interface BaseEncoderOptions {
   maxFrames?: number | undefined;
   /** Hard ceiling for cumulative encoded output bytes. */
   maxOutputBytes?: number | undefined;
-  /** Frame decimation: keep every Nth frame (1 = keep all) */
+  /** Source FPS / target FPS; integer forced values retain their frame floor. */
   frameDecimation?: number | undefined;
   /** Callback fired after each frame is decoded */
   onFrameDecoded?: ((frameIndex: number, totalFrames: number) => void) | undefined;
   /**
    * Callback fired after each frame is encoded.
-   * @note Currently only used by the GIF encoder; WebP does not invoke this.
    */
   onFrameEncoded?: ((encodedFrameCount: number, totalFrames: number) => void) | undefined;
   /** Terminal exact counts, emitted after the encoder has finished consuming input. */
-  onEncodingComplete?:
-    | ((counts: { decodedFrames: number; encodedFrames: number }) => void)
-    | undefined;
+  onEncodingComplete?: ((counts: EncoderFrameCounts) => void) | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
+  /** Conversion-owned memory pressure; independent of optional browser heap APIs. */
+  decimationMemoryCheck?: (() => { usagePercentage: number } | null) | undefined;
   /** Development profiling callback for overlapping per-operation wall time. */
   profileOperation?: ProfileOperationRecorder | undefined;
   /** Development profiling callback for the selected frame-copy strategy. */
@@ -51,15 +59,16 @@ export interface BaseEncoderOptions {
  * Decimation reduces the number of frames sent to the encoder, which directly
  * impacts output file size, conversion time, and motion smoothness.
  *
- * The formula is simple: `decimation = round(sourceFps / targetFps)`,
- * clamped to ensure output never drops below MIN_OUTPUT_FPS (3fps).
+ * The ratio is sourceFps / targetFps; the decoder samples original presentation
+ * timestamps against that cadence. Keep fractional ratios (for example 30/20)
+ * so they do not silently become a slower integer frame stride.
  *
  * Scale no longer affects frame rate. Resolution and frame rate are separate
  * quality axes — the user's scale choice controls output dimensions, while
  * quality (passed as targetFps by the caller) controls frame rate.
  *
  * Example (60fps source):
- *   targetFps=8  (GIF low)    → decimation=8  → output ~7.5fps
+ *   targetFps=8  (GIF low)    → decimation=7.5 → output ~8fps
  *   targetFps=12 (GIF medium) → decimation=5  → output ~12fps
  *   targetFps=20 (GIF high)   → decimation=3  → output ~20fps
  *   targetFps=30 (WebP high) → decimation=2 → output ~30fps
@@ -67,7 +76,7 @@ export interface BaseEncoderOptions {
  * @param sourceFps - Source video frame rate
  * @param targetFps - Desired output frame rate (from a format-specific target FPS map)
  * @param forceDecimation - Override all calculations (used for memory-pressure forced decimation)
- * @returns Frame decimation factor (1 = keep every frame, N = keep every Nth frame)
+ * @returns Source/target cadence ratio (1 = keep every frame)
  */
 export function calcAutoDecimation(
   sourceFps: number,
@@ -85,21 +94,14 @@ export function calcAutoDecimation(
       : 1;
   const safeTargetFps = Number.isFinite(targetFps) && targetFps > 0 ? targetFps : clampedFps;
 
-  // Base decimation: keep every Nth frame to approximately match target FPS
-  const baseDecimation =
-    clampedFps > safeTargetFps ? Math.max(1, Math.round(clampedFps / safeTargetFps)) : 1;
+  // Preserve the fractional cadence for timestamp-based sampling.
+  const baseDecimation = clampedFps > safeTargetFps ? clampedFps / safeTargetFps : 1;
 
   // MIN_OUTPUT_FPS guard: ensure output never drops below the floor.
-  // E.g., 120fps source with 8fps target → decimation=15 → output=8fps ✓
-  //       120fps source with 5fps target (hypothetical) → decimation=24 → output=5fps ✓
-  //       60fps source with 8fps target → decimation=8 → output=7.5fps ✓
-  const outputFps = clampedFps / baseDecimation;
-  if (outputFps < MIN_OUTPUT_FPS) {
-    // Recalculate: use floor to keep output at or above MIN_OUTPUT_FPS
-    return Math.max(1, Math.floor(clampedFps / MIN_OUTPUT_FPS));
-  }
-
-  return baseDecimation;
+  // E.g., 120fps source with 8fps target → ratio=15 → output~8fps.
+  //       120fps source with 1fps target → capped ratio=40 → output~3fps.
+  //       60fps source with 8fps target → ratio=7.5 → output~8fps.
+  return Math.min(baseDecimation, Math.max(1, clampedFps / MIN_OUTPUT_FPS));
 }
 
 /**

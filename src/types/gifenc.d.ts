@@ -25,6 +25,7 @@ declare module 'gifenc' {
         transparent?: boolean;
         transparentIndex?: number;
         delay?: number;
+        colorDepth?: number;
         repeat?: number;
         dispose?: number;
       }

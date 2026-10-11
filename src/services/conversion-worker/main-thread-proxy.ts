@@ -132,12 +132,14 @@ export async function runPipelineViaWorker(
     };
 
     // Throttle progress callbacks to ~100ms
-    let lastProgressTime = 0;
+    let lastProgressTime = Number.NEGATIVE_INFINITY;
+    let lastDeliveredPercent = 0;
     const throttledProgress = (update: ConversionProgress) => {
       const now = performance.now();
-      if (now - lastProgressTime >= 100) {
+      if (now - lastProgressTime >= 100 || update.progress === 100) {
         lastProgressTime = now;
-        onProgress(update);
+        lastDeliveredPercent = Math.max(lastDeliveredPercent, update.progress);
+        onProgress({ ...update, progress: lastDeliveredPercent });
       }
     };
 
@@ -169,7 +171,7 @@ export async function runPipelineViaWorker(
     // Handle messages from the worker
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       // Ignore messages after timeout — worker is already terminated
-      if (timedOut) return;
+      if (settled || timedOut) return;
 
       // Runtime guard: validate message shape before processing.
       // Malformed responses (null, arrays, primitives, missing fields)
@@ -194,6 +196,12 @@ export async function runPipelineViaWorker(
             fps: response.fps,
             etaSeconds: response.etaSeconds ?? null,
             memoryMB: response.memoryMB,
+            accountedMemoryMB: response.accountedMemoryMB,
+            consumedChunks: response.consumedChunks,
+            decodedFrames: response.decodedFrames,
+            selectedFrames: response.selectedFrames,
+            encodedFrames: response.encodedFrames,
+            emittedFrames: response.emittedFrames,
             currentFrame: response.currentFrame,
             totalFrames: response.totalFrames,
             outputFrames: response.outputFrames,
@@ -203,6 +211,7 @@ export async function runPipelineViaWorker(
         }
 
         case 'complete': {
+          settled = true;
           cleanup();
           if (response.profile) {
             setLastConversionProfileReport(response.profile);
@@ -215,6 +224,7 @@ export async function runPipelineViaWorker(
         }
 
         case 'error': {
+          settled = true;
           cleanup();
           worker.terminate();
 
@@ -248,7 +258,8 @@ export async function runPipelineViaWorker(
 
     // Handle worker errors
     worker.onerror = (error) => {
-      if (timedOut) return;
+      if (settled || timedOut) return;
+      settled = true;
       cleanup();
       worker.terminate();
       if (!workerInitialized) {

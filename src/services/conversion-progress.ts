@@ -10,7 +10,8 @@ interface EncodingProgressInput {
   etaFrame: number | null;
   totalFrames: number;
   fps: number;
-  memoryMB: number;
+  memoryMB: number | null;
+  accountedMemoryMB?: number | undefined;
   elapsedMs: number;
 }
 
@@ -26,9 +27,10 @@ export function buildEncodingProgress(input: EncodingProgressInput): ConversionP
     fps: input.fps,
     etaSeconds:
       input.fps > 0 && input.etaFrame !== null
-        ? Math.round((input.totalFrames - input.etaFrame) / input.fps)
+        ? Math.max(0, Math.round((input.totalFrames - input.etaFrame) / input.fps))
         : null,
     memoryMB: input.memoryMB,
+    accountedMemoryMB: input.accountedMemoryMB,
     currentFrame: input.currentFrame,
     totalFrames: input.totalFrames,
     elapsedMs: input.elapsedMs,

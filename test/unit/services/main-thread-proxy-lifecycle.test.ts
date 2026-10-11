@@ -229,11 +229,12 @@ describe('runPipelineViaWorker lifecycle', () => {
   it('retains a validated profile returned from the Worker realm', async () => {
     const outputBuffer = new ArrayBuffer(4);
     const profile = {
-      schemaVersion: 3 as const,
+      schemaVersion: 4 as const,
       totalDurationMs: 100,
-      heapStartMB: 0,
-      heapEndMB: 0,
-      heapPeakMB: 0,
+      heapStartMB: null,
+      heapEndMB: null,
+      heapPeakMB: null,
+      encoderRoute: 'gif-worker' as const,
       stages: [],
       operationTotals: {
         pixelCopy: { wallMs: 0, samples: 0 },
@@ -243,6 +244,11 @@ describe('runPipelineViaWorker lifecycle', () => {
         gifQuantization: { wallMs: 0, samples: 0 },
         gifPaletteMapping: { wallMs: 0, samples: 0 },
         gifFrameWrite: { wallMs: 0, samples: 0 },
+        webpEncoding: { wallMs: 0, samples: 0 },
+        encoderQueueWait: { wallMs: 0, samples: 0 },
+        webpMuxing: { wallMs: 0, samples: 0 },
+        muxFinalization: { wallMs: 0, samples: 0 },
+        outputCopy: { wallMs: 0, samples: 0 },
       },
       copyPathCounts: { RGBX: 0, RGBA: 0, BGRA: 0, BGRX: 0, canvas: 0, unknown: 0 },
       stageWallTimePct: { demuxing: 0, transcoding: 0, finalizing: 0 },
@@ -266,6 +272,59 @@ describe('runPipelineViaWorker lifecycle', () => {
     } finally {
       ThrowingWorker.response = null;
     }
+  });
+
+  it('preserves exact worker counters and delivers terminal progress through the throttle', async () => {
+    const outputBuffer = new ArrayBuffer(4);
+    const onProgress = vi.fn();
+    ThrowingWorker.response = [
+      {
+        type: 'progress',
+        requestId: 'request-1',
+        phase: 'encoding',
+        percent: 50,
+        fps: 10,
+        etaSeconds: null,
+        memoryMB: null,
+        accountedMemoryMB: 12,
+        decodedFrames: 20,
+        encodedFrames: 4,
+      },
+      {
+        type: 'progress',
+        requestId: 'request-1',
+        phase: 'assembling',
+        percent: 100,
+        fps: 0,
+        etaSeconds: 0,
+        memoryMB: null,
+        accountedMemoryMB: 14,
+        consumedChunks: 24,
+        decodedFrames: 20,
+        selectedFrames: 5,
+        encodedFrames: 4,
+        emittedFrames: 3,
+        outputFrames: 3,
+      },
+      { type: 'complete', requestId: 'request-1', outputBuffer, durationMs: 10 },
+    ];
+
+    await expect(
+      runPipelineViaWorker(new ArrayBuffer(8), validDecoderConfig, validOptions, onProgress)
+    ).resolves.toBe(outputBuffer);
+    expect(onProgress).toHaveBeenCalledTimes(2);
+    expect(onProgress.mock.calls.at(-1)?.[0]).toMatchObject({
+      progress: 100,
+      memoryMB: null,
+      accountedMemoryMB: 14,
+      consumedChunks: 24,
+      decodedFrames: 20,
+      selectedFrames: 5,
+      encodedFrames: 4,
+      emittedFrames: 3,
+      outputFrames: 3,
+      etaSeconds: 0,
+    });
   });
 
   it('ignores worker diagnostics that do not belong to the current request', async () => {

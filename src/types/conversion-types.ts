@@ -79,16 +79,15 @@ export const CONVERSION_SCALES: readonly ConversionScale[] = [0.5, 0.75, 1.0] as
 /**
  * Smart frame skip mode — controls similarity-based frame deduplication.
  *
- * Uses 8×8 grayscale Mean Absolute Difference (MAD) for frame comparison,
- * which is more robust to compression noise than gradient-based dHash.
+ * Uses bounded RGB tile statistics with color extrema and spatial safeguards.
+ * This approximate policy can omit subtle changes; exact output optimization
+ * and validation use separate full-pixel or encoded-byte equality checks.
  *
- * - `off`: No similarity-based skipping (fixed FPS decimation only, default)
- * - `low`: Conservative — only skip near-identical frames (MAD ≤ 1.5)
- * - `medium`: Balanced — skip subtle changes (MAD ≤ 3)
- * - `high`: Aggressive — skip moderate changes too (MAD ≤ 6)
- *
- * When enabled, consecutive similar frames are merged and their durations
- * are accumulated into the next kept frame, preserving timing accuracy.
+ * - `off`: No similarity-based skipping (fixed cadence only, default)
+ * - `low`: Conservative motion threshold (1.5)
+ * - `medium`: Balanced motion threshold (3)
+ * - `high`: Aggressive motion threshold (6)
+ * - `adaptive`: Motion-dependent cadence within the requested resource floor
  */
 export type SmartFrameSkipMode = 'off' | 'low' | 'medium' | 'high' | 'adaptive';
 
@@ -291,7 +290,14 @@ export interface ConversionProgress {
   progress: number;
   fps: number;
   etaSeconds: number | null;
-  memoryMB: number;
+  memoryMB: number | null;
+  /** Conversion-owned byte estimate; separate from measured JS heap. */
+  accountedMemoryMB?: number | undefined;
+  consumedChunks?: number | undefined;
+  decodedFrames?: number | undefined;
+  selectedFrames?: number | undefined;
+  encodedFrames?: number | undefined;
+  emittedFrames?: number | undefined;
   currentFrame?: number | undefined;
   totalFrames?: number | undefined;
   outputFrames?: number | undefined;

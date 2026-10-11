@@ -54,7 +54,7 @@ export function createDynamicDecimationController(
   let policyFrameCount = 0;
   let consecutiveMemWarnings = 0;
   let policy: SkipPolicy = 'none';
-  let usagePercentage = 0;
+  let usagePercentage: number | null = null;
 
   const checkMemory =
     memoryCheck ??
@@ -75,9 +75,16 @@ export function createDynamicDecimationController(
     // every frame until the next sample changes it.
     if (frameNum % 5 === 0) {
       const memInfo = checkMemory();
-      usagePercentage = memInfo?.usagePercentage ?? 0;
+      const sampledUsage = memInfo?.usagePercentage;
+      usagePercentage =
+        sampledUsage !== undefined &&
+        Number.isFinite(sampledUsage) &&
+        sampledUsage >= 0 &&
+        sampledUsage <= 100
+          ? sampledUsage
+          : null;
 
-      if (!memInfo || usagePercentage <= DYNAMIC_DECIMATION_MEM_THRESHOLD) {
+      if (usagePercentage === null || usagePercentage <= DYNAMIC_DECIMATION_MEM_THRESHOLD) {
         consecutiveMemWarnings = 0;
         setPolicy('none');
       } else {
@@ -94,7 +101,7 @@ export function createDynamicDecimationController(
 
     // Always retain the first frame so short conversions produce a visible
     // result even when the heap is already under pressure.
-    if (frameNum === 0 || policy === 'none') return false;
+    if (frameNum === 0 || policy === 'none' || usagePercentage === null) return false;
 
     const divisor = policy === 'critical' ? 2 : 3;
     const skip = policyFrameCount % divisor === 0;

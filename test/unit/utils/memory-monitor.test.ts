@@ -44,6 +44,7 @@ describe('memory monitor', () => {
   it('classifies conversion estimates as ok, warning, or critical', () => {
     getMemoryInfo.mockReturnValue(null);
     expect(checkMemoryForConversion(10, 10, 1, 'gif').level).toBe('ok');
+    expect(checkMemoryForConversion(10, 10, 1, 'gif').availableSource).toBe('fallback-estimate');
 
     getMemoryInfo.mockReturnValue({
       usedJSHeapSize: 0,
@@ -56,5 +57,8 @@ describe('memory monitor', () => {
 
     expect(checkMemoryForConversion(1000, 1000, 10, 'gif').estimatedMB).toBe(61);
     expect(checkMemoryForConversion(1000, 1000, 10, 'webp').estimatedMB).toBe(80);
+    expect(checkMemoryForConversion(1000, 1000, 10, 'webp').availableSource).toBe(
+      'measured-heap'
+    );
   });
 });

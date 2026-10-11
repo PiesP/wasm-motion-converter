@@ -9,6 +9,9 @@ const STATIC_THRESHOLD = 1.5;
 const SLOW_THRESHOLD = 3;
 const NORMAL_THRESHOLD = 6;
 const NOISE_FLOOR_MULTIPLIER = 3.5;
+// A median dominated by scene changes must never make later scene changes
+// eligible for smart skipping. This remains below the existing high preset.
+const MAX_NOISE_FLOOR = 4.5;
 const MAX_CONSECUTIVE_SKIP_MS = 500;
 
 const DECIMATION_BY_MOTION: Readonly<Record<AdaptiveMotionClass, number>> = {
@@ -26,18 +29,21 @@ const MOTION_CLASS_ORDER: Readonly<Record<AdaptiveMotionClass, number>> = {
 };
 
 export function calculateAdaptiveNoiseFloor(samples: readonly number[]): number {
-  const sorted = [...samples].sort((a, b) => a - b);
+  const sorted = samples
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-  return median * NOISE_FLOOR_MULTIPLIER;
+  return Math.min(MAX_NOISE_FLOOR, median * NOISE_FLOOR_MULTIPLIER);
 }
 
 export function classifyAdaptiveMotion(
   frameDistance: number,
   noiseFloor: number
 ): AdaptiveMotionClass {
-  const effectiveStatic = Math.max(STATIC_THRESHOLD, noiseFloor / NOISE_FLOOR_MULTIPLIER);
-  const effectiveSlow = Math.max(SLOW_THRESHOLD, noiseFloor / 1.8);
-  const effectiveNormal = Math.max(NORMAL_THRESHOLD, noiseFloor / 1.2);
+  const boundedNoiseFloor = Math.min(MAX_NOISE_FLOOR, Math.max(0, noiseFloor));
+  const effectiveStatic = Math.max(STATIC_THRESHOLD, boundedNoiseFloor / 2);
+  const effectiveSlow = Math.max(SLOW_THRESHOLD, boundedNoiseFloor);
+  const effectiveNormal = Math.max(NORMAL_THRESHOLD, boundedNoiseFloor * 1.5);
 
   if (frameDistance <= effectiveStatic) return 'static';
   if (frameDistance <= effectiveSlow) return 'slow';

@@ -6,6 +6,7 @@ import {
   DEVICE_MEMORY_HEAP_RATIO,
   WORKER_MAX_MEMORY_MB,
 } from '../utils/constants.js';
+import { getEstimatedHeapLimitBytes } from '../utils/memory-info.js';
 import { getMemoryInfo } from '../utils/memory-monitor.js';
 
 /**
@@ -26,7 +27,7 @@ const DEFAULT_MAX_TOTAL_MEMORY = WORKER_MAX_MEMORY_MB * BYTES_PER_MB;
  */
 function getDefaultMaxTotalMemory(): number {
   const memInfo = getMemoryInfo();
-  const limit = memInfo?.jsHeapSizeLimit;
+  const limit = memInfo?.jsHeapSizeLimit ?? getEstimatedHeapLimitBytes();
   if (limit && limit > 0) {
     // Use DEVICE_MEMORY_HEAP_RATIO of total JS heap limit, capped at 512MB
     return Math.min(Math.round(limit * DEVICE_MEMORY_HEAP_RATIO), DEFAULT_MAX_TOTAL_MEMORY);

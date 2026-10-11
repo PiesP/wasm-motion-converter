@@ -6,21 +6,25 @@ import { describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   decodeOptions: null as Record<string, unknown> | null,
   encodeRGBReuse: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
-  padLastFrameDuration: vi.fn(),
+  finishPresentation: vi.fn(),
 }));
 
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     mocks.decodeOptions = options;
-    await options.onFrameAvailable(new Uint8Array(3), 100, 0);
+    options.onFrameDecoded?.(1, 1);
+    await options.onFrameAvailable(new Uint8Array(3), 100, 0, undefined, { startUs: 0, endUs: 100_000 });
     return {
       frames: [],
       outputTotalMs: 0,
       skippedByDecimation: 0,
       smartSkipped: 0,
       sourceTotalMs: 175,
-      tailAccumulatedMs: 75,
+      tailAccumulatedMs: 0,
+      presentationEndUs: 175_000,
       totalInputFrames: 1,
+      consumedChunks: 3,
+      selectedFrames: 1,
     };
   }),
 }));
@@ -34,10 +38,10 @@ vi.mock('@services/streaming-webp-encoder', () => ({
   extractVP8Bitstream: (value: Uint8Array) => value,
   StreamingWebpMuxer: class {
     frames = 0;
-    addFrame(): void {
+    addPresentationFrame(): void {
       this.frames++;
     }
-    padLastFrameDuration = mocks.padLastFrameDuration;
+    finishPresentation = mocks.finishPresentation;
     async finish(): Promise<Uint8Array> {
       return new Uint8Array([1, 2, 3]);
     }
@@ -50,7 +54,10 @@ vi.mock('@services/wasm-webp-singleton', () => ({
 import { encodeWebp } from '@services/webp-encoder-service';
 
 describe('encodeWebp timing', () => {
-  it('pads the last frame with decoder trailing duration', async () => {
+  it('finalizes the last hold at the visible source endpoint', async () => {
+    const onFrameDecoded = vi.fn();
+    const onFrameEncoded = vi.fn();
+    const onEncodingComplete = vi.fn();
     await encodeWebp(
       {
         chunks: [],
@@ -60,11 +67,17 @@ describe('encodeWebp timing', () => {
         sourceTotalMs: 175,
         totalFrames: 1,
       },
-      { width: 1, height: 1, quality: 'medium', scale: 1 }
+      { width: 1, height: 1, quality: 'medium', scale: 1,
+        onFrameDecoded, onFrameEncoded, onEncodingComplete }
     );
 
-    expect(mocks.padLastFrameDuration).toHaveBeenCalledWith(75);
+    expect(mocks.finishPresentation).toHaveBeenCalledWith(175_000);
     expect(mocks.encodeRGBReuse).toHaveBeenCalledWith(expect.any(Uint8Array), 1, 1, 75);
     expect(mocks.decodeOptions).not.toHaveProperty('maxInputChunks');
+    expect(onFrameDecoded).toHaveBeenCalledWith(1, 1);
+    expect(onFrameEncoded).toHaveBeenCalledWith(1, 1);
+    expect(onEncodingComplete).toHaveBeenCalledWith({
+      consumedChunks: 3, decodedFrames: 1, selectedFrames: 1, encodedFrames: 1, emittedFrames: 1,
+    });
   });
 });

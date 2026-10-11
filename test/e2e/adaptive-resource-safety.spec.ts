@@ -4,6 +4,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
+import type { ConversionProfileReport } from '@services/conversion-profiler';
 
 import { inspectAnimatedWebp } from './fixtures/validate-magic';
 import {
@@ -25,6 +26,20 @@ interface OutputMetrics {
   frameCount: number;
   durationMs: number;
   outputBytes: number;
+  counts: {
+    consumedChunks: number;
+    decodedFrames: number;
+    selectedFrames: number;
+    encodedFrames: number;
+    emittedFrames: number;
+  };
+}
+
+function observedCount(value: number | null, name: string): number {
+  if (!Number.isSafeInteger(value) || value === null || value < 1) {
+    throw new Error(`Conversion profile did not report a positive ${name} count`);
+  }
+  return value;
 }
 
 async function decodeAllFramesInBrowser(
@@ -87,6 +102,25 @@ async function convertAndInspect(
   expect(resultBlob).toMatchObject({ type: `image/${format}` });
   expect(resultBlob!.size).toBeGreaterThan(100);
 
+  const profile = await page.evaluate(() => {
+    const helpers = window.__TEST_HELPERS__ as unknown as {
+      getConversionProfile: () => ConversionProfileReport | null;
+    } | undefined;
+    return helpers?.getConversionProfile() ?? null;
+  });
+  expect(profile?.encoderRoute).toMatch(format === 'gif' ? /^gif-/ : /^webp-/);
+  const stage = profile?.stages.find((candidate) => candidate.stage === 'transcoding');
+  if (!stage || stage.stage !== 'transcoding') {
+    throw new Error('Conversion profile did not report transcoding');
+  }
+  const counts = {
+    consumedChunks: observedCount(stage.consumedChunks, 'consumedChunks'),
+    decodedFrames: observedCount(stage.decodedFrames, 'decodedFrames'),
+    selectedFrames: observedCount(stage.selectedFrames, 'selectedFrames'),
+    encodedFrames: observedCount(stage.encodedFrames, 'encodedFrames'),
+    emittedFrames: observedCount(stage.emittedFrames, 'emittedFrames'),
+  };
+
   const preview = page.locator('[data-testid="result-image"]');
   await expect(preview).toBeVisible();
   await expect
@@ -108,6 +142,11 @@ async function convertAndInspect(
   expect(validateFileMagic(output, format)).toMatchObject({ valid: true });
   const browserDecode = await decodeAllFramesInBrowser(page, output, format);
   expect(browserDecode).toMatchObject(expectedDimensions);
+  expect(counts.emittedFrames).toBe(browserDecode.frameCount);
+  expect(counts.consumedChunks).toBe(360);
+  expect(counts.decodedFrames).toBe(360);
+  expect(counts.selectedFrames).toBeLessThanOrEqual(counts.decodedFrames);
+  expect(counts.encodedFrames).toBeLessThanOrEqual(counts.selectedFrames);
 
   if (format === 'gif') {
     await decodeFileFully(outputPath);
@@ -118,6 +157,7 @@ async function convertAndInspect(
       frameCount: probe.frameCount,
       durationMs: probe.duration * 1_000,
       outputBytes: output.byteLength,
+      counts,
     };
   }
 
@@ -128,6 +168,7 @@ async function convertAndInspect(
     frameCount: webp.frameCount,
     durationMs: webp.durationMs,
     outputBytes: output.byteLength,
+    counts,
   };
 }
 
@@ -162,15 +203,20 @@ test.describe('adaptive frame skipping resource safety', () => {
       await page.reload();
       const adaptive = await convertAndInspect(page, format, 'adaptive');
 
-      // 120fps high quality is capped at 20fps for GIF and 30fps for WebP.
-      // GIF can add one identical continuation frame for a trailing duration.
-      const expectedFrameCount = format === 'gif' ? 60 : 90;
-      expect(fixed.frameCount).toBeGreaterThanOrEqual(expectedFrameCount);
-      expect(fixed.frameCount).toBeLessThanOrEqual(expectedFrameCount + (format === 'gif' ? 1 : 0));
-      expect(adaptive.frameCount).toBeGreaterThanOrEqual(Math.floor(expectedFrameCount * 0.7));
-      expect(adaptive.frameCount).toBeLessThanOrEqual(fixed.frameCount);
+      // All 360 source PTS select exactly 60/90 at the 20/30fps preset cadence.
+      // The fixture's alternating 120fps luma aliases at both cadences; exact
+      // payload dedup can store far fewer frames than the selected work count.
+      const expectedSelectedFrames = format === 'gif' ? 60 : 90;
+      expect(fixed.counts.selectedFrames).toBe(expectedSelectedFrames);
+      expect(adaptive.counts.selectedFrames).toBeLessThanOrEqual(expectedSelectedFrames);
 
       for (const result of [fixed, adaptive]) {
+        expect(result.counts.emittedFrames).toBe(result.frameCount);
+        expect(result.frameCount).toBeGreaterThan(0);
+        expect(result.frameCount).toBeLessThanOrEqual(expectedSelectedFrames + (format === 'gif' ? 1 : 0));
+        expect(result.counts.emittedFrames).toBeLessThanOrEqual(
+          result.counts.encodedFrames + (format === 'gif' ? 1 : 0),
+        );
         expect(result.durationMs).toBeGreaterThanOrEqual(SOURCE_DURATION_MS - 100);
         expect(result.durationMs).toBeLessThanOrEqual(SOURCE_DURATION_MS + 100);
         expect(result.outputBytes).toBeGreaterThan(100);
@@ -196,14 +242,18 @@ test.describe('adaptive frame skipping resource safety', () => {
       await page.reload();
       const adaptive = await convertAndInspect(page, format, 'adaptive', '100%');
 
-      // A 64MiB synthetic heap limit makes the real pre-conversion memory check
-      // force decimation 8: 360 source frames become at most 45 kept frames.
-      // GIF writes one continuation frame to preserve the final skipped duration.
-      const expectedContainerFrames = format === 'gif' ? 46 : 45;
-      expect(fixed.frameCount).toBe(expectedContainerFrames);
-      expect(adaptive.frameCount).toBeLessThanOrEqual(expectedContainerFrames);
+      // A 64MiB synthetic heap limit forces decimation 8 before conversion.
+      // The 360 source PTS select exactly 45 frames; dedup may emit fewer.
+      expect(fixed.counts.selectedFrames).toBe(45);
+      expect(adaptive.counts.selectedFrames).toBeLessThanOrEqual(45);
 
       for (const result of [fixed, adaptive]) {
+        expect(result.counts.emittedFrames).toBe(result.frameCount);
+        expect(result.frameCount).toBeGreaterThan(0);
+        expect(result.frameCount).toBeLessThanOrEqual(format === 'gif' ? 46 : 45);
+        expect(result.counts.emittedFrames).toBeLessThanOrEqual(
+          result.counts.encodedFrames + (format === 'gif' ? 1 : 0),
+        );
         expect(result.durationMs).toBeGreaterThanOrEqual(SOURCE_DURATION_MS - 100);
         expect(result.durationMs).toBeLessThanOrEqual(SOURCE_DURATION_MS + 100);
       }

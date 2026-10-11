@@ -62,3 +62,24 @@ export function verifyAnimatedOutput(
   contract: OutputContractCase,
   markers: Record<string, number[]>
 ): Promise<AnimatedOutputObservation>;
+
+export interface ExactAnimatedOutputComparison {
+  width: number;
+  height: number;
+  durationUs: number;
+  repetitionCount: number;
+  referenceFrameCount: number;
+  candidateFrameCount: number;
+  comparedIntervals: number;
+  /** Checked for opaque outputs with a full-canvas, prior-state-independent first frame. */
+  loopTransitionChecked: true;
+}
+
+/** Rejects GIF/WebP files whose first encoded frame cannot prove a stable opaque loop start. */
+export function compareAnimatedOutputExact(
+  page: import('@playwright/test').Page,
+  referenceBytes: Uint8Array,
+  candidateBytes: Uint8Array,
+  referenceFormat: OutputContractCase['format'],
+  candidateFormat?: OutputContractCase['format']
+): Promise<ExactAnimatedOutputComparison>;

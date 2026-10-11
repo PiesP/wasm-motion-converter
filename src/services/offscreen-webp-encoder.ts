@@ -24,7 +24,7 @@ import { createDynamicDecimationController } from './dynamic-decimation-controll
 import type { BaseEncoderOptions } from './encoder-common';
 import { withPooledBuffer } from './pooled-buffer';
 import { StreamingWebpMuxer } from './streaming-webp-encoder';
-import { extractAndNormalizeCanvasVp8 } from './webp-bitstream';
+import { extractCanvasWebp } from './webp-bitstream';
 
 /**
  * Check if OffscreenCanvas is available in the current context.
@@ -38,20 +38,6 @@ function isOffscreenCanvasAvailable(): boolean {
   return typeof OffscreenCanvas !== 'undefined';
 }
 
-/**
- * Extract the VP8 bitstream from a single-frame WebP file produced by
- * OffscreenCanvas.convertToBlob.
- *
- * OffscreenCanvas may produce either:
- * 1. Simple VP8 WebP: RIFF → WEBP → "VP8 " → bitstream
- * 2. Extended VP8X WebP: RIFF → WEBP → "VP8X" → [chunks including "VP8 "]
- *
- * This function handles both formats by scanning for the VP8 chunk.
- *
- * Chromium's convertToBlob (and VideoEncoder) prepend a 3-byte frame
- * size prefix before the VP8 keyframe tag (0x9d 0x01 0x2a). This is
- * stripped to produce a clean VP8 bitstream for the animated WebP muxer.
- */
 /**
  * Encode demuxed video frames to animated WebP using OffscreenCanvas.
  *
@@ -100,24 +86,19 @@ export async function encodeWebpOffscreen(
   }
 
   // Streaming encode state — use incremental muxer to avoid O(N) memory accumulation
-  const muxer = new StreamingWebpMuxer(w, h, opts);
+  const muxer = new StreamingWebpMuxer(w, h, opts, opts.profileOperation);
   let encodeIdx = 0;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
-  const decimationController = createDynamicDecimationController();
-
-  // Accumulate durations from dynamically skipped frames for timing preservation.
-  // When decimationController.shouldSkip() drops a frame under memory pressure,
-  // its duration is accumulated here and added to the next kept frame's delay.
-  // This mirrors the GIF encoder's accumulatedDuration behavior.
-  let accumulatedDuration = 0;
+  const decimationController = createDynamicDecimationController(opts.decimationMemoryCheck);
 
   // Decode frames with streaming callback — each frame is encoded immediately
   const {
     totalInputFrames: totalDecoded,
     skippedByDecimation: totalSkipped,
     smartSkipped: totalSmartSkipped,
-    tailAccumulatedMs,
+    selectedFrames,
+    presentationEndUs,
   } = await decodeFrames(
     demux,
     {
@@ -130,7 +111,8 @@ export async function encodeWebpOffscreen(
       profileCopyPath: opts.profileCopyPath,
       pixelFormat: 'rgba',
       stagedCopyLookahead: true,
-      onFrameDecoded: (_frameNum: number, total: number) => {
+      onFrameDecoded: (frameNum: number, total: number) => {
+        opts.onFrameDecoded?.(frameNum, total);
         if (!onProgress) return;
         const encCount = encodeIdx;
         if (encCount === 0) return;
@@ -140,13 +122,13 @@ export async function encodeWebpOffscreen(
           progress: 50 + Math.min(40, encodePct),
           fps: 0,
           etaSeconds: null,
-          memoryMB: 0,
+          memoryMB: null,
           currentFrame: encCount,
           totalFrames: total,
         });
       },
       // Streaming callback: encode each frame immediately upon decoding
-      onFrameAvailable: async (rgbaData: Uint8Array, frameDurationMs: number, frameNum: number) => {
+      onFrameAvailable: async (rgbaData, _frameDurationMs, frameNum, _memoryHandoff, timing) => {
         if (signal?.aborted) {
           globalBufferPool.release(rgbaData);
           throw new DOMException('Cancelled', 'AbortError');
@@ -156,18 +138,11 @@ export async function encodeWebpOffscreen(
         const shouldSkip = decimationController.shouldSkip(frameNum);
 
         if (shouldSkip) {
-          // Accumulate skipped frame duration for timing preservation.
-          // Without this, WebP output plays faster than source when dynamic
-          // decimation kicks in under memory pressure.
-          accumulatedDuration += frameDurationMs;
           globalBufferPool.release(rgbaData);
           return;
         }
 
         return withPooledBuffer(rgbaData, async () => {
-          const totalDuration = frameDurationMs + accumulatedDuration;
-          accumulatedDuration = 0;
-
           const exactRgba = new Uint8ClampedArray(
             rgbaData.buffer as ArrayBuffer,
             rgbaData.byteOffset,
@@ -177,6 +152,7 @@ export async function encodeWebpOffscreen(
           ctx.putImageData(imageData, 0, 0);
 
           // Encode to WebP via convertToBlob
+          const encodingStart = opts.profileOperation ? performance.now() : null;
           const blob = await canvas.convertToBlob({
             type: 'image/webp',
             quality,
@@ -188,32 +164,31 @@ export async function encodeWebpOffscreen(
             );
           }
 
+          if (encodingStart !== null)
+            opts.profileOperation?.('webpEncoding', performance.now() - encodingStart);
+
           // Read blob as ArrayBuffer
           const webpBuffer = new Uint8Array(await blob.arrayBuffer());
 
           // Extract VP8 bitstream from the single-frame WebP.
           // Always use the full parser — convertToBlob may produce VP8X
           // format for any frame, not just the first.
-          const bitstream = extractAndNormalizeCanvasVp8(webpBuffer);
+          const { bitstream, iccProfile } = extractCanvasWebp(webpBuffer);
 
-          muxer.addFrame(bitstream, totalDuration);
+          muxer.addPresentationFrame(bitstream, timing, iccProfile);
           encodeIdx++;
+          opts.onFrameEncoded?.(encodeIdx, demux.totalFrames);
         });
       },
     },
     signal
   );
 
-  if (muxer.frames === 0) {
+  if (encodeIdx === 0) {
     throw new Error('No frames decoded for WebP encoding');
   }
 
-  // Apply tail accumulated duration (decimation + smart-skip leftovers)
-  // and dynamic decimation leftovers to the last frame to preserve total play time.
-  const totalTailMs = tailAccumulatedMs + accumulatedDuration;
-  if (totalTailMs > 0) {
-    muxer.padLastFrameDuration(totalTailMs);
-  }
+  muxer.finishPresentation(presentationEndUs);
 
   // Mux all encoded frames into animated WebP container
   const result = await muxer.finish(signal);
@@ -224,13 +199,18 @@ export async function encodeWebpOffscreen(
     progress: 90,
     fps: 0,
     etaSeconds: 0,
-    memoryMB: 0,
-    currentFrame: muxer.frames,
+    memoryMB: null,
+    currentFrame: encodeIdx,
+    encodedFrames: encodeIdx,
+    emittedFrames: muxer.frames,
+    outputFrames: muxer.frames,
     totalFrames: Math.max(muxer.frames, totalDecoded),
   });
   opts.onEncodingComplete?.({
     decodedFrames: totalDecoded,
-    encodedFrames: muxer.frames,
+    selectedFrames,
+    encodedFrames: encodeIdx,
+    emittedFrames: muxer.frames,
   });
 
   logger.info('encoders', 'OffscreenCanvas WebP encoding complete', {

@@ -62,6 +62,27 @@ const baseRequest: ConversionRequest = {
   smartFrameSkip: 'adaptive',
 };
 
+function stubCanvasWebpSupport(): void {
+  class FakeOffscreenCanvas {
+    getContext(): object {
+      return { fillStyle: '', fillRect() {} };
+    }
+    async convertToBlob(): Promise<Blob> {
+      const frame = new Uint8Array([0x10, 0, 0, 0x9d, 0x01, 0x2a, 2, 0, 2, 0]);
+      const webp = new Uint8Array(20 + frame.length);
+      webp.set([0x52, 0x49, 0x46, 0x46], 0);
+      webp.set([0x57, 0x45, 0x42, 0x50], 8);
+      webp.set([0x56, 0x50, 0x38, 0x20], 12);
+      const view = new DataView(webp.buffer);
+      view.setUint32(4, webp.length - 8, true);
+      view.setUint32(16, frame.length, true);
+      webp.set(frame, 20);
+      return new Blob([webp], { type: 'image/webp' });
+    }
+  }
+  vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+}
+
 beforeEach(() => {
   demuxResult.dispose.mockClear();
   mocks.demuxVideo.mockReset().mockResolvedValue(demuxResult);
@@ -207,13 +228,7 @@ describe('main conversion pipeline encoder options', () => {
   });
 
   it('forwards smartFrameSkip to the OffscreenCanvas WebP fallback', async () => {
-    class FakeOffscreenCanvas {
-      readonly convertToBlob = vi.fn();
-      getContext(): object {
-        return {};
-      }
-    }
-    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+    stubCanvasWebpSupport();
     vi.stubGlobal('Worker', undefined);
 
     await runConversionPipeline({ ...baseRequest, format: 'webp' }, vi.fn());
@@ -247,13 +262,7 @@ describe('main conversion pipeline encoder options', () => {
   });
 
   it('creates only one memory-safe RGBA Worker for full-resolution 4K WebP', async () => {
-    class FakeOffscreenCanvas {
-      readonly convertToBlob = vi.fn();
-      getContext(): object {
-        return {};
-      }
-    }
-    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+    stubCanvasWebpSupport();
     vi.stubGlobal('Worker', class {});
     mocks.demuxVideo.mockResolvedValueOnce({
       ...demuxResult,

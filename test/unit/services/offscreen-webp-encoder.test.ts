@@ -13,7 +13,7 @@ vi.mock('@services/decoder-service', () => ({
     mocks.decodeOptions = options;
     mocks.pixelFormat = options.pixelFormat;
     const backing = new Uint8Array([10, 20, 30, 255, 0x7f, 0x7f, 0x7f, 0x7f]);
-    await options.onFrameAvailable(backing, 100, 0);
+    await options.onFrameAvailable(backing, 100, 0, undefined, { startUs: 0, endUs: 100_000 });
     return {
       frames: [],
       outputTotalMs: 0,
@@ -21,6 +21,7 @@ vi.mock('@services/decoder-service', () => ({
       smartSkipped: 0,
       sourceTotalMs: 100,
       tailAccumulatedMs: 0,
+      presentationEndUs: 100_000,
       totalInputFrames: 1,
     };
   }),
@@ -43,9 +44,10 @@ afterEach(() => {
 
 describe('OffscreenCanvas WebP RGBA ownership', () => {
   it('passes an exact RGBA view to ImageData without allocating a converted frame', async () => {
-    const bitstream = new Uint8Array([0x06, 0, 0, 0x9d, 0x01, 0x2a, 0xa0, 0]);
+    const bitstream = new Uint8Array([0x06, 0, 0, 0x9d, 0x01, 0x2a, 1, 0, 1, 0]);
     const webp = new Uint8Array(20 + bitstream.length);
     webp.set([0x52, 0x49, 0x46, 0x46], 0);
+    new DataView(webp.buffer).setUint32(4, webp.length - 8, true);
     webp.set([0x57, 0x45, 0x42, 0x50], 8);
     webp.set([0x56, 0x50, 0x38, 0x20], 12);
     new DataView(webp.buffer).setUint32(16, bitstream.length, true);

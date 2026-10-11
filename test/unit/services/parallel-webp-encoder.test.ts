@@ -55,6 +55,17 @@ describe('createStreamingWebpEncoder tail timing', () => {
     globalBufferPool.clear();
   });
 
+  it('retains the worker ICC profile once in the animated output', async () => {
+    const encoder = createStreamingWebpEncoder(createWorkerPool(), 16, 16, 'medium', 1);
+    await encoder.submit(new Uint8Array(16), 100);
+    const profile = new Uint8Array([1, 2, 3]);
+    mocks.pending.get(0)?.resolve({ id: 0, bitstream: new Uint8Array(8), iccProfile: profile });
+    const output = await encoder.finish();
+    expect(output[20]).toBe(0x22);
+    expect(output.subarray(38, 41)).toEqual(profile);
+    expect(String.fromCharCode(...output.subarray(42, 46))).toBe('ANIM');
+  });
+
   it('applies deferred tail duration to the final frame after in-flight work settles', async () => {
     const encoder = createStreamingWebpEncoder(createWorkerPool(), 16, 16, 'medium', 2);
     await encoder.submit(new Uint8Array(16), 100);
@@ -71,6 +82,8 @@ describe('createStreamingWebpEncoder tail timing', () => {
 
     expect(durations).toEqual([100, 275]);
     expect(durations.reduce((total, duration) => total + duration, 0)).toBe(375);
+    expect(encoder.encodedFrames).toBe(2);
+    expect(encoder.emittedFrames).toBe(2);
   });
 
   it('preserves the first worker error and refuses submissions after failure', async () => {

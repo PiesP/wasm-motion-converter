@@ -2,9 +2,11 @@
 // Copyright (c) 2026 PiesP
 
 import { expect, test } from '@playwright/test';
+import type { ConversionProfileReport } from '@services/conversion-profiler';
 import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {
   type OutputContractCase,
+  compareAnimatedOutputExact,
   verifyAnimatedOutput,
 } from '../../validation/windows/output-contract.mjs';
 import {
@@ -97,6 +99,11 @@ test.describe('deterministic output contracts', () => {
       const output = await runContractConversion(page, contract);
       const observation = await verifyAnimatedOutput(page, output, contract, markers);
       expect(observation.frameCount).toBe(contract.expected.markers.length);
+      if (contract.id === 'cfr-trim-gif') {
+        const exact = await compareAnimatedOutputExact(page, output, output, contract.format);
+        expect(exact.durationUs).toBeGreaterThan(0);
+        expect(exact.loopTransitionChecked).toBe(true);
+      }
     });
   }
 });
@@ -192,17 +199,25 @@ test.describe('conversion Worker fallback boundary', () => {
   const webpContract = cases.find((candidate) => candidate.id === 'vfr-par-webp');
   if (!webpContract) throw new Error('Missing vfr-par-webp output contract');
   const bootstrapCases = [
-    { contract, warning: 'worker.fallback', encoder: 'GIF', disableNativeWebp: false },
     {
-      contract: webpContract,
-      warning: 'worker-create-failed',
-      encoder: 'serial Canvas WebP',
+      contract,
+      warning: 'worker.fallback',
+      encoder: 'GIF',
+      route: 'gif-main',
       disableNativeWebp: false,
     },
     {
       contract: webpContract,
       warning: 'worker-create-failed',
+      encoder: 'serial Canvas WebP',
+      route: 'webp-serial-canvas',
+      disableNativeWebp: false,
+    },
+    {
+      contract: webpContract,
+      warning: null,
       encoder: 'WASM WebP',
+      route: 'webp-wasm',
       disableNativeWebp: true,
     },
   ];
@@ -242,10 +257,23 @@ test.describe('conversion Worker fallback boundary', () => {
       await page.goto('/');
 
       const output = await runContractConversion(page, fallbackContract);
-      expect(
-        await page.evaluate(() => globalThis.__wmcWorkerConstructionAttempts)
-      ).toBeGreaterThan(0);
-      expect(warnings.some((message) => message.includes(bootstrapCase.warning))).toBe(true);
+      const attempts = await page.evaluate(() => globalThis.__wmcWorkerConstructionAttempts);
+      if (bootstrapCase.disableNativeWebp) {
+        // A rejected native capability probe selects WASM before creating a pool.
+        expect(attempts).toBe(0);
+      } else {
+        expect(attempts).toBeGreaterThan(0);
+      }
+      if (bootstrapCase.warning) {
+        expect(warnings.some((message) => message.includes(bootstrapCase.warning!))).toBe(true);
+      }
+      const route = await page.evaluate(() => {
+        const helpers = window.__TEST_HELPERS__ as unknown as {
+          getConversionProfile: () => ConversionProfileReport | null;
+        } | undefined;
+        return helpers?.getConversionProfile()?.encoderRoute ?? null;
+      });
+      expect(route).toBe(bootstrapCase.route);
       if (bootstrapCase.disableNativeWebp) {
         expect(
           await page.evaluate(() => typeof OffscreenCanvas.prototype.convertToBlob)
@@ -255,59 +283,86 @@ test.describe('conversion Worker fallback boundary', () => {
     });
   }
 
-  test('does not retry on the main thread after Worker initialization', async ({ page }) => {
-    await page.addInitScript(() => {
-      const NativeWorker = globalThis.Worker;
-      class RuntimeFailingWorker {
-        readonly inner: Worker;
-        onmessage: ((event: MessageEvent) => void) | null = null;
-        onerror: ((event: ErrorEvent) => void) | null = null;
-        private injected = false;
+  for (const failure of ['runtime', 'decoder'] as const) {
+    test(`recovers with a new conversion after a post-start ${failure} failure`, async ({ page }) => {
+      await page.addInitScript((failureKind) => {
+        const NativeWorker = globalThis.Worker;
+        let injectedFailure = false;
+        class RuntimeFailingWorker {
+          readonly inner: Worker;
+          onmessage: ((event: MessageEvent) => void) | null = null;
+          onerror: ((event: ErrorEvent) => void) | null = null;
+          private injected = false;
+          private requestId = '';
 
-        constructor(url: string | URL, options?: WorkerOptions) {
-          this.inner = new NativeWorker(url, options);
-          this.inner.onmessage = (event) => {
-            this.onmessage?.(event);
-            const data = event.data as { type?: string; message?: string } | null;
-            if (!this.injected && data?.type === 'log' && data.message === 'Worker initialized') {
-              this.injected = true;
-              this.inner.terminate();
-              queueMicrotask(() =>
-                this.onerror?.(
-                  new ErrorEvent('error', { message: 'Forced post-start Worker failure' })
-                )
-              );
-            }
-          };
-          this.inner.onerror = (event) => this.onerror?.(event);
-        }
+          constructor(url: string | URL, options?: WorkerOptions) {
+            this.inner = new NativeWorker(url, options);
+            this.inner.onmessage = (event) => {
+              this.onmessage?.(event);
+              const data = event.data as { type?: string; message?: string } | null;
+              if (!injectedFailure && !this.injected && data?.type === 'log' && data.message === 'Worker initialized') {
+                this.injected = true;
+                injectedFailure = true;
+                this.inner.terminate();
+                queueMicrotask(() => {
+                  if (failureKind === 'decoder') {
+                    this.onmessage?.(new MessageEvent('message', { data: {
+                      type: 'error', requestId: this.requestId,
+                      message: 'Forced decoder failure', code: 'DECODER_ERROR',
+                    } }));
+                  } else {
+                    this.onerror?.(
+                      new ErrorEvent('error', { message: 'Forced post-start Worker failure' })
+                    );
+                  }
+                });
+              }
+            };
+            this.inner.onerror = (event) => this.onerror?.(event);
+          }
 
-        postMessage(message: unknown, transfer?: Transferable[]): void {
-          this.inner.postMessage(message, transfer ?? []);
-        }
+          postMessage(message: unknown, transfer?: Transferable[]): void {
+            const request = message as { requestId?: string };
+            if (request.requestId) this.requestId = request.requestId;
+            this.inner.postMessage(message, transfer ?? []);
+          }
 
-        terminate(): void {
-          this.inner.terminate();
+          terminate(): void {
+            this.inner.terminate();
+          }
         }
-      }
-      Object.defineProperty(globalThis, 'Worker', {
-        configurable: true,
-        value: RuntimeFailingWorker,
-        writable: true,
+        Object.defineProperty(globalThis, 'Worker', {
+          configurable: true,
+          value: RuntimeFailingWorker,
+          writable: true,
+        });
+      }, failure);
+      const warnings: string[] = [];
+      page.on('console', (message) => {
+        if (message.type() === 'warning') warnings.push(message.text());
       });
-    });
-    const warnings: string[] = [];
-    page.on('console', (message) => {
-      if (message.type() === 'warning') warnings.push(message.text());
-    });
-    await page.goto('/');
-    await configureContract(page, contract);
-    await clickConvert(page);
-    await dismissWarningDialog(page);
+      await page.goto('/');
+      const documentIdentity = await page.evaluate(() => performance.timeOrigin);
+      await configureContract(page, contract);
+      await clickConvert(page);
+      await dismissWarningDialog(page);
 
-    expect(await waitForConversionComplete(page, 30_000)).toBe('error');
-    expect(warnings.some((message) => message.includes('worker.fallback'))).toBe(false);
-  });
+      expect(await waitForConversionComplete(page, 30_000)).toBe('error');
+      expect(warnings.some((message) => message.includes('worker.fallback'))).toBe(false);
+      expect(await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null)).toBeNull();
+      await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
+      const recoveredOutput = await runContractConversion(page, contract);
+      await verifyAnimatedOutput(page, recoveredOutput, contract, markers);
+      expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentIdentity);
+      expect(await page.evaluate(() => {
+        const helpers = window.__TEST_HELPERS__ as unknown as {
+          getConversionProfile: () => ConversionProfileReport | null;
+        } | undefined;
+        return helpers?.getConversionProfile()?.encoderRoute ?? null;
+      })).toBe('gif-worker');
+      expect(warnings.some((message) => message.includes('worker.fallback'))).toBe(false);
+    });
+  }
 });
 
 declare global {

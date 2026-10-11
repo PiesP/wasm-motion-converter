@@ -16,6 +16,30 @@ function makeProgress(overrides: Partial<ConversionProgress> = {}): ConversionPr
 }
 
 describe('createThrottledProgress', () => {
+  it('keeps overlapping decode and encode progress monotonic without completing early', () => {
+    const onProgress = vi.fn();
+    const tracker = createThrottledProgress(onProgress, 0);
+    tracker.callback(makeProgress({ phase: 'encoding', progress: 85 }));
+    tracker.callback(makeProgress({ phase: 'decoding', progress: 42 }));
+    tracker.callback(makeProgress({ phase: 'assembling', progress: 100 }));
+    expect(onProgress.mock.calls.map(([update]) => update.progress)).toEqual([85, 85, 100]);
+    tracker.cleanup();
+  });
+
+  it('cannot flush a stale pending update after a newer immediate update', () => {
+    const onProgress = vi.fn();
+    const now = vi.spyOn(performance, 'now');
+    const tracker = createThrottledProgress(onProgress, 100);
+    now.mockReturnValue(100);
+    tracker.callback(makeProgress({ progress: 10, currentFrame: 1 }));
+    now.mockReturnValue(110);
+    tracker.callback(makeProgress({ progress: 20, currentFrame: 2 }));
+    now.mockReturnValue(250);
+    tracker.callback(makeProgress({ progress: 30, currentFrame: 3 }));
+    tracker.flush();
+    expect(onProgress.mock.calls.map(([update]) => update.currentFrame)).toEqual([1, 3]);
+    tracker.cleanup();
+  });
   beforeEach(() => {
     // Fake both timers and performance.now so that:
     // - setTimeout is controlled via vi.advanceTimersByTime()

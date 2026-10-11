@@ -9,6 +9,8 @@ import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 import type {
   ConversionProfileReport,
   ProfileOperationTotals,
+  ProfileEncoderRoute,
+  TranscodingStageMetrics,
 } from '@services/conversion-profiler';
 import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {
@@ -51,6 +53,7 @@ interface ConversionWorkload {
   format: 'gif' | 'webp';
   settings: OutputContractCase['settings'];
   contract?: OutputContractCase;
+  backend?: 'serial-canvas' | 'wasm';
 }
 
 const workloads: ConversionWorkload[] = [
@@ -73,6 +76,19 @@ const workloads: ConversionWorkload[] = [
     settings: profileContract.settings,
     contract: profileContract,
   },
+  ...(['auto', 'serial-canvas', 'wasm'] as const).map((backend) => {
+    const contract = (contractData.cases as OutputContractCase[]).find(
+      (entry) => entry.id === 'vfr-par-webp',
+    )!;
+    return {
+      id: `small-webp-${backend}`,
+      fixture: contract.fixture.replace(/^public\//, ''),
+      format: 'webp' as const,
+      settings: contract.settings,
+      contract,
+      ...(backend === 'auto' ? {} : { backend }),
+    };
+  }),
 ];
 
 interface ChromiumProcessInfo {
@@ -101,6 +117,8 @@ interface ConversionMeasurement {
   transcodingWallMs: number | null;
   profileOperationTotals: ProfileOperationTotals | null;
   profileCopyPathCounts: Record<string, number> | null;
+  encoderRoute: ProfileEncoderRoute | null;
+  transcoding: TranscodingStageMetrics | null;
   cpuSeconds: number | null;
   cpuProcessSetStable: boolean;
   samples: ResourceSample[];
@@ -298,11 +316,30 @@ async function runMeasuredConversion(
     () => (window as any).__TEST_HELPERS__?.getConversionProfile() ?? null,
   )) as ConversionProfileReport | null;
   expect(profile).not.toBeNull();
+  expect(profile!.encoderRoute).toMatch(workload.format === 'gif' ? /^gif-/ : /^webp-/);
+  if (workload.backend) {
+    expect(profile!.encoderRoute).toBe(
+      workload.backend === 'wasm' ? 'webp-wasm' : 'webp-serial-canvas',
+    );
+  }
   expect(
     Object.values(profile!.copyPathCounts).reduce((sum, count) => sum + count, 0),
   ).toBe(profile!.operationTotals.pixelCopy.samples);
-  const transcodingWallMs =
-    profile?.stages.find((stage) => stage.stage === 'transcoding')?.durationMs ?? null;
+  const transcoding = profile!.stages.find((stage) => stage.stage === 'transcoding') ?? null;
+  expect(transcoding).not.toBeNull();
+  if (profile!.encoderRoute === 'webp-serial-canvas') {
+    expect(transcoding!.consumedChunks).toBeNull();
+  } else {
+    expect(Number.isSafeInteger(transcoding!.consumedChunks)).toBe(true);
+    expect(transcoding!.consumedChunks).toBeGreaterThan(0);
+  }
+  for (const count of ['decodedFrames', 'selectedFrames', 'encodedFrames', 'emittedFrames'] as const) {
+    expect(Number.isSafeInteger(transcoding![count])).toBe(true);
+    expect(transcoding![count]).toBeGreaterThan(0);
+  }
+  expect(transcoding!.selectedFrames).toBeLessThanOrEqual(transcoding!.decodedFrames!);
+  expect(transcoding!.encodedFrames).toBeLessThanOrEqual(transcoding!.selectedFrames!);
+  const transcodingWallMs = transcoding?.durationMs ?? null;
 
   const output = await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null);
   expect(output?.type).toBe(`image/${workload.format}`);
@@ -335,6 +372,8 @@ async function runMeasuredConversion(
       transcodingWallMs,
       profileOperationTotals: profile?.operationTotals ?? null,
       profileCopyPathCounts: profile?.copyPathCounts ?? null,
+      encoderRoute: profile!.encoderRoute,
+      transcoding,
       cpuSeconds: cpuProcessSetStable
         ? samples.at(-1)!.cpuTimeSeconds - samples[0]!.cpuTimeSeconds
         : null,
@@ -414,6 +453,19 @@ test.describe('opt-in Chromium resource profile', () => {
       page,
     }) => {
       test.slow();
+      if (workload.backend) {
+        await page.addInitScript((backend) => {
+          if (backend === 'wasm') {
+            Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+              configurable: true, value: undefined,
+            });
+          } else {
+            Object.defineProperty(globalThis, 'Worker', {
+              configurable: true, value: undefined,
+            });
+          }
+        }, workload.backend);
+      }
       await page.goto('/');
       const browserCdp = await browser.newBrowserCDPSession();
       try {
@@ -432,7 +484,7 @@ test.describe('opt-in Chromium resource profile', () => {
         );
 
         // Exclude one-time worker, Canvas, and WASM initialization from leak slopes.
-        await runMeasuredConversion(page, browserCdp, workload);
+        const cold = await runMeasuredConversion(page, browserCdp, workload);
 
         const measurements: ConversionMeasurement[] = [];
         const outputs: Buffer[] = [];
@@ -490,6 +542,7 @@ test.describe('opt-in Chromium resource profile', () => {
             sampleIntervalMs: CONVERSION_SAMPLE_INTERVAL_MS,
             correctness: 'Encoded outputs decoded after all measured cycles and post-GC samples',
           },
+          coldInitialization: cold.measurement,
           measurements, postGcPssSlope, postGcJsSlope, postGcUaSlope,
           observations,
           correctness: {

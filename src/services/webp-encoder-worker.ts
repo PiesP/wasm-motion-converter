@@ -16,7 +16,7 @@
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { isRecord } from '@piesp/browser-core/util';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
-import { extractAndNormalizeCanvasVp8 } from './webp-bitstream';
+import { extractCanvasWebp } from './webp-bitstream';
 
 // ─── Worker Entry Point ────────────────────────────────────────────
 
@@ -99,7 +99,7 @@ function ensureCanvas(
 
 async function handleEncode(
   request: EncodeRequest
-): Promise<{ id: number; bitstream: Uint8Array }> {
+): Promise<{ id: number; bitstream: Uint8Array; iccProfile: Uint8Array | null }> {
   const { id, rgbaData, width, height, quality } = request;
 
   // Get or create cached OffscreenCanvas
@@ -132,9 +132,9 @@ async function handleEncode(
   // (extended) format for any frame, not just the first. The former fast-path
   // assumption (simple VP8 at offset 20) produced garbage bitstreams for VP8X
   // frames, resulting in broken animated WebP output.
-  const bitstream = extractAndNormalizeCanvasVp8(webpBuffer);
+  const { bitstream, iccProfile } = extractCanvasWebp(webpBuffer);
 
-  return { id, bitstream };
+  return { id, bitstream, iccProfile };
 }
 
 // ─── Message Handler ───────────────────────────────────────────────
@@ -157,7 +157,12 @@ self.onmessage = async (event: MessageEvent) => {
   try {
     const result = await handleEncode(request);
     // Transfer the bitstream's underlying ArrayBuffer back
-    self.postMessage(result, [result.bitstream.buffer]);
+    self.postMessage(
+      result,
+      result.iccProfile
+        ? [result.bitstream.buffer, result.iccProfile.buffer]
+        : [result.bitstream.buffer]
+    );
   } catch (err) {
     const message = getErrorMessage(err);
     self.postMessage({ id: request.id, error: message });

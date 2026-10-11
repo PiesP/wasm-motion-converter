@@ -12,11 +12,147 @@ import { describe, expect, it } from 'vitest';
 import { StreamingWebpMuxer } from '@services/streaming-webp-encoder';
 
 /** Create a minimal dummy VP8 bitstream for testing muxer structure only. */
-function dummyBitstream(size = 100): Uint8Array {
-  return new Uint8Array(size);
+function dummyBitstream(size = 100, seed = 0): Uint8Array {
+  const frame = new Uint8Array(size);
+  if (size >= 10) frame.set([0x10, 0, 0, 0x9d, 0x01, 0x2a, 16, 0, 16, 0]);
+  if (size > 10) frame[10] = seed;
+  return frame;
 }
 
 describe('StreamingWebpMuxer', () => {
+  it('writes one identical ICC profile before ANIM and enforces profile consistency and bytes', async () => {
+    const profile = new Uint8Array([1, 2, 3]);
+    const muxer = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 191 });
+    muxer.addPresentationFrame(dummyBitstream(100), { startUs: 0, endUs: 1000 }, profile);
+    profile[0] = 9;
+    expect(() => muxer.addPresentationFrame(dummyBitstream(100, 1),
+      { startUs: 1000, endUs: 2000 }, profile)).toThrow('inconsistent ICC');
+    muxer.finishPresentation(1000);
+    const output = await muxer.finish();
+    expect(output[20]).toBe(0x22);
+    expect(Array.from(output.subarray(30, 42))).toEqual([73, 67, 67, 80, 3, 0, 0, 0, 1, 2, 3, 0]);
+    expect(String.fromCharCode(...output.subarray(42, 46))).toBe('ANIM');
+    expect(output.length).toBe(188);
+
+    const capped = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 190 });
+    expect(() => capped.addPresentationFrame(dummyBitstream(100),
+      { startUs: 0, endUs: 1000 }, new Uint8Array([1, 2, 3]))).toThrow('byte limit');
+  });
+  describe('source presentation holds', () => {
+    const durations = (bytes: Uint8Array): number[] => {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const result: number[] = [];
+      for (let offset = 12; offset < bytes.length;) {
+        const size = view.getUint32(offset + 4, true);
+        if (view.getUint32(offset) === 0x414e4d46) {
+          result.push(bytes[offset + 20]! | (bytes[offset + 21]! << 8) | (bytes[offset + 22]! << 16));
+        }
+        offset += 8 + size + (size & 1);
+      }
+      return result;
+    };
+
+    it('finalizes prior holds at original PTS and the last hold at the visible endpoint', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      muxer.addPresentationFrame(dummyBitstream(), { startUs: 0, endUs: 100_000 });
+      muxer.addPresentationFrame(dummyBitstream(42), { startUs: 300_000, endUs: 400_000 });
+      muxer.finishPresentation(400_000);
+      expect(durations(await muxer.finish())).toEqual([300, 100]);
+    });
+
+    it('rounds cumulative boundaries without systematic high-FPS drift', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      for (let index = 0; index < 120; index++) {
+        muxer.addPresentationFrame(dummyBitstream(100, index), {
+          startUs: Math.round(index * 1_000_000 / 120),
+          endUs: Math.round((index + 1) * 1_000_000 / 120),
+        });
+      }
+      muxer.finishPresentation(1_000_000);
+      const holds = durations(await muxer.finish());
+      expect(holds.reduce((sum, hold) => sum + hold, 0)).toBe(1000);
+      expect(new Set(holds)).toEqual(new Set([8, 9]));
+    });
+
+    it('splits an overlong hold without truncating its endpoint', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      muxer.addPresentationFrame(dummyBitstream(99), { startUs: 0, endUs: 100_000 });
+      muxer.finishPresentation((0xffffff + 71) * 1000);
+      expect(durations(await muxer.finish())).toEqual([0xffffff, 71]);
+      expect(muxer.frames).toBe(2);
+    });
+
+    it('coalesces exact adjacent VP8 payloads and owns the borrowed input', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      const borrowed = dummyBitstream(100, 7);
+      muxer.addPresentationFrame(borrowed, { startUs: 0, endUs: 400 });
+      borrowed[10] = 99;
+      muxer.addPresentationFrame(dummyBitstream(100, 7), { startUs: 400, endUs: 800 });
+      muxer.finishPresentation(800);
+      expect(durations(await muxer.finish())).toEqual([1]);
+      expect(muxer.frames).toBe(1);
+    });
+
+    it('drops zero-length distinct holds at sub-millisecond source cadence', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      for (let index = 0; index < 8; index++) {
+        muxer.addPresentationFrame(dummyBitstream(100, index), {
+          startUs: index * 250,
+          endUs: (index + 1) * 250,
+        });
+      }
+      muxer.finishPresentation(2000);
+      const holds = durations(await muxer.finish());
+      expect(holds).toEqual([1, 1]);
+      expect(muxer.frames).toBe(2);
+    });
+
+    it('counts a dropped terminal sub-millisecond hold against no emitted frame', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16, { maxFrames: 1 });
+      muxer.addPresentationFrame(dummyBitstream(100, 1), { startUs: 0, endUs: 800 });
+      muxer.addPresentationFrame(dummyBitstream(100, 2), { startUs: 800, endUs: 1000 });
+      muxer.finishPresentation(1000);
+      expect(durations(await muxer.finish())).toEqual([1]);
+      expect(muxer.frames).toBe(1);
+    });
+
+    it('rejects reversed timestamps even after an exact duplicate was merged', () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      muxer.addPresentationFrame(dummyBitstream(), { startUs: 0, endUs: 1000 });
+      muxer.addPresentationFrame(dummyBitstream(), { startUs: 1000, endUs: 2000 });
+      expect(() => muxer.addPresentationFrame(dummyBitstream(),
+        { startUs: 500, endUs: 1500 })).toThrow('out of order');
+    });
+
+    it('bounds two compressed views during a zero-hold replacement before copying', () => {
+      const muxer = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 550 });
+      muxer.addPresentationFrame(dummyBitstream(100, 1), { startUs: 0, endUs: 800 });
+      muxer.addPresentationFrame(dummyBitstream(200, 2), { startUs: 800, endUs: 900 });
+      expect(() => muxer.addPresentationFrame(dummyBitstream(200, 3),
+        { startUs: 900, endUs: 1000 })).toThrow('byte limit');
+      expect(muxer.frames).toBe(1);
+      expect(muxer.frameBytes).toBe(300);
+    });
+
+    it('rejects invalid dimensions and mixed presentation APIs', () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      expect(() => muxer.addPresentationFrame(dummyBitstream(100, 1),
+        { startUs: 0, endUs: 1000 })).not.toThrow();
+      expect(() => muxer.addFrame(dummyBitstream(), 1)).toThrow('Cannot mix');
+      const wrongSize = dummyBitstream();
+      wrongSize[6] = 15;
+      expect(() => muxer.addPresentationFrame(wrongSize,
+        { startUs: 1000, endUs: 2000 })).toThrow('dimensions');
+    });
+
+    it('checks all continuation frames against the output cap before emission', () => {
+      const muxer = new StreamingWebpMuxer(16, 16, { maxFrames: 1, maxOutputBytes: 1000 });
+      muxer.addPresentationFrame(dummyBitstream(), { startUs: 0, endUs: 1000 });
+      expect(() => muxer.finishPresentation((0xffffff + 1) * 1000)).toThrow('frame limit');
+      expect(muxer.frames).toBe(0);
+      expect(muxer.frameBytes).toBe(100);
+    });
+  });
   describe('output budgets', () => {
     it('rejects a cumulative frame overflow before adding the frame', () => {
       const muxer = new StreamingWebpMuxer(16, 16, {
