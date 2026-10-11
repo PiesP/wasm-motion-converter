@@ -49,7 +49,11 @@ import { demuxVideo } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import { calcAutoDecimation } from './encoder-common';
 import { calculateWebpWorkerCountForBudget, WebpFrameMemoryBudget } from './frame-memory';
-import { clearCanvasCache, resolveVideoDimensions } from './frame-utils';
+import {
+  clearCanvasCache,
+  MOTION_SIGNATURE_PEAK_BYTES,
+  resolveVideoDimensions,
+} from './frame-utils';
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { resolveOutputLimits } from './output-limits';
@@ -387,6 +391,10 @@ async function _runPipelineInner(
         targetWidth: w,
         targetHeight: h,
         requestedWorkers: desiredWorkerCount,
+        analysisBytes:
+          request.smartFrameSkip && request.smartFrameSkip !== 'off'
+            ? MOTION_SIGNATURE_PEAK_BYTES
+            : 0,
       });
       workerPool = memorySafeWorkerCount > 0 ? createWorkerPool(memorySafeWorkerCount) : null;
       if (signal?.aborted) {

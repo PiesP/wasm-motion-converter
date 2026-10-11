@@ -202,16 +202,15 @@ export async function decodeFrames(
 
   // ── Smart frame skip state (must be before parallel decode block) ──
   const skipThreshold = getSkipThreshold(effectiveSmartSkip);
-  const motionMemoryBytes =
-    effectiveSmartSkip !== 'off' && typeof onVideoFrameAvailable !== 'function'
-      ? MOTION_SIGNATURE_PEAK_BYTES
-      : 0;
-
   // Determine streaming mode: explicit 'stream' mode or infer from callback
   const streaming =
     mode === 'stream' ||
     (mode !== 'batch' &&
       (typeof onFrameAvailable === 'function' || typeof onVideoFrameAvailable === 'function'));
+  const motionMemoryBytes =
+    streaming && effectiveSmartSkip !== 'off' && typeof onVideoFrameAvailable !== 'function'
+      ? MOTION_SIGNATURE_PEAK_BYTES
+      : 0;
 
   if (
     streaming &&

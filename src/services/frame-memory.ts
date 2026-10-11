@@ -79,6 +79,7 @@ export interface WebpFrameMemoryBudgetOptions {
 export interface WebpWorkerBudgetOptions
   extends Omit<WebpFrameMemoryBudgetOptions, 'sourceHeadroomFrames' | 'workerCount'> {
   requestedWorkers: number;
+  analysisBytes?: number;
 }
 
 /**
@@ -87,6 +88,8 @@ export interface WebpWorkerBudgetOptions
  * serial OffscreenCanvas fallback before any unusable Worker pool is created.
  */
 export function calculateWebpWorkerCountForBudget(options: WebpWorkerBudgetOptions): number {
+  const analysisBytes = options.analysisBytes ?? 0;
+  assertReservationBytes(analysisBytes);
   const requestedWorkers = Math.max(1, Math.floor(options.requestedWorkers));
   const sourceBytes = estimateRuntimeDecodedSourceFrameBytes(
     options.codedWidth,
@@ -102,11 +105,15 @@ export function calculateWebpWorkerCountForBudget(options: WebpWorkerBudgetOptio
 
   for (let workers = requestedWorkers; workers >= 2; workers--) {
     const parallelBytes =
-      sourceHeadroomBytes + decoderCanvasBytes + canvasBytes * workers + taskBytes * workers;
+      analysisBytes +
+      sourceHeadroomBytes +
+      decoderCanvasBytes +
+      canvasBytes * workers +
+      taskBytes * workers;
     if (parallelBytes <= FRAME_PIPELINE_MEMORY_BUDGET_BYTES) return workers;
   }
 
-  const serialBytes = sourceBytes + decoderCanvasBytes + canvasBytes + taskBytes;
+  const serialBytes = analysisBytes + sourceBytes + decoderCanvasBytes + canvasBytes + taskBytes;
   return serialBytes <= FRAME_PIPELINE_MEMORY_BUDGET_BYTES ? 1 : 0;
 }
 

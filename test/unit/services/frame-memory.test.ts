@@ -250,4 +250,18 @@ describe('frame memory reservations', () => {
       })
     ).toBe(1);
   });
+
+  it('selects the serial fallback when motion analysis exceeds a full Worker budget', () => {
+    const options = {
+      codedWidth: 4096,
+      codedHeight: 2048,
+      displayWidth: 4096,
+      displayHeight: 2048,
+      targetWidth: 4096,
+      targetHeight: 2048,
+      requestedWorkers: 1,
+    };
+    expect(calculateWebpWorkerCountForBudget(options)).toBe(1);
+    expect(calculateWebpWorkerCountForBudget({ ...options, analysisBytes: 37_376 })).toBe(0);
+  });
 });
