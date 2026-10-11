@@ -56,6 +56,13 @@ quiet period while A tabs remain open and the owned loopback server switches
 to B. It checks the notice during conversion and with a retained download,
 uses normal cancellation and reselection controls, and clicks **Clear result**
 before an explicit reload to B. Both input builds must include that control.
+For the two A/B online transitions, a temporary page-only metadata Fetch gate
+holds the observer's request until Playwright finishes restoring both the page
+and controlling service-worker network sessions. The original request arguments
+and AbortSignal then pass to native Fetch unchanged. The gate restores native
+Fetch in `finally`, and the run requires exactly one queued request, one actual
+response, and the existing two-request cadence for each tab. The direct
+stalled-response cleanup probes do not use this gate.
 Cold JavaScript transfer must be positive and below 150,000 bytes in fresh
 service-worker-blocked contexts; metadata request counts and bytes are recorded
 separately.
