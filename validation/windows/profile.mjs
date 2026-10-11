@@ -1844,6 +1844,7 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
   let primaryFailure;
   let closeFailure;
   const errors = { page: [], console: [], request: [], csp: [], uploads: [], external: [] };
+  const browserInternalRequests = [];
   const assets = new Map();
   const workers = [];
   const origin = new URL(target.url).origin;
@@ -1886,13 +1887,25 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
       errors.request.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`);
     });
     context.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.protocol === 'edge:' && ['downloads-hub', 'resources', 'fileicon'].includes(url.hostname)) {
+        browserInternalRequests.push(`${url.protocol}//${url.hostname}${url.pathname}`);
+        return;
+      }
       if (!['GET', 'HEAD'].includes(request.method())) errors.uploads.push(`${request.method()} ${request.url()}`);
-      if (!request.url().startsWith('blob:') && new URL(request.url()).origin !== new URL(target.url).origin)
+      if (!request.url().startsWith('blob:') && url.origin !== origin)
         errors.external.push(request.url());
     });
     context.on('response', (response) => {
       const path = new URL(response.url()).pathname;
-      if (/^\/assets\/.*\.(?:js|css|wasm)$/.test(path)) assets.set(path, response);
+      if (/^\/assets\/.*\.(?:js|css|wasm)$/.test(path)) {
+        const snapshot = { url: response.url(), status: response.status(), headers: response.headers() };
+        // Preserve bodies before later navigation invalidates their CDP request IDs.
+        assets.set(path, response.body().then(
+          (bytes) => ({ ...snapshot, bytes }),
+          (error) => ({ ...snapshot, error: String(error) })
+        ));
+      }
     });
     await context.addInitScript(() => {
       globalThis.__wmcPublicViolations = [];
@@ -2051,13 +2064,14 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     assert(wasmAssets.length > 0, 'Public WebP fallback loaded no WASM');
     assert(firstWebpTraffic.networkAssetRequests.some((request) => request.path.endsWith('.wasm')),
       'Public WebP traffic did not record its WASM request');
-    for (const [, response] of assets) {
-      assert.equal(response.status(), 200, `Executable ${response.url()} status`);
-      const path = new URL(response.url()).pathname;
+    for (const [path, pending] of assets) {
+      const response = await pending;
+      assert(!response.error, `Executable ${path} body capture failed: ${response.error}`);
+      assert.equal(response.status, 200, `Executable ${response.url} status`);
       const type = path.endsWith('.wasm') ? /^application\/wasm\b/i :
         path.endsWith('.css') ? /^text\/css\b/i : /^(?:text|application)\/javascript\b/i;
-      assert.match(response.headers()['content-type'] ?? '', type, `Executable ${path} MIME`);
-      const bytes = await response.body();
+      assert.match(response.headers['content-type'] ?? '', type, `Executable ${path} MIME`);
+      const bytes = response.bytes;
       assert(bytes.length > 0, `Executable ${path} has no body`);
       assert(!/^\s*<!doctype html/i.test(bytes.subarray(0, 256).toString('utf8')),
         `Executable ${path} is an HTML fallback`);
@@ -2083,6 +2097,7 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
       workerPaths: workers, wasmPaths: wasmAssets.map(([path]) => path), cancellation,
       gif: { bytes: gifBytes.length, sha256: sha256(gifBytes) },
       webp: { bytes: webpBytes.length, sha256: sha256(webpBytes) },
+      browserInternalRequests,
     };
   } catch (error) {
     primaryFailure = error;
@@ -2092,7 +2107,7 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     catch (error) { closeFailure = error; }
     await writeFile(join(publicRoot, 'diagnostics.json'), JSON.stringify({
       target: target.url, sourceSha: target.sourceSha, deploymentId: target.deploymentId,
-      errors, observedAssets: [...assets.keys()], workers,
+      errors, observedAssets: [...assets.keys()], workers, browserInternalRequests,
       failure: primaryFailure ? String(primaryFailure) : null,
       cleanupErrors: closeFailure ? [String(closeFailure)] : [],
     }, null, 2)).catch(() => {});
