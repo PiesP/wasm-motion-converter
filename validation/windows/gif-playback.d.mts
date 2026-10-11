@@ -41,8 +41,48 @@ export interface GifPlaybackAnalysis {
   incompleteTail: GifPlaybackMarker[];
 }
 
+export interface GifPlaybackCycleAnalysis {
+  scope: 'observed-red-lime-red-cadence';
+  errors: string[];
+  invalidFrameSequences: number[];
+  runs: Array<{
+    marker: GifPlaybackMarker | null;
+    startMs: number;
+    lastMs: number;
+    firstSequence: number;
+    lastSequence: number;
+  }>;
+  cycles: Array<{
+    status: 'qualified' | 'unknown';
+    reasons: string[];
+    markers: Array<GifPlaybackMarker | null>;
+    startSequence: number;
+    endSequence: number;
+    startMs: number;
+    endMs: number;
+    durationMs: number;
+    bracketsMs: {
+      startReturnToRed: number | null;
+      redToLime: number | null;
+      returnToRed: number | null;
+    };
+    blue: { observed: boolean; holdMs: null; holdKnown: false };
+  }>;
+  qualifiedCycleCount: number;
+  maxConsecutiveQualifiedCycles: number;
+  incompleteLead: { status: 'unknown'; markers: Array<GifPlaybackMarker | null> } | null;
+  incompleteTail: { status: 'unknown'; markers: Array<GifPlaybackMarker | null> } | null;
+  blueVisibility: {
+    observedFrames: number;
+    observedInCapture: boolean;
+    observedQualifiedCycles: number;
+    holdMs: null;
+    everyCycleVisible: 'unknown';
+  };
+}
+
 export interface GifPlaybackObservation {
-  schemaVersion: 1;
+  schemaVersion: 2;
   label: string;
   sourceSha256: string;
   sourceBytes: number;
@@ -74,7 +114,10 @@ export interface GifPlaybackObservation {
   captureEventCount: number;
   errors: string[];
   cleanupErrors: string[];
+  /** Strict red/lime/blue diagnostic; collection status does not use its errors. */
   analysis: GifPlaybackAnalysis;
+  /** Scoped cadence evidence used by collection status and assertions. */
+  cycleAnalysis: GifPlaybackCycleAnalysis;
   status: 'collected' | 'inconclusive';
 }
 
@@ -95,6 +138,9 @@ export function inspectPlaybackPng(bytes: Buffer): {
 export function analyzeGifPlaybackFrames(
   frames: Array<Pick<GifPlaybackFrame, 'sequence' | 'timestampMs' | 'marker'>>
 ): GifPlaybackAnalysis;
+export function analyzeGifPlaybackCycles(
+  frames: Array<Pick<GifPlaybackFrame, 'sequence' | 'timestampMs' | 'marker'>>
+): GifPlaybackCycleAnalysis;
 export function collectGifPlayback(options: {
   context: import('@playwright/test').BrowserContext;
   gifBytes: Uint8Array;
