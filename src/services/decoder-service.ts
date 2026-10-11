@@ -25,6 +25,7 @@ import {
   MAX_DECODE_INPUT_CHUNKS,
   MAX_FRAME_PIXEL_COUNT,
   MIN_OUTPUT_FPS,
+  STALL_DETECTION_TIMEOUT_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 import {
@@ -254,7 +255,7 @@ export async function decodeFrames(
   const isAdaptive = skipThreshold === -2;
   const sourceFps =
     Number.isFinite(demux.framerate) && demux.framerate > 0
-      ? Math.min(demux.framerate, FPS_CLAMP_MAX)
+      ? Math.max(1, Math.min(demux.framerate, FPS_CLAMP_MAX))
       : DEFAULT_FPS;
   const fallbackFrameDurationMs = 1000 / sourceFps;
   let previousMotion: MotionSignature | null = null;
@@ -427,13 +428,29 @@ export async function decodeFrames(
   let inputChunkCount = 0;
   let keptFrameCount = 0;
   let presentationOriginUs: number | null = null;
-  let lastVisiblePresentationStartUs: number | null = null;
   let presentationEndUs = 0;
   let duplicateTimestamps = 0;
+  let lastNativeTimestampUs: number | null = null;
+  let lastVisibleSourceStartUs: number | null = null;
   let lastBatchStartUs: number | null = null;
   let trimEndReached = false;
+  let wakeDecodeCapacityWait: (() => void) | null = null;
   let skippedByDecimation = 0;
   let smartSkippedCount = 0;
+  interface PendingPresentationFrame {
+    frame: VideoFrame;
+    releaseReservation: () => void;
+    duplicates: number;
+    knownEndUs: number | null;
+  }
+  let pendingPresentationFrame: PendingPresentationFrame | null = null;
+  const closePendingPresentationFrame = (): void => {
+    const pending = pendingPresentationFrame;
+    pendingPresentationFrame = null;
+    if (!pending) return;
+    pending.releaseReservation();
+    pending.frame.close();
+  };
   // Noise floor estimation: collect frame diff stdDev from first N frames
   const noiseFloorSamples: number[] = [];
   let noiseFloor = 0; // will be set after sampling phase
@@ -463,6 +480,7 @@ export async function decodeFrames(
     closeStagedTargetGate();
     frameMemoryBudget?.closeTargetGate(normalized);
     firstPipelineFailure ??= { error: normalized, origin: 'decoder' };
+    wakeDecodeCapacityWait?.();
   };
 
   const recordCancellation = (): void => {
@@ -475,6 +493,7 @@ export async function decodeFrames(
       error: cancellation,
       origin: 'cancellation',
     };
+    wakeDecodeCapacityWait?.();
   };
 
   const recordConversionError = (error: unknown): void => {
@@ -484,6 +503,7 @@ export async function decodeFrames(
     closeStagedTargetGate();
     frameMemoryBudget?.closeTargetGate(normalized);
     firstPipelineFailure ??= { error: normalized, origin: 'processing' };
+    wakeDecodeCapacityWait?.();
   };
 
   const hasProcessingFailure = (): boolean => {
@@ -560,6 +580,7 @@ export async function decodeFrames(
     }
 
     await Promise.allSettled([...pendingConversions]);
+    closePendingPresentationFrame();
     previousMotion = null;
     motionMemoryReservation?.release();
     motionMemoryReservation = null;
@@ -664,6 +685,83 @@ export async function decodeFrames(
     );
   };
 
+  const retainPresentationFrame = (frame: VideoFrame, knownEndUs: number | null): void => {
+    let releaseReservation: () => void;
+    if (usesStagedCpuStreaming) {
+      let runtimeAllocationBytes: number | null = null;
+      if (frame.format != null && typeof frame.allocationSize === 'function') {
+        try {
+          runtimeAllocationBytes = frame.allocationSize();
+        } catch {
+          // Unknown native layout uses the conservative 8-Bpp source floor.
+        }
+      }
+      const sourceBytes = estimateRuntimeDecodedSourceFrameBytes(
+        frame.codedWidth,
+        frame.codedHeight,
+        frame.displayWidth,
+        frame.displayHeight,
+        runtimeAllocationBytes
+      );
+      if (frameMemoryBudget) {
+        const reservation = frameMemoryBudget.tryReserveSource(sourceBytes);
+        if (!reservation) {
+          throw new Error('Unknown-duration frame lookbehind exceeds shared frame byte budget');
+        }
+        releaseReservation = () => reservation.release();
+      } else {
+        if (
+          retainedSourceFrameBytes +
+            sourceBytes +
+            Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes >
+          FRAME_PIPELINE_MEMORY_BUDGET_BYTES - motionMemoryBytes
+        ) {
+          throw new Error('Unknown-duration frame lookbehind exceeds source frame byte budget');
+        }
+        retainedSourceFrameBytes += sourceBytes;
+        let released = false;
+        releaseReservation = () => {
+          if (released) return;
+          released = true;
+          retainedSourceFrameBytes -= sourceBytes;
+          drainStagedTargetWaiters();
+        };
+      }
+    } else {
+      const maxOutputSlots = Math.min(
+        calculateFrameOutputConcurrency(
+          frame.codedWidth,
+          frame.codedHeight,
+          width,
+          height,
+          outputOwnershipRequestedMaximum,
+          pixelFormat,
+          motionMemoryBytes
+        ),
+        calculateFrameOutputConcurrency(
+          frame.displayWidth,
+          frame.displayHeight,
+          width,
+          height,
+          outputOwnershipRequestedMaximum,
+          pixelFormat,
+          motionMemoryBytes
+        )
+      );
+      if (activeOutputSlots >= maxOutputSlots) {
+        throw new Error('Unknown-duration frame lookbehind exceeds output frame slot limit');
+      }
+      activeOutputSlots++;
+      let released = false;
+      releaseReservation = () => {
+        if (released) return;
+        released = true;
+        releaseOutputSlot();
+      };
+    }
+    pendingPresentationFrame = { frame, releaseReservation, duplicates: 0, knownEndUs };
+  };
+
   const reserveEncodedChunk = (chunk: EncodedVideoChunk): EncodedChunkReservation => {
     const bytes = getEncodedChunkRetainedBytes(chunk);
     if (
@@ -690,10 +788,9 @@ export async function decodeFrames(
     return reservation;
   };
 
-  const decoderInit: VideoDecoderInit = {
-    output(frame: VideoFrame) {
+  const frameProcessor = {
+    processDecodedFrame(frame: VideoFrame, sourceEndUs: number, deferredDuplicateCount = 0): void {
       try {
-        releaseEncodedChunkForOutput(frame.timestamp);
         if (!hasSafeFrameDimensions(frame)) {
           recordDecoderError(
             new Error('Decoded frame dimensions exceed the per-frame memory limit')
@@ -705,19 +802,13 @@ export async function decodeFrames(
           frame.close();
           return;
         }
-        const fallbackDurationUs = Math.max(1, Math.round(fallbackFrameDurationMs * 1000));
-        const sourceDurationUs =
-          frame.duration != null && Number.isSafeInteger(frame.duration) && frame.duration > 0
-            ? frame.duration
-            : fallbackDurationUs;
         if (!Number.isSafeInteger(frame.timestamp)) {
           recordDecoderError(new Error('Decoded frame has an invalid presentation timestamp'));
           frame.close();
           return;
         }
         const sourceStartUs = frame.timestamp;
-        const sourceEndUs = sourceStartUs + sourceDurationUs;
-        if (!Number.isSafeInteger(sourceEndUs)) {
+        if (!Number.isSafeInteger(sourceEndUs) || sourceEndUs <= sourceStartUs) {
           recordDecoderError(
             new Error('Decoded frame presentation interval exceeds integer range')
           );
@@ -728,16 +819,12 @@ export async function decodeFrames(
         const trimEndUs = demux.trimEndUs;
         const overlapStartUs = Math.max(sourceStartUs, trimStartUs);
         const overlapEndUs = Math.min(sourceEndUs, trimEndUs ?? Number.POSITIVE_INFINITY);
-        if (trimEndUs !== undefined && sourceEndUs >= trimEndUs) trimEndReached = true;
-        if (overlapEndUs <= overlapStartUs) {
-          frame.close();
-          return;
+        const duplicate = lastVisibleSourceStartUs === sourceStartUs;
+        if (!duplicate && trimEndUs !== undefined && sourceEndUs >= trimEndUs) {
+          trimEndReached = true;
+          wakeDecodeCapacityWait?.();
         }
-        if (
-          lastVisiblePresentationStartUs !== null &&
-          overlapStartUs < lastVisiblePresentationStartUs
-        ) {
-          recordDecoderError(new Error('Decoded frames have decreasing presentation timestamps'));
+        if (overlapEndUs <= overlapStartUs) {
           frame.close();
           return;
         }
@@ -748,14 +835,17 @@ export async function decodeFrames(
         };
         presentationEndUs = Math.max(presentationEndUs, presentation.endUs);
         const frameNum = inputFrameCount++;
-        if (lastVisiblePresentationStartUs === overlapStartUs) {
+        if (duplicate) {
           // Equal PTS has no representable hold. Keep the first visible frame
           // and count/close later native outputs before pixel admission.
           duplicateTimestamps++;
           frame.close();
           return;
         }
-        lastVisiblePresentationStartUs = overlapStartUs;
+        inputFrameCount += deferredDuplicateCount;
+        duplicateTimestamps += deferredDuplicateCount;
+        lastVisibleSourceStartUs = sourceStartUs;
+        const decodedInputCount = inputFrameCount;
         const frameDuration = Math.max(1, Math.round((overlapEndUs - overlapStartUs) / 1000));
 
         // Select at source presentation boundaries, preserving fractional
@@ -1145,10 +1235,10 @@ export async function decodeFrames(
             if (
               onFrameDecoded &&
               (streaming
-                ? inputFrameCount % 10 === 0
+                ? decodedInputCount % 10 === 0
                 : batchFrames.length % 10 === 0 || batchFrames.length === 1)
             ) {
-              onFrameDecoded(streaming ? keptFrameCount : batchFrames.length, demux.totalFrames);
+              onFrameDecoded(decodedInputCount, demux.totalFrames);
             }
           } catch (error) {
             recordConversionError(error);
@@ -1188,6 +1278,97 @@ export async function decodeFrames(
         throw err;
       }
     },
+  };
+
+  const finishPendingPresentationFrame = (endUs: number): void => {
+    const pending = pendingPresentationFrame;
+    pendingPresentationFrame = null;
+    if (!pending) return;
+    // Transfer native ownership synchronously into the ordinary source
+    // admission path. No copy or other allocation occurs between release and
+    // reacquisition, and that path closes the frame on every exit.
+    pending.releaseReservation();
+    frameProcessor.processDecodedFrame(
+      pending.frame,
+      Math.min(endUs, pending.knownEndUs ?? Number.POSITIVE_INFINITY),
+      pending.duplicates
+    );
+  };
+  const getPendingPresentationFrame = (): PendingPresentationFrame | null =>
+    pendingPresentationFrame;
+
+  const decoderInit: VideoDecoderInit = {
+    output(frame: VideoFrame) {
+      releaseEncodedChunkForOutput(frame.timestamp);
+      if (!hasSafeFrameDimensions(frame)) {
+        recordDecoderError(new Error('Decoded frame dimensions exceed the per-frame memory limit'));
+        frame.close();
+        return;
+      }
+      if (decodeError || hasProcessingFailure()) {
+        frame.close();
+        return;
+      }
+      if (!Number.isSafeInteger(frame.timestamp)) {
+        recordDecoderError(new Error('Decoded frame has an invalid presentation timestamp'));
+        frame.close();
+        return;
+      }
+      if (lastNativeTimestampUs !== null && frame.timestamp < lastNativeTimestampUs) {
+        recordDecoderError(new Error('Decoded frames have decreasing presentation timestamps'));
+        frame.close();
+        return;
+      }
+      const pending = pendingPresentationFrame;
+      if (pending && frame.timestamp === pending.frame.timestamp) {
+        pending.duplicates++;
+        frame.close();
+        return;
+      }
+      if (pending) {
+        try {
+          finishPendingPresentationFrame(frame.timestamp);
+        } catch (error) {
+          recordDecoderError(error);
+          frame.close();
+          return;
+        }
+      }
+      if (decodeError || hasProcessingFailure()) {
+        frame.close();
+        return;
+      }
+      lastNativeTimestampUs = frame.timestamp;
+
+      const knownEndUs =
+        frame.duration != null && Number.isSafeInteger(frame.duration) && frame.duration > 0
+          ? frame.timestamp + frame.duration
+          : null;
+      if (knownEndUs === null) {
+        if (demux.trimEndUs !== undefined && frame.timestamp >= demux.trimEndUs) {
+          frame.close();
+          return;
+        }
+        try {
+          retainPresentationFrame(frame, null);
+        } catch (error) {
+          recordDecoderError(error);
+          frame.close();
+        }
+        return;
+      }
+      const trimStartUs = Math.max(0, demux.trimStartUs ?? 0);
+      if (frame.timestamp < trimStartUs && knownEndUs > trimStartUs) {
+        try {
+          retainPresentationFrame(frame, knownEndUs);
+        } catch (error) {
+          recordDecoderError(error);
+          frame.close();
+        }
+        return;
+      }
+      frameProcessor.processDecodedFrame(frame, knownEndUs);
+    },
     error(e: Error) {
       logger.warn('decoders', 'decoder-error', {
         codec: demux.config.codec,
@@ -1209,6 +1390,54 @@ export async function decodeFrames(
     throw (await cleanupDecoderLifecycle(primaryFailure)) ?? primaryFailure;
   }
   const activeDecoder = decoder;
+
+  const supportsDequeueEvent =
+    typeof activeDecoder.addEventListener === 'function' &&
+    typeof activeDecoder.removeEventListener === 'function';
+  const waitForDecodeCapacity = async (): Promise<void> => {
+    if (!supportsDequeueEvent) {
+      // Older implementations without EventTarget support need a bounded retry.
+      await new Promise<void>((resolve) => setTimeout(resolve, 16));
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      let ready = false;
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        activeDecoder.removeEventListener('dequeue', checkCapacity);
+        signal?.removeEventListener('abort', checkCapacity);
+        processingFailureSignal?.removeEventListener('abort', checkCapacity);
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        if (wakeDecodeCapacityWait === checkCapacity) wakeDecodeCapacityWait = null;
+        resolve();
+      };
+      const checkCapacity = (): void => {
+        if (!ready) return;
+        if (
+          activeDecoder.decodeQueueSize <= MAX_DECODE_QUEUE ||
+          signal?.aborted ||
+          decodeError ||
+          trimEndReached ||
+          hasProcessingFailure()
+        ) {
+          finish();
+        }
+      };
+      activeDecoder.addEventListener('dequeue', checkCapacity);
+      signal?.addEventListener('abort', checkCapacity);
+      processingFailureSignal?.addEventListener('abort', checkCapacity);
+      wakeDecodeCapacityWait = checkCapacity;
+      timeoutId = setTimeout(() => {
+        recordDecoderError(new Error('Video decoder queue stalled while waiting for capacity'));
+      }, STALL_DETECTION_TIMEOUT_MS);
+      // The queue may have drained while the listeners were being attached.
+      ready = true;
+      checkCapacity();
+    });
+  };
 
   let streamedSourceDurationUs = 0;
   chunkStream = (async function* iterateChunks(): AsyncGenerator<EncodedVideoChunk> {
@@ -1232,10 +1461,8 @@ export async function decodeFrames(
       }
       if (decodeError || hasProcessingFailure() || trimEndReached) break;
 
-      // Backpressure: wait if decode queue is full.
-      // Use setTimeout(0) as primary yield mechanism because
-      // requestAnimationFrame pauses in background tabs, causing deadlock
-      // when the decoder still queues frames but rAF never fires.
+      // Backpressure: wait for native dequeue notifications when available.
+      const capacityWaitDeadline = Date.now() + STALL_DETECTION_TIMEOUT_MS;
       while (
         activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE &&
         !signal?.aborted &&
@@ -1243,9 +1470,11 @@ export async function decodeFrames(
         !trimEndReached &&
         !hasProcessingFailure()
       ) {
-        await new Promise<void>((resolve) => {
-          setTimeout(() => resolve(), 0);
-        });
+        if (!supportsDequeueEvent && Date.now() >= capacityWaitDeadline) {
+          recordDecoderError(new Error('Video decoder queue stalled while waiting for capacity'));
+          break;
+        }
+        await waitForDecodeCapacity();
       }
 
       // Backpressure on output processing (RES-H2): wait if too many
@@ -1318,6 +1547,20 @@ export async function decodeFrames(
       } catch (e) {
         recordDecoderError(e);
       }
+    }
+    const finalPendingFrame = getPendingPresentationFrame();
+    if (!decodeError && !cancellationObserved && !hasProcessingFailure() && finalPendingFrame) {
+      const startUs = finalPendingFrame.frame.timestamp;
+      const metadataEndUs = Math.round(demux.duration * 1_000_000);
+      const fallbackEndUs = startUs + Math.max(1, Math.round(fallbackFrameDurationMs * 1000));
+      const endUs =
+        finalPendingFrame.knownEndUs ??
+        (Number.isSafeInteger(metadataEndUs) && metadataEndUs > startUs
+          ? metadataEndUs
+          : fallbackEndUs);
+      // A final unknown duration has no following PTS. Prefer the validated
+      // source endpoint; otherwise use one bounded (at most one second) FPS interval.
+      finishPendingPresentationFrame(endUs);
     }
     // Always await pending conversions before closing decoder to avoid VideoFrame leak.
     // Use Promise.allSettled so that even if some conversions fail (e.g., due to abort),

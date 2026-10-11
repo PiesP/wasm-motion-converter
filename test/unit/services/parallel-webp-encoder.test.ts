@@ -71,6 +71,8 @@ describe('createStreamingWebpEncoder tail timing', () => {
 
     expect(durations).toEqual([100, 275]);
     expect(durations.reduce((total, duration) => total + duration, 0)).toBe(375);
+    expect(encoder.encodedFrames).toBe(2);
+    expect(encoder.emittedFrames).toBe(2);
   });
 
   it('preserves the first worker error and refuses submissions after failure', async () => {

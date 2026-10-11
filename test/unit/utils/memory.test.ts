@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getMemoryInfo } from '@utils/memory-info';
+import { getEstimatedHeapLimitBytes, getMemoryInfo } from '@utils/memory-info';
 
 const setPerformanceMemory = (memory: object | undefined) => {
   if (memory === undefined) {
@@ -44,14 +44,30 @@ describe('getMemoryInfo', () => {
     expect(getMemoryInfo()?.deviceMemoryGB).toBeUndefined();
   });
 
-  it('estimates a heap limit from positive device memory when performance.memory is absent', () => {
+  it('does not present device RAM as a measured JS heap', () => {
     setPerformanceMemory(undefined);
     vi.stubGlobal('navigator', { deviceMemory: 4 });
+    expect(getMemoryInfo()).toBeNull();
+    expect(getEstimatedHeapLimitBytes()).toBe(1024 * 1024 * 1024);
+  });
 
-    const info = getMemoryInfo();
-    expect(info?.usedJSHeapSize).toBe(0);
-    expect(info?.usagePercentage).toBe(0);
-    expect(info?.jsHeapSizeLimit).toBe(4 * 1024 * 1024 * 1024 * 0.25);
+  it.each([
+    { usedJSHeapSize: Number.NaN, totalJSHeapSize: 80, jsHeapSizeLimit: 100 },
+    { usedJSHeapSize: 40, totalJSHeapSize: Number.POSITIVE_INFINITY, jsHeapSizeLimit: 100 },
+    { usedJSHeapSize: 40, totalJSHeapSize: 80, jsHeapSizeLimit: 0 },
+    { usedJSHeapSize: 90, totalJSHeapSize: 80, jsHeapSizeLimit: 100 },
+    { usedJSHeapSize: 80, totalJSHeapSize: 120, jsHeapSizeLimit: 100 },
+    { usedJSHeapSize: 120, totalJSHeapSize: 120, jsHeapSizeLimit: 100 },
+  ])('rejects invalid performance.memory fields: %o', (memory) => {
+    setPerformanceMemory(memory);
+    vi.stubGlobal('navigator', { deviceMemory: 8 });
+    expect(getMemoryInfo()).toBeNull();
+  });
+
+  it('ignores invalid device memory while retaining valid heap measurements', () => {
+    setPerformanceMemory({ usedJSHeapSize: 1, totalJSHeapSize: 2, jsHeapSizeLimit: 4 });
+    vi.stubGlobal('navigator', { deviceMemory: Number.POSITIVE_INFINITY });
+    expect(getMemoryInfo()?.deviceMemoryGB).toBeUndefined();
   });
 
   it('returns null when neither memory API is available', () => {
@@ -59,4 +75,21 @@ describe('getMemoryInfo', () => {
     vi.stubGlobal('navigator', { deviceMemory: 0 });
     expect(getMemoryInfo()).toBeNull();
   });
+});
+
+describe('getEstimatedHeapLimitBytes', () => {
+  it('derives a conservative cap from device RAM independently of heap measurement', () => {
+    setPerformanceMemory(undefined);
+    vi.stubGlobal('navigator', { deviceMemory: 1 });
+    expect(getEstimatedHeapLimitBytes()).toBe(256 * 1024 * 1024);
+    expect(getMemoryInfo()).toBeNull();
+  });
+
+  it.each([undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1e30])(
+    'rejects absent or invalid device memory %s',
+    (deviceMemory) => {
+      vi.stubGlobal('navigator', { deviceMemory });
+      expect(getEstimatedHeapLimitBytes()).toBeNull();
+    }
+  );
 });

@@ -75,4 +75,20 @@ describe('createDynamicDecimationController', () => {
     expect(controller.shouldSkip(20)).toBe(false);
     expect(logger.info).not.toHaveBeenCalled();
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 101])(
+    'treats invalid usage %s as unavailable rather than memory pressure',
+    (invalid) => {
+      const check = vi
+        .fn<() => { usagePercentage: number }>()
+        .mockReturnValueOnce({ usagePercentage: 90 })
+        .mockReturnValue({ usagePercentage: invalid });
+      const controller = createDynamicDecimationController(check);
+
+      expect(controller.shouldSkip(5)).toBe(true);
+      expect(controller.shouldSkip(10)).toBe(false);
+      expect(controller.shouldSkip(11)).toBe(false);
+      expect(controller.getSkipCount()).toBe(1);
+    }
+  );
 });

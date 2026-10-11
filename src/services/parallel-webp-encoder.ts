@@ -22,6 +22,7 @@ import type { ProgressCallback } from '@t/conversion-types';
 import { getCanvasWebpQuality } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { globalBufferPool } from './buffer-pool';
+import type { ProfileOperationRecorder } from './conversion-profiler';
 import type { BaseEncoderOptions } from './encoder-common';
 import {
   type FrameMemoryHandoff,
@@ -52,6 +53,10 @@ export interface StreamingWebpEncoder {
   padLastFrame: (extraMs: number) => void;
   /** Release conversion-scoped reservations after the Worker pool is terminated. */
   dispose: () => void;
+  /** Successful worker payloads, before presentation coalescing. */
+  readonly encodedFrames: number;
+  /** Physical ANMF records, including long-hold continuations. */
+  readonly emittedFrames: number;
 }
 
 interface OutstandingTask {
@@ -75,7 +80,8 @@ export function createStreamingWebpEncoder(
   onProgress?: ProgressCallback,
   limits?: OutputLimitOverrides,
   signal?: AbortSignal,
-  sharedMemoryBudget?: WebpFrameMemoryBudget
+  sharedMemoryBudget?: WebpFrameMemoryBudget,
+  profileOperation?: ProfileOperationRecorder
 ): StreamingWebpEncoder {
   const qualityF = getCanvasWebpQuality(quality);
 
@@ -85,10 +91,11 @@ export function createStreamingWebpEncoder(
     throw new Error('Worker pool has no active workers');
   }
 
-  const muxer = new StreamingWebpMuxer(width, height, limits);
+  const muxer = new StreamingWebpMuxer(width, height, limits, profileOperation);
   const resultBuffer = new Map<number, FrameEncodeResult>();
   let nextExpectedId = 0;
   let submittedCount = 0;
+  let encodedCount = 0;
   let firstEncodeError: Error | null = null;
   let pendingTailMs = 0;
   const inFlight = new Set<Promise<EncodeTaskResult | void>>();
@@ -214,6 +221,7 @@ export function createStreamingWebpEncoder(
     memoryHandoff?: FrameMemoryHandoff,
     timing?: { startUs: number; endUs: number }
   ): Promise<void> => {
+    const queueStart = profileOperation ? performance.now() : null;
     let reservation: FrameMemoryReservation | null = null;
     let poolOwnsPixels = false;
     let admissionAcquired = false;
@@ -245,10 +253,15 @@ export function createStreamingWebpEncoder(
         durationMs,
       };
       outstandingTasks.set(id, { reservation, state: 'active' });
+      if (queueStart !== null)
+        profileOperation?.('encoderQueueWait', performance.now() - queueStart);
+      const encodingStart = profileOperation ? performance.now() : null;
 
       const promise = pool
         .encode(task)
         .then((result: EncodeTaskResult) => {
+          if (encodingStart !== null)
+            profileOperation?.('webpEncoding', performance.now() - encodingStart);
           if (result.id !== id) {
             throw new Error(`Invalid WebP worker response for task ${id}`);
           }
@@ -259,6 +272,7 @@ export function createStreamingWebpEncoder(
             throw new Error('WebP frame memory limit exceeded by encoded results');
           }
           outstanding.state = 'result';
+          if (result.bitstream.length > 0) encodedCount++;
           resultBuffer.set(result.id, {
             bitstream: result.bitstream,
             durationMs,
@@ -275,7 +289,7 @@ export function createStreamingWebpEncoder(
               progress: 50 + Math.min(40, encodePct),
               fps: 0,
               etaSeconds: null,
-              memoryMB: 0,
+              memoryMB: null,
               currentFrame: completedFrames,
               totalFrames,
             });
@@ -321,7 +335,7 @@ export function createStreamingWebpEncoder(
       throw new Error('WebP encoder finished with a missing ordered result');
     }
 
-    if (muxer.frames === 0) {
+    if (encodedCount === 0) {
       throw new Error('No frames encoded for streaming WebP encoding');
     }
 
@@ -349,5 +363,17 @@ export function createStreamingWebpEncoder(
     if (ownsMemoryBudget) memoryBudget.dispose();
   };
 
-  return { submit, finish, failureSignal: failureController.signal, padLastFrame, dispose };
+  return {
+    submit,
+    finish,
+    failureSignal: failureController.signal,
+    padLastFrame,
+    dispose,
+    get encodedFrames() {
+      return encodedCount;
+    },
+    get emittedFrames() {
+      return muxer.frames;
+    },
+  };
 }

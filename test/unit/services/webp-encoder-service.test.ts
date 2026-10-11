@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     mocks.decodeOptions = options;
+    options.onFrameDecoded?.(1, 1);
     await options.onFrameAvailable(new Uint8Array(3), 100, 0, undefined, { startUs: 0, endUs: 100_000 });
     return {
       frames: [],
@@ -22,6 +23,7 @@ vi.mock('@services/decoder-service', () => ({
       tailAccumulatedMs: 0,
       presentationEndUs: 175_000,
       totalInputFrames: 1,
+      selectedFrames: 1,
     };
   }),
 }));
@@ -52,6 +54,9 @@ import { encodeWebp } from '@services/webp-encoder-service';
 
 describe('encodeWebp timing', () => {
   it('finalizes the last hold at the visible source endpoint', async () => {
+    const onFrameDecoded = vi.fn();
+    const onFrameEncoded = vi.fn();
+    const onEncodingComplete = vi.fn();
     await encodeWebp(
       {
         chunks: [],
@@ -61,11 +66,17 @@ describe('encodeWebp timing', () => {
         sourceTotalMs: 175,
         totalFrames: 1,
       },
-      { width: 1, height: 1, quality: 'medium', scale: 1 }
+      { width: 1, height: 1, quality: 'medium', scale: 1,
+        onFrameDecoded, onFrameEncoded, onEncodingComplete }
     );
 
     expect(mocks.finishPresentation).toHaveBeenCalledWith(175_000);
     expect(mocks.encodeRGBReuse).toHaveBeenCalledWith(expect.any(Uint8Array), 1, 1, 75);
     expect(mocks.decodeOptions).not.toHaveProperty('maxInputChunks');
+    expect(onFrameDecoded).toHaveBeenCalledWith(1, 1);
+    expect(onFrameEncoded).toHaveBeenCalledWith(1, 1);
+    expect(onEncodingComplete).toHaveBeenCalledWith({
+      decodedFrames: 1, selectedFrames: 1, encodedFrames: 1, emittedFrames: 1,
+    });
   });
 });

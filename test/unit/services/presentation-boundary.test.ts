@@ -12,19 +12,29 @@ import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
 import type { WebpWorkerPool, EncodeTask } from '@services/worker-pool';
 import type { BaseEncoderOptions } from '@services/encoder-common';
 
+function vp8Frame(color: number): Uint8Array<ArrayBuffer> {
+  // A VP8 keyframe with an 8x8 coded canvas and a scene-specific payload byte.
+  return new Uint8Array([0x10, 0, 0, 0x9d, 0x01, 0x2a, 8, 0, 8, 0, color]);
+}
+
+function simpleWebp(color: number): Uint8Array<ArrayBuffer> {
+  const frame = vp8Frame(color);
+  const result = new Uint8Array(20 + frame.length + (frame.length & 1));
+  const view = new DataView(result.buffer);
+  view.setUint32(0, 0x52494646);
+  view.setUint32(4, result.length - 8, true);
+  view.setUint32(8, 0x57454250);
+  view.setUint32(12, 0x56503820);
+  view.setUint32(16, frame.length, true);
+  result.set(frame, 20);
+  return result;
+}
+
 // The native codec is the platform boundary. Decoder selection, pixel copy,
 // gifenc, encoder skipping and container serialization remain production code.
 vi.mock('@services/wasm-webp-singleton', () => ({
   encodeRGBReuse: async (rgb: Uint8Array) => {
-    const result = new Uint8Array(28);
-    const view = new DataView(result.buffer);
-    view.setUint32(0, 0x52494646);
-    view.setUint32(4, 20, true);
-    view.setUint32(8, 0x57454250);
-    view.setUint32(12, 0x56503820);
-    view.setUint32(16, 8, true);
-    result[20] = rgb[0]!;
-    return result;
+    return simpleWebp(rgb[0]!);
   },
 }));
 
@@ -221,15 +231,7 @@ describe('source presentation boundaries (issue #285)', () => {
                 return { putImageData: (image: { data: Uint8ClampedArray }) => { this.pixels = image.data; } };
               }
               async convertToBlob() {
-                const data = new Uint8Array(28);
-                const view = new DataView(data.buffer);
-                view.setUint32(0, 0x52494646);
-                view.setUint32(4, 20, true);
-                view.setUint32(8, 0x57454250);
-                view.setUint32(12, 0x56503820);
-                view.setUint32(16, 8, true);
-                data[20] = this.pixels[0]!;
-                return new Blob([data], { type: 'image/webp' });
+                return new Blob([simpleWebp(this.pixels[0]!)], { type: 'image/webp' });
               }
             });
             bytes = await encodeWebpOffscreen(demux, opts);
@@ -237,8 +239,7 @@ describe('source presentation boundaries (issue #285)', () => {
             const pool = {
               activeWorkers: 1,
               encode: async (task: EncodeTask) => {
-                const bitstream = new Uint8Array(8);
-                bitstream[0] = task.rgbaData[0]!;
+                const bitstream = vp8Frame(task.rgbaData[0]!);
                 globalBufferPool.release(task.rgbaData);
                 return { id: task.id, bitstream };
               },
