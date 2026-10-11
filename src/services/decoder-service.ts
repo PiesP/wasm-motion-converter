@@ -152,6 +152,8 @@ export interface DecodeResult {
   decodedFrames: number;
   /** Number of frames passed to the encoder or returned in the batch. */
   selectedFrames: number;
+  /** Visible native output frames discarded for an already seen timestamp. */
+  duplicateTimestamps: number;
   /** End of the visible presentation interval, relative to its first frame. */
   presentationEndUs: number;
   /** Frames skipped by the fixed frame-decimation ratio. */
@@ -425,7 +427,9 @@ export async function decodeFrames(
   let inputChunkCount = 0;
   let keptFrameCount = 0;
   let presentationOriginUs: number | null = null;
+  let lastVisiblePresentationStartUs: number | null = null;
   let presentationEndUs = 0;
+  let duplicateTimestamps = 0;
   let lastBatchStartUs: number | null = null;
   let trimEndReached = false;
   let skippedByDecimation = 0;
@@ -729,14 +733,30 @@ export async function decodeFrames(
           frame.close();
           return;
         }
+        if (
+          lastVisiblePresentationStartUs !== null &&
+          overlapStartUs < lastVisiblePresentationStartUs
+        ) {
+          recordDecoderError(new Error('Decoded frames have decreasing presentation timestamps'));
+          frame.close();
+          return;
+        }
         presentationOriginUs ??= overlapStartUs;
         const presentation: PresentationInterval = {
           startUs: overlapStartUs - presentationOriginUs,
           endUs: overlapEndUs - presentationOriginUs,
         };
         presentationEndUs = Math.max(presentationEndUs, presentation.endUs);
-        const frameDuration = Math.max(1, Math.round((overlapEndUs - overlapStartUs) / 1000));
         const frameNum = inputFrameCount++;
+        if (lastVisiblePresentationStartUs === overlapStartUs) {
+          // Equal PTS has no representable hold. Keep the first visible frame
+          // and count/close later native outputs before pixel admission.
+          duplicateTimestamps++;
+          frame.close();
+          return;
+        }
+        lastVisiblePresentationStartUs = overlapStartUs;
+        const frameDuration = Math.max(1, Math.round((overlapEndUs - overlapStartUs) / 1000));
 
         // Select at source presentation boundaries, preserving fractional
         // source/target FPS ratios and never anticipating the next frame.
@@ -1341,6 +1361,7 @@ export async function decodeFrames(
       consumedChunks: inputChunkCount,
       decodedFrames: inputFrameCount,
       selectedFrames: streaming ? keptFrameCount : batchFrames.length,
+      duplicateTimestamps,
       presentationEndUs,
       skippedByDecimation,
       smartSkipped: smartSkippedCount,
