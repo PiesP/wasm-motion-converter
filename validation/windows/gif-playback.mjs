@@ -270,6 +270,136 @@ export function analyzeGifPlaybackFrames(frames) {
   };
 }
 
+function longestQualifiedSequence(cycles) {
+  let longest = 0;
+  let current = 0;
+  for (const cycle of cycles) {
+    current = cycle.status === 'qualified' ? current + 1 : 0;
+    longest = Math.max(longest, current);
+  }
+  return longest;
+}
+
+/** Judge only observed red-to-lime-to-red cadence; retain sparse intervals as unknown. */
+export function analyzeGifPlaybackCycles(frames) {
+  const errors = [];
+  const runs = [];
+  const invalidFrameSequences = [];
+  for (const [index, frame] of frames.entries()) {
+    if (!Number.isFinite(frame.timestampMs)) {
+      errors.push(`Missing CDP timestamp at frame ${index}`);
+      invalidFrameSequences.push(frame.sequence);
+      continue;
+    }
+    if (!Number.isSafeInteger(frame.sequence) || frame.sequence < 0 ||
+        index && frame.sequence <= frames[index - 1].sequence) {
+      errors.push(`CDP frame sequence is out of order at frame ${index}`);
+    }
+    if (index && frame.timestampMs <= frames[index - 1].timestampMs) {
+      errors.push(`CDP timestamp is out of order at frame ${index}`);
+    }
+    if (frame.marker !== null && !COLORS.includes(frame.marker)) {
+      errors.push(`Unexpected color at frame ${index}`);
+    }
+    const marker = COLORS.includes(frame.marker) ? frame.marker : null;
+    const previous = runs.at(-1);
+    if (previous?.marker === marker) {
+      previous.lastMs = frame.timestampMs;
+      previous.lastSequence = frame.sequence;
+    } else {
+      runs.push({ marker, startMs: frame.timestampMs, lastMs: frame.timestampMs,
+        firstSequence: frame.sequence, lastSequence: frame.sequence });
+    }
+  }
+  const redIndices = runs.flatMap((run, index) => run.marker === 'red' ? [index] : []);
+  if (!redIndices.length) errors.push('No red frame was rendered');
+  const cycles = [];
+  for (let index = 0; index + 1 < redIndices.length; index++) {
+    const firstIndex = redIndices[index];
+    const lastIndex = redIndices[index + 1];
+    const start = runs[firstIndex];
+    const end = runs[lastIndex];
+    const middle = runs.slice(firstIndex + 1, lastIndex);
+    const markers = [start, ...middle, end].map((run) => run.marker);
+    const validOrder = middle.length === 1 && middle[0].marker === 'lime' ||
+      middle.length === 2 && middle[0].marker === 'lime' && middle[1].marker === 'blue';
+    const blueObserved = middle.some((run) => run.marker === 'blue');
+    const reasons = [];
+    const precedingReturn = runs[firstIndex - 1];
+    const startReturnToRedMs = precedingReturn &&
+      (precedingReturn.marker === 'lime' || precedingReturn.marker === 'blue')
+      ? start.startMs - precedingReturn.lastMs : null;
+    let redToLimeMs = null;
+    let returnToRedMs = null;
+    if (startReturnToRedMs === null) {
+      reasons.push('Start red return was not observed');
+    } else if (startReturnToRedMs < 0) {
+      errors.push(`Negative start red bracket at frame ${start.firstSequence}`);
+      reasons.push('Start red timestamp is out of order');
+    } else if (startReturnToRedMs > MAX_SAMPLE_GAP_MS) {
+      reasons.push('Start red return bracket is sparse');
+    }
+    if (!validOrder) {
+      const hasUnclassified = middle.some((run) => run.marker === null);
+      const hasLime = middle.some((run) => run.marker === 'lime');
+      reasons.push(hasUnclassified ? 'Unclassified sample in cycle' :
+        hasLime ? 'Observed colors are out of order' : 'Lime transition was not observed');
+      if (hasLime && !hasUnclassified) {
+        errors.push(`Observed colors are out of order between red frames ${start.firstSequence} and ${end.firstSequence}`);
+      }
+    } else {
+      redToLimeMs = middle[0].startMs - start.lastMs;
+      returnToRedMs = end.startMs - middle.at(-1).lastMs;
+      if (redToLimeMs < 0 || returnToRedMs < 0) {
+        errors.push(`Negative transition bracket between red frames ${start.firstSequence} and ${end.firstSequence}`);
+        reasons.push('Transition timestamps are out of order');
+      } else {
+        if (redToLimeMs > MAX_SAMPLE_GAP_MS) reasons.push('Red-to-lime bracket is sparse');
+        if (returnToRedMs > MAX_SAMPLE_GAP_MS) reasons.push('Return-to-red bracket is sparse');
+      }
+    }
+    cycles.push({
+      status: reasons.length ? 'unknown' : 'qualified',
+      reasons,
+      markers,
+      startSequence: start.firstSequence,
+      endSequence: end.firstSequence,
+      startMs: start.startMs,
+      endMs: end.startMs,
+      durationMs: end.startMs - start.startMs,
+      bracketsMs: {
+        startReturnToRed: startReturnToRedMs,
+        redToLime: redToLimeMs,
+        returnToRed: returnToRedMs,
+      },
+      blue: { observed: blueObserved, holdMs: null, holdKnown: false },
+    });
+  }
+  const qualifiedCycles = cycles.filter((cycle) => cycle.status === 'qualified');
+  return {
+    scope: 'observed-red-lime-red-cadence',
+    errors,
+    invalidFrameSequences,
+    runs,
+    cycles,
+    qualifiedCycleCount: qualifiedCycles.length,
+    maxConsecutiveQualifiedCycles: longestQualifiedSequence(cycles),
+    incompleteLead: runs.length && (!redIndices.length || redIndices[0] > 0)
+      ? { status: 'unknown', markers: runs.slice(0, redIndices[0] ?? runs.length).map((run) => run.marker) }
+      : null,
+    incompleteTail: redIndices.length > 0
+      ? { status: 'unknown', markers: runs.slice(redIndices.at(-1)).map((run) => run.marker) }
+      : null,
+    blueVisibility: {
+      observedFrames: frames.filter((frame) => frame.marker === 'blue').length,
+      observedInCapture: frames.some((frame) => frame.marker === 'blue'),
+      observedQualifiedCycles: qualifiedCycles.filter((cycle) => cycle.blue.observed).length,
+      holdMs: null,
+      everyCycleVisible: 'unknown',
+    },
+  };
+}
+
 async function pageVisibility(page) {
   return page.evaluate(() => {
     const img = document.querySelector('#playback-gif');
@@ -297,7 +427,7 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
   }
   await mkdir(outputRoot, { recursive: true });
   const output = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     label,
     sourceSha256: digest(gifBytes),
     sourceBytes: gifBytes.byteLength,
@@ -324,6 +454,7 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
     errors: [],
     cleanupErrors: [],
     analysis: null,
+    cycleAnalysis: null,
     status: 'inconclusive',
   };
   const captures = [];
@@ -467,8 +598,11 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
     }
   }
   output.analysis = analyzeGifPlaybackFrames(output.frameRecords);
+  output.cycleAnalysis = analyzeGifPlaybackCycles(output.frameRecords);
   if (output.overflow) output.errors.push(`Screencast exceeded ${MAX_CAPTURE_FRAMES} frames`);
-  output.status = output.errors.length || output.cleanupErrors.length || output.analysis.errors.length
+  output.status = output.errors.length || output.cleanupErrors.length ||
+    output.cycleAnalysis.errors.length ||
+    output.cycleAnalysis.maxConsecutiveQualifiedCycles < MIN_COMPLETE_CYCLES
     ? 'inconclusive' : 'collected';
   const summaryFile = `${label}-observation.json`;
   const summaryBytes = Buffer.from(`${JSON.stringify(output, null, 2)}\n`);
@@ -479,8 +613,11 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
 
 /** Apply the predeclared cadence threshold after evidence has been retained. */
 export function assertGifPlayback(observation, { expectedCycleMs = 120 } = {}) {
-  const errors = [...observation.errors, ...observation.cleanupErrors, ...(observation.analysis?.errors ?? [])];
+  const errors = [...observation.errors, ...observation.cleanupErrors,
+    ...(observation.cycleAnalysis?.errors ?? [])];
   if (observation.status !== 'collected') errors.push('Playback collection was inconclusive');
+  if (!observation.cycleAnalysis) errors.push('Scoped cycle analysis is missing');
+  if (!Number.isFinite(expectedCycleMs) || expectedCycleMs <= 0) errors.push('Invalid expected cycle duration');
   if (!observation.browserIdentity.version || !/\bEdg\/\d/.test(observation.browserIdentity.userAgent ?? '')) {
     errors.push('Installed Edge browser identity was not observed');
   }
@@ -496,9 +633,13 @@ export function assertGifPlayback(observation, { expectedCycleMs = 120 } = {}) {
     errors.push('Player image did not load');
   }
   if (observation.visibilityEvents.some((event) => event.visible === false)) errors.push('CDP reported a hidden player');
-  const cycles = observation.analysis?.cycles ?? [];
-  if (cycles.length < MIN_COMPLETE_CYCLES) errors.push(`Only ${cycles.length} complete cycles observed`);
-  const cycleErrors = cycles.map((cycle) => Math.abs(cycle.durationMs - expectedCycleMs));
+  const cycles = observation.cycleAnalysis?.cycles ?? [];
+  const qualifiedCycles = cycles.filter((cycle) => cycle.status === 'qualified');
+  const consecutiveQualifiedCycles = longestQualifiedSequence(cycles);
+  if (consecutiveQualifiedCycles < MIN_COMPLETE_CYCLES) {
+    errors.push(`Only ${consecutiveQualifiedCycles} consecutive qualified cycles observed`);
+  }
+  const cycleErrors = qualifiedCycles.map((cycle) => Math.abs(cycle.durationMs - expectedCycleMs));
   if (cycleErrors.some((error) => error > MAX_CYCLE_ERROR_MS)) errors.push('A complete cycle exceeded the 35ms timestamp-error budget');
   if (cycleErrors.length && median(cycleErrors) > MAX_MEDIAN_CYCLE_ERROR_MS) {
     errors.push('Median cycle error exceeded the 20ms budget');
