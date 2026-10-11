@@ -419,8 +419,7 @@ export class StreamingWebpMuxer {
 
   /**
    * Finalize the container and return the complete WebP file.
-   * Patches the RIFF size in the header, then uses the Blob constructor
-   * to concatenate chunks without an extra O(N) copy into a new buffer.
+   * Patches the RIFF size, then records concatenation and the final output copy.
    */
   async finish(signal?: AbortSignal): Promise<Uint8Array> {
     if (this.pending) throw new Error('WebP presentation has no endpoint');

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { expect, test } from '@playwright/test';
+import type { ConversionProfileReport } from '@services/conversion-profiler';
 import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {
   type OutputContractCase,
@@ -198,17 +199,25 @@ test.describe('conversion Worker fallback boundary', () => {
   const webpContract = cases.find((candidate) => candidate.id === 'vfr-par-webp');
   if (!webpContract) throw new Error('Missing vfr-par-webp output contract');
   const bootstrapCases = [
-    { contract, warning: 'worker.fallback', encoder: 'GIF', disableNativeWebp: false },
     {
-      contract: webpContract,
-      warning: 'worker-create-failed',
-      encoder: 'serial Canvas WebP',
+      contract,
+      warning: 'worker.fallback',
+      encoder: 'GIF',
+      route: 'gif-main',
       disableNativeWebp: false,
     },
     {
       contract: webpContract,
       warning: 'worker-create-failed',
+      encoder: 'serial Canvas WebP',
+      route: 'webp-serial-canvas',
+      disableNativeWebp: false,
+    },
+    {
+      contract: webpContract,
+      warning: null,
       encoder: 'WASM WebP',
+      route: 'webp-wasm',
       disableNativeWebp: true,
     },
   ];
@@ -248,10 +257,23 @@ test.describe('conversion Worker fallback boundary', () => {
       await page.goto('/');
 
       const output = await runContractConversion(page, fallbackContract);
-      expect(
-        await page.evaluate(() => globalThis.__wmcWorkerConstructionAttempts)
-      ).toBeGreaterThan(0);
-      expect(warnings.some((message) => message.includes(bootstrapCase.warning))).toBe(true);
+      const attempts = await page.evaluate(() => globalThis.__wmcWorkerConstructionAttempts);
+      if (bootstrapCase.disableNativeWebp) {
+        // A rejected native capability probe selects WASM before creating a pool.
+        expect(attempts).toBe(0);
+      } else {
+        expect(attempts).toBeGreaterThan(0);
+      }
+      if (bootstrapCase.warning) {
+        expect(warnings.some((message) => message.includes(bootstrapCase.warning!))).toBe(true);
+      }
+      const route = await page.evaluate(() => {
+        const helpers = window.__TEST_HELPERS__ as unknown as {
+          getConversionProfile: () => ConversionProfileReport | null;
+        } | undefined;
+        return helpers?.getConversionProfile()?.encoderRoute ?? null;
+      });
+      expect(route).toBe(bootstrapCase.route);
       if (bootstrapCase.disableNativeWebp) {
         expect(
           await page.evaluate(() => typeof OffscreenCanvas.prototype.convertToBlob)

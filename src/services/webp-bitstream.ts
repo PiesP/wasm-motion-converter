@@ -80,7 +80,7 @@ function parseVp8Chunk(webp: Uint8Array, allowIcc: boolean): CanvasWebpFrame {
         throw new Error('Invalid WebP VP8 chunk order');
       vp8 = webp.subarray(offset + 8, end);
     } else {
-      // Metadata and alpha cannot be preserved by this opaque VP8-only muxer.
+      // Canvas preserves ICC explicitly; other metadata and alpha are unsupported.
       throw new Error('Unsupported WebP chunk or codec');
     }
     offset = paddedEnd;
@@ -108,11 +108,4 @@ export function extractCanvasWebp(webp: Uint8Array): CanvasWebpFrame {
   const bitstream = new Uint8Array(parsed.bitstream);
   bitstream[0] = bitstream[0]! | 0x10;
   return { bitstream, iccProfile: parsed.iccProfile };
-}
-
-/** Canvas WebP can clear the VP8 display bit; restore it for ANMF playback. */
-export function extractAndNormalizeCanvasVp8(webp: Uint8Array): Uint8Array {
-  const parsed = extractCanvasWebp(webp);
-  if (parsed.iccProfile) throw new Error('Canvas WebP ICC profile requires profile-aware muxing');
-  return parsed.bitstream;
 }
