@@ -375,9 +375,14 @@ test.describe('Deployment: Visual — Progress UI', () => {
     // Capture progress UI during conversion
     await captureScreenshot(page, 'deploy-progress-active');
 
-    if (await progressBar.isVisible()) {
-      // Verify progress bar has valid value
-      const progressValue = await progressBar.getAttribute('aria-valuenow');
+    const progressSample = await progressBar.evaluateAll((elements) => {
+      const element = elements.find((value) => value.getClientRects().length > 0);
+      return element ? { value: element.getAttribute('aria-valuenow') } : null;
+    });
+    if (progressSample) {
+      // Conversion can finish between observations; sample the transient bar
+      // atomically instead of waiting for a disappeared element to return.
+      const progressValue = progressSample.value;
       if (progressValue !== null) {
         const progressNum = Number(progressValue);
         expect(progressNum).toBeGreaterThanOrEqual(0);
