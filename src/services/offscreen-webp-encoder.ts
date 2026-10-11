@@ -39,20 +39,6 @@ function isOffscreenCanvasAvailable(): boolean {
 }
 
 /**
- * Extract the VP8 bitstream from a single-frame WebP file produced by
- * OffscreenCanvas.convertToBlob.
- *
- * OffscreenCanvas may produce either:
- * 1. Simple VP8 WebP: RIFF → WEBP → "VP8 " → bitstream
- * 2. Extended VP8X WebP: RIFF → WEBP → "VP8X" → [chunks including "VP8 "]
- *
- * This function handles both formats by scanning for the VP8 chunk.
- *
- * Chromium's convertToBlob (and VideoEncoder) prepend a 3-byte frame
- * size prefix before the VP8 keyframe tag (0x9d 0x01 0x2a). This is
- * stripped to produce a clean VP8 bitstream for the animated WebP muxer.
- */
-/**
  * Encode demuxed video frames to animated WebP using OffscreenCanvas.
  *
  * Uses OffscreenCanvas.convertToBlob for per-frame WebP encoding, then
@@ -100,17 +86,18 @@ export async function encodeWebpOffscreen(
   }
 
   // Streaming encode state — use incremental muxer to avoid O(N) memory accumulation
-  const muxer = new StreamingWebpMuxer(w, h, opts);
+  const muxer = new StreamingWebpMuxer(w, h, opts, opts.profileOperation);
   let encodeIdx = 0;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
-  const decimationController = createDynamicDecimationController();
+  const decimationController = createDynamicDecimationController(opts.decimationMemoryCheck);
 
   // Decode frames with streaming callback — each frame is encoded immediately
   const {
     totalInputFrames: totalDecoded,
     skippedByDecimation: totalSkipped,
     smartSkipped: totalSmartSkipped,
+    selectedFrames,
     presentationEndUs,
   } = await decodeFrames(
     demux,
@@ -124,7 +111,8 @@ export async function encodeWebpOffscreen(
       profileCopyPath: opts.profileCopyPath,
       pixelFormat: 'rgba',
       stagedCopyLookahead: true,
-      onFrameDecoded: (_frameNum: number, total: number) => {
+      onFrameDecoded: (frameNum: number, total: number) => {
+        opts.onFrameDecoded?.(frameNum, total);
         if (!onProgress) return;
         const encCount = encodeIdx;
         if (encCount === 0) return;
@@ -134,7 +122,7 @@ export async function encodeWebpOffscreen(
           progress: 50 + Math.min(40, encodePct),
           fps: 0,
           etaSeconds: null,
-          memoryMB: 0,
+          memoryMB: null,
           currentFrame: encCount,
           totalFrames: total,
         });
@@ -164,6 +152,7 @@ export async function encodeWebpOffscreen(
           ctx.putImageData(imageData, 0, 0);
 
           // Encode to WebP via convertToBlob
+          const encodingStart = opts.profileOperation ? performance.now() : null;
           const blob = await canvas.convertToBlob({
             type: 'image/webp',
             quality,
@@ -175,6 +164,9 @@ export async function encodeWebpOffscreen(
             );
           }
 
+          if (encodingStart !== null)
+            opts.profileOperation?.('webpEncoding', performance.now() - encodingStart);
+
           // Read blob as ArrayBuffer
           const webpBuffer = new Uint8Array(await blob.arrayBuffer());
 
@@ -185,13 +177,14 @@ export async function encodeWebpOffscreen(
 
           muxer.addPresentationFrame(bitstream, timing);
           encodeIdx++;
+          opts.onFrameEncoded?.(encodeIdx, demux.totalFrames);
         });
       },
     },
     signal
   );
 
-  if (muxer.frames === 0) {
+  if (encodeIdx === 0) {
     throw new Error('No frames decoded for WebP encoding');
   }
 
@@ -206,13 +199,15 @@ export async function encodeWebpOffscreen(
     progress: 90,
     fps: 0,
     etaSeconds: 0,
-    memoryMB: 0,
+    memoryMB: null,
     currentFrame: muxer.frames,
     totalFrames: Math.max(muxer.frames, totalDecoded),
   });
   opts.onEncodingComplete?.({
     decodedFrames: totalDecoded,
-    encodedFrames: muxer.frames,
+    selectedFrames,
+    encodedFrames: encodeIdx,
+    emittedFrames: muxer.frames,
   });
 
   logger.info('encoders', 'OffscreenCanvas WebP encoding complete', {
