@@ -390,18 +390,9 @@ export function convertRGBAToRGB(
   return dst;
 }
 
-// ─── Duration accumulation state ──────────────────────────────────
-// Track fractional duration remainders to prevent rounding drift.
-// E.g., at 30fps each frame is ~33.33ms. Rounding to 33ms loses 0.33ms/frame,
-// which accumulates to ~500ms over 1500 frames. We carry the fractional
-// remainder across frames so total timing matches source.
-//
-// Per-conversion context — must be created fresh for each decodeFrames call
-// to prevent concurrent conversions from bleeding carry state.
+// ─── Per-conversion pixel-copy state ───────────────────────────────
 
 export interface FrameProcessingContext {
-  /** Fractional duration remainder in microseconds */
-  durationCarryUs: number;
   /** Exact successful copy strategy, detected once per conversion. */
   copyPath: FrameCopyStrategy | null;
 }
@@ -412,44 +403,7 @@ export interface FrameProcessingContext {
  */
 export function createFrameProcessingContext(): FrameProcessingContext {
   return {
-    durationCarryUs: 0,
     copyPath: null,
-  };
-}
-
-/**
- * Get frame duration in milliseconds — preserves original timing by
- * accumulating fractional remainders across frames to prevent drift.
- *
- * Returns a new context instead of mutating the input, preserving
- * referential transparency and pure function semantics.
- *
- * No clamping: the original video frame duration is used as-is to maintain
- * accurate playback speed. Clamping is applied only at the output stage
- * when writing frames (see writeFrameWithDelay in gif-encoder-service).
- *
- * @param frame - The VideoFrame to extract duration from
- * @param ctx - Per-conversion context for carry state
- * @returns An object with the duration in ms and an updated context
- */
-export function getFrameDurationMs(
-  frame: VideoFrame,
-  ctx: FrameProcessingContext,
-  fallbackMs?: number,
-  durationUs?: number
-): { durationMs: number; ctx: FrameProcessingContext } {
-  const raw = durationUs ?? frame.duration;
-  if (raw == null || raw <= 0) {
-    return { durationMs: fallbackMs ?? 100, ctx };
-  }
-  // Add any fractional remainder from previous frames
-  const totalUs = raw + ctx.durationCarryUs;
-  const ms = Math.round(totalUs / 1000);
-  // Save the sub-millisecond remainder for next frame in new context
-  const newCarry = totalUs - ms * 1000;
-  return {
-    durationMs: Math.max(1, ms),
-    ctx: { ...ctx, durationCarryUs: newCarry },
   };
 }
 

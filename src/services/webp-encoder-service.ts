@@ -65,7 +65,6 @@ export async function encodeWebp(
   let totalInputFrames = 0;
   let skippedByDecimation = 0;
   let encodeIdx = 0;
-  let accumulatedDuration = 0;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController();
@@ -75,7 +74,7 @@ export async function encodeWebp(
     totalInputFrames: totalDecoded,
     skippedByDecimation: totalSkipped,
     smartSkipped: totalSmartSkipped,
-    tailAccumulatedMs,
+    presentationEndUs,
   } = await decodeFrames(
     demux,
     {
@@ -105,7 +104,7 @@ export async function encodeWebp(
         }
       },
       // Streaming callback: encode each frame immediately upon decoding
-      onFrameAvailable: async (rgbData: Uint8Array, frameDurationMs: number, _frameNum: number) => {
+      onFrameAvailable: async (rgbData, _frameDurationMs, _frameNum, _memoryHandoff, timing) => {
         if (signal?.aborted) {
           globalBufferPool.release(rgbData);
           throw new DOMException('Cancelled', 'AbortError');
@@ -115,8 +114,6 @@ export async function encodeWebp(
         const shouldSkip = decimationController.shouldSkip(_frameNum);
 
         if (shouldSkip) {
-          // Accumulate skipped frame duration to avoid timing drift
-          accumulatedDuration += frameDurationMs;
           // Release buffer and skip encoding
           globalBufferPool.release(rgbData);
           return;
@@ -143,9 +140,7 @@ export async function encodeWebp(
           // the view is only borrowed and the WASM memory can be safely reused.
           const bitstream = extractVP8Bitstream(webpResult);
 
-          const totalDuration = frameDurationMs + accumulatedDuration;
-          accumulatedDuration = 0;
-          muxer.addFrame(bitstream, totalDuration);
+          muxer.addPresentationFrame(bitstream, timing);
           encodeIdx++;
         });
       },
@@ -160,17 +155,7 @@ export async function encodeWebp(
     throw new Error('No frames decoded for WebP encoding');
   }
 
-  // ── Tail accumulated duration fix ──
-  // When dynamic decimation skips frames after the last kept frame, their
-  // accumulated duration is never consumed by any subsequent encoding call.
-  // Pad the last ANMF chunk's duration to preserve total playback time.
-  const totalTailDuration = accumulatedDuration + tailAccumulatedMs;
-  if (totalTailDuration > 0) {
-    muxer.padLastFrameDuration(totalTailDuration);
-    logger.info('encoders', 'WebP tail duration padded', {
-      tailMs: Math.round(totalTailDuration),
-    });
-  }
+  muxer.finishPresentation(presentationEndUs);
 
   // Mux all encoded frames into animated WebP container
   const result = await muxer.finish(signal);

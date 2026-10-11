@@ -94,6 +94,7 @@ export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
  *   const result = muxer.finish();
  */
 export class StreamingWebpMuxer {
+  private presentationStartUs: number | null = null;
   private static readonly VP8_FOURCC = SHARED_VP8_FOURCC;
   private static readonly VP8X_FOURCC = VP8X_FOURCC;
   private static readonly ANIM_MAGIC = 0x414e494d;
@@ -133,6 +134,50 @@ export class StreamingWebpMuxer {
   /** Number of frames added so far. */
   get frames(): number {
     return this.frameCount;
+  }
+
+  /** Consume the borrowed codec view now; finalize its hold at the next source PTS. */
+  addPresentationFrame(bitstream: Uint8Array, timing: { startUs: number; endUs: number }): void {
+    if (
+      !Number.isSafeInteger(timing.startUs) ||
+      timing.startUs < 0 ||
+      !Number.isSafeInteger(timing.endUs) ||
+      timing.endUs <= timing.startUs
+    ) {
+      throw new RangeError('Invalid WebP presentation interval');
+    }
+    if (this.presentationStartUs !== null) this.finishPresentation(timing.startUs);
+    this.addFrame(bitstream, 0);
+    this.presentationStartUs = timing.startUs;
+  }
+
+  /** Round absolute boundaries once, rather than rounding each source duration. */
+  finishPresentation(endUs: number): void {
+    if (this.presentationStartUs === null) return;
+    if (!Number.isSafeInteger(endUs) || endUs <= this.presentationStartUs) {
+      throw new RangeError('Invalid WebP presentation endpoint');
+    }
+    const durationMs = Math.round(endUs / 1000) - Math.round(this.presentationStartUs / 1000);
+    if (durationMs < 1) throw new RangeError('WebP presentation interval is below one millisecond');
+    this.setLastFrameDuration(durationMs);
+    this.presentationStartUs = null;
+  }
+
+  private setLastFrameDuration(durationMs: number): void {
+    const chunk = this.chunks[this.chunks.length - 1];
+    if (!chunk || this.frameCount === 0) throw new Error('No frame to finalize');
+    const payloadSize = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength).getUint32(
+      28,
+      true
+    );
+    const payload = chunk.subarray(32, 32 + payloadSize);
+    StreamingWebpMuxer.writeUint24(chunk, 20, Math.min(durationMs, 0xffffff));
+    let remainingMs = durationMs - 0xffffff;
+    while (remainingMs > 0) {
+      const hold = Math.min(remainingMs, 0xffffff);
+      this.addFrame(payload, hold);
+      remainingMs -= hold;
+    }
   }
 
   /**
@@ -225,9 +270,8 @@ export class StreamingWebpMuxer {
     off = StreamingWebpMuxer.writeUint24(chunk, off, Math.max(0, this.width - 1));
     off = StreamingWebpMuxer.writeUint24(chunk, off, Math.max(0, this.height - 1));
 
-    // Frame Duration (ms) — clamped to 24-bit max (16,777,215ms ≈ 4.6 hours)
-    // to prevent ANMF chunk overflow for very long videos
-    off = StreamingWebpMuxer.writeUint24(chunk, off, Math.min(durationMs, 0xffffff));
+    // Completed presentation holds are split before the 24-bit duration limit.
+    off = StreamingWebpMuxer.writeUint24(chunk, off, Math.min(Math.round(durationMs), 0xffffff));
 
     // Frame Flags
     chunk[off++] = 0x00;
@@ -304,8 +348,7 @@ export class StreamingWebpMuxer {
       (view.getUint8(durOffset + 1) << 8) |
       (view.getUint8(durOffset + 2) << 16);
 
-    const updatedMs = Math.min(existingMs + extraMs, 0xffffff);
-    StreamingWebpMuxer.writeUint24(lastChunk, durOffset, updatedMs);
+    this.setLastFrameDuration(existingMs + Math.round(extraMs));
   }
 
   private static writeUint24(output: Uint8Array, offset: number, value: number): number {

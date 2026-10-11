@@ -468,6 +468,7 @@ async function _runPipelineInner(
         // Accumulate durations from dynamically skipped frames (see offscreen-webp-encoder).
         let dynamicAccumulatedMs = 0;
         let tailAccumulatedMs = 0;
+        let presentationEndUs: number | undefined;
 
         await scheduleTask(
           () =>
@@ -510,7 +511,8 @@ async function _runPipelineInner(
                   rgbaData: Uint8Array,
                   frameDurationMs: number,
                   frameNum: number,
-                  memoryHandoff
+                  memoryHandoff,
+                  timing
                 ) => {
                   if (signal?.aborted) {
                     globalBufferPool.release(rgbaData);
@@ -518,13 +520,13 @@ async function _runPipelineInner(
                   }
                   const shouldSkip = decimationController.shouldSkip(frameNum);
                   if (shouldSkip) {
-                    dynamicAccumulatedMs += frameDurationMs;
+                    if (!timing) dynamicAccumulatedMs += frameDurationMs;
                     globalBufferPool.release(rgbaData);
                     return;
                   }
                   const totalDuration = frameDurationMs + dynamicAccumulatedMs;
                   dynamicAccumulatedMs = 0;
-                  await streamingEncoder.submit(rgbaData, totalDuration, memoryHandoff);
+                  await streamingEncoder.submit(rgbaData, totalDuration, memoryHandoff, timing);
                   // buffer ownership transferred to worker via postMessage — do NOT release
                 },
               },
@@ -533,6 +535,7 @@ async function _runPipelineInner(
               observedDecodedFrames = Math.max(observedDecodedFrames, result.totalInputFrames);
               transcodeSpan?.update({ decodedFrames: observedDecodedFrames });
               tailAccumulatedMs = result.tailAccumulatedMs;
+              presentationEndUs = result.presentationEndUs;
             }),
           { priority: 'user-blocking' }
         );
@@ -545,7 +548,9 @@ async function _runPipelineInner(
         }
 
         output = toOwnedArrayBuffer(
-          await scheduleTask(() => streamingEncoder.finish(), { priority: 'user-visible' })
+          await scheduleTask(() => streamingEncoder.finish(presentationEndUs), {
+            priority: 'user-visible',
+          })
         );
         encodeResult = {
           frames: estimatedOutputFrames,

@@ -28,7 +28,7 @@ import {
 import { logger } from '@utils/logger';
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
 import { globalBufferPool } from './buffer-pool';
-import { decodeFrames } from './decoder-service';
+import { decodeFrames, type PresentationInterval } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
@@ -54,12 +54,6 @@ const QUALITY_DITHER_STRENGTH: Record<BaseEncoderOptions['quality'], number> = {
 interface GifEncoderOptions extends BaseEncoderOptions {
   /** Assert the aggregate Worker budget using the GIF stream's live peak bytes. */
   assertAdditionalMemoryBytes?: ((additionalBytes: number) => void) | undefined;
-}
-
-/** Original source presentation interval supplied by the streaming decoder. */
-interface PresentationInterval {
-  startUs: number;
-  endUs: number;
 }
 
 // ─── Bayer Ordered Dithering ────────────────────────────────────────
@@ -141,12 +135,16 @@ function bayerDitherRgba(rgba: Uint8Array, width: number, height: number, streng
  * centiseconds; callers skip a continuation frame when it is zero.
  */
 export function createGifDelayQuantizer(): (delayMs: number) => number {
-  let scheduledDurationMs = 0;
+  let scheduledDurationUs = 0;
   let emittedDurationCs = 0;
 
   return (delayMs: number): number => {
-    scheduledDurationMs += Math.max(0, delayMs);
-    const targetDurationCs = Math.max(emittedDurationCs, Math.round(scheduledDurationMs / 10));
+    const delayUs = Math.round(Math.max(0, delayMs) * 1000);
+    if (!Number.isSafeInteger(delayUs) || !Number.isSafeInteger(scheduledDurationUs + delayUs)) {
+      throw new RangeError('GIF presentation duration exceeds integer range');
+    }
+    scheduledDurationUs += delayUs;
+    const targetDurationCs = Math.max(emittedDurationCs, Math.round(scheduledDurationUs / 10_000));
     const nextDelayCs = targetDurationCs - emittedDurationCs;
     emittedDurationCs = targetDurationCs;
     return nextDelayCs;
@@ -294,10 +292,7 @@ export async function encodeGif(
   let smartSkipped = 0;
   let sourceTotalMs = demux.sourceTotalMs;
 
-  let accumulatedDuration = 0;
   let pendingStartUs: number | null = null;
-  let pendingFallbackMs = 0;
-  let presentationMode: 'source' | 'legacy' | null = null;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController();
@@ -372,7 +367,6 @@ export async function encodeGif(
     lastPalette = null;
     liveIndexedBytes = 0;
     pendingStartUs = null;
-    pendingFallbackMs = 0;
   }
 
   try {
@@ -382,9 +376,8 @@ export async function encodeGif(
       skippedByDecimation: decoderSkippedByDecimation,
       smartSkipped: decoderSmartSkipped,
       sourceTotalMs: decodedSourceTotalMs,
-      tailAccumulatedMs,
       presentationEndUs,
-    } = (await decodeFrames(
+    } = await decodeFrames(
       demux,
       {
         width: w,
@@ -405,10 +398,10 @@ export async function encodeGif(
         // Streaming callback: index each selected frame after flushing its predecessor.
         onFrameAvailable: async (
           rgbaData: Uint8Array,
-          frameDurationMs: number,
+          _frameDurationMs: number,
           frameNum: number,
-          _memoryHandoff?: unknown,
-          presentation?: PresentationInterval
+          _memoryHandoff: unknown,
+          presentation: PresentationInterval
         ) => {
           if (signal?.aborted) {
             globalBufferPool.release(rgbaData);
@@ -434,18 +427,11 @@ export async function encodeGif(
             throw new DOMException('Cancelled', 'AbortError');
           }
 
-          const frameMode = presentation ? 'source' : 'legacy';
-          if (presentationMode && presentationMode !== frameMode) {
-            globalBufferPool.release(rgbaData);
-            throw new Error('GIF presentation intervals cannot change midstream');
-          }
-          presentationMode = frameMode;
           if (
-            presentation &&
-            (!Number.isSafeInteger(presentation.startUs) ||
-              !Number.isSafeInteger(presentation.endUs) ||
-              presentation.startUs < 0 ||
-              presentation.endUs <= presentation.startUs)
+            !Number.isSafeInteger(presentation.startUs) ||
+            !Number.isSafeInteger(presentation.endUs) ||
+            presentation.startUs < 0 ||
+            presentation.endUs <= presentation.startUs
           ) {
             globalBufferPool.release(rgbaData);
             throw new RangeError('Invalid GIF presentation interval');
@@ -455,9 +441,7 @@ export async function encodeGif(
           const shouldSkip = decimationController.shouldSkip(frameNum);
 
           if (shouldSkip) {
-            // Source timestamps make skipped frames part of the preceding
-            // frame's hold. Legacy test doubles use accumulated durations.
-            if (!presentation) accumulatedDuration += frameDurationMs;
+            // The next selected source timestamp extends the preceding hold.
             globalBufferPool.release(rgbaData);
             return;
           }
@@ -465,12 +449,9 @@ export async function encodeGif(
           let rgbaReleased = false;
           try {
             if (lastIndexedData) {
-              const delayMs = presentation
-                ? (presentation.startUs - pendingStartUs!) / 1000
-                : pendingFallbackMs + accumulatedDuration;
+              const delayMs = (presentation.startUs - pendingStartUs!) / 1000;
               await flushPending(delayMs);
             }
-            accumulatedDuration = 0;
 
             // Reject the next selected frame before allocating RGBA or index data.
             assertCanWriteOutputFrame();
@@ -514,8 +495,7 @@ export async function encodeGif(
             }
             lastPalette = framePalette;
             prepareIndexedFrame(exactRgbaScratch, framePalette);
-            pendingStartUs = presentation?.startUs ?? null;
-            pendingFallbackMs = frameDurationMs;
+            pendingStartUs = presentation.startUs;
           } finally {
             if (!rgbaReleased) globalBufferPool.release(rgbaData);
           }
@@ -529,7 +509,7 @@ export async function encodeGif(
         },
       },
       signal
-    )) as Awaited<ReturnType<typeof decodeFrames>> & { presentationEndUs?: number };
+    );
     sourceTotalMs = decodedSourceTotalMs;
 
     totalInputFrames = totalDecoded;
@@ -542,15 +522,12 @@ export async function encodeGif(
     if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
 
     if (lastIndexedData) {
-      if (presentationMode === 'source' && !Number.isSafeInteger(presentationEndUs)) {
+      if (!Number.isSafeInteger(presentationEndUs)) {
         throw new RangeError('Missing GIF presentation end');
       }
-      const finalDelayMs =
-        presentationMode === 'source'
-          ? (presentationEndUs! - pendingStartUs!) / 1000
-          : pendingFallbackMs + tailAccumulatedMs + accumulatedDuration;
+      const finalDelayMs = (presentationEndUs - pendingStartUs!) / 1000;
       // Only a whole clip shorter than 20 ms needs the GIF viewer floor.
-      const wholeClipMs = presentationMode === 'source' ? presentationEndUs! / 1000 : sourceTotalMs;
+      const wholeClipMs = presentationEndUs / 1000;
       await flushPending(
         wholeClipMs < GIF_MIN_FRAME_DELAY_MS
           ? Math.max(finalDelayMs, GIF_MIN_FRAME_DELAY_MS - outputTotalDelay * 10)

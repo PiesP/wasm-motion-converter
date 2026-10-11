@@ -17,6 +17,50 @@ function dummyBitstream(size = 100): Uint8Array {
 }
 
 describe('StreamingWebpMuxer', () => {
+  describe('source presentation holds', () => {
+    const durations = (bytes: Uint8Array): number[] => {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const result: number[] = [];
+      for (let offset = 12; offset < bytes.length;) {
+        const size = view.getUint32(offset + 4, true);
+        if (view.getUint32(offset) === 0x414e4d46) {
+          result.push(bytes[offset + 20]! | (bytes[offset + 21]! << 8) | (bytes[offset + 22]! << 16));
+        }
+        offset += 8 + size + (size & 1);
+      }
+      return result;
+    };
+
+    it('finalizes prior holds at original PTS and the last hold at the visible endpoint', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      muxer.addPresentationFrame(dummyBitstream(), { startUs: 0, endUs: 100_000 });
+      muxer.addPresentationFrame(dummyBitstream(42), { startUs: 300_000, endUs: 400_000 });
+      muxer.finishPresentation(400_000);
+      expect(durations(await muxer.finish())).toEqual([300, 100]);
+    });
+
+    it('rounds cumulative boundaries without systematic high-FPS drift', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      for (let index = 0; index < 120; index++) {
+        muxer.addPresentationFrame(dummyBitstream(), {
+          startUs: Math.round(index * 1_000_000 / 120),
+          endUs: Math.round((index + 1) * 1_000_000 / 120),
+        });
+      }
+      muxer.finishPresentation(1_000_000);
+      const holds = durations(await muxer.finish());
+      expect(holds.reduce((sum, hold) => sum + hold, 0)).toBe(1000);
+      expect(new Set(holds)).toEqual(new Set([8, 9]));
+    });
+
+    it('splits an overlong hold without truncating its endpoint', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      muxer.addPresentationFrame(dummyBitstream(99), { startUs: 0, endUs: 100_000 });
+      muxer.finishPresentation((0xffffff + 71) * 1000);
+      expect(durations(await muxer.finish())).toEqual([0xffffff, 71]);
+      expect(muxer.frames).toBe(2);
+    });
+  });
   describe('output budgets', () => {
     it('rejects a cumulative frame overflow before adding the frame', () => {
       const muxer = new StreamingWebpMuxer(16, 16, {

@@ -13,7 +13,7 @@ vi.mock('@services/decoder-service', () => ({
     mocks.decodeOptions = options;
     mocks.pixelFormat = options.pixelFormat;
     const backing = new Uint8Array([10, 20, 30, 255, 0x7f, 0x7f, 0x7f, 0x7f]);
-    await options.onFrameAvailable(backing, 100, 0);
+    await options.onFrameAvailable(backing, 100, 0, undefined, { startUs: 0, endUs: 100_000 });
     return {
       frames: [],
       outputTotalMs: 0,
@@ -21,6 +21,7 @@ vi.mock('@services/decoder-service', () => ({
       smartSkipped: 0,
       sourceTotalMs: 100,
       tailAccumulatedMs: 0,
+      presentationEndUs: 100_000,
       totalInputFrames: 1,
     };
   }),

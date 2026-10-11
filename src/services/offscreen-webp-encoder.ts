@@ -106,18 +106,12 @@ export async function encodeWebpOffscreen(
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController();
 
-  // Accumulate durations from dynamically skipped frames for timing preservation.
-  // When decimationController.shouldSkip() drops a frame under memory pressure,
-  // its duration is accumulated here and added to the next kept frame's delay.
-  // This mirrors the GIF encoder's accumulatedDuration behavior.
-  let accumulatedDuration = 0;
-
   // Decode frames with streaming callback — each frame is encoded immediately
   const {
     totalInputFrames: totalDecoded,
     skippedByDecimation: totalSkipped,
     smartSkipped: totalSmartSkipped,
-    tailAccumulatedMs,
+    presentationEndUs,
   } = await decodeFrames(
     demux,
     {
@@ -146,7 +140,7 @@ export async function encodeWebpOffscreen(
         });
       },
       // Streaming callback: encode each frame immediately upon decoding
-      onFrameAvailable: async (rgbaData: Uint8Array, frameDurationMs: number, frameNum: number) => {
+      onFrameAvailable: async (rgbaData, _frameDurationMs, frameNum, _memoryHandoff, timing) => {
         if (signal?.aborted) {
           globalBufferPool.release(rgbaData);
           throw new DOMException('Cancelled', 'AbortError');
@@ -156,18 +150,11 @@ export async function encodeWebpOffscreen(
         const shouldSkip = decimationController.shouldSkip(frameNum);
 
         if (shouldSkip) {
-          // Accumulate skipped frame duration for timing preservation.
-          // Without this, WebP output plays faster than source when dynamic
-          // decimation kicks in under memory pressure.
-          accumulatedDuration += frameDurationMs;
           globalBufferPool.release(rgbaData);
           return;
         }
 
         return withPooledBuffer(rgbaData, async () => {
-          const totalDuration = frameDurationMs + accumulatedDuration;
-          accumulatedDuration = 0;
-
           const exactRgba = new Uint8ClampedArray(
             rgbaData.buffer as ArrayBuffer,
             rgbaData.byteOffset,
@@ -196,7 +183,7 @@ export async function encodeWebpOffscreen(
           // format for any frame, not just the first.
           const bitstream = extractAndNormalizeCanvasVp8(webpBuffer);
 
-          muxer.addFrame(bitstream, totalDuration);
+          muxer.addPresentationFrame(bitstream, timing);
           encodeIdx++;
         });
       },
@@ -208,12 +195,7 @@ export async function encodeWebpOffscreen(
     throw new Error('No frames decoded for WebP encoding');
   }
 
-  // Apply tail accumulated duration (decimation + smart-skip leftovers)
-  // and dynamic decimation leftovers to the last frame to preserve total play time.
-  const totalTailMs = tailAccumulatedMs + accumulatedDuration;
-  if (totalTailMs > 0) {
-    muxer.padLastFrameDuration(totalTailMs);
-  }
+  muxer.finishPresentation(presentationEndUs);
 
   // Mux all encoded frames into animated WebP container
   const result = await muxer.finish(signal);

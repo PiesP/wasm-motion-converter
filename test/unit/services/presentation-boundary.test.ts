@@ -7,6 +7,10 @@ import { decodeFrames } from '@services/decoder-service';
 import type { DemuxResult } from '@services/demuxer-service';
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
+import { encodeWebpOffscreen } from '@services/offscreen-webp-encoder';
+import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
+import type { WebpWorkerPool, EncodeTask } from '@services/worker-pool';
+import type { BaseEncoderOptions } from '@services/encoder-common';
 
 // The native codec is the platform boundary. Decoder selection, pixel copy,
 // gifenc, encoder skipping and container serialization remain production code.
@@ -145,9 +149,7 @@ afterEach(() => {
   globalBufferPool.clear();
 });
 
-describe('source presentation boundaries (issue #285 baseline defects)', () => {
-  // Only the assertion uses .fails. Codec/serialization failures in setup
-  // remain ordinary failures rather than masquerading as the known timing bug.
+describe('source presentation boundaries (issue #285)', () => {
   describe('fixed batch cadence', () => {
     let frames: Awaited<ReturnType<typeof decodeFrames>>['frames'] = [];
     beforeEach(async () => {
@@ -157,7 +159,7 @@ describe('source presentation boundaries (issue #285 baseline defects)', () => {
       expect(frames.map((frame) => frame.data[0])).toEqual([64, 192]);
     });
     afterEach(() => { for (const frame of frames) globalBufferPool.release(frame.data); });
-    it.fails('holds f0 until the original f2 boundary', () => {
+    it('holds f0 until the original f2 boundary', () => {
       expect(frames.map((frame) => frame.duration)).toEqual([200, 200]);
     });
   });
@@ -196,21 +198,66 @@ describe('source presentation boundaries (issue #285 baseline defects)', () => {
     expect(selected).toEqual([0, 1]);
   });
 
-  describe.each(['gif', 'webp'] as const)('%s serialized presentation', (format) => {
+  describe.each(['gif', 'webp', 'webp-canvas', 'webp-parallel'] as const)('%s serialized presentation', (format) => {
     for (const duplicate of [false, true]) {
       describe(duplicate ? 'smart A/A/A/B removal' : 'fixed f0/f2 sampling', () => {
         let holds: number[] = [];
         beforeEach(async () => {
           const demux = installDecoder(fourFrames(duplicate));
-          const opts = {
+          const opts: BaseEncoderOptions = {
             width: 8, height: 8, scale: 1, quality: 'low' as const,
             ...(duplicate ? { smartFrameSkip: 'low' as const } : { frameDecimation: 2 }),
           };
-          const bytes = format === 'gif' ? await encodeGif(demux, opts) : await encodeWebp(demux, opts);
+          let bytes: Uint8Array;
+          if (format === 'gif') bytes = await encodeGif(demux, opts);
+          else if (format === 'webp') bytes = await encodeWebp(demux, opts);
+          else if (format === 'webp-canvas') {
+            vi.stubGlobal('ImageData', class {
+              constructor(readonly data: Uint8ClampedArray) {}
+            });
+            vi.stubGlobal('OffscreenCanvas', class {
+              private pixels: Uint8ClampedArray = new Uint8ClampedArray(0);
+              getContext() {
+                return { putImageData: (image: { data: Uint8ClampedArray }) => { this.pixels = image.data; } };
+              }
+              async convertToBlob() {
+                const data = new Uint8Array(28);
+                const view = new DataView(data.buffer);
+                view.setUint32(0, 0x52494646);
+                view.setUint32(4, 20, true);
+                view.setUint32(8, 0x57454250);
+                view.setUint32(12, 0x56503820);
+                view.setUint32(16, 8, true);
+                data[20] = this.pixels[0]!;
+                return new Blob([data], { type: 'image/webp' });
+              }
+            });
+            bytes = await encodeWebpOffscreen(demux, opts);
+          } else {
+            const pool = {
+              activeWorkers: 1,
+              encode: async (task: EncodeTask) => {
+                const bitstream = new Uint8Array(8);
+                bitstream[0] = task.rgbaData[0]!;
+                globalBufferPool.release(task.rgbaData);
+                return { id: task.id, bitstream };
+              },
+            } as unknown as WebpWorkerPool;
+            const encoder = createStreamingWebpEncoder(pool, 8, 8, 'low', 4);
+            try {
+              const result = await decodeFrames(demux, {
+                width: 8, height: 8, pixelFormat: 'rgba',
+                frameDecimation: opts.frameDecimation,
+                smartFrameSkip: opts.smartFrameSkip,
+                onFrameAvailable: (pixels, duration, _index, handoff, timing) => encoder.submit(pixels, duration, handoff, timing),
+              });
+              bytes = await encoder.finish(result.presentationEndUs);
+            } finally { encoder.dispose(); }
+          }
           holds = format === 'gif' ? gifHolds(bytes) : webpHolds(bytes);
           expect(holds.reduce((sum, duration) => sum + duration, 0)).toBe(400);
         });
-        it.fails('retains the source scene boundary and closes at 400ms', () => {
+        it('retains the source scene boundary and closes at 400ms', () => {
           expect(holds).toEqual(duplicate ? [300, 100] : [200, 200]);
         });
       });

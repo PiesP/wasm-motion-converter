@@ -9,7 +9,6 @@ import {
   copyFrameToPixels,
   computeMotionSignature,
   convertRGBAToRGB,
-  getFrameDurationMs,
   resolveVideoDimensions,
 } from '@services/frame-utils';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
@@ -252,7 +251,7 @@ describe('clearCanvasCache', () => {
       frame,
       2,
       2,
-      { durationCarryUs: 0, copyPath: null },
+      { copyPath: null },
       'rgb'
     );
 
@@ -301,7 +300,7 @@ describe('opaque RGBA frame copying', () => {
       frame,
       48,
       80,
-      { durationCarryUs: 0, copyPath: null },
+      { copyPath: null },
       'rgba',
       270
     );
@@ -329,7 +328,7 @@ describe('opaque RGBA frame copying', () => {
       displayHeight: 1,
       displayWidth: 2,
     } as unknown as VideoFrame;
-    const context = { durationCarryUs: 0, copyPath: null };
+    const context = { copyPath: null };
 
     const first = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
     const second = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
@@ -360,7 +359,7 @@ describe('opaque RGBA frame copying', () => {
       displayHeight: 1,
       displayWidth: 1,
     } as unknown as VideoFrame;
-    const context = { durationCarryUs: 0, copyPath: null };
+    const context = { copyPath: null };
 
     const first = await copyFrameToPixels(frame, 1, 1, context, 'rgba');
     attemptedFormats.length = 0;
@@ -398,7 +397,7 @@ describe('opaque RGBA frame copying', () => {
       displayHeight: 1,
       displayWidth: 1,
     } as unknown as VideoFrame;
-    const context = { durationCarryUs: 0, copyPath: null };
+    const context = { copyPath: null };
 
     const first = await copyFrameToPixels(frame, 1, 1, context, 'rgba');
     frameNumber = 1;
@@ -440,7 +439,7 @@ describe('opaque RGBA frame copying', () => {
       displayHeight: 2,
       displayWidth: 2,
     } as unknown as VideoFrame;
-    const context = { durationCarryUs: 0, copyPath: null };
+    const context = { copyPath: null };
 
     const scaled = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
     const cached = await copyFrameToPixels(frame, 2, 1, context, 'rgba');
@@ -485,7 +484,7 @@ describe('opaque RGBA frame copying', () => {
       frame,
       1,
       1,
-      { durationCarryUs: 0, copyPath: null },
+      { copyPath: null },
       'rgba'
     );
 
@@ -583,45 +582,5 @@ describe('convertRGBAToRGB', () => {
     // Actually needsBytes = 0*4 = 0, so the bounds check passes, and acquire(0) returns a 1-byte buffer
     // The function should not throw for zero dimensions
     expect(() => convertRGBAToRGB(rgba, 0, 0, 'RGBA')).not.toThrow();
-  });
-});
-
-describe('getFrameDurationMs', () => {
-  it('returns duration in milliseconds from centisecond delay', () => {
-    // 100 centiseconds = 1000ms
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    const result = getFrameDurationMs({ duration: 1000000 } as any, ctx);
-    expect(result.durationMs).toBe(1000);
-  });
-
-  it('returns integer milliseconds', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    expect(getFrameDurationMs({ duration: 500000 } as any, ctx).durationMs).toBe(500);
-    expect(getFrameDurationMs({ duration: 330000 } as any, ctx).durationMs).toBe(330);
-  });
-
-  it('handles null duration by returning fallbackMs', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    expect(getFrameDurationMs({ duration: null } as any, ctx).durationMs).toBe(100);
-  });
-  it('handles zero delay (returns fallbackMs=100)', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    // duration=0 → raw<=0 → returns fallbackMs=100 (default)
-    const result = getFrameDurationMs({ duration: 0 } as any, ctx);
-    expect(result.durationMs).toBe(100);
-  });
-
-  it('handles positive carry across frames', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    // 333333us: rounds to 333ms, carry = 333333 - 333*1000 = 333us
-    const r1 = getFrameDurationMs({ duration: 333333 } as any, ctx);
-    expect(r1.durationMs).toBe(333);
-    expect(r1.ctx.durationCarryUs).toBe(333);
-  });
-
-  it('uses fallbackMs when duration is null', () => {
-    const ctx = { durationCarryUs: 0, copyPath: null };
-    const result = getFrameDurationMs({ duration: null } as any, ctx, 50);
-    expect(result.durationMs).toBe(50);
   });
 });

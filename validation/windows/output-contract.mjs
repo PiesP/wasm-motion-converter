@@ -108,9 +108,16 @@ export async function inspectAnimatedOutput(page, bytes, format, markers) {
 
 /** Validate a retained observation independently of the conversion measurement. */
 export function assertAnimatedOutput(observation, contract) {
-  assert.equal(observation.frameCount, contract.expected.markers.length, `${contract.id}: frame count`);
+  // Stored frames may be split or merged. Compare source-derived scene intervals.
+  const scenes = [];
+  for (const frame of observation.frames) {
+    const prior = scenes[scenes.length - 1];
+    if (prior?.marker === frame.marker) prior.durationMs += frame.durationMs;
+    else scenes.push({ marker: frame.marker, durationMs: frame.durationMs });
+  }
+  assert.equal(scenes.length, contract.expected.markers.length, `${contract.id}: scene count`);
   assert.deepEqual(
-    observation.frames.map((frame) => frame.marker),
+    scenes.map((frame) => frame.marker),
     contract.expected.markers,
     `${contract.id}: frame marker order`
   );
@@ -121,11 +128,6 @@ export function assertAnimatedOutput(observation, contract) {
     assert(
       frame.markerDistance <= contract.expected.maxColorDistance,
       `${contract.id}: frame ${index} color ${frame.rgb.join(',')} is outside its marker tolerance`
-    );
-    assert(
-      Math.abs(frame.durationMs - contract.expected.durationsMs[index]) <=
-        contract.expected.durationToleranceMs,
-      `${contract.id}: frame ${index} duration ${frame.durationMs}ms`
     );
     if (contract.expected.corners) {
       assert.deepEqual(
@@ -142,6 +144,16 @@ export function assertAnimatedOutput(observation, contract) {
         );
       }
     }
+  }
+  let actualBoundaryMs = 0;
+  let expectedBoundaryMs = 0;
+  for (const [index, scene] of scenes.entries()) {
+    actualBoundaryMs += scene.durationMs;
+    expectedBoundaryMs += contract.expected.durationsMs[index];
+    assert(
+      Math.abs(actualBoundaryMs - expectedBoundaryMs) <= contract.expected.durationToleranceMs,
+      `${contract.id}: scene ${index} boundary ${actualBoundaryMs}ms instead of ${expectedBoundaryMs}ms`
+    );
   }
   assert(
     Math.abs(

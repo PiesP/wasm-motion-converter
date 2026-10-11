@@ -35,15 +35,17 @@ import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from './worker-pool
 interface FrameEncodeResult {
   bitstream: Uint8Array;
   durationMs: number;
+  timing?: { startUs: number; endUs: number } | undefined;
 }
 
 export interface StreamingWebpEncoder {
   submit: (
     rgbaData: Uint8Array,
     durationMs: number,
-    memoryHandoff?: FrameMemoryHandoff
+    memoryHandoff?: FrameMemoryHandoff,
+    timing?: { startUs: number; endUs: number }
   ) => Promise<void>;
-  finish: () => Promise<Uint8Array>;
+  finish: (presentationEndUs?: number) => Promise<Uint8Array>;
   /** Signals the first asynchronous worker failure to the decoder immediately. */
   failureSignal: AbortSignal;
   /** Pad the last frame's duration (for tail-accumulated durations from decimation/smart-skip). */
@@ -171,7 +173,8 @@ export function createStreamingWebpEncoder(
     while (resultBuffer.has(nextExpectedId)) {
       const r = resultBuffer.get(nextExpectedId)!;
       if (r.bitstream.length > 0) {
-        muxer.addFrame(r.bitstream, r.durationMs);
+        if (r.timing) muxer.addPresentationFrame(r.bitstream, r.timing);
+        else muxer.addFrame(r.bitstream, r.durationMs);
       }
       resultBuffer.delete(nextExpectedId);
       const task = outstandingTasks.get(nextExpectedId);
@@ -208,7 +211,8 @@ export function createStreamingWebpEncoder(
   const submit = async (
     rgbaData: Uint8Array,
     durationMs: number,
-    memoryHandoff?: FrameMemoryHandoff
+    memoryHandoff?: FrameMemoryHandoff,
+    timing?: { startUs: number; endUs: number }
   ): Promise<void> => {
     let reservation: FrameMemoryReservation | null = null;
     let poolOwnsPixels = false;
@@ -258,6 +262,7 @@ export function createStreamingWebpEncoder(
           resultBuffer.set(result.id, {
             bitstream: result.bitstream,
             durationMs,
+            timing,
           });
           flushResultsToMuxer();
 
@@ -301,7 +306,7 @@ export function createStreamingWebpEncoder(
     }
   };
 
-  const finish = async (): Promise<Uint8Array> => {
+  const finish = async (presentationEndUs?: number): Promise<Uint8Array> => {
     await awaitWithCancellation(Promise.allSettled([...inFlight]));
 
     if (firstEncodeError) {
@@ -320,7 +325,8 @@ export function createStreamingWebpEncoder(
       throw new Error('No frames encoded for streaming WebP encoding');
     }
 
-    if (pendingTailMs > 0) {
+    if (presentationEndUs !== undefined) muxer.finishPresentation(presentationEndUs);
+    else if (pendingTailMs > 0) {
       muxer.padLastFrameDuration(pendingTailMs);
       pendingTailMs = 0;
     }

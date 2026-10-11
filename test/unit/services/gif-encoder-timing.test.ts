@@ -50,15 +50,16 @@ vi.mock('@services/decoder-service', () => ({
         presentationEndUs: mocks.presentationEndUs,
       };
     }
-    await options.onFrameAvailable(new Uint8Array([1, 1, 1, 255]), 100, 0);
-    await options.onFrameAvailable(new Uint8Array([2, 2, 2, 255]), 40, 1);
+    await options.onFrameAvailable(new Uint8Array([1, 1, 1, 255]), 100, 0, undefined, { startUs: 0, endUs: 100_000 });
+    await options.onFrameAvailable(new Uint8Array([2, 2, 2, 255]), 40, 1, undefined, { startUs: 100_000, endUs: 140_000 });
     return {
       frames: [],
       outputTotalMs: 0,
       skippedByDecimation: 0,
       smartSkipped: 0,
       sourceTotalMs: 200,
-      tailAccumulatedMs: 60,
+      tailAccumulatedMs: 0,
+      presentationEndUs: 200_000,
       totalInputFrames: 2,
     };
   }),
