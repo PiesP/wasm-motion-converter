@@ -18,20 +18,10 @@ pnpm prepare:e2e:fixture
 pnpm build:ci
 ```
 
-The common Windows acceptance runner reads `profile.json` and bundles exactly
-these repository-relative assets:
-
-- `dist/`, including `dist/_headers`
-- `public/test-video-ci-h264.mp4`
-- `public/test-video-ci-high-motion-120fps.mp4`
-- `public/test-video-contract-cfr.mp4`
-- `public/test-video-contract-motion-120fps.mp4`
-- `public/test-video-contract-bframes.mp4`
-- `public/test-video-contract-vp9.webm`
-- `public/test-video-contract-vfr-par.mp4`
-- `public/test-video-contract-rotate-90.mp4`
-- `validation/windows/output-contract.json`
-- `validation/windows/output-contract.mjs`
+The common Windows acceptance runner reads
+[`profile.json`](./profile.json) for the exact repository-relative asset list,
+including production `dist/`, deterministic media, output contracts, and
+playback helpers.
 
 The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
@@ -101,6 +91,12 @@ record:
 - the same VFR/PAR WebP output contract through the production WASM fallback,
   with Worker construction and native WebP encoding disabled under the deployed
   CSP; the real WASM binary must initialize without JavaScript string evaluation;
+- short-tail GIF raw delays and ordinary `<img>` playback observed through
+  bounded timestamped compositor PNGs; repeated rendered color cycles have a
+  declared sampling tolerance separate from serialized endpoint error;
+- integer-ratio sparse VFR outputs through GIF and parallel/serial/WASM WebP,
+  plus controlled critical-pressure conversions with real GIF Worker terminal
+  counts and native WebP decoder/encoder-task observations;
 - high-motion GIF cancellation from a non-zero progress value, including an
   inspector assertion that the same progress bar and value remain visible while
   both cancellation controls are disabled and accurately named, the operation
