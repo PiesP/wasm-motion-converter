@@ -62,3 +62,22 @@ export function verifyAnimatedOutput(
   contract: OutputContractCase,
   markers: Record<string, number[]>
 ): Promise<AnimatedOutputObservation>;
+
+export interface ExactAnimatedOutputComparison {
+  width: number;
+  height: number;
+  durationUs: number;
+  repetitionCount: number;
+  referenceFrameCount: number;
+  candidateFrameCount: number;
+  comparedIntervals: number;
+  loopTransitionChecked: true;
+}
+
+export function compareAnimatedOutputExact(
+  page: import('@playwright/test').Page,
+  referenceBytes: Uint8Array,
+  candidateBytes: Uint8Array,
+  referenceFormat: OutputContractCase['format'],
+  candidateFormat?: OutputContractCase['format']
+): Promise<ExactAnimatedOutputComparison>;

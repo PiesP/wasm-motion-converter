@@ -5,6 +5,7 @@ import { expect, test } from '@playwright/test';
 import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {
   type OutputContractCase,
+  compareAnimatedOutputExact,
   verifyAnimatedOutput,
 } from '../../validation/windows/output-contract.mjs';
 import {
@@ -97,6 +98,11 @@ test.describe('deterministic output contracts', () => {
       const output = await runContractConversion(page, contract);
       const observation = await verifyAnimatedOutput(page, output, contract, markers);
       expect(observation.frameCount).toBe(contract.expected.markers.length);
+      if (contract.id === 'cfr-trim-gif') {
+        const exact = await compareAnimatedOutputExact(page, output, output, contract.format);
+        expect(exact.durationUs).toBeGreaterThan(0);
+        expect(exact.loopTransitionChecked).toBe(true);
+      }
     });
   }
 });
