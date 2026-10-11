@@ -45,6 +45,8 @@ export interface BaseEncoderOptions {
   onEncodingComplete?: ((counts: EncoderFrameCounts) => void) | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
+  /** Conversion-owned memory pressure; independent of optional browser heap APIs. */
+  decimationMemoryCheck?: (() => { usagePercentage: number } | null) | undefined;
   /** Development profiling callback for overlapping per-operation wall time. */
   profileOperation?: ProfileOperationRecorder | undefined;
   /** Development profiling callback for the selected frame-copy strategy. */
