@@ -14,6 +14,7 @@ const MAX_CYCLE_ERROR_MS = 35;
 const MAX_MEDIAN_CYCLE_ERROR_MS = 20;
 const MIN_COMPLETE_CYCLES = 3;
 const SAMPLING_PULSE_CSS_PX = 16;
+const SAMPLING_PULSE_MS = 48;
 const COLORS = ['red', 'lime', 'blue'];
 
 function digest(bytes) {
@@ -456,6 +457,7 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
       maxMedianCycleErrorMs: MAX_MEDIAN_CYCLE_ERROR_MS,
       minCompleteCycles: MIN_COMPLETE_CYCLES,
       samplingPulseCssPx: SAMPLING_PULSE_CSS_PX,
+      samplingPulseMs: SAMPLING_PULSE_MS,
     },
     rawGceDelaysCs: [],
     frameRecords: [],
@@ -494,7 +496,7 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
       #playback-gif { width:240px; height:240px; object-fit:fill; image-rendering:pixelated; }
       #sampling-pulse { position:fixed; top:0; left:0;
         width:${SAMPLING_PULSE_CSS_PX}px; height:${SAMPLING_PULSE_CSS_PX}px;
-        animation:pulse 32ms steps(2,end) infinite; }
+        animation:pulse ${SAMPLING_PULSE_MS}ms steps(2,end) infinite; }
       @keyframes pulse { from { background:#000; } to { background:#fff; } }
     </style></head><body><img id="playback-gif" tabindex="0" alt="GIF playback sample"><div id="sampling-pulse"></div></body></html>`);
     await page.bringToFront();
