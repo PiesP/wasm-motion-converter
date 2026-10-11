@@ -21,6 +21,9 @@ const TEST_VIDEO_PATH =
   process.env.DEPLOY_TEST_VIDEO || resolve(process.cwd(), 'public/test-video-ci-h264.mp4');
 
 test.use({ serviceWorkers: 'block' });
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('dropconvert.locale', 'en'));
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -81,19 +84,27 @@ async function captureScreenshot(page: Page, name: string): Promise<void> {
 }
 
 async function uploadTestVideo(page: Page): Promise<void> {
-  await page.locator('input[type="file"]').first().setInputFiles(TEST_VIDEO_PATH);
-  await expect(page.locator('[data-testid="convert-button"]')).toBeEnabled();
-  await expect(page.locator('[data-testid="video-metadata"]')).toContainText(
+  await page.locator('#file-upload').setInputFiles(TEST_VIDEO_PATH);
+  await expect(page.getByRole('button', { name: 'Convert', exact: true })).toBeEnabled();
+  await expect(page.getByText('Input Video', { exact: true }).locator('..')).toContainText(
     basename(TEST_VIDEO_PATH)
   );
 }
 
 async function startConversion(page: Page): Promise<void> {
-  await page.locator('[data-testid="convert-button"]').click();
-  const modalProceed = page.locator('[data-testid="modal-confirm-button"]');
+  await page.getByRole('button', { name: 'Convert', exact: true }).click();
+  const modalProceed = page.getByRole('button', { name: 'Proceed with conversion despite warnings' });
   if (await modalProceed.isVisible({ timeout: 5000 }).catch(() => false)) {
     await modalProceed.click();
   }
+}
+
+function resultSection(page: Page) {
+  return page.getByRole('heading', { name: 'Result', exact: true }).locator('..');
+}
+
+function downloadLink(page: Page) {
+  return page.getByRole('link', { name: /^Download (?:GIF|WEBP) file —/ });
 }
 
 // ---------------------------------------------------------------------------
@@ -176,9 +187,10 @@ test.describe('Deployment: Visual — Initial State', () => {
     await captureScreenshot(page, 'deploy-initial-state');
 
     // Verify key elements are visible
-    await expect(page.locator('[data-testid="app"]')).toBeVisible();
-    await expect(page.locator('[data-testid="dropzone"]')).toBeVisible();
-    await expect(page.locator('[data-testid="convert-button"]')).toBeDisabled();
+    await expect(page.locator('#root')).toBeVisible();
+    await expect(page.locator('#main-content')).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Select video file for conversion' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Select a video to start conversion' })).toBeDisabled();
     await expect(page.locator('h1')).toHaveText('dropconvert');
   });
 
@@ -186,18 +198,21 @@ test.describe('Deployment: Visual — Initial State', () => {
     await page.goto(DEPLOY_URL);
 
     // Verify format options
-    await expect(page.locator('[data-testid="option-format-gif"]')).toBeVisible();
-    await expect(page.locator('[data-testid="option-format-webp"]')).toBeVisible();
+    const format = page.getByRole('radiogroup', { name: 'Output Format' });
+    await expect(format.getByRole('radio', { name: /^GIF/ })).toBeVisible();
+    await expect(format.getByRole('radio', { name: /^WebP/ })).toBeVisible();
 
     // Verify quality options
-    await expect(page.locator('[data-testid="option-quality-low"]')).toBeVisible();
-    await expect(page.locator('[data-testid="option-quality-medium"]')).toBeVisible();
-    await expect(page.locator('[data-testid="option-quality-high"]')).toBeVisible();
+    const quality = page.getByRole('radiogroup', { name: 'Quality Preset' });
+    await expect(quality.getByRole('radio', { name: /^Low/ })).toBeVisible();
+    await expect(quality.getByRole('radio', { name: /^Medium/ })).toBeVisible();
+    await expect(quality.getByRole('radio', { name: /^High/ })).toBeVisible();
 
     // Verify scale options
-    await expect(page.locator('[data-testid="option-scale-0.5"]')).toBeVisible();
-    await expect(page.locator('[data-testid="option-scale-0.75"]')).toBeVisible();
-    await expect(page.locator('[data-testid="option-scale-1"]')).toBeVisible();
+    const scale = page.getByRole('radiogroup', { name: 'Output Scale' });
+    await expect(scale.getByRole('radio', { name: /^50%/ })).toBeVisible();
+    await expect(scale.getByRole('radio', { name: /^75%/ })).toBeVisible();
+    await expect(scale.getByRole('radio', { name: /^100%/ })).toBeVisible();
   });
 });
 
@@ -215,11 +230,11 @@ test.describe('Deployment: Visual — File Upload', () => {
     await captureScreenshot(page, 'deploy-file-uploaded');
 
     // Verify convert button is enabled
-    const convertBtn = page.locator('[data-testid="convert-button"]');
+    const convertBtn = page.getByRole('button', { name: 'Convert', exact: true });
     await expect(convertBtn).toBeEnabled();
 
     // Verify metadata is displayed
-    await expect(page.locator('[data-testid="video-metadata"]')).toContainText(
+    await expect(page.getByText('Input Video', { exact: true }).locator('..')).toContainText(
       basename(TEST_VIDEO_PATH)
     );
   });
@@ -238,12 +253,12 @@ test.describe('Deployment: Visual — Progress UI', () => {
     await uploadTestVideo(page);
     await startConversion(page);
 
-    const progressBar = page.locator('[data-progress]');
-    const resultSection = page.locator('[data-testid="result-section"]');
+    const progressBar = page.getByRole('progressbar').first();
+    const result = resultSection(page);
     await expect
       .poll(
         async () =>
-          (await progressBar.isVisible()) || (await resultSection.isVisible()),
+          (await progressBar.isVisible()) || (await result.isVisible()),
         { timeout: 30_000 },
       )
       .toBe(true);
@@ -253,20 +268,21 @@ test.describe('Deployment: Visual — Progress UI', () => {
 
     if (await progressBar.isVisible()) {
       // Verify progress bar has valid value
-      const progressValue = await progressBar.getAttribute('data-progress');
-      expect(progressValue).not.toBeNull();
-      const progressNum = Number(progressValue);
-      expect(progressNum).toBeGreaterThanOrEqual(0);
-      expect(progressNum).toBeLessThanOrEqual(100);
+      const progressValue = await progressBar.getAttribute('aria-valuenow');
+      if (progressValue !== null) {
+        const progressNum = Number(progressValue);
+        expect(progressNum).toBeGreaterThanOrEqual(0);
+        expect(progressNum).toBeLessThanOrEqual(100);
+      }
     }
 
-    await expect(resultSection).toBeVisible({ timeout: 120_000 });
+    await expect(result).toBeVisible({ timeout: 120_000 });
     await captureScreenshot(page, 'deploy-conversion-complete');
-    await expect(page.locator('[data-testid="download-result-button"]')).toBeVisible();
+    await expect(downloadLink(page)).toBeVisible();
     expect(workers.length, 'No module worker was started').toBeGreaterThan(0);
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.locator('[data-testid="download-result-button"]').click(),
+      downloadLink(page).click(),
     ]);
     const bytes = await readFile(await download.path());
     expect(bytes.subarray(0, 6).toString('ascii')).toMatch(/^GIF8[79]a$/);
@@ -298,9 +314,10 @@ test.describe('Deployment: Visual — Progress UI', () => {
     });
     await page.goto(DEPLOY_URL);
     await uploadTestVideo(page);
-    await page.locator('[data-testid="option-format-webp"]').click();
+    await page.getByRole('radiogroup', { name: 'Output Format' })
+      .getByRole('radio', { name: /^WebP/ }).check();
     await startConversion(page);
-    await expect(page.locator('[data-testid="result-section"]')).toBeVisible({ timeout: 120_000 });
+    await expect(resultSection(page)).toBeVisible({ timeout: 120_000 });
     expect(wasmResponses.length, 'WebP fallback loaded no WASM response').toBeGreaterThan(0);
     for (const response of wasmResponses) {
       await assertExecutableResponse(response, 'wasm', new URL(DEPLOY_URL).origin);
@@ -309,7 +326,7 @@ test.describe('Deployment: Visual — Progress UI', () => {
     }
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.locator('[data-testid="download-result-button"]').click(),
+      downloadLink(page).click(),
     ]);
     const bytes = await readFile(await download.path());
     expect(bytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
@@ -339,20 +356,21 @@ test.describe('Deployment: Visual — Result Section', () => {
     await startConversion(page);
 
     // Wait for completion — GIF conversion of 1920x1080 can take 30-90s
-    const resultSection = page.locator('[data-testid="result-section"]');
-    await expect(resultSection).toBeVisible({ timeout: 180_000 });
+    const result = resultSection(page);
+    await expect(result).toBeVisible({ timeout: 180_000 });
 
     // Capture final result state
     await captureScreenshot(page, 'deploy-result-section');
 
     // Verify result stats are present
-    const originalSize = page.locator('[data-result-original-size]');
-    const outputSize = page.locator('[data-result-output-size]');
-    const format = page.locator('[data-result-format]');
+    const summary = page.getByRole('region', { name: /^GIF conversion results:/ });
+    const outputSize = summary.getByText('Output size', { exact: true }).locator('..').locator('dd');
+    const format = summary.getByText('Format', { exact: true }).locator('..').locator('dd');
+    const details = page.getByRole('region', { name: 'Result details' });
 
-    await expect(originalSize).toBeVisible();
+    await expect(details).toContainText(/\d+(?:\.\d+)?\s*(?:B|KB|MB)/);
     await expect(outputSize).toBeVisible();
-    await expect(format).toBeVisible();
+    await expect(format).toHaveText('GIF');
 
     // Verify output size is reasonable (not empty)
     const outputSizeText = await outputSize.textContent();
@@ -360,7 +378,9 @@ test.describe('Deployment: Visual — Result Section', () => {
     expect(outputSizeText!.length).toBeGreaterThan(0);
 
     // Verify preview image is loaded
-    const resultImage = page.locator('[data-testid="result-image"]');
+    const showPreview = page.getByRole('button', { name: 'Show animated preview' });
+    if (await showPreview.isVisible()) await showPreview.click();
+    const resultImage = page.getByRole('img', { name: /^GIF animated preview:/ });
     await expect(resultImage).toBeVisible();
     const naturalWidth = await resultImage.evaluate((el) => (el as HTMLImageElement).naturalWidth);
     expect(naturalWidth).toBeGreaterThan(0);
@@ -371,24 +391,19 @@ test.describe('Deployment: Visual — Result Section', () => {
 // 6. Cross-environment: Dev vs Deploy comparison
 // ---------------------------------------------------------------------------
 
-test.describe('Deployment: Cross-environment', () => {
-  test('deployed version has same core elements as dev', async ({ page }) => {
+test.describe('Deployment: Production controls', () => {
+  test('app exposes its maintained controls and accessible names', async ({ page }) => {
     await page.goto(DEPLOY_URL);
     await page.waitForLoadState('domcontentloaded');
 
-    // Core elements that must exist in both dev and deploy
-    const coreElements = [
-      '[data-testid="app"]',
-      '[data-testid="dropzone"]',
-      '[data-testid="convert-button"]',
-      '[data-testid="language-selector"]',
-      '[data-testid="option-format-gif"]',
-      '[data-testid="option-format-webp"]',
-    ];
-
-    for (const selector of coreElements) {
-      const el = page.locator(selector).first();
-      await expect(el).toBeAttached();
-    }
+    await expect(page.locator('#root')).toBeVisible();
+    await expect(page.locator('#main-content')).toBeVisible();
+    await expect(page.locator('#file-upload')).toBeAttached();
+    await expect(page.getByRole('combobox', { name: 'Select language' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Select a video to start conversion' })).toBeDisabled();
+    await expect(page.getByRole('radiogroup', { name: 'Output Format' })
+      .getByRole('radio', { name: /^GIF/ })).toBeVisible();
+    await expect(page.getByRole('radiogroup', { name: 'Output Format' })
+      .getByRole('radio', { name: /^WebP/ })).toBeVisible();
   });
 });

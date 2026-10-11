@@ -18,6 +18,9 @@ const DEPLOY_URL = process.env.DEPLOY_URL || SITE_URL;
 test.beforeAll(() => {
   expect(process.env.SKIP_WEB_SERVER).not.toBe('1');
 });
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('dropconvert.locale', 'en'));
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -200,7 +203,7 @@ test.describe('Accessibility', () => {
   test('convert button is disabled without file and enabled text changes', async ({ page }) => {
     await page.goto(DEPLOY_URL);
 
-    const convertBtn = page.locator('[data-testid="convert-button"]');
+    const convertBtn = page.getByRole('button', { name: 'Select a video to start conversion' });
     await expect(convertBtn).toBeDisabled();
     await expect(convertBtn).toHaveText(/select a video to start/i);
   });
