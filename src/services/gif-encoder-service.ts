@@ -372,6 +372,17 @@ export async function encodeGif(
 
   let pendingStartUs: number | null = null;
   let pendingStartCs: number | null = null;
+  let firstPendingStartUs: number | null = null;
+  let lastIndexedBytes = 0;
+  type PendingFrame = {
+    indexed: Uint8Array;
+    palette: number[][];
+    colorHash: number;
+    indexedBytes: number;
+    startUs: number;
+    startCs: number;
+  };
+  let deferredPredecessor: PendingFrame | null = null;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
   const decimationController = createDynamicDecimationController(opts.decimationMemoryCheck);
@@ -468,16 +479,47 @@ export async function encodeGif(
       if (remainingCs > 0) splitFrames++;
       if ((splitFrames & 63) === 0 && remainingCs > 0) await yieldToMain();
     }
+    liveIndexedBytes -= lastIndexedBytes;
+    lastIndexedBytes = 0;
     lastIndexedData = null;
     lastPalette = null;
     lastColorHash = 0;
-    liveIndexedBytes = 0;
     pendingStartUs = null;
     pendingStartCs = null;
   }
 
+  async function flushDeferredPredecessor(): Promise<void> {
+    if (!deferredPredecessor) return;
+    const successor: PendingFrame = {
+      indexed: lastIndexedData!,
+      palette: lastPalette!,
+      colorHash: lastColorHash,
+      indexedBytes: lastIndexedBytes,
+      startUs: pendingStartUs!,
+      startCs: pendingStartCs!,
+    };
+    const predecessor = deferredPredecessor;
+    deferredPredecessor = null;
+    lastIndexedData = predecessor.indexed;
+    lastPalette = predecessor.palette;
+    lastColorHash = predecessor.colorHash;
+    lastIndexedBytes = predecessor.indexedBytes;
+    pendingStartUs = predecessor.startUs;
+    pendingStartCs = predecessor.startCs;
+    try {
+      await flushPending(successor.startCs);
+    } finally {
+      lastIndexedData = successor.indexed;
+      lastPalette = successor.palette;
+      lastColorHash = successor.colorHash;
+      lastIndexedBytes = successor.indexedBytes;
+      pendingStartUs = successor.startUs;
+      pendingStartCs = successor.startCs;
+    }
+  }
+
   try {
-    // Decode frames with a streaming callback and retain one pending index.
+    // Decode frames with a streaming callback and retain at most two pending indices.
     const {
       totalInputFrames: totalDecoded,
       skippedByDecimation: decoderSkippedByDecimation,
@@ -566,6 +608,20 @@ export async function encodeGif(
 
           let rgbaReleased = false;
           try {
+            // A predecessor is retained only until another representable sample
+            // proves that its successor has a full 2cs hold.
+            if (deferredPredecessor) await flushDeferredPredecessor();
+
+            const projectedEndCs = Math.max(
+              gifTimeCs(presentation.endUs),
+              frameStartCs + GIF_MIN_FRAME_DELAY_CS
+            );
+            const deferPredecessor =
+              lastIndexedData !== null &&
+              firstPendingStartUs !== null &&
+              (outputTotalDelay + projectedEndCs - pendingStartCs!) * 10 -
+                (presentation.endUs - firstPendingStartUs) / 1000 >
+                20;
             if (lastIndexedData) {
               // A second index is optional. If the aggregate guard cannot
               // admit it, flush first and take the original one-index path.
@@ -577,6 +633,13 @@ export async function encodeGif(
                 );
               } catch (error) {
                 if (!(error instanceof Error) || !/memory/i.test(error.message)) throw error;
+                // If this may be the terminal scene, retaining its predecessor
+                // is necessary to coalesce the endpoint without inflating it.
+                if (deferPredecessor) {
+                  globalBufferPool.release(rgbaData);
+                  rgbaReleased = true;
+                  return;
+                }
                 await flushPending(frameStartCs);
               }
             }
@@ -638,14 +701,26 @@ export async function encodeGif(
               liveIndexedBytes = precedingIndexedBytes;
               comparisonWorkingBytes = 0;
             } else {
-              if (lastIndexedData) await flushPending(frameStartCs);
+              if (lastIndexedData && deferPredecessor) {
+                deferredPredecessor = {
+                  indexed: lastIndexedData,
+                  palette: lastPalette!,
+                  colorHash: lastColorHash,
+                  indexedBytes: lastIndexedBytes,
+                  startUs: pendingStartUs!,
+                  startCs: pendingStartCs!,
+                };
+              } else if (lastIndexedData) {
+                await flushPending(frameStartCs);
+              }
               lastIndexedData = candidate.indexed;
               lastPalette = candidate.palette;
               lastColorHash = candidate.colorHash;
-              liveIndexedBytes = candidate.indexedBytes;
+              lastIndexedBytes = candidate.indexedBytes;
               comparisonWorkingBytes = 0;
               pendingStartUs = presentation.startUs;
               pendingStartCs = frameStartCs;
+              firstPendingStartUs ??= presentation.startUs;
             }
           } finally {
             if (!rgbaReleased) globalBufferPool.release(rgbaData);
@@ -679,12 +754,38 @@ export async function encodeGif(
       if (presentationEndUs < pendingStartUs!) {
         throw new RangeError('Invalid GIF presentation end');
       }
-      // Extend only the final hold when its quantized tail is unrepresentable.
-      // This adds at most 20ms beyond the rounded endpoint (itself within 5ms
-      // of source time), rather than adding a minimum to every input frame.
-      await flushPending(
-        Math.max(gifTimeCs(presentationEndUs), pendingStartCs! + GIF_MIN_FRAME_DELAY_CS)
+      const finalEndCs = Math.max(
+        gifTimeCs(presentationEndUs),
+        pendingStartCs! + GIF_MIN_FRAME_DELAY_CS
       );
+      // The decode callback may have installed this predecessor; TypeScript
+      // cannot see assignments made through that callback.
+      const terminalPredecessor = deferredPredecessor as PendingFrame | null;
+      if (terminalPredecessor) {
+        const projectedDurationMs =
+          (outputTotalDelay + finalEndCs - terminalPredecessor.startCs) * 10;
+        const sourceDurationMs = (presentationEndUs - firstPendingStartUs!) / 1000;
+        if (projectedDurationMs - sourceDurationMs > 20) {
+          // A minimum 2cs terminal record would exceed the clip's 20ms
+          // endpoint allowance. Keep the prior image through the rounded end;
+          // no source image is introduced before its presentation timestamp.
+          liveIndexedBytes -= lastIndexedBytes;
+          lastIndexedData = terminalPredecessor.indexed;
+          lastPalette = terminalPredecessor.palette;
+          lastColorHash = terminalPredecessor.colorHash;
+          lastIndexedBytes = terminalPredecessor.indexedBytes;
+          pendingStartUs = terminalPredecessor.startUs;
+          pendingStartCs = terminalPredecessor.startCs;
+          deferredPredecessor = null;
+          await flushPending(gifTimeCs(presentationEndUs));
+        } else {
+          await flushDeferredPredecessor();
+          await flushPending(finalEndCs);
+        }
+      } else {
+        // A single minimum 2cs record may extend a short whole clip by 20ms.
+        await flushPending(finalEndCs);
+      }
     }
 
     // Pixel scratch and the tail index are no longer needed during GIF stream

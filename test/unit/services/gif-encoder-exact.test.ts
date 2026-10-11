@@ -231,6 +231,49 @@ describe('GIF exact indexed representation', () => {
     expect(frames.map((frame) => frame.delayCs)).toEqual([5, 5, 2]);
   });
 
+  it.each([
+    [25_001, [0x010000], [3]],
+    [29_999, [0x010000], [3]],
+    [30_000, [0x010000, 0x020000], [3, 2]],
+  ] as const)(
+    'bounds the endpoint for a 25 ms boundary and %i µs final scene',
+    async (endUs, colors, delaysCs) => {
+      mocks.frames = [
+        { startUs: 0, endUs: 25_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+        { startUs: 25_000, endUs, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+      ];
+
+      const frames = readGif(await encodeFrames(1, 1)).frames;
+      expect(frames.map((frame) => frame.colors[0])).toEqual(colors);
+      expect(frames.map((frame) => frame.delayCs)).toEqual(delaysCs);
+      expect(frames.reduce((total, frame) => total + frame.delayCs * 10, 0) - endUs / 1000)
+        .toBeLessThanOrEqual(20);
+    }
+  );
+
+  it('keeps a deferred scene once a later timestamp gives it a full hold', async () => {
+    mocks.frames = [
+      { startUs: 0, endUs: 25_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 25_000, endUs: 25_001, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 45_000, endUs: 65_000, palette: [[3, 0, 0]], indices: Uint8Array.of(0) },
+    ];
+
+    const frames = readGif(await encodeFrames(1, 1)).frames;
+    expect(frames.map((frame) => frame.colors[0])).toEqual([0x010000, 0x020000, 0x030000]);
+    expect(frames.map((frame) => frame.delayCs)).toEqual([3, 2, 2]);
+  });
+
+  it('keeps the predecessor when memory cannot retain a short terminal scene', async () => {
+    mocks.frames = [
+      { startUs: 0, endUs: 25_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
+      { startUs: 25_000, endUs: 25_001, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
+    ];
+
+    const frames = readGif(await encodeFrames(1, 1, 'low', 20_000)).frames;
+    expect(frames.map((frame) => frame.colors[0])).toEqual([0x010000]);
+    expect(frames.map((frame) => frame.delayCs)).toEqual([3]);
+  });
+
   it('omits an interior short scene without moving later source colors earlier', async () => {
     mocks.frames = [
       { startUs: 0, endUs: 15_000, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
