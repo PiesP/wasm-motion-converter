@@ -37,6 +37,16 @@ import {
   setSmartFrameSkip,
 } from './fixtures/test-helpers';
 
+const pageResourceSessions = new WeakMap<Page, CDPSession>();
+
+test.afterEach(async ({ page }) => {
+  const session = pageResourceSessions.get(page);
+  if (session) {
+    pageResourceSessions.delete(page);
+    await session.detach();
+  }
+});
+
 const STRESS_FIXTURE = 'test-video-ci-high-motion-120fps.mp4';
 const HOSTILE_PAR_FIXTURE = 'test-video-resource-hostile-par.webm';
 const MEASURED_CYCLES = 5;
@@ -54,9 +64,20 @@ interface ConversionWorkload {
   settings: OutputContractCase['settings'];
   contract?: OutputContractCase;
   backend?: 'serial-canvas' | 'wasm';
+  pressure?: 'normal' | 'critical';
 }
 
 const workloads: ConversionWorkload[] = [
+  ...(['normal', 'critical'] as const).map((pressure) => {
+    const contract = (contractData.cases as OutputContractCase[]).find(
+      (entry) => entry.id === 'pressure-21fps-gif',
+    )!;
+    return { id: `pressure-21fps-${pressure}`, pressure,
+      fixture: contract.fixture.replace(/^public\//, ''), format: 'gif' as const,
+      settings: contract.settings, contract: pressure === 'critical' ? {
+        ...contract, expected: { ...contract.expected, ...contractData.pressureExpectations.gif },
+      } : contract };
+  }),
   ...(['gif', 'webp'] as const).map((format) => ({
     id: `high-motion-${format}`,
     fixture: STRESS_FIXTURE,
@@ -189,12 +210,13 @@ async function sampleResources(page: Page, browserCdp: CDPSession): Promise<Reso
     throw new Error(`Chromium process-memory sample unavailable: ${JSON.stringify(evidence)}`);
   }
 
-  const jsHeapMB = await page.evaluate(() => {
-    const memory = (performance as Performance & {
-      memory?: { usedJSHeapSize?: number };
-    }).memory;
-    return typeof memory?.usedJSHeapSize === 'number' ? memory.usedJSHeapSize / 1024 / 1024 : null;
-  });
+  let pageCdp = pageResourceSessions.get(page);
+  if (!pageCdp) {
+    pageCdp = await page.context().newCDPSession(page);
+    pageResourceSessions.set(page, pageCdp);
+  }
+  const heap = await pageCdp.send('Runtime.getHeapUsage') as { usedSize: number };
+  const jsHeapMB = Number.isFinite(heap.usedSize) ? heap.usedSize / 1024 / 1024 : null;
 
   return {
     timestampMs: Date.now(),
@@ -339,6 +361,10 @@ async function runMeasuredConversion(
   }
   expect(transcoding!.selectedFrames).toBeLessThanOrEqual(transcoding!.decodedFrames!);
   expect(transcoding!.encodedFrames).toBeLessThanOrEqual(transcoding!.selectedFrames!);
+  if (workload.pressure) {
+    expect(transcoding!.decodedFrames).toBe(21);
+    expect(transcoding!.selectedFrames).toBe(workload.pressure === 'critical' ? 15 : 20);
+  }
   const transcodingWallMs = transcoding?.durationMs ?? null;
 
   const output = await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null);
@@ -453,6 +479,16 @@ test.describe('opt-in Chromium resource profile', () => {
       page,
     }) => {
       test.slow();
+      if (workload.pressure) {
+        // Control only preflight input; Runtime.getHeapUsage/PSS/RSS still measure
+        // the real processes, not this injected performance.memory value.
+        await page.addInitScript((pressure) => {
+          Object.defineProperty(performance, 'memory', { configurable: true,
+            value: { usedJSHeapSize: 8 * 1024 * 1024, totalJSHeapSize: 16 * 1024 * 1024,
+              jsHeapSizeLimit: (pressure === 'critical' ? 16 : 1024) * 1024 * 1024 },
+          });
+        }, workload.pressure);
+      }
       if (workload.backend) {
         await page.addInitScript((backend) => {
           if (backend === 'wasm') {
@@ -535,10 +571,16 @@ test.describe('opt-in Chromium resource profile', () => {
           inputSha256: createHash('sha256')
             .update(readFileSync(resolve('public', workload.fixture))).digest('hex'),
           settings: workload.settings,
+          controlledPreflight: workload.pressure ? {
+            level: workload.pressure,
+            usedJSHeapSizeMB: 8,
+            totalJSHeapSizeMB: 16,
+            jsHeapSizeLimitMB: workload.pressure === 'critical' ? 16 : 1024,
+          } : null,
           measurementScope: {
             elapsed: 'UI conversion request through observed done, including resource sampling',
             cpu: 'Chromium process CPU delta; unavailable when a sampled process set changes',
-            memory: 'Observed sampled peak delta, not an absolute peak',
+            memory: 'CDP Runtime.getHeapUsage renderer heap and process PSS/RSS sampled peak deltas; GPU memory unmeasured',
             sampleIntervalMs: CONVERSION_SAMPLE_INTERVAL_MS,
             correctness: 'Encoded outputs decoded after all measured cycles and post-GC samples',
           },

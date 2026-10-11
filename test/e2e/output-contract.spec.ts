@@ -4,6 +4,7 @@
 import { expect, test } from '@playwright/test';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
 import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
+import { parseGifDelaysCs } from '../../validation/windows/gif-playback.mjs';
 import {
   type OutputContractCase,
   compareAnimatedOutputExact,
@@ -55,12 +56,18 @@ async function runContractConversion(
   contract: OutputContractCase
 ) {
   await configureContract(page, contract);
+  if (contract.id.startsWith('integer-vfr-')) {
+    expect(await page.evaluate(() => window.__TEST_HELPERS__?.getMetadata()?.framerate)).toBe(60);
+  }
   await clickConvert(page);
   await dismissWarningDialog(page);
   const state = await waitForConversionComplete(page, 120_000);
   expect(await getErrorMessage(page)).toBeNull();
   expect(state).toBe('done');
   const output = await downloadResult(page);
+  if (contract.format === 'gif') {
+    expect(parseGifDelaysCs(output).every((delay) => delay >= 2 && delay <= 200)).toBe(true);
+  }
   await test.info().attach(`${contract.id}.${contract.format}`, {
     body: output,
     contentType: contract.format === 'gif' ? 'image/gif' : 'image/webp',
@@ -104,6 +111,131 @@ test.describe('deterministic output contracts', () => {
         expect(exact.durationUs).toBeGreaterThan(0);
         expect(exact.loopTransitionChecked).toBe(true);
       }
+    });
+  }
+});
+
+test.describe('fractional pressure cadence through UI routing', () => {
+  for (const route of ['gif-worker', 'gif-main', 'webp-parallel', 'webp-serial', 'webp-wasm'] as const) {
+    test(`${route} admits fifteen of twenty-one decoded frames under critical pressure`, async ({ page }) => {
+      await page.addInitScript((backend) => {
+        if (backend === 'gif-main' || backend === 'webp-serial') {
+          Object.defineProperty(globalThis, 'Worker', { configurable: true,
+            value: class UnavailableWorker { constructor() {
+              throw new DOMException('Force the selected main-thread contract', 'NotSupportedError');
+            } },
+          });
+        }
+        if (backend === 'webp-wasm') {
+          Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+            configurable: true, value: undefined,
+          });
+        }
+      }, route);
+      await page.goto('/');
+      const timeOrigin = await page.evaluate(() => performance.timeOrigin);
+      const format = route.startsWith('gif') ? 'gif' : 'webp';
+      const contract = cases.find((entry) => entry.id === `pressure-21fps-${format}`)!;
+      const observations = [];
+      for (const critical of [false, true]) {
+        await page.evaluate((isCritical) => {
+          window.__TEST_HELPERS__?.resetApp();
+          Object.defineProperty(performance, 'memory', { configurable: true,
+            value: { usedJSHeapSize: 8 * 1024 * 1024, totalJSHeapSize: 16 * 1024 * 1024,
+              jsHeapSizeLimit: (isCritical ? 16 : 1024) * 1024 * 1024 },
+          });
+        }, critical);
+        const activeContract = critical ? { ...contract, expected: {
+          ...contract.expected, ...contractData.pressureExpectations[format],
+        } } : contract;
+        const output = await runContractConversion(page, activeContract);
+        await verifyAnimatedOutput(page, output, activeContract, markers);
+        const profile = await page.evaluate(() => {
+          const helper = window.__TEST_HELPERS__ as unknown as {
+            getConversionProfile: () => ConversionProfileReport | null;
+          };
+          return helper.getConversionProfile();
+        });
+        const stage = profile?.stages.find((entry) => entry.stage === 'transcoding');
+        if (!stage || stage.stage !== 'transcoding') throw new Error('Missing native counts');
+        expect(stage.decodedFrames).toBe(21);
+        expect(stage.selectedFrames).toBe(critical ? 15 : format === 'gif' ? 20 : 21);
+        expect(profile?.encoderRoute).toBe(route === 'webp-parallel' ? 'webp-parallel-canvas'
+          : route === 'webp-serial' ? 'webp-serial-canvas' : route);
+        observations.push({ critical, profile });
+        expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
+      }
+      await page.evaluate(() => {
+        window.__TEST_HELPERS__?.resetApp();
+        Object.defineProperty(performance, 'memory', { configurable: true,
+          value: { usedJSHeapSize: 8 * 1024 * 1024, totalJSHeapSize: 16 * 1024 * 1024,
+            jsHeapSizeLimit: 1024 * 1024 * 1024 },
+        });
+      });
+      const integerVfr = cases.find((entry) => entry.id === `integer-vfr-${format}`)!;
+      const vfrOutput = await runContractConversion(page, integerVfr);
+      await verifyAnimatedOutput(page, vfrOutput, integerVfr, markers);
+      const vfrProfile = await page.evaluate(() => {
+        const helper = window.__TEST_HELPERS__ as unknown as {
+          getConversionProfile: () => ConversionProfileReport | null;
+        };
+        return helper.getConversionProfile();
+      });
+      const vfrStage = vfrProfile?.stages.find((entry) => entry.stage === 'transcoding');
+      if (!vfrStage || vfrStage.stage !== 'transcoding') throw new Error('Missing VFR admission counts');
+      expect(vfrStage.decodedFrames).toBe(3);
+      expect(vfrStage.selectedFrames).toBe(3);
+      await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
+      await injectTestFile(page, 'test-video-ci-high-motion-120fps.mp4');
+      await setFormat(page, format);
+      await setQuality(page, 'high');
+      await setScale(page, '100%');
+      await setSmartFrameSkip(page, 'off');
+      await page.evaluate(() => {
+        const samples: Array<{ atMs: number; percent: number; current: number; total: number; phase: string; fps: number | null }> = [];
+        const capture = () => {
+          const diagnostics = document.querySelector('[data-testid="progress-diagnostics"]');
+          const text = diagnostics?.textContent ?? '';
+          const count = /Frame (\d+)\/(\d+)/.exec(text);
+          const rate = /@ ([\d.]+) fps/.exec(text);
+          const phase = /— (\w+)/.exec(text)?.[1] ?? 'unknown';
+          const percent = Number(document.querySelector('[role="progressbar"]')?.getAttribute('data-progress'));
+          if (!count || !Number.isFinite(percent)) return;
+          const current = Number(count[1]);
+          if (samples.at(-1)?.current === current && samples.at(-1)?.phase === phase) return;
+          if (samples.length >= 128) throw new Error('Progress observer overflow');
+          samples.push({ atMs: performance.now(), percent, current, total: Number(count[2]), phase,
+            fps: rate ? Number(rate[1]) : null });
+        };
+        const observer = new MutationObserver(capture);
+        observer.observe(document.body, { attributes: true, characterData: true, childList: true, subtree: true });
+        (globalThis as unknown as { __wmcProgressObservation: unknown }).__wmcProgressObservation = { samples, observer };
+      });
+      await clickConvert(page);
+      await dismissWarningDialog(page);
+      expect(await waitForConversionComplete(page, 120_000)).toBe('done');
+      const progressObservation = await page.evaluate(() => {
+        const inspector = (globalThis as unknown as { __wmcProgressObservation: {
+          samples: Array<{ atMs: number; percent: number; current: number; total: number; phase: string; fps: number | null }>;
+          observer: MutationObserver;
+        } }).__wmcProgressObservation;
+        inspector.observer.disconnect();
+        return inspector.samples;
+      });
+      const longProfile = await page.evaluate(() => (window.__TEST_HELPERS__ as unknown as {
+        getConversionProfile: () => ConversionProfileReport | null;
+      }).getConversionProfile());
+      const longStage = longProfile?.stages.find((entry) => entry.stage === 'transcoding');
+      if (!longStage || longStage.stage !== 'transcoding') throw new Error('Missing native long-stream counts');
+      expect(longStage.decodedFrames).toBe(360);
+      const intermediate = progressObservation.filter((sample) => sample.current > 1 && sample.current < 360 && sample.percent < 100);
+      expect(intermediate.length).toBeGreaterThan(0);
+      expect(intermediate.some((sample) => sample.fps !== null && Number.isFinite(sample.fps) && sample.fps > 0)).toBe(true);
+      expect(progressObservation.every((sample, index) => index === 0 || sample.percent >= progressObservation[index - 1]!.percent && (sample.phase !== progressObservation[index - 1]!.phase || sample.current >= progressObservation[index - 1]!.current))).toBe(true);
+      expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
+      await test.info().attach(`${route}-admission.json`, {
+        body: JSON.stringify({ timeOrigin, observations, vfrProfile, longProfile, progressObservation }, null, 2), contentType: 'application/json',
+      });
     });
   }
 });

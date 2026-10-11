@@ -4,7 +4,7 @@
 // Copyright (c) 2026 PiesP
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,6 +17,56 @@ interface VideoFixture {
   outputArgs?: string[];
   displayRotation?: number;
   requiresReorderedFrames?: boolean;
+  finalSampleDurationMs?: number;
+}
+
+/** Adjust only the final singleton sample in the small, ordinary MP4 fixture. */
+function setFinalSampleDuration(path: string, durationMs: number): void {
+  const bytes = readFileSync(path);
+  const boxes = new Map<string, number>();
+  const containers = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'edts']);
+  const visit = (start: number, end: number, depth: number): void => {
+    if (depth > 8) throw new Error('Fixture MP4 nesting exceeds the bounded parser');
+    for (let offset = start; offset + 8 <= end; ) {
+      const size = bytes.readUInt32BE(offset);
+      const type = bytes.toString('ascii', offset + 4, offset + 8);
+      if (size < 8 || size > end - offset) throw new Error('Invalid fixture MP4 box');
+      boxes.set(type, offset);
+      if (containers.has(type)) visit(offset + 8, offset + size, depth + 1);
+      offset += size;
+    }
+  };
+  visit(0, bytes.length, 0);
+  const box = (type: string): number => {
+    const offset = boxes.get(type);
+    if (offset === undefined || bytes[offset + 8] !== 0) {
+      throw new Error(`Fixture requires a version-zero ${type} box`);
+    }
+    return offset;
+  };
+  const stts = box('stts');
+  const entries = bytes.readUInt32BE(stts + 12);
+  if (entries < 1 || entries > 16) throw new Error('Unexpected fixture time table');
+  const lastEntry = stts + 16 + (entries - 1) * 8;
+  if (bytes.readUInt32BE(lastEntry) !== 1) throw new Error('Final fixture sample is not singleton');
+  const mdhd = box('mdhd');
+  const timescale = bytes.readUInt32BE(mdhd + 20);
+  bytes.writeUInt32BE(Math.round((durationMs * timescale) / 1000), lastEntry + 4);
+  let duration = 0;
+  for (let entry = stts + 16; entry <= lastEntry; entry += 8) {
+    duration += bytes.readUInt32BE(entry) * bytes.readUInt32BE(entry + 4);
+  }
+  bytes.writeUInt32BE(duration, mdhd + 24);
+  const mvhd = box('mvhd');
+  const movieDuration = Math.round((duration * bytes.readUInt32BE(mvhd + 20)) / timescale);
+  bytes.writeUInt32BE(movieDuration, mvhd + 24);
+  bytes.writeUInt32BE(movieDuration, box('tkhd') + 28);
+  const elst = box('elst');
+  if (bytes.readUInt32BE(elst + 12) !== 1 || bytes.readInt32BE(elst + 20) !== 0) {
+    throw new Error('Fixture has an unexpected edit list');
+  }
+  bytes.writeUInt32BE(movieDuration, elst + 16);
+  writeFileSync(path, bytes);
 }
 
 const CFR_MARKERS =
@@ -58,6 +108,48 @@ export function generateE2eVideo(): void {
       fileName: 'test-video-contract-motion-120fps.mp4',
       input: `color=c=black:size=320x180:rate=120:duration=1.2,${PERF_MARKER_DRAWS}`,
       extraEncoderArgs: ['-preset', 'ultrafast', '-crf', '18', '-g', '1'],
+    },
+    {
+      // Seven nominal 60-fps PTS rounded to milliseconds, with an exact 110-ms endpoint.
+      fileName: 'test-video-contract-short-tail.mp4',
+      input:
+        'color=c=black:size=96x64:rate=1000:duration=0.11,' +
+        "drawbox=c=red:t=fill:enable='lt(t,0.05)'," +
+        "drawbox=c=lime:t=fill:enable='between(t,0.05,0.099)'," +
+        "drawbox=c=blue:t=fill:enable='gte(t,0.1)'," +
+        "select='eq(n,0)+eq(n,17)+eq(n,33)+eq(n,50)+eq(n,67)+eq(n,83)+eq(n,100)'",
+      extraEncoderArgs: [
+        '-g',
+        '1',
+        '-fps_mode',
+        'vfr',
+        '-enc_time_base',
+        '1/1000',
+        '-video_track_timescale',
+        '1000',
+      ],
+      finalSampleDurationMs: 10,
+    },
+    {
+      // The metadata's first 50 packets are 60 fps; the trimmed segment is sparse VFR.
+      fileName: 'test-video-contract-integer-vfr.mp4',
+      input:
+        'color=c=white:size=96x64:rate=60:duration=5.02,' +
+        "drawbox=c=red:t=fill:enable='eq(n,60)'," +
+        "drawbox=c=lime:t=fill:enable='eq(n,120)'," +
+        "drawbox=c=blue:t=fill:enable='eq(n,180)'," +
+        "drawbox=c=yellow:t=fill:enable='eq(n,240)'," +
+        "select='lt(n,60)+eq(n,60)+eq(n,120)+eq(n,180)+eq(n,240)+eq(n,300)'",
+      extraEncoderArgs: ['-g', '1', '-fps_mode', 'vfr', '-enc_time_base', '1/60'],
+    },
+    {
+      fileName: 'test-video-contract-pressure-21fps.mp4',
+      input:
+        'color=c=black:size=96x64:rate=21:duration=1,' +
+        "drawbox=c=red:t=fill:enable='lt(n,7)'," +
+        "drawbox=c=lime:t=fill:enable='between(n,7,13)'," +
+        "drawbox=c=blue:t=fill:enable='gte(n,14)'",
+      extraEncoderArgs: ['-g', '1'],
     },
     {
       fileName: 'test-video-contract-bframes.mp4',
@@ -225,6 +317,9 @@ export function generateE2eVideo(): void {
         }
       }
 
+      if (fixture.finalSampleDurationMs !== undefined) {
+        setFinalSampleDuration(outputPath, fixture.finalSampleDurationMs);
+      }
       const size = statSync(outputPath).size;
       if (size === 0) {
         throw new Error(`Generated an empty E2E codec fixture: ${outputPath}`);

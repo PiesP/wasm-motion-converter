@@ -66,6 +66,21 @@ construction is unavailable. The WASM case disables only Canvas WebP encoding,
 keeping Canvas pixel copying available. A failure after the GIF Worker
 initialization message cannot silently retry on the main thread.
 
+The [presentation policy](../docs/presentation-timing.md) states sampling and GIF timing tradeoffs.
+The corpus also covers a 110-ms GIF tail, a sparse three-scene trimmed interval
+inside a nominal 60-fps track, and 21-fps normal/critical pressure conversions.
+All five UI encoder routes assert production admission counts and observable
+intermediate progress in the same document. Pressure inputs are controlled
+preflight values; they are separate from native decode/encode observations.
+
+The prepared Windows profile displays the downloaded short-tail GIF as an
+ordinary Blob-backed `<img>`. `../validation/windows/gif-playback.mjs` records
+bounded, timestamped compositor PNGs and checks repeated visible color cycles.
+It declares display sampling tolerance separately from serialized delay error.
+`ImageDecoder` verifies source-scene timing and the full-composited exact
+representation oracle; neither that metadata nor a self-comparison establishes
+ordinary-image playback. Keep these three acceptance oracles separate.
+
 The shared contract in `../validation/windows/output-contract.json` is consumed
 by both Playwright and the production-bundle Windows profile. Codec skips are
 allowed only when `VideoDecoder.isConfigSupported()` explicitly rejects the

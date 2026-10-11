@@ -10,6 +10,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.mjs';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
 import { exerciseOfflineRecovery } from './offline-recovery.mjs';
+import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.mjs';
 
 const PROFILE_ID = 'wmc-media';
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
@@ -925,6 +926,7 @@ async function convertOutputContract(
   );
   await selectFixture(page, fixturePath);
   await applyContractSettings(page, contract);
+  await page.evaluate(() => globalThis.__wmcPressureProbe?.reset());
   await page.locator('[data-testid="convert-button"]').click();
   await proceedIfPrompted(page);
   await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
@@ -957,6 +959,11 @@ async function convertOutputContract(
   });
   validateOutput(bytes, contract.format, contract.expected.width, contract.expected.height);
   const decoded = await verifyAnimatedOutput(page, bytes, contract, markers);
+  const gifDelaysCs = contract.format === 'gif' ? parseGifDelaysCs(bytes) : null;
+  if (gifDelaysCs) {
+    assert(gifDelaysCs.every((delay) => delay >= 2 && delay <= 200),
+      `${contract.id}: an emitted record is not viewer-safe`);
+  }
   const exactOracle = contract.id === 'cfr-trim-gif'
     ? await compareAnimatedOutputExact(page, bytes, bytes, contract.format)
     : null;
@@ -966,6 +973,7 @@ async function convertOutputContract(
     fixture: contract.fixture,
     format: contract.format,
     decoded,
+    gifDelaysCs,
     exactOracle,
     output: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) },
   };
@@ -1873,8 +1881,7 @@ export async function run({ browser, root, output }) {
     checks.push(await exerciseCancellation(page, started.url, cancellationFixture, outputRoot, artifacts));
     checks.push(await exerciseUiDisclosures(page, started.url, smallFixture, outputRoot, artifacts));
     for (const contract of outputContract.cases) {
-      checks.push(
-        await convertOutputContract(
+      const check = await convertOutputContract(
           page,
           started.url,
           contractFixtures.get(contract.id),
@@ -1882,8 +1889,126 @@ export async function run({ browser, root, output }) {
           outputContract.markers,
           outputRoot,
           artifacts
-        )
-      );
+        );
+      checks.push(check);
+      if (contract.id === 'short-tail-gif') {
+        const playback = await collectGifPlayback({
+          context,
+          gifBytes: await readFile(join(outputRoot, check.output.file)),
+          outputRoot,
+          artifacts,
+          label: 'short-tail-live-playback',
+        });
+        assertGifPlayback(playback, { expectedCycleMs: 120 });
+        checks.push({ id: 'gif-ordinary-image-playback', status: 'passed', observation: playback });
+      }
+    }
+
+    // A separate page keeps this controlled preflight pressure observation out
+    // of the normal corpus and preserves the real application option round-trip.
+    const pressurePage = await context.newPage();
+    try {
+      await pressurePage.addInitScript(() => {
+        Object.defineProperty(performance, 'memory', {
+          configurable: true,
+          value: { usedJSHeapSize: 8 * 1024 * 1024, totalJSHeapSize: 16 * 1024 * 1024,
+            jsHeapSizeLimit: 16 * 1024 * 1024 },
+        });
+        const probe = globalThis.__wmcPressureProbe = {
+          nativeDecoded: 0, submittedWebp: 0, terminal: null, startRatios: [],
+          reset() {
+            this.nativeDecoded = 0; this.submittedWebp = 0;
+            this.terminal = null; this.startRatios = [];
+          },
+        };
+        const NativeDecoder = VideoDecoder;
+        globalThis.VideoDecoder = class ObservedDecoder extends NativeDecoder {
+          constructor(config) {
+            super({ ...config, output(frame) {
+              probe.nativeDecoded++;
+              config.output(frame);
+            } });
+          }
+        };
+        const NativeWorker = Worker;
+        globalThis.Worker = class ObservedWorker extends NativeWorker {
+          constructor(...args) {
+            super(...args);
+            this.addEventListener('message', ({ data }) => {
+              if (data?.type === 'progress' && data.percent === 100) {
+                probe.terminal = {
+                  decodedFrames: data.decodedFrames, selectedFrames: data.selectedFrames,
+                  encodedFrames: data.encodedFrames, emittedFrames: data.emittedFrames,
+                };
+              }
+            });
+          }
+          postMessage(message, ...args) {
+            if (message?.type === 'start') {
+              probe.startRatios.push(message.options.memoryPressureCadenceRatio);
+            } else if (message?.rgbaData instanceof Uint8Array) {
+              probe.submittedWebp++;
+            }
+            return super.postMessage(message, ...args);
+          }
+        };
+      });
+      for (const format of ['gif', 'webp']) {
+        const contract = outputContract.cases.find((candidate) => candidate.id === `pressure-21fps-${format}`);
+        assert(contract, 'Missing pressure cadence output contract');
+        const check = await convertOutputContract(pressurePage, started.url,
+          contractFixtures.get(contract.id), { ...contract, id: `critical-${contract.id}`, expected: {
+            ...contract.expected, ...outputContract.pressureExpectations[format],
+          } },
+          outputContract.markers, outputRoot, artifacts);
+        const counts = await pressurePage.evaluate(() => {
+          const { reset: _reset, ...observation } = globalThis.__wmcPressureProbe;
+          return observation;
+        });
+        if (format === 'gif') {
+          assert.equal(counts.terminal?.decodedFrames, 21);
+          assert.equal(counts.terminal?.selectedFrames, 15);
+          assert.equal(counts.startRatios.length, 1);
+          assert(Math.abs(counts.startRatios[0] - 1.4) < 0.000001);
+        } else {
+          assert.equal(counts.nativeDecoded, 21);
+          assert.equal(counts.submittedWebp, 15);
+        }
+        checks.push({ ...check, admission: {
+          ...counts, route: format === 'gif' ? 'gif-worker' : 'webp-parallel-canvas',
+          boundary: format === 'gif' ? 'production Worker terminal progress' : 'native decoder output and submitted encoder tasks',
+          controlledPreflight: { usedMB: 8, totalMB: 16, limitMB: 16 },
+        } });
+      }
+    } finally {
+      await pressurePage.close();
+    }
+
+    const serialPage = await context.newPage();
+    try {
+      await serialPage.addInitScript(() => {
+        globalThis.__wmcWorkerConstructionAttempts = 0;
+        Object.defineProperty(globalThis, 'Worker', { configurable: true,
+          value: class UnavailableWorker { constructor() {
+            globalThis.__wmcWorkerConstructionAttempts++;
+            throw new DOMException('Force serial Canvas contract', 'NotSupportedError');
+          } },
+        });
+      });
+      const contract = outputContract.cases.find((candidate) => candidate.id === 'integer-vfr-webp');
+      assert(contract, 'Missing integer-ratio VFR WebP contract');
+      const serial = await convertOutputContract(serialPage, started.url,
+        contractFixtures.get(contract.id), { ...contract, id: 'integer-vfr-serial-webp' },
+        outputContract.markers, outputRoot, artifacts);
+      const routeProbe = await serialPage.evaluate(() => ({
+        workerAttempts: globalThis.__wmcWorkerConstructionAttempts,
+        nativeWebpAvailable: typeof OffscreenCanvas.prototype.convertToBlob === 'function',
+      }));
+      assert(routeProbe.workerAttempts > 0 && routeProbe.nativeWebpAvailable,
+        'Serial Canvas check did not reject its pool while preserving native WebP');
+      checks.push({ ...serial, routeProbe });
+    } finally {
+      await serialPage.close();
     }
 
     // Exercise the production WASM bundle under the deployed CSP, preserving
@@ -1923,6 +2048,12 @@ export async function run({ browser, root, output }) {
       'Rejected native WebP capability must select WASM before creating a Worker pool');
     assert.equal(fallback.nativeWebpAvailable, false);
     checks.push({ ...wasmCheck, fallback });
+    const integerWasmContract = outputContract.cases.find((contract) => contract.id === 'integer-vfr-webp');
+    assert(integerWasmContract, 'Missing integer-ratio WASM contract');
+    checks.push(await convertOutputContract(page, started.url,
+      contractFixtures.get(integerWasmContract.id),
+      { ...integerWasmContract, id: 'integer-vfr-wasm-webp' },
+      outputContract.markers, outputRoot, artifacts));
     checks.push(await exerciseLongLocaleResult(page, outputRoot, artifacts));
     checks.push(await exerciseBrowserZoom(
       browser, page, bundleRoot, started.url, smallFixture, outputRoot, artifacts

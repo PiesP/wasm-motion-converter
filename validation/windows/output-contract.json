@@ -237,6 +237,162 @@
         "durationToleranceMs": 20,
         "maxColorDistance": 96
       }
+    },
+    {
+      "id": "short-tail-gif",
+      "fixture": "public/test-video-contract-short-tail.mp4",
+      "format": "gif",
+      "settings": {
+        "quality": "high",
+        "scale": "1",
+        "trimStart": 0,
+        "trimEnd": 0,
+        "smartFrameSkip": "off"
+      },
+      "expected": {
+        "width": 96,
+        "height": 64,
+        "markers": [
+          "red",
+          "lime",
+          "blue"
+        ],
+        "durationsMs": [
+          50,
+          50,
+          20
+        ],
+        "durationToleranceMs": 1,
+        "maxColorDistance": 96
+      }
+    },
+    {
+      "id": "integer-vfr-gif",
+      "fixture": "public/test-video-contract-integer-vfr.mp4",
+      "format": "gif",
+      "settings": {
+        "quality": "high",
+        "scale": "1",
+        "trimStart": 1,
+        "trimEnd": 4,
+        "smartFrameSkip": "off"
+      },
+      "expected": {
+        "width": 96,
+        "height": 64,
+        "markers": [
+          "red",
+          "lime",
+          "blue"
+        ],
+        "durationsMs": [
+          1000,
+          1000,
+          1000
+        ],
+        "durationToleranceMs": 20,
+        "maxColorDistance": 96
+      }
+    },
+    {
+      "id": "integer-vfr-webp",
+      "fixture": "public/test-video-contract-integer-vfr.mp4",
+      "format": "webp",
+      "settings": {
+        "quality": "high",
+        "scale": "1",
+        "trimStart": 1,
+        "trimEnd": 4,
+        "smartFrameSkip": "off"
+      },
+      "expected": {
+        "width": 96,
+        "height": 64,
+        "markers": [
+          "red",
+          "lime",
+          "blue"
+        ],
+        "durationsMs": [
+          1000,
+          1000,
+          1000
+        ],
+        "durationToleranceMs": 12,
+        "maxColorDistance": 96
+      }
+    },
+    {
+      "id": "pressure-21fps-gif",
+      "fixture": "public/test-video-contract-pressure-21fps.mp4",
+      "format": "gif",
+      "settings": {
+        "quality": "high",
+        "scale": "1",
+        "trimStart": 0,
+        "trimEnd": 0,
+        "smartFrameSkip": "off"
+      },
+      "expected": {
+        "width": 96,
+        "height": 64,
+        "markers": [
+          "red",
+          "lime",
+          "blue"
+        ],
+        "durationsMs": [
+          330,
+          340,
+          330
+        ],
+        "durationToleranceMs": 20,
+        "maxColorDistance": 96
+      }
+    },
+    {
+      "id": "pressure-21fps-webp",
+      "fixture": "public/test-video-contract-pressure-21fps.mp4",
+      "format": "webp",
+      "settings": {
+        "quality": "high",
+        "scale": "1",
+        "trimStart": 0,
+        "trimEnd": 0,
+        "smartFrameSkip": "off"
+      },
+      "expected": {
+        "width": 96,
+        "height": 64,
+        "markers": [
+          "red",
+          "lime",
+          "blue"
+        ],
+        "durationsMs": [
+          333,
+          334,
+          333
+        ],
+        "durationToleranceMs": 12,
+        "maxColorDistance": 96
+      }
     }
-  ]
+  ],
+  "pressureExpectations": {
+    "gif": {
+      "durationsMs": [
+        330,
+        380,
+        290
+      ]
+    },
+    "webp": {
+      "durationsMs": [
+        333,
+        381,
+        286
+      ]
+    }
+  }
 }
