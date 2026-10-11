@@ -21,11 +21,25 @@ export const PROFILE_OPERATIONS = [
   'gifQuantization',
   'gifPaletteMapping',
   'gifFrameWrite',
+  'webpEncoding',
+  'encoderQueueWait',
+  'webpMuxing',
+  'muxFinalization',
+  'outputCopy',
+] as const;
+
+export const PROFILE_ENCODER_ROUTES = [
+  'gif-worker',
+  'gif-main',
+  'webp-parallel-canvas',
+  'webp-serial-canvas',
+  'webp-wasm',
 ] as const;
 
 export const PROFILE_COPY_PATHS = ['RGBX', 'RGBA', 'BGRA', 'BGRX', 'canvas', 'unknown'] as const;
 
 export type ProfileOperation = (typeof PROFILE_OPERATIONS)[number];
+export type ProfileEncoderRoute = (typeof PROFILE_ENCODER_ROUTES)[number];
 export type ProfileCopyPath = (typeof PROFILE_COPY_PATHS)[number];
 export type ProfileOperationRecorder = (operation: ProfileOperation, wallMs: number) => void;
 export type ProfileCopyPathRecorder = (path: ProfileCopyPath) => void;
@@ -43,27 +57,31 @@ interface CommonStageMetrics {
   startMs: number;
   endMs: number;
   durationMs: number;
-  heapStartMB: number;
-  heapEndMB: number;
-  heapPeakMB: number;
+  heapStartMB: number | null;
+  heapEndMB: number | null;
+  heapPeakMB: number | null;
 }
 
 export interface DemuxStageMetrics extends CommonStageMetrics {
   stage: 'demuxing';
-  framesProcessed: number;
-  fps: number;
+  framesProcessed: number | null;
+  fps: number | null;
 }
 
 export interface TranscodingStageMetrics extends CommonStageMetrics {
   stage: 'transcoding';
   mode: 'streaming-decode-encode';
   attribution: 'combined';
-  decodedFrames: number;
-  encodedFrames: number;
-  decodeFps: number;
-  encodeFps: number;
-  outputBytes: number;
-  throughputMBps: number;
+  /** Explicit observations only; null means this route did not report the count. */
+  consumedChunks: number | null;
+  decodedFrames: number | null;
+  selectedFrames: number | null;
+  encodedFrames: number | null;
+  emittedFrames: number | null;
+  decodeFps: number | null;
+  encodeFps: number | null;
+  outputBytes: number | null;
+  throughputMBps: number | null;
 }
 
 export interface FinalizationStageMetrics extends CommonStageMetrics {
@@ -74,7 +92,14 @@ export type StageMetrics = DemuxStageMetrics | TranscodingStageMetrics | Finaliz
 
 interface StageObservations {
   demuxing: { frames: number };
-  transcoding: { decodedFrames: number; encodedFrames: number; outputBytes: number };
+  transcoding: {
+    consumedChunks: number;
+    decodedFrames: number;
+    selectedFrames: number;
+    encodedFrames: number;
+    emittedFrames: number;
+    outputBytes: number;
+  };
   finalizing: Record<string, never>;
 }
 
@@ -84,11 +109,12 @@ export interface ProfileSpan<S extends ProfileStage> {
 }
 
 export interface ConversionProfileReport {
-  schemaVersion: 3;
+  schemaVersion: 4;
   totalDurationMs: number;
-  heapStartMB: number;
-  heapEndMB: number;
-  heapPeakMB: number;
+  heapStartMB: number | null;
+  heapEndMB: number | null;
+  heapPeakMB: number | null;
+  encoderRoute: ProfileEncoderRoute | null;
   stages: readonly StageMetrics[];
   /** Fine-grained operation wall time. These totals may overlap and are not stage percentages. */
   operationTotals: ProfileOperationTotals;
@@ -103,18 +129,26 @@ export interface ConversionProfileReport {
 interface ActiveStage {
   stage: ProfileStage;
   startMs: number;
-  heapStartMB: number;
-  heapPeakMB: number;
+  heapStartMB: number | null;
+  heapPeakMB: number | null;
   observations: Record<string, number>;
 }
 
 const STAGE_ORDER: readonly ProfileStage[] = ['demuxing', 'transcoding', 'finalizing'];
 
-function roundRate(count: number, durationMs: number): number {
+function maxKnown(first: number | null, second: number | null): number | null {
+  if (first === null) return second;
+  if (second === null) return first;
+  return Math.max(first, second);
+}
+
+function roundRate(count: number | null, durationMs: number): number | null {
+  if (count === null) return null;
   return durationMs > 0 ? Math.round((count / durationMs) * 1000) : 0;
 }
 
-function roundThroughput(outputBytes: number, durationMs: number): number {
+function roundThroughput(outputBytes: number | null, durationMs: number): number | null {
+  if (outputBytes === null) return null;
   return durationMs > 0 && outputBytes > 0
     ? Math.round((outputBytes / BYTES_PER_MB / (durationMs / 1000)) * 100) / 100
     : 0;
@@ -132,7 +166,12 @@ export class ConversionProfiler {
     PROFILE_COPY_PATHS.map((path) => [path, 0])
   );
   private active: ActiveStage | null = null;
+  private encoderRoute: ProfileEncoderRoute | null = null;
   private finishedReport: ConversionProfileReport | null = null;
+
+  setEncoderRoute(route: ProfileEncoderRoute): void {
+    if (!this.finishedReport) this.encoderRoute = route;
+  }
 
   readonly recordOperation: ProfileOperationRecorder = (operation, wallMs) => {
     if (this.finishedReport || !Number.isFinite(wallMs) || wallMs < 0) return;
@@ -157,7 +196,7 @@ export class ConversionProfiler {
     }
 
     const heapStartMB = ConversionProfiler.getHeapMB();
-    this.heapPeakMB = Math.max(this.heapPeakMB, heapStartMB);
+    this.heapPeakMB = maxKnown(this.heapPeakMB, heapStartMB);
     const state: ActiveStage = {
       stage,
       startMs: performance.now(),
@@ -191,7 +230,7 @@ export class ConversionProfiler {
 
     const totalDurationMs = Math.max(0, Math.round(performance.now() - this.pipelineStartMs));
     const heapEndMB = ConversionProfiler.getHeapMB();
-    this.heapPeakMB = Math.max(this.heapPeakMB, heapEndMB);
+    this.heapPeakMB = maxKnown(this.heapPeakMB, heapEndMB);
     const stages = STAGE_ORDER.flatMap((stage) => {
       const metrics = this.stages.get(stage);
       return metrics ? [metrics] : [];
@@ -228,6 +267,7 @@ export class ConversionProfiler {
     ) as Record<ProfileCopyPath, number>;
     const summary = [
       `[${totalDurationMs}ms total]`,
+      `encoder route: ${this.encoderRoute ?? 'unavailable'}`,
       ...stageSummary,
       `operation wall time: ${
         PROFILE_OPERATIONS.filter((operation) => operationTotals[operation].samples > 0)
@@ -242,11 +282,12 @@ export class ConversionProfiler {
 
     const frozenStages = Object.freeze(stages.map((stage) => Object.freeze({ ...stage })));
     this.finishedReport = Object.freeze({
-      schemaVersion: 3 as const,
+      schemaVersion: 4 as const,
       totalDurationMs,
       heapStartMB: this.heapStartMB,
       heapEndMB,
       heapPeakMB: this.heapPeakMB,
+      encoderRoute: this.encoderRoute,
       stages: frozenStages,
       operationTotals: Object.freeze(operationTotals),
       copyPathCounts: Object.freeze(copyPathCounts),
@@ -262,7 +303,13 @@ export class ConversionProfiler {
     observations: Partial<StageObservations[S]>
   ): void {
     for (const [key, value] of Object.entries(observations)) {
-      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      // Counters are cumulative observations. Ignore invalid or stale updates.
+      if (
+        typeof value === 'number' &&
+        Number.isSafeInteger(value) &&
+        value >= 0 &&
+        value >= (state.observations[key] ?? 0)
+      ) {
         state.observations[key] = value;
       }
     }
@@ -270,15 +317,15 @@ export class ConversionProfiler {
 
   private sampleHeap(state: ActiveStage): void {
     const heapMB = ConversionProfiler.getHeapMB();
-    state.heapPeakMB = Math.max(state.heapPeakMB, heapMB);
-    this.heapPeakMB = Math.max(this.heapPeakMB, heapMB);
+    state.heapPeakMB = maxKnown(state.heapPeakMB, heapMB);
+    this.heapPeakMB = maxKnown(this.heapPeakMB, heapMB);
   }
 
   private endStage(state: ActiveStage): void {
     if (this.active !== state || this.finishedReport) return;
     const heapEndMB = ConversionProfiler.getHeapMB();
-    state.heapPeakMB = Math.max(state.heapPeakMB, heapEndMB);
-    this.heapPeakMB = Math.max(this.heapPeakMB, heapEndMB);
+    state.heapPeakMB = maxKnown(state.heapPeakMB, heapEndMB);
+    this.heapPeakMB = maxKnown(this.heapPeakMB, heapEndMB);
     const endMs = performance.now();
     const durationMs = Math.max(0, Math.round(endMs - state.startMs));
     const common = {
@@ -291,7 +338,7 @@ export class ConversionProfiler {
     };
 
     if (state.stage === 'demuxing') {
-      const framesProcessed = state.observations.frames ?? 0;
+      const framesProcessed = state.observations.frames ?? null;
       this.stages.set('demuxing', {
         ...common,
         stage: 'demuxing',
@@ -299,16 +346,22 @@ export class ConversionProfiler {
         fps: roundRate(framesProcessed, durationMs),
       });
     } else if (state.stage === 'transcoding') {
-      const decodedFrames = state.observations.decodedFrames ?? 0;
-      const encodedFrames = state.observations.encodedFrames ?? 0;
-      const outputBytes = state.observations.outputBytes ?? 0;
+      const consumedChunks = state.observations.consumedChunks ?? null;
+      const decodedFrames = state.observations.decodedFrames ?? null;
+      const selectedFrames = state.observations.selectedFrames ?? null;
+      const encodedFrames = state.observations.encodedFrames ?? null;
+      const emittedFrames = state.observations.emittedFrames ?? null;
+      const outputBytes = state.observations.outputBytes ?? null;
       this.stages.set('transcoding', {
         ...common,
         stage: 'transcoding',
         mode: 'streaming-decode-encode',
         attribution: 'combined',
+        consumedChunks,
         decodedFrames,
+        selectedFrames,
         encodedFrames,
+        emittedFrames,
         decodeFps: roundRate(decodedFrames, durationMs),
         encodeFps: roundRate(encodedFrames, durationMs),
         outputBytes,
@@ -325,21 +378,21 @@ export class ConversionProfiler {
     percentages: Readonly<Record<ProfileStage, number>>
   ): string {
     const base = `${stage.stage}: ${stage.durationMs}ms (${percentages[stage.stage]}%)`;
-    const memory = stage.heapPeakMB > 0 ? ` (peak ${stage.heapPeakMB}MB)` : '';
+    const memory = stage.heapPeakMB !== null ? ` (peak ${stage.heapPeakMB}MB)` : '';
     if (stage.stage === 'demuxing') {
-      return `${base} @ ${stage.fps}fps${memory}`;
+      return `${base} @ ${stage.fps ?? 'unknown'}fps${memory}`;
     }
     if (stage.stage === 'transcoding') {
       return (
         `${base} (streaming decode+encode; attribution unavailable; ` +
-        `${stage.decodedFrames} decoded/${stage.encodedFrames} encoded) ` +
-        `@ ${stage.encodeFps}fps, ${stage.throughputMBps}MB/s${memory}`
+        `${stage.decodedFrames ?? 'unknown'} decoded/${stage.encodedFrames ?? 'unknown'} encoded) ` +
+        `@ ${stage.encodeFps ?? 'unknown'}fps, ${stage.throughputMBps ?? 'unknown'}MB/s${memory}`
       );
     }
     return `${base}${memory}`;
   }
 
-  private static getHeapMB(): number {
-    return getMemoryUsageMB() ?? 0;
+  private static getHeapMB(): number | null {
+    return getMemoryUsageMB();
   }
 }

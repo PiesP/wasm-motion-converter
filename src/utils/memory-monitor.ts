@@ -90,18 +90,24 @@ export function checkMemoryForConversion(
   height: number,
   totalFrames: number,
   format: ConversionFormat
-): { level: 'ok' | 'warning' | 'critical'; estimatedMB: number; availableMB: number } {
+): {
+  level: 'ok' | 'warning' | 'critical';
+  estimatedMB: number;
+  availableMB: number;
+  availableSource: 'measured-heap' | 'fallback-estimate';
+} {
   const estimatedMB = estimatePeakMemoryMB(width, height, totalFrames, format);
   const memInfo = getMemoryInfo();
+  const availableSource = memInfo ? 'measured-heap' : 'fallback-estimate';
   const availableMB = memInfo
-    ? Math.round((memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize) / BYTES_PER_MB)
+    ? Math.max(0, Math.round((memInfo.jsHeapSizeLimit - memInfo.usedJSHeapSize) / BYTES_PER_MB))
     : MEMORY_DEFAULT_AVAILABLE_MB;
 
   if (estimatedMB > availableMB * MEMORY_CRITICAL_RATIO) {
-    return { level: 'critical', estimatedMB, availableMB };
+    return { level: 'critical', estimatedMB, availableMB, availableSource };
   }
   if (estimatedMB > availableMB * MEMORY_WARNING_RATIO) {
-    return { level: 'warning', estimatedMB, availableMB };
+    return { level: 'warning', estimatedMB, availableMB, availableSource };
   }
-  return { level: 'ok', estimatedMB, availableMB };
+  return { level: 'ok', estimatedMB, availableMB, availableSource };
 }
