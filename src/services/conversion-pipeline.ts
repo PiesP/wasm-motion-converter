@@ -31,6 +31,7 @@ import {
   PROGRESS_PHASE,
   PROGRESS_PHASE_RANGES,
   PROGRESS_THROTTLE_MS,
+  WEBP_QUALITY_PERCENT,
   WEBP_TARGET_FPS,
   WORKER_MAX_MEMORY_MB,
   WORKER_MIN_MEMORY_MB,
@@ -415,7 +416,9 @@ async function _runPipelineInner(
             ? MOTION_SIGNATURE_PEAK_BYTES
             : 0,
       });
-      const offscreenOk = await probeCanvasWebpCapability();
+      const offscreenOk = await probeCanvasWebpCapability(
+        WEBP_QUALITY_PERCENT[request.quality] / 100
+      );
       workerPool =
         offscreenOk && typeof Worker !== 'undefined' && memorySafeWorkerCount > 0
           ? createWorkerPool(memorySafeWorkerCount)
