@@ -16,13 +16,14 @@ export type CpuPixelFormat = 'rgb' | 'rgba';
 
 export interface FrameMemoryUsage {
   readonly canvasBytes: number;
+  readonly analysisBytes: number;
   readonly resultBytes: number;
   readonly sourceBytes: number;
   readonly targetBytes: number;
   readonly totalBytes: number;
 }
 
-type ReservationKind = 'canvas' | 'source' | 'target';
+type ReservationKind = 'analysis' | 'canvas' | 'source' | 'target';
 
 /** One conversion-scoped reservation. Release is deliberately idempotent. */
 export class FrameMemoryReservation {
@@ -129,6 +130,7 @@ export class WebpFrameMemoryBudget {
   readonly maxOutstandingTasks: number;
   readonly allowsTargetLookahead: boolean;
 
+  private analysisBytes = 0;
   private canvasBytes = 0;
   private resultBytes = 0;
   private sourceBytes = 0;
@@ -190,22 +192,45 @@ export class WebpFrameMemoryBudget {
 
   get usage(): FrameMemoryUsage {
     return {
+      analysisBytes: this.analysisBytes,
       canvasBytes: this.canvasBytes,
       resultBytes: this.resultBytes,
       sourceBytes: this.sourceBytes,
       targetBytes: this.targetBytes,
-      totalBytes: this.canvasBytes + this.resultBytes + this.sourceBytes + this.targetBytes,
+      totalBytes: this.currentBytes,
     };
   }
 
   /** Decoder output promises may retain this many source floors beside one task. */
-  calculatePendingSourceCapacity(sourceBytes: number, requestedMaximum: number): number {
+  calculatePendingSourceCapacity(
+    sourceBytes: number,
+    requestedMaximum: number,
+    analysisBytes = 0
+  ): number {
     assertReservationBytes(sourceBytes);
+    assertReservationBytes(analysisBytes);
     if (sourceBytes === 0) return 0;
     const requested = Math.max(1, Math.floor(requestedMaximum));
     const availableSourceBytes =
-      FRAME_PIPELINE_MEMORY_BUDGET_BYTES - this.canvasBytes - this.targetTaskBytes;
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES -
+      this.canvasBytes -
+      this.targetTaskBytes -
+      Math.max(this.analysisBytes, analysisBytes);
     return Math.min(requested, Math.max(0, Math.floor(availableSourceBytes / sourceBytes)));
+  }
+
+  /** Reserve bounded per-conversion analysis state beside at least one task. */
+  reserveAnalysis(bytes: number): FrameMemoryReservation {
+    assertReservationBytes(bytes);
+    if (
+      this.currentBytes + bytes + Math.max(0, this.targetTaskBytes - this.targetBytes) >
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    ) {
+      throw new Error('WebP frame memory limit exceeded by motion analysis');
+    }
+    const reservation = this.reserveImmediate('analysis', bytes);
+    if (!reservation) throw new Error('WebP frame memory limit exceeded by motion analysis');
+    return reservation;
   }
 
   tryReserveSource(bytes: number): FrameMemoryReservation | null {
@@ -281,6 +306,7 @@ export class WebpFrameMemoryBudget {
 
   release(reservation: FrameMemoryReservation, resultBytes: number): void {
     if (!this.reservations.delete(reservation)) return;
+    if (reservation.kind === 'analysis') this.analysisBytes -= reservation.bytes;
     if (reservation.kind === 'canvas') this.canvasBytes -= reservation.bytes;
     if (reservation.kind === 'source') this.sourceBytes -= reservation.bytes;
     if (reservation.kind === 'target') {
@@ -295,7 +321,9 @@ export class WebpFrameMemoryBudget {
   }
 
   private get currentBytes(): number {
-    return this.canvasBytes + this.resultBytes + this.sourceBytes + this.targetBytes;
+    return (
+      this.analysisBytes + this.canvasBytes + this.resultBytes + this.sourceBytes + this.targetBytes
+    );
   }
 
   private get admissionBytes(): number {
@@ -306,7 +334,9 @@ export class WebpFrameMemoryBudget {
       this.useSourceHeadroom && this.targetBytes > 0
         ? Math.max(this.sourceBytes, this.sourceHeadroomBytes)
         : this.sourceBytes;
-    return this.canvasBytes + this.resultBytes + retainedSources + this.targetBytes;
+    return (
+      this.analysisBytes + this.canvasBytes + this.resultBytes + retainedSources + this.targetBytes
+    );
   }
 
   private tryReserveTarget(): FrameMemoryReservation | null {
@@ -322,6 +352,7 @@ export class WebpFrameMemoryBudget {
     if (this.currentBytes + bytes > FRAME_PIPELINE_MEMORY_BUDGET_BYTES) return null;
     const reservation = new FrameMemoryReservation(this, kind, bytes);
     this.reservations.add(reservation);
+    if (kind === 'analysis') this.analysisBytes += bytes;
     if (kind === 'canvas') this.canvasBytes += bytes;
     if (kind === 'source') this.sourceBytes += bytes;
     if (kind === 'target') {
@@ -480,8 +511,10 @@ export function calculateFrameOutputConcurrency(
   targetWidth: number,
   targetHeight: number,
   requestedMaximum: number,
-  pixelFormat: CpuPixelFormat = 'rgb'
+  pixelFormat: CpuPixelFormat = 'rgb',
+  analysisBytes = 0
 ): number {
+  assertReservationBytes(analysisBytes);
   const requested = Math.max(1, Math.floor(requestedMaximum));
   const bytesPerFrame = estimateFrameOutputBytes(
     sourceWidth,
@@ -490,7 +523,10 @@ export function calculateFrameOutputConcurrency(
     targetHeight,
     pixelFormat
   );
-  return Math.min(requested, Math.floor(FRAME_PIPELINE_MEMORY_BUDGET_BYTES / bytesPerFrame));
+  return Math.min(
+    requested,
+    Math.max(0, Math.floor((FRAME_PIPELINE_MEMORY_BUDGET_BYTES - analysisBytes) / bytesPerFrame))
+  );
 }
 
 /**
@@ -507,8 +543,10 @@ export function calculateStagedFrameSourceCapacity(
   targetHeight: number,
   requestedMaximum: number,
   targetWorkingSetCount = 1,
-  pixelFormat: CpuPixelFormat = 'rgb'
+  pixelFormat: CpuPixelFormat = 'rgb',
+  analysisBytes = 0
 ): number {
+  assertReservationBytes(analysisBytes);
   const requested = Math.max(1, Math.floor(requestedMaximum));
   const targetCount = Math.max(1, Math.floor(targetWorkingSetCount));
   const sourceBytes = estimateDecodedSourceFrameBytes(
@@ -522,7 +560,7 @@ export function calculateStagedFrameSourceCapacity(
   if (!Number.isSafeInteger(targetWorkingBytes)) {
     throw new RangeError('Target working-set reservation exceeds the safe integer range');
   }
-  const sourceBudgetBytes = FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingBytes;
+  const sourceBudgetBytes = FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingBytes - analysisBytes;
   if (sourceBudgetBytes < sourceBytes) return 0;
   return Math.min(requested, Math.floor(sourceBudgetBytes / sourceBytes));
 }

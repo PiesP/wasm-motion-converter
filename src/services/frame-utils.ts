@@ -459,19 +459,27 @@ const MOTION_TILE_COLUMNS = 16;
 const MOTION_TILE_COUNT = MOTION_TILE_COLUMNS * MOTION_TILE_COLUMNS;
 const MOTION_CHANNELS = 3;
 
+/** Two ordered signatures, including all typed-array backing storage. */
+export const MOTION_SIGNATURE_PEAK_BYTES =
+  2 * MOTION_TILE_COUNT * (MOTION_CHANNELS * (3 + 4 + 8 + 8) + 4);
+
 /**
  * RGB area statistics for a fixed spatial grid. Every source pixel contributes
- * to one tile, while its typed arrays remain 3,328 bytes at any frame size.
+ * to one tile. Color sums and first spatial moments retain cursor position
+ * within tiles; each retained signature owns 18,688 bytes at any frame size.
  * This is an approximation: different images can have equal tile statistics,
- * especially when small objects move within one tile.
+ * including rearrangements that preserve all first moments and color extrema.
  */
 export interface MotionSignature {
   readonly width: number;
   readonly height: number;
   readonly means: Uint8Array;
+  readonly colorSums: Uint32Array;
   readonly minima: Uint8Array;
   readonly maxima: Uint8Array;
   readonly counts: Uint32Array;
+  readonly horizontalMoments: Float64Array;
+  readonly verticalMoments: Float64Array;
 }
 
 export interface MotionComparison {
@@ -502,6 +510,10 @@ export function computeMotionSignature(
 
   const sums = new Uint32Array(MOTION_TILE_COUNT * MOTION_CHANNELS);
   const counts = new Uint32Array(MOTION_TILE_COUNT);
+  // Keep unrounded integer sums. At the hard pixel ceiling, tile-relative
+  // coordinates keep every weighted sum below Number.MAX_SAFE_INTEGER.
+  const horizontalMoments = new Float64Array(sums.length);
+  const verticalMoments = new Float64Array(sums.length);
   const minima = new Uint8Array(sums.length);
   const maxima = new Uint8Array(sums.length);
   minima.fill(255);
@@ -518,12 +530,16 @@ export function computeMotionSignature(
       );
       const tile = tileRow * MOTION_TILE_COLUMNS + tileColumn;
       const tileOffset = tile * MOTION_CHANNELS;
+      const localX = x - Math.ceil((tileColumn * width) / MOTION_TILE_COLUMNS);
+      const localY = y - Math.ceil((tileRow * height) / MOTION_TILE_COLUMNS);
       const pixelOffset = (y * width + x) * pixelStride;
       counts[tile]!++;
       for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
         const value = pixelData[pixelOffset + channel]!;
         const offset = tileOffset + channel;
         sums[offset] = sums[offset]! + value;
+        horizontalMoments[offset] = horizontalMoments[offset]! + value * localX;
+        verticalMoments[offset] = verticalMoments[offset]! + value * localY;
         if (value < minima[offset]!) minima[offset] = value;
         if (value > maxima[offset]!) maxima[offset] = value;
       }
@@ -539,7 +555,17 @@ export function computeMotionSignature(
       means[offset] = Math.round(sums[offset]! / count);
     }
   }
-  return { width, height, means, minima, maxima, counts };
+  return {
+    width,
+    height,
+    means,
+    colorSums: sums,
+    minima,
+    maxima,
+    counts,
+    horizontalMoments,
+    verticalMoments,
+  };
 }
 
 export function compareMotionSignatures(
@@ -557,9 +583,31 @@ export function compareMotionSignatures(
     if (count === 0) continue;
     let meanDifference = 0;
     let extremaDifference = 0;
+    let spatialChange = false;
+    let appearanceChange = false;
+    let colorRange = 0;
     for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
       const offset = tile * MOTION_CHANNELS + channel;
       meanDifference += Math.abs(current.means[offset]! - previous.means[offset]!);
+      const channelRange = Math.max(
+        current.maxima[offset]! - current.minima[offset]!,
+        previous.maxima[offset]! - previous.minima[offset]!
+      );
+      spatialChange ||=
+        channelRange >= 64 &&
+        current.colorSums[offset] === previous.colorSums[offset] &&
+        Math.max(
+          Math.abs(current.horizontalMoments[offset]! - previous.horizontalMoments[offset]!),
+          Math.abs(current.verticalMoments[offset]! - previous.verticalMoments[offset]!)
+        ) >= channelRange;
+      appearanceChange ||=
+        Math.abs(current.colorSums[offset]! - previous.colorSums[offset]!) >= 64 &&
+        channelRange >= 64;
+      colorRange = Math.max(
+        colorRange,
+        current.maxima[offset]! - current.minima[offset]!,
+        previous.maxima[offset]! - previous.minima[offset]!
+      );
       extremaDifference = Math.max(
         extremaDifference,
         Math.abs(current.minima[offset]! - previous.minima[offset]!),
@@ -574,7 +622,13 @@ export function compareMotionSignatures(
       tileDistance >= 1 && extremaDifference >= 32
         ? Math.max(tileDistance, extremaDifference)
         : tileDistance;
-    localDistance = Math.max(localDistance, safeguardedDistance);
+    // A high-contrast cursor/text change must survive dilution in a large tile.
+    // Require stable unrounded channel sums and a contrast-sized displacement
+    // so a one-level codec fluctuation cannot alone trigger the safeguard.
+    // Balanced textured noise may still be retained; this is approximate motion
+    // detection, never a lossless equality decision.
+    const spatialSafeguard = (spatialChange && colorRange >= 64) || appearanceChange ? 7 : 0;
+    localDistance = Math.max(localDistance, safeguardedDistance, spatialSafeguard);
   }
 
   const globalDistance = weightedDistance / (current.width * current.height);

@@ -58,6 +58,35 @@ describe('bounded color-aware motion signatures', () => {
     expect(comparison.distance).toBe(comparison.localDistance);
   });
 
+  it('retains a one-pixel cursor move within the same large tile', () => {
+    const screenWidth = 1920;
+    const screenHeight = 1080;
+    const before = new Uint8Array(screenWidth * screenHeight * 3);
+    const after = before.slice();
+    before.set([255, 255, 255], (screenWidth + 1) * 3);
+    after.set([255, 255, 255], (screenWidth + 2) * 3);
+    const result = compareMotionSignatures(
+      computeMotionSignature(before, screenWidth, screenHeight),
+      computeMotionSignature(after, screenWidth, screenHeight)
+    );
+    expect(result.globalDistance).toBe(0);
+    expect(result.distance).toBeGreaterThan(6); // strongest smart-skip preset
+  });
+
+  it('distinguishes high-contrast cursor appearance from a one-level codec fluctuation', () => {
+    const screenWidth = 1920;
+    const screenHeight = 1080;
+    const background = new Uint8Array(screenWidth * screenHeight * 3);
+    background.set([255, 255, 255], (screenWidth + 20) * 3);
+    const noise = background.slice();
+    noise.set([1, 1, 1], (screenWidth + 1) * 3);
+    const cursor = background.slice();
+    cursor.set([255, 255, 255], (screenWidth + 1) * 3);
+    const baseline = computeMotionSignature(background, screenWidth, screenHeight);
+    expect(compareMotionSignatures(computeMotionSignature(noise, screenWidth, screenHeight), baseline).distance).toBeLessThanOrEqual(1.5);
+    expect(compareMotionSignatures(computeMotionSignature(cursor, screenWidth, screenHeight), baseline).distance).toBeGreaterThan(6);
+  });
+
   it('detects scene cuts and gradual motion while tolerating small compression noise', () => {
     const background = solid(30, 50, 70);
     const noisy = background.slice();

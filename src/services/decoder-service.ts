@@ -58,6 +58,7 @@ import {
   type FrameProcessingContext,
   getFrameDurationMs,
   getSkipThreshold,
+  MOTION_SIGNATURE_PEAK_BYTES,
   type MotionSignature,
 } from './frame-utils';
 
@@ -201,6 +202,10 @@ export async function decodeFrames(
 
   // ── Smart frame skip state (must be before parallel decode block) ──
   const skipThreshold = getSkipThreshold(effectiveSmartSkip);
+  const motionMemoryBytes =
+    effectiveSmartSkip !== 'off' && typeof onVideoFrameAvailable !== 'function'
+      ? MOTION_SIGNATURE_PEAK_BYTES
+      : 0;
 
   // Determine streaming mode: explicit 'stream' mode or infer from callback
   const streaming =
@@ -277,7 +282,8 @@ export async function decodeFrames(
           configuredDisplayWidth,
           configuredDisplayHeight
         ),
-        10
+        10,
+        motionMemoryBytes
       )
     : usesStagedCpuStreaming
       ? calculateStagedFrameSourceCapacity(
@@ -289,7 +295,8 @@ export async function decodeFrames(
           height,
           10,
           1,
-          pixelFormat
+          pixelFormat,
+          motionMemoryBytes
         )
       : calculateFrameOutputConcurrency(
           configuredSourceWidth,
@@ -297,7 +304,8 @@ export async function decodeFrames(
           width,
           height,
           10,
-          pixelFormat
+          pixelFormat,
+          motionMemoryBytes
         );
   if (maxPendingConversions === 0) {
     throw new Error(
@@ -327,7 +335,8 @@ export async function decodeFrames(
         height,
         Number.MAX_SAFE_INTEGER,
         2,
-        pixelFormat
+        pixelFormat,
+        motionMemoryBytes
       )
     : 0;
   let stagedLookaheadEnabled =
@@ -353,7 +362,7 @@ export async function decodeFrames(
       slotLimit === 2 && activeStagedTargetSlots === 1 ? queuedSourceHeadroomBytes : 0
     ) +
       (activeStagedTargetSlots + 1) * targetWorkingBytes <=
-      FRAME_PIPELINE_MEMORY_BUDGET_BYTES;
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES - motionMemoryBytes;
 
   const drainStagedTargetWaiters = (): void => {
     while (stagedTargetWaiters.length > 0) {
@@ -474,6 +483,7 @@ export async function decodeFrames(
   const handleCancellation = (): void => {
     recordCancellation();
   };
+  let motionMemoryReservation: FrameMemoryReservation | null = null;
   let decoder: VideoDecoder | null = null;
   let chunkStream: AsyncGenerator<EncodedVideoChunk> | null = null;
   let demuxDisposed = false;
@@ -534,6 +544,9 @@ export async function decodeFrames(
     }
 
     await Promise.allSettled([...pendingConversions]);
+    previousMotion = null;
+    motionMemoryReservation?.release();
+    motionMemoryReservation = null;
 
     const activeDecoder = decoder;
     decoder = null;
@@ -747,7 +760,7 @@ export async function decodeFrames(
               : retainedSourceFrameBytes +
                   sourceReservationBytes +
                   Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes >
-                FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+                FRAME_PIPELINE_MEMORY_BUDGET_BYTES - motionMemoryBytes
           ) {
             const memoryLimitDescription = frameMemoryBudget
               ? 'shared frame byte budget'
@@ -772,7 +785,8 @@ export async function decodeFrames(
               width,
               height,
               outputOwnershipRequestedMaximum,
-              pixelFormat
+              pixelFormat,
+              motionMemoryBytes
             ),
             calculateFrameOutputConcurrency(
               frame.displayWidth,
@@ -780,7 +794,8 @@ export async function decodeFrames(
               width,
               height,
               outputOwnershipRequestedMaximum,
-              pixelFormat
+              pixelFormat,
+              motionMemoryBytes
             )
           );
           if (activeOutputSlots >= maxOutputSlots) {
@@ -1136,6 +1151,9 @@ export async function decodeFrames(
   };
 
   try {
+    if (motionMemoryBytes > 0 && frameMemoryBudget) {
+      motionMemoryReservation = frameMemoryBudget.reserveAnalysis(motionMemoryBytes);
+    }
     decoder = new VideoDecoder(decoderInit);
     decoder.configure(activeConfig);
   } catch (error) {

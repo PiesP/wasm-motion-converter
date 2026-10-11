@@ -205,6 +205,25 @@ describe('frame memory reservations', () => {
     expect(budget.usage.totalBytes).toBe(0);
   });
 
+  it('reserves and releases motion analysis within the same hard frame budget', () => {
+    const budget = new WebpFrameMemoryBudget({
+      codedWidth: 8, codedHeight: 8, displayWidth: 8, displayHeight: 8,
+      targetWidth: 8, targetHeight: 8, workerCount: 1,
+    });
+    const analysis = budget.reserveAnalysis(37_376);
+    expect(budget.usage.analysisBytes).toBe(37_376);
+    const available = FRAME_PIPELINE_MEMORY_BUDGET_BYTES - budget.usage.totalBytes - budget.targetTaskBytes;
+    const source = budget.tryReserveSource(available);
+    expect(source).not.toBeNull();
+    expect(budget.tryReserveSource(1)).toBeNull();
+    expect(() => budget.reserveAnalysis(1)).toThrow('motion analysis');
+    analysis.release();
+    expect(budget.usage.analysisBytes).toBe(0);
+    source?.release();
+    budget.dispose();
+    expect(budget.usage.totalBytes).toBe(0);
+  });
+
   it('admits one RGBA Worker for full-resolution 4K within the shared budget', () => {
     const width = 3840;
     const height = 2160;

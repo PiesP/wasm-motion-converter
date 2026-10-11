@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { globalBufferPool } from '@services/buffer-pool';
 import { decodeFrames } from '@services/decoder-service';
 import type { DemuxResult } from '@services/demuxer-service';
@@ -28,9 +28,10 @@ interface SourceFrame {
   timestamp: number;
   duration: number;
   rgb: readonly [number, number, number];
+  pixels?: Uint8Array;
 }
 
-function installDecoder(frames: SourceFrame[]): DemuxResult {
+function installDecoder(frames: SourceFrame[], size = 8): DemuxResult {
   const closed: Array<ReturnType<typeof vi.fn>> = [];
   class FixtureDecoder {
     static async isConfigSupported(config: VideoDecoderConfig) {
@@ -50,17 +51,18 @@ function installDecoder(frames: SourceFrame[]): DemuxResult {
       closed.push(close);
       this.init.output({
         ...source,
-        codedWidth: 8,
-        codedHeight: 8,
-        displayWidth: 8,
-        displayHeight: 8,
+        codedWidth: size,
+        codedHeight: size,
+        displayWidth: size,
+        displayHeight: size,
         format: 'RGBA',
-        allocationSize: () => 8 * 8 * 4,
+        allocationSize: () => size * size * 4,
         async copyTo(destination: Uint8Array) {
-          for (let offset = 0; offset < 8 * 8 * 4; offset += 4) {
-            destination.set([...source.rgb, 255], offset);
+          for (let pixel = 0; pixel < size * size; pixel++) {
+            const rgb = source.pixels?.subarray(pixel * 3, pixel * 3 + 3) ?? source.rgb;
+            destination.set([...rgb, 255], pixel * 4);
           }
-          return [{ offset: 0, stride: 32 }];
+          return [{ offset: 0, stride: size * 4 }];
         },
         close,
       } as unknown as VideoFrame);
@@ -75,7 +77,7 @@ function installDecoder(frames: SourceFrame[]): DemuxResult {
       type: 'key' as const,
       copyTo: vi.fn(),
     })),
-    config: { codec: 'vp09.presentation-fixture', codedWidth: 8, codedHeight: 8 },
+    config: { codec: 'vp09.presentation-fixture', codedWidth: size, codedHeight: size },
     duration: 0.4,
     framerate: 10,
     sourceTotalMs: 400,
@@ -144,18 +146,20 @@ afterEach(() => {
 });
 
 describe('source presentation boundaries (issue #285 baseline defects)', () => {
-  // These expected failures freeze the independent source-derived requirements.
-  // Remove .fails as each production path is corrected; do not change the oracle.
-  it.fails('holds batch f0 until the original f2 boundary under fixed 2:1 sampling', async () => {
-    const output = await decodeFrames(installDecoder(fourFrames(false)), {
-      width: 8, height: 8, frameDecimation: 2, mode: 'batch',
+  // Only the assertion uses .fails. Codec/serialization failures in setup
+  // remain ordinary failures rather than masquerading as the known timing bug.
+  describe('fixed batch cadence', () => {
+    let frames: Awaited<ReturnType<typeof decodeFrames>>['frames'] = [];
+    beforeEach(async () => {
+      frames = (await decodeFrames(installDecoder(fourFrames(false)), {
+        width: 8, height: 8, frameDecimation: 2, mode: 'batch',
+      })).frames;
+      expect(frames.map((frame) => frame.data[0])).toEqual([64, 192]);
     });
-    try {
-      expect(output.frames.map((frame) => frame.data[0])).toEqual([64, 192]);
-      expect(output.frames.map((frame) => frame.duration)).toEqual([200, 200]);
-    } finally {
-      for (const frame of output.frames) globalBufferPool.release(frame.data);
-    }
+    afterEach(() => { for (const frame of frames) globalBufferPool.release(frame.data); });
+    it.fails('holds f0 until the original f2 boundary', () => {
+      expect(frames.map((frame) => frame.duration)).toEqual([200, 200]);
+    });
   });
 
   it('keeps primary-color changes before short-clip noise calibration', async () => {
@@ -173,19 +177,43 @@ describe('source presentation boundaries (issue #285 baseline defects)', () => {
     expect(selected).toEqual(colors);
   });
 
-  for (const format of ['gif', 'webp'] as const) {
-    it.fails(`${format}: fixed f0/f2 begin at 0/200ms and close at 400ms`, async () => {
-      const demux = installDecoder(fourFrames(false));
-      const opts = { width: 8, height: 8, scale: 1, quality: 'low' as const, frameDecimation: 2 };
-      const bytes = format === 'gif' ? await encodeGif(demux, opts) : await encodeWebp(demux, opts);
-      expect(format === 'gif' ? gifHolds(bytes) : webpHolds(bytes)).toEqual([200, 200]);
+  it('retains cursor movement inside one tile through production selection', async () => {
+    const size = 128;
+    const before = new Uint8Array(size * size * 3);
+    const after = before.slice();
+    before.set([255, 255, 255], (size + 1) * 3);
+    after.set([255, 255, 255], (size + 2) * 3);
+    const selected: number[] = [];
+    await decodeFrames(installDecoder([before, after].map((pixels, index) => ({
+      timestamp: index * 100_000, duration: 100_000, rgb: [0, 0, 0], pixels,
+    })), size), {
+      width: size, height: size, smartFrameSkip: 'high', mode: 'stream',
+      onFrameAvailable: (pixels, _duration, frameNumber) => {
+        selected.push(frameNumber);
+        globalBufferPool.release(pixels);
+      },
     });
+    expect(selected).toEqual([0, 1]);
+  });
 
-    it.fails(`${format}: smart removal of A/A/A/B holds A for 300ms and B for 100ms`, async () => {
-      const demux = installDecoder(fourFrames(true));
-      const opts = { width: 8, height: 8, scale: 1, quality: 'low' as const, smartFrameSkip: 'low' as const };
-      const bytes = format === 'gif' ? await encodeGif(demux, opts) : await encodeWebp(demux, opts);
-      expect(format === 'gif' ? gifHolds(bytes) : webpHolds(bytes)).toEqual([300, 100]);
-    });
-  }
+  describe.each(['gif', 'webp'] as const)('%s serialized presentation', (format) => {
+    for (const duplicate of [false, true]) {
+      describe(duplicate ? 'smart A/A/A/B removal' : 'fixed f0/f2 sampling', () => {
+        let holds: number[] = [];
+        beforeEach(async () => {
+          const demux = installDecoder(fourFrames(duplicate));
+          const opts = {
+            width: 8, height: 8, scale: 1, quality: 'low' as const,
+            ...(duplicate ? { smartFrameSkip: 'low' as const } : { frameDecimation: 2 }),
+          };
+          const bytes = format === 'gif' ? await encodeGif(demux, opts) : await encodeWebp(demux, opts);
+          holds = format === 'gif' ? gifHolds(bytes) : webpHolds(bytes);
+          expect(holds.reduce((sum, duration) => sum + duration, 0)).toBe(400);
+        });
+        it.fails('retains the source scene boundary and closes at 400ms', () => {
+          expect(holds).toEqual(duplicate ? [300, 100] : [200, 200]);
+        });
+      });
+    }
+  });
 });
