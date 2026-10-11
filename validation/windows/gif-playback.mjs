@@ -295,8 +295,7 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
   if (!(gifBytes instanceof Uint8Array) || gifBytes.byteLength < 1 || gifBytes.byteLength > 16 * 1024 * 1024) {
     throw new RangeError('GIF playback input must be a bounded Uint8Array');
   }
-  const directory = join(outputRoot, label);
-  await mkdir(directory);
+  await mkdir(outputRoot, { recursive: true });
   const output = {
     schemaVersion: 1,
     label,
@@ -447,7 +446,7 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
     }
   }
   for (const capture of captures) {
-    const file = join(label, `frame-${String(capture.sequence).padStart(3, '0')}.png`);
+    const file = `${label}-frame-${String(capture.sequence).padStart(3, '0')}.png`;
     try {
       const bytes = Buffer.from(capture.data, 'base64');
       const decoded = inspectPlaybackPng(bytes);
@@ -471,7 +470,7 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
   if (output.overflow) output.errors.push(`Screencast exceeded ${MAX_CAPTURE_FRAMES} frames`);
   output.status = output.errors.length || output.cleanupErrors.length || output.analysis.errors.length
     ? 'inconclusive' : 'collected';
-  const summaryFile = join(label, 'observation.json');
+  const summaryFile = `${label}-observation.json`;
   const summaryBytes = Buffer.from(`${JSON.stringify(output, null, 2)}\n`);
   await writeFile(join(outputRoot, summaryFile), summaryBytes);
   artifacts.push({ kind: 'gif-playback-observation', file: summaryFile, bytes: summaryBytes.byteLength, sha256: digest(summaryBytes) });
