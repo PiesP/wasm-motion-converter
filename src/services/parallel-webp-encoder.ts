@@ -35,6 +35,7 @@ import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from './worker-pool
 
 interface FrameEncodeResult {
   bitstream: Uint8Array;
+  iccProfile?: Uint8Array | null | undefined;
   durationMs: number;
   timing?: { startUs: number; endUs: number } | undefined;
 }
@@ -180,8 +181,8 @@ export function createStreamingWebpEncoder(
     while (resultBuffer.has(nextExpectedId)) {
       const r = resultBuffer.get(nextExpectedId)!;
       if (r.bitstream.length > 0) {
-        if (r.timing) muxer.addPresentationFrame(r.bitstream, r.timing);
-        else muxer.addFrame(r.bitstream, r.durationMs);
+        if (r.timing) muxer.addPresentationFrame(r.bitstream, r.timing, r.iccProfile ?? null);
+        else muxer.addFrame(r.bitstream, r.durationMs, r.iccProfile ?? null);
       }
       resultBuffer.delete(nextExpectedId);
       const task = outstandingTasks.get(nextExpectedId);
@@ -267,7 +268,9 @@ export function createStreamingWebpEncoder(
           }
           const outstanding = outstandingTasks.get(id);
           if (!outstanding || firstEncodeError) return result;
-          const resultBytes = retainedResultBytes(result.bitstream);
+          const resultBytes =
+            retainedResultBytes(result.bitstream) +
+            (result.iccProfile ? retainedResultBytes(result.iccProfile) : 0);
           if (!outstanding.reservation.reserveResultBytes(resultBytes)) {
             throw new Error('WebP frame memory limit exceeded by encoded results');
           }
@@ -275,6 +278,7 @@ export function createStreamingWebpEncoder(
           if (result.bitstream.length > 0) encodedCount++;
           resultBuffer.set(result.id, {
             bitstream: result.bitstream,
+            iccProfile: result.iccProfile,
             durationMs,
             timing,
           });

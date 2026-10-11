@@ -5,6 +5,12 @@ import { VP8_FOURCC, VP8X_FOURCC } from '@utils/constants';
 
 const RIFF_MAGIC = 0x52494646;
 const WEBP_MAGIC = 0x57454250;
+const ICCP_FOURCC = 0x49434350;
+
+export interface CanvasWebpFrame {
+  bitstream: Uint8Array;
+  iccProfile: Uint8Array | null;
+}
 
 /** Validate an opaque, full-canvas VP8 keyframe before placing it in ANMF. */
 export function validateVp8Frame(frame: Uint8Array, width: number, height: number): void {
@@ -27,7 +33,7 @@ export function validateVp8Frame(frame: Uint8Array, width: number, height: numbe
 }
 
 /** Return a borrowed VP8 payload only from a complete, opaque WebP container. */
-export function extractVp8Chunk(webp: Uint8Array): Uint8Array {
+function parseVp8Chunk(webp: Uint8Array, allowIcc: boolean): CanvasWebpFrame {
   if (webp.length < 30) throw new Error('WebP container is too small');
   const view = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
   if (view.getUint32(0, false) !== RIFF_MAGIC || view.getUint32(8, false) !== WEBP_MAGIC) {
@@ -37,6 +43,8 @@ export function extractVp8Chunk(webp: Uint8Array): Uint8Array {
   let offset = 12;
   let extended = false;
   let vp8: Uint8Array | null = null;
+  let iccProfile: Uint8Array | null = null;
+  let iccFlag = false;
   let vp8xWidth: number | null = null;
   let vp8xHeight: number | null = null;
   while (offset < webp.length) {
@@ -54,16 +62,22 @@ export function extractVp8Chunk(webp: Uint8Array): Uint8Array {
       extended = true;
       const flags = webp[offset + 8]!;
       if (
-        flags !== 0 ||
+        (allowIcc ? flags !== 0 && flags !== 0x20 : flags !== 0) ||
         webp[offset + 9] !== 0 ||
         webp[offset + 10] !== 0 ||
         webp[offset + 11] !== 0
       )
         throw new Error('WebP VP8X has unsupported features');
+      iccFlag = flags === 0x20;
       vp8xWidth = 1 + webp[offset + 12]! + (webp[offset + 13]! << 8) + (webp[offset + 14]! << 16);
       vp8xHeight = 1 + webp[offset + 15]! + (webp[offset + 16]! << 8) + (webp[offset + 17]! << 16);
+    } else if (fourCC === ICCP_FOURCC && allowIcc) {
+      if (!extended || !iccFlag || iccProfile || vp8 || size === 0)
+        throw new Error('Invalid WebP ICCP chunk');
+      iccProfile = webp.subarray(offset + 8, end);
     } else if (fourCC === VP8_FOURCC) {
-      if (vp8) throw new Error('Duplicate WebP VP8 chunk');
+      if (vp8 || (extended && iccFlag !== (iccProfile !== null)))
+        throw new Error('Invalid WebP VP8 chunk order');
       vp8 = webp.subarray(offset + 8, end);
     } else {
       // Metadata and alpha cannot be preserved by this opaque VP8-only muxer.
@@ -72,18 +86,33 @@ export function extractVp8Chunk(webp: Uint8Array): Uint8Array {
     offset = paddedEnd;
   }
   if (!vp8) throw new Error('WebP container has no VP8 chunk');
+  if (extended && iccFlag !== (iccProfile !== null))
+    throw new Error('WebP ICCP flag does not match profile');
   if (!extended && view.getUint32(12, false) !== VP8_FOURCC) {
     throw new Error('Invalid simple WebP chunk order');
   }
   const codedWidth = (vp8[6]! | (vp8[7]! << 8)) & 0x3fff;
   const codedHeight = (vp8[8]! | (vp8[9]! << 8)) & 0x3fff;
   validateVp8Frame(vp8, vp8xWidth ?? codedWidth, vp8xHeight ?? codedHeight);
-  return vp8;
+  return { bitstream: vp8, iccProfile };
+}
+
+/** Strict WASM codec path: metadata cannot be discarded. */
+export function extractVp8Chunk(webp: Uint8Array): Uint8Array {
+  return parseVp8Chunk(webp, false).bitstream;
+}
+
+/** Parse the supported Canvas VP8 + optional ICC profile combination. */
+export function extractCanvasWebp(webp: Uint8Array): CanvasWebpFrame {
+  const parsed = parseVp8Chunk(webp, true);
+  const bitstream = new Uint8Array(parsed.bitstream);
+  bitstream[0] = bitstream[0]! | 0x10;
+  return { bitstream, iccProfile: parsed.iccProfile };
 }
 
 /** Canvas WebP can clear the VP8 display bit; restore it for ANMF playback. */
 export function extractAndNormalizeCanvasVp8(webp: Uint8Array): Uint8Array {
-  const frame = new Uint8Array(extractVp8Chunk(webp));
-  frame[0] = frame[0]! | 0x10;
-  return frame;
+  const parsed = extractCanvasWebp(webp);
+  if (parsed.iccProfile) throw new Error('Canvas WebP ICC profile requires profile-aware muxing');
+  return parsed.bitstream;
 }

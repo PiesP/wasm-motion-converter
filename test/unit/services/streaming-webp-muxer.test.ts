@@ -20,6 +20,24 @@ function dummyBitstream(size = 100, seed = 0): Uint8Array {
 }
 
 describe('StreamingWebpMuxer', () => {
+  it('writes one identical ICC profile before ANIM and enforces profile consistency and bytes', async () => {
+    const profile = new Uint8Array([1, 2, 3]);
+    const muxer = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 191 });
+    muxer.addPresentationFrame(dummyBitstream(100), { startUs: 0, endUs: 1000 }, profile);
+    profile[0] = 9;
+    expect(() => muxer.addPresentationFrame(dummyBitstream(100, 1),
+      { startUs: 1000, endUs: 2000 }, profile)).toThrow('inconsistent ICC');
+    muxer.finishPresentation(1000);
+    const output = await muxer.finish();
+    expect(output[20]).toBe(0x22);
+    expect(Array.from(output.subarray(30, 42))).toEqual([73, 67, 67, 80, 3, 0, 0, 0, 1, 2, 3, 0]);
+    expect(String.fromCharCode(...output.subarray(42, 46))).toBe('ANIM');
+    expect(output.length).toBe(188);
+
+    const capped = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 190 });
+    expect(() => capped.addPresentationFrame(dummyBitstream(100),
+      { startUs: 0, endUs: 1000 }, new Uint8Array([1, 2, 3]))).toThrow('byte limit');
+  });
   describe('source presentation holds', () => {
     const durations = (bytes: Uint8Array): number[] => {
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

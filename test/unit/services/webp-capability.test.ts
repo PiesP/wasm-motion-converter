@@ -17,9 +17,34 @@ function webp(width: number, height: number): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+function iccWebp(width: number, height: number): Uint8Array<ArrayBuffer> {
+  const simple = webp(width, height);
+  const bytes = new Uint8Array(12 + 18 + 10 + simple.length - 12);
+  const view = new DataView(bytes.buffer);
+  bytes.set(simple.subarray(0, 12), 0);
+  view.setUint32(4, bytes.length - 8, true);
+  bytes.set([0x56, 0x50, 0x38, 0x58], 12);
+  view.setUint32(16, 10, true);
+  bytes[20] = 0x20;
+  bytes[24] = width - 1;
+  bytes[27] = height - 1;
+  bytes.set([0x49, 0x43, 0x43, 0x50], 30);
+  view.setUint32(34, 1, true);
+  bytes[38] = 7;
+  bytes.set(simple.subarray(12), 40);
+  return bytes;
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Canvas WebP capability', () => {
+  it('accepts a Chromium-style ICCP chunk before opaque VP8', async () => {
+    vi.stubGlobal('OffscreenCanvas', class {
+      getContext(): object { return { fillRect() {}, fillStyle: '' }; }
+      async convertToBlob(): Promise<Blob> { return new Blob([iccWebp(2, 2)], { type: 'image/webp' }); }
+    });
+    expect(await probeCanvasWebpCapability()).toBe(true);
+  });
   it('accepts only a 2x2 opaque VP8 result', async () => {
     vi.stubGlobal('OffscreenCanvas', class {
       getContext(): object { return { fillRect() {}, fillStyle: '' }; }
