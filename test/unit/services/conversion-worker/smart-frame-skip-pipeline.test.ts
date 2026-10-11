@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SerializedConversionOptions } from '@services/conversion-worker/types';
 
 const mocks = vi.hoisted(() => ({
@@ -53,14 +53,23 @@ beforeEach(() => {
           onFrameDecoded?: (frameCount: number, totalFrames: number) => void;
           onFrameEncoded?: (frameCount: number, totalFrames: number) => void;
           onEncodingComplete?: (counts: {
+            consumedChunks?: number;
             decodedFrames: number;
+            selectedFrames?: number;
             encodedFrames: number;
+            emittedFrames?: number;
           }) => void;
         }
       ) => {
         options.onFrameDecoded?.(10, 30);
         options.onFrameEncoded?.(10, 10);
-        options.onEncodingComplete?.({ decodedFrames: 30, encodedFrames: 10 });
+        options.onEncodingComplete?.({
+          consumedChunks: 30,
+          decodedFrames: 30,
+          selectedFrames: 12,
+          encodedFrames: 10,
+          emittedFrames: 10,
+        });
         return new Uint8Array([1, 2, 3]);
       }
     );
@@ -71,17 +80,30 @@ beforeEach(() => {
         _demux: unknown,
         options: {
           onEncodingComplete?: (counts: {
+            consumedChunks?: number;
             decodedFrames: number;
+            selectedFrames?: number;
             encodedFrames: number;
+            emittedFrames?: number;
           }) => void;
         },
         onProgress?: (progress: { currentFrame?: number; totalFrames?: number }) => void
       ) => {
-        onProgress?.({ currentFrame: 10, totalFrames: 30 });
-        options.onEncodingComplete?.({ decodedFrames: 2, encodedFrames: 1 });
+        onProgress?.({ currentFrame: 1, totalFrames: 30 });
+        options.onEncodingComplete?.({
+          consumedChunks: 3,
+          decodedFrames: 2,
+          selectedFrames: 1,
+          encodedFrames: 1,
+          emittedFrames: 1,
+        });
         return new Uint8Array([1, 2, 3]);
       }
     );
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('worker pipeline smart frame skip forwarding', () => {
@@ -128,10 +150,33 @@ describe('worker pipeline smart frame skip forwarding', () => {
       'finalizing',
     ]);
     expect(result.profile?.stages.find((stage) => stage.stage === 'transcoding')).toMatchObject({
+      consumedChunks: 30,
       decodedFrames: 30,
+      selectedFrames: 12,
       encodedFrames: 10,
+      emittedFrames: 10,
       outputBytes: 3,
     });
+    expect(result.profile?.encoderRoute).toBe('gif-worker');
+    const progress = postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === 'progress');
+    expect(progress.at(-1)).toMatchObject({
+      phase: 'assembling',
+      percent: 100,
+      memoryMB: null,
+      accountedMemoryMB: expect.any(Number),
+      consumedChunks: 30,
+      decodedFrames: 30,
+      selectedFrames: 12,
+      encodedFrames: 10,
+      emittedFrames: 10,
+      outputFrames: 10,
+      etaSeconds: 0,
+    });
+    expect(progress.map((entry) => entry.percent)).toEqual(
+      [...progress.map((entry) => entry.percent)].sort((a, b) => a - b)
+    );
     expect(postMessage).toHaveBeenCalledWith({
       type: 'log',
       requestId: 'request-1',
@@ -207,9 +252,84 @@ describe('worker pipeline smart frame skip forwarding', () => {
       undefined
     );
     expect(result.profile?.stages.find((stage) => stage.stage === 'transcoding')).toMatchObject({
+      consumedChunks: 3,
       decodedFrames: 2,
+      selectedFrames: 1,
       encodedFrames: 1,
+      emittedFrames: 1,
     });
+    expect(result.profile?.encoderRoute).toBe('webp-wasm');
+  });
+
+  it('transfers only output view bytes when the encoder returns spare capacity', async () => {
+    mocks.encodeGif.mockImplementationOnce(async () =>
+      new Uint8Array([99, 1, 2, 3, 99]).subarray(1, 4)
+    );
+
+    const result = await runWorkerPipeline(new ArrayBuffer(8), baseOptions, vi.fn(), 'view-output');
+    expect([...new Uint8Array(result.outputBuffer)]).toEqual([1, 2, 3]);
+    expect(result.outputBuffer.byteLength).toBe(3);
+    expect(result.profile?.operationTotals.outputCopy.samples).toBe(1);
+  });
+
+  it('uses native decode counts and separate encoded completion rate for streaming progress', async () => {
+    let nowMs = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
+    mocks.encodeGif.mockImplementationOnce(
+      async (
+        _demux: unknown,
+        options: {
+          onFrameDecoded?: (count: number, total: number) => void;
+          onFrameEncoded?: (count: number, total: number) => void;
+          onEncodingComplete?: (counts: {
+            decodedFrames: number;
+            encodedFrames: number;
+            emittedFrames: number;
+          }) => void;
+        }
+      ) => {
+        nowMs = 120;
+        options.onFrameDecoded?.(10, 30);
+        nowMs = 240;
+        options.onFrameEncoded?.(1, 12);
+        nowMs = 360;
+        options.onFrameDecoded?.(20, 30);
+        nowMs = 480;
+        options.onFrameEncoded?.(2, 12);
+        options.onEncodingComplete?.({ decodedFrames: 30, encodedFrames: 2, emittedFrames: 2 });
+        return new Uint8Array([1, 2, 3]);
+      }
+    );
+    const postMessage = vi.fn();
+
+    await runWorkerPipeline(new ArrayBuffer(8), baseOptions, postMessage, 'cadence-progress');
+    const progress = postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === 'progress');
+    const decoding = progress.find((message) => message.phase === 'decoding');
+    const encoding = progress.find((message) => message.phase === 'encoding');
+
+    expect(decoding).toMatchObject({
+      decodedFrames: 10,
+      currentFrame: 10,
+      totalFrames: 30,
+      fps: 83.3,
+      memoryMB: null,
+      etaSeconds: 1,
+    });
+    expect(encoding).toMatchObject({
+      decodedFrames: 10,
+      encodedFrames: 1,
+      currentFrame: 1,
+      totalFrames: 12,
+      fps: 4.2,
+      etaSeconds: 3,
+    });
+    expect(encoding).not.toHaveProperty('outputFrames');
+    expect(progress.map((message) => message.percent)).toEqual(
+      [...progress.map((message) => message.percent)].sort((a, b) => a - b)
+    );
+    expect(progress.at(-1)).toMatchObject({ emittedFrames: 2, outputFrames: 2 });
   });
 
   it('rejects hostile decoded dimensions before encoding and disposes the demux session', async () => {

@@ -89,9 +89,8 @@ function isValidStageMetrics(value: unknown): value is StageMetrics {
         value.encodedFrames,
         value.emittedFrames,
       ].every(isNullableCount) &&
-      [value.decodeFps, value.encodeFps, value.outputBytes, value.throughputMBps].every(
-        isNullableMeasurement
-      )
+      [value.decodeFps, value.encodeFps, value.throughputMBps].every(isNullableMeasurement) &&
+      isNullableCount(value.outputBytes)
     );
   }
   return true;
@@ -229,13 +228,15 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
   switch (value.type) {
     case 'progress': {
       if (!isNonEmptyString(value.requestId)) return false;
-      if (!isNonEmptyString(value.phase)) return false;
-      if (!isFiniteNumber(value.percent)) return false;
+      if (!['demuxing', 'decoding', 'encoding', 'assembling'].includes(value.phase as string))
+        return false;
+      if (!isFiniteNonNegative(value.percent) || value.percent > 100) return false;
       if (!isFiniteNonNegative(value.fps)) return false;
       if (!isNullableMeasurement(value.memoryMB)) return false;
       if (!isNullableMeasurement(value.etaSeconds)) return false;
       if (value.accountedMemoryMB !== undefined && !isFiniteNonNegative(value.accountedMemoryMB))
         return false;
+      if (value.elapsedMs !== undefined && !isFiniteNonNegative(value.elapsedMs)) return false;
       if (
         ![
           'consumedChunks',
