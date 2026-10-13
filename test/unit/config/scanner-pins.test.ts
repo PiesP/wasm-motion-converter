@@ -10,7 +10,7 @@ const metadata = JSON.parse(readFileSync(resolve(root, 'scripts/ci/pinned-tools.
   semgrep: { version: string; image: string };
 };
 const security = readFileSync(resolve(root, '.github/workflows/security.yaml'), 'utf8');
-const publishedSha = '7a5ab41114bfe234b4524303680f792266b551d3';
+const publishedSha = 'e474c313673dbdb717156b8df3b0febf1b89f19a';
 
 describe('scanner pin workflow contracts', () => {
   it('keeps both scanner image versions and digests validated before use', () => {
@@ -33,6 +33,8 @@ describe('scanner pin workflow contracts', () => {
       expect(match).toContain(`ref: ${publishedSha}`);
       expect(match).toContain("install-dependencies: 'false'");
       expect(match).toContain('pinned_dir="$(mktemp -d "$RUNNER_TEMP/pinned-tools.XXXXXXXX")"');
+      expect(match).toContain('for name in pinned-tools.json pinned-tools.ts check-pinned-tools.ts; do');
+      expect(match).not.toContain('install-nose.ts');
       expect(match).toContain('install -m 0600 "scripts/ci/$name" "$pinned_dir/$name"');
       expect(match).toContain(`"$pinned_dir/${helper}"`);
     }

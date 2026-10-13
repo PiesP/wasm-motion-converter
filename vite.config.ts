@@ -1,14 +1,11 @@
-import { visualizer } from 'rollup-plugin-visualizer';
 import type { PluginOption } from 'vite';
-import { defineConfig, loadEnv, mergeConfig } from 'vite';
+import { defineConfig, mergeConfig } from 'vite';
 import { applicationSourceSha } from './scripts/build/deployment-state.ts';
 import { stripDataTestIdPlugin } from './tooling/vite/plugins/strip-data-testid.ts';
 import basePreset from './tooling/vite/presets/base.ts';
 import browserAppPreset from './tooling/vite/presets/browser-app.ts';
 
-export default defineConfig(({ mode, command }) => {
-  const env = loadEnv(mode, process.cwd(), '');
-
+export default defineConfig(({ command }) => {
   // Solid applies reactive width and position style attributes at runtime, and
   // Vite HMR injects styles in development. Keep preview aligned with the
   // deployed Cloudflare policy in public/_headers.
@@ -26,18 +23,7 @@ export default defineConfig(({ mode, command }) => {
     "worker-src 'self'",
   ].join('; ');
 
-  const commonPlugins: PluginOption[] = [
-    ...(env.VITE_ANALYZE_BUNDLE === 'true'
-      ? [
-          visualizer({
-            filename: 'dist/stats.html',
-            gzipSize: true,
-            brotliSize: true,
-          }) as PluginOption,
-        ]
-      : []),
-    stripDataTestIdPlugin(),
-  ];
+  const commonPlugins: PluginOption[] = [stripDataTestIdPlugin()];
 
   const modeConfig = {
     define: {

@@ -72,16 +72,12 @@ test('Vite commands keep their arguments and command-specific environment', asyn
     ['dev', ['--host', '127.0.0.1']],
     ['build', ['build', '--host', '127.0.0.1']],
     ['preview', ['preview', '--host', '127.0.0.1']],
-    ['analyze', ['build', '--host', '127.0.0.1']],
   ] as const) {
     const fixture = recordingRunner();
     assert.equal(await runVite(mode, ['--host', '127.0.0.1'], fixture.run), 0);
     assert.deepEqual(fixture.calls[0]?.args, expectedArgs);
     assert.equal(fixture.calls[0]?.env.NODE_OPTIONS, '--no-deprecation');
-    assert.equal(
-      fixture.calls[0]?.env.VITE_ANALYZE_BUNDLE,
-      mode === 'analyze' ? 'true' : undefined
-    );
+    assert.equal(fixture.calls[0]?.env.VITE_ANALYZE_BUNDLE, undefined);
   }
 });
 
