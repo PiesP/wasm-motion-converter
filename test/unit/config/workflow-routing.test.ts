@@ -106,7 +106,6 @@ describe('Workflow change routing', () => {
       unit: 'false',
       e2e: 'false',
       build: 'false',
-      duplication: 'false',
       mutation: 'false',
       dependency: 'false',
       codeql: 'false',
@@ -123,7 +122,6 @@ describe('Workflow change routing', () => {
       unit: 'true',
       e2e: 'true',
       build: 'true',
-      duplication: 'true',
       mutation: 'true',
       dependency: 'false',
       codeql: 'true',
@@ -139,7 +137,6 @@ describe('Workflow change routing', () => {
         unit: 'true',
         e2e: 'true',
         build: 'true',
-        duplication: 'false',
         mutation: 'true',
         dependency: 'true',
         codeql: 'true',
@@ -155,7 +152,6 @@ describe('Workflow change routing', () => {
       unit: 'true',
       e2e: 'true',
       build: 'true',
-      duplication: 'true',
       dependency: 'true',
       codeql: 'true',
       semgrep_full: 'true',
@@ -169,13 +165,8 @@ describe('Workflow change routing', () => {
       security_tools: 'true',
     });
     expect(classify(['scripts/ci/pinned-tools.json'])).toMatchObject({
-      duplication: 'true',
       dependency: 'true',
       semgrep: 'true',
-      security_tools: 'true',
-    });
-    expect(classify(['scripts/ci/install-nose.ts'])).toMatchObject({
-      duplication: 'true',
       security_tools: 'true',
     });
   });
@@ -187,7 +178,6 @@ describe('Workflow change routing', () => {
       unit: 'false',
       e2e: 'false',
       build: 'false',
-      duplication: 'false',
       mutation: 'false',
       dependency: 'false',
       codeql: 'false',
@@ -354,10 +344,10 @@ describe('Workflow change routing', () => {
       expect(diff).toContain('src/removed.ts\0');
       expect(diff).toContain('src/type.ts\0');
       expect(classifyGitEvent(directory, 'push', { before, after })).toMatchObject({
-        all: 'false', quality: 'true', build: 'true', duplication: 'true', semgrep: 'true', semgrep_full: 'true',
+        all: 'false', quality: 'true', build: 'true', semgrep: 'true', semgrep_full: 'true',
       });
       expect(classifyGitEvent(directory, 'merge_group', { merge_group: { base_sha: before, head_sha: after } })).toMatchObject({
-        all: 'false', quality: 'true', build: 'true', duplication: 'true', semgrep: 'true', semgrep_full: 'true',
+        all: 'false', quality: 'true', build: 'true', semgrep: 'true', semgrep_full: 'true',
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -378,14 +368,14 @@ describe('Workflow change routing', () => {
       git('commit', '-qm', 'symlink type');
       const linkCommit = git('rev-parse', 'HEAD');
       expect(classifyGitEvent(directory, 'push', { before: fileCommit, after: linkCommit })).toMatchObject({
-        all: 'false', quality: 'true', build: 'true', duplication: 'true', dependency: 'false',
+        all: 'false', quality: 'true', build: 'true', dependency: 'false',
       });
 
       git('rm', 'src/type.ts');
       git('commit', '-qm', 'delete symlink');
       const deletionCommit = git('rev-parse', 'HEAD');
       expect(classifyGitEvent(directory, 'push', { before: linkCommit, after: deletionCommit })).toMatchObject({
-        all: 'false', quality: 'true', build: 'true', duplication: 'true', dependency: 'false',
+        all: 'false', quality: 'true', build: 'true', dependency: 'false',
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -485,7 +475,7 @@ describe('Workflow change routing', () => {
       expect(changes).toContain("|| 'true'");
     }
 
-    for (const output of ['QUALITY', 'UNIT', 'E2E', 'BUILD', 'DUPLICATION']) {
+    for (const output of ['QUALITY', 'UNIT', 'E2E', 'BUILD']) {
       expect(ciChanges).toContain(`${output}=true`);
     }
     for (const output of [

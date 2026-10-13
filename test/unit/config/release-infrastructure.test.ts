@@ -191,7 +191,6 @@ describe('Release infrastructure', () => {
       quality: 'uses: ./.github/actions/setup-release',
       unit: 'uses: ./.github/actions/setup-release',
       e2e: 'uses: ./.github/actions/setup-release',
-      duplication: 'node --experimental-strip-types "$pinned_dir/install-nose.ts"',
       mutation: 'uses: ./.github/actions/setup-release',
       build: 'uses: ./.github/actions/setup-release',
     } as const;
@@ -214,7 +213,7 @@ describe('Release infrastructure', () => {
     expect(build).toContain('RELEASE_VERSION: ${{ needs.provenance.outputs.version }}');
     expect(build).toContain('RELEASE_SHA: ${{ needs.provenance.outputs.release-sha }}');
     expect(build).toContain('name: release-bundle-${{ needs.provenance.outputs.release-sha }}');
-    expect(publish).toContain('needs: [provenance, quality, unit, e2e, duplication, mutation, build]');
+    expect(publish).toContain('needs: [provenance, quality, unit, e2e, mutation, build]');
     expect(publish).toContain('name: release-bundle-${{ needs.provenance.outputs.release-sha }}');
     expect(publish).toContain('tag_name: ${{ inputs.tag }}');
     expect(prepareScript).toContain(
@@ -245,7 +244,7 @@ describe('Release infrastructure', () => {
       resolve(root, '.github/workflows/release.yaml'),
       'utf8'
     );
-    const e2eJob = workflow.match(/\n  e2e:[\s\S]*?\n  duplication:/)?.[0] ?? '';
+    const e2eJob = workflow.match(/\n  e2e:[\s\S]*?\n  mutation:/)?.[0] ?? '';
 
     expect(e2eJob).toContain('pnpm test:e2e:ci');
     expect(e2eJob).not.toContain('pnpm build:ci');
