@@ -3,6 +3,10 @@
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
+import type {
+  SerializedConversionOptions,
+  SerializedDecoderConfig,
+} from '@services/conversion-worker/types';
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { showConfirmation } from '@stores/confirmation-store';
@@ -26,6 +30,7 @@ import {
 } from '@stores/conversion-store';
 import type {
   ConversionProgress,
+  ConversionRequest,
   ConversionResult,
   ConversionSettings,
   ProgressCallback,
@@ -335,8 +340,8 @@ export function formatConversionProgressStatus(
 }
 
 async function executePipeline(
-  serializedConfig: ReturnType<typeof serializeConversionInputs>['serializedConfig'],
-  serializedOptions: ReturnType<typeof serializeConversionInputs>['serializedOptions'],
+  serializedConfig: SerializedDecoderConfig | null,
+  serializedOptions: SerializedConversionOptions,
   progressCallback: ProgressCallback,
   signal: AbortSignal,
   file: File,
@@ -356,7 +361,7 @@ async function executePipeline(
     const request = {
       inputBlob: file,
       fileName: file.name,
-      format: 'webp' as const,
+      format: 'webp',
       quality: serializedOptions.quality,
       scale: serializedOptions.scale,
       trimStart: serializedOptions.trimStart,
@@ -367,17 +372,13 @@ async function executePipeline(
       forceDecimation: serializedOptions.forceDecimation,
       memoryPressureCadenceRatio: serializedOptions.memoryPressureCadenceRatio,
       smartFrameSkip: serializedOptions.smartFrameSkip ?? 'off',
-    };
-    return runConversionPipeline(
-      request as Parameters<typeof runConversionPipeline>[0],
-      progressCallback as Parameters<typeof runConversionPipeline>[1],
-      signal
-    );
+    } satisfies ConversionRequest;
+    return runConversionPipeline(request, progressCallback, signal);
   }
 
   return runPipelineWithFallback(
     file,
-    serializedConfig as unknown as Parameters<typeof runPipelineWithFallback>[1],
+    serializedConfig,
     serializedOptions,
     progressCallback,
     signal,

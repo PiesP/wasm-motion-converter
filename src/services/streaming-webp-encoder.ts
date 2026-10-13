@@ -85,7 +85,9 @@ export class StreamingWebpMuxer {
   private readonly height: number;
   private frameCount = 0;
   private totalFrameBytes = 0; // Sum of all frame bitstream bytes (for capacity planning)
-  private chunks: Uint8Array[] = [];
+  // Only locally allocated headers and frame chunks enter this collection.
+  // Borrowed codec views retain their broader backing type at the input boundary.
+  private chunks: Uint8Array<ArrayBuffer>[] = [];
   private currentOffset = 0;
   private headerWritten = false;
   private iccProfile: Uint8Array | null | undefined;
@@ -437,10 +439,8 @@ export class StreamingWebpMuxer {
     view.setUint32(4, riffSize, true);
 
     // Concatenate the owned chunks without assuming a browser-specific copy strategy.
-    // Cast through unknown: TS strict mode treats Uint8Array<ArrayBufferLike>
-    // as incompatible with BlobPart (ArrayBufferLike includes SharedArrayBuffer).
     const finalizeStart = this.profileOperation ? performance.now() : null;
-    const blob = new Blob(this.chunks as unknown as BlobPart[], { type: 'image/webp' });
+    const blob = new Blob(this.chunks, { type: 'image/webp' });
     // The Blob owns the bytes now; the final allocation guard accounts for both forms.
     this.chunks.length = 0;
     if (finalizeStart !== null)

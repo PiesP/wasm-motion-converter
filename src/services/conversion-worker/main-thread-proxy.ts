@@ -11,7 +11,7 @@
  * Features:
  * - Clones Blob handles for lazy reads or transfers owned ArrayBuffers
  * - Throttled progress callbacks to the main thread
- * - Graceful fallback to main-thread pipeline on worker errors
+ * - Main-thread fallback only when Worker construction or bootstrap is unavailable
  * - AbortController propagation to the worker
  * - Timeout protection: terminates worker and rejects if conversion hangs
  */
@@ -23,17 +23,12 @@ import {
   setLastConversionProfileReport,
 } from '@services/conversion-profile-store';
 import { resolveVideoDimensions } from '@services/frame-utils';
-import type { ConversionProgress } from '@t/conversion-types';
+import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { buildConversionRequest } from './build-conversion-request';
 import { isWorkerResponse } from './guards';
-import type {
-  SerializedConversionOptions,
-  SerializedDecoderConfig,
-  WorkerRequest,
-  WorkerResponse,
-} from './types';
+import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerRequest } from './types';
 
 /**
  * Error thrown when a worker operation exceeds the timeout.
@@ -72,10 +67,6 @@ export class WorkerPipelineError extends Error {
   }
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────
-
-export type MainThreadPipelineCallback = (progress: ConversionProgress) => void;
-
 /**
  * Runs the conversion pipeline via a Web Worker.
  *
@@ -90,7 +81,7 @@ export async function runPipelineViaWorker(
   input: ArrayBuffer | Blob,
   config: SerializedDecoderConfig,
   options: SerializedConversionOptions,
-  onProgress: MainThreadPipelineCallback,
+  onProgress: ProgressCallback,
   signal?: AbortSignal,
   duration?: number,
   framerate?: number
@@ -169,7 +160,7 @@ export async function runPipelineViaWorker(
     }
 
     // Handle messages from the worker
-    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+    worker.onmessage = (event: MessageEvent<unknown>) => {
       // Ignore messages after timeout — worker is already terminated
       if (settled || timedOut) return;
 
@@ -304,7 +295,7 @@ export async function runPipelineWithFallback(
   input: ArrayBuffer | Blob,
   config: SerializedDecoderConfig,
   options: SerializedConversionOptions,
-  onProgress: MainThreadPipelineCallback,
+  onProgress: ProgressCallback,
   signal?: AbortSignal,
   inputBlob?: Blob,
   duration?: number,

@@ -21,7 +21,7 @@ const activeControllers = new Map<string, AbortController>();
 
 // ─── Message handler ────────────────────────────────────────────────────
 
-self.onmessage = async (event: MessageEvent) => {
+self.onmessage = async (event: MessageEvent<unknown>) => {
   // Defense-in-depth: validate the message source.
   // Same-origin Workers have event.origin === '' and event.source === null
   // (the worker receives messages via its own MessagePort, not a cross-origin
@@ -34,7 +34,7 @@ self.onmessage = async (event: MessageEvent) => {
     return;
   }
 
-  // Runtime guard: validate message shape before casting to WorkerRequest.
+  // Runtime guard: narrow the untrusted payload before accessing request fields.
   // A recognizable start request receives an immediate protocol error so the
   // caller does not wait for the proxy timeout when numeric fields are invalid.
   if (!isWorkerRequest(event.data)) {
